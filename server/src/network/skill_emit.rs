@@ -1,9 +1,10 @@
-use valence::prelude::{Client, Entity, EventReader, Query, With};
+use valence::prelude::{Client, Entity, EventReader, Query, Res, With};
 
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::redis_bridge::RedisOutbound;
+use crate::network::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::skill::{
     SkillCapChangedPayloadV1, SkillIdV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1,
@@ -17,81 +18,108 @@ use crate::skill::events::{
 pub fn emit_skill_xp_gain_payloads(
     mut events: EventReader<SkillXpGain>,
     mut clients: Query<&mut Client, With<Client>>,
+    redis: Option<Res<RedisBridgeResource>>,
 ) {
     for event in events.read() {
-        let Ok(mut client) = clients.get_mut(event.char_entity) else {
-            continue;
-        };
-
-        let payload = ServerDataV1::new(ServerDataPayloadV1::SkillXpGain(Box::new(
-            SkillXpGainPayloadV1::new(
-                entity_wire_id(event.char_entity),
-                skill_to_wire(event.skill),
-                event.amount,
-                source_to_wire(&event.source),
-            ),
-        )));
-        send_payload(&mut client, payload);
+        let payload = SkillXpGainPayloadV1::new(
+            entity_wire_id(event.char_entity),
+            skill_to_wire(event.skill),
+            event.amount,
+            source_to_wire(&event.source),
+        );
+        if let Ok(mut client) = clients.get_mut(event.char_entity) {
+            send_payload(
+                &mut client,
+                ServerDataV1::new(ServerDataPayloadV1::SkillXpGain(Box::new(payload.clone()))),
+            );
+        }
+        publish_skill_payload(redis.as_deref(), RedisOutbound::SkillXpGain(payload));
     }
 }
 
 pub fn emit_skill_lv_up_payloads(
     mut events: EventReader<SkillLvUp>,
     mut clients: Query<&mut Client, With<Client>>,
+    redis: Option<Res<RedisBridgeResource>>,
 ) {
     for event in events.read() {
-        let Ok(mut client) = clients.get_mut(event.char_entity) else {
-            continue;
-        };
-
-        let payload = ServerDataV1::new(ServerDataPayloadV1::SkillLvUp(SkillLvUpPayloadV1::new(
+        let payload = SkillLvUpPayloadV1::new(
             entity_wire_id(event.char_entity),
             skill_to_wire(event.skill),
             event.new_lv,
-        )));
-        send_payload(&mut client, payload);
+        );
+        if let Ok(mut client) = clients.get_mut(event.char_entity) {
+            send_payload(
+                &mut client,
+                ServerDataV1::new(ServerDataPayloadV1::SkillLvUp(payload)),
+            );
+        }
+        let payload = SkillLvUpPayloadV1::new(
+            entity_wire_id(event.char_entity),
+            skill_to_wire(event.skill),
+            event.new_lv,
+        );
+        publish_skill_payload(redis.as_deref(), RedisOutbound::SkillLvUp(payload));
     }
 }
 
 pub fn emit_skill_cap_changed_payloads(
     mut events: EventReader<SkillCapChanged>,
     mut clients: Query<&mut Client, With<Client>>,
+    redis: Option<Res<RedisBridgeResource>>,
 ) {
     for event in events.read() {
-        let Ok(mut client) = clients.get_mut(event.char_entity) else {
-            continue;
-        };
-
-        let payload = ServerDataV1::new(ServerDataPayloadV1::SkillCapChanged(
-            SkillCapChangedPayloadV1::new(
-                entity_wire_id(event.char_entity),
-                skill_to_wire(event.skill),
-                event.new_cap,
-            ),
-        ));
-        send_payload(&mut client, payload);
+        let payload = SkillCapChangedPayloadV1::new(
+            entity_wire_id(event.char_entity),
+            skill_to_wire(event.skill),
+            event.new_cap,
+        );
+        if let Ok(mut client) = clients.get_mut(event.char_entity) {
+            send_payload(
+                &mut client,
+                ServerDataV1::new(ServerDataPayloadV1::SkillCapChanged(payload)),
+            );
+        }
+        let payload = SkillCapChangedPayloadV1::new(
+            entity_wire_id(event.char_entity),
+            skill_to_wire(event.skill),
+            event.new_cap,
+        );
+        publish_skill_payload(redis.as_deref(), RedisOutbound::SkillCapChanged(payload));
     }
 }
 
 pub fn emit_skill_scroll_used_payloads(
     mut events: EventReader<SkillScrollUsed>,
     mut clients: Query<&mut Client, With<Client>>,
+    redis: Option<Res<RedisBridgeResource>>,
 ) {
     for event in events.read() {
-        let Ok(mut client) = clients.get_mut(event.char_entity) else {
-            continue;
-        };
+        let payload = SkillScrollUsedPayloadV1::new(
+            entity_wire_id(event.char_entity),
+            event.scroll_id.as_str(),
+            skill_to_wire(event.skill),
+            event.xp_granted,
+            event.was_duplicate,
+        );
+        if let Ok(mut client) = clients.get_mut(event.char_entity) {
+            send_payload(
+                &mut client,
+                ServerDataV1::new(ServerDataPayloadV1::SkillScrollUsed(Box::new(
+                    payload.clone(),
+                ))),
+            );
+        }
+        publish_skill_payload(redis.as_deref(), RedisOutbound::SkillScrollUsed(payload));
+    }
+}
 
-        let payload = ServerDataV1::new(ServerDataPayloadV1::SkillScrollUsed(Box::new(
-            SkillScrollUsedPayloadV1::new(
-                entity_wire_id(event.char_entity),
-                event.scroll_id.as_str(),
-                skill_to_wire(event.skill),
-                event.xp_granted,
-                event.was_duplicate,
-            ),
-        )));
-        send_payload(&mut client, payload);
+fn publish_skill_payload(redis: Option<&RedisBridgeResource>, message: RedisOutbound) {
+    let Some(redis) = redis else {
+        return;
+    };
+    if let Err(error) = redis.tx_outbound.send(message) {
+        tracing::warn!("[bong][network][skill] failed to enqueue skill redis payload: {error}");
     }
 }
 
@@ -118,6 +146,9 @@ fn skill_to_wire(skill: SkillId) -> SkillIdV1 {
         SkillId::Herbalism => SkillIdV1::Herbalism,
         SkillId::Alchemy => SkillIdV1::Alchemy,
         SkillId::Forging => SkillIdV1::Forging,
+        SkillId::Combat => SkillIdV1::Combat,
+        SkillId::Mineral => SkillIdV1::Mineral,
+        SkillId::Cultivation => SkillIdV1::Cultivation,
     }
 }
 
@@ -145,8 +176,9 @@ fn source_to_wire(source: &XpGainSource) -> XpGainSourceV1 {
 mod tests {
     use super::*;
     use crate::skill::components::ScrollId;
+    use crossbeam_channel::unbounded;
     use serde_json::Value;
-    use valence::prelude::App;
+    use valence::prelude::{App, Update};
 
     #[test]
     fn converts_xp_gain_source_action_to_wire() {
@@ -206,6 +238,51 @@ mod tests {
                 json.get("type").and_then(Value::as_str),
                 Some(expected_type)
             );
+        }
+    }
+
+    #[test]
+    fn new_cross_system_skill_ids_convert_to_wire() {
+        assert_eq!(skill_to_wire(SkillId::Combat), SkillIdV1::Combat);
+        assert_eq!(skill_to_wire(SkillId::Mineral), SkillIdV1::Mineral);
+        assert_eq!(skill_to_wire(SkillId::Cultivation), SkillIdV1::Cultivation);
+    }
+
+    #[test]
+    fn skill_xp_emit_also_publishes_to_redis_without_client() {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = unbounded();
+        let (_tx_inbound, rx_inbound) = unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<SkillXpGain>();
+        app.add_systems(Update, emit_skill_xp_gain_payloads);
+
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(SkillXpGain {
+            char_entity: entity,
+            skill: SkillId::Mineral,
+            amount: 1,
+            source: XpGainSource::Action {
+                plan_id: "mineral",
+                action: "ore_drop",
+            },
+        });
+
+        app.update();
+
+        match rx_outbound
+            .try_recv()
+            .expect("redis payload should be queued")
+        {
+            RedisOutbound::SkillXpGain(payload) => {
+                assert_eq!(payload.char_id, entity.to_bits());
+                assert_eq!(payload.skill, SkillIdV1::Mineral);
+                assert_eq!(payload.amount, 1);
+            }
+            other => panic!("expected SkillXpGain redis payload, got {other:?}"),
         }
     }
 

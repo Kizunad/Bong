@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use valence::prelude::{bevy_ecs, Component, Resource};
+use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::cultivation::components::{Cultivation, Realm};
@@ -301,6 +301,10 @@ pub fn player_username_from_character_id(character_id: &str) -> Option<&str> {
     } else {
         Some(username)
     }
+}
+
+pub fn position_array_from_dvec3(position: DVec3) -> [f64; 3] {
+    [position.x, position.y, position.z]
 }
 
 pub fn load_current_character_id(

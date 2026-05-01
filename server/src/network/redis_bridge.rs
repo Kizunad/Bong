@@ -5,15 +5,21 @@ use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
+use crate::schema::alchemy::{
+    AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
+};
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
+    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_SOCIAL_EXPOSURE,
-    CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_REBIRTH,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TSY_EVENT,
+    CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -22,10 +28,15 @@ use crate::schema::cultivation::{
     BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
 };
 use crate::schema::death_insight::DeathInsightRequestV1;
-use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
+use crate::schema::death_lifecycle::{
+    AgingEventV1, DuoSheEventV1, LifespanEventV1, RebirthEventV1,
+};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::skill::{
+    SkillCapChangedPayloadV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1, SkillXpGainPayloadV1,
+};
 use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
 };
@@ -60,12 +71,20 @@ pub enum RedisOutbound {
     ForgeEvent(ForgeEventV1),
     ForgeStart(ForgeStartPayloadV1),
     ForgeOutcome(ForgeOutcomePayloadV1),
+    AlchemySessionStart(AlchemySessionStartV1),
+    AlchemySessionEnd(AlchemySessionEndV1),
+    AlchemyInterventionResult(AlchemyInterventionResultV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     DeathInsight(DeathInsightRequestV1),
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
+    Rebirth(RebirthEventV1),
+    SkillXpGain(SkillXpGainPayloadV1),
+    SkillLvUp(SkillLvUpPayloadV1),
+    SkillCapChanged(SkillCapChangedPayloadV1),
+    SkillScrollUsed(SkillScrollUsedPayloadV1),
     NpcSpawned(NpcSpawnedV1),
     NpcDeath(NpcDeathV1),
     FactionEvent(FactionEventV1),
@@ -368,6 +387,37 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::AlchemySessionStart(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize AlchemySessionStartV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_SESSION_START,
+                payload,
+            })
+        }
+        RedisOutbound::AlchemySessionEnd(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize AlchemySessionEndV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_SESSION_END,
+                payload,
+            })
+        }
+        RedisOutbound::AlchemyInterventionResult(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize AlchemyInterventionResultV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_INTERVENTION_RESULT,
+                payload,
+            })
+        }
         RedisOutbound::CultivationDeath(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize CultivationDeathV1: {error}"))
@@ -421,6 +471,55 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DUO_SHE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::Rebirth(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize RebirthEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_REBIRTH,
+                payload,
+            })
+        }
+        RedisOutbound::SkillXpGain(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SkillXpGainPayloadV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_XP_GAIN,
+                payload,
+            })
+        }
+        RedisOutbound::SkillLvUp(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SkillLvUpPayloadV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_LV_UP,
+                payload,
+            })
+        }
+        RedisOutbound::SkillCapChanged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SkillCapChangedPayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_CAP_CHANGED,
+                payload,
+            })
+        }
+        RedisOutbound::SkillScrollUsed(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SkillScrollUsedPayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_SCROLL_USED,
                 payload,
             })
         }
@@ -1448,6 +1547,83 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn publishes_alchemy_bridge_payloads_on_correct_channels() {
+        let start =
+            prepare_outbound_command(RedisOutbound::AlchemySessionStart(AlchemySessionStartV1 {
+                v: 1,
+                session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+                recipe_id: "kai_mai_pill_v0".to_string(),
+                furnace_pos: (-12, 64, 38),
+                furnace_tier: 1,
+                caster_id: "offline:Azure".to_string(),
+                ts: 84_000,
+            }))
+            .expect("alchemy session start payload should serialize");
+        match start {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ALCHEMY_SESSION_START);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["recipe_id"], "kai_mai_pill_v0");
+                assert_eq!(v["furnace_pos"], serde_json::json!([-12, 64, 38]));
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let end = prepare_outbound_command(RedisOutbound::AlchemySessionEnd(AlchemySessionEndV1 {
+            v: 1,
+            session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
+            furnace_pos: (-12, 64, 38),
+            furnace_tier: 1,
+            caster_id: "offline:Azure".to_string(),
+            bucket: crate::schema::alchemy::AlchemyOutcomeBucketV1::Explode,
+            pill: None,
+            quality: None,
+            damage: Some(12.0),
+            meridian_crack: Some(0.2),
+            elapsed_ticks: 120,
+            ts: 84_120,
+        }))
+        .expect("alchemy session end payload should serialize");
+        match end {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ALCHEMY_SESSION_END);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["bucket"], "explode");
+                assert_eq!(v["damage"], 12.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let intervention = prepare_outbound_command(RedisOutbound::AlchemyInterventionResult(
+            AlchemyInterventionResultV1 {
+                v: 1,
+                session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+                recipe_id: "kai_mai_pill_v0".to_string(),
+                furnace_pos: (-12, 64, 38),
+                caster_id: "offline:Azure".to_string(),
+                intervention: crate::schema::alchemy::AlchemyInterventionV1::InjectQi { qi: 3.0 },
+                temp_current: 0.6,
+                qi_injected: 3.0,
+                accepted: true,
+                message: None,
+                ts: 84_020,
+            },
+        ))
+        .expect("alchemy intervention payload should serialize");
+        match intervention {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ALCHEMY_INTERVENTION_RESULT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["intervention"]["kind"], "inject_qi");
+                assert_eq!(v["accepted"], true);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn publishes_death_insight_on_correct_channel() {
         let command =
             prepare_outbound_command(RedisOutbound::DeathInsight(DeathInsightRequestV1 {
@@ -1527,6 +1703,100 @@ mod redis_bridge_tests {
                 assert_eq!(v["character_id"], "offline:Azure");
                 assert_eq!(v["kind"], "natural_death");
                 assert_eq!(v["remaining_years"], 0.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let rebirth = prepare_outbound_command(RedisOutbound::Rebirth(RebirthEventV1 {
+            v: 1,
+            character_id: "offline:Azure".to_string(),
+            at_tick: 84_100,
+            prior_realm: "Induce".to_string(),
+            new_realm: "Awaken".to_string(),
+        }))
+        .expect("rebirth payload should serialize");
+
+        match rebirth {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_REBIRTH);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["character_id"], "offline:Azure");
+                assert_eq!(v["prior_realm"], "Induce");
+                assert_eq!(v["new_realm"], "Awaken");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_skill_events_on_skill_channels() {
+        let xp = prepare_outbound_command(RedisOutbound::SkillXpGain(SkillXpGainPayloadV1::new(
+            1001,
+            crate::schema::skill::SkillIdV1::Combat,
+            4,
+            crate::schema::skill::XpGainSourceV1::Action {
+                plan_id: "combat".to_string(),
+                action: "kill_npc".to_string(),
+            },
+        )))
+        .expect("skill xp payload should serialize");
+        match xp {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_XP_GAIN);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "combat");
+                assert_eq!(v["amount"], 4);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let lv = prepare_outbound_command(RedisOutbound::SkillLvUp(SkillLvUpPayloadV1::new(
+            1001,
+            crate::schema::skill::SkillIdV1::Mineral,
+            2,
+        )))
+        .expect("skill level payload should serialize");
+        match lv {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_LV_UP);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "mineral");
+                assert_eq!(v["new_lv"], 2);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let cap = prepare_outbound_command(RedisOutbound::SkillCapChanged(
+            SkillCapChangedPayloadV1::new(1001, crate::schema::skill::SkillIdV1::Cultivation, 7),
+        ))
+        .expect("skill cap payload should serialize");
+        match cap {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_CAP_CHANGED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "cultivation");
+                assert_eq!(v["new_cap"], 7);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let scroll = prepare_outbound_command(RedisOutbound::SkillScrollUsed(
+            SkillScrollUsedPayloadV1::new(
+                1001,
+                "scroll:mine_cave_scrap",
+                crate::schema::skill::SkillIdV1::Mineral,
+                100,
+                false,
+            ),
+        ))
+        .expect("skill scroll payload should serialize");
+        match scroll {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_SCROLL_USED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "mineral");
+                assert_eq!(v["scroll_id"], "scroll:mine_cave_scrap");
             }
             other => panic!("expected publish, got {other:?}"),
         }

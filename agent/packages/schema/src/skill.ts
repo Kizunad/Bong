@@ -12,11 +12,14 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { validate, type ValidationResult } from "./validate.js";
 
-/** plan §1 首批 skill — MVP 三种；v2+ 战斗武学 / 阵法 / 师承见 plan §11。 */
+/** plan §1 首批 skill + plan-cross-system-patch-v1 P1 跨系统熟练度。 */
 export const SkillIdV1 = Type.Union([
   Type.Literal("herbalism"),
   Type.Literal("alchemy"),
   Type.Literal("forging"),
+  Type.Literal("combat"),
+  Type.Literal("mineral"),
+  Type.Literal("cultivation"),
 ]);
 export type SkillIdV1 = Static<typeof SkillIdV1>;
 

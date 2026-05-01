@@ -43,6 +43,11 @@ import {
   TsySentinelPhaseChangedV1,
 } from "../src/tsy-hostile-v1.js";
 import {
+  AlchemyInterventionResultV1,
+  AlchemySessionEndV1,
+  AlchemySessionStartV1,
+} from "../src/alchemy.js";
+import {
   ForgeOutcomePayloadV1,
   ForgeStartPayloadV1,
 } from "../src/forge-bridge.js";
@@ -103,6 +108,17 @@ describe("sample files pass schema validation", () => {
     expect(CHANNELS.SOCIAL_RENOWN_DELTA).toBe("bong:social/renown_delta");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_EXPOSURE);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_RENOWN_DELTA);
+  });
+
+  it("declares alchemy Redis channels", () => {
+    expect(CHANNELS.ALCHEMY_SESSION_START).toBe("bong:alchemy/session_start");
+    expect(CHANNELS.ALCHEMY_SESSION_END).toBe("bong:alchemy/session_end");
+    expect(CHANNELS.ALCHEMY_INTERVENTION_RESULT).toBe(
+      "bong:alchemy/intervention_result",
+    );
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_SESSION_START);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_SESSION_END);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_INTERVENTION_RESULT);
   });
 
   it("world-state.sample.json", () => {
@@ -448,22 +464,27 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
-  it("client-request.alchemy-feed-slot.sample.json", () => {
-    const data = loadSample("client-request.alchemy-feed-slot.sample.json");
-    const result = validate(ClientRequestV1, data);
-    expect(result.ok, result.errors.join("; ")).toBe(true);
-  });
+  for (const sample of [
+    "client-request.alchemy-open-furnace.sample.json",
+    "client-request.alchemy-feed-slot.sample.json",
+    "client-request.alchemy-take-back.sample.json",
+    "client-request.alchemy-ignite.sample.json",
+    "client-request.alchemy-intervention.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
 
-  it("client-request.alchemy-ignite.sample.json", () => {
-    const data = loadSample("client-request.alchemy-ignite.sample.json");
-    const result = validate(ClientRequestV1, data);
-    expect(result.ok, result.errors.join("; ")).toBe(true);
-  });
-
-  it("client-request.alchemy-intervention.sample.json", () => {
-    const data = loadSample("client-request.alchemy-intervention.sample.json");
-    const result = validate(ClientRequestV1, data);
-    expect(result.ok, result.errors.join("; ")).toBe(true);
+  it("rejects stale alchemy furnace_id routing", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "alchemy_open_furnace",
+      furnace_id: "block_-12_64_38",
+    });
+    expect(result.ok).toBe(false);
   });
 
   it("client-request.inventory-move-intent.sample.json", () => {
@@ -805,6 +826,26 @@ describe("forge bridge payload samples pass schema validation", () => {
   it("forge-outcome-payload-flawed.sample.json", () => {
     const data = loadSample("forge-outcome-payload-flawed.sample.json");
     const result = validate(ForgeOutcomePayloadV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("alchemy bridge payload samples pass schema validation", () => {
+  it("alchemy-session-start.sample.json", () => {
+    const data = loadSample("alchemy-session-start.sample.json");
+    const result = validate(AlchemySessionStartV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("alchemy-session-end-explode.sample.json", () => {
+    const data = loadSample("alchemy-session-end-explode.sample.json");
+    const result = validate(AlchemySessionEndV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("alchemy-intervention-result.sample.json", () => {
+    const data = loadSample("alchemy-intervention-result.sample.json");
+    const result = validate(AlchemyInterventionResultV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });

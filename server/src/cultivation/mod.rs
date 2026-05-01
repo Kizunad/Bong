@@ -90,7 +90,10 @@ use self::lifespan::{
 };
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
-use self::overload::{overload_detection_tick, MeridianOverloadEvent};
+use self::overload::{
+    apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
+    MeridianCrackEvent, MeridianOverloadEvent,
+};
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
     DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
@@ -111,6 +114,7 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
+use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
     load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
 };
@@ -154,6 +158,7 @@ pub fn register(app: &mut App) {
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
     app.add_event::<MeridianOverloadEvent>();
+    app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
@@ -176,8 +181,8 @@ pub fn register(app: &mut App) {
             emit_skill_caps_on_realm_regressed.after(qi_zero_decay_tick),
             // plan §2.1 损伤/净化链
             overload_detection_tick.after(meridian_open_tick),
+            apply_meridian_crack_events.after(overload_detection_tick),
             contamination_tick.after(qi_regen_and_zone_drain_tick),
-            meridian_heal_tick.after(overload_detection_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §3.2 渡劫
             start_tribulation_system,
@@ -186,6 +191,15 @@ pub fn register(app: &mut App) {
             // plan §4 死亡/重生钩子
             on_player_revived,
             on_player_terminated,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            apply_meridian_overload_events.after(overload_detection_tick),
+            meridian_heal_tick
+                .after(apply_meridian_crack_events)
+                .after(apply_meridian_overload_events),
         ),
     );
     app.add_systems(
@@ -206,7 +220,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             process_lifespan_extension_intents.after(lifespan_aging_tick),
-            process_duo_she_requests.after(lifespan_aging_tick),
+            process_duo_she_requests
+                .after(lifespan_aging_tick)
+                .after(DuoSheIntentForwardSet),
             process_life_core_requests.after(process_duo_she_requests),
         ),
     );
@@ -417,11 +433,7 @@ fn emit_skill_caps_on_realm_regressed(
 ) {
     for event in regressed.read() {
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
-        for skill in [
-            crate::skill::components::SkillId::Herbalism,
-            crate::skill::components::SkillId::Alchemy,
-            crate::skill::components::SkillId::Forging,
-        ] {
+        for skill in crate::skill::components::SkillId::ALL {
             skill_cap_events.send(SkillCapChanged {
                 char_entity: event.entity,
                 skill,
@@ -784,7 +796,7 @@ mod tests {
             .resource_mut::<valence::prelude::Events<SkillCapChanged>>()
             .drain()
             .collect();
-        assert_eq!(caps.len(), 3);
+        assert_eq!(caps.len(), crate::skill::components::SkillId::ALL.len());
         assert!(caps.iter().all(|e| e.new_cap == 8));
     }
 }

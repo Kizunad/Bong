@@ -9,15 +9,20 @@
 
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, Entity, IntoSystemConfigs, Position, PreUpdate, Query, Res,
-    With,
+    bevy_ecs, App, Commands, Component, Entity, EventReader, EventWriter, IntoSystemConfigs,
+    Position, PreUpdate, Query, Res, Update, With,
 };
 
+use crate::combat::components::Lifecycle;
+use crate::combat::events::DeathEvent;
 use crate::inventory::{ItemInstance, ItemRarity};
+use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::FactionMembership;
 use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::{DuelTarget, NpcMarker};
+use crate::schema::social::RelationshipKindV1;
+use crate::social::events::SocialRelationshipEvent;
 
 /// SocializeAction 单次持续 tick 上限（到时 Success 让 picker 重选）。
 pub const SOCIALIZE_MAX_TICKS: u32 = 120;
@@ -81,7 +86,50 @@ pub fn register(app: &mut App) {
     .add_systems(
         PreUpdate,
         socialize_action_system.in_set(BigBrainSet::Actions),
-    );
+    )
+    .add_systems(Update, record_npc_death_feud_from_death_event);
+}
+
+fn record_npc_death_feud_from_death_event(
+    mut deaths: EventReader<DeathEvent>,
+    npc_victims: Query<&Lifecycle, With<NpcMarker>>,
+    lifecycles: Query<&Lifecycle>,
+    mut relationships: EventWriter<SocialRelationshipEvent>,
+) {
+    for death in deaths.read() {
+        let Ok(victim_lifecycle) = npc_victims.get(death.target) else {
+            continue;
+        };
+        let Some(attacker_entity) = death.attacker else {
+            continue;
+        };
+        if attacker_entity == death.target {
+            continue;
+        }
+
+        let attacker_id = lifecycles
+            .get(attacker_entity)
+            .map(|lifecycle| lifecycle.character_id.clone())
+            .ok()
+            .or_else(|| death.attacker_player_id.clone())
+            .unwrap_or_else(|| canonical_npc_id(attacker_entity));
+        if attacker_id == victim_lifecycle.character_id {
+            continue;
+        }
+
+        relationships.send(SocialRelationshipEvent {
+            left: attacker_id.clone(),
+            right: victim_lifecycle.character_id.clone(),
+            left_kind: RelationshipKindV1::Feud,
+            right_kind: RelationshipKindV1::Feud,
+            tick: death.at_tick,
+            metadata: serde_json::json!({
+                "source": "npc_death",
+                "cause": death.cause,
+                "attacker_id": attacker_id,
+            }),
+        });
+    }
 }
 
 type SocializeNpcQuery<'w, 's> =
@@ -262,9 +310,12 @@ pub fn estimate_trade_value(items: &[ItemInstance]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::Lifecycle;
+    use crate::combat::events::DeathEvent;
     use crate::inventory::ItemInstance;
     use crate::npc::faction::{FactionId, FactionRank, MissionQueue, Reputation};
-    use valence::prelude::{App, DVec3, PreUpdate};
+    use crate::social::events::SocialRelationshipEvent;
+    use valence::prelude::{App, DVec3, Events, PreUpdate, Update};
 
     fn make_item(rarity: ItemRarity, stack: u32, quality: f64, durability: f64) -> ItemInstance {
         ItemInstance {
@@ -378,6 +429,82 @@ mod tests {
     fn estimate_trade_value_empty_list_zero() {
         let empty: [ItemInstance; 0] = [];
         assert_eq!(estimate_trade_value(&empty), 0);
+    }
+
+    #[test]
+    fn npc_death_feud_records_relationship_event() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_systems(Update, record_npc_death_feud_from_death_event);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Lifecycle {
+                    character_id: "npc:victim".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let attacker = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Killer".to_string(),
+                ..Default::default()
+            })
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "attack_intent:offline:Killer".into(),
+            attacker: Some(attacker),
+            attacker_player_id: Some("offline:Killer".into()),
+            at_tick: 77,
+        });
+        app.update();
+
+        let relationships = app.world().resource::<Events<SocialRelationshipEvent>>();
+        let event = relationships.iter_current_update_events().next().unwrap();
+        assert_eq!(event.left, "offline:Killer");
+        assert_eq!(event.right, "npc:victim");
+        assert_eq!(event.left_kind, RelationshipKindV1::Feud);
+        assert_eq!(event.right_kind, RelationshipKindV1::Feud);
+        assert_eq!(event.metadata["source"], "npc_death");
+    }
+
+    #[test]
+    fn npc_death_feud_ignores_environment_death() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_systems(Update, record_npc_death_feud_from_death_event);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Lifecycle {
+                    character_id: "npc:victim".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "environment".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 77,
+        });
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<Events<SocialRelationshipEvent>>()
+            .is_empty());
     }
 
     // --- SocializeScorer ---

@@ -103,7 +103,7 @@ pub fn on_player_revived(
                 tick: now,
             });
             let new_cap = super::breakthrough::skill_cap_for_realm(c.realm);
-            for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+            for skill in SkillId::ALL {
                 skill_cap_events.send(SkillCapChanged {
                     char_entity: ev.entity,
                     skill,

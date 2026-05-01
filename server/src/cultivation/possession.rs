@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, Component, Despawned, Entity, EventReader, EventWriter, ParamSet, Query, Res, ResMut,
-    Resource, Without,
+    bevy_ecs, Component, DVec3, Despawned, Entity, EntityLayerId, EventReader, EventWriter,
+    ParamSet, Position, Query, Res, ResMut, Resource, Username, VisibleChunkLayer,
+    VisibleEntityLayers, Without,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -16,8 +17,11 @@ use crate::inventory::{
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
-use crate::player::state::PlayerState;
+use crate::player::state::{
+    position_array_from_dvec3, save_player_slow_slice, PlayerState, PlayerStatePersistence,
+};
 use crate::schema::death_lifecycle::DuoSheEventV1;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 
 pub const DUO_SHE_KARMA_DELTA: f64 = 100.0;
 pub const DUO_SHE_QI_MAX_FACTOR: f64 = 0.80;
@@ -78,6 +82,12 @@ type DuoSheHostItem<'a> = (
     &'a mut LifespanComponent,
     Option<&'a mut LifeRecord>,
     Option<&'a mut Lifecycle>,
+    Option<&'a Username>,
+    Option<&'a mut Position>,
+    Option<&'a mut CurrentDimension>,
+    Option<&'a mut EntityLayerId>,
+    Option<&'a mut VisibleChunkLayer>,
+    Option<&'a mut VisibleEntityLayers>,
 );
 
 type DuoSheTargetReadItem<'a> = (
@@ -88,6 +98,9 @@ type DuoSheTargetReadItem<'a> = (
     Option<&'a LifespanComponent>,
     Option<&'a LifeRecord>,
     Option<&'a Lifecycle>,
+    Option<&'a Position>,
+    Option<&'a CurrentDimension>,
+    Option<&'a EntityLayerId>,
 );
 
 type DuoSheTargetWriteItem<'a> = (Option<&'a mut LifeRecord>, Option<&'a mut Lifecycle>);
@@ -109,10 +122,12 @@ pub fn duo_she_target_eligibility(
     DuoSheTargetEligibility::Ineligible
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_duo_she_requests(
     clock: Res<CultivationClock>,
     mut cooldowns: ResMut<DuoSheCooldowns>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
     mut requests: EventReader<DuoSheRequestEvent>,
     mut emitted: EventWriter<DuoSheEventEmitted>,
     mut warnings: EventWriter<DuoSheWarningEvent>,
@@ -129,7 +144,11 @@ pub fn process_duo_she_requests(
         }
         let Some(snapshot) = ({
             let targets = actors.p1();
-            resolve_target_snapshot(request.target_id.as_str(), &targets)
+            resolve_target_snapshot(
+                request.target_id.as_str(),
+                &targets,
+                dimension_layers.as_deref(),
+            )
         }) else {
             continue;
         };
@@ -150,6 +169,12 @@ pub fn process_duo_she_requests(
                 mut host_lifespan,
                 host_life_record,
                 host_lifecycle,
+                host_username,
+                host_position,
+                host_current_dimension,
+                host_layer,
+                host_visible_chunk,
+                host_visible_entities,
             )) = hosts.get_mut(request.host)
             else {
                 continue;
@@ -187,6 +212,17 @@ pub fn process_duo_she_requests(
             if let Some(mut lifecycle) = host_lifecycle {
                 lifecycle.state = LifecycleState::Alive;
             }
+            inherit_host_runtime_body(
+                request.host,
+                host_username,
+                host_position,
+                host_current_dimension,
+                host_layer,
+                host_visible_chunk,
+                host_visible_entities,
+                &snapshot,
+                player_persistence.as_deref(),
+            );
             (host_id, host_prev_age)
         };
 
@@ -283,19 +319,41 @@ struct DuoSheTargetSnapshot {
     target_id: String,
     target_age: f64,
     eligibility: DuoSheTargetEligibility,
+    position: Option<DVec3>,
+    dimension: Option<DimensionKind>,
+    layer: Option<Entity>,
 }
 
 fn resolve_target_snapshot(
     target_id: &str,
     targets: &Query<DuoSheTargetReadItem<'_>, Without<Despawned>>,
+    dimension_layers: Option<&DimensionLayers>,
 ) -> Option<DuoSheTargetSnapshot> {
-    for (entity, npc_marker, cultivation, player_state, lifespan, life_record, lifecycle) in
-        targets.iter()
+    for (
+        entity,
+        npc_marker,
+        cultivation,
+        player_state,
+        lifespan,
+        life_record,
+        lifecycle,
+        position,
+        current_dimension,
+        layer,
+    ) in targets.iter()
     {
         if life_record.is_some_and(|record| record.character_id == target_id)
             || lifecycle.is_some_and(|lifecycle| lifecycle.character_id == target_id)
             || canonical_npc_id(entity) == target_id
         {
+            let dimension = current_dimension
+                .map(|current_dimension| current_dimension.0)
+                .or_else(|| {
+                    layer.and_then(|layer| dimension_from_layer(layer.0, dimension_layers))
+                });
+            let layer = layer.map(|layer| layer.0).or_else(|| {
+                dimension.and_then(|dimension| layer_for_dimension(dimension, dimension_layers))
+            });
             return Some(DuoSheTargetSnapshot {
                 entity,
                 target_id: target_identifier(entity, life_record, lifecycle),
@@ -307,10 +365,91 @@ fn resolve_target_snapshot(
                     cultivation,
                     npc_marker.is_some(),
                 ),
+                position: position.map(|position| position.get()),
+                dimension,
+                layer,
             });
         }
     }
     None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn inherit_host_runtime_body(
+    host: Entity,
+    username: Option<&Username>,
+    position: Option<valence::prelude::Mut<Position>>,
+    current_dimension: Option<valence::prelude::Mut<CurrentDimension>>,
+    layer: Option<valence::prelude::Mut<EntityLayerId>>,
+    visible_chunk: Option<valence::prelude::Mut<VisibleChunkLayer>>,
+    visible_entities: Option<valence::prelude::Mut<VisibleEntityLayers>>,
+    target: &DuoSheTargetSnapshot,
+    player_persistence: Option<&PlayerStatePersistence>,
+) {
+    let inherited_dimension = target.dimension.unwrap_or_else(|| {
+        current_dimension
+            .as_ref()
+            .map(|current_dimension| current_dimension.0)
+            .unwrap_or_default()
+    });
+
+    if let (Some(target_position), Some(mut position)) = (target.position, position) {
+        position.set(target_position);
+        if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
+            if let Err(error) = save_player_slow_slice(
+                player_persistence,
+                username.0.as_str(),
+                position_array_from_dvec3(target_position),
+                inherited_dimension,
+            ) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to persist duo_she inherited position for host={host:?}: {error}"
+                );
+            }
+        }
+    }
+
+    if let Some(mut current_dimension) = current_dimension {
+        current_dimension.0 = inherited_dimension;
+    }
+
+    let Some(target_layer) = target.layer else {
+        return;
+    };
+    let previous_layer = layer.as_ref().map(|layer| layer.0);
+    if let Some(mut layer) = layer {
+        layer.0 = target_layer;
+    }
+    if let Some(mut visible_chunk) = visible_chunk {
+        visible_chunk.0 = target_layer;
+    }
+    if let Some(mut visible_entities) = visible_entities {
+        if let Some(previous_layer) = previous_layer {
+            visible_entities.0.remove(&previous_layer);
+        }
+        visible_entities.0.insert(target_layer);
+    }
+}
+
+fn dimension_from_layer(
+    layer: Entity,
+    dimension_layers: Option<&DimensionLayers>,
+) -> Option<DimensionKind> {
+    let dimension_layers = dimension_layers?;
+    if layer == dimension_layers.overworld {
+        Some(DimensionKind::Overworld)
+    } else if layer == dimension_layers.tsy {
+        Some(DimensionKind::Tsy)
+    } else {
+        None
+    }
+}
+
+fn layer_for_dimension(
+    dimension: DimensionKind,
+    dimension_layers: Option<&DimensionLayers>,
+) -> Option<Entity> {
+    dimension_layers.map(|layers| layers.entity_for(dimension))
 }
 
 fn host_identifier(
@@ -418,5 +557,82 @@ mod tests {
             app.world().resource::<Events<DuoSheWarningEvent>>().len(),
             1
         );
+    }
+
+    #[test]
+    fn process_duo_she_inherits_target_position_and_dimension() {
+        let mut app = App::new();
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(CultivationClock { tick: 321 });
+        app.insert_resource(DuoSheCooldowns::default());
+        app.add_event::<DuoSheRequestEvent>();
+        app.add_event::<DuoSheEventEmitted>();
+        app.add_event::<DuoSheWarningEvent>();
+        app.add_systems(Update, process_duo_she_requests);
+
+        let mut visible = VisibleEntityLayers::default();
+        visible.0.insert(overworld);
+        let host = app
+            .world_mut()
+            .spawn((
+                Username("Host".to_string()),
+                Cultivation::default(),
+                Karma::default(),
+                PlayerState::default(),
+                LifespanComponent::new(120),
+                LifeRecord::new("offline:Host"),
+                Lifecycle::default(),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                EntityLayerId(overworld),
+                VisibleChunkLayer(overworld),
+                visible,
+            ))
+            .id();
+        let target = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation::default(),
+                LifespanComponent::new(80),
+                LifeRecord::new("npc:target"),
+                Lifecycle {
+                    character_id: "npc:target".to_string(),
+                    ..Default::default()
+                },
+                Position::new([12.0, 70.0, -4.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                EntityLayerId(tsy),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<DuoSheRequestEvent>>()
+            .send(DuoSheRequestEvent {
+                host,
+                target_id: "npc:target".to_string(),
+            });
+        app.update();
+
+        let host_entity = app.world().entity(host);
+        assert_eq!(
+            host_entity.get::<Position>().unwrap().get(),
+            DVec3::new(12.0, 70.0, -4.0)
+        );
+        assert_eq!(
+            host_entity.get::<CurrentDimension>().unwrap().0,
+            DimensionKind::Tsy
+        );
+        assert_eq!(host_entity.get::<EntityLayerId>().unwrap().0, tsy);
+        assert_eq!(host_entity.get::<VisibleChunkLayer>().unwrap().0, tsy);
+        let visible_layers = &host_entity.get::<VisibleEntityLayers>().unwrap().0;
+        assert!(visible_layers.contains(&tsy));
+        assert!(!visible_layers.contains(&overworld));
+
+        let target_entity = app.world().entity(target);
+        assert!(target_entity.get::<PossessedVictim>().is_some());
+        assert!(target_entity.get::<Despawned>().is_some());
     }
 }

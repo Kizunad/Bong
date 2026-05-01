@@ -1,7 +1,7 @@
 use serde_json::json;
 use valence::prelude::{
-    Client, Commands, DVec3, Entity, EventReader, EventWriter, ParamSet, Position, Query, Res,
-    ResMut, Username, With,
+    Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, ParamSet, Position, Query,
+    Res, ResMut, Username, With,
 };
 
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
@@ -37,6 +37,8 @@ use crate::player::state::canonical_player_id;
 use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::events::ActiveEventsResource;
 
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
@@ -148,6 +150,7 @@ pub fn resolve_attack_intents(
         Commands,
         Query<&mut PlayerInventory>,
         Option<ResMut<DroppedLootRegistry>>,
+        Option<ResMut<Events<SkillXpGain>>>,
     ),
 ) {
     let (
@@ -156,6 +159,7 @@ pub fn resolve_attack_intents(
         mut commands,
         mut inventories,
         mut dropped_loot_registry,
+        mut skill_xp_events,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -696,6 +700,20 @@ pub fn resolve_attack_intents(
                 attacker_player_id,
                 at_tick: clock.tick,
             });
+            if let (true, Some(skill_xp_events)) = (
+                attacker_id.starts_with("offline:"),
+                skill_xp_events.as_deref_mut(),
+            ) {
+                skill_xp_events.send(SkillXpGain {
+                    char_entity: intent.attacker,
+                    skill: SkillId::Combat,
+                    amount: 4,
+                    source: XpGainSource::Action {
+                        plan_id: "combat",
+                        action: "kill_npc",
+                    },
+                });
+            }
         }
     }
 }
@@ -1055,6 +1073,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
 
@@ -1413,6 +1432,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
@@ -1505,6 +1525,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
@@ -1576,6 +1597,10 @@ mod tests {
             !death_events.is_empty(),
             "npc entity-target intent should emit DeathEvent when lethal"
         );
+        assert!(
+            app.world().resource::<Events<SkillXpGain>>().is_empty(),
+            "NPC attackers should not earn player skill XP"
+        );
     }
 
     #[test]
@@ -1586,6 +1611,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
@@ -1670,6 +1696,59 @@ mod tests {
             !combat_events.is_empty(),
             "both directions should emit CombatEvent through the same resolver event family"
         );
+    }
+
+    #[test]
+    fn player_killing_npc_emits_combat_skill_xp() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 92 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let player = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let npc = spawn_npc(
+            &mut app,
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 3.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: player,
+            target: Some(npc),
+            issued_at_tick: 91,
+            reach: FIST_REACH,
+            qi_invest: 12.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        let xp = xp_events
+            .iter_current_update_events()
+            .next()
+            .expect("lethal player->npc hit should award combat xp");
+        assert_eq!(xp.char_entity, player);
+        assert_eq!(xp.skill, SkillId::Combat);
+        assert_eq!(xp.amount, 4);
     }
 
     #[test]

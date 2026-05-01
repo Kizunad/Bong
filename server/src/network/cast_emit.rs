@@ -309,7 +309,7 @@ fn lookup_template_id(inv: &PlayerInventory, instance_id: u64) -> Option<String>
         .map(|item| item.template_id.clone())
 }
 
-fn apply_item_effect(
+pub(crate) fn apply_item_effect(
     effect: &ItemEffect,
     meridians: Option<valence::prelude::Mut<MeridianSystem>>,
     contamination: Option<valence::prelude::Mut<Contamination>>,

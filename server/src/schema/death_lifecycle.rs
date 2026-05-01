@@ -50,6 +50,15 @@ pub struct DuoSheEventV1 {
     pub target_age: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RebirthEventV1 {
+    pub v: u8,
+    pub character_id: String,
+    pub at_tick: u64,
+    pub prior_realm: String,
+    pub new_realm: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,5 +101,15 @@ mod tests {
         })
         .expect("duoshe event should serialize");
         assert_eq!(duoshe["host_id"], "offline:Host");
+
+        let rebirth = serde_json::to_value(RebirthEventV1 {
+            v: 1,
+            character_id: "offline:Ancestor".to_string(),
+            at_tick: 91_000,
+            prior_realm: "Induce".to_string(),
+            new_realm: "Awaken".to_string(),
+        })
+        .expect("rebirth event should serialize");
+        assert_eq!(rebirth["prior_realm"], "Induce");
     }
 }

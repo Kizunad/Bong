@@ -22,12 +22,17 @@ use crate::cultivation::lifespan::{
 use crate::cultivation::possession::PossessedVictim;
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::{FactionId, FactionMembership};
+use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::NpcMarker;
 
 type RegistryNpcQuery<'w, 's> = Query<
     'w,
     's,
-    (&'static NpcArchetype, Option<&'static Lifecycle>),
+    (
+        &'static NpcArchetype,
+        Option<&'static Lifecycle>,
+        Option<&'static NpcPatrol>,
+    ),
     (With<NpcMarker>, Without<Despawned>),
 >;
 
@@ -181,6 +186,8 @@ pub struct NpcRegistry {
     pub resume_npc_count: usize,
     pub spawn_paused: bool,
     pub counts_by_archetype: HashMap<NpcArchetype, usize>,
+    pub per_zone_caps: HashMap<String, usize>,
+    pub counts_by_zone: HashMap<String, usize>,
 }
 
 impl Default for NpcRegistry {
@@ -191,6 +198,8 @@ impl Default for NpcRegistry {
             resume_npc_count: 460,
             spawn_paused: false,
             counts_by_archetype: HashMap::new(),
+            per_zone_caps: HashMap::new(),
+            counts_by_zone: HashMap::new(),
         }
     }
 }
@@ -200,9 +209,11 @@ impl NpcRegistry {
         &mut self,
         live_npc_count: usize,
         counts_by_archetype: HashMap<NpcArchetype, usize>,
+        counts_by_zone: HashMap<String, usize>,
     ) {
         self.live_npc_count = live_npc_count;
         self.counts_by_archetype = counts_by_archetype;
+        self.counts_by_zone = counts_by_zone;
 
         if self.live_npc_count >= self.max_npc_count {
             self.spawn_paused = true;
@@ -240,6 +251,44 @@ impl NpcRegistry {
         self.live_npc_count = self.live_npc_count.saturating_sub(count);
         if self.live_npc_count < self.resume_npc_count {
             self.spawn_paused = false;
+        }
+    }
+
+    pub fn reserve_zone_batch(&mut self, zone: &str, desired: usize) -> usize {
+        if desired == 0 {
+            return 0;
+        }
+        let zone_remaining = self
+            .per_zone_caps
+            .get(zone)
+            .map(|cap| cap.saturating_sub(*self.counts_by_zone.get(zone).unwrap_or(&0)))
+            .unwrap_or(desired);
+        let desired = desired.min(zone_remaining);
+        let granted = self.reserve_spawn_batch(desired);
+        if granted > 0 {
+            *self.counts_by_zone.entry(zone.to_string()).or_default() += granted;
+        }
+        granted
+    }
+
+    #[allow(dead_code)]
+    pub fn release_zone_slot(&mut self, zone: &str) {
+        self.release_zone_batch(zone, 1);
+    }
+
+    pub fn release_zone_batch(&mut self, zone: &str, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.release_spawn_batch(count);
+        let remove = if let Some(current) = self.counts_by_zone.get_mut(zone) {
+            *current = current.saturating_sub(count);
+            *current == 0
+        } else {
+            false
+        };
+        if remove {
+            self.counts_by_zone.remove(zone);
         }
     }
 
@@ -432,18 +481,22 @@ fn sync_shared_lifespan_from_npc_age(
 
 fn update_npc_registry(mut registry: ResMut<NpcRegistry>, npcs: RegistryNpcQuery<'_, '_>) {
     let mut counts_by_archetype = HashMap::new();
+    let mut counts_by_zone = HashMap::new();
     let mut live_npc_count = 0usize;
 
-    for (archetype, lifecycle) in &npcs {
+    for (archetype, lifecycle, patrol) in &npcs {
         if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
             continue;
         }
 
         live_npc_count += 1;
         *counts_by_archetype.entry(*archetype).or_default() += 1;
+        if let Some(patrol) = patrol {
+            *counts_by_zone.entry(patrol.home_zone.clone()).or_default() += 1;
+        }
     }
 
-    registry.refresh_from_counts(live_npc_count, counts_by_archetype);
+    registry.refresh_from_counts(live_npc_count, counts_by_archetype, counts_by_zone);
 }
 
 fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: SharedAgingNpcQuery<'_, '_>) {
@@ -614,28 +667,71 @@ mod tests {
     fn registry_hysteresis_pauses_at_cap_and_resumes_below_low_watermark() {
         let mut registry = NpcRegistry::default();
 
-        registry.refresh_from_counts(512, HashMap::new());
+        registry.refresh_from_counts(512, HashMap::new(), HashMap::new());
         assert!(registry.spawn_paused);
 
-        registry.refresh_from_counts(500, HashMap::new());
+        registry.refresh_from_counts(500, HashMap::new(), HashMap::new());
         assert!(
             registry.spawn_paused,
             "should remain paused until low watermark"
         );
 
-        registry.refresh_from_counts(459, HashMap::new());
+        registry.refresh_from_counts(459, HashMap::new(), HashMap::new());
         assert!(!registry.spawn_paused, "should resume below low watermark");
     }
 
     #[test]
     fn reserve_spawn_batch_clamps_to_remaining_capacity() {
         let mut registry = NpcRegistry::default();
-        registry.refresh_from_counts(510, HashMap::new());
+        registry.refresh_from_counts(510, HashMap::new(), HashMap::new());
 
         let granted = registry.reserve_spawn_batch(8);
         assert_eq!(granted, 2);
         assert_eq!(registry.live_npc_count, 512);
         assert!(registry.spawn_paused);
+    }
+
+    #[test]
+    fn reserve_zone_batch_clamps_to_zone_cap_and_global_cap() {
+        let mut registry = NpcRegistry {
+            max_npc_count: 10,
+            resume_npc_count: 8,
+            ..Default::default()
+        };
+        registry.per_zone_caps.insert("forest".to_string(), 2);
+        registry.counts_by_zone.insert("forest".to_string(), 1);
+        registry.live_npc_count = 9;
+
+        let granted = registry.reserve_zone_batch("forest", 5);
+
+        assert_eq!(granted, 1);
+        assert_eq!(registry.live_npc_count, 10);
+        assert_eq!(registry.counts_by_zone["forest"], 2);
+        assert!(registry.spawn_paused);
+    }
+
+    #[test]
+    fn update_npc_registry_counts_home_zones() {
+        let mut app = App::new();
+        app.insert_resource(NpcRegistry::default());
+        app.add_systems(Update, update_npc_registry);
+
+        app.world_mut().spawn((
+            NpcMarker,
+            NpcArchetype::Rogue,
+            crate::npc::patrol::NpcPatrol::new("forest", DVec3::ZERO),
+        ));
+        app.world_mut().spawn((
+            NpcMarker,
+            NpcArchetype::Beast,
+            crate::npc::patrol::NpcPatrol::new("marsh", DVec3::ZERO),
+        ));
+        app.update();
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(registry.live_npc_count, 2);
+        assert_eq!(registry.counts_by_zone["forest"], 1);
+        assert_eq!(registry.counts_by_zone["marsh"], 1);
     }
 
     #[test]

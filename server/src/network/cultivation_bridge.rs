@@ -18,16 +18,17 @@ use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::cultivation::breakthrough::{BreakthroughError, BreakthroughOutcome};
 use crate::cultivation::components::{Cultivation, QiColor};
-use crate::cultivation::death_hooks::CultivationDeathTrigger;
+use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerRevived};
 use crate::cultivation::forging::{ForgeAxis, ForgeOutcome};
 use crate::cultivation::insight::{InsightCategory, InsightQuota, InsightRequest};
-use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{AgingEventEmitted, LifespanEventEmitted};
 use crate::cultivation::possession::DuoSheEventEmitted;
 use crate::schema::cultivation::{
     color_kind_to_string, meridian_id_to_string, realm_to_string, BreakthroughEventV1,
     CultivationDeathV1, ForgeEventV1, InsightRequestV1, QiColorStateV1,
 };
+use crate::schema::death_lifecycle::RebirthEventV1;
 
 pub fn publish_breakthrough_events(
     redis: Res<RedisBridgeResource>,
@@ -198,5 +199,34 @@ pub fn publish_aging_events(
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::Aging(ev.payload.clone()));
+    }
+}
+
+pub fn publish_rebirth_events(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<PlayerRevived>,
+    life_records: Query<&LifeRecord>,
+) {
+    for ev in reader.read() {
+        let Ok(life_record) = life_records.get(ev.entity) else {
+            continue;
+        };
+        let Some(BiographyEntry::Rebirth {
+            prior_realm,
+            new_realm,
+            tick,
+        }) = life_record.biography.last()
+        else {
+            continue;
+        };
+
+        let payload = RebirthEventV1 {
+            v: 1,
+            character_id: life_record.character_id.clone(),
+            at_tick: *tick,
+            prior_realm: realm_to_string(*prior_realm).to_string(),
+            new_realm: realm_to_string(*new_realm).to_string(),
+        };
+        let _ = redis.tx_outbound.send(RedisOutbound::Rebirth(payload));
     }
 }

@@ -73,13 +73,31 @@ pub fn emit_join_alchemy_snapshots(
 
 fn mock_furnace(owner: &str) -> AlchemyFurnaceDataV1 {
     AlchemyFurnaceDataV1 {
-        furnace_id: "block_-12_64_38".into(),
+        pos: Some((-12, 64, 38)),
         tier: 1,
         integrity: 88.0,
         integrity_max: 100.0,
         owner_name: owner.to_string(),
         has_session: true,
     }
+}
+
+pub fn send_furnace_from_furnace(
+    client: &mut Client,
+    player_id: &str,
+    furnace: &crate::alchemy::AlchemyFurnace,
+) {
+    let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemyFurnace(Box::new(
+        AlchemyFurnaceDataV1 {
+            pos: furnace.pos,
+            tier: furnace.tier,
+            integrity: furnace.integrity * 100.0,
+            integrity_max: 100.0,
+            owner_name: furnace.owner.clone().unwrap_or_default(),
+            has_session: furnace.session.is_some(),
+        },
+    )));
+    send_payload(client, &payload, player_id);
 }
 
 fn mock_session() -> AlchemySessionDataV1 {
@@ -97,7 +115,7 @@ fn mock_session() -> AlchemySessionDataV1 {
         stages: vec![AlchemyStageHintV1 {
             at_tick: 0,
             window: 0,
-            summary: "kai_mai_cao×3 + ling_shui×1".into(),
+            summary: "ci_she_hao×3 + ling_shui×1".into(),
             completed: true,
             missed: false,
         }],

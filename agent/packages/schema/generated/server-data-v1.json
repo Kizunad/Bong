@@ -5826,7 +5826,6 @@
       "required": [
         "v",
         "type",
-        "furnace_id",
         "tier",
         "integrity",
         "integrity_max",
@@ -5842,8 +5841,22 @@
           "const": "alchemy_furnace",
           "type": "string"
         },
-        "furnace_id": {
-          "type": "string"
+        "pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "tier": {
           "minimum": 1,
@@ -6522,6 +6535,18 @@
             {
               "const": "forging",
               "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
+              "type": "string"
             }
           ]
         },
@@ -6649,6 +6674,18 @@
             {
               "const": "forging",
               "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
+              "type": "string"
             }
           ]
         },
@@ -6694,6 +6731,18 @@
             },
             {
               "const": "forging",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
               "type": "string"
             }
           ]
@@ -6746,6 +6795,18 @@
             },
             {
               "const": "forging",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
               "type": "string"
             }
           ]

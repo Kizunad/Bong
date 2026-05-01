@@ -7,7 +7,7 @@
 //!   * zone.spirit_qi >= 0.3 才推进（阈值内不能打通）
 //!   * 打通本身消耗 qi（cost = progress_delta × COST_FACTOR）
 
-use valence::prelude::{bevy_ecs, Component, Position, Query, Res};
+use valence::prelude::{bevy_ecs, Component, Entity, Events, Position, Query, Res, ResMut};
 
 use crate::world::zone::ZoneRegistry;
 
@@ -15,6 +15,8 @@ use super::components::{Cultivation, MeridianId, MeridianSystem};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 
 /// 玩家客户端发起的"选择下一条经脉"目标。未选目标时此 component 不存在。
 #[derive(Debug, Clone, Copy, Component)]
@@ -24,6 +26,17 @@ pub const MIN_ZONE_QI_TO_OPEN: f64 = 0.3;
 pub const BASE_OPEN_RATE: f64 = 0.01;
 pub const OPEN_COST_FACTOR: f64 = 5.0;
 pub const MERIDIAN_CAPACITY_ON_OPEN: f64 = 10.0;
+
+type MeridianOpenItem<'a> = (
+    Entity,
+    &'a Position,
+    &'a MeridianTarget,
+    &'a mut Cultivation,
+    &'a mut MeridianSystem,
+    // LifeRecord 可选：玩家有完整生平卷，NPC 无（plan §8 已决定）。
+    // 推进经脉逻辑对 NPC / 玩家一视同仁，仅生平记录步骤按存在与否跳过。
+    Option<&'a mut LifeRecord>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OpenStepError {
@@ -110,21 +123,14 @@ pub fn meridian_open_tick(
     topo: Res<MeridianTopology>,
     clock: Res<CultivationClock>,
     zones: Option<Res<ZoneRegistry>>,
-    mut entities: Query<(
-        &Position,
-        &MeridianTarget,
-        &mut Cultivation,
-        &mut MeridianSystem,
-        // LifeRecord 可选：玩家有完整生平卷，NPC 无（plan §8 已决定）。
-        // 推进经脉逻辑对 NPC / 玩家一视同仁，仅生平记录步骤按存在与否跳过。
-        Option<&mut LifeRecord>,
-    )>,
+    mut entities: Query<MeridianOpenItem<'_>>,
+    mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
 ) {
     let Some(zones) = zones else {
         return;
     };
     let now = clock.tick;
-    for (pos, target, mut cultivation, mut meridians, life) in entities.iter_mut() {
+    for (entity, pos, target, mut cultivation, mut meridians, life) in entities.iter_mut() {
         let zone_qi = zones
             .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
             .map(|z| z.spirit_qi)
@@ -147,6 +153,17 @@ pub fn meridian_open_tick(
                     if life.spirit_root_first.is_none() {
                         life.spirit_root_first = Some(target.0);
                     }
+                }
+                if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
+                    skill_xp_events.send(SkillXpGain {
+                        char_entity: entity,
+                        skill: SkillId::Cultivation,
+                        amount: 2,
+                        source: XpGainSource::Action {
+                            plan_id: "cultivation",
+                            action: "meridian_open",
+                        },
+                    });
                 }
             }
         }

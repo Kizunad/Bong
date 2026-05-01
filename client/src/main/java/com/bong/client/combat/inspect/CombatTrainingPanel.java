@@ -117,7 +117,7 @@ public final class CombatTrainingPanel {
         }
 
         techniqueList.child(sectionLabel("技艺"));
-        for (SkillId id : new SkillId[] { SkillId.HERBALISM, SkillId.ALCHEMY, SkillId.FORGING }) {
+        for (SkillId id : SkillId.values()) {
             SkillRowComponent row = new SkillRowComponent(id);
             row.update(SkillSetStore.snapshot().get(id), System.currentTimeMillis());
             techniqueList.child(row.component());
