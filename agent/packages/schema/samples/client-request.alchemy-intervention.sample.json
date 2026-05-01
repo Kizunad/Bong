@@ -1,6 +1,7 @@
 {
   "v": 1,
   "type": "alchemy_intervention",
+  "furnace_pos": [-12, 64, 38],
   "intervention": {
     "kind": "inject_qi",
     "qi": 1.0

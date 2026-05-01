@@ -4,6 +4,7 @@
   "required": [
     "v",
     "type",
+    "furnace_pos",
     "recipe_id"
   ],
   "properties": {
@@ -14,6 +15,23 @@
     "type": {
       "const": "alchemy_ignite",
       "type": "string"
+    },
+    "furnace_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     },
     "recipe_id": {
       "type": "string"

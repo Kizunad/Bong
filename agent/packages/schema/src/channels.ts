@@ -109,6 +109,14 @@ export const CHANNELS = {
   FORGE_START: "bong:forge/start",
   /** Server → Agent: 锻造结果（结算推，供 agent 记录/叙事） */
   FORGE_OUTCOME: "bong:forge/outcome",
+
+  // ─── 炼丹（plan-alchemy-client-v1 §6 / P4） ───────────────────
+  /** Server → Agent: 炼丹起炉 */
+  ALCHEMY_SESSION_START: "bong:alchemy/session_start",
+  /** Server → Agent: 炼丹结算（含炸炉） */
+  ALCHEMY_SESSION_END: "bong:alchemy/session_end",
+  /** Server → Agent: 炼丹干预结果 */
+  ALCHEMY_INTERVENTION_RESULT: "bong:alchemy/intervention_result",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -147,6 +155,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.TSY_EVENT,
   CHANNELS.FORGE_START,
   CHANNELS.FORGE_OUTCOME,
+  CHANNELS.ALCHEMY_SESSION_START,
+  CHANNELS.ALCHEMY_SESSION_END,
+  CHANNELS.ALCHEMY_INTERVENTION_RESULT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

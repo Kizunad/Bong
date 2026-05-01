@@ -5,6 +5,7 @@ import {
   AlchemyOutcomeBucket,
   AlchemyRecipeEntryV1,
   AlchemyStageHintV1,
+  BlockPosV1,
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import {
@@ -441,7 +442,7 @@ export const ServerDataAlchemyFurnaceV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_furnace"),
-    furnace_id: Type.String(),
+    pos: Type.Optional(BlockPosV1),
     tier: Type.Integer({ minimum: 1, maximum: 9 }),
     integrity: Type.Number({ minimum: 0 }),
     integrity_max: Type.Number({ minimum: 0 }),

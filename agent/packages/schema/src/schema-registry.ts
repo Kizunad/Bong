@@ -11,9 +11,12 @@ import {
 } from "./audio-event.js";
 import {
   AlchemyContaminationLevelV1,
+  AlchemyInterventionResultV1,
   AlchemyInterventionV1,
   AlchemyOutcomeBucket,
   AlchemyRecipeEntryV1,
+  AlchemySessionEndV1,
+  AlchemySessionStartV1,
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyEcologySnapshotV1 } from "./botany.js";
@@ -376,6 +379,9 @@ export const SCHEMA_REGISTRY = {
   alchemyRecipeEntryV1: AlchemyRecipeEntryV1,
   alchemyStageHintV1: AlchemyStageHintV1,
   alchemyContaminationLevelV1: AlchemyContaminationLevelV1,
+  alchemySessionStartV1: AlchemySessionStartV1,
+  alchemySessionEndV1: AlchemySessionEndV1,
+  alchemyInterventionResultV1: AlchemyInterventionResultV1,
   serverDataAlchemyFurnaceV1: ServerDataAlchemyFurnaceV1,
   serverDataAlchemySessionV1: ServerDataAlchemySessionV1,
   serverDataAlchemyOutcomeForecastV1: ServerDataAlchemyOutcomeForecastV1,
@@ -636,6 +642,10 @@ export const GENERATED_SCHEMA_FILES = {
   "alchemy-stage-hint-v1.json": SCHEMA_REGISTRY.alchemyStageHintV1,
   "alchemy-contamination-level-v1.json":
     SCHEMA_REGISTRY.alchemyContaminationLevelV1,
+  "alchemy-session-start-v1.json": SCHEMA_REGISTRY.alchemySessionStartV1,
+  "alchemy-session-end-v1.json": SCHEMA_REGISTRY.alchemySessionEndV1,
+  "alchemy-intervention-result-v1.json":
+    SCHEMA_REGISTRY.alchemyInterventionResultV1,
   "server-data-alchemy-furnace-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemyFurnaceV1,
   "server-data-alchemy-session-v1.json":

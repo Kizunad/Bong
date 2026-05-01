@@ -8,6 +8,12 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 import { ColorKind } from "./cultivation.js";
+import { type ValidationResult, validate } from "./validate.js";
+
+const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
+
+export const BlockPosV1 = Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]);
+export type BlockPosV1 = Static<typeof BlockPosV1>;
 
 /** 五结果桶 — 与 server::alchemy::outcome::OutcomeBucket 对齐。 */
 export const AlchemyOutcomeBucket = Type.Union(
@@ -99,3 +105,67 @@ export const AlchemyContaminationLevelV1 = Type.Object(
   { additionalProperties: false },
 );
 export type AlchemyContaminationLevelV1 = Static<typeof AlchemyContaminationLevelV1>;
+
+export const AlchemySessionStartV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    session_id: Type.String({ minLength: 1, maxLength: 256 }),
+    recipe_id: Type.String({ minLength: 1, maxLength: 128 }),
+    furnace_pos: BlockPosV1,
+    furnace_tier: Type.Integer({ minimum: 1, maximum: 9 }),
+    caster_id: Type.String({ minLength: 1, maxLength: 128 }),
+    ts: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemySessionStartV1 = Static<typeof AlchemySessionStartV1>;
+
+export const AlchemySessionEndV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    session_id: Type.String({ minLength: 1, maxLength: 256 }),
+    recipe_id: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+    furnace_pos: BlockPosV1,
+    furnace_tier: Type.Integer({ minimum: 1, maximum: 9 }),
+    caster_id: Type.String({ minLength: 1, maxLength: 128 }),
+    bucket: AlchemyOutcomeBucket,
+    pill: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    quality: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+    damage: Type.Optional(Type.Number({ minimum: 0 })),
+    meridian_crack: Type.Optional(Type.Number({ minimum: 0 })),
+    elapsed_ticks: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    ts: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemySessionEndV1 = Static<typeof AlchemySessionEndV1>;
+
+export const AlchemyInterventionResultV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    session_id: Type.String({ minLength: 1, maxLength: 256 }),
+    recipe_id: Type.String({ minLength: 1, maxLength: 128 }),
+    furnace_pos: BlockPosV1,
+    caster_id: Type.String({ minLength: 1, maxLength: 128 }),
+    intervention: AlchemyInterventionV1,
+    temp_current: Type.Number({ minimum: 0, maximum: 1 }),
+    qi_injected: Type.Number({ minimum: 0 }),
+    accepted: Type.Boolean(),
+    message: Type.Optional(Type.String({ maxLength: 512 })),
+    ts: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyInterventionResultV1 = Static<typeof AlchemyInterventionResultV1>;
+
+export function validateAlchemySessionStartV1Contract(data: unknown): ValidationResult {
+  return validate(AlchemySessionStartV1, data);
+}
+
+export function validateAlchemySessionEndV1Contract(data: unknown): ValidationResult {
+  return validate(AlchemySessionEndV1, data);
+}
+
+export function validateAlchemyInterventionResultV1Contract(data: unknown): ValidationResult {
+  return validate(AlchemyInterventionResultV1, data);
+}

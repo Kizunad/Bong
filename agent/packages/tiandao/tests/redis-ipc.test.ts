@@ -6,6 +6,7 @@ const {
   AGENT_COMMAND,
   AGENT_NARRATE,
   AGENT_WORLD_MODEL,
+  ALCHEMY_SESSION_END,
   FACTION_EVENT,
   NPC_DEATH,
   NPC_SPAWN,
@@ -378,6 +379,52 @@ describe("redis-ipc", () => {
       expect.objectContaining({ kind: "npc_spawned", npc_id: "npc_1v1" }),
       expect.objectContaining({ kind: "npc_death", cause: "combat" }),
       expect.objectContaining({ kind: "faction_event", faction_id: "attack" }),
+    ]);
+  });
+
+  it("observes alchemy session_end events for narration triggers", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onAlchemyRuntimeEvent(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      ALCHEMY_SESSION_END,
+      JSON.stringify({
+        v: 1,
+        session_id: "alchemy:-12:64:38:offline:Azure:kai_mai_pill_v0",
+        recipe_id: "kai_mai_pill_v0",
+        furnace_pos: [-12, 64, 38],
+        furnace_tier: 1,
+        caster_id: "offline:Azure",
+        bucket: "explode",
+        damage: 12,
+        meridian_crack: 0.2,
+        elapsed_ticks: 120,
+        ts: 84120,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.getLatestAlchemyEvents()).toEqual([
+      expect.objectContaining({
+        bucket: "explode",
+        caster_id: "offline:Azure",
+        damage: 12,
+      }),
     ]);
   });
 

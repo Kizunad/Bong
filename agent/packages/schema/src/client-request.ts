@@ -10,7 +10,7 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
-import { AlchemyInterventionV1 } from "./alchemy.js";
+import { AlchemyInterventionV1, BlockPosV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
@@ -309,8 +309,7 @@ export const AlchemyOpenFurnaceRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_open_furnace"),
-    /** 炉的逻辑 ID（BlockEntity 位置 hash 或 Entity ID 字符串化）。 */
-    furnace_id: Type.String(),
+    furnace_pos: BlockPosV1,
   },
   { additionalProperties: false },
 );
@@ -320,6 +319,7 @@ export const AlchemyFeedSlotRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_feed_slot"),
+    furnace_pos: BlockPosV1,
     /** 槽位 0..3（plan §3.3 四投料槽）。 */
     slot_idx: Type.Integer({ minimum: 0, maximum: 7 }),
     material: Type.String(),
@@ -333,6 +333,7 @@ export const AlchemyTakeBackRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_take_back"),
+    furnace_pos: BlockPosV1,
     slot_idx: Type.Integer({ minimum: 0, maximum: 7 }),
   },
   { additionalProperties: false },
@@ -343,6 +344,7 @@ export const AlchemyIgniteRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_ignite"),
+    furnace_pos: BlockPosV1,
     /** 起炉绑定的配方 — 决定 fire_profile / stages。 */
     recipe_id: Type.String(),
   },
@@ -354,6 +356,7 @@ export const AlchemyInterventionRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_intervention"),
+    furnace_pos: BlockPosV1,
     intervention: AlchemyInterventionV1,
   },
   { additionalProperties: false },

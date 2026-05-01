@@ -4,7 +4,7 @@
   "required": [
     "v",
     "type",
-    "furnace_id"
+    "furnace_pos"
   ],
   "properties": {
     "v": {
@@ -15,8 +15,22 @@
       "const": "alchemy_open_furnace",
       "type": "string"
     },
-    "furnace_id": {
-      "type": "string"
+    "furnace_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     }
   }
 }

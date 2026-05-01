@@ -3,19 +3,26 @@
   "type": "object",
   "required": [
     "v",
-    "type",
+    "session_id",
+    "recipe_id",
     "furnace_pos",
-    "slot_idx",
-    "material",
-    "count"
+    "furnace_tier",
+    "caster_id",
+    "ts"
   ],
   "properties": {
     "v": {
       "const": 1,
       "type": "number"
     },
-    "type": {
-      "const": "alchemy_feed_slot",
+    "session_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "recipe_id": {
+      "minLength": 1,
+      "maxLength": 128,
       "type": "string"
     },
     "furnace_pos": {
@@ -35,16 +42,19 @@
       "minItems": 3,
       "maxItems": 3
     },
-    "slot_idx": {
-      "minimum": 0,
-      "maximum": 7,
+    "furnace_tier": {
+      "minimum": 1,
+      "maximum": 9,
       "type": "integer"
     },
-    "material": {
+    "caster_id": {
+      "minLength": 1,
+      "maxLength": 128,
       "type": "string"
     },
-    "count": {
-      "minimum": 1,
+    "ts": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
       "type": "integer"
     }
   }

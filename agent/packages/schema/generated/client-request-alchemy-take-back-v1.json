@@ -4,6 +4,7 @@
   "required": [
     "v",
     "type",
+    "furnace_pos",
     "slot_idx"
   ],
   "properties": {
@@ -14,6 +15,23 @@
     "type": {
       "const": "alchemy_take_back",
       "type": "string"
+    },
+    "furnace_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     },
     "slot_idx": {
       "minimum": 0,
