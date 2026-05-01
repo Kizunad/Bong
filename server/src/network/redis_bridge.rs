@@ -16,7 +16,7 @@ use crate::schema::channels::{
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_SOCIAL_EXPOSURE,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_REBIRTH, CH_SOCIAL_EXPOSURE,
     CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -26,7 +26,9 @@ use crate::schema::cultivation::{
     BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
 };
 use crate::schema::death_insight::DeathInsightRequestV1;
-use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
+use crate::schema::death_lifecycle::{
+    AgingEventV1, DuoSheEventV1, LifespanEventV1, RebirthEventV1,
+};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
@@ -73,6 +75,7 @@ pub enum RedisOutbound {
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
+    Rebirth(RebirthEventV1),
     NpcSpawned(NpcSpawnedV1),
     NpcDeath(NpcDeathV1),
     FactionEvent(FactionEventV1),
@@ -459,6 +462,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DUO_SHE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::Rebirth(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize RebirthEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_REBIRTH,
                 payload,
             })
         }
@@ -1642,6 +1654,27 @@ mod redis_bridge_tests {
                 assert_eq!(v["character_id"], "offline:Azure");
                 assert_eq!(v["kind"], "natural_death");
                 assert_eq!(v["remaining_years"], 0.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let rebirth = prepare_outbound_command(RedisOutbound::Rebirth(RebirthEventV1 {
+            v: 1,
+            character_id: "offline:Azure".to_string(),
+            at_tick: 84_100,
+            prior_realm: "Induce".to_string(),
+            new_realm: "Awaken".to_string(),
+        }))
+        .expect("rebirth payload should serialize");
+
+        match rebirth {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_REBIRTH);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["character_id"], "offline:Azure");
+                assert_eq!(v["prior_realm"], "Induce");
+                assert_eq!(v["new_realm"], "Awaken");
             }
             other => panic!("expected publish, got {other:?}"),
         }

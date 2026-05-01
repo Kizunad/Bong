@@ -12,7 +12,7 @@
 //! 由 inventory 侧的 listener 把 mineral_id 序列化到新建 InventoryItem 的 NBT。
 
 use valence::prelude::{
-    Commands, DiggingEvent, DiggingState, EventReader, EventWriter, Query, Res, ResMut,
+    Client, Commands, DiggingEvent, DiggingState, EventReader, EventWriter, Query, Res, ResMut,
 };
 
 use super::components::{MineralOreIndex, MineralOreNode};
@@ -23,6 +23,11 @@ use super::registry::MineralRegistry;
 use super::types::MineralRarity;
 use crate::combat::components::Lifecycle;
 use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND};
+use crate::network::agent_bridge::{
+    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+};
+use crate::network::send_server_data_payload;
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::social::{block_break_is_protected_by_registered_spirit_niche, SpiritNicheRegistry};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
@@ -56,6 +61,7 @@ pub fn handle_block_break_for_mineral(
     mut karma_events: EventWriter<KarmaFlagIntent>,
     mut feedback_events: EventWriter<MineralFeedbackEvent>,
     registry: Res<MineralRegistry>,
+    mut clients: Query<&mut Client>,
     inventories: Query<&PlayerInventory>,
     lifecycles: Query<&Lifecycle>,
     spirit_niches: Option<valence::prelude::Res<SpiritNicheRegistry>>,
@@ -145,6 +151,19 @@ pub fn handle_block_break_for_mineral(
             mineral_id,
             position: event.position,
         });
+        if let Ok(mut client) = clients.get_mut(event.client) {
+            send_mining_progress_to_client(
+                &mut client,
+                format!(
+                    "mining:{}:{}:{}:{:?}",
+                    event.position.x, event.position.y, event.position.z, mineral_id
+                ),
+                [event.position.x, event.position.y, event.position.z],
+                1.0,
+                false,
+                true,
+            );
+        }
 
         let probability = karma_probability(mineral_id.rarity());
         if probability > 0.0 {
@@ -192,6 +211,53 @@ pub fn pickaxe_tier_from_item(item: &ItemInstance) -> Option<u8> {
     } else {
         None
     }
+}
+
+fn send_mining_progress_to_client(
+    client: &mut Client,
+    session_id: String,
+    ore_pos: [i32; 3],
+    progress: f64,
+    interrupted: bool,
+    completed: bool,
+) {
+    let payload = ServerDataV1::new(ServerDataPayloadV1::MiningProgress {
+        session_id,
+        ore_pos,
+        progress,
+        interrupted,
+        completed,
+    });
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::error!(
+                "[bong][network] failed to serialize {payload_type} payload for {}: {:?}",
+                SERVER_DATA_CHANNEL,
+                error
+            );
+            return;
+        }
+    };
+    send_server_data_payload(client, payload_bytes.as_slice());
+}
+
+#[cfg(test)]
+fn build_mining_progress_payload(
+    session_id: String,
+    ore_pos: [i32; 3],
+    progress: f64,
+    interrupted: bool,
+    completed: bool,
+) -> ServerDataV1 {
+    ServerDataV1::new(ServerDataPayloadV1::MiningProgress {
+        session_id,
+        ore_pos,
+        progress,
+        interrupted,
+        completed,
+    })
 }
 
 fn pickaxe_tier_name(tier: u8) -> &'static str {
@@ -314,5 +380,24 @@ mod tests {
         inv.hotbar[0] = Some(item("minecraft:netherite_pickaxe"));
 
         assert_eq!(equipped_pickaxe_tier(&inv), None);
+    }
+
+    #[test]
+    fn mining_progress_payload_uses_existing_server_data_schema() {
+        let payload = build_mining_progress_payload(
+            "mining:1:64:2:FanTie".to_string(),
+            [1, 64, 2],
+            1.0,
+            false,
+            true,
+        );
+
+        let bytes = serialize_server_data_payload(&payload).expect("mining progress serializes");
+        let value: serde_json::Value = serde_json::from_slice(bytes.as_slice()).unwrap();
+        assert_eq!(value["type"], "mining_progress");
+        assert_eq!(value["session_id"], "mining:1:64:2:FanTie");
+        assert_eq!(value["ore_pos"], serde_json::json!([1, 64, 2]));
+        assert_eq!(value["progress"], 1.0);
+        assert_eq!(value["completed"], true);
     }
 }

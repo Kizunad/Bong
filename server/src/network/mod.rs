@@ -349,6 +349,11 @@ pub fn register(app: &mut App) {
     app.add_systems(Update, alchemy_bridge::publish_alchemy_session_end_events);
     app.add_systems(
         Update,
+        cultivation_bridge::publish_rebirth_events
+            .after(crate::combat::lifecycle::death_arbiter_tick),
+    );
+    app.add_systems(
+        Update,
         (
             vfx_animation_trigger::emit_attack_animation_triggers
                 .after(crate::combat::resolve::resolve_attack_intents),
