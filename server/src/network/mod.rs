@@ -1,4 +1,5 @@
 pub mod agent_bridge;
+pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
@@ -345,6 +346,7 @@ pub fn register(app: &mut App) {
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
     );
+    app.add_systems(Update, alchemy_bridge::publish_alchemy_session_end_events);
     app.add_systems(
         Update,
         (

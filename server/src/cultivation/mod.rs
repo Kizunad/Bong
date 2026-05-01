@@ -88,7 +88,9 @@ use self::lifespan::{
 };
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
-use self::overload::{overload_detection_tick, MeridianOverloadEvent};
+use self::overload::{
+    apply_meridian_crack_events, overload_detection_tick, MeridianCrackEvent, MeridianOverloadEvent,
+};
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
     DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
@@ -151,6 +153,7 @@ pub fn register(app: &mut App) {
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
     app.add_event::<MeridianOverloadEvent>();
+    app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
@@ -172,8 +175,8 @@ pub fn register(app: &mut App) {
             emit_skill_caps_on_realm_regressed.after(qi_zero_decay_tick),
             // plan §2.1 损伤/净化链
             overload_detection_tick.after(meridian_open_tick),
+            apply_meridian_crack_events.after(overload_detection_tick),
             contamination_tick.after(qi_regen_and_zone_drain_tick),
-            meridian_heal_tick.after(overload_detection_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §3.2 渡劫
             start_tribulation_system,
@@ -185,6 +188,10 @@ pub fn register(app: &mut App) {
             // plan §11-5 业力
             karma_decay_tick,
         ),
+    );
+    app.add_systems(
+        Update,
+        meridian_heal_tick.after(apply_meridian_crack_events),
     );
     app.add_systems(
         Update,

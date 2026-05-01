@@ -4,7 +4,7 @@
   "furnace_tier_min": 1,
   "stages": [
     { "at_tick": 0, "required": [
-      { "material": "bai_cao",   "count": 2 },
+      { "material": "hui_yuan_zhi", "count": 2 },
       { "material": "ling_shui", "count": 1 }
     ], "window": 0 }
   ],

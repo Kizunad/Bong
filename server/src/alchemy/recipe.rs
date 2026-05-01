@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn ingredient_mineral_id_legacy_recipe_json_omits_field() {
-        let json = r#"{ "material": "bai_cao", "count": 2 }"#;
+        let json = r#"{ "material": "hui_yuan_zhi", "count": 2 }"#;
         let ing: IngredientSpec = serde_json::from_str(json).expect("legacy ingredient must parse");
         assert!(ing.mineral_id.is_none());
     }
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn ingredient_mineral_id_serialization_omits_when_none() {
         let ing = IngredientSpec {
-            material: "bai_cao".into(),
+            material: "hui_yuan_zhi".into(),
             count: 2,
             mineral_id: None,
         };
@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn ingredient_matches_mineral_when_no_constraint() {
         let ing = IngredientSpec {
-            material: "bai_cao".into(),
+            material: "hui_yuan_zhi".into(),
             count: 1,
             mineral_id: None,
         };
@@ -637,6 +637,42 @@ mod tests {
                             | "mao_xin_wei"
                     )),
                 "{recipe_id} should consume at least one botany v2 herb"
+            );
+        }
+    }
+
+    #[test]
+    fn test_recipes_use_canonical_registered_material_ids() {
+        let registry = load_recipe_registry().unwrap();
+        let expected = [
+            ("kai_mai_pill_v0", "ci_she_hao"),
+            ("hui_yuan_pill_v0", "hui_yuan_zhi"),
+            ("du_ming_san_v0", "chi_sui_cao"),
+            ("du_ming_san_v0", "hui_yuan_zhi"),
+            ("du_ming_san_v0", "shao_hou_man"),
+        ];
+        for (recipe_id, material_id) in expected {
+            let recipe = registry
+                .get(recipe_id)
+                .unwrap_or_else(|| panic!("missing {recipe_id}"));
+            assert!(
+                recipe
+                    .stages
+                    .iter()
+                    .flat_map(|stage| stage.required.iter())
+                    .any(|ingredient| ingredient.material == material_id),
+                "{recipe_id} should include canonical material {material_id}"
+            );
+        }
+
+        for legacy in ["kai_mai_cao", "bai_cao", "xue_cao", "shou_gu", "huo_jing"] {
+            assert!(
+                registry.iter().all(|recipe| recipe
+                    .stages
+                    .iter()
+                    .flat_map(|stage| stage.required.iter())
+                    .all(|ingredient| ingredient.material != legacy)),
+                "default alchemy recipes should not reference legacy material id {legacy}"
             );
         }
     }

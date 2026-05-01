@@ -5,10 +5,14 @@ use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
+use crate::schema::alchemy::{
+    AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
+};
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
+    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
@@ -60,6 +64,9 @@ pub enum RedisOutbound {
     ForgeEvent(ForgeEventV1),
     ForgeStart(ForgeStartPayloadV1),
     ForgeOutcome(ForgeOutcomePayloadV1),
+    AlchemySessionStart(AlchemySessionStartV1),
+    AlchemySessionEnd(AlchemySessionEndV1),
+    AlchemyInterventionResult(AlchemyInterventionResultV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     DeathInsight(DeathInsightRequestV1),
@@ -365,6 +372,37 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_FORGE_OUTCOME,
+                payload,
+            })
+        }
+        RedisOutbound::AlchemySessionStart(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize AlchemySessionStartV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_SESSION_START,
+                payload,
+            })
+        }
+        RedisOutbound::AlchemySessionEnd(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize AlchemySessionEndV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_SESSION_END,
+                payload,
+            })
+        }
+        RedisOutbound::AlchemyInterventionResult(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize AlchemyInterventionResultV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_INTERVENTION_RESULT,
                 payload,
             })
         }
@@ -1444,6 +1482,83 @@ mod redis_bridge_tests {
                 }
                 other => panic!("expected publish, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn publishes_alchemy_bridge_payloads_on_correct_channels() {
+        let start =
+            prepare_outbound_command(RedisOutbound::AlchemySessionStart(AlchemySessionStartV1 {
+                v: 1,
+                session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+                recipe_id: "kai_mai_pill_v0".to_string(),
+                furnace_pos: (-12, 64, 38),
+                furnace_tier: 1,
+                caster_id: "offline:Azure".to_string(),
+                ts: 84_000,
+            }))
+            .expect("alchemy session start payload should serialize");
+        match start {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ALCHEMY_SESSION_START);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["recipe_id"], "kai_mai_pill_v0");
+                assert_eq!(v["furnace_pos"], serde_json::json!([-12, 64, 38]));
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let end = prepare_outbound_command(RedisOutbound::AlchemySessionEnd(AlchemySessionEndV1 {
+            v: 1,
+            session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
+            furnace_pos: (-12, 64, 38),
+            furnace_tier: 1,
+            caster_id: "offline:Azure".to_string(),
+            bucket: crate::schema::alchemy::AlchemyOutcomeBucketV1::Explode,
+            pill: None,
+            quality: None,
+            damage: Some(12.0),
+            meridian_crack: Some(0.2),
+            elapsed_ticks: 120,
+            ts: 84_120,
+        }))
+        .expect("alchemy session end payload should serialize");
+        match end {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ALCHEMY_SESSION_END);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["bucket"], "explode");
+                assert_eq!(v["damage"], 12.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let intervention = prepare_outbound_command(RedisOutbound::AlchemyInterventionResult(
+            AlchemyInterventionResultV1 {
+                v: 1,
+                session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+                recipe_id: "kai_mai_pill_v0".to_string(),
+                furnace_pos: (-12, 64, 38),
+                caster_id: "offline:Azure".to_string(),
+                intervention: crate::schema::alchemy::AlchemyInterventionV1::InjectQi { qi: 3.0 },
+                temp_current: 0.6,
+                qi_injected: 3.0,
+                accepted: true,
+                message: None,
+                ts: 84_020,
+            },
+        ))
+        .expect("alchemy intervention payload should serialize");
+        match intervention {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ALCHEMY_INTERVENTION_RESULT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["intervention"]["kind"], "inject_qi");
+                assert_eq!(v["accepted"], true);
+            }
+            other => panic!("expected publish, got {other:?}"),
         }
     }
 
