@@ -2,6 +2,7 @@ package com.bong.client.mixin;
 
 import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyScreen;
+import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.InventoryStateStore;
@@ -43,10 +44,16 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.world == null) return;
         BlockPos pos = hit.getBlockPos();
-        if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)) {
+        if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
+            && shouldOpenAlchemyFurnace(pos, AlchemyFurnaceStore.snapshot())) {
             ClientRequestSender.sendAlchemyOpenFurnace(pos);
             client.execute(() -> client.setScreen(new AlchemyScreen(pos)));
             cir.setReturnValue(ActionResult.SUCCESS);
         }
+    }
+
+    static boolean shouldOpenAlchemyFurnace(BlockPos clickedPos, AlchemyFurnaceStore.Snapshot snapshot) {
+        if (clickedPos == null || snapshot == null || snapshot.pos() == null) return false;
+        return clickedPos.equals(snapshot.pos());
     }
 }

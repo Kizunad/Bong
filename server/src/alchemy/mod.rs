@@ -86,6 +86,7 @@ pub struct InterventionRequest {
 pub struct AlchemyOutcomeEvent {
     pub furnace: valence::prelude::Entity,
     pub caster_id: String,
+    pub recipe_id: Option<String>,
     pub bucket: outcome::OutcomeBucket,
     pub outcome: ResolvedOutcome,
     pub elapsed_ticks: u32,
@@ -452,6 +453,7 @@ mod integration_tests {
         app.world_mut().send_event(AlchemyOutcomeEvent {
             furnace,
             caster_id: canonical_player_id("Azure"),
+            recipe_id: Some("hui_yuan_pill_v0".to_string()),
             bucket: outcome::OutcomeBucket::Perfect,
             outcome: ResolvedOutcome::Pill {
                 recipe_id: "hui_yuan_pill_v0".into(),

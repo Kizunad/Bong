@@ -4833,6 +4833,7 @@ fn handle_alchemy_take_back(
             let resolved = crate::alchemy::resolver::resolve_with_meta(&ended, recipe, registry);
             let bucket = resolved.bucket;
             let outcome = resolved.outcome;
+            let event_recipe_id = Some(recipe.id.clone());
             match &outcome {
                 crate::alchemy::ResolvedOutcome::Explode {
                     damage,
@@ -4858,6 +4859,7 @@ fn handle_alchemy_take_back(
                         outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
                             furnace: furnace_entity,
                             caster_id: player_id.clone(),
+                            recipe_id: event_recipe_id.clone(),
                             bucket,
                             outcome: outcome.clone(),
                             elapsed_ticks,
@@ -4889,6 +4891,7 @@ fn handle_alchemy_take_back(
                         outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
                             furnace: furnace_entity,
                             caster_id: player_id.clone(),
+                            recipe_id: event_recipe_id,
                             bucket,
                             outcome,
                             elapsed_ticks,

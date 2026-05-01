@@ -84,7 +84,7 @@ fn session_end_payload(
     furnace_pos: (i32, i32, i32),
     furnace_tier: u8,
 ) -> AlchemySessionEndV1 {
-    let recipe_id = alchemy_outcome_recipe_id(&event.outcome);
+    let recipe_id = alchemy_outcome_recipe_id(&event.outcome).or_else(|| event.recipe_id.clone());
     let session_recipe = recipe_id.as_deref().unwrap_or("unknown");
     AlchemySessionEndV1 {
         v: 1,
@@ -133,6 +133,7 @@ mod tests {
         app.world_mut().send_event(AlchemyOutcomeEvent {
             furnace,
             caster_id: "offline:Azure".to_string(),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
             bucket: OutcomeBucket::Explode,
             outcome: ResolvedOutcome::Explode {
                 damage: 12.0,
@@ -153,6 +154,11 @@ mod tests {
         assert_eq!(payload.furnace_pos, (-12, 64, 38));
         assert_eq!(payload.furnace_tier, 1);
         assert_eq!(payload.caster_id, "offline:Azure");
+        assert_eq!(payload.recipe_id, Some("kai_mai_pill_v0".to_string()));
+        assert_eq!(
+            payload.session_id,
+            "alchemy:-12:64:38:offline:Azure:kai_mai_pill_v0"
+        );
         assert_eq!(payload.damage, Some(12.0));
         assert_eq!(payload.elapsed_ticks, 120);
     }

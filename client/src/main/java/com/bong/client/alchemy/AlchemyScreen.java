@@ -702,12 +702,13 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             if (furnaceItems[fIdx] == null) {
                 furnaceItems[fIdx] = dragged;
                 furnaceSlots[fIdx].setItem(dragged, true);
+                int count = feedCountForSlot(activeRecipeId(), fIdx, dragged);
                 try {
                     com.bong.client.network.ClientRequestSender.sendAlchemyFeedSlot(
                         furnacePos,
                         fIdx,
                         dragged.itemId(),
-                        1
+                        count
                     );
                 } catch (RuntimeException ignore) { }
                 dragState.drop();
@@ -739,6 +740,57 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs) return i;
         }
         return -1;
+    }
+
+    private String activeRecipeId() {
+        AlchemySessionStore.Snapshot session = AlchemySessionStore.snapshot();
+        if (AlchemyFurnaceStore.snapshot().hasSession() && session.isActive()) return session.recipeId();
+        RecipeScrollStore.RecipeEntry current = RecipeScrollStore.snapshot().current();
+        return current == null ? "" : current.id();
+    }
+
+    static int feedCountForSlot(String recipeId, int slotIdx, InventoryItem item) {
+        if (item == null) return 1;
+        int required = requiredMaterialCount(recipeId, slotIdx, item.itemId());
+        int target = required > 0 ? required : 1;
+        return Math.max(1, Math.min(item.stackCount(), target));
+    }
+
+    static String canonicalRecipeId(String recipeId) {
+        if (recipeId == null) return "";
+        return switch (recipeId) {
+            case "kaimai_pill", "kai_mai_pill" -> "kai_mai_pill_v0";
+            case "huiyuan_pill", "hui_yuan_pill" -> "hui_yuan_pill_v0";
+            case "duming_san", "du_ming_san" -> "du_ming_san_v0";
+            default -> recipeId;
+        };
+    }
+
+    private static int requiredMaterialCount(String recipeId, int slotIdx, String material) {
+        String normalized = canonicalRecipeId(recipeId);
+        return switch (normalized) {
+            case "kai_mai_pill_v0" -> slotIdx == 0
+                ? switch (material) {
+                    case "ci_she_hao" -> 3;
+                    case "ling_shui" -> 1;
+                    default -> 0;
+                }
+                : 0;
+            case "hui_yuan_pill_v0" -> slotIdx == 0
+                ? switch (material) {
+                    case "hui_yuan_zhi" -> 2;
+                    case "ling_shui" -> 1;
+                    default -> 0;
+                }
+                : 0;
+            case "du_ming_san_v0" -> switch (slotIdx) {
+                case 0 -> "chi_sui_cao".equals(material) ? 4 : 0;
+                case 1 -> "hui_yuan_zhi".equals(material) ? 1 : 0;
+                case 2 -> "shao_hou_man".equals(material) ? 1 : 0;
+                default -> 0;
+            };
+            default -> 0;
+        };
     }
 
     private void updateHighlights(double mx, double my) {
@@ -826,7 +878,10 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             RecipeScrollStore.RecipeEntry current = RecipeScrollStore.snapshot().current();
             if (current != null) {
                 try {
-                    com.bong.client.network.ClientRequestSender.sendAlchemyIgnite(furnacePos, current.id());
+                    com.bong.client.network.ClientRequestSender.sendAlchemyIgnite(
+                        furnacePos,
+                        canonicalRecipeId(current.id())
+                    );
                 } catch (RuntimeException ignore) { }
             }
             return true;
