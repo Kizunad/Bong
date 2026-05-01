@@ -1441,7 +1441,14 @@ pub fn tribulation_intercept_death_system(
         let Ok((state, lifecycle)) = q.get_mut(death.target) else {
             continue;
         };
-        if death.attacker_player_id.is_none() {
+        let Some(killer_id) = death.attacker_player_id.as_deref() else {
+            continue;
+        };
+        if !state
+            .participants
+            .iter()
+            .any(|participant| participant == killer_id)
+        {
             continue;
         }
         if let Err(error) = delete_active_tribulation(&settings, lifecycle.character_id.as_str()) {
@@ -1479,7 +1486,7 @@ pub fn tribulation_intercept_death_system(
             result: DuXuResultV1 {
                 char_id: lifecycle.character_id.clone(),
                 outcome: DuXuOutcomeV1::Killed,
-                killer: death.attacker_player_id.clone(),
+                killer: Some(killer_id.to_string()),
                 waves_survived: state.wave_current,
             },
         });
@@ -4102,7 +4109,7 @@ mod tests {
                     started_tick: 0,
                     phase_started_tick: 0,
                     next_wave_tick: 0,
-                    participants: vec!["offline:Victim".to_string()],
+                    participants: vec!["offline:Victim".to_string(), "offline:Killer".to_string()],
                     failed: false,
                     half_step_on_success: false,
                 },
@@ -4170,6 +4177,69 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
         assert_eq!(emitted[0].result.killer.as_deref(), Some("offline:Killer"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unregistered_player_kill_does_not_claim_interception_settlement() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("intercept-killer-must-be-participant");
+        app.insert_resource(settings);
+        app.add_event::<DeathEvent>();
+        app.add_event::<TribulationSettled>();
+        app.add_systems(Update, tribulation_intercept_death_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    participants: vec!["offline:Victim".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                test_inventory(vec![test_item(101)], 7),
+            ))
+            .id();
+        let killer = app
+            .world_mut()
+            .spawn((
+                test_inventory(vec![test_item(201)], 3),
+                LifeRecord::new("offline:Killer"),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "pvp:offline:Killer".to_string(),
+            attacker: Some(killer),
+            attacker_player_id: Some("offline:Killer".to_string()),
+            at_tick: 120,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<TribulationState>(victim).is_some());
+        assert_eq!(
+            app.world().resource::<Events<TribulationSettled>>().len(),
+            0
+        );
+        let victim_inventory = app.world().get::<PlayerInventory>(victim).unwrap();
+        assert_eq!(victim_inventory.bone_coins, 7);
+        let killer_inventory = app.world().get::<PlayerInventory>(killer).unwrap();
+        assert_eq!(killer_inventory.bone_coins, 3);
 
         let _ = fs::remove_dir_all(root);
     }

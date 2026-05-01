@@ -1542,6 +1542,9 @@ fn death_zone_from_context(
     if cause_lower.contains("negative") {
         return ZoneDeathKind::Negative;
     }
+    if cause_lower.contains("realm_collapse") {
+        return ZoneDeathKind::Death;
+    }
     if cause_lower.contains("death") {
         return ZoneDeathKind::Death;
     }
@@ -1861,6 +1864,18 @@ mod tests {
             ),
             root,
         )
+    }
+
+    #[test]
+    fn realm_collapse_death_causes_count_as_death_zone() {
+        assert_eq!(
+            death_zone_from_context("realm_collapse", None, None),
+            ZoneDeathKind::Death
+        );
+        assert_eq!(
+            death_zone_from_context("realm_collapse_entry_lock", None, None),
+            ZoneDeathKind::Death
+        );
     }
 
     #[test]
