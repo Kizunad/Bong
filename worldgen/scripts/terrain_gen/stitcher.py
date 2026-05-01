@@ -17,6 +17,7 @@ from .fields import (
 )
 from .noise import coherent_noise_2d, _tile_coords
 from .profiles import PROFILE_DECORATION_OFFSETS, ProfileContext, get_profile_generator
+from .profiles.ash_dead_zone import fill_ash_dead_zone_tile
 from .profiles.abyssal_maze import fill_abyssal_maze_tile
 from .profiles.ancient_battlefield import fill_ancient_battlefield_tile
 from .profiles.broken_peaks import fill_broken_peaks_tile
@@ -109,7 +110,7 @@ def _shape_membership_ratio_array(
     edge_noise = _coherent_noise_2d_array(wx, wz, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster"}:
+    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (wx - center_x) / (half_width * edge_warp)
         dz = (wz - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         return np.sqrt(dx * dx + dz * dz)
@@ -317,7 +318,7 @@ def _shape_membership_ratio(zone: BlueprintZone, world_x: int, world_z: int) -> 
     edge_noise = coherent_noise_2d(world_x, world_z, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster"}:
+    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (world_x - center_x) / (half_width * edge_warp)
         dz = (world_z - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         return math.sqrt(dx * dx + dz * dz)
@@ -398,6 +399,8 @@ def _build_zone_overlay_tile(
         buffer = fill_cave_network_tile(zone, tile, tile_size, palette)
     elif profile == "waste_plateau":
         buffer = fill_waste_plateau_tile(zone, tile, tile_size, palette)
+    elif profile == "ash_dead_zone":
+        buffer = fill_ash_dead_zone_tile(zone, tile, tile_size, palette)
     elif profile == "sky_isle":
         buffer = fill_sky_isle_tile(zone, tile, tile_size, palette)
     elif profile == "abyssal_maze":
@@ -462,6 +465,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: rift_valley overlay synthesis and zone-to-wilderness blending.",
             "Implemented: cave_network surface proxy synthesis.",
             "Implemented: waste_plateau overlay synthesis.",
+            "Implemented: ash_dead_zone overlay (zero qi core + ash ecology).",
             "Implemented: sky_isle overlay (sky_island_* vertical layers).",
             "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",
             "Implemented: ancient_battlefield overlay (anomaly_intensity/anomaly_kind).",

@@ -43,6 +43,16 @@
       "water": { "level": "none", "coverage": 0.0 },
       "passability": "high"
     },
+    "ash_dead_zone": {
+      "height": { "base": [70, 82], "peak": 88 },
+      "boundary": { "mode": "hard", "width": 64 },
+      "surface": ["coarse_dirt", "gravel", "sand", "smooth_stone", "stone"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "high",
+      "spawn_blacklist": "all_natural_mobs",
+      "ambient_effects": [],
+      "structure_density": { "dried_corpse_mound": 0.04, "silent_obelisk": 0.005 }
+    },
     "sky_isle": {
       "height": { "ground": [70, 76], "isles_y": [260, 340] },
       "boundary": { "mode": "soft", "width": 160 },

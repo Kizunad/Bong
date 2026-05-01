@@ -18,6 +18,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
     Some(match name {
         // --- natural / surface (mirrors raster::block_state_from_name) ---
         "stone" => BlockState::STONE,
+        "smooth_stone" => BlockState::SMOOTH_STONE,
         "coarse_dirt" => BlockState::COARSE_DIRT,
         "gravel" => BlockState::GRAVEL,
         "grass_block" => BlockState::GRASS_BLOCK,
@@ -45,16 +46,23 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "clay" => BlockState::CLAY,
         "moss_block" => BlockState::MOSS_BLOCK,
         "andesite" => BlockState::ANDESITE,
+        "polished_diorite" => BlockState::POLISHED_DIORITE,
         "deepslate" => BlockState::DEEPSLATE,
         "cobbled_deepslate" => BlockState::COBBLED_DEEPSLATE,
         "tuff" => BlockState::TUFF,
         "cobblestone" => BlockState::COBBLESTONE,
         "mossy_cobblestone" => BlockState::MOSSY_COBBLESTONE,
         "dead_bush" => BlockState::DEAD_BUSH,
+        "cobweb" => BlockState::COBWEB,
+        "gray_concrete_powder" => BlockState::GRAY_CONCRETE_POWDER,
+        "cobblestone_wall" => BlockState::COBBLESTONE_WALL,
+        "torch" => BlockState::TORCH,
+        "stone_button" => BlockState::STONE_BUTTON,
         "muddy_mangrove_roots" => BlockState::MUDDY_MANGROVE_ROOTS,
 
         // --- logs & leaves ---
         "oak_log" => BlockState::OAK_LOG,
+        "stripped_oak_log" => BlockState::STRIPPED_OAK_LOG,
         "oak_leaves" => BlockState::OAK_LEAVES,
         "birch_log" => BlockState::BIRCH_LOG,
         "birch_leaves" => BlockState::BIRCH_LEAVES,

@@ -794,6 +794,7 @@ fn read_optional_u8_strict(bytes: &Option<Mmap>, index: usize) -> Option<u8> {
 fn block_state_from_name(name: &str) -> Result<BlockState, String> {
     match name {
         "stone" => Ok(BlockState::STONE),
+        "smooth_stone" => Ok(BlockState::SMOOTH_STONE),
         "coarse_dirt" => Ok(BlockState::COARSE_DIRT),
         "gravel" => Ok(BlockState::GRAVEL),
         "grass_block" => Ok(BlockState::GRASS_BLOCK),
