@@ -19,11 +19,10 @@ use valence::prelude::{
 
 use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
-    PlaceFurnaceRequest, RecipeRegistry,
+    PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
 use crate::combat::components::{
-    BodyPart, CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot, Wound,
-    WoundKind, Wounds,
+    CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
 };
 use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
@@ -31,13 +30,12 @@ use crate::combat::events::{
 };
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{CrackCause, Cultivation};
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
-use crate::cultivation::overload::MeridianCrackEvent;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
 use crate::forge::blueprint::TemperBeat;
@@ -105,6 +103,7 @@ use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
     StartExtractRequest as StartExtractRequestEvent,
 };
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -168,8 +167,7 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub item_registry: Res<'w, ItemRegistry>,
     pub instance_allocator: Option<ResMut<'w, InventoryInstanceIdAllocator>>,
     pub redis: Option<Res<'w, RedisBridgeResource>>,
-    pub wounds: Query<'w, 's, &'static mut Wounds>,
-    pub meridian_crack_tx: Option<ResMut<'w, Events<MeridianCrackEvent>>>,
+    pub zones: Option<Res<'w, ZoneRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -640,6 +638,7 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &mut alchemy_params.furnaces,
                     &alchemy_params.recipe_registry,
+                    alchemy_params.zones.as_deref(),
                     alchemy_params.redis.as_deref(),
                 );
             }
@@ -683,8 +682,6 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &alchemy_params.item_registry,
                     alchemy_params.instance_allocator.as_deref_mut(),
-                    &mut alchemy_params.wounds,
-                    alchemy_params.meridian_crack_tx.as_deref_mut(),
                 );
             }
             ClientRequestV1::InventoryMoveIntent {
@@ -1672,7 +1669,7 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::UnlockedStyles;
+    use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
     use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
         BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
@@ -2014,6 +2011,7 @@ mod tests {
         app.insert_resource(DroppedLootRegistry::default());
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
+        app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CustomPayloadEvent>();
         app.add_event::<crate::combat::events::AttackIntent>();
         app.add_event::<crate::cultivation::burst_meridian::BurstMeridianEvent>();
@@ -2038,8 +2036,15 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
-        app.add_event::<MeridianCrackEvent>();
+        app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+        app.add_event::<crate::combat::events::CombatEvent>();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
         app.add_systems(Update, handle_client_request_payloads);
+        app.add_systems(
+            Update,
+            crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        );
     }
 
     #[test]
@@ -2115,15 +2120,57 @@ mod tests {
         assert!(wounds.entries.iter().any(|wound| {
             wound.kind == WoundKind::Burn && (wound.severity - 20.0).abs() < f32::EPSILON
         }));
-        let crack_events = app
+        let overload_events = app
             .world()
-            .resource::<valence::prelude::Events<MeridianCrackEvent>>();
-        let mut reader = crack_events.get_reader();
-        let events: Vec<_> = reader.read(crack_events).collect();
+            .resource::<valence::prelude::Events<crate::cultivation::overload::MeridianOverloadEvent>>();
+        let mut reader = overload_events.get_reader();
+        let events: Vec<_> = reader.read(overload_events).collect();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].target, entity);
+        assert_eq!(events[0].entity, entity);
         assert!((events[0].severity - 0.15).abs() < 1e-9);
-        assert_eq!(events[0].cause, CrackCause::Backfire);
+    }
+
+    #[test]
+    fn alchemy_ignite_rejects_low_zone_qi_on_live_request_path() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: "spawn".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (
+                    valence::prelude::DVec3::new(0.0, 0.0, 0.0),
+                    valence::prelude::DVec3::new(10.0, 100.0, 10.0),
+                ),
+                spirit_qi: 0.0,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        });
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
+        furnace.owner = Some("offline:Azure".into());
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert!(furnace.session.is_none());
     }
 
     #[test]
@@ -4643,6 +4690,7 @@ fn handle_alchemy_intervention(
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "intervention");
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_alchemy_ignite(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
@@ -4650,6 +4698,7 @@ fn handle_alchemy_ignite(
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     registry: &RecipeRegistry,
+    zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
@@ -4660,6 +4709,10 @@ fn handle_alchemy_ignite(
         send_alchemy_error(&mut client, &player_id, format!("未知丹方：{recipe_id}"));
         return;
     };
+    if let Err(message) = check_alchemy_zone_qi(furnace_pos, zones, recipe_id.as_str()) {
+        send_alchemy_error(&mut client, &player_id, message);
+        return;
+    }
     let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
         if !furnace.can_run(recipe.furnace_tier_min) {
             send_alchemy_error(
@@ -4692,6 +4745,34 @@ fn handle_alchemy_ignite(
         alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
     });
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "ignite");
+}
+
+fn check_alchemy_zone_qi(
+    furnace_pos: (i32, i32, i32),
+    zones: Option<&ZoneRegistry>,
+    recipe_id: &str,
+) -> Result<(), String> {
+    let zone_qi = zones
+        .and_then(|zones| {
+            zones
+                .find_zone(
+                    DimensionKind::Overworld,
+                    valence::prelude::DVec3::new(
+                        furnace_pos.0 as f64,
+                        furnace_pos.1 as f64,
+                        furnace_pos.2 as f64,
+                    ),
+                )
+                .or_else(|| zones.find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME))
+        })
+        .map(|zone| zone.spirit_qi)
+        .unwrap_or(0.0);
+    if zone_qi < MIN_ZONE_QI_TO_ALCHEMY {
+        return Err(format!(
+            "区域灵气不足：{zone_qi:.3} < {MIN_ZONE_QI_TO_ALCHEMY:.3}，无法起炉 {recipe_id}"
+        ));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4795,7 +4876,7 @@ fn handle_alchemy_take_back(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     slot_idx: u8,
-    tick: u64,
+    _tick: u64,
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     registry: &RecipeRegistry,
@@ -4805,8 +4886,6 @@ fn handle_alchemy_take_back(
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
     instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
-    wounds: &mut Query<&mut Wounds>,
-    meridian_crack_tx: Option<&mut Events<MeridianCrackEvent>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -4855,28 +4934,22 @@ fn handle_alchemy_take_back(
                     let scaled_meridian_crack =
                         scale_alchemy_explosion_crack(*meridian_crack, furnace.tier);
                     furnace.apply_explode((*damage / 100.0).clamp(0.05, 0.75));
-                    apply_alchemy_explode_backlash(
-                        entity,
-                        &mut client,
-                        AlchemyBacklash {
-                            damage: scaled_damage,
-                            meridian_crack: scaled_meridian_crack,
-                            player_id: player_id.as_str(),
-                            tick,
-                        },
-                        wounds,
-                        meridian_crack_tx,
-                    );
                     if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
                         outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
                             furnace: furnace_entity,
                             caster_id: player_id.clone(),
                             recipe_id: event_recipe_id.clone(),
                             bucket,
-                            outcome: outcome.clone(),
+                            outcome: crate::alchemy::ResolvedOutcome::Explode {
+                                damage: scaled_damage,
+                                meridian_crack: scaled_meridian_crack,
+                            },
                             elapsed_ticks,
                         });
                     }
+                    client.send_chat_message(format!(
+                        "§c[炼丹] 炸炉反噬：气血 -{scaled_damage:.1}，经脉裂痕 +{scaled_meridian_crack:.2}"
+                    ));
                 }
                 _ => {
                     let Some(instance_allocator) = instance_allocator else {
@@ -5104,65 +5177,6 @@ fn scale_alchemy_explosion_crack(base_severity: f64, furnace_tier: u8) -> f64 {
     }
     let tier = furnace_tier.clamp(1, 3) as f64;
     (base_severity * (1.0 + (tier - 1.0) * 0.25)).clamp(0.0, 1.0)
-}
-
-struct AlchemyBacklash<'a> {
-    damage: f64,
-    meridian_crack: f64,
-    player_id: &'a str,
-    tick: u64,
-}
-
-fn apply_alchemy_explode_backlash(
-    entity: Entity,
-    client: &mut Client,
-    backlash: AlchemyBacklash<'_>,
-    wounds: &mut Query<&mut Wounds>,
-    meridian_crack_tx: Option<&mut Events<MeridianCrackEvent>>,
-) {
-    let damage = backlash.damage;
-    let meridian_crack = backlash.meridian_crack;
-    let player_id = backlash.player_id;
-    let tick = backlash.tick;
-    if damage > 0.0 {
-        match wounds.get_mut(entity) {
-            Ok(mut wounds) => {
-                let damage = damage as f32;
-                wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
-                wounds.entries.push(Wound {
-                    location: BodyPart::Chest,
-                    kind: WoundKind::Burn,
-                    severity: damage,
-                    bleeding_per_sec: 0.0,
-                    created_at_tick: tick,
-                    inflicted_by: None,
-                });
-            }
-            Err(_) => tracing::warn!(
-                "[bong][network][alchemy] `{player_id}` explosion backlash has no Wounds component; damage skipped"
-            ),
-        }
-    }
-    if meridian_crack > 0.0 {
-        if let Some(tx) = meridian_crack_tx {
-            tx.send(MeridianCrackEvent {
-                target: entity,
-                severity: meridian_crack,
-                cause: CrackCause::Backfire,
-                created_at: tick,
-            });
-        } else {
-            tracing::warn!(
-                "[bong][network][alchemy] `{player_id}` explosion backlash has no MeridianCrackEvent resource; crack skipped"
-            );
-        }
-    }
-    client.send_chat_message(format!(
-        "§c[炼丹] 炸炉反噬：气血 -{damage:.1}，经脉裂痕 +{meridian_crack:.2}"
-    ));
-    tracing::warn!(
-        "[bong][network][alchemy] `{player_id}` explosion backlash applied damage={damage:.2} crack={meridian_crack:.2}"
-    );
 }
 
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。

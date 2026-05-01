@@ -134,7 +134,6 @@ pub fn register(app: &mut App) {
             handle_start_alchemy_requests,
             handle_alchemy_furnace_place,
             emit_alchemy_skill_xp_from_outcomes,
-            apply_alchemy_explode_outcomes,
         ),
     );
 }
@@ -234,7 +233,7 @@ fn handle_start_alchemy_requests(
     }
 }
 
-fn apply_alchemy_explode_outcomes(
+pub(crate) fn apply_alchemy_explode_outcomes(
     clock: Res<CombatClock>,
     mut events: EventReader<AlchemyOutcomeEvent>,
     players: Query<(Entity, &Username), With<Client>>,

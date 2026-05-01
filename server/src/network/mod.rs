@@ -391,6 +391,11 @@ pub fn register(app: &mut App) {
         Update,
         client_request_handler::handle_client_request_payloads,
     );
+    app.add_systems(
+        Update,
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(client_request_handler::handle_client_request_payloads),
+    );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(
         Update,
