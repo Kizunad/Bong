@@ -112,6 +112,7 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
+use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
     load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
 };
@@ -215,7 +216,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             process_lifespan_extension_intents.after(lifespan_aging_tick),
-            process_duo_she_requests.after(lifespan_aging_tick),
+            process_duo_she_requests
+                .after(lifespan_aging_tick)
+                .after(DuoSheIntentForwardSet),
             process_life_core_requests.after(process_duo_she_requests),
         ),
     );
