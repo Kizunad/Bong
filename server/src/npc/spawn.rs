@@ -42,6 +42,7 @@ use crate::npc::territory::{
     TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
 };
 use crate::skin::{npc_uuid, NpcPlayerSkin, NpcSkinFallbackPolicy, SignedSkin, SkinPool};
+use crate::world::mob_spawn::{MobSpawnFilter, NaturalMobKind};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
@@ -247,7 +248,12 @@ pub fn register(app: &mut App) {
 }
 
 pub(crate) fn classify_zones_by_qi(zones: &[Zone], threshold: f64) -> (Vec<&Zone>, Vec<&Zone>) {
-    zones.iter().partition(|z| z.spirit_qi >= threshold)
+    zones
+        .iter()
+        .filter(|z| {
+            MobSpawnFilter::default_candidates_for_zone(z).contains(&NaturalMobKind::Zombie)
+        })
+        .partition(|z| z.spirit_qi >= threshold)
 }
 
 pub(crate) fn distribute_counts_evenly(total: u32, buckets: usize) -> Vec<u32> {

@@ -32,6 +32,7 @@ pub mod color;
 pub mod components;
 pub mod composure;
 pub mod contamination;
+pub mod dead_zone;
 pub mod death_hooks;
 pub mod forging;
 pub mod heal;
@@ -65,6 +66,7 @@ use self::color::{qi_color_evolution_tick, PracticeLog};
 use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use self::composure::composure_tick;
 use self::contamination::contamination_tick;
+use self::dead_zone::{dead_zone_silent_qi_loss_tick, DeadZoneTickHandler};
 use self::death_hooks::{
     on_player_revived, on_player_terminated, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
@@ -122,6 +124,7 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
+    app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
@@ -168,7 +171,8 @@ pub fn register(app: &mut App) {
             // 稳态演化
             qi_color_evolution_tick,
             composure_tick,
-            qi_zero_decay_tick.after(qi_regen_and_zone_drain_tick),
+            dead_zone_silent_qi_loss_tick.after(qi_regen_and_zone_drain_tick),
+            qi_zero_decay_tick.after(dead_zone_silent_qi_loss_tick),
             emit_skill_caps_on_realm_regressed.after(qi_zero_decay_tick),
             // plan §2.1 损伤/净化链
             overload_detection_tick.after(meridian_open_tick),
@@ -182,8 +186,6 @@ pub fn register(app: &mut App) {
             // plan §4 死亡/重生钩子
             on_player_revived,
             on_player_terminated,
-            // plan §11-5 业力
-            karma_decay_tick,
         ),
     );
     app.add_systems(
@@ -196,6 +198,8 @@ pub fn register(app: &mut App) {
             view_distance_ramp_system,
             push_spiritual_sense_targets.after(qi_regen_and_zone_drain_tick),
             cleanup_spiritual_sense_push_state,
+            // plan §11-5 业力
+            karma_decay_tick,
         ),
     );
     app.add_systems(

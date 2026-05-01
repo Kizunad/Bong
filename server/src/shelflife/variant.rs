@@ -25,6 +25,7 @@ pub fn apply_variant_switch(
     profile_registry: &DecayProfileRegistry,
     item_registry: &ItemRegistry,
     now_tick: u64,
+    zone_multiplier: f32,
 ) -> bool {
     let Some(freshness) = &item.freshness else {
         return false;
@@ -34,8 +35,8 @@ pub fn apply_variant_switch(
         return false;
     };
 
-    // 在 inventory 上下文使用 1.0（非容器内）；容器路径会单独传参
-    let state = compute_track_state(freshness, profile, now_tick, 1.0);
+    // 在 inventory 上下文由 sweep 传入 zone multiplier；容器路径会单独传参。
+    let state = compute_track_state(freshness, profile, now_tick, zone_multiplier.max(0.0));
 
     match state {
         TrackState::Dead => {
@@ -47,7 +48,14 @@ pub fn apply_variant_switch(
         }
         TrackState::AgePostPeakSpoiled => {
             if let Some(spoil_id) = age_spoil_variant_mapping(freshness.profile.as_str()) {
-                if migrate_age_to_spoil(item, profile, spoil_id, item_registry, now_tick) {
+                if migrate_age_to_spoil(
+                    item,
+                    profile,
+                    spoil_id,
+                    item_registry,
+                    now_tick,
+                    zone_multiplier,
+                ) {
                     return true;
                 }
             }
@@ -113,12 +121,14 @@ fn migrate_age_to_spoil(
     spoil_template_id: &str,
     item_registry: &ItemRegistry,
     now_tick: u64,
+    zone_multiplier: f32,
 ) -> bool {
     let Some(freshness) = &item.freshness else {
         return false;
     };
 
-    let current_qi = compute_track_state_current_qi(freshness, age_profile, now_tick);
+    let current_qi =
+        compute_track_state_current_qi(freshness, age_profile, now_tick, zone_multiplier);
 
     let spoil_profile_id = match age_profile {
         super::types::DecayProfile::Age {
@@ -155,8 +165,9 @@ fn compute_track_state_current_qi(
     freshness: &Freshness,
     profile: &super::types::DecayProfile,
     now_tick: u64,
+    zone_multiplier: f32,
 ) -> f32 {
-    super::compute::compute_current_qi(freshness, profile, now_tick, 1.0)
+    super::compute::compute_current_qi(freshness, profile, now_tick, zone_multiplier.max(0.0))
 }
 
 #[cfg(test)]
@@ -331,7 +342,9 @@ mod tests {
         let ticks_per_day: u64 = 20 * 60 * 60 * 24;
         let now = 3 * ticks_per_day * 40; // 120 days
 
-        assert!(apply_variant_switch(&mut item, &profile_r, &item_r, now));
+        assert!(apply_variant_switch(
+            &mut item, &profile_r, &item_r, now, 1.0
+        ));
         assert_eq!(item.template_id, "dead_mineral_ling_shi_fan");
         assert_eq!(item.display_name, "死·dead_mineral_ling_shi_fan");
     }
@@ -344,7 +357,9 @@ mod tests {
         let mut item = fresh_instance("mineral_ling_shi_fan", "ling_shi_fan_v1", 100.0);
         let now = 0; // just created — current_qi = 100
 
-        assert!(!apply_variant_switch(&mut item, &profile_r, &item_r, now));
+        assert!(!apply_variant_switch(
+            &mut item, &profile_r, &item_r, now, 1.0
+        ));
         assert_eq!(item.template_id, "mineral_ling_shi_fan");
     }
 
@@ -378,7 +393,8 @@ mod tests {
             &mut item,
             &profile_r,
             &item_r,
-            999_999_999
+            999_999_999,
+            1.0,
         ));
         assert_eq!(item.template_id, "any");
     }
@@ -422,7 +438,9 @@ mod tests {
         };
 
         let now = 5000;
-        assert!(apply_variant_switch(&mut item, &profile_r, &item_r, now));
+        assert!(apply_variant_switch(
+            &mut item, &profile_r, &item_r, now, 1.0
+        ));
         assert_eq!(item.template_id, "chen_cu");
         assert_eq!(item.display_name, "陈醋");
 
@@ -471,7 +489,9 @@ mod tests {
         // bone_coin Linear decay over ~1y; use 2 years for safety margin to ensure ≤ EPSILON.
         let ticks_per_year: u64 = 365 * 20 * 60 * 60 * 24;
         let now = ticks_per_year * 2;
-        assert!(apply_variant_switch(&mut item, &profile_r, &item_r, now));
+        assert!(apply_variant_switch(
+            &mut item, &profile_r, &item_r, now, 1.0
+        ));
         assert_eq!(item.template_id, "rotten_bone_coin");
         assert_eq!(item.display_name, "腐骨币");
     }
