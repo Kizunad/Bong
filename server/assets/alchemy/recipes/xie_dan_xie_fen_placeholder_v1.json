@@ -1,0 +1,32 @@
+{
+  "id": "xie_dan_xie_fen_placeholder_v1",
+  "name": "邪丹（邪粉占位）",
+  "furnace_tier_min": 3,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "kong_shou_hen", "count": 1 },
+      { "material": "xie_fen_core", "count": 1, "mineral_id": "xie_fen" }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.88,
+    "target_duration_ticks": 240,
+    "qi_cost": 40.0,
+    "tolerance": { "temp_band": 0.04, "duration_band": 8 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "xie_dan_placeholder", "quality": 1.0, "toxin_amount": 1.00, "toxin_color": "Insidious" },
+    "good": { "pill": "xie_dan_placeholder", "quality": 0.7, "toxin_amount": 1.30, "toxin_color": "Insidious" },
+    "flawed": { "pill": "xie_dan_placeholder_flawed", "quality": 0.3, "toxin_amount": 2.00, "toxin_color": "Violent" },
+    "waste": null,
+    "explode": { "damage": 45.0, "meridian_crack": 0.35 }
+  },
+  "flawed_fallback": {
+    "pill": "xie_dan_placeholder_flawed",
+    "quality_scale": 0.3,
+    "toxin_scale": 2.0,
+    "side_effect_pool": [
+      { "tag": "negative_spirit_domain_pending", "duration_s": 0, "weight": 1 }
+    ]
+  }
+}

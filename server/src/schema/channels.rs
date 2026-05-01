@@ -29,6 +29,18 @@ pub const CH_TRIBULATION_WAVE: &str = "bong:tribulation/wave";
 pub const CH_TRIBULATION_SETTLE: &str = "bong:tribulation/settle";
 pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
 
+// NPC / 派系观测（plan-npc-ai-v1 §6）。Agent → Server 指令仍统一走
+// `bong:agent_command`，这里仅声明 server → agent 事件流水。
+pub const CH_NPC_SPAWN: &str = "bong:npc/spawn";
+pub const CH_NPC_DEATH: &str = "bong:npc/death";
+pub const CH_FACTION_EVENT: &str = "bong:faction/event";
+
+// 玩家社交 / 匿名 / 声名（plan-social-v1 §7）。server 为权威，agent 只消费事件流水。
+pub const CH_SOCIAL_EXPOSURE: &str = "bong:social/exposure";
+pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
+pub const CH_SOCIAL_FEUD: &str = "bong:social/feud";
+pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
+
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
@@ -56,6 +68,11 @@ pub const CH_TSY_EVENT: &str = "bong:tsy_event";
 pub const CH_FORGE_START: &str = "bong:forge/start";
 pub const CH_FORGE_OUTCOME: &str = "bong:forge/outcome";
 
+// 炼丹（plan-alchemy-client-v1 §6 / P4）—— server → agent 观测频道。
+pub const CH_ALCHEMY_SESSION_START: &str = "bong:alchemy/session_start";
+pub const CH_ALCHEMY_SESSION_END: &str = "bong:alchemy/session_end";
+pub const CH_ALCHEMY_INTERVENTION_RESULT: &str = "bong:alchemy/intervention_result";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,12 +96,20 @@ mod tests {
         assert_eq!(CH_DEATH_INSIGHT, "bong:death_insight");
         assert_eq!(CH_AGING, "bong:aging");
         assert_eq!(CH_LIFESPAN_EVENT, "bong:lifespan_event");
+        assert_eq!(CH_DUO_SHE_EVENT, "bong:duo_she_event");
         assert_eq!(CH_TRIBULATION, "bong:tribulation");
         assert_eq!(CH_TRIBULATION_OMEN, "bong:tribulation/omen");
         assert_eq!(CH_TRIBULATION_LOCK, "bong:tribulation/lock");
         assert_eq!(CH_TRIBULATION_WAVE, "bong:tribulation/wave");
         assert_eq!(CH_TRIBULATION_SETTLE, "bong:tribulation/settle");
         assert_eq!(CH_TRIBULATION_COLLAPSE, "bong:tribulation/collapse");
+        assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
+        assert_eq!(CH_NPC_DEATH, "bong:npc/death");
+        assert_eq!(CH_FACTION_EVENT, "bong:faction/event");
+        assert_eq!(CH_SOCIAL_EXPOSURE, "bong:social/exposure");
+        assert_eq!(CH_SOCIAL_PACT, "bong:social/pact");
+        assert_eq!(CH_SOCIAL_FEUD, "bong:social/feud");
+        assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
@@ -97,5 +122,11 @@ mod tests {
         assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
         assert_eq!(CH_FORGE_START, "bong:forge/start");
         assert_eq!(CH_FORGE_OUTCOME, "bong:forge/outcome");
+        assert_eq!(CH_ALCHEMY_SESSION_START, "bong:alchemy/session_start");
+        assert_eq!(CH_ALCHEMY_SESSION_END, "bong:alchemy/session_end");
+        assert_eq!(
+            CH_ALCHEMY_INTERVENTION_RESULT,
+            "bong:alchemy/intervention_result"
+        );
     }
 }

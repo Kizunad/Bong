@@ -1,0 +1,12 @@
+{
+  "id": "realm_breakthrough",
+  "layers": [
+    { "sound": "minecraft:block.beacon.activate", "volume": 0.6, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:block.bell.use", "volume": 0.4, "pitch": 1.0, "delay_ticks": 10 },
+    { "sound": "minecraft:block.enchantment_table.use", "volume": 0.3, "pitch": 0.9, "delay_ticks": 20 },
+    { "sound": "minecraft:entity.ender_dragon.flap", "volume": 0.2, "pitch": 1.2, "delay_ticks": 35 }
+  ],
+  "priority": 90,
+  "attenuation": "zone_broadcast",
+  "category": "VOICE"
+}

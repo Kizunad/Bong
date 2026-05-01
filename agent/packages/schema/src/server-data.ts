@@ -5,6 +5,7 @@ import {
   AlchemyOutcomeBucket,
   AlchemyRecipeEntryV1,
   AlchemyStageHintV1,
+  BlockPosV1,
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import {
@@ -22,6 +23,7 @@ import {
   InventorySnapshotV1,
 } from "./inventory.js";
 import { Narration } from "./narration.js";
+import { RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ExtractAbortedV1,
   ExtractCompletedV1,
@@ -46,6 +48,17 @@ import {
   SkillXpGainPayloadV1,
 } from "./skill.js";
 import { PlayerPowerBreakdown, Vec3, ZoneStatusV1 } from "./world-state.js";
+import {
+  SocialAnonymityPayloadV1,
+  SocialExposureEventV1,
+  SocialFeudEventV1,
+  SocialPactEventV1,
+  PlayerSocialSnapshotV1,
+  SocialRenownDeltaV1,
+  SparringInvitePayloadV1,
+  TradeOfferPayloadV1,
+} from "./social.js";
+import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -119,6 +132,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
   Type.Literal("botany_harvest_progress"),
+  Type.Literal("botany_plant_v2_render_profiles"),
   Type.Literal("botany_skill"),
   Type.Literal("alchemy_furnace"),
   Type.Literal("alchemy_session"),
@@ -133,6 +147,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_cap_changed"),
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
+  Type.Literal("burst_meridian_event"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
   Type.Literal("weapon_equipped"),
@@ -154,6 +169,15 @@ export const ServerDataType = Type.Union([
   Type.Literal("tribulation_broadcast"),
   Type.Literal("ascension_quota"),
   Type.Literal("heart_demon_offer"),
+  Type.Literal("social_anonymity"),
+  Type.Literal("social_exposure"),
+  Type.Literal("social_pact"),
+  Type.Literal("social_feud"),
+  Type.Literal("social_renown_delta"),
+  Type.Literal("sparring_invite"),
+  Type.Literal("trade_offer"),
+  Type.Literal("realm_vision_params"),
+  Type.Literal("spiritual_sense_targets"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -225,6 +249,7 @@ export const ServerDataPlayerStateV1 = Type.Object(
     composite_power: Type.Number({ minimum: 0, maximum: 1 }),
     breakdown: PlayerPowerBreakdown,
     zone: Type.String(),
+    social: Type.Optional(PlayerSocialSnapshotV1),
   },
   { additionalProperties: false },
 );
@@ -357,6 +382,7 @@ export const ServerDataBotanyHarvestProgressV1 = Type.Object(
     interrupted: Type.Boolean(),
     completed: Type.Boolean(),
     detail: Type.String(),
+    hazard_hints: Type.Optional(Type.Array(Type.String({ maxLength: 500 }))),
     // plan §1.3 投影锚定：目标植物世界坐标，client 侧做 world→screen 投影定位浮窗。
     // 省略时 client 回退到准星右侧锚点。
     target_pos: Type.Optional(
@@ -367,6 +393,39 @@ export const ServerDataBotanyHarvestProgressV1 = Type.Object(
 );
 export type ServerDataBotanyHarvestProgressV1 = Static<
   typeof ServerDataBotanyHarvestProgressV1
+>;
+
+export const BotanyModelOverlayV1 = Type.Union([
+  Type.Literal("none"),
+  Type.Literal("emissive"),
+  Type.Literal("dual_phase"),
+]);
+export type BotanyModelOverlayV1 = Static<typeof BotanyModelOverlayV1>;
+
+export const BotanyPlantV2RenderProfileV1 = Type.Object(
+  {
+    plant_id: Type.String({ minLength: 1 }),
+    base_mesh_ref: Type.String({ minLength: 1 }),
+    tint_rgb: Type.Integer({ minimum: 0, maximum: 0xffffff }),
+    tint_rgb_secondary: Type.Optional(Type.Integer({ minimum: 0, maximum: 0xffffff })),
+    model_overlay: BotanyModelOverlayV1,
+  },
+  { additionalProperties: false },
+);
+export type BotanyPlantV2RenderProfileV1 = Static<
+  typeof BotanyPlantV2RenderProfileV1
+>;
+
+export const ServerDataBotanyPlantV2RenderProfilesV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_plant_v2_render_profiles"),
+    profiles: Type.Array(BotanyPlantV2RenderProfileV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanyPlantV2RenderProfilesV1 = Static<
+  typeof ServerDataBotanyPlantV2RenderProfilesV1
 >;
 
 export const ServerDataBotanySkillV1 = Type.Object(
@@ -388,7 +447,7 @@ export const ServerDataAlchemyFurnaceV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_furnace"),
-    furnace_id: Type.String(),
+    pos: Type.Optional(BlockPosV1),
     tier: Type.Integer({ minimum: 1, maximum: 9 }),
     integrity: Type.Number({ minimum: 0 }),
     integrity_max: Type.Number({ minimum: 0 }),
@@ -678,6 +737,21 @@ export const ServerDataSkillSnapshotV1 = Type.Object(
 );
 export type ServerDataSkillSnapshotV1 = Static<typeof ServerDataSkillSnapshotV1>;
 
+export const BurstMeridianEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("burst_meridian_event"),
+    skill: Type.String({ minLength: 1 }),
+    caster: Type.String({ minLength: 1 }),
+    target: Type.Optional(Type.String({ minLength: 1 })),
+    tick: Type.Integer({ minimum: 0 }),
+    overload_ratio: Type.Number({ minimum: 0 }),
+    integrity_snapshot: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type BurstMeridianEventV1 = Static<typeof BurstMeridianEventV1>;
+
 export const ServerDataSkillBarConfigV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -910,6 +984,125 @@ export type ServerDataForgeBlueprintBookV1 = Static<
   typeof ServerDataForgeBlueprintBookV1
 >;
 
+// ─── 玩家社交（plan-social-v1 §7） ───────────────────────
+export const ServerDataSocialAnonymityV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_anonymity"),
+    ...SocialAnonymityPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialAnonymityV1 = Static<
+  typeof ServerDataSocialAnonymityV1
+>;
+
+export const ServerDataSocialExposureV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_exposure"),
+    actor: SocialExposureEventV1.properties.actor,
+    kind: SocialExposureEventV1.properties.kind,
+    witnesses: SocialExposureEventV1.properties.witnesses,
+    tick: SocialExposureEventV1.properties.tick,
+    zone: SocialExposureEventV1.properties.zone,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialExposureV1 = Static<
+  typeof ServerDataSocialExposureV1
+>;
+
+export const ServerDataSocialPactV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_pact"),
+    left: SocialPactEventV1.properties.left,
+    right: SocialPactEventV1.properties.right,
+    terms: SocialPactEventV1.properties.terms,
+    tick: SocialPactEventV1.properties.tick,
+    broken: SocialPactEventV1.properties.broken,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialPactV1 = Static<typeof ServerDataSocialPactV1>;
+
+export const ServerDataSocialFeudV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_feud"),
+    left: SocialFeudEventV1.properties.left,
+    right: SocialFeudEventV1.properties.right,
+    tick: SocialFeudEventV1.properties.tick,
+    place: SocialFeudEventV1.properties.place,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialFeudV1 = Static<typeof ServerDataSocialFeudV1>;
+
+export const ServerDataSocialRenownDeltaV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_renown_delta"),
+    char_id: SocialRenownDeltaV1.properties.char_id,
+    fame_delta: SocialRenownDeltaV1.properties.fame_delta,
+    notoriety_delta: SocialRenownDeltaV1.properties.notoriety_delta,
+    tags_added: SocialRenownDeltaV1.properties.tags_added,
+    tick: SocialRenownDeltaV1.properties.tick,
+    reason: SocialRenownDeltaV1.properties.reason,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialRenownDeltaV1 = Static<
+  typeof ServerDataSocialRenownDeltaV1
+>;
+
+export const ServerDataSparringInviteV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("sparring_invite"),
+    ...SparringInvitePayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSparringInviteV1 = Static<
+  typeof ServerDataSparringInviteV1
+>;
+
+export const ServerDataTradeOfferV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer"),
+    ...TradeOfferPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTradeOfferV1 = Static<typeof ServerDataTradeOfferV1>;
+
+export const ServerDataRealmVisionParamsV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("realm_vision_params"),
+    ...RealmVisionParamsV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRealmVisionParamsV1 = Static<
+  typeof ServerDataRealmVisionParamsV1
+>;
+
+export const ServerDataSpiritualSenseTargetsV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spiritual_sense_targets"),
+    ...SpiritualSenseTargetsV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSpiritualSenseTargetsV1 = Static<
+  typeof ServerDataSpiritualSenseTargetsV1
+>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -923,6 +1116,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
   ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataBotanySkillV1,
   ServerDataAlchemyFurnaceV1,
   ServerDataAlchemySessionV1,
@@ -938,6 +1132,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillCapChangedV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
+  BurstMeridianEventV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataWeaponEquippedV1,
@@ -958,5 +1153,14 @@ export const ServerDataV1 = Type.Union([
   ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataAscensionQuotaV1,
+  ServerDataSocialAnonymityV1,
+  ServerDataSocialExposureV1,
+  ServerDataSocialPactV1,
+  ServerDataSocialFeudV1,
+  ServerDataSocialRenownDeltaV1,
+  ServerDataSparringInviteV1,
+  ServerDataTradeOfferV1,
+  ServerDataRealmVisionParamsV1,
+  ServerDataSpiritualSenseTargetsV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

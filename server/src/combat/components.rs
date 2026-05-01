@@ -327,6 +327,8 @@ pub struct Casting {
     pub start_position: valence::prelude::DVec3,
     /// 完成成功后写到 QuickSlotBindings 的冷却 tick 数（中断走另一个固定值）。
     pub complete_cooldown_ticks: u64,
+    /// SkillBar 技能 id。QuickSlot/物品 cast 为 None。
+    pub skill_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

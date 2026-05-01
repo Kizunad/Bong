@@ -30,6 +30,8 @@ pub struct MineralEntry {
     pub vanilla_block: &'static str,
     /// 0 = 不入炉。
     pub forge_tier_min: u8,
+    /// plan-mineral-v2 P1 — vanilla pickaxe material tier gate.
+    pub pickaxe_tier_min: u8,
     /// 灵石专用：初始灵气区间。其他 mineral 为 None。
     pub ling_shi_qi_range: Option<LingShiQiRange>,
     /// shelflife profile id（仅灵石），其他 mineral 为 None。
@@ -145,6 +147,7 @@ fn metal(id: MineralId, zh: &'static str) -> MineralEntry {
         category: MineralCategory::Metal,
         vanilla_block: id.vanilla_block(),
         forge_tier_min: id.forge_tier_min(),
+        pickaxe_tier_min: id.rarity().tier(),
         ling_shi_qi_range: None,
         decay_profile: None,
     }
@@ -159,6 +162,7 @@ fn crystal(id: MineralId, zh: &'static str) -> MineralEntry {
         category: MineralCategory::Crystal,
         vanilla_block: id.vanilla_block(),
         forge_tier_min: 0,
+        pickaxe_tier_min: id.rarity().tier(),
         ling_shi_qi_range: None,
         decay_profile: None,
     }
@@ -173,6 +177,7 @@ fn alchemy_aux(id: MineralId, zh: &'static str) -> MineralEntry {
         category: MineralCategory::AlchemyAux,
         vanilla_block: id.vanilla_block(),
         forge_tier_min: 0,
+        pickaxe_tier_min: id.rarity().tier(),
         ling_shi_qi_range: None,
         decay_profile: None,
     }
@@ -192,6 +197,7 @@ fn ling_shi(
         category: MineralCategory::LingShi,
         vanilla_block: id.vanilla_block(),
         forge_tier_min: 0,
+        pickaxe_tier_min: id.rarity().tier(),
         ling_shi_qi_range: Some(qi_range),
         decay_profile: Some(profile),
     }
@@ -218,6 +224,7 @@ mod tests {
         assert_eq!(entry.display_name_zh, "髓铁");
         assert_eq!(entry.vanilla_block, "ancient_debris");
         assert_eq!(entry.forge_tier_min, 3);
+        assert_eq!(entry.pickaxe_tier_min, 3);
     }
 
     #[test]
@@ -244,6 +251,15 @@ mod tests {
         let fan = reg.get(MineralId::LingShiFan).unwrap();
         assert_eq!(fan.decay_profile, Some("ling_shi_fan_v1"));
         assert_eq!(fan.ling_shi_qi_range.unwrap().min, 5.0);
+    }
+
+    #[test]
+    fn pickaxe_tier_min_tracks_mineral_rarity() {
+        let reg = build_default_registry();
+        for &id in MineralId::ALL {
+            let entry = reg.get(id).expect("registered mineral");
+            assert_eq!(entry.pickaxe_tier_min, id.rarity().tier(), "{id}");
+        }
     }
 
     #[test]

@@ -27,6 +27,7 @@
 //!   * 战斗 plan：消费 CultivationDeathTrigger / throughput 写入，并在渡劫波次失败时发送 TribulationFailed
 
 pub mod breakthrough;
+pub mod burst_meridian;
 pub mod color;
 pub mod components;
 pub mod composure;
@@ -47,6 +48,9 @@ pub mod negative_zone;
 pub mod overload;
 pub mod possession;
 pub mod qi_zero_decay;
+pub mod realm_vision;
+pub mod skill_registry;
+pub mod spiritual_sense;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;
@@ -87,12 +91,22 @@ use self::lifespan::{
 };
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
-use self::overload::overload_detection_tick;
+use self::overload::{
+    apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
+    MeridianCrackEvent, MeridianOverloadEvent,
+};
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
     DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
 };
 use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
+use self::realm_vision::push::{
+    push_initial_realm_vision, push_realm_vision_on_breakthrough, push_realm_vision_on_revive,
+};
+use self::realm_vision::view_distance_ramp::view_distance_ramp_system;
+use self::spiritual_sense::push::{
+    cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
+};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
@@ -107,6 +121,7 @@ use self::tribulation::{
     TribulationOriginDimension, TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
+use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
     load_active_tribulation, load_player_cultivation_bundle, release_ascension_quota_slot,
     PersistenceSettings,
@@ -123,9 +138,11 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
+    app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());
+    app.insert_resource(SpiritualSensePushState::default());
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
@@ -157,6 +174,9 @@ pub fn register(app: &mut App) {
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
+    app.add_event::<MeridianOverloadEvent>();
+    app.add_event::<MeridianCrackEvent>();
+    app.add_event::<burst_meridian::BurstMeridianEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
     app.add_systems(
@@ -178,8 +198,8 @@ pub fn register(app: &mut App) {
             emit_skill_caps_on_realm_regressed.after(qi_zero_decay_tick),
             // plan §2.1 损伤/净化链
             overload_detection_tick.after(meridian_open_tick),
+            apply_meridian_crack_events.after(overload_detection_tick),
             contamination_tick.after(qi_regen_and_zone_drain_tick),
-            meridian_heal_tick.after(overload_detection_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §4 死亡/重生钩子
             on_player_revived,
@@ -218,8 +238,31 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            apply_meridian_overload_events.after(overload_detection_tick),
+            meridian_heal_tick
+                .after(apply_meridian_crack_events)
+                .after(apply_meridian_overload_events),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            // plan-perception-v1.1 §4.1 server authoritative realm vision.
+            push_initial_realm_vision.after(attach_cultivation_to_joined_clients),
+            push_realm_vision_on_breakthrough.after(breakthrough_system),
+            push_realm_vision_on_revive.after(on_player_revived),
+            view_distance_ramp_system,
+            push_spiritual_sense_targets.after(qi_regen_and_zone_drain_tick),
+            cleanup_spiritual_sense_push_state,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             process_lifespan_extension_intents.after(lifespan_aging_tick),
-            process_duo_she_requests.after(lifespan_aging_tick),
+            process_duo_she_requests
+                .after(lifespan_aging_tick)
+                .after(DuoSheIntentForwardSet),
             process_life_core_requests.after(process_duo_she_requests),
         ),
     );
@@ -461,11 +504,7 @@ fn emit_skill_caps_on_realm_regressed(
             }
         }
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
-        for skill in [
-            crate::skill::components::SkillId::Herbalism,
-            crate::skill::components::SkillId::Alchemy,
-            crate::skill::components::SkillId::Forging,
-        ] {
+        for skill in crate::skill::components::SkillId::ALL {
             skill_cap_events.send(SkillCapChanged {
                 char_entity: event.entity,
                 skill,
@@ -915,7 +954,7 @@ mod tests {
             .resource_mut::<valence::prelude::Events<SkillCapChanged>>()
             .drain()
             .collect();
-        assert_eq!(caps.len(), 3);
+        assert_eq!(caps.len(), crate::skill::components::SkillId::ALL.len());
         assert!(caps.iter().all(|e| e.new_cap == 8));
     }
 

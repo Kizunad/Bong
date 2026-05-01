@@ -141,6 +141,7 @@ pub enum ItemCategory {
     Weapon,
     Treasure,
     BoneCoin,
+    Tool,
     Misc,
 }
 
@@ -1164,6 +1165,7 @@ fn parse_item_category(
         "weapon" => Ok(ItemCategory::Weapon),
         "treasure" => Ok(ItemCategory::Treasure),
         "bonecoin" | "bone_coin" | "bone-coins" | "bone_coins" => Ok(ItemCategory::BoneCoin),
+        "tool" => Ok(ItemCategory::Tool),
         "misc" => Ok(ItemCategory::Misc),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
@@ -1511,6 +1513,12 @@ pub enum InventoryMoveOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct InventoryExchangeOutcome {
+    pub left_revision: InventoryRevision,
+    pub right_revision: InventoryRevision,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct InventoryDurabilityUpdate {
     pub revision: InventoryRevision,
     pub instance_id: u64,
@@ -1675,6 +1683,45 @@ pub fn apply_inventory_move(
             })
         }
     }
+}
+
+pub fn exchange_inventory_items(
+    left_inventory: &mut PlayerInventory,
+    left_instance_id: u64,
+    right_inventory: &mut PlayerInventory,
+    right_instance_id: u64,
+) -> Result<InventoryExchangeOutcome, String> {
+    if left_instance_id == right_instance_id {
+        return Err(format!(
+            "cannot exchange identical instance {left_instance_id}"
+        ));
+    }
+    let left_item = clone_item_at(left_inventory, left_instance_id)
+        .ok_or_else(|| format!("left instance {left_instance_id} not found"))?;
+    let right_item = clone_item_at(right_inventory, right_instance_id)
+        .ok_or_else(|| format!("right instance {right_instance_id} not found"))?;
+
+    let mut next_left = left_inventory.clone();
+    let mut next_right = right_inventory.clone();
+    detach_instance(&mut next_left, left_instance_id);
+    detach_instance(&mut next_right, right_instance_id);
+
+    let left_receive_location = find_first_fit_container_location(&next_left, &right_item)
+        .ok_or_else(|| format!("left inventory has no room for instance {right_instance_id}"))?;
+    let right_receive_location = find_first_fit_container_location(&next_right, &left_item)
+        .ok_or_else(|| format!("right inventory has no room for instance {left_instance_id}"))?;
+
+    attach_at_location(&mut next_left, right_item, &left_receive_location)?;
+    attach_at_location(&mut next_right, left_item, &right_receive_location)?;
+    bump_revision(&mut next_left);
+    bump_revision(&mut next_right);
+
+    *left_inventory = next_left;
+    *right_inventory = next_right;
+    Ok(InventoryExchangeOutcome {
+        left_revision: left_inventory.revision,
+        right_revision: right_inventory.revision,
+    })
 }
 
 pub fn set_item_instance_durability(
@@ -2559,6 +2606,12 @@ fn validate_move_semantics(
             "weapon `{}` cannot move to hotbar; weapons must stay in equipped slots",
             item.template_id
         )),
+        InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Tool) => {
+            Err(format!(
+                "tool `{}` cannot move to hotbar; tools must stay in equipped slots",
+                item.template_id
+            ))
+        }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
@@ -2570,14 +2623,16 @@ fn validate_move_semantics(
         InventoryLocationV1::Equip { slot } => match slot {
             EquipSlotV1::MainHand => {
                 if template.weapon_spec.is_none()
+                    && !matches!(template.category, ItemCategory::Tool)
                     && crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_none()
                 {
                     return Err(format!(
-                        "item `{}` cannot equip to main_hand; expected weapon or hoe",
+                        "item `{}` cannot equip to main_hand; expected weapon, tool, or hoe",
                         item.template_id
                     ));
                 }
-                if template.weapon_spec.is_some()
+                if (template.weapon_spec.is_some()
+                    || matches!(template.category, ItemCategory::Tool))
                     && inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND)
                     && !from_two_hand
                 {
@@ -3174,6 +3229,35 @@ mod tests {
                 "forge asset `{required}` must be registered"
             );
         }
+        for required_tool in [
+            "cai_yao_dao",
+            "bao_chu",
+            "cao_lian",
+            "dun_qi_jia",
+            "gua_dao",
+            "gu_hai_qian",
+            "bing_jia_shou_tao",
+        ] {
+            let template = registry
+                .get(required_tool)
+                .unwrap_or_else(|| panic!("tool asset `{required_tool}` must be registered"));
+            assert!(
+                matches!(template.category, ItemCategory::Tool),
+                "tool asset `{required_tool}` must parse as ItemCategory::Tool"
+            );
+            assert!(
+                template.weapon_spec.is_none(),
+                "tool asset `{required_tool}` must not define combat weapon stats"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_item_category_accepts_tool_alias() {
+        let category = parse_item_category("tool", Path::new("<inline-items.toml>"), "cai_yao_dao")
+            .expect("tool category should parse");
+
+        assert_eq!(category, ItemCategory::Tool);
     }
 
     #[test]
@@ -3932,6 +4016,94 @@ cols = 4
     }
 
     #[test]
+    fn apply_move_allows_tool_to_main_hand() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "dun_qi_jia".to_string();
+        inv.containers[0].items[0].instance.display_name = "钝气夹".to_string();
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect("tool should equip to main_hand");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("dun_qi_jia")
+        );
+    }
+
+    #[test]
+    fn apply_move_rejects_tool_to_main_hand_when_two_hand_occupied() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "dun_qi_jia".to_string();
+        inv.containers[0].items[0].instance.display_name = "钝气夹".to_string();
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            ItemInstance {
+                instance_id: 77,
+                template_id: "wooden_staff".to_string(),
+                display_name: "木杖".to_string(),
+                grid_w: 1,
+                grid_h: 3,
+                weight: 1.2,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+            },
+        );
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect_err("tool should conflict with occupied two_hand");
+
+        assert!(error.contains("two_hand slot is occupied"));
+    }
+
+    #[test]
     fn apply_move_rejects_weapon_to_hotbar() {
         use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
 
@@ -3955,6 +4127,31 @@ cols = 4
         .expect_err("weapon should be rejected from hotbar");
 
         assert!(error.contains("cannot move to hotbar"));
+    }
+
+    #[test]
+    fn apply_move_rejects_tool_to_hotbar() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "cai_yao_dao".to_string();
+        inv.containers[0].items[0].instance.display_name = "采药刀".to_string();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("tool should be rejected from hotbar");
+
+        assert!(error.contains("tool `cai_yao_dao` cannot move to hotbar"));
     }
 
     #[test]
@@ -4133,6 +4330,52 @@ cols = 4
         assert_eq!(out.remaining_stack, 0);
         assert_eq!(out.revision, InventoryRevision(8));
         assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn exchange_inventory_items_swaps_items_and_bumps_both_revisions() {
+        let mut left = make_test_inventory_with_one_item();
+        let mut right = make_test_inventory_with_one_item();
+        right.revision = InventoryRevision(3);
+        right.containers[0].items[0].row = 1;
+        right.containers[0].items[0].col = 1;
+        right.containers[0].items[0].instance.instance_id = 99;
+        right.containers[0].items[0].instance.display_name = "右物".to_string();
+
+        let outcome = exchange_inventory_items(&mut left, 42, &mut right, 99)
+            .expect("exchange should succeed");
+
+        assert_eq!(outcome.left_revision, InventoryRevision(8));
+        assert_eq!(outcome.right_revision, InventoryRevision(4));
+        assert!(inventory_item_by_instance(&left, 42).is_none());
+        assert!(inventory_item_by_instance(&right, 99).is_none());
+        assert!(inventory_item_by_instance(&left, 99).is_some());
+        assert!(inventory_item_by_instance(&right, 42).is_some());
+    }
+
+    #[test]
+    fn exchange_inventory_items_rejects_without_room_and_keeps_both_unchanged() {
+        let mut left = make_test_inventory_with_one_item();
+        left.containers.truncate(1);
+        left.containers[0].cols = 1;
+        left.containers[0].rows = 1;
+        let original_left = left.clone();
+        let mut right = make_test_inventory_with_one_item();
+        right.containers[0].items[0].instance.instance_id = 99;
+        right.containers[0].items[0].instance.grid_w = 2;
+        right.containers[0].items[0].instance.grid_h = 1;
+        let original_right = right.clone();
+
+        let error = exchange_inventory_items(&mut left, 42, &mut right, 99)
+            .expect_err("oversized incoming item should be rejected");
+
+        assert!(error.contains("left inventory has no room"));
+        assert_eq!(left.revision, original_left.revision);
+        assert_eq!(left.containers, original_left.containers);
+        assert_eq!(left.hotbar, original_left.hotbar);
+        assert_eq!(right.revision, original_right.revision);
+        assert_eq!(right.containers, original_right.containers);
+        assert_eq!(right.hotbar, original_right.hotbar);
     }
 
     #[test]

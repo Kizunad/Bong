@@ -139,9 +139,11 @@ pub fn register(app: &mut App) {
             systems::record_replenish_to_pressure,
             systems::compute_zone_pressure_system,
             // session emit 在 apply 后跑，client 拿到的是结算后状态
+            systems::emit_harvest_inventory_snapshots,
             network_emit::emit_lingtian_session_to_clients,
         )
             .chain()
             .after(systems::apply_completed_sessions),
     );
+    app.add_systems(Update, systems::release_lingtian_plot_owner_on_npc_death);
 }

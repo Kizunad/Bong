@@ -40,6 +40,31 @@
             "total_xp_at": 240
           }
         ]
+      },
+      "social": {
+        "renown": {
+          "fame": 2,
+          "notoriety": 1,
+          "top_tags": [
+            {
+              "tag": "first_exposed",
+              "weight": 0.5,
+              "last_seen_tick": 83800,
+              "permanent": false
+            }
+          ]
+        },
+        "relationships": [
+          {
+            "kind": "companion",
+            "peer": "char:new_player_1",
+            "since_tick": 83000,
+            "metadata": {
+              "source": "shared_travel"
+            }
+          }
+        ],
+        "exposed_to_count": 1
       }
     },
     {
@@ -66,6 +91,7 @@
     {
       "id": "npc_001",
       "kind": "zombie",
+      "zone": "starter_valley",
       "pos": [14.0, 66.0, 14.0],
       "state": "idle",
       "digest": {

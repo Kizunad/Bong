@@ -69,3 +69,41 @@ tasks.withType(JavaCompile).configureEach {
 tasks.withType(Test) {
     useJUnitPlatform()
 }
+
+// runClientPreview — 用于 worldgen-snapshot 预览（plan-worldgen-snapshot-v1）。
+// 行为：继承 fabric-loom 的 runClient，自动设 BONG_PREVIEW_HARNESS=1 并把
+// BONG_PREVIEW_CONFIG 默认指向 client/preview-harness.json（绝对路径，避免
+// client/run/ 作为 cwd 时的相对路径误解）。
+//
+// 调用：
+//   ./gradlew runClientPreview                      # 用默认 client/preview-harness.json
+//   BONG_PREVIEW_CONFIG=/abs/cfg.json ./gradlew runClientPreview
+//
+// CI 上需 xvfb-run 包：
+//   xvfb-run -a --server-args='-screen 0 1280x720x24' ./gradlew runClientPreview
+// loom 1.6-SNAPSHOT 不带 useXVFB，须显式包；ubuntu-24.04 预装 xvfb 21.x，无需 apt。
+//
+// 退出条件由 mod 内 PreviewSession 调用 client.scheduleStop()（不会自然退出）。
+tasks.register('runClientPreview') {
+    group = 'fabric'
+    description = 'Run Fabric client with preview harness env enabled (worldgen-snapshot)'
+    dependsOn('runClient')
+}
+
+tasks.named('runClient').configure {
+    def isPreviewRun = gradle.startParameter.taskNames.any {
+        it == 'runClientPreview' || it.endsWith(':runClientPreview')
+    }
+    if (isPreviewRun) {
+        environment 'BONG_PREVIEW_HARNESS', '1'
+        if (System.getenv('BONG_PREVIEW_CONFIG') == null) {
+            environment 'BONG_PREVIEW_CONFIG', file('preview-harness.json').absolutePath
+        }
+        // MC 1.20.1 vanilla Main 解析 --quickPlayMultiplayer（23w14a 引入），
+        // 让 client 启动后跳过主菜单直接连 server。不加这个 client 卡在标题
+        // 屏，PreviewSession.WAIT_WORLD 永远等不到 client.world，60s 后超时
+        // 退出 → artifact 0 张图（首轮 CI 实测命中此 bug）。
+        def previewServer = System.getenv('BONG_PREVIEW_SERVER') ?: '127.0.0.1:25565'
+        args '--quickPlayMultiplayer', previewServer
+    }
+}

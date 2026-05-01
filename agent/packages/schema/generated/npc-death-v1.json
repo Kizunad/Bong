@@ -1,0 +1,119 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "npc_id",
+    "archetype",
+    "cause",
+    "age_ticks",
+    "max_age_ticks",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "npc_death",
+      "type": "string"
+    },
+    "npc_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "archetype": {
+      "anyOf": [
+        {
+          "const": "zombie",
+          "type": "string"
+        },
+        {
+          "const": "commoner",
+          "type": "string"
+        },
+        {
+          "const": "rogue",
+          "type": "string"
+        },
+        {
+          "const": "beast",
+          "type": "string"
+        },
+        {
+          "const": "disciple",
+          "type": "string"
+        },
+        {
+          "const": "guardian_relic",
+          "type": "string"
+        },
+        {
+          "const": "daoxiang",
+          "type": "string"
+        },
+        {
+          "const": "zhinian",
+          "type": "string"
+        },
+        {
+          "const": "fuya",
+          "type": "string"
+        }
+      ]
+    },
+    "cause": {
+      "anyOf": [
+        {
+          "const": "natural_aging",
+          "type": "string"
+        },
+        {
+          "const": "combat",
+          "type": "string"
+        },
+        {
+          "const": "despawned",
+          "type": "string"
+        },
+        {
+          "const": "duo_she",
+          "type": "string"
+        }
+      ]
+    },
+    "faction_id": {
+      "anyOf": [
+        {
+          "const": "attack",
+          "type": "string"
+        },
+        {
+          "const": "defend",
+          "type": "string"
+        },
+        {
+          "const": "neutral",
+          "type": "string"
+        }
+      ]
+    },
+    "life_record_snapshot": {
+      "type": "string"
+    },
+    "age_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "max_age_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

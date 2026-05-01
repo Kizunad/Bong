@@ -2,6 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { BiographyEntryV1 } from "./biography.js";
 import { Realm } from "./cultivation.js";
+import { DeceasedSocialSnapshotV1 } from "./social.js";
 import { validate, type ValidationResult } from "./validate.js";
 
 export const ZoneDeathKind = Type.Union(
@@ -182,6 +183,7 @@ export const DeceasedSnapshotV1 = Type.Object(
     termination_category: TerminationCategoryV1,
     lifecycle: LifecycleV1,
     life_record: LifeRecordV1,
+    social: Type.Optional(DeceasedSocialSnapshotV1),
   },
   { additionalProperties: false },
 );
@@ -241,6 +243,18 @@ export const DuoSheEventV1 = Type.Object(
 );
 export type DuoSheEventV1 = Static<typeof DuoSheEventV1>;
 
+export const RebirthEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    character_id: Type.String({ minLength: 1 }),
+    at_tick: Type.Integer({ minimum: 0 }),
+    prior_realm: Realm,
+    new_realm: Realm,
+  },
+  { additionalProperties: false },
+);
+export type RebirthEventV1 = Static<typeof RebirthEventV1>;
+
 export function validateDeceasedIndexEntryV1Contract(data: unknown): ValidationResult {
   return validate(DeceasedIndexEntryV1, data);
 }
@@ -259,4 +273,8 @@ export function validateAgingEventV1Contract(data: unknown): ValidationResult {
 
 export function validateDuoSheEventV1Contract(data: unknown): ValidationResult {
   return validate(DuoSheEventV1, data);
+}
+
+export function validateRebirthEventV1Contract(data: unknown): ValidationResult {
+  return validate(RebirthEventV1, data);
 }

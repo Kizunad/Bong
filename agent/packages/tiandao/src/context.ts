@@ -111,15 +111,67 @@ export const playerProfilesBlock: ContextBlock = {
   required: true,
   render({ state }) {
     if (state.players.length === 0) return "";
-    const header = "| 玩家 | 综合实力 | 战斗 | karma | 趋势 | 位置 |";
-    const sep = "|------|---------|------|-------|------|------|";
+    const header = "| 玩家 | 综合实力 | 战斗 | karma | 声名 | 关系 | 趋势 | 位置 |";
+    const sep = "|------|---------|------|-------|------|------|------|------|";
     const rows = state.players.map((p: PlayerProfile) => {
       const trend = p.trend === "rising" ? "↑" : p.trend === "falling" ? "↓" : "→";
-      return `| ${p.name} | ${p.composite_power.toFixed(2)} | ${p.breakdown.combat.toFixed(2)} | ${p.breakdown.karma.toFixed(2)} | ${trend} | ${p.zone} |`;
+      const renown = p.social
+        ? `${p.social.renown.fame}/${p.social.renown.notoriety} ${formatRenownTags(
+            p.social.renown.top_tags,
+          )}`
+        : "-";
+      const relationships = p.social ? `${p.social.relationships.length}` : "-";
+      return `| ${p.name} | ${p.composite_power.toFixed(2)} | ${p.breakdown.combat.toFixed(2)} | ${p.breakdown.karma.toFixed(2)} | ${renown} | ${relationships} | ${trend} | ${p.zone} |`;
     });
     return `## 玩家画像\n${header}\n${sep}\n${rows.join("\n")}`;
   },
 };
+
+export const perceptionEnvelopeBlock: ContextBlock = {
+  name: "perception_envelope",
+  priority: 1,
+  required: true,
+  render({ state }) {
+    if (state.players.length === 0) return "";
+
+    const lines = state.players.map((player) => {
+      const profile = describePerceptionProfile(player.realm);
+      const [x, y, z] = player.pos;
+      return `- ${player.uuid}: ${player.realm} @ ${player.zone} (${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)})；${profile}`;
+    });
+
+    return [
+      "## 玩家可感知边界",
+      "叙事只能写玩家肉眼或神识可感之事；超出范围只能写作远方异象、传闻或 NPC 口述。",
+      "匿名：正文不要主动写玩家名，除非渡虚劫点名或死亡遗念。",
+      ...lines,
+    ].join("\n");
+  },
+};
+
+function formatRenownTags(tags: NonNullable<PlayerProfile["social"]>["renown"]["top_tags"]): string {
+  if (tags.length === 0) return "";
+  return `(${tags.map((tag) => tag.tag).join("/")})`;
+}
+
+function describePerceptionProfile(realm: string): string {
+  switch (realm) {
+    case "Awaken":
+      return "凡眼近距，只能感到灵气浓淡；不可直叙墙后/远处细节";
+    case "Induce":
+      return "神识 50m，可感 LivingQi；远处战斗只能作风声/兽鸣";
+    case "Condense":
+      return "神识约 200m，可感 LivingQi + AmbientLeyline；可写区域灵气精确波动";
+    case "Solidify":
+      return "神识约 500m，可感 LivingQi + AmbientLeyline + CultivatorRealm；只写境界段，不写具体数值";
+    case "Spirit":
+      return "神识约 1000m，可感天道注意力与危机预警；可写危机方位，不剧透全貌";
+    case "Void":
+      return "神识三圈：500m 明察，2000m 只感修士/战斗/灵气波动，外圈仅感渡虚劫/时代法旨等大事";
+    default:
+      return "境界未知，按凡眼近距处理；不可直叙远处细节";
+  }
+}
 
 export const recentEventsBlock: ContextBlock = {
   name: "recent_events",
@@ -167,6 +219,24 @@ export const peerDecisionsBlock: ContextBlock = {
       (decision) => `- ${decision.displayName} (上一轮): ${decision.summary}`,
     );
     return `## 其他天道意志\n${lines.join("\n")}`;
+  },
+};
+
+export const recentNarrationsBlock: ContextBlock = {
+  name: "recent_narrations",
+  priority: 3,
+  required: false,
+  render({ worldModel }) {
+    const narrations = worldModel?.getRecentNarrations(6) ?? [];
+    if (narrations.length === 0) {
+      return "";
+    }
+
+    const lines = narrations.map((narration) => {
+      const target = narration.target ? ` target=${narration.target}` : "";
+      return `- ${narration.displayName}: ${narration.scope}${target} ${narration.style}「${narration.text}」`;
+    });
+    return `## 近轮天道叙事\n${lines.join("\n")}\n要求：本轮若要叙事，必须换物象、换句式，不要复用上述文本或同义近句。`;
   },
 };
 
@@ -269,11 +339,13 @@ export const CALAMITY_RECIPE: ContextRecipe = {
   blocks: [
     { ...keyPlayerBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
-    { ...recentEventsBlock, priority: 2, required: true },
-    { ...balanceBlock, priority: 3, required: false },
-    { ...peerDecisionsBlock, priority: 4, required: false },
-    { ...chatSignalsBlock, priority: 5, required: false },
-    { ...worldSnapshotBlock, priority: 6, required: false },
+    { ...perceptionEnvelopeBlock, priority: 2, required: true },
+    { ...recentEventsBlock, priority: 3, required: true },
+    { ...balanceBlock, priority: 4, required: false },
+    { ...recentNarrationsBlock, priority: 5, required: false },
+    { ...peerDecisionsBlock, priority: 6, required: false },
+    { ...chatSignalsBlock, priority: 7, required: false },
+    { ...worldSnapshotBlock, priority: 8, required: false },
   ],
 };
 
@@ -283,10 +355,12 @@ export const MUTATION_RECIPE: ContextRecipe = {
   blocks: [
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
-    { ...balanceBlock, priority: 2, required: false },
-    { ...peerDecisionsBlock, priority: 3, required: false },
-    { ...chatSignalsBlock, priority: 4, required: false },
-    { ...recentEventsBlock, priority: 5, required: false },
+    { ...perceptionEnvelopeBlock, priority: 2, required: true },
+    { ...balanceBlock, priority: 3, required: false },
+    { ...recentNarrationsBlock, priority: 4, required: false },
+    { ...peerDecisionsBlock, priority: 5, required: false },
+    { ...chatSignalsBlock, priority: 6, required: false },
+    { ...recentEventsBlock, priority: 7, required: false },
   ],
 };
 
@@ -297,11 +371,13 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
-    { ...balanceBlock, priority: 3, required: false },
-    { ...playerProfilesBlock, priority: 4, required: true },
-    { ...recentEventsBlock, priority: 5, required: true },
-    { ...keyPlayerBlock, priority: 6, required: false },
-    { ...chatSignalsBlock, priority: 7, required: false },
+    { ...perceptionEnvelopeBlock, priority: 3, required: true },
+    { ...balanceBlock, priority: 4, required: false },
+    { ...recentNarrationsBlock, priority: 5, required: false },
+    { ...playerProfilesBlock, priority: 6, required: true },
+    { ...recentEventsBlock, priority: 7, required: true },
+    { ...keyPlayerBlock, priority: 8, required: false },
+    { ...chatSignalsBlock, priority: 9, required: false },
   ],
 };
 

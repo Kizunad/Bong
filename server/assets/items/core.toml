@@ -27,6 +27,39 @@ spirit_quality_initial = 0.6
 description = "最入门的炼丹炉。摆稳了就能起炉，坏了再打一座就是。"
 
 [[item]]
+id = "furnace_lingtie"
+name = "灵铁炉"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 10.0
+rarity = "uncommon"
+spirit_quality_initial = 0.75
+description = "灵铁回火铸成的丹炉，火膛能压住稍烈的药性。"
+
+[[item]]
+id = "furnace_xitie"
+name = "稀铁炉"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 12.0
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "稀铁炉壁薄而不裂，可炼会反噬炉火的高阶药料。"
+
+[[item]]
+id = "spirit_niche_stone"
+name = "龛石"
+category = "treasure"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "rare"
+spirit_quality_initial = 0.2
+description = "可埋作私有灵龛的冷石。放下后不再属于背包，若被揭露便只剩一截空壳。"
+
+[[item]]
 id = "healing_herb_bundle"
 name = "止创草束"
 category = "herb"

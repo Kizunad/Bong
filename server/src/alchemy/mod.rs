@@ -12,7 +12,7 @@
 //! 本 plan **不含炼器** — 炼器走 plan-forge-v1。
 //!
 //! 跨 plan 钩子：
-//!   * plan-botany-v1：§3.2 placeholder 材料（kai_mai_cao / ling_shui / ...）等 botany 落地后替换
+//!   * plan-botany-v1：正典药材名（ci_she_hao / hui_yuan_zhi / ...）直接入配方
 //!   * plan-inventory-v1：pill item / 丹方残卷 item / 材料 item 需登记到 ItemRegistry
 //!   * plan-cultivation-v1：pill 效果 → meridian_progress_bonus 待接
 //!   * plan-HUD-v1 §10：快捷使用栏消费 pill item
@@ -36,15 +36,21 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event,
-    EventReader, EventWriter, Query, Update, Username, With, Without,
+    EventReader, EventWriter, Query, Res, Update, Username, With, Without,
 };
 
+use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
+use crate::combat::events::{CombatEvent, DeathEvent};
+use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::overload::MeridianOverloadEvent;
 use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::ZoneRegistry;
 
 type JoinedClientsWithoutRecipes<'a> = (Entity, &'a Username);
 type JoinedClientsWithoutRecipesFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
@@ -73,6 +79,8 @@ pub struct StartAlchemyRequest {
     pub caster_id: String,
 }
 
+pub const MIN_ZONE_QI_TO_ALCHEMY: f64 = 0.3;
+
 /// plan §4 数据契约：`InterventionRequest` — client → server 调温/注 qi/中途投料。
 #[derive(Debug, Clone, Event)]
 pub struct InterventionRequest {
@@ -86,8 +94,10 @@ pub struct InterventionRequest {
 pub struct AlchemyOutcomeEvent {
     pub furnace: valence::prelude::Entity,
     pub caster_id: String,
+    pub recipe_id: Option<String>,
     pub bucket: outcome::OutcomeBucket,
     pub outcome: ResolvedOutcome,
+    pub elapsed_ticks: u32,
 }
 
 /// plan §1.2 — 玩家手持炉类物品右键地面，客户端发 `AlchemyFurnacePlace` 后
@@ -121,6 +131,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_alchemy_to_joined_clients,
+            handle_start_alchemy_requests,
             handle_alchemy_furnace_place,
             emit_alchemy_skill_xp_from_outcomes,
         ),
@@ -159,6 +170,164 @@ fn alchemy_action_for_bucket(bucket: outcome::OutcomeBucket) -> &'static str {
         outcome::OutcomeBucket::Flawed => "craft_flawed",
         outcome::OutcomeBucket::Waste => "craft_waste",
         outcome::OutcomeBucket::Explode => "craft_explode",
+    }
+}
+
+fn handle_start_alchemy_requests(
+    mut requests: EventReader<StartAlchemyRequest>,
+    recipes: Res<RecipeRegistry>,
+    zones: Option<Res<ZoneRegistry>>,
+    mut furnaces: Query<&mut AlchemyFurnace>,
+) {
+    for request in requests.read() {
+        let Some(recipe) = recipes.get(&request.recipe_id) else {
+            tracing::warn!(
+                "[bong][alchemy] start rejected: unknown recipe `{}`",
+                request.recipe_id
+            );
+            continue;
+        };
+        let zone_qi = zones
+            .as_deref()
+            .and_then(|zones| zones.find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME))
+            .or_else(|| {
+                zones
+                    .as_deref()
+                    .and_then(|zones| zones.find_zone(DimensionKind::Overworld, Default::default()))
+            })
+            .map(|zone| zone.spirit_qi)
+            .unwrap_or(0.0);
+        if zone_qi < MIN_ZONE_QI_TO_ALCHEMY {
+            tracing::warn!(
+                "[bong][alchemy] start rejected: zone spirit_qi {:.3} below {:.3} for recipe `{}`",
+                zone_qi,
+                MIN_ZONE_QI_TO_ALCHEMY,
+                request.recipe_id
+            );
+            continue;
+        }
+
+        let Ok(mut furnace) = furnaces.get_mut(request.furnace) else {
+            tracing::warn!(
+                "[bong][alchemy] start rejected: furnace {:?} missing",
+                request.furnace
+            );
+            continue;
+        };
+        if !furnace.can_run(recipe.furnace_tier_min) {
+            tracing::warn!(
+                "[bong][alchemy] start rejected: furnace {:?} tier/integrity cannot run `{}`",
+                request.furnace,
+                request.recipe_id
+            );
+            continue;
+        }
+        let session = AlchemySession::new(request.recipe_id.clone(), request.caster_id.clone());
+        if let Err(error) = furnace.start_session(session) {
+            tracing::warn!(
+                "[bong][alchemy] start rejected: furnace {:?} recipe `{}`: {error}",
+                request.furnace,
+                request.recipe_id
+            );
+        }
+    }
+}
+
+pub(crate) fn apply_alchemy_explode_outcomes(
+    clock: Res<CombatClock>,
+    mut events: EventReader<AlchemyOutcomeEvent>,
+    players: Query<(Entity, &Username), With<Client>>,
+    mut wounds: Query<(&mut Wounds, Option<&Lifecycle>)>,
+    mut combat_events: EventWriter<CombatEvent>,
+    mut death_events: EventWriter<DeathEvent>,
+    mut overload_events: EventWriter<MeridianOverloadEvent>,
+) {
+    for event in events.read() {
+        let ResolvedOutcome::Explode {
+            damage,
+            meridian_crack,
+        } = event.outcome
+        else {
+            continue;
+        };
+
+        let Some((player_entity, username)) = players.iter().find(|(_, username)| {
+            event.caster_id == username.0
+                || canonical_player_id(username.0.as_str()) == event.caster_id
+        }) else {
+            tracing::warn!(
+                "[bong][alchemy] explode outcome for unknown caster `{}` from furnace {:?}",
+                event.caster_id,
+                event.furnace
+            );
+            continue;
+        };
+
+        let Ok((mut wounds, lifecycle)) = wounds.get_mut(player_entity) else {
+            tracing::warn!(
+                "[bong][alchemy] explode outcome caster {:?} `{}` has no Wounds",
+                player_entity,
+                username.0
+            );
+            continue;
+        };
+
+        let damage = damage.max(0.0) as f32;
+        if damage <= f32::EPSILON && meridian_crack <= f64::EPSILON {
+            continue;
+        }
+
+        let was_alive = wounds.health_current > 0.0;
+        if damage > f32::EPSILON {
+            wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+            wounds.entries.push(Wound {
+                location: BodyPart::Chest,
+                kind: WoundKind::Burn,
+                severity: damage,
+                bleeding_per_sec: 0.0,
+                created_at_tick: clock.tick,
+                inflicted_by: Some("alchemy_explode".to_string()),
+            });
+
+            combat_events.send(CombatEvent {
+                attacker: event.furnace,
+                target: player_entity,
+                resolved_at_tick: clock.tick,
+                body_part: BodyPart::Chest,
+                wound_kind: WoundKind::Burn,
+                damage,
+                contam_delta: 0.0,
+                description: format!(
+                    "alchemy_explode furnace {:?} -> {} for {:.1} damage",
+                    event.furnace, username.0, damage
+                ),
+            });
+        }
+
+        if meridian_crack > f64::EPSILON {
+            overload_events.send(MeridianOverloadEvent {
+                entity: player_entity,
+                severity: meridian_crack,
+            });
+        }
+
+        if was_alive
+            && wounds.health_current <= 0.0
+            && !lifecycle.is_some_and(|lifecycle| {
+                matches!(
+                    lifecycle.state,
+                    LifecycleState::NearDeath | LifecycleState::Terminated
+                )
+            })
+        {
+            death_events.send(DeathEvent {
+                target: player_entity,
+                cause: format!("alchemy_explode:{}", event.caster_id),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: clock.tick,
+            });
+        }
     }
 }
 
@@ -282,7 +451,11 @@ mod integration_tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::combat::components::{WoundKind, Wounds};
+    use crate::combat::events::{CombatEvent, DeathEvent};
+    use crate::combat::CombatClock;
     use crate::cultivation::components::{ColorKind, Contamination, Cultivation};
+    use crate::cultivation::overload::MeridianOverloadEvent;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         PlayerInventory,
@@ -303,7 +476,10 @@ mod integration_tests {
             .feed_stage(
                 &recipe,
                 0,
-                &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+                &[
+                    ("hui_yuan_zhi".into(), 2, 1.0),
+                    ("ling_shui".into(), 1, 1.0),
+                ],
             )
             .unwrap();
         session.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -448,6 +624,7 @@ mod integration_tests {
         app.world_mut().send_event(AlchemyOutcomeEvent {
             furnace,
             caster_id: canonical_player_id("Azure"),
+            recipe_id: Some("hui_yuan_pill_v0".to_string()),
             bucket: outcome::OutcomeBucket::Perfect,
             outcome: ResolvedOutcome::Pill {
                 recipe_id: "hui_yuan_pill_v0".into(),
@@ -459,6 +636,7 @@ mod integration_tests {
                 side_effect: None,
                 flawed_path: false,
             },
+            elapsed_ticks: 120,
         });
 
         app.update();
@@ -479,6 +657,103 @@ mod integration_tests {
             }
             other => panic!("expected action source, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn explode_applies_damage_to_caster() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 42 });
+        app.add_event::<AlchemyOutcomeEvent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<MeridianOverloadEvent>();
+        app.add_systems(Update, apply_alchemy_explode_outcomes);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Wounds {
+                    health_current: 30.0,
+                    health_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let furnace = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(AlchemyOutcomeEvent {
+            furnace,
+            caster_id: canonical_player_id("Azure"),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
+            bucket: outcome::OutcomeBucket::Explode,
+            outcome: ResolvedOutcome::Explode {
+                damage: 12.0,
+                meridian_crack: 0.2,
+            },
+            elapsed_ticks: 120,
+        });
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(player).unwrap();
+        assert_eq!(wounds.health_current, 18.0);
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].kind, WoundKind::Burn);
+
+        assert_eq!(app.world().resource::<Events<CombatEvent>>().len(), 1);
+        let overload = app.world().resource::<Events<MeridianOverloadEvent>>();
+        let overload_event = overload.iter_current_update_events().next().unwrap();
+        assert_eq!(overload_event.entity, player);
+        assert!((overload_event.severity - 0.2).abs() < 1e-9);
+        assert!(app.world().resource::<Events<DeathEvent>>().is_empty());
+    }
+
+    #[test]
+    fn explode_emits_death_when_lethal() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 43 });
+        app.add_event::<AlchemyOutcomeEvent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<MeridianOverloadEvent>();
+        app.add_systems(Update, apply_alchemy_explode_outcomes);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Wounds {
+                    health_current: 5.0,
+                    health_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let furnace = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(AlchemyOutcomeEvent {
+            furnace,
+            caster_id: "Azure".to_string(),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
+            bucket: outcome::OutcomeBucket::Explode,
+            outcome: ResolvedOutcome::Explode {
+                damage: 12.0,
+                meridian_crack: 0.0,
+            },
+            elapsed_ticks: 120,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Wounds>(player).unwrap().health_current,
+            0.0
+        );
+        let deaths = app.world().resource::<Events<DeathEvent>>();
+        let death = deaths.iter_current_update_events().next().unwrap();
+        assert_eq!(death.target, player);
+        assert!(death.cause.starts_with("alchemy_explode:"));
     }
 
     #[test]

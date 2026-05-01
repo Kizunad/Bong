@@ -8,8 +8,10 @@ use valence::prelude::{
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use crate::combat::components::Lifecycle;
 use crate::player::state::canonical_player_id;
 use crate::schema::chat_message::ChatMessageV1;
+use crate::social::events::PlayerChatCollected;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
@@ -43,10 +45,11 @@ pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut player_sets: ParamSet<(
-        Query<(&Username, &Position), With<Client>>,
+        Query<(&Username, &Position, Option<&Lifecycle>), With<Client>>,
         Query<&mut Client, With<Client>>,
     )>,
     mut events: EventReader<ChatMessageEvent>,
+    mut collected_chats: valence::prelude::EventWriter<PlayerChatCollected>,
     mut rate_limit: valence::prelude::ResMut<ChatCollectorRateLimit>,
 ) {
     rate_limit.per_player_count.clear();
@@ -67,10 +70,16 @@ pub fn collect_player_chat(
             players
                 .get(*client)
                 .ok()
-                .map(|(username, position)| (username.0.clone(), position.get()))
+                .map(|(username, position, lifecycle)| {
+                    (
+                        username.0.clone(),
+                        position.get(),
+                        lifecycle.map(|lifecycle| lifecycle.character_id.clone()),
+                    )
+                })
         };
 
-        let Some(outbound) = classify_player_message(
+        let Some(classified) = classify_player_message(
             *client,
             message,
             *timestamp,
@@ -82,19 +91,25 @@ pub fn collect_player_chat(
             continue;
         };
 
-        let _ = redis.tx_outbound.send(outbound);
+        collected_chats.send(classified.collected);
+        let _ = redis.tx_outbound.send(classified.outbound);
     }
+}
+
+struct ClassifiedChat {
+    outbound: RedisOutbound,
+    collected: PlayerChatCollected,
 }
 
 fn classify_player_message(
     player_entity: Entity,
     message: &str,
     timestamp: u64,
-    player_info: Option<(String, DVec3)>,
+    player_info: Option<(String, DVec3, Option<String>)>,
     clients: &mut Query<&mut Client, With<Client>>,
     zone_registry: &ZoneRegistry,
     rate_limit: &mut ChatCollectorRateLimit,
-) -> Option<RedisOutbound> {
+) -> Option<ClassifiedChat> {
     let too_long = is_oversize_message(message);
     let over_budget = exceeds_rate_budget(player_entity, rate_limit);
 
@@ -102,7 +117,7 @@ fn classify_player_message(
         return None;
     }
 
-    let (username, position) = player_info?;
+    let (username, position, char_id) = player_info?;
 
     if is_legacy_bang_command(message) {
         if let Ok(mut client) = clients.get_mut(player_entity) {
@@ -117,14 +132,25 @@ fn classify_player_message(
 
     let zone = zone_name_for_position(zone_registry, position);
     let canonical_player = canonical_player_id(username.as_str());
+    let char_id = char_id.unwrap_or_else(|| canonical_player.clone());
 
-    Some(RedisOutbound::PlayerChat(ChatMessageV1 {
-        v: 1,
-        ts: timestamp,
-        player: canonical_player,
-        raw: message.to_string(),
-        zone,
-    }))
+    Some(ClassifiedChat {
+        outbound: RedisOutbound::PlayerChat(ChatMessageV1 {
+            v: 1,
+            ts: timestamp,
+            player: canonical_player,
+            raw: message.to_string(),
+            zone: zone.clone(),
+        }),
+        collected: PlayerChatCollected {
+            entity: player_entity,
+            username,
+            char_id,
+            zone,
+            raw: message.to_string(),
+            timestamp,
+        },
+    })
 }
 
 fn exceeds_rate_budget(player_entity: Entity, rate_limit: &mut ChatCollectorRateLimit) -> bool {
@@ -178,6 +204,7 @@ mod chat_collector_tests {
 
         let mut app = App::new();
         app.add_event::<ChatMessageEvent>();
+        app.add_event::<PlayerChatCollected>();
         app.insert_resource(RedisBridgeResource {
             tx_outbound,
             rx_inbound,
@@ -354,5 +381,31 @@ mod chat_collector_tests {
             }
             other => panic!("expected player chat outbound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn emits_collected_chat_event_after_filtering() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        app.world_mut().entity_mut(alice).insert(Lifecycle {
+            character_id: "char:alice".to_string(),
+            ..Default::default()
+        });
+        send_chat_event(&mut app, alice, "现身一言", 1_712_345_705);
+
+        app.update();
+
+        assert!(matches!(
+            rx_outbound.try_recv(),
+            Ok(RedisOutbound::PlayerChat(_))
+        ));
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<PlayerChatCollected>>();
+        let mut reader = events.get_reader();
+        let collected = reader.read(events).cloned().collect::<Vec<_>>();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].char_id, "char:alice");
+        assert_eq!(collected[0].raw, "现身一言");
     }
 }

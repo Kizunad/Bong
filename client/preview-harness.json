@@ -1,0 +1,52 @@
+{
+  "_doc": "Preview harness 配置（plan-worldgen-snapshot-v1 §2.1 5 角度 + §4.2 chunk-ready barrier）。激活方式：BONG_PREVIEW_HARNESS=1 + BONG_PREVIEW_CONFIG 指向本文件（绝对路径）。client 端用 networkHandler.sendCommand(\"preview_tp ...\") 让 server 做 authoritative teleport，server 端必须设 BONG_PREVIEW_MODE=1。",
+  "_pitch_convention": "-90 仰天 / +90 朝地 / 0 水平（plan §1.5 表里写反过，已修）",
+  "_yaw_convention": "0 朝南 +Z / 90 朝西 -X / 180 朝北 -Z / -90 朝东 +X。yaw=atan2(-(0-camX), (0-camZ))*180/PI 把摄像机指向 (0,0)",
+  "_settle_doc": "chunk_ready_radius=0 走 plan §4.2 HACK 备选：盲等 settle_ticks=600 (30s) 给远距离 tp 后 chunks 流式时间。开启 chunk-ready barrier (radius>0) 时实测 1.20.1 client 的 ClientChunkManager.getWorldChunk 即便 chunks 已渲染也会返回 null（PR #78 实测 top@spawn 都超时但 artifact 显示正常 dirt 色），predicate 不可靠 → 走 HACK 让 validate_snapshots.py 兜底。",
+  "server": "127.0.0.1:25565",
+  "username": "PreviewBot",
+  "wait_world_ticks": 1200,
+  "wait_chunks_ticks": 600,
+  "settle_ticks": 600,
+  "chunk_ready_radius": 0,
+  "chunk_ready_timeout_ticks": 600,
+  "output_dir": "screenshots",
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "_doc": "全俯视。spawn 中心 (8,8) 高空 320 朝地，看 spawn zone 完整轮廓。client render_distance 32 chunks ≈ 512 blocks，看到 spawn 1500x1500 ellipse 一部分中心区域 + 周围 zone 过渡。",
+      "name": "top",
+      "tp": [8, 320, 8],
+      "yaw": 0,
+      "pitch": 90
+    },
+    {
+      "_doc": "等角 NE 视：摄像机在 spawn NE 角 (+400, -400) 高空 220 朝 SW 中心看，pitch=30 略低头看远方地平线 + 中近景地形。",
+      "name": "iso_ne",
+      "tp": [400, 220, -400],
+      "yaw": 45,
+      "pitch": 30
+    },
+    {
+      "_doc": "等角 NW 视：摄像机在 spawn NW 角 (-400, -400) 朝 SE 中心。",
+      "name": "iso_nw",
+      "tp": [-400, 220, -400],
+      "yaw": -45,
+      "pitch": 30
+    },
+    {
+      "_doc": "等角 SE 视：摄像机在 spawn SE 角 (+400, +400) 朝 NW 中心。",
+      "name": "iso_se",
+      "tp": [400, 220, 400],
+      "yaw": 135,
+      "pitch": 30
+    },
+    {
+      "_doc": "等角 SW 视：摄像机在 spawn SW 角 (-400, +400) 朝 NE 中心。",
+      "name": "iso_sw",
+      "tp": [-400, 220, 400],
+      "yaw": -135,
+      "pitch": 30
+    }
+  ]
+}

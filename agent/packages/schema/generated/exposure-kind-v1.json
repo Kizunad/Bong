@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "chat",
+      "type": "string"
+    },
+    {
+      "const": "trade",
+      "type": "string"
+    },
+    {
+      "const": "divine",
+      "type": "string"
+    },
+    {
+      "const": "death",
+      "type": "string"
+    }
+  ]
+}

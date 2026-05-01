@@ -99,6 +99,9 @@ fn default_skill_lv_up_narration(skill: components::SkillId, new_lv: u8) -> Stri
         components::SkillId::Herbalism => "采药",
         components::SkillId::Alchemy => "炼丹",
         components::SkillId::Forging => "锻造",
+        components::SkillId::Combat => "战斗",
+        components::SkillId::Mineral => "采矿",
+        components::SkillId::Cultivation => "修行",
     };
     format!("{skill_name}至 Lv.{new_lv}。手眼未必更快，只是旧误不再反复。")
 }
@@ -368,5 +371,50 @@ mod tests {
             0,
             "no SkillLvUp event should be emitted when the penalty prevents leveling"
         );
+    }
+
+    #[test]
+    fn xp_gain_full_coverage_accumulates_for_every_skill_id() {
+        let mut app = App::new();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillLvUp>();
+        app.add_systems(Update, consume_skill_xp_gain);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                SkillSet::default(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        for skill in SkillId::ALL {
+            app.world_mut().send_event(SkillXpGain {
+                char_entity: entity,
+                skill,
+                amount: 1,
+                source: XpGainSource::Action {
+                    plan_id: "coverage",
+                    action: skill.as_str(),
+                },
+            });
+        }
+
+        app.update();
+
+        let set = app.world().get::<SkillSet>(entity).unwrap();
+        for skill in SkillId::ALL {
+            let entry = set.skills.get(&skill).expect("entry should be created");
+            assert_eq!(entry.xp, 1, "{} xp should increment", skill.as_str());
+            assert_eq!(
+                entry.total_xp,
+                1,
+                "{} total_xp should increment",
+                skill.as_str()
+            );
+        }
     }
 }

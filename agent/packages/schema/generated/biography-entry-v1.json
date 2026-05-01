@@ -1084,6 +1084,45 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "TradeCompleted"
+      ],
+      "properties": {
+        "TradeCompleted": {
+          "type": "object",
+          "required": [
+            "counterparty_id",
+            "offered_item",
+            "received_item",
+            "tick"
+          ],
+          "properties": {
+            "counterparty_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "offered_item": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "received_item": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
     }
   ]
 }

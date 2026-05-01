@@ -65,6 +65,27 @@ export const CHANNELS = {
   TRIBULATION_SETTLE: "bong:tribulation/settle",
   TRIBULATION_COLLAPSE: "bong:tribulation/collapse",
 
+  /** Server → Agent: NPC 生成事件（plan-npc-ai-v1 §6） */
+  NPC_SPAWN: "bong:npc/spawn",
+
+  /** Server → Agent: NPC 死亡事件（plan-npc-ai-v1 §6） */
+  NPC_DEATH: "bong:npc/death",
+
+  /** Server → Agent: 派系状态变更事件（plan-npc-ai-v1 §6） */
+  FACTION_EVENT: "bong:faction/event",
+
+  /** Server → Agent: 玩家社交暴露事件（plan-social-v1 §7） */
+  SOCIAL_EXPOSURE: "bong:social/exposure",
+
+  /** Server → Agent: 玩家盟约建立 / 解除（plan-social-v1 §7） */
+  SOCIAL_PACT: "bong:social/pact",
+
+  /** Server → Agent: 玩家死仇建立（plan-social-v1 §7） */
+  SOCIAL_FEUD: "bong:social/feud",
+
+  /** Server → Agent: 玩家声名变动（plan-social-v1 §7） */
+  SOCIAL_RENOWN_DELTA: "bong:social/renown_delta",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -102,6 +123,14 @@ export const CHANNELS = {
   FORGE_START: "bong:forge/start",
   /** Server → Agent: 锻造结果（结算推，供 agent 记录/叙事） */
   FORGE_OUTCOME: "bong:forge/outcome",
+
+  // ─── 炼丹（plan-alchemy-client-v1 §6 / P4） ───────────────────
+  /** Server → Agent: 炼丹起炉 */
+  ALCHEMY_SESSION_START: "bong:alchemy/session_start",
+  /** Server → Agent: 炼丹结算（含炸炉） */
+  ALCHEMY_SESSION_END: "bong:alchemy/session_end",
+  /** Server → Agent: 炼丹干预结果 */
+  ALCHEMY_INTERVENTION_RESULT: "bong:alchemy/intervention_result",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -129,6 +158,13 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.TRIBULATION_WAVE,
   CHANNELS.TRIBULATION_SETTLE,
   CHANNELS.TRIBULATION_COLLAPSE,
+  CHANNELS.NPC_SPAWN,
+  CHANNELS.NPC_DEATH,
+  CHANNELS.FACTION_EVENT,
+  CHANNELS.SOCIAL_EXPOSURE,
+  CHANNELS.SOCIAL_PACT,
+  CHANNELS.SOCIAL_FEUD,
+  CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,
@@ -141,6 +177,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.TSY_EVENT,
   CHANNELS.FORGE_START,
   CHANNELS.FORGE_OUTCOME,
+  CHANNELS.ALCHEMY_SESSION_START,
+  CHANNELS.ALCHEMY_SESSION_END,
+  CHANNELS.ALCHEMY_INTERVENTION_RESULT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

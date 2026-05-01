@@ -86,6 +86,8 @@ bash scripts/smoke-test.sh
 
 ## Plan 工作流
 
+> **立新 plan 前先读 `docs/CLAUDE.md`** —— 防孤岛调研流程（必读 finished_plans / active / skeleton + 接入面 checklist + 红旗清单）。本节只讲三态流转和 plan 文件结构。
+
 修仙系统功能落地由 plan 文档驱动。**三态流转**：
 
 - **骨架** `docs/plans-skeleton/plan-<name>-vN.md` — 草案，目标 + P0/P1/... 大致划分

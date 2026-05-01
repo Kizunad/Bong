@@ -20,6 +20,7 @@ pub mod inventory_grant;
 pub mod persistence;
 pub mod probe;
 pub mod registry;
+pub mod session;
 pub mod types;
 
 // 公共 re-exports — M3 阶段只 register / break_handler 真正使用；其他类型作为
@@ -28,8 +29,8 @@ pub mod types;
 pub use components::{MineralOreIndex, MineralOreNode};
 #[allow(unused_imports)]
 pub use events::{
-    KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent, MineralProbeDenialReason,
-    MineralProbeIntent, MineralProbeResponse, MineralProbeResult,
+    KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent, MineralFeedbackEvent,
+    MineralProbeDenialReason, MineralProbeIntent, MineralProbeResponse, MineralProbeResult,
 };
 #[allow(unused_imports)]
 pub use persistence::{
@@ -38,6 +39,8 @@ pub use persistence::{
 #[allow(unused_imports)]
 pub use registry::{build_default_registry, LingShiQiRange, MineralEntry, MineralRegistry};
 #[allow(unused_imports)]
+pub use session::{ticks_total_for_rarity, MiningSession, MiningSessionState};
+#[allow(unused_imports)]
 pub use types::{MineralCategory, MineralId, MineralRarity};
 
 use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
@@ -45,6 +48,7 @@ use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
 use anchors::{spawn_mineral_anchor_nodes, MineralAnchorConfig};
 use break_handler::handle_block_break_for_mineral;
 use bridge::{forward_karma_flag_to_agent, record_karma_flag_weights};
+use events::emit_mineral_feedback_chat;
 use inventory_grant::consume_mineral_drops_into_inventory;
 use persistence::{record_exhausted_minerals, tick_mineral_clock};
 use probe::resolve_mineral_probe_intents;
@@ -76,6 +80,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MineralDropEvent>();
     app.add_event::<MineralExhaustedEvent>();
     app.add_event::<KarmaFlagIntent>();
+    app.add_event::<MineralFeedbackEvent>();
 
     app.add_systems(
         Startup,
@@ -88,6 +93,7 @@ pub fn register(app: &mut App) {
             tick_mineral_clock,
             resolve_mineral_probe_intents,
             handle_block_break_for_mineral,
+            emit_mineral_feedback_chat,
             // plan-mineral-v1 §2.2 — drop 事件由 inventory_grant 在同一 Update 内消费；
             // Bevy 的 Events 支持单 tick 内 writer → reader 管道（EventReader 扫整帧的 events）。
             consume_mineral_drops_into_inventory,

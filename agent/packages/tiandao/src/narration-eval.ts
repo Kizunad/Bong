@@ -11,7 +11,7 @@ const MIN_NARRATION_LENGTH = 100;
 const MAX_NARRATION_LENGTH = 200;
 const TICK_LOG_PREFIX = "[tiandao:tick] ";
 const MODERN_SLANG_RE =
-  /(?:\b(?:ok|lol|bro|buff|nerf|gg|wtf)\b|哈哈|666|牛(?:啊|了)?|服了|离谱|刷怪|yyds|233)/iu;
+  /(?:\b(?:ok|lol|bro|buff|nerf|gg|wtf|xp)\b|恭喜|注意|警告|小心|等级提升|哈哈|666|牛(?:啊|了)?|服了|离谱|刷怪|yyds|233)/iu;
 const OMEN_RE = /(?:预兆|先兆|暗示|伏笔|将|欲|渐|未几|不日|下一轮|后势|后续|且看|宜早|将至|将起|或将)/u;
 
 const BASE_STYLE_KEYWORDS = [

@@ -1148,7 +1148,7 @@ pub fn tribulation_wave_system(
                     }
                     // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
                     let new_cap = skill_cap_for_realm(Realm::Void);
-                    for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                    for skill in SkillId::ALL {
                         skill_cap_events.send(SkillCapChanged {
                             char_entity: ev.entity,
                             skill,

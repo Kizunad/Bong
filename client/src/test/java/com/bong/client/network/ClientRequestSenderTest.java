@@ -2,6 +2,7 @@ package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -181,6 +182,80 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendSpiritNichePlaceUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNichePlace(11, 64, 10, 4242L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendAlchemyFurnaceRequestsUseCorrectChannelAndBlockPosJson() {
+        install();
+        BlockPos pos = new BlockPos(-12, 64, 38);
+
+        ClientRequestSender.sendAlchemyOpenFurnace(pos);
+        ClientRequestSender.sendAlchemyFurnacePlace(pos, 4242L);
+        ClientRequestSender.sendAlchemyFeedSlot(pos, 0, "ci_she_hao", 3);
+
+        assertEquals(3, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"alchemy_open_furnace\",\"v\":1,\"furnace_pos\":[-12,64,38]}",
+            sent.get(0).body()
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_furnace_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242}",
+            sent.get(1).body()
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_feed_slot\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0,\"material\":\"ci_she_hao\",\"count\":3}",
+            sent.get(2).body()
+        );
+    }
+
+    @Test
+    void sendSpiritNicheRevealRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNicheGaze(11, 64, 10);
+        ClientRequestSender.sendSpiritNicheMarkCoordinate(12, 65, 11);
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_mark_coordinate\",\"v\":1,\"x\":12,\"y\":65,\"z\":11}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
+    void sendTradeOfferRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendTradeOfferRequest("entity:42", 1001L);
+        ClientRequestSender.sendTradeOfferResponse("trade:a:b:1001:20", true, 2002L);
+
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"trade_offer_request\",\"v\":1,\"target\":\"entity:42\",\"offered_instance_id\":1001}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":true,\"requested_instance_id\":2002}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);
@@ -213,16 +288,18 @@ public class ClientRequestSenderTest {
     void sendSkillBarRequestsUseCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendSkillBarCast(0);
+        ClientRequestSender.sendSkillBarCast(2, "entity:42");
         ClientRequestSender.sendSkillBarBindSkill(1, "burst_meridian.beng_quan");
         ClientRequestSender.sendSkillBarBindClear(1);
 
-        assertEquals(3, sent.size());
+        assertEquals(4, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals("{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}", sent.get(0).body());
+        assertEquals("{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":2,\"target\":\"entity:42\"}", sent.get(1).body());
         assertEquals(
             "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"skill\",\"skill_id\":\"burst_meridian.beng_quan\"}}",
-            sent.get(1).body()
+            sent.get(2).body()
         );
-        assertEquals("{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":null}", sent.get(2).body());
+        assertEquals("{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":null}", sent.get(3).body());
     }
 }

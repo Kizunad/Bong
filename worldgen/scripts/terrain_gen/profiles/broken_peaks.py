@@ -13,6 +13,9 @@ from .base import (
 )
 
 
+SNOW_LINE_Y = 285.0
+
+
 BROKEN_PEAKS_DECORATIONS = (
     DecorationSpec(
         name="qing_yun_pine",
@@ -170,7 +173,7 @@ def fill_broken_peaks_tile(
     is_valley = ridges < -0.3
 
     surface_id = np.full_like(height, stone_id, dtype=np.int32)
-    surface_id = np.where(height > 285.0, snow_id, surface_id)
+    surface_id = np.where(height > SNOW_LINE_Y, snow_id, surface_id)
     surface_id = np.where((height > 270.0) & (detail > 0.42), ice_id, surface_id)
     surface_id = np.where(
         (height > 235.0) & (surface_id == stone_id), calcite_id, surface_id

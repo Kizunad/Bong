@@ -2,6 +2,9 @@ package com.bong.client.combat;
 
 import com.bong.client.network.ClientRequestSender;
 
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.hit.EntityHitResult;
+
 /** Pure routing logic for 1-9 hotbar key presses; the mixin delegates here. */
 public final class SkillBarKeyRouter {
     public enum RouteResult { NOOP, PASS_THROUGH, CAST_SENT, COOLDOWN_BLOCKED, SAME_CAST_IGNORED }
@@ -10,7 +13,7 @@ public final class SkillBarKeyRouter {
     }
 
     public static boolean shouldCancelHotbarKey(int slot) {
-        RouteResult result = route(slot, System.currentTimeMillis(), ClientRequestSender::sendSkillBarCast);
+        RouteResult result = route(slot, System.currentTimeMillis(), SkillBarKeyRouter::sendCastWithCrosshairTarget);
         return result == RouteResult.CAST_SENT
             || result == RouteResult.COOLDOWN_BLOCKED
             || result == RouteResult.SAME_CAST_IGNORED;
@@ -32,5 +35,17 @@ public final class SkillBarKeyRouter {
         CastStateStore.beginSkillBarCast(slot, entry.castDurationMs(), nowMs);
         castSender.accept(slot);
         return RouteResult.CAST_SENT;
+    }
+
+    private static void sendCastWithCrosshairTarget(int slot) {
+        ClientRequestSender.sendSkillBarCast(slot, crosshairEntityTarget());
+    }
+
+    static String crosshairEntityTarget() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || !(client.crosshairTarget instanceof EntityHitResult hit)) {
+            return null;
+        }
+        return "entity:" + hit.getEntity().getId();
     }
 }

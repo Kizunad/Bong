@@ -2,19 +2,25 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
-use valence::prelude::{Commands, Despawned, Entity, Query, ResMut, Resource, With, Without};
+use valence::prelude::{
+    Commands, Despawned, Entity, EventWriter, Query, ResMut, Resource, With, Without,
+};
 
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::faction::{
-    FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind, FactionId,
-    FactionStore,
+    FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
+    FactionEventNotice, FactionId, FactionRank, FactionStore,
 };
-use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
+use crate::npc::lifecycle::{NpcArchetype, NpcRegistry, NpcSpawnNotice, NpcSpawnSource};
 use crate::npc::spawn::{
-    spawn_commoner_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_notice,
+    spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    NpcSkinSpawnContext,
 };
+use crate::npc::territory::Territory;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
+use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::events::ActiveEventsResource;
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::zone::ZoneRegistry;
@@ -130,10 +136,13 @@ pub fn execute_agent_commands(
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut faction_store: Option<ResMut<FactionStore>>,
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
     karma_weights: Option<valence::prelude::Res<KarmaWeightStore>>,
     qi_heatmap: Option<valence::prelude::Res<QiDensityHeatmap>>,
+    mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
+    mut faction_notices: EventWriter<FactionEventNotice>,
     layers: LayerQuery<'_, '_>,
     npc_entities: LiveNpcQuery<'_, '_>,
 ) {
@@ -158,10 +167,13 @@ pub fn execute_agent_commands(
                 &mut zone_registry,
                 &mut active_events,
                 &mut npc_registry,
+                &mut skin_pool,
                 &mut faction_store,
                 &mut npc_behavior,
                 karma_weights.as_deref(),
                 qi_heatmap.as_deref(),
+                &mut npc_spawn_notices,
+                &mut faction_notices,
                 &layers,
                 &npc_entities,
                 &mut pending_despawn_targets,
@@ -193,10 +205,13 @@ fn execute_single_command(
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
+    skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
+    npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
+    faction_notices: &mut EventWriter<FactionEventNotice>,
     layers: &LayerQuery<'_, '_>,
     npc_entities: &LiveNpcQuery<'_, '_>,
     pending_despawn_targets: &mut HashSet<String>,
@@ -213,13 +228,21 @@ fn execute_single_command(
 
     let result = match command.command_type {
         CommandType::ModifyZone => execute_modify_zone(command, zone_registry),
-        CommandType::SpawnNpc => {
-            execute_spawn_npc(command, commands, zone_registry, npc_registry, layers)
-        }
+        CommandType::SpawnNpc => execute_spawn_npc(
+            command,
+            commands,
+            zone_registry,
+            npc_registry,
+            skin_pool,
+            npc_spawn_notices,
+            layers,
+        ),
         CommandType::DespawnNpc => {
             execute_despawn_npc(command, commands, npc_entities, pending_despawn_targets)
         }
-        CommandType::FactionEvent => execute_faction_event(command, faction_store, active_events),
+        CommandType::FactionEvent => {
+            execute_faction_event(command, faction_store, active_events, faction_notices)
+        }
         CommandType::NpcBehavior => {
             execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
         }
@@ -257,6 +280,7 @@ fn execute_faction_event(
     command: &Command,
     faction_store: &mut Option<ResMut<FactionStore>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
+    faction_notices: &mut EventWriter<FactionEventNotice>,
 ) -> &'static str {
     let Some(faction_store) = faction_store.as_deref_mut() else {
         tracing::warn!(
@@ -277,8 +301,9 @@ fn execute_faction_event(
     match faction_store.apply_event(event_command) {
         Ok(applied) => {
             if let Some(active_events) = active_events.as_deref_mut() {
-                active_events.record_recent_event(build_faction_recent_event(applied));
+                active_events.record_recent_event(build_faction_recent_event(applied.clone()));
             }
+            faction_notices.send(FactionEventNotice { applied });
             "ok"
         }
         Err(error) => match error {
@@ -314,6 +339,8 @@ fn execute_spawn_npc(
     commands: &mut Commands,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
+    skin_pool: &mut Option<ResMut<SkinPool>>,
+    npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     layers: &LayerQuery<'_, '_>,
 ) -> &'static str {
     let Some(archetype) = command.params.get("archetype").and_then(Value::as_str) else {
@@ -328,6 +355,9 @@ fn execute_spawn_npc(
         "zombie" => NpcArchetype::Zombie,
         "commoner" => NpcArchetype::Commoner,
         "rogue" => NpcArchetype::Rogue,
+        "beast" => NpcArchetype::Beast,
+        "disciple" => NpcArchetype::Disciple,
+        "guardian_relic" => NpcArchetype::GuardianRelic,
         _ => {
             tracing::warn!(
                 "[bong][network] spawn_npc target `{}` uses unsupported archetype `{}`",
@@ -373,12 +403,29 @@ fn execute_spawn_npc(
         return "rejected_missing_npc_registry";
     };
 
-    if registry.reserve_spawn_batch(1) == 0 {
+    let Some(requested_count) = parse_spawn_count(&command.params) else {
+        tracing::warn!(
+            "[bong][network] spawn_npc target `{}` has invalid `count` (expected integer in [1, {MAX_COMMANDS_PER_TICK}])",
+            command.target
+        );
+        return "rejected_invalid_spawn_count";
+    };
+
+    let reserved_count = registry.reserve_zone_batch(zone.name.as_str(), requested_count);
+    if reserved_count == 0 {
         tracing::info!(
             "[bong][network] spawn_npc target `{}` rejected because npc registry budget is exhausted",
             command.target
         );
         return "rejected_spawn_budget_exhausted";
+    }
+    if reserved_count < requested_count {
+        tracing::info!(
+            "[bong][network] spawn_npc target `{}` clamped by npc registry: requested={} reserved={}",
+            command.target,
+            requested_count,
+            reserved_count
+        );
     }
 
     let spawn_position = zone
@@ -395,41 +442,164 @@ fn execute_spawn_npc(
         .unwrap_or(0.0)
         .max(0.0);
 
-    match archetype {
-        NpcArchetype::Zombie => {
-            spawn_zombie_npc_at(
-                commands,
-                layer,
-                zone.name.as_str(),
-                spawn_position,
-                patrol_target,
-            );
-            "ok"
+    for _ in 0..reserved_count {
+        match archetype {
+            NpcArchetype::Zombie => {
+                let entity = spawn_zombie_npc_at(
+                    commands,
+                    layer,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    0.0,
+                ));
+            }
+            NpcArchetype::Commoner => {
+                let entity = spawn_commoner_npc_at(
+                    commands,
+                    NpcSkinSpawnContext::new(
+                        skin_pool.as_deref_mut(),
+                        NpcSkinFallbackPolicy::AllowFallback,
+                    ),
+                    layer,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                    initial_age_ticks,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::Rogue => {
+                let entity = spawn_rogue_npc_at(
+                    commands,
+                    NpcSkinSpawnContext::new(
+                        skin_pool.as_deref_mut(),
+                        NpcSkinFallbackPolicy::AllowFallback,
+                    ),
+                    layer,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                    initial_age_ticks,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::Beast => {
+                let radius = command
+                    .params
+                    .get("territory_radius")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(24.0)
+                    .max(1.0);
+                let entity = spawn_beast_npc_at(
+                    commands,
+                    layer,
+                    zone.name.as_str(),
+                    spawn_position,
+                    Territory::new(spawn_position, radius),
+                    initial_age_ticks,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::Disciple => {
+                let faction_id = command
+                    .params
+                    .get("faction_id")
+                    .and_then(Value::as_str)
+                    .and_then(FactionId::from_str_name)
+                    .unwrap_or(FactionId::Neutral);
+                let entity = spawn_disciple_npc_at(
+                    commands,
+                    layer,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                    faction_id,
+                    FactionRank::Disciple,
+                    command
+                        .params
+                        .get("master_id")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    initial_age_ticks,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::GuardianRelic => {
+                let radius = command
+                    .params
+                    .get("alarm_radius")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(crate::npc::relic::GUARDIAN_ALARM_RADIUS_DEFAULT)
+                    .max(1.0);
+                let relic_id = command
+                    .params
+                    .get("relic_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("agent_relic");
+                let trial_template_id = command
+                    .params
+                    .get("trial_template_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("agent_trial");
+                let entity = spawn_relic_guard_npc_at(
+                    commands,
+                    layer,
+                    zone.name.as_str(),
+                    spawn_position,
+                    radius,
+                    relic_id,
+                    trial_template_id,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    0.0,
+                ));
+            }
+            _ => unreachable!("archetype match above rejects unsupported variants"),
         }
-        NpcArchetype::Commoner => {
-            spawn_commoner_npc_at(
-                commands,
-                layer,
-                zone.name.as_str(),
-                spawn_position,
-                patrol_target,
-                initial_age_ticks,
-            );
-            "ok"
-        }
-        NpcArchetype::Rogue => {
-            spawn_rogue_npc_at(
-                commands,
-                layer,
-                zone.name.as_str(),
-                spawn_position,
-                patrol_target,
-                initial_age_ticks,
-            );
-            "ok"
-        }
-        _ => "rejected_unsupported_archetype",
     }
+
+    "ok"
 }
 
 fn execute_spawn_event(
@@ -678,6 +848,17 @@ fn param_as_f64(params: &HashMap<String, Value>, key: &str) -> Option<f64> {
     params.get(key).and_then(Value::as_f64)
 }
 
+fn parse_spawn_count(params: &HashMap<String, Value>) -> Option<usize> {
+    let Some(value) = params.get("count") else {
+        return Some(1);
+    };
+    let count = value_to_i64(Some(value))?;
+    if count < 1 || count > MAX_COMMANDS_PER_TICK as i64 {
+        return None;
+    }
+    Some(count as usize)
+}
+
 fn optional_param_as_i64(params: &HashMap<String, Value>, key: &str) -> Option<i64> {
     let value = params.get(key)?;
     value_to_i64(Some(value))
@@ -758,6 +939,8 @@ mod command_executor_tests {
         app.insert_resource(FactionStore::default());
         app.insert_resource(KarmaWeightStore::default());
         app.insert_resource(QiDensityHeatmap::default());
+        app.add_event::<NpcSpawnNotice>();
+        app.add_event::<FactionEventNotice>();
         app.add_systems(Update, execute_agent_commands);
         app
     }
@@ -862,6 +1045,10 @@ mod command_executor_tests {
                 .and_then(Value::as_str),
             Some("enqueue_mission")
         );
+        let notices = app
+            .world()
+            .resource::<valence::prelude::Events<FactionEventNotice>>();
+        assert_eq!(notices.len(), 1);
     }
 
     #[test]
@@ -1165,6 +1352,74 @@ mod command_executor_tests {
     }
 
     #[test]
+    fn spawn_npc_count_spawns_batch_and_clamps_to_remaining_budget() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("rogue"));
+        params.insert("count".to_string(), json!(3));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_count",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let rogue_count = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&NpcArchetype, With<NpcMarker>>();
+            query
+                .iter(world)
+                .filter(|archetype| **archetype == NpcArchetype::Rogue)
+                .count()
+        };
+        assert_eq!(rogue_count, 3);
+        assert_eq!(app.world().resource::<NpcRegistry>().live_npc_count, 3);
+
+        {
+            let mut registry = app.world_mut().resource_mut::<NpcRegistry>();
+            registry.live_npc_count = registry.max_npc_count - 1;
+            registry.spawn_paused = false;
+        }
+        let mut clamped_params = HashMap::new();
+        clamped_params.insert("archetype".to_string(), json!("rogue"));
+        clamped_params.insert("count".to_string(), json!(5));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_count_clamped",
+                vec![command(CommandType::SpawnNpc, "spawn", clamped_params)],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let all_rogues = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&NpcArchetype, With<NpcMarker>>();
+            query
+                .iter(world)
+                .filter(|archetype| **archetype == NpcArchetype::Rogue)
+                .count()
+        };
+        assert_eq!(
+            all_rogues, 4,
+            "second batch should reserve only one remaining slot"
+        );
+        assert_eq!(
+            app.world().resource::<NpcRegistry>().live_npc_count,
+            app.world().resource::<NpcRegistry>().max_npc_count
+        );
+    }
+
+    #[test]
     fn spawn_npc_rejects_unknown_zone_unsupported_archetype_and_exhausted_budget() {
         let mut app = setup_executor_app();
 
@@ -1175,7 +1430,7 @@ mod command_executor_tests {
         commands.push(command(CommandType::SpawnNpc, "missing_zone", bad_zone));
 
         let mut bad_archetype = HashMap::new();
-        bad_archetype.insert("archetype".to_string(), json!("beast"));
+        bad_archetype.insert("archetype".to_string(), json!("daoxiang"));
         commands.push(command(CommandType::SpawnNpc, "spawn", bad_archetype));
 
         {

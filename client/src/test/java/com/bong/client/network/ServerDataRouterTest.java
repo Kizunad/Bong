@@ -30,6 +30,7 @@ public class ServerDataRouterTest {
             "dropped_loot_sync",
             // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
+            "botany_plant_v2_render_profiles",
             "botany_skill",
             // Combat UI handlers (plan-combat-ui §U1–U7).
             "combat_event",
@@ -58,10 +59,14 @@ public class ServerDataRouterTest {
             "techniques_snapshot",
             "unlocks_sync",
             "event_stream_push",
+            "burst_meridian_event",
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
             "weapon_broken",
             "treasure_equipped",
+            // plan-perception-v1.1 §4 server-authoritative vision/sense push.
+            "realm_vision_params",
+            "spiritual_sense_targets",
             // plan-tsy-extract-v1 §4.1 撤离点 / 撤离进度 HUD 推送。
             "rift_portal_state",
             "rift_portal_removed",
@@ -83,7 +88,14 @@ public class ServerDataRouterTest {
             "forge_station",
             "forge_session",
             "forge_outcome",
-            "forge_blueprint_book"
+            "forge_blueprint_book",
+            // plan-social-v1 §7 — 匿名 / 暴露 / 关系 / 声名 / 切磋邀请。
+            "social_anonymity",
+            "social_exposure",
+            "social_pact",
+            "social_feud",
+            "social_renown_delta",
+            "sparring_invite"
         ), router.registeredTypes());
     }
 
@@ -165,6 +177,19 @@ public class ServerDataRouterTest {
         assertFalse(result.isParseError());
         assertTrue(result.isHandled());
         assertEquals("botany_skill", result.envelope().type());
+    }
+
+    @Test
+    void routesBurstMeridianEventWithoutNoOp() {
+        String json = """
+            {"v":1,"type":"burst_meridian_event","skill":"thunder_step","caster":"offline:Azure","target":"npc_1v1","tick":84000,"overload_ratio":0.75,"integrity_snapshot":0.4}
+            """;
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertFalse(result.isNoOp());
+        assertEquals("burst_meridian_event", result.envelope().type());
     }
 
     @Test

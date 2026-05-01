@@ -3,6 +3,27 @@ import { Type, type Static } from "@sinclair/typebox";
 import { CommandType } from "./common.js";
 import { validate, type ValidationResult } from "./validate.js";
 
+const ALLOWED_NPC_ARCHETYPES = [
+  "zombie",
+  "commoner",
+  "rogue",
+  "beast",
+  "disciple",
+  "guardian_relic",
+  "daoxiang",
+  "zhinian",
+  "fuya",
+] as const;
+const ALLOWED_FACTION_IDS = ["attack", "defend", "neutral"] as const;
+const ALLOWED_FACTION_EVENT_KINDS = [
+  "set_leader",
+  "clear_leader",
+  "set_leader_lineage",
+  "adjust_loyalty_bias",
+  "enqueue_mission",
+  "pop_mission",
+] as const;
+
 // ─── 指令子结构 ─────────────────────────────────────────
 
 export const Command = Type.Object(
@@ -12,11 +33,11 @@ export const Command = Type.Object(
     params: Type.Record(Type.String(), Type.Any(), {
       description:
         "指令参数。spawn_event: {event, intensity, duration_ticks, target_player?}; " +
-        "spawn_npc: {archetype}; " +
+        "spawn_npc: {archetype, initial_age_ticks?, count?, reason?}; " +
         "despawn_npc: {}; " +
         "faction_event: {kind, faction_id, subject_id?, mission_id?, loyalty_delta?}; " +
         "modify_zone: {spirit_qi_delta, danger_level_delta?}; " +
-        "npc_behavior: {aggression?, flee_threshold?, patrol_radius?}",
+        "npc_behavior: {flee_threshold}",
     }),
   },
   { additionalProperties: false },
@@ -56,23 +77,34 @@ export function validateAgentCommandV1Contract(data: unknown): ValidationResult 
   for (const [index, command] of commands.entries()) {
     if (command?.type !== "spawn_npc") {
       if (command?.type !== "faction_event") {
+        if (command?.type === "npc_behavior") {
+          const fleeThreshold = command?.params?.flee_threshold;
+          if (typeof fleeThreshold !== "number") {
+            semanticErrors.push(`/commands/${index}/params/flee_threshold: Expected number`);
+          }
+        }
         continue;
       }
 
       const kind = command?.params?.kind;
       const factionId = command?.params?.faction_id;
-      if (typeof kind !== "string") {
-        semanticErrors.push(`/commands/${index}/params/kind: Expected string`);
+      if (!isAllowedLiteral(ALLOWED_FACTION_EVENT_KINDS, kind)) {
+        semanticErrors.push(`/commands/${index}/params/kind: Expected supported faction event kind`);
       }
-      if (typeof factionId !== "string") {
-        semanticErrors.push(`/commands/${index}/params/faction_id: Expected string`);
+      if (!isAllowedLiteral(ALLOWED_FACTION_IDS, factionId)) {
+        semanticErrors.push(`/commands/${index}/params/faction_id: Expected supported faction id`);
       }
       continue;
     }
 
     const archetype = command?.params?.archetype;
-    if (typeof archetype !== "string") {
-      semanticErrors.push(`/commands/${index}/params/archetype: Expected string`);
+    if (!isAllowedLiteral(ALLOWED_NPC_ARCHETYPES, archetype)) {
+      semanticErrors.push(`/commands/${index}/params/archetype: Expected supported NPC archetype`);
+    }
+
+    const count = command?.params?.count;
+    if (count !== undefined && (typeof count !== "number" || !Number.isInteger(count) || count < 1 || count > 5)) {
+      semanticErrors.push(`/commands/${index}/params/count: Expected integer in [1, 5]`);
     }
   }
 
@@ -81,4 +113,8 @@ export function validateAgentCommandV1Contract(data: unknown): ValidationResult 
   }
 
   return result;
+}
+
+function isAllowedLiteral(values: readonly string[], candidate: unknown): boolean {
+  return typeof candidate === "string" && values.includes(candidate);
 }

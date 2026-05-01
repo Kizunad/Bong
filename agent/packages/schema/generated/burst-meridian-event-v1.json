@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "skill",
+    "caster",
+    "tick",
+    "overload_ratio",
+    "integrity_snapshot"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "burst_meridian_event",
+      "type": "string"
+    },
+    "skill": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "caster": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "overload_ratio": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "integrity_snapshot": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    }
+  }
+}

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::Resource;
 
 use super::plant_kind::{PlantId, PlantKind};
+use crate::tools::ToolKind;
 use crate::world::zone::{BotanyZoneTag, Zone};
 
 const DEFAULT_PLANTS_PATH: &str = "assets/botany/plants.toml";
@@ -119,6 +120,186 @@ pub const HEI_GU_JUN: &str = "hei_gu_jun";
 pub const FU_CHEN_CAO: &str = "fu_chen_cao";
 pub const ZHONG_YAN_TENG: &str = "zhong_yan_teng";
 
+// plan-botany-v2 §2 — 绝地草木拾遗十七味（野生 only，不进 PlantKindRegistry/SeedRegistry）。
+pub const FU_YUAN_JUE: &str = "fu_yuan_jue";
+pub const BAI_YAN_PENG: &str = "bai_yan_peng";
+pub const DUAN_JI_CI: &str = "duan_ji_ci";
+pub const XUE_SE_MAI_CAO: &str = "xue_se_mai_cao";
+pub const YUN_DING_LAN: &str = "yun_ding_lan";
+pub const XUAN_GEN_WEI: &str = "xuan_gen_wei";
+pub const YING_YUAN_GU: &str = "ying_yuan_gu";
+pub const XUAN_RONG_TAI: &str = "xuan_rong_tai";
+pub const YUAN_NI_HONG_YU: &str = "yuan_ni_hong_yu";
+pub const JING_XIN_ZAO: &str = "jing_xin_zao";
+pub const XUE_PO_LIAN: &str = "xue_po_lian";
+pub const JIAO_MAI_TENG: &str = "jiao_mai_teng";
+pub const LIE_YUAN_TAI: &str = "lie_yuan_tai";
+pub const MING_GU_GU: &str = "ming_gu_gu";
+pub const BEI_WEN_ZHI: &str = "bei_wen_zhi";
+pub const LING_JING_XU: &str = "ling_jing_xu";
+pub const MAO_XIN_WEI: &str = "mao_xin_wei";
+
+const HAZARD_NONE: &[HarvestHazard] = &[];
+const ENV_FU_YUAN_JUE: &[EnvLock] = &[EnvLock::NegPressure { min: 0.3 }];
+const HAZARD_FU_YUAN_JUE: &[HarvestHazard] = &[HarvestHazard::QiDrainOnApproach {
+    radius_blocks: 5,
+    drain_per_sec: 0.4,
+}];
+const ENV_BAI_YAN_PENG: &[EnvLock] = &[];
+const HAZARD_BAI_YAN_PENG: &[HarvestHazard] = &[
+    HarvestHazard::DispersalOnFail {
+        dispersal_chance: 0.6,
+    },
+    HarvestHazard::AttractsMobs {
+        mob_kind: FaunaKind::SpiritMice,
+        min_count: 2,
+        max_count: 5,
+    },
+];
+const ENV_DUAN_JI_CI: &[EnvLock] = &[
+    EnvLock::RuinDensity { min: 0.3 },
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::Any(&["broken_spear_tree", "war_banner_post"]),
+        radius: 1,
+    },
+];
+const HAZARD_DUAN_JI_CI: &[HarvestHazard] = &[HarvestHazard::ResonanceVision {
+    duration_secs: 3,
+    composure_loss: 0.05,
+}];
+const ENV_XUE_SE_MAI_CAO: &[EnvLock] = &[EnvLock::RuinDensity { min: 0.2 }];
+const HAZARD_XUE_SE_MAI_CAO: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
+    dispersal_chance: 0.4,
+}];
+const ENV_YUN_DING_LAN: &[EnvLock] = &[EnvLock::SkyIslandMask {
+    min: 0.2,
+    surface: SkyIsleSurface::Top,
+}];
+const HAZARD_YUN_DING_LAN: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
+    dispersal_chance: 0.7,
+}];
+const ENV_XUAN_GEN_WEI: &[EnvLock] = &[EnvLock::SkyIslandMask {
+    min: 0.2,
+    surface: SkyIsleSurface::Bottom,
+}];
+const HAZARD_XUAN_GEN_WEI: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
+    wound: WoundLevel::Laceration,
+    required_tool: Some(ToolKind::DunQiJia),
+}];
+const ENV_YING_YUAN_GU: &[EnvLock] = &[
+    EnvLock::UndergroundTier { tier: 1 },
+    EnvLock::AdjacentLightBlock { radius: 2 },
+];
+const HAZARD_YING_YUAN_GU: &[HarvestHazard] = &[
+    HarvestHazard::DispersalOnFail {
+        dispersal_chance: 0.3,
+    },
+    HarvestHazard::AttractsMobs {
+        mob_kind: FaunaKind::MimicSpider,
+        min_count: 1,
+        max_count: 2,
+    },
+];
+const ENV_XUAN_RONG_TAI: &[EnvLock] = &[EnvLock::UndergroundTier { tier: 2 }];
+const HAZARD_XUAN_RONG_TAI: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
+    wound: WoundLevel::Abrasion,
+    required_tool: Some(ToolKind::GuaDao),
+}];
+const ENV_YUAN_NI_HONG_YU: &[EnvLock] = &[
+    EnvLock::UndergroundTier { tier: 3 },
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::One("yuan_ni_ebony"),
+        radius: 5,
+    },
+    EnvLock::QiVeinFlow { min: 0.5 },
+];
+const HAZARD_YUAN_NI_HONG_YU: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
+    dispersal_chance: 0.5,
+}];
+const ENV_JING_XIN_ZAO: &[EnvLock] = &[
+    EnvLock::QiVeinFlow { min: 0.6 },
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::Any(&["ling_yun_mangrove", "spirit_willow"]),
+        radius: 8,
+    },
+    EnvLock::TimePhase(WaterPulsePhase::Open),
+];
+const HAZARD_JING_XIN_ZAO: &[HarvestHazard] = &[HarvestHazard::SeasonRequired {
+    phase: WaterPulsePhase::Open,
+}];
+const ENV_XUE_PO_LIAN: &[EnvLock] = &[EnvLock::SnowSurface, EnvLock::QiVeinFlow { min: 0.3 }];
+const HAZARD_XUE_PO_LIAN: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
+    wound: WoundLevel::Laceration,
+    required_tool: Some(ToolKind::BingJiaShouTao),
+}];
+const ENV_JIAO_MAI_TENG: &[EnvLock] = &[
+    EnvLock::FractureMask { min: 0.4 },
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::One("fire_vein_cactus"),
+        radius: 3,
+    },
+];
+const HAZARD_JIAO_MAI_TENG: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
+    wound: WoundLevel::Fracture,
+    required_tool: Some(ToolKind::DunQiJia),
+}];
+const ENV_LIE_YUAN_TAI: &[EnvLock] = &[EnvLock::PortalRiftActive];
+const HAZARD_LIE_YUAN_TAI: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
+    dispersal_chance: 0.4,
+}];
+const ENV_MING_GU_GU: &[EnvLock] = &[
+    EnvLock::RuinDensity { min: 0.4 },
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::One("bone_mountain"),
+        radius: 3,
+    },
+];
+const HAZARD_MING_GU_GU: &[HarvestHazard] = &[
+    HarvestHazard::ResonanceVision {
+        duration_secs: 5,
+        composure_loss: 0.08,
+    },
+    HarvestHazard::AttractsMobs {
+        mob_kind: FaunaKind::MimicSpider,
+        min_count: 1,
+        max_count: 3,
+    },
+];
+const ENV_BEI_WEN_ZHI: &[EnvLock] = &[
+    EnvLock::RuinDensity { min: 0.3 },
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::One("array_disc_remnant"),
+        radius: 2,
+    },
+];
+const HAZARD_BEI_WEN_ZHI: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
+    dispersal_chance: 0.5,
+}];
+const ENV_LING_JING_XU: &[EnvLock] = &[
+    EnvLock::AdjacentDecoration {
+        kind: DecorationLock::One("qi_crystal_pillar"),
+        radius: 3,
+    },
+    EnvLock::QiVeinFlow { min: 0.5 },
+];
+const HAZARD_LING_JING_XU: &[HarvestHazard] = &[
+    HarvestHazard::WoundOnBareHand {
+        wound: WoundLevel::Abrasion,
+        required_tool: Some(ToolKind::GuaDao),
+    },
+    HarvestHazard::DispersalOnFail {
+        dispersal_chance: 0.6,
+    },
+];
+const ENV_MAO_XIN_WEI: &[EnvLock] = &[EnvLock::AdjacentDecoration {
+    kind: DecorationLock::Any(&[
+        "thatched_hermitage",
+        "lone_grave_mound",
+        "daily_artifact_cache",
+    ]),
+    radius: 2,
+}];
+
 pub const KAI_MAI_CAO_ALIAS: &str = "kai_mai_cao";
 pub const XUE_CAO_ALIAS: &str = "xue_cao";
 pub const BAI_CAO_ALIAS: &str = "bai_cao";
@@ -147,6 +328,23 @@ pub enum BotanyPlantId {
     HeiGuJun,
     FuChenCao,
     ZhongYanTeng,
+    FuYuanJue,
+    BaiYanPeng,
+    DuanJiCi,
+    XueSeMaiCao,
+    YunDingLan,
+    XuanGenWei,
+    YingYuanGu,
+    XuanRongTai,
+    YuanNiHongYu,
+    JingXinZao,
+    XuePoLian,
+    JiaoMaiTeng,
+    LieYuanTai,
+    MingGuGu,
+    BeiWenZhi,
+    LingJingXu,
+    MaoXinWei,
 }
 
 impl BotanyPlantId {
@@ -174,6 +372,23 @@ impl BotanyPlantId {
             Self::HeiGuJun => HEI_GU_JUN,
             Self::FuChenCao => FU_CHEN_CAO,
             Self::ZhongYanTeng => ZHONG_YAN_TENG,
+            Self::FuYuanJue => FU_YUAN_JUE,
+            Self::BaiYanPeng => BAI_YAN_PENG,
+            Self::DuanJiCi => DUAN_JI_CI,
+            Self::XueSeMaiCao => XUE_SE_MAI_CAO,
+            Self::YunDingLan => YUN_DING_LAN,
+            Self::XuanGenWei => XUAN_GEN_WEI,
+            Self::YingYuanGu => YING_YUAN_GU,
+            Self::XuanRongTai => XUAN_RONG_TAI,
+            Self::YuanNiHongYu => YUAN_NI_HONG_YU,
+            Self::JingXinZao => JING_XIN_ZAO,
+            Self::XuePoLian => XUE_PO_LIAN,
+            Self::JiaoMaiTeng => JIAO_MAI_TENG,
+            Self::LieYuanTai => LIE_YUAN_TAI,
+            Self::MingGuGu => MING_GU_GU,
+            Self::BeiWenZhi => BEI_WEN_ZHI,
+            Self::LingJingXu => LING_JING_XU,
+            Self::MaoXinWei => MAO_XIN_WEI,
         }
     }
 
@@ -201,6 +416,23 @@ impl BotanyPlantId {
             HEI_GU_JUN => Some(Self::HeiGuJun),
             FU_CHEN_CAO => Some(Self::FuChenCao),
             ZHONG_YAN_TENG => Some(Self::ZhongYanTeng),
+            FU_YUAN_JUE => Some(Self::FuYuanJue),
+            BAI_YAN_PENG => Some(Self::BaiYanPeng),
+            DUAN_JI_CI => Some(Self::DuanJiCi),
+            XUE_SE_MAI_CAO => Some(Self::XueSeMaiCao),
+            YUN_DING_LAN => Some(Self::YunDingLan),
+            XUAN_GEN_WEI => Some(Self::XuanGenWei),
+            YING_YUAN_GU => Some(Self::YingYuanGu),
+            XUAN_RONG_TAI => Some(Self::XuanRongTai),
+            YUAN_NI_HONG_YU => Some(Self::YuanNiHongYu),
+            JING_XIN_ZAO => Some(Self::JingXinZao),
+            XUE_PO_LIAN => Some(Self::XuePoLian),
+            JIAO_MAI_TENG => Some(Self::JiaoMaiTeng),
+            LIE_YUAN_TAI => Some(Self::LieYuanTai),
+            MING_GU_GU => Some(Self::MingGuGu),
+            BEI_WEN_ZHI => Some(Self::BeiWenZhi),
+            LING_JING_XU => Some(Self::LingJingXu),
+            MAO_XIN_WEI => Some(Self::MaoXinWei),
             _ => None,
         }
     }
@@ -234,6 +466,120 @@ pub enum PlantVariant {
     None,
     Thunder,
     Tainted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SurvivalMode {
+    QiAbsorb,
+    NegPressureFeed,
+    PressureDifferential,
+    SpiritCrystallize,
+    RuinResonance,
+    ThermalConvection,
+    PortalSiphon,
+    DualMetabolism,
+    PhotoLuminance,
+    WaterPulse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SkyIsleSurface {
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WaterPulsePhase {
+    Open,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DecorationLock {
+    One(&'static str),
+    Any(&'static [&'static str]),
+}
+
+impl DecorationLock {
+    pub fn names(self) -> Vec<&'static str> {
+        match self {
+            Self::One(expected) => vec![expected],
+            Self::Any(expected) => expected.to_vec(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EnvLock {
+    NegPressure { min: f32 },
+    QiVeinFlow { min: f32 },
+    FractureMask { min: f32 },
+    RuinDensity { min: f32 },
+    SkyIslandMask { min: f32, surface: SkyIsleSurface },
+    UndergroundTier { tier: u8 },
+    PortalRiftActive,
+    AdjacentDecoration { kind: DecorationLock, radius: u8 },
+    AdjacentLightBlock { radius: u8 },
+    SnowSurface,
+    TimePhase(WaterPulsePhase),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WoundLevel {
+    Abrasion,
+    Laceration,
+    Fracture,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FaunaKind {
+    SpiritMice,
+    MimicSpider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HarvestHazard {
+    QiDrainOnApproach {
+        radius_blocks: u8,
+        drain_per_sec: f32,
+    },
+    WoundOnBareHand {
+        wound: WoundLevel,
+        required_tool: Option<ToolKind>,
+    },
+    DispersalOnFail {
+        dispersal_chance: f32,
+    },
+    ResonanceVision {
+        duration_secs: u8,
+        composure_loss: f32,
+    },
+    SeasonRequired {
+        phase: WaterPulsePhase,
+    },
+    AttractsMobs {
+        mob_kind: FaunaKind,
+        min_count: u8,
+        max_count: u8,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ModelOverlay {
+    None,
+    Emissive,
+    DualPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BotanyV2Spec {
+    pub survival_mode: SurvivalMode,
+    pub env_locks: &'static [EnvLock],
+    pub harvest_hazards: &'static [HarvestHazard],
+    pub base_mesh_ref: &'static str,
+    pub tint_rgb: u32,
+    pub tint_rgb_secondary: Option<u32>,
+    pub model_overlay: ModelOverlay,
+    pub icon_prompt: &'static str,
 }
 
 impl PlantVariant {
@@ -277,6 +623,7 @@ pub struct BotanyPlantKind {
     pub regen_ticks: u64,
     pub spawn_mode: BotanySpawnMode,
     pub restore_ratio: f32,
+    pub v2: Option<BotanyV2Spec>,
 }
 
 #[derive(Debug, Clone)]
@@ -300,6 +647,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::NingMaiCao,
@@ -312,6 +660,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::HuiYuanZhi,
@@ -324,6 +673,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::ChiSuiCao,
@@ -336,6 +686,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::GuYuanGen,
@@ -348,6 +699,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 7_200,
                 spawn_mode: BotanySpawnMode::StaticPoint,
                 restore_ratio: 0.8,
+                v2: None,
             },
             // plan §1.2.3：异变兽死亡 → 尸旁生成空兽痕（library 正典）。
             // 不扣 zone spirit_qi，不受 biome 过滤，长寿命单次结实植物。
@@ -362,6 +714,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             // ===== 常用七味 剩 4 种（plan §1.1 / 末法药材十七种）=====
             BotanyPlantKind {
@@ -375,6 +728,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::YangJingTai,
@@ -389,6 +743,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::QingZhuoCao,
@@ -401,6 +756,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::AnShenGuo,
@@ -413,6 +769,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             // ===== 稀见五味 剩 3 种 =====
             BotanyPlantKind {
@@ -426,6 +783,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             // 灵眼未实装 → MVP 禁用生成（EventTriggered 占位，永不 spawn）
             BotanyPlantKind {
@@ -439,6 +797,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::YeKuTeng,
@@ -451,6 +810,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 9_000,
                 spawn_mode: BotanySpawnMode::StaticPoint,
                 restore_ratio: 0.8,
+                v2: None,
             },
             // ===== 辛草剩 3 种（辛草试毒录）=====
             // 残灰方块未实装，挂 ResidueAsh tag 占位；EventTriggered 不自动 spawn
@@ -467,6 +827,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 2_400, // 40 min @ 1t/30s 近似
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::ZhenJieZi,
@@ -479,6 +840,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::ShaoHouMan,
@@ -491,6 +853,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             // 伪灵脉焦土（天道陷阱，事件触发稍纵即逝）
             // FakeVeinBurn 是事件级临时状态，非 zone tag；spawn 依赖 plan-tribulation 的伪灵脉消散事件
@@ -505,6 +868,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             // ===== 毒性五味（可采不可炼）=====
             BotanyPlantKind {
@@ -518,6 +882,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::WuYanGuo,
@@ -530,6 +895,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             // 生于死人之骨缝——死域事件触发；DeathEdge 非 zone tag 故此处留空
             BotanyPlantKind {
@@ -543,6 +909,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
             BotanyPlantKind {
                 id: BotanyPlantId::FuChenCao,
@@ -555,6 +922,7 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::ZoneRefresh,
                 restore_ratio: 0.8,
+                v2: None,
             },
             // 毒蛊师终极原料——事件触发，极稀
             BotanyPlantKind {
@@ -568,7 +936,281 @@ impl Default for BotanyKindRegistry {
                 regen_ticks: 0,
                 spawn_mode: BotanySpawnMode::EventTriggered,
                 restore_ratio: 0.0,
+                v2: None,
             },
+            // ===== plan-botany-v2：绝地草木拾遗十七味（v2 走 EnvLock，不走 zone tag）=====
+            botany_v2_kind(
+                BotanyPlantId::FuYuanJue,
+                FU_YUAN_JUE,
+                0.004,
+                14_400,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::NegPressureFeed,
+                    env_locks: ENV_FU_YUAN_JUE,
+                    harvest_hazards: HAZARD_FU_YUAN_JUE,
+                    base_mesh_ref: "large_fern",
+                    tint_rgb: 0x4A2E5A,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "dark purple reverse-breathing fern, salt-dry wasteland herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::BaiYanPeng,
+                BAI_YAN_PENG,
+                0.002,
+                8_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::SpiritCrystallize,
+                    env_locks: ENV_BAI_YAN_PENG,
+                    harvest_hazards: HAZARD_BAI_YAN_PENG,
+                    base_mesh_ref: "dead_bush",
+                    tint_rgb: 0xF8F8E8,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "white saltbush with tiny spirit salt crystals, dry wasteland herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::DuanJiCi,
+                DUAN_JI_CI,
+                0.004,
+                12_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::RuinResonance,
+                    env_locks: ENV_DUAN_JI_CI,
+                    harvest_hazards: HAZARD_DUAN_JI_CI,
+                    base_mesh_ref: "sweet_berry_bush",
+                    tint_rgb: 0x5C1E0F,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "blood-dark thorn growing around broken spear fragments, battlefield herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::XueSeMaiCao,
+                XUE_SE_MAI_CAO,
+                0.003,
+                10_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::DualMetabolism,
+                    env_locks: ENV_XUE_SE_MAI_CAO,
+                    harvest_hazards: HAZARD_XUE_SE_MAI_CAO,
+                    base_mesh_ref: "tall_grass",
+                    tint_rgb: 0xC03020,
+                    tint_rgb_secondary: Some(0x205040),
+                    model_overlay: ModelOverlay::DualPhase,
+                    icon_prompt: "two-phase vein grass, red day leaf and blue-green night leaf, toxic battlefield herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::YunDingLan,
+                YUN_DING_LAN,
+                0.003,
+                9_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::QiAbsorb,
+                    env_locks: ENV_YUN_DING_LAN,
+                    harvest_hazards: HAZARD_YUN_DING_LAN,
+                    base_mesh_ref: "lily_of_the_valley",
+                    tint_rgb: 0xE8F4FF,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "silver-white orchid from floating cloud peak, light airy herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::XuanGenWei,
+                XUAN_GEN_WEI,
+                0.004,
+                11_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::PressureDifferential,
+                    env_locks: ENV_XUAN_GEN_WEI,
+                    harvest_hazards: HAZARD_XUAN_GEN_WEI,
+                    base_mesh_ref: "vine",
+                    tint_rgb: 0x60D080,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "hanging green root vine with crystal tips, floating island underside herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::YingYuanGu,
+                YING_YUAN_GU,
+                0.003,
+                10_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::PhotoLuminance,
+                    env_locks: ENV_YING_YUAN_GU,
+                    harvest_hazards: HAZARD_YING_YUAN_GU,
+                    base_mesh_ref: "red_mushroom",
+                    tint_rgb: 0xFFA040,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::Emissive,
+                    icon_prompt: "warm orange glowing abyss mushroom, emissive cave herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::XuanRongTai,
+                XUAN_RONG_TAI,
+                0.004,
+                12_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::ThermalConvection,
+                    env_locks: ENV_XUAN_RONG_TAI,
+                    harvest_hazards: HAZARD_XUAN_RONG_TAI,
+                    base_mesh_ref: "moss_carpet",
+                    tint_rgb: 0x101015,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::Emissive,
+                    icon_prompt: "black velvet moss with faint silver glow, abyss middle-tier herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::YuanNiHongYu,
+                YUAN_NI_HONG_YU,
+                0.008,
+                18_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::PressureDifferential,
+                    env_locks: ENV_YUAN_NI_HONG_YU,
+                    harvest_hazards: HAZARD_YUAN_NI_HONG_YU,
+                    base_mesh_ref: "large_fern",
+                    tint_rgb: 0xC02040,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "red jade fern under black abyss mud tree, precious herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::JingXinZao,
+                JING_XIN_ZAO,
+                0.005,
+                14_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::WaterPulse,
+                    env_locks: ENV_JING_XIN_ZAO,
+                    harvest_hazards: HAZARD_JING_XIN_ZAO,
+                    base_mesh_ref: "seagrass",
+                    tint_rgb: 0x40A0A0,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::Emissive,
+                    icon_prompt: "cyan algae from spirit well heart, soft luminous water herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::XuePoLian,
+                XUE_PO_LIAN,
+                0.006,
+                16_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::SpiritCrystallize,
+                    env_locks: ENV_XUE_PO_LIAN,
+                    harvest_hazards: HAZARD_XUE_PO_LIAN,
+                    base_mesh_ref: "lily_of_the_valley",
+                    tint_rgb: 0xF0F8FF,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "snow-white lotus with frost-blue rim, high snowline herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::JiaoMaiTeng,
+                JIAO_MAI_TENG,
+                0.004,
+                12_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::PressureDifferential,
+                    env_locks: ENV_JIAO_MAI_TENG,
+                    harvest_hazards: HAZARD_JIAO_MAI_TENG,
+                    base_mesh_ref: "weeping_vines",
+                    tint_rgb: 0x301010,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::Emissive,
+                    icon_prompt: "charred vein vine with orange ember core, rift valley herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::LieYuanTai,
+                LIE_YUAN_TAI,
+                0.003,
+                9_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::PortalSiphon,
+                    env_locks: ENV_LIE_YUAN_TAI,
+                    harvest_hazards: HAZARD_LIE_YUAN_TAI,
+                    base_mesh_ref: "glow_lichen",
+                    tint_rgb: 0x402060,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::Emissive,
+                    icon_prompt: "purple-black moss clinging to a dimensional rift, abyss portal herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::MingGuGu,
+                MING_GU_GU,
+                0.004,
+                14_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::RuinResonance,
+                    env_locks: ENV_MING_GU_GU,
+                    harvest_hazards: HAZARD_MING_GU_GU,
+                    base_mesh_ref: "brown_mushroom",
+                    tint_rgb: 0xE8E0D0,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "bone-white mushroom growing from silent battlefield bones, TSY herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::BeiWenZhi,
+                BEI_WEN_ZHI,
+                0.004,
+                13_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::RuinResonance,
+                    env_locks: ENV_BEI_WEN_ZHI,
+                    harvest_hazards: HAZARD_BEI_WEN_ZHI,
+                    base_mesh_ref: "red_mushroom",
+                    tint_rgb: 0x808890,
+                    tint_rgb_secondary: Some(0x6020A0),
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "gray-blue ganoderma with purple inscription veins, ruined sect herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::LingJingXu,
+                LING_JING_XU,
+                0.004,
+                13_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::PressureDifferential,
+                    env_locks: ENV_LING_JING_XU,
+                    harvest_hazards: HAZARD_LING_JING_XU,
+                    base_mesh_ref: "twisting_vines",
+                    tint_rgb: 0xA060FF,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::Emissive,
+                    icon_prompt: "purple crystal tendrils around ancient qi pillar, TSY crater herb icon",
+                },
+            ),
+            botany_v2_kind(
+                BotanyPlantId::MaoXinWei,
+                MAO_XIN_WEI,
+                0.002,
+                9_000,
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::RuinResonance,
+                    env_locks: ENV_MAO_XIN_WEI,
+                    harvest_hazards: HAZARD_NONE,
+                    base_mesh_ref: "wheat",
+                    tint_rgb: 0xE8C040,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "warm yellow thatch-heart vetch, hermitage remnant herb icon",
+                },
+            ),
         ];
 
         Self {
@@ -589,6 +1231,38 @@ impl BotanyKindRegistry {
     #[allow(dead_code)]
     pub fn canonicalize(&self, raw: &str) -> Result<BotanyPlantId, String> {
         canonicalize_herb_id(raw)
+    }
+}
+
+fn botany_v2_kind(
+    id: BotanyPlantId,
+    item_id: &'static str,
+    growth_cost: f32,
+    max_age_ticks: u64,
+    v2: BotanyV2Spec,
+) -> BotanyPlantKind {
+    BotanyPlantKind {
+        id,
+        item_id,
+        zone_tags: &[],
+        density_factor: 1.0,
+        growth_cost,
+        survive_threshold: -1.0,
+        max_age_ticks,
+        regen_ticks: 0,
+        spawn_mode: BotanySpawnMode::ZoneRefresh,
+        restore_ratio: 0.8,
+        v2: Some(v2),
+    }
+}
+
+impl BotanyPlantKind {
+    pub fn is_v2(&self) -> bool {
+        self.v2.is_some()
+    }
+
+    pub fn v2_spec(&self) -> Option<BotanyV2Spec> {
+        self.v2
     }
 }
 
@@ -697,6 +1371,23 @@ mod tests {
             HEI_GU_JUN,
             FU_CHEN_CAO,
             ZHONG_YAN_TENG,
+            FU_YUAN_JUE,
+            BAI_YAN_PENG,
+            DUAN_JI_CI,
+            XUE_SE_MAI_CAO,
+            YUN_DING_LAN,
+            XUAN_GEN_WEI,
+            YING_YUAN_GU,
+            XUAN_RONG_TAI,
+            YUAN_NI_HONG_YU,
+            JING_XIN_ZAO,
+            XUE_PO_LIAN,
+            JIAO_MAI_TENG,
+            LIE_YUAN_TAI,
+            MING_GU_GU,
+            BEI_WEN_ZHI,
+            LING_JING_XU,
+            MAO_XIN_WEI,
         ] {
             assert!(canonicalize_herb_id(id).is_ok(), "{id} should be canonical");
         }
@@ -720,13 +1411,17 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_contains_all_22_canonical_kinds() {
-        // plan §1.1：去重后 22 种正典（末法药材十七种 + 辛草试毒录 - 重叠 2）
+    fn default_registry_contains_22_v1_and_17_v2_canonical_kinds() {
+        // plan-botany-v1 22 种 + plan-botany-v2 绝地草木拾遗 17 种。
         let registry = BotanyKindRegistry::default();
         let count = registry.iter().count();
         assert_eq!(
-            count, 22,
-            "BotanyKindRegistry should register exactly 22 canonical kinds, got {count}"
+            count, 39,
+            "BotanyKindRegistry should register exactly 39 canonical kinds, got {count}"
         );
+        assert_eq!(registry.iter().filter(|kind| kind.is_v2()).count(), 17);
+        assert!(registry.iter().filter(|kind| kind.is_v2()).all(|kind| {
+            kind.zone_tags.is_empty() && kind.spawn_mode == BotanySpawnMode::ZoneRefresh
+        }));
     }
 }

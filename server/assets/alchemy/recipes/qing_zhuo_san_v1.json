@@ -1,0 +1,32 @@
+{
+  "id": "qing_zhuo_san_v1",
+  "name": "清浊散·脉草引",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "xue_se_mai_cao", "count": 2 },
+      { "material": "duan_ji_ci", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.58,
+    "target_duration_ticks": 130,
+    "qi_cost": 14.0,
+    "tolerance": { "temp_band": 0.12, "duration_band": 20 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "qing_zhuo_san_v2", "quality": 1.0, "toxin_amount": 0.50, "toxin_color": "Mellow", "qi_gain": 14.0 },
+    "good": { "pill": "qing_zhuo_san_v2", "quality": 0.7, "toxin_amount": 0.70, "toxin_color": "Mellow", "qi_gain": 9.0 },
+    "flawed": { "pill": "qing_zhuo_san_v2_flawed", "quality": 0.35, "toxin_amount": 1.00, "toxin_color": "Turbid", "qi_gain": 4.0 },
+    "waste": null,
+    "explode": { "damage": 15.0, "meridian_crack": 0.08 }
+  },
+  "flawed_fallback": {
+    "pill": "qing_zhuo_san_v2_flawed",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      { "tag": "battlefield_resentment_flash", "duration_s": 6, "weight": 1 }
+    ]
+  }
+}

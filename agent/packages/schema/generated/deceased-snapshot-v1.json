@@ -1273,6 +1273,45 @@
                     }
                   }
                 }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "TradeCompleted"
+                ],
+                "properties": {
+                  "TradeCompleted": {
+                    "type": "object",
+                    "required": [
+                      "counterparty_id",
+                      "offered_item",
+                      "received_item",
+                      "tick"
+                    ],
+                    "properties": {
+                      "counterparty_id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "offered_item": {
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "type": "string"
+                      },
+                      "received_item": {
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "type": "string"
+                      },
+                      "tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
               }
             ]
           }
@@ -1315,6 +1354,187 @@
           "minLength": 1,
           "maxLength": 128,
           "type": "string"
+        }
+      }
+    },
+    "social": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "renown",
+        "relationships",
+        "exposure_log"
+      ],
+      "properties": {
+        "renown": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "fame",
+            "notoriety",
+            "tags"
+          ],
+          "properties": {
+            "fame": {
+              "type": "integer"
+            },
+            "notoriety": {
+              "type": "integer"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "tag",
+                  "weight",
+                  "last_seen_tick",
+                  "permanent"
+                ],
+                "properties": {
+                  "tag": {
+                    "type": "string"
+                  },
+                  "weight": {
+                    "type": "number"
+                  },
+                  "last_seen_tick": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "permanent": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "peer",
+              "since_tick",
+              "metadata"
+            ],
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "const": "master",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disciple",
+                    "type": "string"
+                  },
+                  {
+                    "const": "companion",
+                    "type": "string"
+                  },
+                  {
+                    "const": "pact",
+                    "type": "string"
+                  },
+                  {
+                    "const": "feud",
+                    "type": "string"
+                  }
+                ]
+              },
+              "peer": {
+                "type": "string"
+              },
+              "since_tick": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "metadata": {}
+            }
+          }
+        },
+        "exposure_log": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "tick",
+              "kind",
+              "witnesses"
+            ],
+            "properties": {
+              "tick": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "trade",
+                    "type": "string"
+                  },
+                  {
+                    "const": "divine",
+                    "type": "string"
+                  },
+                  {
+                    "const": "death",
+                    "type": "string"
+                  }
+                ]
+              },
+              "witnesses": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "faction_membership": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "faction",
+            "rank",
+            "loyalty",
+            "betrayal_count",
+            "permanently_refused"
+          ],
+          "properties": {
+            "faction": {
+              "type": "string"
+            },
+            "rank": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "loyalty": {
+              "type": "integer"
+            },
+            "betrayal_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invite_block_until_tick": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "permanently_refused": {
+              "type": "boolean"
+            }
+          }
         }
       }
     }

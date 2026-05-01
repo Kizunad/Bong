@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "social_renown_delta",
+  "char_id": "char:steve",
+  "fame_delta": 1,
+  "notoriety_delta": 0,
+  "tags_added": [
+    {
+      "tag": "kept_pact",
+      "weight": 1,
+      "last_seen_tick": 84400,
+      "permanent": false
+    }
+  ],
+  "tick": 84400,
+  "reason": "pact_kept"
+}

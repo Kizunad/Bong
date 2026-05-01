@@ -2,6 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { GameEventType, NpcState, PlayerTrend } from "./common.js";
 import { CultivationSnapshotV1, LifeRecordSnapshotV1 } from "./cultivation.js";
+import { PlayerSocialSnapshotV1 } from "./social.js";
 import { validate, type ValidationResult } from "./validate.js";
 
 // ─── 子结构 ─────────────────────────────────────────────
@@ -97,6 +98,7 @@ export const PlayerProfile = Type.Object(
     recent_deaths: Type.Integer({ minimum: 0 }),
     cultivation: Type.Optional(CultivationSnapshotV1),
     life_record: Type.Optional(LifeRecordSnapshotV1),
+    social: Type.Optional(PlayerSocialSnapshotV1),
   },
   { additionalProperties: false },
 );
@@ -106,6 +108,7 @@ export const NpcSnapshot = Type.Object(
   {
     id: Type.String(),
     kind: Type.String(),
+    zone: Type.String(),
     pos: Vec3,
     state: NpcState,
     blackboard: Type.Record(Type.String(), Type.Any()),

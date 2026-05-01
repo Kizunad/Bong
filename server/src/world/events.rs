@@ -546,8 +546,8 @@ impl ActiveEventsResource {
         });
     }
 
-    /// 推进事件。返回剩余未消耗的 `npc_spawn_budget`（若入参为 `None` 则返回
-    /// `None`）。调用方负责把剩余额度通过 `NpcRegistry::release_spawn_batch`
+    /// 推进事件。返回剩余未消耗的 zone 预算（若入参为 `None` 则返回
+    /// `None`）。调用方负责把剩余额度通过 `NpcRegistry::release_zone_batch`
     /// 回滚，以避免预留但未消费的配额把 `spawn_paused` 误触发（P2-5）。
     #[must_use = "leftover budget should be released back to NpcRegistry"]
     #[allow(clippy::too_many_arguments)]
@@ -560,11 +560,11 @@ impl ActiveEventsResource {
         collapse_targets: Option<&[(Entity, DimensionKind, DVec3)]>,
         mut death_events: Option<&mut EventWriter<DeathEvent>>,
         mut collapsed_events: Option<&mut EventWriter<ZoneCollapsedEvent>>,
-        mut npc_spawn_budget: Option<usize>,
-    ) -> Option<usize> {
+        mut npc_spawn_budget_by_zone: Option<HashMap<String, usize>>,
+    ) -> Option<HashMap<String, usize>> {
         let Some(zone_registry) = zone_registry else {
             self.tick_metadata_only(None);
-            return npc_spawn_budget;
+            return npc_spawn_budget_by_zone;
         };
         let mut recent_events = Vec::new();
 
@@ -584,7 +584,10 @@ impl ActiveEventsResource {
             if let (Some(layer_entity), Some(commands)) = (layer_entity, commands.as_deref_mut()) {
                 let mut deferred_spawns = Vec::new();
                 for spawn in std::mem::take(&mut self.pending_daoxiang_spawns) {
-                    if let Some(budget) = npc_spawn_budget.as_mut() {
+                    if let Some(budget) = npc_spawn_budget_by_zone
+                        .as_mut()
+                        .and_then(|budgets| budgets.get_mut(spawn.zone_name.as_str()))
+                    {
                         if *budget == 0 {
                             deferred_spawns.push(spawn);
                             continue;
@@ -694,7 +697,9 @@ impl ActiveEventsResource {
                         };
 
                         let desired_beast_count = beast_count_for_intensity(event.intensity);
-                        let beast_count = npc_spawn_budget
+                        let beast_count = npc_spawn_budget_by_zone
+                            .as_ref()
+                            .and_then(|budget| budget.get(event.zone_name.as_str()).copied())
                             .map(|budget| desired_beast_count.min(budget))
                             .unwrap_or(desired_beast_count);
                         if beast_count == 0 {
@@ -704,8 +709,10 @@ impl ActiveEventsResource {
                             );
                             continue;
                         }
-                        if let Some(budget) = npc_spawn_budget.as_mut() {
-                            *budget = budget.saturating_sub(beast_count);
+                        if let Some(budget_by_zone) = npc_spawn_budget_by_zone.as_mut() {
+                            if let Some(budget) = budget_by_zone.get_mut(event.zone_name.as_str()) {
+                                *budget = budget.saturating_sub(beast_count);
+                            }
                         }
                         for beast_index in 0..beast_count {
                             let spawn_position =
@@ -865,7 +872,7 @@ impl ActiveEventsResource {
             }
         }
 
-        npc_spawn_budget
+        npc_spawn_budget_by_zone
     }
 
     pub fn contains(&self, zone_name: &str, event_name: &str) -> bool {
@@ -1007,24 +1014,31 @@ fn tick_active_events(
     }
 
     let npc_spawn_budget = if let Some(registry) = npc_registry.as_deref_mut() {
-        let desired = active_events
+        let mut reserved_by_zone = HashMap::new();
+        for event in active_events
             .active_events
             .iter()
             .filter(|event| event.event_name == EVENT_BEAST_TIDE && event.elapsed_ticks == 0)
-            .map(|event| beast_count_for_intensity(event.intensity))
-            .sum::<usize>()
-            .saturating_add(active_events.pending_daoxiang_spawns.len());
-        let reserved = registry.reserve_spawn_batch(desired);
-        if reserved < desired {
-            tracing::info!(
-                "[bong][world] beast_tide spawn clamped by npc registry: desired={} reserved={} live_npc_count={} max_npc_count={}",
-                desired,
-                reserved,
-                registry.live_npc_count,
-                registry.max_npc_count
-            );
+        {
+            let desired = beast_count_for_intensity(event.intensity);
+            let reserved = registry.reserve_zone_batch(event.zone_name.as_str(), desired);
+            if reserved < desired {
+                tracing::info!(
+                    "[bong][world] beast_tide spawn clamped by npc registry: zone={} desired={} reserved={} live_npc_count={} max_npc_count={}",
+                    event.zone_name,
+                    desired,
+                    reserved,
+                    registry.live_npc_count,
+                    registry.max_npc_count
+                );
+            }
+            reserved_by_zone.insert(event.zone_name.clone(), reserved);
         }
-        Some(reserved)
+        for spawn in &active_events.pending_daoxiang_spawns {
+            let reserved = registry.reserve_zone_batch(spawn.zone_name.as_str(), 1);
+            *reserved_by_zone.entry(spawn.zone_name.clone()).or_insert(0) += reserved;
+        }
+        Some(reserved_by_zone)
     } else {
         None
     };
@@ -1058,9 +1072,11 @@ fn tick_active_events(
 
     // P2-5: 把 reserve 了但没消费掉（eg. beast_tide 因 missing layer/commands
     // 提前 continue）的额度归还给 registry，防止 1-tick 暂态 `spawn_paused`。
-    if let (Some(registry), Some(remaining)) = (npc_registry.as_deref_mut(), leftover) {
-        if remaining > 0 {
-            registry.release_spawn_batch(remaining);
+    if let (Some(registry), Some(remaining_by_zone)) = (npc_registry.as_deref_mut(), leftover) {
+        for (zone, remaining) in remaining_by_zone {
+            if remaining > 0 {
+                registry.release_zone_batch(zone.as_str(), remaining);
+            }
         }
     }
 }
@@ -2707,7 +2723,7 @@ mod events_tests {
         // 同 tick 内 `live_npc_count >= resume_npc_count` 可能误触
         // `spawn_paused=true`，击杀后续 spawn。
         let mut registry = NpcRegistry::default();
-        let reserved = registry.reserve_spawn_batch(5);
+        let reserved = registry.reserve_zone_batch(DEFAULT_SPAWN_ZONE_NAME, 5);
         assert_eq!(reserved, 5);
         assert_eq!(registry.live_npc_count, 5);
 
@@ -2731,15 +2747,23 @@ mod events_tests {
             None,
             None,
             None,
-            Some(reserved),
+            Some(HashMap::from([(
+                DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                reserved,
+            )])),
         );
         assert_eq!(
-            leftover,
+            leftover
+                .as_ref()
+                .and_then(|budgets| budgets.get(DEFAULT_SPAWN_ZONE_NAME))
+                .copied(),
             Some(reserved),
             "tick must return the full reserved budget when spawn could not occur"
         );
 
-        registry.release_spawn_batch(leftover.unwrap_or(0));
+        for (zone, remaining) in leftover.unwrap_or_default() {
+            registry.release_zone_batch(zone.as_str(), remaining);
+        }
         assert_eq!(
             registry.live_npc_count, 0,
             "leftover budget must be released back to NpcRegistry"

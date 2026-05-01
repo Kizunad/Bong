@@ -421,6 +421,7 @@ pub fn handle_vfx_debug_commands(
                 let id = anim_id_from_payload(&payload).to_string();
                 let kind = match &payload {
                     VfxEventPayloadV1::PlayAnim { .. } => "play",
+                    VfxEventPayloadV1::PlayAnimInline { .. } => "play_inline",
                     VfxEventPayloadV1::StopAnim { .. } => "stop",
                     VfxEventPayloadV1::SpawnParticle { .. } => "particle",
                 };
@@ -591,6 +592,7 @@ fn is_valid_color_hex_shape(hex: &str) -> bool {
 fn anim_id_from_payload(payload: &VfxEventPayloadV1) -> &str {
     match payload {
         VfxEventPayloadV1::PlayAnim { anim_id, .. } => anim_id,
+        VfxEventPayloadV1::PlayAnimInline { anim_id, .. } => anim_id,
         VfxEventPayloadV1::StopAnim { anim_id, .. } => anim_id,
         // 粒子 variant 没有 anim_id 概念；debug 命令目前只生产 Play/Stop，
         // 保底返回 event_id 以便日志不致 panic。

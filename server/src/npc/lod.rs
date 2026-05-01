@@ -147,6 +147,25 @@ pub fn should_skip_scorer_tick(tier: NpcLodTier, tick: u32, config: &NpcLodConfi
     }
 }
 
+pub fn lod_gated_score(
+    tier: Option<&NpcLodTier>,
+    tick: u32,
+    config: &NpcLodConfig,
+    compute: impl FnOnce() -> f32,
+) -> Option<f32> {
+    if is_dormant(tier) {
+        Some(0.0)
+    } else if tier
+        .copied()
+        .map(|tier| should_skip_scorer_tick(tier, tick, config))
+        .unwrap_or(false)
+    {
+        None
+    } else {
+        Some(compute())
+    }
+}
+
 /// Dormant 判断的便捷版（不需要 config）。
 pub fn is_dormant(tier: Option<&NpcLodTier>) -> bool {
     matches!(tier, Some(NpcLodTier::Dormant))

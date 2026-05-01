@@ -61,7 +61,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Tabs (left panel)
     private int activeTab = 0;
-    // plan-skill-v1 §5.1 第三个 tab "技艺"
+        // plan-skill-v1 §5.1 第三个 tab "技艺"
     private final LabelComponent[] tabLabels = new LabelComponent[4];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
@@ -72,7 +72,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private LabelComponent skillScrollDropTitle;
     private LabelComponent skillScrollDropHint;
     private String skillScrollDropFeedback = "仅 skill 残卷可悟";
-    // plan-skill-v1 §5.1 三行固定（herbalism / alchemy / forging）
+    // plan-cross-system-patch-v1 P1：按 SkillId.values() 展示所有技艺。
     private com.bong.client.skill.SkillRowComponent[] skillRows;
     private com.bong.client.skill.SkillId selectedSkill = com.bong.client.skill.SkillId.HERBALISM;
     private LabelComponent skillDetailTitle;
@@ -112,7 +112,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -386,12 +386,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         skillTabContent.gap(2);
         skillTabContent.padding(Insets.of(2));
 
-        skillRows = new com.bong.client.skill.SkillRowComponent[3];
-        com.bong.client.skill.SkillId[] order = {
-            com.bong.client.skill.SkillId.HERBALISM,
-            com.bong.client.skill.SkillId.ALCHEMY,
-            com.bong.client.skill.SkillId.FORGING,
-        };
+        com.bong.client.skill.SkillId[] order = com.bong.client.skill.SkillId.values();
+        skillRows = new com.bong.client.skill.SkillRowComponent[order.length];
         for (int i = 0; i < order.length; i++) {
             skillRows[i] = new com.bong.client.skill.SkillRowComponent(order[i]);
             final com.bong.client.skill.SkillId skillId = order[i];
@@ -913,6 +909,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case HERBALISM -> herbalismCurrentEffect(lv);
             case ALCHEMY -> alchemyCurrentEffect(lv);
             case FORGING -> forgingCurrentEffect(lv);
+            case COMBAT -> combatCurrentEffect(lv);
+            case MINERAL -> mineralCurrentEffect(lv);
+            case CULTIVATION -> cultivationCurrentEffect(lv);
         };
     }
 
@@ -931,6 +930,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 case HERBALISM -> herbalismNextEffect(nextLv);
                 case ALCHEMY -> alchemyNextEffect(nextLv);
                 case FORGING -> forgingNextEffect(nextLv);
+                case COMBAT -> combatNextEffect(nextLv);
+                case MINERAL -> mineralNextEffect(nextLv);
+                case CULTIVATION -> cultivationNextEffect(nextLv);
             };
     }
 
@@ -1005,6 +1007,31 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             formatInt(forgingAllowedMiss(nextLv)),
             formatPercent1(forgingFailureReduction(nextLv) * 100.0)
         );
+    }
+
+    private static String combatCurrentEffect(int effectiveLv) {
+        return "击杀、实战与截脉对练会增长此项；当前只作熟练度记录，细分武学待后续 plan。"
+            + " 实效 Lv." + effectiveLv + "。";
+    }
+
+    private static String combatNextEffect(int nextLv) {
+        return "实战熟练度将提到 Lv." + nextLv + "；细分剑术/拳法等仍由后续 combat plan 定义。";
+    }
+
+    private static String mineralCurrentEffect(int effectiveLv) {
+        return "采矿、辨矿与落袋会增长此项；当前只作熟练度记录。实效 Lv." + effectiveLv + "。";
+    }
+
+    private static String mineralNextEffect(int nextLv) {
+        return "采矿熟练度将提到 Lv." + nextLv + "；矿物品质/概率加成留给 mineral 后续表。";
+    }
+
+    private static String cultivationCurrentEffect(int effectiveLv) {
+        return "开脉与突破会增长此项；境界仍是根本，本项只记行功熟练。实效 Lv." + effectiveLv + "。";
+    }
+
+    private static String cultivationNextEffect(int nextLv) {
+        return "行功熟练度将提到 Lv." + nextLv + "；不替代境界，只辅助展示修行履历。";
     }
 
     private static String herbalismAutoText(int effectiveLv) {
@@ -1689,6 +1716,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (forgeStationTier(item) > 0) {
             actions.add(new PillMenuAction("放置炼器砧", ActionKind.PLACE_FORGE_STATION));
         }
+        if (isSpiritNicheStone(item)) {
+            actions.add(new PillMenuAction("放置灵龛", ActionKind.PLACE_SPIRIT_NICHE));
+        }
         return actions;
     }
 
@@ -1737,11 +1767,36 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 pendingMeridianUse = null;
                 dispatchPlaceForgeStation(item);
             }
+            case PLACE_SPIRIT_NICHE -> {
+                pendingMeridianUse = null;
+                dispatchPlaceSpiritNiche(item);
+            }
         }
     }
 
+    boolean dispatchPlaceSpiritNiche(InventoryItem item) {
+        BlockPos pos = targetPlacementPos();
+        return dispatchPlaceSpiritNicheAt(item, pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    boolean dispatchPlaceSpiritNicheAt(InventoryItem item, int x, int y, int z) {
+        if (item == null || item.instanceId() == 0L || !isSpiritNicheStone(item)) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchPlaceSpiritNiche instance={} item={} pos=[{},{},{}]",
+            item.instanceId(), item.itemId(), x, y, z);
+        com.bong.client.network.ClientRequestSender.sendSpiritNichePlace(
+            x,
+            y,
+            z,
+            item.instanceId()
+        );
+        return true;
+    }
+
     boolean dispatchPlaceForgeStation(InventoryItem item) {
-        BlockPos pos = targetForgeStationPlacementPos();
+        BlockPos pos = targetPlacementPos();
         return dispatchPlaceForgeStationAt(item, pos.getX(), pos.getY(), pos.getZ());
     }
 
@@ -1779,7 +1834,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    private static BlockPos targetForgeStationPlacementPos() {
+    static boolean isSpiritNicheStone(InventoryItem item) {
+        return item != null && "spirit_niche_stone".equals(item.itemId());
+    }
+
+    private static BlockPos targetPlacementPos() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.crosshairTarget instanceof BlockHitResult hit
             && hit.getType() == HitResult.Type.BLOCK) {
@@ -2126,6 +2185,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void quickEquipFromGrid(InventoryItem item) {
         if (!InventoryEquipRules.isWeapon(item)
             && !InventoryEquipRules.isHoe(item)
+            && !InventoryEquipRules.isTool(item)
             && !InventoryEquipRules.isTreasure(item)) {
             return;
         }

@@ -1,0 +1,10 @@
+{
+  "id": "stance_switch",
+  "layers": [
+    { "sound": "minecraft:block.note_block.chime", "volume": 0.25, "pitch": 1.25, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.08, "pitch": 1.6, "delay_ticks": 1 }
+  ],
+  "priority": 60,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

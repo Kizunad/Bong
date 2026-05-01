@@ -63,6 +63,8 @@ pub struct ColumnSample {
     pub flora_density: f32,
     /// Global decoration id (0 = none; lookup via TerrainProvider::decoration).
     pub flora_variant_id: u8,
+    /// 0 none, 1 whalefall outer ribs/periphery, 2 mineral-rich core.
+    pub fossil_bbox: u8,
     // --- event / anomaly layers ---
     /// 0..1 local anomaly strength (event system threshold ≈ 0.3).
     pub anomaly_intensity: f32,
@@ -123,6 +125,7 @@ pub struct TerrainProvider {
     /// Global decoration palette: index by global id (0-slot is unused placeholder).
     decoration_palette: Vec<Option<Decoration>>,
     abyssal_tier_floor_y: HashMap<u8, f32>,
+    fossil_bboxes: Vec<FossilBbox>,
 }
 
 impl Resource for TerrainProvider {}
@@ -190,6 +193,7 @@ struct TileFields {
     cavern_floor_y: Option<Mmap>,
     flora_density: Option<Mmap>,
     flora_variant_id: Option<Mmap>,
+    fossil_bbox: Option<Mmap>,
     anomaly_intensity: Option<Mmap>,
     anomaly_kind: Option<Mmap>,
     // plan-tsy-worldgen-v1 §4.1 — TSY-only layers, all uint8 (tile_area sized).
@@ -213,6 +217,8 @@ struct RasterManifest {
     abyssal_tier_floor_y: HashMap<String, f32>,
     #[serde(default)]
     global_decoration_palette: Vec<ManifestDecoration>,
+    #[serde(default)]
+    fossil_bboxes: Vec<ManifestFossilBbox>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,6 +271,20 @@ struct ManifestDecoration {
     notes: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestFossilBbox {
+    zone: String,
+    name: String,
+    center_xz: [i32; 2],
+    center_y: i32,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    #[serde(default)]
+    max_units: u32,
+}
+
 // --- Public read-only views of manifest data ----------------------------
 
 #[allow(dead_code)]
@@ -294,6 +314,20 @@ pub struct Decoration {
     pub notes: String,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct FossilBbox {
+    pub zone: String,
+    pub name: String,
+    pub center_xz: [i32; 2],
+    pub center_y: i32,
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub max_units: u32,
+}
+
 impl TerrainProvider {
     #[cfg(test)]
     pub(crate) fn empty_for_tests() -> Self {
@@ -315,6 +349,7 @@ impl TerrainProvider {
             anomaly_kinds: HashMap::new(),
             decoration_palette: Vec::new(),
             abyssal_tier_floor_y: HashMap::new(),
+            fossil_bboxes: Vec::new(),
         }
     }
 
@@ -423,6 +458,22 @@ impl TerrainProvider {
             });
         }
 
+        let fossil_bboxes = manifest
+            .fossil_bboxes
+            .into_iter()
+            .map(|raw| FossilBbox {
+                zone: raw.zone,
+                name: raw.name,
+                center_xz: raw.center_xz,
+                center_y: raw.center_y,
+                min_x: raw.min_x,
+                max_x: raw.max_x,
+                min_z: raw.min_z,
+                max_z: raw.max_z,
+                max_units: raw.max_units,
+            })
+            .collect::<Vec<_>>();
+
         Ok(Self {
             tiles,
             tile_size: manifest.tile_size,
@@ -441,6 +492,7 @@ impl TerrainProvider {
             anomaly_kinds,
             decoration_palette,
             abyssal_tier_floor_y,
+            fossil_bboxes,
         })
     }
 
@@ -458,6 +510,17 @@ impl TerrainProvider {
             .and_then(|o| o.as_ref())
     }
 
+    #[allow(dead_code)]
+    pub fn decorations(&self) -> impl Iterator<Item = &Decoration> {
+        self.decoration_palette.iter().filter_map(Option::as_ref)
+    }
+
+    #[allow(dead_code)]
+    pub fn decoration_by_name(&self, name: &str) -> Option<&Decoration> {
+        self.decorations()
+            .find(|decoration| decoration.name == name)
+    }
+
     /// Total number of decorations in the global palette.
     #[allow(dead_code)]
     pub fn decoration_count(&self) -> usize {
@@ -465,6 +528,16 @@ impl TerrainProvider {
             .iter()
             .filter(|d| d.is_some())
             .count()
+    }
+
+    #[allow(dead_code)]
+    pub fn fossil_bboxes(&self) -> &[FossilBbox] {
+        &self.fossil_bboxes
+    }
+
+    #[allow(dead_code)]
+    pub fn sample_fossil_bbox(&self, world_x: i32, world_z: i32) -> u8 {
+        self.sample(world_x, world_z).fossil_bbox
     }
 
     /// Human-readable name for an anomaly_kind enum value.
@@ -543,12 +616,62 @@ impl TerrainProvider {
             cavern_floor_y: read_optional_f32(&tile.cavern_floor_y, index, 9999.0),
             flora_density: read_optional_f32(&tile.flora_density, index, 0.0),
             flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
+            fossil_bbox: read_optional_u8(&tile.fossil_bbox, index, 0),
             anomaly_intensity: read_optional_f32(&tile.anomaly_intensity, index, 0.0),
             anomaly_kind: read_optional_u8(&tile.anomaly_kind, index, 0),
             tsy_presence: read_optional_u8(&tile.tsy_presence, index, 0),
             tsy_origin_id: read_optional_u8(&tile.tsy_origin_id, index, 0),
             tsy_depth_tier: read_optional_u8(&tile.tsy_depth_tier, index, 0),
         }
+    }
+
+    pub fn sample_layer(&self, world_x: i32, world_z: i32, layer_name: &str) -> Option<f32> {
+        let (tile, index) = self.tile_and_index(world_x, world_z)?;
+        match layer_name {
+            "height" => Some(read_f32(&tile.height, index)),
+            "water_level" => Some(read_f32(&tile.water_level, index)),
+            "feature_mask" => Some(read_f32(&tile.feature_mask, index)),
+            "boundary_weight" => Some(read_f32(&tile.boundary_weight, index)),
+            "rift_axis_sdf" => read_optional_f32_strict(&tile.rift_axis_sdf, index),
+            "rim_edge_mask" => read_optional_f32_strict(&tile.rim_edge_mask, index),
+            "cave_mask" => read_optional_f32_strict(&tile.cave_mask, index),
+            "ceiling_height" => read_optional_f32_strict(&tile.ceiling_height, index),
+            "entrance_mask" => read_optional_f32_strict(&tile.entrance_mask, index),
+            "fracture_mask" => read_optional_f32_strict(&tile.fracture_mask, index),
+            "neg_pressure" => read_optional_f32_strict(&tile.neg_pressure, index),
+            "ruin_density" => read_optional_f32_strict(&tile.ruin_density, index),
+            "qi_density" => read_optional_f32_strict(&tile.qi_density, index),
+            "mofa_decay" => read_optional_f32_strict(&tile.mofa_decay, index),
+            "qi_vein_flow" => read_optional_f32_strict(&tile.qi_vein_flow, index),
+            "sky_island_mask" => read_optional_f32_strict(&tile.sky_island_mask, index),
+            "sky_island_base_y" => read_optional_f32_strict(&tile.sky_island_base_y, index),
+            "sky_island_thickness" => read_optional_f32_strict(&tile.sky_island_thickness, index),
+            "underground_tier" => {
+                read_optional_u8_strict(&tile.underground_tier, index).map(f32::from)
+            }
+            "cavern_floor_y" => read_optional_f32_strict(&tile.cavern_floor_y, index),
+            "flora_density" => read_optional_f32_strict(&tile.flora_density, index),
+            "flora_variant_id" => {
+                read_optional_u8_strict(&tile.flora_variant_id, index).map(f32::from)
+            }
+            "fossil_bbox" => read_optional_u8_strict(&tile.fossil_bbox, index).map(f32::from),
+            "anomaly_intensity" => read_optional_f32_strict(&tile.anomaly_intensity, index),
+            "anomaly_kind" => read_optional_u8_strict(&tile.anomaly_kind, index).map(f32::from),
+            "tsy_presence" => read_optional_u8_strict(&tile.tsy_presence, index).map(f32::from),
+            "tsy_origin_id" => read_optional_u8_strict(&tile.tsy_origin_id, index).map(f32::from),
+            "tsy_depth_tier" => read_optional_u8_strict(&tile.tsy_depth_tier, index).map(f32::from),
+            _ => None,
+        }
+    }
+
+    fn tile_and_index(&self, world_x: i32, world_z: i32) -> Option<(&TileFields, usize)> {
+        let tile_x = world_x.div_euclid(self.tile_size);
+        let tile_z = world_z.div_euclid(self.tile_size);
+        let tile = self.tiles.get(&(tile_x, tile_z))?;
+        let local_x = world_x.rem_euclid(self.tile_size) as usize;
+        let local_z = world_z.rem_euclid(self.tile_size) as usize;
+        let index = local_z * self.tile_size as usize + local_x;
+        Some((tile, index))
     }
 }
 
@@ -586,6 +709,7 @@ impl TileFields {
             cavern_floor_y: map_optional_layer(tile_dir, layers, "cavern_floor_y", area4)?,
             flora_density: map_optional_layer(tile_dir, layers, "flora_density", area4)?,
             flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
+            fossil_bbox: map_optional_layer(tile_dir, layers, "fossil_bbox", tile_area)?,
             anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
             anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,
             tsy_presence: map_optional_layer(tile_dir, layers, "tsy_presence", tile_area)?,
@@ -657,6 +781,14 @@ fn read_optional_u8(bytes: &Option<Mmap>, index: usize, fallback: u8) -> u8 {
         .as_ref()
         .map(|mmap| read_u8(mmap, index))
         .unwrap_or(fallback)
+}
+
+fn read_optional_f32_strict(bytes: &Option<Mmap>, index: usize) -> Option<f32> {
+    bytes.as_ref().map(|mmap| read_f32(mmap, index))
+}
+
+fn read_optional_u8_strict(bytes: &Option<Mmap>, index: usize) -> Option<u8> {
+    bytes.as_ref().map(|mmap| read_u8(mmap, index))
 }
 
 fn block_state_from_name(name: &str) -> Result<BlockState, String> {

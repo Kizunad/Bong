@@ -180,6 +180,18 @@ const HeartDemonRecord = Type.Object(
   { additionalProperties: false },
 );
 
+const TradeCompleted = Type.Object(
+  {
+    TradeCompleted: Type.Object({
+      counterparty_id: Type.String({ minLength: 1, maxLength: 128 }),
+      offered_item: Type.String({ minLength: 1, maxLength: 256 }),
+      received_item: Type.String({ minLength: 1, maxLength: 256 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 export const BiographyEntryV1 = Type.Union([
   BreakthroughStarted,
   BreakthroughSucceeded,
@@ -199,6 +211,7 @@ export const BiographyEntryV1 = Type.Union([
   TribulationIntercepted,
   TribulationFled,
   HeartDemonRecord,
+  TradeCompleted,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;
 

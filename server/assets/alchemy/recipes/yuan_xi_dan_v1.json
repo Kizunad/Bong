@@ -1,0 +1,36 @@
+{
+  "id": "yuan_xi_dan_v1",
+  "name": "渊息丹",
+  "furnace_tier_min": 3,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "lie_yuan_tai", "count": 1 },
+      { "material": "ling_jing_xu", "count": 1 }
+    ], "window": 0 },
+    { "at_tick": 80, "required": [
+      { "material": "bei_wen_zhi", "count": 1 }
+    ], "window": 10 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.50,
+    "target_duration_ticks": 180,
+    "qi_cost": 20.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 26 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "yuan_xi_dan", "quality": 1.0, "toxin_amount": 0.70, "toxin_color": "Insidious", "qi_gain": 10.0 },
+    "good": { "pill": "yuan_xi_dan", "quality": 0.7, "toxin_amount": 0.85, "toxin_color": "Insidious", "qi_gain": 6.0 },
+    "flawed": { "pill": "yuan_xi_dan_flawed", "quality": 0.35, "toxin_amount": 1.25, "toxin_color": "Turbid", "qi_gain": 2.0 },
+    "waste": null,
+    "explode": { "damage": 24.0, "meridian_crack": 0.14 }
+  },
+  "flawed_fallback": {
+    "pill": "yuan_xi_dan_flawed",
+    "quality_scale": 0.35,
+    "toxin_scale": 1.8,
+    "side_effect_pool": [
+      { "tag": "rift_breath_choke", "duration_s": 10, "weight": 2 },
+      { "tag": "array_echo_noise", "duration_s": 20, "weight": 1 }
+    ]
+  }
+}

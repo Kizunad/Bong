@@ -1,6 +1,10 @@
 pub mod agent_bridge;
+pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod ascension_quota_emit;
+pub mod audio_event_emit;
+pub mod audio_trigger;
+pub mod burst_event_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -17,8 +21,10 @@ pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod npc_event_bridge;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
+pub mod resourcepack;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
@@ -31,6 +37,7 @@ pub mod tribulation_heart_demon_offer_emit;
 pub mod tribulation_state_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
+pub mod vfx_animation_trigger;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
 pub mod wounds_snapshot_emit;
@@ -51,16 +58,19 @@ use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
     ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventReader, EventWriter,
-    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
+    Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update,
+    Username, With,
 };
 
 use crate::combat::components::Lifecycle;
+use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
+use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
@@ -80,11 +90,17 @@ use crate::schema::cultivation::{
     SkillMilestoneSnapshotV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::social::{
+    FactionMembershipSnapshotV1, PlayerSocialSnapshotV1, RelationshipSnapshotV1, RenownSnapshotV1,
+};
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
     NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot, ZoneStatusV1,
 };
 use crate::skill::components::SkillId;
+use crate::social::components::{
+    Anonymity, FactionMembership as PlayerFactionMembership, Relationships, Renown,
+};
 use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -239,6 +255,8 @@ pub fn register(app: &mut App) {
     app.insert_resource(NarrationDedupeResource::default());
     app.insert_resource(WorldModelMirrorReconcileState::default());
     app.insert_resource(combat_bridge::CombatSummaryAccumulator::default());
+    app.insert_resource(resourcepack::ResourcePackConfig::default());
+    app.insert_resource(resourcepack::ResourcePackStatusStore::default());
 
     app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
 
@@ -277,8 +295,23 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        (
+            npc_event_bridge::publish_npc_spawn_events,
+            npc_event_bridge::publish_npc_death_events,
+            npc_event_bridge::publish_faction_events.after(execute_agent_commands),
+        ),
+    );
+    app.add_systems(
+        Update,
         techniques_snapshot_emit::emit_join_techniques_snapshot_payloads
             .after(crate::player::attach_player_state_to_joined_clients),
+    );
+    app.add_systems(
+        Update,
+        (
+            resourcepack::prompt_resource_pack_on_join.after(send_welcome_payload_on_join),
+            resourcepack::record_resource_pack_status,
+        ),
     );
     app.add_systems(
         Update,
@@ -299,12 +332,29 @@ pub fn register(app: &mut App) {
             ascension_quota_emit::emit_ascension_quota_payloads
                 .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
+            burst_event_emit::emit_burst_meridian_events,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            audio_event_emit::handle_audio_debug_commands,
+            audio_event_emit::emit_audio_play_payloads
+                .after(audio_event_emit::handle_audio_debug_commands)
+                .after(process_redis_inbound)
+                .after(emit_gameplay_narrations),
+            audio_event_emit::emit_audio_stop_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
             vfx_event_emit::emit_vanilla_vfx_particles
                 .after(vfx_event_emit::handle_vfx_debug_commands),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
             tsy_event_bridge::publish_tsy_enter_events,
             tsy_event_bridge::publish_tsy_exit_events,
@@ -314,6 +364,47 @@ pub fn register(app: &mut App) {
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
+    );
+    app.add_systems(Update, alchemy_bridge::publish_alchemy_session_end_events);
+    app.add_systems(
+        Update,
+        cultivation_bridge::publish_rebirth_events
+            .after(crate::combat::lifecycle::death_arbiter_tick),
+    );
+    app.add_systems(
+        Update,
+        (
+            vfx_animation_trigger::emit_attack_animation_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            vfx_animation_trigger::emit_defense_animation_triggers
+                .after(crate::combat::resolve::apply_defense_intents),
+            vfx_animation_trigger::emit_hit_recoil_animation_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            vfx_animation_trigger::emit_breakthrough_animation_triggers
+                .after(crate::cultivation::breakthrough::breakthrough_system),
+            vfx_animation_trigger::emit_tribulation_animation_triggers
+                .after(crate::cultivation::tribulation::start_tribulation_system)
+                .after(crate::cultivation::tribulation::tribulation_failure_system),
+        )
+            .before(vfx_event_emit::emit_vfx_event_payloads),
+    );
+    app.add_systems(
+        Update,
+        (
+            audio_trigger::emit_combat_audio_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            audio_trigger::emit_cultivation_audio_triggers,
+            audio_trigger::emit_tribulation_audio_triggers,
+            audio_trigger::emit_alchemy_audio_triggers,
+            audio_trigger::emit_forge_audio_triggers,
+            audio_trigger::emit_botany_audio_triggers,
+            audio_trigger::emit_lingtian_audio_triggers,
+            audio_trigger::emit_skill_audio_triggers,
+            audio_trigger::emit_social_audio_triggers
+                .after(crate::cultivation::possession::process_duo_she_requests),
+            audio_trigger::emit_player_state_audio_triggers,
+        )
+            .before(audio_event_emit::emit_audio_play_payloads),
     );
     app.add_systems(
         Update,
@@ -328,6 +419,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         client_request_handler::handle_client_request_payloads,
+    );
+    app.add_systems(
+        Update,
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(client_request_handler::handle_client_request_payloads),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(
@@ -399,6 +495,10 @@ pub fn register(app: &mut App) {
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
+    app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
+    app.init_resource::<audio_trigger::AudioTriggerState>();
+    app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
+    app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
@@ -450,6 +550,10 @@ fn publish_world_state_to_redis(
             &Username,
             Option<&PlayerState>,
             Option<&Cultivation>,
+            Option<&Anonymity>,
+            Option<&Renown>,
+            Option<&Relationships>,
+            Option<&PlayerFactionMembership>,
         ),
         With<Client>,
     >,
@@ -465,6 +569,7 @@ fn publish_world_state_to_redis(
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
             Option<&FactionMembership>,
+            Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
@@ -545,6 +650,10 @@ fn build_world_state_snapshot(
             &Username,
             Option<&PlayerState>,
             Option<&Cultivation>,
+            Option<&Anonymity>,
+            Option<&Renown>,
+            Option<&Relationships>,
+            Option<&PlayerFactionMembership>,
         ),
         With<Client>,
     >,
@@ -560,6 +669,7 @@ fn build_world_state_snapshot(
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
             Option<&FactionMembership>,
+            Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
@@ -568,14 +678,19 @@ fn build_world_state_snapshot(
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
     let (players, player_ids_by_entity, player_counts_by_zone) =
-        collect_player_snapshots(clients, &zone_registry, cultivation_by_entity);
+        collect_player_snapshots(tick, clients, &zone_registry, cultivation_by_entity);
 
     WorldStateV1 {
         v: 1,
         ts,
         tick,
         players,
-        npcs: collect_npc_snapshots(npcs, npc_action_states, &player_ids_by_entity),
+        npcs: collect_npc_snapshots(
+            npcs,
+            npc_action_states,
+            &player_ids_by_entity,
+            &zone_registry,
+        ),
         factions: faction_store.map(collect_faction_summaries),
         zones: collect_zone_snapshots(&zone_registry, &player_counts_by_zone),
         recent_events: active_events
@@ -591,7 +706,7 @@ pub(crate) fn build_player_state_payload(
     cultivation: &Cultivation,
     zone: impl Into<String>,
 ) -> Result<Vec<u8>, PayloadBuildError> {
-    let payload = player_state.server_payload(cultivation, None, zone.into());
+    let payload = player_state.server_payload_with_social(cultivation, None, zone.into(), None);
     serialize_server_data_payload(&payload)
 }
 
@@ -652,6 +767,7 @@ where
                 recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
                 cultivation: None,
                 life_record: None,
+                social: None,
             }
         })
         .collect::<Vec<_>>();
@@ -665,6 +781,7 @@ fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
 ) {
     let Some(mut gameplay_narrations) = gameplay_narrations else {
         return;
@@ -675,9 +792,11 @@ fn emit_gameplay_narrations(
         return;
     }
 
+    let mut audio_events = audio_events;
     process_agent_narrations(
         &mut clients,
         zone_registry.as_deref(),
+        audio_events.as_deref_mut(),
         narrations.as_slice(),
     );
 }
@@ -711,6 +830,7 @@ fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry
 
 #[allow(clippy::type_complexity)]
 fn collect_player_snapshots(
+    tick: u64,
     clients: &Query<
         (
             Entity,
@@ -718,6 +838,10 @@ fn collect_player_snapshots(
             &Username,
             Option<&PlayerState>,
             Option<&Cultivation>,
+            Option<&Anonymity>,
+            Option<&Renown>,
+            Option<&Relationships>,
+            Option<&PlayerFactionMembership>,
         ),
         With<Client>,
     >,
@@ -733,80 +857,155 @@ fn collect_player_snapshots(
 
     let mut players = clients
         .iter()
-        .map(|(entity, position, username, player_state, cultivation)| {
-            let name = username.0.clone();
-            let zone_name = zone_name_for_position(zone_registry, position.get());
-            let canonical_id = canonical_player_id(&name);
-            let state = player_state.cloned().unwrap_or_default();
-
-            // For player list summary, prefer live Cultivation on the entity when
-            // available (tests attach it directly). Fall back to periodic
-            // cultivation snapshots, then to defaults.
-
-            // Player list summary uses the best cultivation snapshot we have at
-            // the time of building WorldState. Fall back to default cultivation.
-            let (realm, composite_power, breakdown) = if let Some(cultivation) = cultivation {
-                (
-                    realm_to_string(cultivation.realm).to_string(),
-                    state.composite_power(cultivation),
-                    state.power_breakdown(cultivation),
-                )
-            } else {
-                cultivation_by_entity
-                    .get(&entity)
-                    .map(|(cultivation_snapshot, _)| {
-                        let cultivation = Cultivation {
-                            realm: realm_from_string(cultivation_snapshot.realm.as_str()),
-                            qi_current: cultivation_snapshot.qi_current,
-                            qi_max: cultivation_snapshot.qi_max,
-                            ..Cultivation::default()
-                        };
-                        (
-                            cultivation_snapshot.realm.clone(),
-                            state.composite_power(&cultivation),
-                            state.power_breakdown(&cultivation),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        let cultivation = Cultivation::default();
-                        (
-                            realm_to_string(cultivation.realm).to_string(),
-                            state.composite_power(&cultivation),
-                            state.power_breakdown(&cultivation),
-                        )
-                    })
-            };
-
-            player_ids_by_entity.insert(entity, canonical_id.clone());
-            *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
-
-            let (cultivation, life_record) = cultivation_by_entity
-                .get(&entity)
-                .cloned()
-                .map(|(c, l)| (Some(c), Some(l)))
-                .unwrap_or((None, None));
-
-            PlayerProfile {
-                uuid: canonical_id,
-                name,
-                realm,
-                composite_power,
-                breakdown,
-                trend: PlayerTrend::Stable,
-                active_hours: DEFAULT_PLAYER_ACTIVE_HOURS,
-                zone: zone_name,
-                pos: vec3_to_array(position.get()),
-                recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
-                recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+        .map(
+            |(
+                entity,
+                position,
+                username,
+                player_state,
                 cultivation,
-                life_record,
-            }
-        })
+                anonymity,
+                renown,
+                relationships,
+                faction_membership,
+            )| {
+                let name = username.0.clone();
+                let zone_name = zone_name_for_position(zone_registry, position.get());
+                let canonical_id = canonical_player_id(&name);
+                let state = player_state.cloned().unwrap_or_default();
+
+                // For player list summary, prefer live Cultivation on the entity when
+                // available (tests attach it directly). Fall back to periodic
+                // cultivation snapshots, then to defaults.
+
+                // Player list summary uses the best cultivation snapshot we have at
+                // the time of building WorldState. Fall back to default cultivation.
+                let (realm, composite_power, breakdown) = if let Some(cultivation) = cultivation {
+                    (
+                        realm_to_string(cultivation.realm).to_string(),
+                        state.composite_power(cultivation),
+                        state.power_breakdown(cultivation),
+                    )
+                } else {
+                    cultivation_by_entity
+                        .get(&entity)
+                        .map(|(cultivation_snapshot, _)| {
+                            let cultivation = Cultivation {
+                                realm: realm_from_string(cultivation_snapshot.realm.as_str()),
+                                qi_current: cultivation_snapshot.qi_current,
+                                qi_max: cultivation_snapshot.qi_max,
+                                ..Cultivation::default()
+                            };
+                            (
+                                cultivation_snapshot.realm.clone(),
+                                state.composite_power(&cultivation),
+                                state.power_breakdown(&cultivation),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            let cultivation = Cultivation::default();
+                            (
+                                realm_to_string(cultivation.realm).to_string(),
+                                state.composite_power(&cultivation),
+                                state.power_breakdown(&cultivation),
+                            )
+                        })
+                };
+
+                player_ids_by_entity.insert(entity, canonical_id.clone());
+                *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
+
+                let (cultivation, life_record) = cultivation_by_entity
+                    .get(&entity)
+                    .cloned()
+                    .map(|(c, l)| (Some(c), Some(l)))
+                    .unwrap_or((None, None));
+
+                PlayerProfile {
+                    uuid: canonical_id,
+                    name,
+                    realm,
+                    composite_power,
+                    breakdown,
+                    trend: PlayerTrend::Stable,
+                    active_hours: DEFAULT_PLAYER_ACTIVE_HOURS,
+                    zone: zone_name,
+                    pos: vec3_to_array(position.get()),
+                    recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
+                    recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+                    cultivation,
+                    life_record,
+                    social: build_player_social_snapshot(
+                        tick,
+                        anonymity,
+                        renown,
+                        relationships,
+                        faction_membership,
+                    ),
+                }
+            },
+        )
         .collect::<Vec<_>>();
 
     players.sort_by(|left, right| left.uuid.cmp(&right.uuid));
 
     (players, player_ids_by_entity, player_counts_by_zone)
+}
+
+fn build_player_social_snapshot(
+    tick: u64,
+    anonymity: Option<&Anonymity>,
+    renown: Option<&Renown>,
+    relationships: Option<&Relationships>,
+    faction_membership: Option<&PlayerFactionMembership>,
+) -> Option<PlayerSocialSnapshotV1> {
+    if anonymity.is_none()
+        && renown.is_none()
+        && relationships.is_none()
+        && faction_membership.is_none()
+    {
+        return None;
+    }
+
+    let renown = renown
+        .map(|renown| RenownSnapshotV1 {
+            fame: renown.fame,
+            notoriety: renown.notoriety,
+            top_tags: renown.top_tags(tick, 5),
+        })
+        .unwrap_or_default();
+    let relationships = relationships
+        .map(|relationships| {
+            relationships
+                .edges
+                .iter()
+                .map(|relationship| RelationshipSnapshotV1 {
+                    kind: relationship.kind,
+                    peer: relationship.peer.clone(),
+                    since_tick: relationship.since_tick,
+                    metadata: relationship.metadata.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let exposed_to_count = anonymity
+        .map(|anonymity| anonymity.exposed_to.len().min(u32::MAX as usize) as u32)
+        .unwrap_or_default();
+    let faction_membership = faction_membership.map(|membership| FactionMembershipSnapshotV1 {
+        faction: membership.faction.as_str().to_string(),
+        rank: membership.rank,
+        loyalty: membership.loyalty,
+        betrayal_count: membership.betrayal_count,
+        invite_block_until_tick: membership.invite_block_until_tick,
+        permanently_refused: membership.permanently_refused,
+    });
+
+    Some(PlayerSocialSnapshotV1 {
+        renown,
+        relationships,
+        exposed_to_count,
+        faction_membership,
+    })
 }
 
 #[allow(clippy::type_complexity)]
@@ -820,19 +1019,33 @@ fn collect_npc_snapshots(
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
             Option<&FactionMembership>,
+            Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     player_ids_by_entity: &HashMap<Entity, String>,
+    zone_registry: &ZoneRegistry,
 ) -> Vec<NpcSnapshot> {
     let mut npc_snapshots = npcs
         .iter()
         .map(
-            |(entity, position, blackboard, kind, archetype, lifespan, faction_membership)| {
+            |(
+                entity,
+                position,
+                blackboard,
+                kind,
+                archetype,
+                lifespan,
+                faction_membership,
+                patrol,
+            )| {
                 NpcSnapshot {
                     id: canonical_npc_id(entity),
                     kind: format!("{kind:?}"),
+                    zone: patrol
+                        .map(|patrol| patrol.home_zone.clone())
+                        .unwrap_or_else(|| zone_name_for_position(zone_registry, position.get())),
                     pos: vec3_to_array(position.get()),
                     state: npc_action_states
                         .get(&entity)
@@ -1037,6 +1250,10 @@ type PlayerStateEmitQueryItem<'a> = (
     &'a Position,
     &'a PlayerState,
     &'a Cultivation,
+    Option<&'a Anonymity>,
+    Option<&'a Renown>,
+    Option<&'a Relationships>,
+    Option<&'a PlayerFactionMembership>,
 );
 
 type PlayerStateEmitQueryFilter = (
@@ -1046,21 +1263,51 @@ type PlayerStateEmitQueryFilter = (
         Changed<PlayerState>,
         Added<Cultivation>,
         Changed<Cultivation>,
+        Added<Anonymity>,
+        Changed<Anonymity>,
+        Added<Renown>,
+        Changed<Renown>,
+        Added<Relationships>,
+        Changed<Relationships>,
+        Added<PlayerFactionMembership>,
+        Changed<PlayerFactionMembership>,
     )>,
 );
 
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
+    clock: Option<Res<CombatClock>>,
     mut clients: Query<PlayerStateEmitQueryItem<'_>, PlayerStateEmitQueryFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
 
-    for (entity, mut client, username, position, player_state, cultivation) in &mut clients {
+    for (
+        entity,
+        mut client,
+        username,
+        position,
+        player_state,
+        cultivation,
+        anonymity,
+        renown,
+        relationships,
+        faction_membership,
+    ) in &mut clients
+    {
         let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let payload = player_state.server_payload(
+        let social = build_player_social_snapshot(
+            tick,
+            anonymity,
+            renown,
+            relationships,
+            faction_membership,
+        );
+        let payload = player_state.server_payload_with_social(
             cultivation,
             Some(canonical_player_id(username.0.as_str())),
             zone_name,
+            social,
         );
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -1215,9 +1462,11 @@ fn process_redis_inbound(
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
     mut life_records: Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
 ) {
+    let mut audio_events = audio_events;
     let mut drained_messages = 0;
 
     while drained_messages < REDIS_INBOUND_DRAIN_BUDGET {
@@ -1261,6 +1510,7 @@ fn process_redis_inbound(
                     zone_registry.as_deref(),
                     &mut narration_dedupe,
                     &mut life_records,
+                    audio_events.as_deref_mut(),
                     persistence_settings.as_deref(),
                     narr.narrations.as_slice(),
                 );
@@ -1629,10 +1879,16 @@ fn write_world_model_runtime_mirror(
 fn process_agent_narrations(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
+    mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
-        process_single_narration(clients, zone_registry, narration);
+        process_single_narration(
+            clients,
+            zone_registry,
+            audio_events.as_deref_mut(),
+            narration,
+        );
     }
 }
 
@@ -1641,6 +1897,7 @@ fn process_agent_narrations_with_dedupe(
     zone_registry: Option<&ZoneRegistry>,
     narration_dedupe: &mut NarrationDedupeResource,
     life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     persistence_settings: Option<&PersistenceSettings>,
     narrations: &[crate::schema::narration::Narration],
 ) {
@@ -1656,7 +1913,12 @@ fn process_agent_narrations_with_dedupe(
         }
 
         archive_death_insight_narration(life_records, persistence_settings, narration);
-        process_single_narration(clients, zone_registry, narration);
+        process_single_narration(
+            clients,
+            zone_registry,
+            audio_events.as_deref_mut(),
+            narration,
+        );
     }
 }
 
@@ -1704,6 +1966,9 @@ fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, Skill
                 "herbalism" => Some(SkillId::Herbalism),
                 "alchemy" => Some(SkillId::Alchemy),
                 "forging" => Some(SkillId::Forging),
+                "combat" => Some(SkillId::Combat),
+                "mineral" => Some(SkillId::Mineral),
+                "cultivation" => Some(SkillId::Cultivation),
                 _ => None,
             };
             continue;
@@ -1817,6 +2082,7 @@ fn normalize_life_record_target(value: &str) -> Option<String> {
 fn process_single_narration(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
+    mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narration: &crate::schema::narration::Narration,
 ) {
     let selector = match narration_selector(narration) {
@@ -1854,6 +2120,17 @@ fn process_single_narration(
 
     for entity in routed_targets.iter().copied() {
         if let Ok((_, mut client, _, _)) = clients.get_mut(entity) {
+            if let Some(audio_events) = audio_events.as_deref_mut() {
+                audio_events.send(audio_event_emit::PlaySoundRecipeRequest {
+                    recipe_id: "narration_cue".to_string(),
+                    instance_id: 0,
+                    pos: None,
+                    flag: None,
+                    volume_mul: 1.0,
+                    pitch_shift: 0.0,
+                    recipient: audio_event_emit::AudioRecipient::Single(entity),
+                });
+            }
             send_server_data_payload(&mut client, payload_bytes.as_slice());
         }
     }
@@ -2146,6 +2423,8 @@ mod tests {
         };
         use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
         use crate::player::state::PlayerState;
+        use crate::schema::social::{RelationshipKindV1, RenownTagV1};
+        use crate::social::components::{Anonymity, Relationship, Relationships, Renown};
 
         fn setup_publish_app(with_zone_registry: bool) -> (App, Receiver<RedisOutbound>) {
             let (tx_outbound, rx_outbound) = unbounded();
@@ -2350,6 +2629,63 @@ mod tests {
                 player.breakdown.combat > 0.0,
                 "attached PlayerState should replace placeholder power breakdown"
             );
+        }
+
+        #[test]
+        fn publishes_attached_social_snapshot_when_present() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);
+
+            app.world_mut().entity_mut(player_entity).insert((
+                Anonymity {
+                    displayed_name: None,
+                    exposed_to: ["char:bob".to_string(), "char:chen".to_string()]
+                        .into_iter()
+                        .collect(),
+                },
+                Renown {
+                    fame: 12,
+                    notoriety: 7,
+                    tags: (0..6)
+                        .map(|index| RenownTagV1 {
+                            tag: format!("tag:{index}"),
+                            weight: index as f64,
+                            last_seen_tick: WORLD_STATE_PUBLISH_INTERVAL_TICKS,
+                            permanent: false,
+                        })
+                        .collect(),
+                },
+                Relationships {
+                    edges: vec![Relationship {
+                        kind: RelationshipKindV1::Feud,
+                        peer: "char:rival".to_string(),
+                        since_tick: 17,
+                        metadata: serde_json::json!({ "place": "spawn" }),
+                    }],
+                },
+            ));
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let player = state
+                .players
+                .iter()
+                .find(|player| player.name == "Azure")
+                .expect("Azure should be present in the world snapshot");
+            let social = player
+                .social
+                .as_ref()
+                .expect("attached social components should publish a social snapshot");
+
+            assert_eq!(social.exposed_to_count, 2);
+            assert_eq!(social.renown.fame, 12);
+            assert_eq!(social.renown.notoriety, 7);
+            assert_eq!(social.renown.top_tags.len(), 5);
+            assert_eq!(social.renown.top_tags[0].tag, "tag:5");
+            assert_eq!(social.relationships.len(), 1);
+            assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
+            assert_eq!(social.relationships[0].peer, "char:rival");
+            assert_eq!(social.relationships[0].since_tick, 17);
+            assert_eq!(social.relationships[0].metadata["place"], "spawn");
         }
 
         #[test]
@@ -3086,12 +3422,15 @@ mod tests {
     mod player_state_payload_tests {
         use super::*;
         use crate::player::state::PlayerState;
+        use crate::schema::social::RenownTagV1;
+        use crate::social::components::{FactionMembership as PlayerFactionMembership, Renown};
         use crate::world::zone::ZoneRegistry;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
 
         fn emit_player_state_payloads_periodically_without_change(
             zone_registry: Option<Res<ZoneRegistry>>,
+            clock: Option<Res<CombatClock>>,
             mut tick_counter: valence::prelude::Local<u64>,
             mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
         ) {
@@ -3101,14 +3440,34 @@ mod tests {
             }
 
             let zone_registry = effective_zone_registry(zone_registry.as_deref());
+            let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
 
-            for (entity, mut client, username, position, player_state, cultivation) in &mut clients
+            for (
+                entity,
+                mut client,
+                username,
+                position,
+                player_state,
+                cultivation,
+                anonymity,
+                renown,
+                relationships,
+                faction_membership,
+            ) in &mut clients
             {
                 let zone_name = zone_name_for_position(&zone_registry, position.get());
-                let payload = player_state.server_payload(
+                let social = build_player_social_snapshot(
+                    tick,
+                    anonymity,
+                    renown,
+                    relationships,
+                    faction_membership,
+                );
+                let payload = player_state.server_payload_with_social(
                     cultivation,
                     Some(canonical_player_id(username.0.as_str())),
                     zone_name,
+                    social,
                 );
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -3312,6 +3671,69 @@ mod tests {
                 bob_payloads.is_empty(),
                 "missing-route/fallthrough must not broadcast player_state to other clients"
             );
+        }
+
+        #[test]
+        fn emits_self_social_snapshot_in_player_state() {
+            let mut app = setup_player_state_payload_app();
+            app.insert_resource(CombatClock { tick: 123 });
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.2,
+                    inventory_score: 0.4,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                Renown {
+                    fame: 7,
+                    notoriety: 12,
+                    tags: vec![RenownTagV1 {
+                        tag: "背盟者".to_string(),
+                        weight: 50.0,
+                        last_seen_tick: 123,
+                        permanent: true,
+                    }],
+                },
+                PlayerFactionMembership {
+                    faction: crate::npc::faction::FactionId::Defend,
+                    rank: 0,
+                    loyalty: 10,
+                    betrayal_count: 1,
+                    invite_block_until_tick: Some(200),
+                    permanently_refused: false,
+                },
+            ));
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_player_state_payloads(&mut helper);
+            match &payloads[0].payload {
+                ServerDataPayloadV1::PlayerState { social, .. } => {
+                    let social = social
+                        .as_ref()
+                        .expect("self social snapshot should be present");
+                    assert_eq!(social.renown.fame, 7);
+                    assert_eq!(social.renown.notoriety, 12);
+                    assert_eq!(social.renown.top_tags[0].tag, "背盟者");
+                    let membership = social
+                        .faction_membership
+                        .as_ref()
+                        .expect("self faction membership should be present");
+                    assert_eq!(membership.faction, "defend");
+                    assert_eq!(membership.rank, 0);
+                    assert_eq!(membership.loyalty, 10);
+                    assert_eq!(membership.invite_block_until_tick, Some(200));
+                }
+                other => panic!("expected player_state payload, got {other:?}"),
+            }
         }
 
         #[test]

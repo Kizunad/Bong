@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
-    bevy_ecs, App, Bundle, Commands, Component, DVec3, Despawned, Entity, Event, EventReader,
-    EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update,
-    With, Without,
+    bevy_ecs, Added, App, Bundle, Commands, Component, DVec3, Despawned, Entity, Event,
+    EventReader, EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource,
+    Update, With, Without,
 };
 
 use crate::combat::components::{
@@ -16,14 +16,23 @@ use crate::cultivation::death_hooks::{
     CultivationDeathCause, CultivationDeathTrigger, PlayerTerminated,
 };
 use crate::cultivation::life_record::LifeRecord;
-use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
+use crate::cultivation::lifespan::{
+    DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
+};
+use crate::cultivation::possession::PossessedVictim;
 use crate::npc::brain::canonical_npc_id;
+use crate::npc::faction::{FactionId, FactionMembership};
+use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::NpcMarker;
 
 type RegistryNpcQuery<'w, 's> = Query<
     'w,
     's,
-    (&'static NpcArchetype, Option<&'static Lifecycle>),
+    (
+        &'static NpcArchetype,
+        Option<&'static Lifecycle>,
+        Option<&'static NpcPatrol>,
+    ),
     (With<NpcMarker>, Without<Despawned>),
 >;
 
@@ -32,8 +41,16 @@ type ActiveNpcFilter = (
     Without<Despawned>,
     Without<PendingRetirement>,
 );
-type SharedAgingNpcQuery<'w, 's> =
-    Query<'w, 's, (&'static mut NpcLifespan, Option<&'static LifespanComponent>), ActiveNpcFilter>;
+type SharedAgingNpcQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static NpcArchetype,
+        &'static mut NpcLifespan,
+        Option<&'static LifespanComponent>,
+    ),
+    ActiveNpcFilter,
+>;
 type TerminatedNpcQuery<'w, 's> = Query<
     'w,
     's,
@@ -42,10 +59,31 @@ type TerminatedNpcQuery<'w, 's> = Query<
         &'static NpcLifespan,
         Option<&'static PendingRetirement>,
         Option<&'static LifespanComponent>,
+        Option<&'static FactionMembership>,
+        Option<&'static LifeRecord>,
     ),
     With<NpcMarker>,
 >;
 
+type DespawnedNpcNoticeQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static NpcArchetype,
+        &'static NpcLifespan,
+        Option<&'static LifespanComponent>,
+        Option<&'static FactionMembership>,
+        Option<&'static LifeRecord>,
+        Option<&'static PossessedVictim>,
+    ),
+    (
+        With<NpcMarker>,
+        With<Despawned>,
+        Added<Despawned>,
+        Without<NpcDeathNoticeEmitted>,
+    ),
+>;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]
 #[serde(rename_all = "snake_case")]
 pub enum NpcArchetype {
@@ -93,6 +131,10 @@ impl NpcArchetype {
             Self::Fuya => 240_000.0,
         }
     }
+
+    pub const fn uses_lifespan_aging(self) -> bool {
+        !matches!(self, Self::Zombie | Self::GuardianRelic | Self::Daoxiang)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Component, Serialize, Deserialize)]
@@ -107,10 +149,6 @@ impl NpcLifespan {
             age_ticks,
             max_age_ticks,
         }
-    }
-
-    pub fn for_archetype(archetype: NpcArchetype) -> Self {
-        Self::new(0.0, archetype.default_max_age_ticks())
     }
 
     pub fn age_ratio(&self) -> f64 {
@@ -148,6 +186,8 @@ pub struct NpcRegistry {
     pub resume_npc_count: usize,
     pub spawn_paused: bool,
     pub counts_by_archetype: HashMap<NpcArchetype, usize>,
+    pub per_zone_caps: HashMap<String, usize>,
+    pub counts_by_zone: HashMap<String, usize>,
 }
 
 impl Default for NpcRegistry {
@@ -158,6 +198,8 @@ impl Default for NpcRegistry {
             resume_npc_count: 460,
             spawn_paused: false,
             counts_by_archetype: HashMap::new(),
+            per_zone_caps: HashMap::new(),
+            counts_by_zone: HashMap::new(),
         }
     }
 }
@@ -167,9 +209,11 @@ impl NpcRegistry {
         &mut self,
         live_npc_count: usize,
         counts_by_archetype: HashMap<NpcArchetype, usize>,
+        counts_by_zone: HashMap<String, usize>,
     ) {
         self.live_npc_count = live_npc_count;
         self.counts_by_archetype = counts_by_archetype;
+        self.counts_by_zone = counts_by_zone;
 
         if self.live_npc_count >= self.max_npc_count {
             self.spawn_paused = true;
@@ -210,6 +254,44 @@ impl NpcRegistry {
         }
     }
 
+    pub fn reserve_zone_batch(&mut self, zone: &str, desired: usize) -> usize {
+        if desired == 0 {
+            return 0;
+        }
+        let zone_remaining = self
+            .per_zone_caps
+            .get(zone)
+            .map(|cap| cap.saturating_sub(*self.counts_by_zone.get(zone).unwrap_or(&0)))
+            .unwrap_or(desired);
+        let desired = desired.min(zone_remaining);
+        let granted = self.reserve_spawn_batch(desired);
+        if granted > 0 {
+            *self.counts_by_zone.entry(zone.to_string()).or_default() += granted;
+        }
+        granted
+    }
+
+    #[allow(dead_code)]
+    pub fn release_zone_slot(&mut self, zone: &str) {
+        self.release_zone_batch(zone, 1);
+    }
+
+    pub fn release_zone_batch(&mut self, zone: &str, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.release_spawn_batch(count);
+        let remove = if let Some(current) = self.counts_by_zone.get_mut(zone) {
+            *current = current.saturating_sub(count);
+            *current == 0
+        } else {
+            false
+        };
+        if remove {
+            self.counts_by_zone.remove(zone);
+        }
+    }
+
     pub fn should_reduce_population(&self) -> bool {
         self.live_npc_count >= self.max_npc_count
     }
@@ -243,9 +325,56 @@ pub struct NpcReproductionRequest {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum NpcSpawnSource {
+    Startup,
+    Seed,
+    Reproduction,
+    AgentCommand,
+}
+
+impl NpcSpawnSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Seed => "seed",
+            Self::Reproduction => "reproduction",
+            Self::AgentCommand => "agent_command",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Event)]
+pub struct NpcSpawnNotice {
+    pub npc_id: String,
+    pub archetype: NpcArchetype,
+    pub source: NpcSpawnSource,
+    pub home_zone: String,
+    pub position: DVec3,
+    pub initial_age_ticks: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NpcDeathReason {
     NaturalAging,
+    Combat,
+    Despawned,
+    DuoShe,
 }
+
+impl NpcDeathReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NaturalAging => "natural_aging",
+            Self::Combat => "combat",
+            Self::Despawned => "despawned",
+            Self::DuoShe => "duo_she",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct NpcDeathNoticeEmitted;
 
 #[derive(Clone, Debug, Event)]
 #[allow(dead_code)]
@@ -253,6 +382,8 @@ pub struct NpcDeathNotice {
     pub npc_id: String,
     pub archetype: NpcArchetype,
     pub reason: NpcDeathReason,
+    pub faction_id: Option<FactionId>,
+    pub life_record_snapshot: Option<String>,
     pub age_ticks: f64,
     pub max_age_ticks: f64,
 }
@@ -264,12 +395,20 @@ pub fn register(app: &mut App) {
         .add_event::<PlayerTerminated>()
         .add_event::<NpcRetireRequest>()
         .add_event::<NpcReproductionRequest>()
+        .add_event::<NpcSpawnNotice>()
         .add_event::<NpcDeathNotice>()
         .add_systems(
             PreUpdate,
             (update_npc_registry, age_npcs).before(big_brain::prelude::BigBrainSet::Scorers),
         )
-        .add_systems(Update, (process_npc_retire_requests, handle_npc_terminated));
+        .add_systems(
+            Update,
+            (
+                process_npc_retire_requests,
+                handle_npc_terminated,
+                emit_npc_despawn_notices.after(handle_npc_terminated),
+            ),
+        );
 }
 
 #[derive(Bundle)]
@@ -292,10 +431,21 @@ pub struct NpcRuntimeBundle {
 }
 
 pub fn npc_runtime_bundle(entity: Entity, archetype: NpcArchetype) -> NpcRuntimeBundle {
+    npc_runtime_bundle_with_age(entity, archetype, 0.0)
+}
+
+pub fn npc_runtime_bundle_with_age(
+    entity: Entity,
+    archetype: NpcArchetype,
+    initial_age_ticks: f64,
+) -> NpcRuntimeBundle {
     let char_id = canonical_npc_id(entity);
-    NpcRuntimeBundle {
+    let mut bundle = NpcRuntimeBundle {
         archetype,
-        lifespan: NpcLifespan::for_archetype(archetype),
+        lifespan: NpcLifespan::new(
+            initial_age_ticks.max(0.0),
+            archetype.default_max_age_ticks(),
+        ),
         shared_lifespan: LifespanComponent::for_realm(Cultivation::default().realm),
         death_registry: DeathRegistry::new(char_id.clone()),
         life_record: LifeRecord::new(char_id.clone()),
@@ -313,23 +463,40 @@ pub fn npc_runtime_bundle(entity: Entity, archetype: NpcArchetype) -> NpcRuntime
             fortune_remaining: 0,
             ..Default::default()
         },
+    };
+    if archetype == NpcArchetype::Commoner {
+        bundle.shared_lifespan.apply_cap(LifespanCapTable::MORTAL);
     }
+    sync_shared_lifespan_from_npc_age(&mut bundle.shared_lifespan, &bundle.lifespan);
+    bundle
+}
+
+fn sync_shared_lifespan_from_npc_age(
+    shared_lifespan: &mut LifespanComponent,
+    npc_lifespan: &NpcLifespan,
+) {
+    let ratio = npc_lifespan.age_ratio().clamp(0.0, 1.0);
+    shared_lifespan.years_lived = shared_lifespan.cap_by_realm as f64 * ratio;
 }
 
 fn update_npc_registry(mut registry: ResMut<NpcRegistry>, npcs: RegistryNpcQuery<'_, '_>) {
     let mut counts_by_archetype = HashMap::new();
+    let mut counts_by_zone = HashMap::new();
     let mut live_npc_count = 0usize;
 
-    for (archetype, lifecycle) in &npcs {
+    for (archetype, lifecycle, patrol) in &npcs {
         if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
             continue;
         }
 
         live_npc_count += 1;
         *counts_by_archetype.entry(*archetype).or_default() += 1;
+        if let Some(patrol) = patrol {
+            *counts_by_zone.entry(patrol.home_zone.clone()).or_default() += 1;
+        }
     }
 
-    registry.refresh_from_counts(live_npc_count, counts_by_archetype);
+    registry.refresh_from_counts(live_npc_count, counts_by_archetype, counts_by_zone);
 }
 
 fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: SharedAgingNpcQuery<'_, '_>) {
@@ -337,7 +504,10 @@ fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: SharedAgingNpcQuery<'_, '_>) 
         return;
     }
 
-    for (mut npc_lifespan, shared_lifespan) in &mut npcs {
+    for (archetype, mut npc_lifespan, shared_lifespan) in &mut npcs {
+        if !archetype.uses_lifespan_aging() {
+            continue;
+        }
         if let Some(shared_lifespan) = shared_lifespan {
             let ratio = if shared_lifespan.cap_by_realm == 0 {
                 1.0
@@ -408,28 +578,82 @@ fn handle_npc_terminated(
     mut notices: EventWriter<NpcDeathNotice>,
 ) {
     for event in terminated.read() {
-        let Ok((archetype, lifespan, pending_retirement, shared_lifespan)) = npcs.get(event.entity)
+        let Ok((archetype, lifespan, pending_retirement, shared_lifespan, faction, life_record)) =
+            npcs.get(event.entity)
         else {
             continue;
         };
 
-        if pending_retirement.is_some()
+        let reason = if pending_retirement.is_some()
             || lifespan.is_expired()
             || shared_lifespan.is_some_and(|lifespan| lifespan.remaining_years() <= f64::EPSILON)
         {
-            notices.send(NpcDeathNotice {
-                npc_id: canonical_npc_id(event.entity),
-                archetype: *archetype,
-                reason: NpcDeathReason::NaturalAging,
-                age_ticks: lifespan.age_ticks,
-                max_age_ticks: lifespan.max_age_ticks,
-            });
-        }
+            NpcDeathReason::NaturalAging
+        } else {
+            NpcDeathReason::Combat
+        };
+
+        notices.send(build_npc_death_notice(
+            event.entity,
+            *archetype,
+            lifespan,
+            faction,
+            life_record,
+            reason,
+        ));
 
         if let Some(mut entity_commands) = commands.get_entity(event.entity) {
-            entity_commands.insert(Despawned);
+            entity_commands.insert((Despawned, NpcDeathNoticeEmitted));
             entity_commands.remove::<PendingRetirement>();
         }
+    }
+}
+
+fn emit_npc_despawn_notices(
+    mut commands: Commands,
+    despawned: DespawnedNpcNoticeQuery<'_, '_>,
+    mut notices: EventWriter<NpcDeathNotice>,
+) {
+    for (entity, archetype, lifespan, _shared_lifespan, faction, life_record, possessed) in
+        &despawned
+    {
+        let reason = if possessed.is_some() {
+            NpcDeathReason::DuoShe
+        } else {
+            NpcDeathReason::Despawned
+        };
+        notices.send(build_npc_death_notice(
+            entity,
+            *archetype,
+            lifespan,
+            faction,
+            life_record,
+            reason,
+        ));
+        if let Some(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.insert(NpcDeathNoticeEmitted);
+        }
+    }
+}
+
+fn build_npc_death_notice(
+    entity: Entity,
+    archetype: NpcArchetype,
+    lifespan: &NpcLifespan,
+    faction: Option<&FactionMembership>,
+    life_record: Option<&LifeRecord>,
+    reason: NpcDeathReason,
+) -> NpcDeathNotice {
+    NpcDeathNotice {
+        npc_id: canonical_npc_id(entity),
+        archetype,
+        reason,
+        faction_id: faction.map(|membership| membership.faction_id),
+        life_record_snapshot: life_record
+            .map(|record| record.recent_summary_text(8))
+            .filter(|summary| !summary.is_empty()),
+        age_ticks: lifespan.age_ticks,
+        max_age_ticks: lifespan.max_age_ticks,
     }
 }
 
@@ -443,28 +667,71 @@ mod tests {
     fn registry_hysteresis_pauses_at_cap_and_resumes_below_low_watermark() {
         let mut registry = NpcRegistry::default();
 
-        registry.refresh_from_counts(512, HashMap::new());
+        registry.refresh_from_counts(512, HashMap::new(), HashMap::new());
         assert!(registry.spawn_paused);
 
-        registry.refresh_from_counts(500, HashMap::new());
+        registry.refresh_from_counts(500, HashMap::new(), HashMap::new());
         assert!(
             registry.spawn_paused,
             "should remain paused until low watermark"
         );
 
-        registry.refresh_from_counts(459, HashMap::new());
+        registry.refresh_from_counts(459, HashMap::new(), HashMap::new());
         assert!(!registry.spawn_paused, "should resume below low watermark");
     }
 
     #[test]
     fn reserve_spawn_batch_clamps_to_remaining_capacity() {
         let mut registry = NpcRegistry::default();
-        registry.refresh_from_counts(510, HashMap::new());
+        registry.refresh_from_counts(510, HashMap::new(), HashMap::new());
 
         let granted = registry.reserve_spawn_batch(8);
         assert_eq!(granted, 2);
         assert_eq!(registry.live_npc_count, 512);
         assert!(registry.spawn_paused);
+    }
+
+    #[test]
+    fn reserve_zone_batch_clamps_to_zone_cap_and_global_cap() {
+        let mut registry = NpcRegistry {
+            max_npc_count: 10,
+            resume_npc_count: 8,
+            ..Default::default()
+        };
+        registry.per_zone_caps.insert("forest".to_string(), 2);
+        registry.counts_by_zone.insert("forest".to_string(), 1);
+        registry.live_npc_count = 9;
+
+        let granted = registry.reserve_zone_batch("forest", 5);
+
+        assert_eq!(granted, 1);
+        assert_eq!(registry.live_npc_count, 10);
+        assert_eq!(registry.counts_by_zone["forest"], 2);
+        assert!(registry.spawn_paused);
+    }
+
+    #[test]
+    fn update_npc_registry_counts_home_zones() {
+        let mut app = App::new();
+        app.insert_resource(NpcRegistry::default());
+        app.add_systems(Update, update_npc_registry);
+
+        app.world_mut().spawn((
+            NpcMarker,
+            NpcArchetype::Rogue,
+            crate::npc::patrol::NpcPatrol::new("forest", DVec3::ZERO),
+        ));
+        app.world_mut().spawn((
+            NpcMarker,
+            NpcArchetype::Beast,
+            crate::npc::patrol::NpcPatrol::new("marsh", DVec3::ZERO),
+        ));
+        app.update();
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(registry.live_npc_count, 2);
+        assert_eq!(registry.counts_by_zone["forest"], 1);
+        assert_eq!(registry.counts_by_zone["marsh"], 1);
     }
 
     #[test]
@@ -593,6 +860,8 @@ mod tests {
             npc_id: "npc_1v1".to_string(),
             archetype: NpcArchetype::Zombie,
             reason: NpcDeathReason::NaturalAging,
+            faction_id: None,
+            life_record_snapshot: Some("少时醒灵".to_string()),
             age_ticks: 120.0,
             max_age_ticks: 100.0,
         };
@@ -600,8 +869,48 @@ mod tests {
         assert_eq!(notice.npc_id, "npc_1v1");
         assert_eq!(notice.archetype, NpcArchetype::Zombie);
         assert_eq!(notice.reason, NpcDeathReason::NaturalAging);
+        assert_eq!(notice.reason.as_str(), "natural_aging");
+        assert_eq!(notice.faction_id, None);
+        assert_eq!(notice.life_record_snapshot.as_deref(), Some("少时醒灵"));
         assert_eq!(notice.age_ticks, 120.0);
         assert_eq!(notice.max_age_ticks, 100.0);
+    }
+
+    #[test]
+    fn npc_runtime_bundle_with_age_syncs_shared_lifespan_source_of_truth() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn_empty().id();
+        let bundle = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, 45_000.0);
+        assert_eq!(bundle.lifespan.age_ticks, 45_000.0);
+        assert_eq!(
+            bundle.shared_lifespan.cap_by_realm,
+            LifespanCapTable::MORTAL
+        );
+        assert!((bundle.shared_lifespan.years_lived - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ageing_sync_skips_non_aging_archetypes() {
+        let mut app = App::new();
+        app.insert_resource(NpcAgingConfig::default());
+        app.add_systems(Update, age_npcs);
+
+        let mut shared_lifespan = LifespanComponent::new(100);
+        shared_lifespan.years_lived = 90.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::GuardianRelic,
+                NpcLifespan::new(0.0, 200.0),
+                shared_lifespan,
+            ))
+            .id();
+
+        app.update();
+
+        let lifespan = app.world().get::<NpcLifespan>(entity).unwrap();
+        assert_eq!(lifespan.age_ticks, 0.0);
     }
 
     /// 端到端：致命 AttackIntent → resolve → DeathEvent → death_arbiter
@@ -699,6 +1008,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 30.0,
             wound_kind: crate::combat::components::WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
             debug_command: None,
         });
 
@@ -730,8 +1040,7 @@ mod tests {
         app.world_mut().resource_mut::<CombatClock>().tick = deadline + 1;
 
         // near_death_tick 发 PlayerTerminated；下一帧 handle_npc_terminated
-        // 插 Despawned + 发 NpcDeathNotice（只在 PendingRetirement 存在时，
-        // 这里没有，所以 notice 不 fire — 但 Despawned 必须有）。
+        // 插 Despawned + 发 NpcDeathNotice；普通战斗死亡标记为 combat。
         app.update();
         app.update();
 

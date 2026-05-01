@@ -10,12 +10,13 @@ use valence::prelude::{
 use super::state::{canonical_player_id, PlayerState};
 use crate::botany::components::BotanyHarvestMode;
 use crate::botany::components::HarvestSessionStore;
+use crate::botany::components::Plant;
 use crate::botany::harvest::start_or_resume_harvest;
 use crate::botany::registry::canonicalize_herb_id;
 use crate::combat::{
     components::WoundKind,
     debug::enqueue_debug_attack_intent,
-    events::{AttackIntent, FIST_REACH},
+    events::{AttackIntent, AttackSource, FIST_REACH},
 };
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::Cultivation;
@@ -149,6 +150,7 @@ pub(crate) fn apply_queued_gameplay_actions(
     mut harvest_sessions: Option<ResMut<HarvestSessionStore>>,
     mut attack_intents: EventWriter<AttackIntent>,
     mut breakthrough_requests: EventWriter<BreakthroughRequest>,
+    plants: Query<(Entity, &Plant)>,
     mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
     gameplay_tick.tick = gameplay_tick.tick.saturating_add(1);
@@ -206,6 +208,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                     &mut player_state,
                     &mut cultivation,
                     harvest_sessions.as_deref_mut(),
+                    &plants,
                     active_events.as_deref_mut(),
                     &mut pending_narrations,
                 )
@@ -237,6 +240,7 @@ fn bridge_debug_combat_action(
             reach: FIST_REACH,
             qi_invest: action.qi_invest.max(0.0) as f32,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(action),
         },
     );
@@ -253,6 +257,7 @@ fn apply_gather_action(
     player_state: &mut PlayerState,
     cultivation: &mut Cultivation,
     harvest_sessions: Option<&mut HarvestSessionStore>,
+    plants: &Query<(Entity, &Plant)>,
     active_events: Option<&mut ActiveEventsResource>,
     pending_narrations: &mut PendingGameplayNarrations,
 ) {
@@ -260,11 +265,14 @@ fn apply_gather_action(
 
     if let Some(harvest_sessions) = harvest_sessions {
         if let Ok(plant_id) = canonicalize_herb_id(resource_name) {
+            let target_entity = action.target_entity.or_else(|| {
+                resolve_nearest_harvestable_plant(plants, plant_id, zone_name, player_position)
+            });
             start_or_resume_harvest(
                 harvest_sessions,
                 canonical_player.trim_start_matches("offline:"),
                 player_entity,
-                action.target_entity,
+                target_entity,
                 plant_id,
                 action.mode.unwrap_or(BotanyHarvestMode::Manual),
                 [player_position.x, player_position.y, player_position.z],
@@ -299,6 +307,32 @@ fn apply_gather_action(
         format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
         NarrationStyle::Narration,
     );
+}
+
+fn resolve_nearest_harvestable_plant(
+    plants: &Query<(Entity, &Plant)>,
+    plant_id: crate::botany::registry::BotanyPlantId,
+    zone_name: &str,
+    player_position: valence::prelude::DVec3,
+) -> Option<Entity> {
+    const MAX_HARVEST_DISTANCE_SQ: f64 = 6.0 * 6.0;
+    plants
+        .iter()
+        .filter(|(_, plant)| {
+            plant.id == plant_id
+                && plant.zone_name == zone_name
+                && !plant.harvested
+                && !plant.trampled
+        })
+        .filter_map(|(entity, plant)| {
+            let dx = player_position.x - plant.position[0];
+            let dy = player_position.y - plant.position[1];
+            let dz = player_position.z - plant.position[2];
+            let dist_sq = dx * dx + dy * dy + dz * dz;
+            (dist_sq <= MAX_HARVEST_DISTANCE_SQ).then_some((entity, dist_sq))
+        })
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(entity, _)| entity)
 }
 
 fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry {

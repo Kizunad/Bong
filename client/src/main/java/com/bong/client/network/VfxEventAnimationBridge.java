@@ -22,5 +22,13 @@ import java.util.UUID;
 public interface VfxEventAnimationBridge {
     boolean playAnim(UUID targetPlayer, Identifier animId, int priority, OptionalInt fadeInTicks);
 
+    boolean playAnimInline(
+        UUID targetPlayer,
+        Identifier animId,
+        String animJson,
+        int priority,
+        OptionalInt fadeInTicks
+    );
+
     boolean stopAnim(UUID targetPlayer, Identifier animId, OptionalInt fadeOutTicks);
 }

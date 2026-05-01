@@ -68,7 +68,7 @@ export const TechniqueEntryV1 = Type.Object(
     description: Type.String(),
     required_realm: Type.String(),
     required_meridians: Type.Array(TechniqueRequiredMeridianV1),
-    qi_cost: Type.Integer({ minimum: 0 }),
+    qi_cost: Type.Number({ minimum: 0 }),
     cast_ticks: Type.Integer({ minimum: 0 }),
     cooldown_ticks: Type.Integer({ minimum: 0 }),
     range: Type.Number({ minimum: 0 }),

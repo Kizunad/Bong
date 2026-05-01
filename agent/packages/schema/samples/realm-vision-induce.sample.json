@@ -1,0 +1,12 @@
+{
+  "fog_start": 50,
+  "fog_end": 92,
+  "fog_color_rgb": 11580856,
+  "fog_shape": "Cylinder",
+  "vignette_alpha": 0.45,
+  "tint_color_argb": 0,
+  "particle_density": 0.05,
+  "transition_ticks": 100,
+  "server_view_distance_chunks": 6,
+  "post_fx_sharpen": 0
+}

@@ -11,14 +11,15 @@ use std::collections::HashMap;
 
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
+use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, Query,
-    Res, ResMut, Resource, Username, With,
+    bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter,
+    Events, Query, Res, ResMut, Resource, Username, With,
 };
 
 use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
-    PlaceFurnaceRequest, RecipeRegistry,
+    PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
@@ -32,10 +33,11 @@ use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::{recover_current_qi, Cultivation};
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
-use crate::cultivation::known_techniques::technique_definition;
+use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
+use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
@@ -45,10 +47,11 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
-    apply_inventory_move, apply_item_spiritual_wear, consume_item_instance_once,
-    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
-    inventory_item_by_instance_borrow, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryDurabilityChangedEvent, InventoryMoveOutcome, ItemInstance, PlayerInventory,
+    add_item_to_player_inventory, apply_inventory_move, apply_item_spiritual_wear,
+    consume_item_instance_once, discard_inventory_item_to_dropped_loot,
+    fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
+    DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
+    InventoryMoveOutcome, ItemInstance, PlayerInventory,
 };
 use crate::inventory::{
     ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
@@ -67,24 +70,36 @@ use crate::mineral::MineralProbeIntent;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
+use crate::network::alchemy_bridge::alchemy_session_id;
 use crate::network::alchemy_snapshot_emit;
 use crate::network::cast_emit::{
-    current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
+    apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
+use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
+use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::shelflife::{
+    age_peak_check, container_storage_multiplier, spoil_check, AgeBonusRoll, AgePeakCheck,
+    ContainerFreshnessBehavior, DecayProfileRegistry, SpoilCheckOutcome, SpoilConsumeWarning,
+    SpoilSeverity,
+};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
+use crate::social::events::{
+    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::extract_system::{
@@ -92,7 +107,7 @@ use crate::world::extract_system::{
     StartExtractRequest as StartExtractRequestEvent,
 };
 use crate::world::karma::KarmaWeightStore;
-use crate::world::zone::ZoneRegistry;
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
 const TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
@@ -114,10 +129,17 @@ pub struct CombatRequestParams<'w, 's> {
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub skill_registry: Option<Res<'w, SkillRegistry>>,
+    pub entity_manager: Option<Res<'w, EntityManager>>,
     pub item_registry: Res<'w, ItemRegistry>,
+    pub decay_profiles: Option<Res<'w, DecayProfileRegistry>>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
     pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
+    pub meridians: Query<'w, 's, &'static mut crate::cultivation::components::MeridianSystem>,
+    pub contaminations: Query<'w, 's, &'static mut crate::cultivation::components::Contamination>,
+    pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
+    pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
 }
 
 #[derive(SystemParam)]
@@ -145,11 +167,15 @@ pub struct LingtianRequestParams<'w, 's> {
 #[derive(SystemParam)]
 pub struct AlchemyRequestParams<'w, 's> {
     pub state: ResMut<'w, AlchemyMockState>,
-    pub furnaces: Query<'w, 's, &'static mut AlchemyFurnace>,
+    pub furnaces: Query<'w, 's, (Entity, &'static mut AlchemyFurnace)>,
     pub learned: Query<'w, 's, &'static mut LearnedRecipes>,
     pub recipe_registry: Res<'w, RecipeRegistry>,
     pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
-    pub zone_registry: Option<Res<'w, ZoneRegistry>>,
+    pub outcome_tx: Option<ResMut<'w, Events<crate::alchemy::AlchemyOutcomeEvent>>>,
+    pub item_registry: Res<'w, ItemRegistry>,
+    pub instance_allocator: Option<ResMut<'w, InventoryInstanceIdAllocator>>,
+    pub redis: Option<Res<'w, RedisBridgeResource>>,
+    pub zones: Option<Res<'w, ZoneRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -169,6 +195,12 @@ pub struct ClientRequestDispatchParams<'w> {
     pub tempering_hit_tx: Option<ResMut<'w, Events<TemperingHit>>>,
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
+    pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
+    pub spirit_niche_coordinate_reveal_tx:
+        Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
+    pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
+    pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
+    pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
 }
 
 #[derive(SystemParam)]
@@ -259,6 +291,12 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
+            | ClientRequestV1::SpiritNichePlace { v, .. }
+            | ClientRequestV1::SpiritNicheGaze { v, .. }
+            | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
+            | ClientRequestV1::SparringInviteResponse { v, .. }
+            | ClientRequestV1::TradeOfferRequest { v, .. }
+            | ClientRequestV1::TradeOfferResponse { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
@@ -434,35 +472,35 @@ pub fn handle_client_request_payloads(
                     &alchemy_params.recipe_registry,
                 );
             }
-            ClientRequestV1::AlchemyIntervention { intervention, .. } => {
+            ClientRequestV1::AlchemyIntervention {
+                furnace_pos,
+                intervention,
+                ..
+            } => {
                 handle_alchemy_intervention(
                     ev.client,
+                    furnace_pos,
                     intervention.into(),
                     &mut clients,
                     &mut alchemy_params.furnaces,
-                    alchemy_params.zone_registry.as_deref(),
+                    alchemy_params.zones.as_deref(),
+                    alchemy_params.redis.as_deref(),
                 );
             }
-            ClientRequestV1::AlchemyOpenFurnace { furnace_id, .. } => {
-                // 当前 MVP:每玩家一个虚拟炉,furnace_id 仅作日志记录;触发一次完整 snapshot 重推。
-                if let Ok((username, mut client)) = clients.get_mut(ev.client) {
-                    let player_id = canonical_player_id(username.0.as_str());
-                    if let Ok(learned) = alchemy_params.learned.get(ev.client) {
-                        alchemy_snapshot_emit::send_recipe_book_from_learned(
-                            &mut client,
-                            &player_id,
-                            learned,
-                        );
-                    }
-                    tracing::info!(
-                        "[bong][network][alchemy] open_furnace `{furnace_id}` for `{player_id}`"
-                    );
-                }
+            ClientRequestV1::AlchemyOpenFurnace { furnace_pos, .. } => {
+                handle_alchemy_open_furnace(
+                    ev.client,
+                    furnace_pos,
+                    &mut clients,
+                    &mut alchemy_params.furnaces,
+                    &mut alchemy_params.learned,
+                );
             }
             ClientRequestV1::AlchemyTakePill { pill_item_id, .. } => {
                 handle_alchemy_take_pill(
                     ev.client,
                     &pill_item_id,
+                    None,
                     &mut commands,
                     &combat_clock,
                     &mut inventories,
@@ -491,6 +529,142 @@ pub fn handle_client_request_payloads(
                     item_instance_id,
                 });
             }
+            ClientRequestV1::SpiritNichePlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                let Some(spirit_niche_place_tx) = dispatch.spirit_niche_place_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_place because SpiritNichePlaceRequest event resource is missing"
+                    );
+                    continue;
+                };
+                spirit_niche_place_tx.send(SpiritNichePlaceRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    item_instance_id: Some(item_instance_id),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheGaze { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_gaze entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(reveal_tx) = dispatch.spirit_niche_coordinate_reveal_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_gaze because SpiritNicheCoordinateRevealRequest event resource is missing"
+                    );
+                    continue;
+                };
+                reveal_tx.send(SpiritNicheCoordinateRevealRequest {
+                    observer: ev.client,
+                    pos: [x, y, z],
+                    source: SpiritNicheRevealSource::Gaze,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheMarkCoordinate { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_mark_coordinate entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(reveal_tx) = dispatch.spirit_niche_coordinate_reveal_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_mark_coordinate because SpiritNicheCoordinateRevealRequest event resource is missing"
+                    );
+                    continue;
+                };
+                reveal_tx.send(SpiritNicheCoordinateRevealRequest {
+                    observer: ev.client,
+                    pos: [x, y, z],
+                    source: SpiritNicheRevealSource::MarkCoordinate,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SparringInviteResponse {
+                invite_id,
+                accepted,
+                timed_out,
+                ..
+            } => {
+                let Some(response_tx) = dispatch.sparring_invite_response_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped sparring_invite_response because SparringInviteResponseEvent resource is missing"
+                    );
+                    continue;
+                };
+                let kind = if timed_out {
+                    SparringInviteResponseKind::Timeout
+                } else if accepted {
+                    SparringInviteResponseKind::Accept
+                } else {
+                    SparringInviteResponseKind::Decline
+                };
+                response_tx.send(SparringInviteResponseEvent {
+                    player: ev.client,
+                    invite_id,
+                    kind,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::TradeOfferRequest {
+                target,
+                offered_instance_id,
+                ..
+            } => {
+                let Some(request_tx) = dispatch.trade_offer_request_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped trade_offer_request because TradeOfferRequest event resource is missing"
+                    );
+                    continue;
+                };
+                let Some(target_entity) =
+                    resolve_trade_offer_target(target.as_str(), &combat_params)
+                else {
+                    tracing::warn!(
+                        "[bong][network] rejected trade_offer_request from {:?}: invalid target `{target}`",
+                        ev.client
+                    );
+                    continue;
+                };
+                request_tx.send(TradeOfferRequest {
+                    initiator: ev.client,
+                    target: target_entity,
+                    offered_instance_id,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::TradeOfferResponse {
+                offer_id,
+                accepted,
+                requested_instance_id,
+                ..
+            } => {
+                let Some(response_tx) = dispatch.trade_offer_response_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped trade_offer_response because TradeOfferResponseEvent resource is missing"
+                    );
+                    continue;
+                };
+                response_tx.send(TradeOfferResponseEvent {
+                    player: ev.client,
+                    offer_id,
+                    accepted,
+                    requested_instance_id,
+                    tick: combat_clock.tick,
+                });
+            }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
                 handle_learn_skill_scroll(
                     ev.client,
@@ -501,13 +675,62 @@ pub fn handle_client_request_payloads(
                     &mut skill_scroll_params,
                 );
             }
-            // 涉及 inventory 联动的请求暂保留 stub(plan-inventory-v1 接入后再做)
-            other @ (ClientRequestV1::AlchemyFeedSlot { .. }
-            | ClientRequestV1::AlchemyTakeBack { .. }
-            | ClientRequestV1::AlchemyIgnite { .. }) => {
-                tracing::debug!(
-                    "[bong][network][alchemy] received {other:?} from {:?}; awaiting inventory wiring (plan-inventory-v1)",
-                    ev.client
+            ClientRequestV1::AlchemyIgnite {
+                furnace_pos,
+                recipe_id,
+                ..
+            } => {
+                handle_alchemy_ignite(
+                    ev.client,
+                    furnace_pos,
+                    recipe_id,
+                    &mut clients,
+                    &mut alchemy_params.furnaces,
+                    &alchemy_params.recipe_registry,
+                    alchemy_params.zones.as_deref(),
+                    alchemy_params.redis.as_deref(),
+                );
+            }
+            ClientRequestV1::AlchemyFeedSlot {
+                furnace_pos,
+                slot_idx,
+                material,
+                count,
+                ..
+            } => {
+                handle_alchemy_feed_slot(
+                    ev.client,
+                    furnace_pos,
+                    slot_idx,
+                    material,
+                    count,
+                    &mut clients,
+                    &mut alchemy_params.furnaces,
+                    &alchemy_params.recipe_registry,
+                    &mut inventories,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                );
+            }
+            ClientRequestV1::AlchemyTakeBack {
+                furnace_pos,
+                slot_idx,
+                ..
+            } => {
+                handle_alchemy_take_back(
+                    ev.client,
+                    furnace_pos,
+                    slot_idx,
+                    combat_clock.tick,
+                    &mut clients,
+                    &mut alchemy_params.furnaces,
+                    &alchemy_params.recipe_registry,
+                    &mut alchemy_params.outcome_tx,
+                    &mut inventories,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                    &alchemy_params.item_registry,
+                    alchemy_params.instance_allocator.as_deref_mut(),
                 );
             }
             ClientRequestV1::InventoryMoveIntent {
@@ -1498,7 +1721,7 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::UnlockedStyles;
+    use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
     use crate::cultivation::components::Realm;
     use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
@@ -1537,6 +1760,16 @@ mod tests {
     struct CapturedMineralProbes(Vec<MineralProbeIntent>);
 
     impl valence::prelude::Resource for CapturedMineralProbes {}
+
+    #[derive(Default)]
+    struct CapturedSpiritNichePlaces(Vec<SpiritNichePlaceRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNichePlaces {}
+
+    #[derive(Default)]
+    struct CapturedSpiritNicheCoordinateReveals(Vec<SpiritNicheCoordinateRevealRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNicheCoordinateReveals {}
 
     #[derive(Default)]
     struct CapturedInscriptionScrolls(Vec<InscriptionScrollSubmit>);
@@ -1589,6 +1822,20 @@ mod tests {
     fn capture_mineral_probes(
         mut events: EventReader<MineralProbeIntent>,
         mut captured: ResMut<CapturedMineralProbes>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_places(
+        mut events: EventReader<SpiritNichePlaceRequest>,
+        mut captured: ResMut<CapturedSpiritNichePlaces>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_coordinate_reveals(
+        mut events: EventReader<SpiritNicheCoordinateRevealRequest>,
+        mut captured: ResMut<CapturedSpiritNicheCoordinateReveals>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -1716,6 +1963,46 @@ mod tests {
         }
     }
 
+    fn inventory_with_stack(template_id: &str, count: u32) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: ItemInstance {
+                        instance_id: 9001,
+                        template_id: template_id.to_string(),
+                        display_name: template_id.to_string(),
+                        grid_w: 1,
+                        grid_h: 1,
+                        weight: 0.1,
+                        rarity: ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: count,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                    },
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -1828,12 +2115,17 @@ mod tests {
 
     fn register_request_app(app: &mut App) {
         app.insert_resource(CombatClock::default());
+        app.insert_resource(crate::cultivation::skill_registry::init_registry());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
+        app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CustomPayloadEvent>();
+        app.add_event::<crate::combat::events::AttackIntent>();
+        app.add_event::<crate::cultivation::burst_meridian::BurstMeridianEvent>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<BreakthroughRequest>();
         app.add_event::<ForgeRequest>();
         app.add_event::<InsightChosen>();
@@ -1841,6 +2133,8 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -1853,6 +2147,10 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+        app.add_event::<crate::combat::events::CombatEvent>();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
         app.add_systems(
             Update,
             (
@@ -1860,6 +2158,10 @@ mod tests {
                 crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
             )
                 .chain(),
+        );
+        app.add_systems(
+            Update,
+            crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
         );
     }
 
@@ -1877,27 +2179,200 @@ mod tests {
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(AlchemyFurnace::placed(
-                valence::prelude::BlockPos::new(8, 66, 8),
-                1,
-            ));
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
+        furnace.owner = Some("offline:Azure".into());
+        furnace.session = Some(AlchemySession::new(
+            "kai_mai_pill_v0".into(),
+            "offline:Azure".into(),
+        ));
+        let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data:
-                    br#"{"type":"alchemy_intervention","v":1,"intervention":{"kind":"inject_qi","qi":5.0}}"#
-                        .to_vec()
-                        .into_boxed_slice(),
+                data: br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[8,66,8],"intervention":{"kind":"inject_qi","qi":5.0}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
             });
 
         app.update();
 
-        let furnace = app.world().entity(entity).get::<AlchemyFurnace>().unwrap();
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert_eq!(furnace.session.as_ref().unwrap().qi_injected, 0.0);
+    }
+
+    #[test]
+    fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut meridians = crate::cultivation::components::MeridianSystem::default();
+        meridians
+            .get_mut(crate::cultivation::components::MeridianId::Lung)
+            .opened = true;
+        app.world_mut().entity_mut(entity).insert((
+            crate::combat::components::Wounds {
+                health_current: 100.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            meridians,
+            crate::cultivation::components::Cultivation::default(),
+            PlayerState::default(),
+            inventory_with_stack("ci_she_hao", 3),
+        ));
+
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
+        furnace.owner = Some("offline:Azure".into());
+        app.world_mut().spawn(furnace);
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[2,64,3],"slot_idx":0,"material":"ci_she_hao","count":3}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[2,64,3],"intervention":{"kind":"adjust_temp","value":1.0}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[2,64,3],"slot_idx":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(entity).unwrap();
+        assert_eq!(wounds.health_current, 80.0);
+        assert!(wounds.entries.iter().any(|wound| {
+            wound.kind == WoundKind::Burn && (wound.severity - 20.0).abs() < f32::EPSILON
+        }));
+        let overload_events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::cultivation::overload::MeridianOverloadEvent>>();
+        let mut reader = overload_events.get_reader();
+        let events: Vec<_> = reader.read(overload_events).collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].entity, entity);
+        assert!((events[0].severity - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn alchemy_ignite_rejects_low_zone_qi_on_live_request_path() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: "spawn".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (
+                    valence::prelude::DVec3::new(0.0, 0.0, 0.0),
+                    valence::prelude::DVec3::new(10.0, 100.0, 10.0),
+                ),
+                spirit_qi: 0.0,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        });
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
+        furnace.owner = Some("offline:Azure".into());
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
         assert!(furnace.session.is_none());
+    }
+
+    #[test]
+    fn alchemy_explode_tier_three_scales_backlash_above_tier_one() {
+        let tier_one = scale_alchemy_explosion_damage(40.0, 1);
+        let tier_three = scale_alchemy_explosion_damage(40.0, 3);
+
+        assert!(tier_one > 0.0);
+        assert!(tier_three > tier_one);
+        assert_eq!(tier_three, 80.0);
+        assert!(scale_alchemy_explosion_crack(0.3, 3) > scale_alchemy_explosion_crack(0.3, 1));
+    }
+
+    #[test]
+    fn alchemy_explode_backlash_without_components_does_not_crash() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+
+        let (client_bundle, _helper) = create_mock_client("NpcLike");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(inventory_with_stack("ci_she_hao", 3));
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(4, 64, 5), 1);
+        furnace.owner = Some("offline:NpcLike".into());
+        app.world_mut().spawn(furnace);
+        for data in [
+            br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[4,64,5],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
+            br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[4,64,5],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
+            br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[4,64,5],"intervention":{"kind":"adjust_temp","value":1.0}}"#.as_slice(),
+            br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[4,64,5],"slot_idx":0}"#.as_slice(),
+        ] {
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: data.to_vec().into_boxed_slice(),
+                });
+        }
+
+        app.update();
+
+        assert!(app.world().get::<Wounds>(entity).is_none());
     }
 
     #[test]
@@ -2259,6 +2734,141 @@ mod tests {
             valence::prelude::BlockPos::new(8, 32, 8)
         );
         assert_eq!(captured.0[0].dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn spirit_niche_place_request_emits_place_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNichePlaces::default());
+        app.insert_resource(CombatClock { tick: 88 });
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_spirit_niche_places).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"spirit_niche_place","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedSpiritNichePlaces>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].item_instance_id, Some(4242));
+        assert_eq!(captured.0[0].tick, 88);
+    }
+
+    #[test]
+    fn spirit_niche_coordinate_requests_emit_reveal_intents() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNicheCoordinateReveals::default());
+        app.insert_resource(CombatClock { tick: 89 });
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                capture_spirit_niche_coordinate_reveals,
+            )
+                .chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut custom_payloads = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>();
+        custom_payloads.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"spirit_niche_gaze","v":1,"x":11,"y":64,"z":10}"#
+                .to_vec()
+                .into_boxed_slice(),
+        });
+        custom_payloads.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"spirit_niche_mark_coordinate","v":1,"x":12,"y":65,"z":11}"#
+                .to_vec()
+                .into_boxed_slice(),
+        });
+
+        app.update();
+
+        let captured = app
+            .world()
+            .resource::<CapturedSpiritNicheCoordinateReveals>();
+        assert_eq!(captured.0.len(), 2);
+        assert_eq!(captured.0[0].observer, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].source, SpiritNicheRevealSource::Gaze);
+        assert_eq!(captured.0[0].tick, 89);
+        assert_eq!(captured.0[1].observer, entity);
+        assert_eq!(captured.0[1].pos, [12, 65, 11]);
+        assert_eq!(
+            captured.0[1].source,
+            SpiritNicheRevealSource::MarkCoordinate
+        );
+        assert_eq!(captured.0[1].tick, 89);
     }
 
     #[test]
@@ -3100,15 +3710,21 @@ mod tests {
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                SkillBarBindings::default(),
-                QuickSlotBindings::default(),
-                empty_inventory(),
-            ))
-            .id();
+        let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            crate::cultivation::components::MeridianSystem::default(),
+            SkillBarBindings::default(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+        ));
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -3123,9 +3739,13 @@ mod tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"npc:1"}"#
-                    .to_vec()
-                    .into_boxed_slice(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: Some(format!("entity_bits:{}", target.to_bits())),
+                })
+                .unwrap()
+                .into_boxed_slice(),
             });
 
         app.update();
@@ -3141,6 +3761,108 @@ mod tests {
         assert_eq!(casting.bound_instance_id, None);
         assert_eq!(casting.duration_ticks, 8);
         assert_eq!(casting.complete_cooldown_ticks, 60);
+    }
+
+    #[test]
+    fn skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        ));
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+        ));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let casting = app.world().get::<Casting>(entity).unwrap();
+        assert_eq!(casting.source, CastSource::SkillBar);
+        assert_eq!(casting.slot, 0);
+        assert_eq!(casting.duration_ticks, 10);
+        assert_eq!(casting.complete_cooldown_ticks, 70);
+        assert_eq!(
+            casting.skill_id.as_deref(),
+            Some("burst_meridian.tie_shan_kao")
+        );
+    }
+
+    #[test]
+    fn skill_bar_cast_protocol_entity_id_does_not_fallback_to_entity_bits() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            crate::cultivation::components::MeridianSystem::default(),
+            SkillBarBindings::default(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+        ));
+        app.world_mut()
+            .get_mut::<SkillBarBindings>(entity)
+            .unwrap()
+            .set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: "burst_meridian.beng_quan".to_string(),
+                },
+            );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: Some(format!("entity:{}", target.to_bits())),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+        assert_eq!(
+            app.world()
+                .resource::<valence::prelude::Events<crate::combat::events::AttackIntent>>()
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -3333,6 +4055,7 @@ fn handle_use_quick_slot(
         bound_instance_id: Some(instance_id),
         start_position,
         complete_cooldown_ticks,
+        skill_id: None,
     });
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         push_cast_sync(
@@ -3473,6 +4196,10 @@ fn handle_skill_bar_cast(
         );
         return;
     };
+    let skill_fn = combat_params
+        .skill_registry
+        .as_deref()
+        .and_then(|registry| registry.lookup(&skill_id));
     if combat_params
         .skillbar_bindings_q
         .get(entity)
@@ -3496,6 +4223,63 @@ fn handle_skill_bar_cast(
         cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
     }
 
+    let resolved_target = resolve_skill_cast_target(target.as_deref(), combat_params);
+    if let Some(skill_fn) = skill_fn {
+        let command_target = resolved_target;
+        commands.add(move |world: &mut bevy_ecs::world::World| {
+            match skill_fn(world, entity, slot, command_target) {
+                CastResult::Started {
+                    cooldown_ticks,
+                    anim_duration_ticks,
+                } => {
+                    push_skill_cast_started_sync(world, entity, slot);
+                    tracing::info!(
+                        "[bong][network] skill resolver started entity={entity:?} slot={slot} cooldown_ticks={cooldown_ticks} anim_duration_ticks={anim_duration_ticks}"
+                    );
+                }
+                CastResult::Rejected { reason } => {
+                    tracing::debug!(
+                        "[bong][network] skill resolver rejected entity={entity:?} slot={slot} reason={reason:?}"
+                    );
+                }
+                CastResult::Interrupted => {
+                    tracing::debug!(
+                        "[bong][network] skill resolver interrupted entity={entity:?} slot={slot}"
+                    );
+                }
+            }
+        });
+    } else {
+        start_generic_skillbar_cast(
+            entity,
+            slot,
+            &skill_id,
+            definition,
+            clock,
+            commands,
+            clients,
+            combat_params,
+        );
+    }
+    tracing::info!(
+        "[bong][network] skill cast queued entity={entity:?} slot={slot} skill={skill_id} target={target:?} resolved_target={resolved_target:?} duration_ticks={} cooldown_ticks={} tick={}",
+        definition.cast_ticks,
+        definition.cooldown_ticks,
+        clock.tick
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_generic_skillbar_cast(
+    entity: valence::prelude::Entity,
+    slot: u8,
+    skill_id: &str,
+    definition: &TechniqueDefinition,
+    clock: &CombatClock,
+    commands: &mut Commands,
+    clients: &mut Query<(&Username, &mut Client)>,
+    combat_params: &CombatRequestParams,
+) {
     let duration_ticks = u64::from(definition.cast_ticks).max(1);
     let complete_cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
     let duration_ms = definition.cast_ticks.saturating_mul(50);
@@ -3515,6 +4299,7 @@ fn handle_skill_bar_cast(
         bound_instance_id: None,
         start_position,
         complete_cooldown_ticks,
+        skill_id: Some(skill_id.to_string()),
     });
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         push_cast_sync(
@@ -3530,11 +4315,57 @@ fn handle_skill_bar_cast(
             entity,
         );
     }
-    tracing::info!(
-        "[bong][network] skill cast started entity={entity:?} slot={slot} skill={skill_id} target={target:?} duration_ticks={} cooldown_ticks={} tick={}",
-        definition.cast_ticks,
-        definition.cooldown_ticks,
-        clock.tick
+}
+
+fn resolve_skill_cast_target(
+    raw: Option<&str>,
+    combat_params: &CombatRequestParams,
+) -> Option<Entity> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(id) = raw.strip_prefix("entity:") {
+        let protocol_id = id.parse::<i32>().ok()?;
+        return combat_params
+            .entity_manager
+            .as_deref()
+            .and_then(|manager| manager.get_by_id(protocol_id));
+    }
+    let id = raw.strip_prefix("entity_bits:")?;
+    id.parse::<u64>().ok().map(Entity::from_bits)
+}
+
+fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.starts_with("entity_bits:") {
+        return None;
+    }
+    resolve_skill_cast_target(Some(raw), combat_params)
+}
+
+fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Entity, slot: u8) {
+    let Some(casting) = world.get::<Casting>(entity).cloned() else {
+        return;
+    };
+    let username = world
+        .get::<Username>(entity)
+        .map(|username| username.0.clone())
+        .unwrap_or_else(|| format!("entity:{:?}", entity));
+    let Some(mut client) = world.get_mut::<Client>(entity) else {
+        return;
+    };
+    push_cast_sync(
+        &mut client,
+        CastSyncV1 {
+            phase: CastPhaseV1::Casting,
+            slot,
+            duration_ms: casting.duration_ms,
+            started_at_ms: casting.started_at_ms,
+            outcome: CastOutcomeV1::None,
+        },
+        username.as_str(),
+        entity,
     );
 }
 
@@ -4188,6 +5019,7 @@ fn handle_apply_pill(
     handle_alchemy_take_pill(
         entity,
         &template_id,
+        Some(instance_id),
         commands,
         clock,
         inventories,
@@ -4269,43 +5101,584 @@ fn handle_alchemy_learn(
     }
 }
 
-fn handle_alchemy_intervention(
+fn handle_alchemy_open_furnace(
     entity: valence::prelude::Entity,
-    intervention: Intervention,
+    furnace_pos: (i32, i32, i32),
     clients: &mut Query<(&Username, &mut Client)>,
-    furnaces: &mut Query<&mut AlchemyFurnace>,
-    zone_registry: Option<&ZoneRegistry>,
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    learned_q: &mut Query<&mut LearnedRecipes>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
     let player_id = canonical_player_id(username.0.as_str());
-    let Ok(mut furnace) = furnaces.get_mut(entity) else {
+    match with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
+        alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
+        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+    }) {
+        Ok(()) => {
+            if let Ok(learned) = learned_q.get(entity) {
+                alchemy_snapshot_emit::send_recipe_book_from_learned(
+                    &mut client,
+                    &player_id,
+                    learned,
+                );
+            }
+            tracing::info!(
+                "[bong][network][alchemy] open_furnace pos={furnace_pos:?} for `{player_id}`"
+            );
+        }
+        Err(AlchemyFurnaceRouteError::Missing) => {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                format!("炼丹炉不存在：{furnace_pos:?}"),
+            );
+        }
+        Err(AlchemyFurnaceRouteError::Forbidden { owner }) => {
+            tracing::warn!(
+                "[bong][network][alchemy] `{player_id}` tried to open furnace pos={furnace_pos:?} owned by {owner:?}"
+            );
+            send_alchemy_error(&mut client, &player_id, "这座炉不是你的".to_string());
+        }
+    }
+}
+
+fn handle_alchemy_intervention(
+    entity: valence::prelude::Entity,
+    furnace_pos: (i32, i32, i32),
+    intervention: Intervention,
+    clients: &mut Query<(&Username, &mut Client)>,
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    zones: Option<&ZoneRegistry>,
+    redis: Option<&RedisBridgeResource>,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    if matches!(intervention, Intervention::InjectQi(_))
-        && furnace_zone_is_collapsed(&furnace, zone_registry)
-    {
-        tracing::debug!(
-            "[bong][network][alchemy] `{player_id}` inject_qi ignored: furnace is in collapsed zone"
+    let player_id = canonical_player_id(username.0.as_str());
+    let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
+        if matches!(intervention, Intervention::InjectQi(_))
+            && furnace_zone_is_collapsed(furnace, zones)
+        {
+            tracing::debug!(
+                "[bong][network][alchemy] `{player_id}` inject_qi ignored: furnace is in collapsed zone"
+            );
+            return;
+        }
+        let session = match furnace.session.as_mut() {
+            Some(s) => s,
+            None => {
+                send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
+                return;
+            }
+        };
+        session.apply_intervention(intervention.clone());
+        tracing::info!(
+            "[bong][network][alchemy] `{player_id}` intervention {intervention:?} pos={furnace_pos:?} → temp={:.2} qi={:.2}",
+            session.temp_current, session.qi_injected
         );
+        publish_alchemy_intervention_result(
+            redis,
+            furnace_pos,
+            session.recipe.as_str(),
+            player_id.as_str(),
+            &intervention,
+            session.temp_current,
+            session.qi_injected,
+        );
+        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+    });
+    log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "intervention");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_alchemy_ignite(
+    entity: valence::prelude::Entity,
+    furnace_pos: (i32, i32, i32),
+    recipe_id: String,
+    clients: &mut Query<(&Username, &mut Client)>,
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    registry: &RecipeRegistry,
+    zones: Option<&ZoneRegistry>,
+    redis: Option<&RedisBridgeResource>,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let Some(recipe) = registry.get(&recipe_id) else {
+        send_alchemy_error(&mut client, &player_id, format!("未知丹方：{recipe_id}"));
+        return;
+    };
+    if let Err(message) = check_alchemy_zone_qi(furnace_pos, zones, recipe_id.as_str()) {
+        send_alchemy_error(&mut client, &player_id, message);
         return;
     }
-    let session = match furnace.session.as_mut() {
-        Some(s) => s,
-        None => {
-            // 没起炉 — 创建空 session 让干预可见(诊断/调试)。生产路径应先 ignite。
-            let s = AlchemySession::new("__none__".into(), player_id.clone());
-            furnace.session = Some(s);
-            furnace.session.as_mut().unwrap()
+    let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
+        if !furnace.can_run(recipe.furnace_tier_min) {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                format!("炉阶不足或炉体已损：需要 t{}", recipe.furnace_tier_min),
+            );
+            return;
+        }
+        if furnace.is_busy() {
+            send_alchemy_error(&mut client, &player_id, "炉中已有丹火".to_string());
+            return;
+        }
+        let session = AlchemySession::new(recipe.id.clone(), player_id.clone());
+        if let Err(error) = furnace.start_session(session) {
+            send_alchemy_error(&mut client, &player_id, format!("起炉失败：{error}"));
+            return;
+        }
+        tracing::info!(
+            "[bong][network][alchemy] `{player_id}` ignite `{recipe_id}` at pos={furnace_pos:?}"
+        );
+        publish_alchemy_session_start(
+            redis,
+            furnace_pos,
+            furnace.tier,
+            recipe_id.as_str(),
+            player_id.as_str(),
+        );
+        alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
+        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+    });
+    log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "ignite");
+}
+
+fn check_alchemy_zone_qi(
+    furnace_pos: (i32, i32, i32),
+    zones: Option<&ZoneRegistry>,
+    recipe_id: &str,
+) -> Result<(), String> {
+    let zone_qi = zones
+        .and_then(|zones| {
+            zones
+                .find_zone(
+                    DimensionKind::Overworld,
+                    valence::prelude::DVec3::new(
+                        furnace_pos.0 as f64,
+                        furnace_pos.1 as f64,
+                        furnace_pos.2 as f64,
+                    ),
+                )
+                .or_else(|| zones.find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME))
+        })
+        .map(|zone| zone.spirit_qi)
+        .unwrap_or(0.0);
+    if zone_qi < MIN_ZONE_QI_TO_ALCHEMY {
+        return Err(format!(
+            "区域灵气不足：{zone_qi:.3} < {MIN_ZONE_QI_TO_ALCHEMY:.3}，无法起炉 {recipe_id}"
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_alchemy_feed_slot(
+    entity: valence::prelude::Entity,
+    furnace_pos: (i32, i32, i32),
+    slot_idx: u8,
+    material: String,
+    count: u32,
+    clients: &mut Query<(&Username, &mut Client)>,
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    registry: &RecipeRegistry,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
+        let Some(session) = furnace.session.as_mut() else {
+            send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
+            return;
+        };
+        let Some(recipe) = registry.get(&session.recipe) else {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                format!("未知丹方：{}", session.recipe),
+            );
+            return;
+        };
+        let expected = recipe
+            .stages
+            .get(slot_idx as usize)
+            .and_then(|stage| stage.required.iter().find(|spec| spec.material == material));
+        let Some(expected) = expected else {
+            send_alchemy_error(&mut client, &player_id, format!("此槽不收 {material}"));
+            return;
+        };
+        if count != expected.count {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                format!("投料数量不符：需要 {}，收到 {count}", expected.count),
+            );
+            return;
+        }
+        let mut inventory = match inventories.get_mut(entity) {
+            Ok(inventory) => inventory,
+            Err(_) => {
+                send_alchemy_error(&mut client, &player_id, "未找到背包".to_string());
+                return;
+            }
+        };
+        if !inventory_has_template_count(&inventory, material.as_str(), count) {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                format!("材料不足：{material}×{count}"),
+            );
+            return;
+        }
+        if let Err(error) =
+            session.feed_stage(recipe, slot_idx as usize, &[(material.clone(), count, 1.0)])
+        {
+            send_alchemy_error(&mut client, &player_id, format!("投料失败：{error}"));
+            return;
+        }
+        for _ in 0..count {
+            let consumed = consume_one_by_template(&mut inventory, material.as_str());
+            debug_assert!(
+                consumed,
+                "inventory_has_template_count checked availability first"
+            );
+        }
+        tracing::info!(
+            "[bong][network][alchemy] `{player_id}` feed pos={furnace_pos:?} slot={slot_idx} {material}×{count}"
+        );
+        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+        if let (Ok(player_state), Ok(cultivation)) =
+            (player_states.get(entity), cultivations.get(entity))
+        {
+            send_inventory_snapshot_to_client(
+                entity,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "alchemy_feed_slot",
+            );
+        }
+    });
+    log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "feed_slot");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_alchemy_take_back(
+    entity: valence::prelude::Entity,
+    furnace_pos: (i32, i32, i32),
+    slot_idx: u8,
+    _tick: u64,
+    clients: &mut Query<(&Username, &mut Client)>,
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    registry: &RecipeRegistry,
+    outcome_tx: &mut Option<ResMut<Events<crate::alchemy::AlchemyOutcomeEvent>>>,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    item_registry: &ItemRegistry,
+    instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let result = with_owned_furnace_mut_with_entity(
+        entity,
+        &player_id,
+        furnace_pos,
+        furnaces,
+        |furnace_entity, furnace| {
+            let Some(session) = furnace.session.as_mut() else {
+                send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
+                return;
+            };
+            let Some(recipe) = registry.get(&session.recipe) else {
+                send_alchemy_error(
+                    &mut client,
+                    &player_id,
+                    format!("未知丹方：{}", session.recipe),
+                );
+                return;
+            };
+            let remaining = recipe
+                .fire_profile
+                .target_duration_ticks
+                .saturating_sub(session.elapsed_ticks);
+            for _ in 0..remaining {
+                session.tick();
+            }
+            session.finished = true;
+            let Some(ended) = furnace.end_session() else {
+                return;
+            };
+            let elapsed_ticks = ended.elapsed_ticks;
+            let resolved = crate::alchemy::resolver::resolve_with_meta(&ended, recipe, registry);
+            let bucket = resolved.bucket;
+            let outcome = resolved.outcome;
+            let event_recipe_id = Some(recipe.id.clone());
+            match &outcome {
+                crate::alchemy::ResolvedOutcome::Explode {
+                    damage,
+                    meridian_crack,
+                } => {
+                    let scaled_damage = scale_alchemy_explosion_damage(*damage, furnace.tier);
+                    let scaled_meridian_crack =
+                        scale_alchemy_explosion_crack(*meridian_crack, furnace.tier);
+                    furnace.apply_explode((*damage / 100.0).clamp(0.05, 0.75));
+                    if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
+                        outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
+                            furnace: furnace_entity,
+                            caster_id: player_id.clone(),
+                            recipe_id: event_recipe_id.clone(),
+                            bucket,
+                            outcome: crate::alchemy::ResolvedOutcome::Explode {
+                                damage: scaled_damage,
+                                meridian_crack: scaled_meridian_crack,
+                            },
+                            elapsed_ticks,
+                        });
+                    }
+                    client.send_chat_message(format!(
+                        "§c[炼丹] 炸炉反噬：气血 -{scaled_damage:.1}，经脉裂痕 +{scaled_meridian_crack:.2}"
+                    ));
+                }
+                _ => {
+                    let Some(instance_allocator) = instance_allocator else {
+                        send_alchemy_error(
+                            &mut client,
+                            &player_id,
+                            "成丹入袋失败：实例编号器未就绪".to_string(),
+                        );
+                        return;
+                    };
+                    grant_alchemy_outcome_item(
+                        entity,
+                        &mut client,
+                        username.0.as_str(),
+                        &player_id,
+                        &outcome,
+                        inventories,
+                        player_states,
+                        cultivations,
+                        item_registry,
+                        instance_allocator,
+                    );
+                    if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
+                        outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
+                            furnace: furnace_entity,
+                            caster_id: player_id.clone(),
+                            recipe_id: event_recipe_id,
+                            bucket,
+                            outcome,
+                            elapsed_ticks,
+                        });
+                    }
+                }
+            }
+            tracing::info!(
+                "[bong][network][alchemy] `{player_id}` take_back pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?}"
+            );
+            alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
+            alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+        },
+    );
+    log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "take_back");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grant_alchemy_outcome_item(
+    entity: Entity,
+    client: &mut Client,
+    username: &str,
+    player_id: &str,
+    outcome: &crate::alchemy::ResolvedOutcome,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    item_registry: &ItemRegistry,
+    instance_allocator: &mut InventoryInstanceIdAllocator,
+) {
+    let crate::alchemy::ResolvedOutcome::Pill { pill, .. } = outcome else {
+        return;
+    };
+    let Ok(mut inventory) = inventories.get_mut(entity) else {
+        send_alchemy_error(client, player_id, "未找到背包，成丹无法入袋".to_string());
+        return;
+    };
+    if let Err(error) =
+        add_item_to_player_inventory(&mut inventory, item_registry, instance_allocator, pill, 1)
+    {
+        send_alchemy_error(client, player_id, format!("成丹入袋失败：{error}"));
+        return;
+    }
+    if let (Ok(player_state), Ok(cultivation)) =
+        (player_states.get(entity), cultivations.get(entity))
+    {
+        send_inventory_snapshot_to_client(
+            entity,
+            client,
+            username,
+            &inventory,
+            player_state,
+            cultivation,
+            "alchemy_outcome_grant",
+        );
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AlchemyFurnaceRouteError {
+    Missing,
+    Forbidden { owner: Option<String> },
+}
+
+fn with_owned_furnace_mut<R>(
+    player: Entity,
+    player_id: &str,
+    furnace_pos: (i32, i32, i32),
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    f: impl FnOnce(&mut AlchemyFurnace) -> R,
+) -> Result<R, AlchemyFurnaceRouteError> {
+    with_owned_furnace_mut_with_entity(player, player_id, furnace_pos, furnaces, |_, furnace| {
+        f(furnace)
+    })
+}
+
+fn with_owned_furnace_mut_with_entity<R>(
+    _player: Entity,
+    player_id: &str,
+    furnace_pos: (i32, i32, i32),
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    f: impl FnOnce(Entity, &mut AlchemyFurnace) -> R,
+) -> Result<R, AlchemyFurnaceRouteError> {
+    let Some((furnace_entity, mut furnace)) = furnaces
+        .iter_mut()
+        .find(|(_, furnace)| furnace.pos == Some(furnace_pos))
+    else {
+        return Err(AlchemyFurnaceRouteError::Missing);
+    };
+    let owner_ok = match furnace.owner.as_deref() {
+        None | Some("") => true,
+        Some(owner) => {
+            owner == player_id || owner == player_id.strip_prefix("offline:").unwrap_or(player_id)
         }
     };
-    session.apply_intervention(intervention.clone());
-    tracing::info!(
-        "[bong][network][alchemy] `{player_id}` intervention {intervention:?} → temp={:.2} qi={:.2}",
-        session.temp_current, session.qi_injected
-    );
-    alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, &furnace);
+    if !owner_ok {
+        return Err(AlchemyFurnaceRouteError::Forbidden {
+            owner: furnace.owner.clone(),
+        });
+    }
+    Ok(f(furnace_entity, &mut furnace))
+}
+
+fn log_or_send_route_error(
+    result: Result<(), AlchemyFurnaceRouteError>,
+    client: &mut Client,
+    player_id: &str,
+    furnace_pos: (i32, i32, i32),
+    action: &str,
+) {
+    match result {
+        Ok(()) => {}
+        Err(AlchemyFurnaceRouteError::Missing) => {
+            tracing::warn!(
+                "[bong][network][alchemy] `{player_id}` {action} rejected: missing furnace pos={furnace_pos:?}"
+            );
+            send_alchemy_error(client, player_id, format!("炼丹炉不存在：{furnace_pos:?}"));
+        }
+        Err(AlchemyFurnaceRouteError::Forbidden { owner }) => {
+            tracing::warn!(
+                "[bong][network][alchemy] `{player_id}` {action} rejected: forbidden pos={furnace_pos:?} owner={owner:?}"
+            );
+            send_alchemy_error(client, player_id, "这座炉不是你的".to_string());
+        }
+    }
+}
+
+fn send_alchemy_error(client: &mut Client, player_id: &str, message: String) {
+    client.send_chat_message(format!("§c[炼丹] {message}"));
+    tracing::warn!("[bong][network][alchemy] error for `{player_id}`: {message}");
+}
+
+fn publish_alchemy_session_start(
+    redis: Option<&RedisBridgeResource>,
+    furnace_pos: (i32, i32, i32),
+    furnace_tier: u8,
+    recipe_id: &str,
+    caster_id: &str,
+) {
+    let Some(redis) = redis else {
+        return;
+    };
+    let payload = AlchemySessionStartV1 {
+        v: 1,
+        session_id: alchemy_session_id(furnace_pos, caster_id, recipe_id),
+        recipe_id: recipe_id.to_string(),
+        furnace_pos,
+        furnace_tier,
+        caster_id: caster_id.to_string(),
+        ts: current_unix_millis(),
+    };
+    let _ = redis
+        .tx_outbound
+        .send(RedisOutbound::AlchemySessionStart(payload));
+}
+
+fn publish_alchemy_intervention_result(
+    redis: Option<&RedisBridgeResource>,
+    furnace_pos: (i32, i32, i32),
+    recipe_id: &str,
+    caster_id: &str,
+    intervention: &Intervention,
+    temp_current: f64,
+    qi_injected: f64,
+) {
+    let Some(redis) = redis else {
+        return;
+    };
+    let payload = AlchemyInterventionResultV1 {
+        v: 1,
+        session_id: alchemy_session_id(furnace_pos, caster_id, recipe_id),
+        recipe_id: recipe_id.to_string(),
+        furnace_pos,
+        caster_id: caster_id.to_string(),
+        intervention: crate::schema::alchemy::AlchemyInterventionV1::from(intervention),
+        temp_current,
+        qi_injected,
+        accepted: true,
+        message: None,
+        ts: current_unix_millis(),
+    };
+    let _ = redis
+        .tx_outbound
+        .send(RedisOutbound::AlchemyInterventionResult(payload));
+}
+
+fn scale_alchemy_explosion_damage(base_damage: f64, furnace_tier: u8) -> f64 {
+    if !base_damage.is_finite() || base_damage <= 0.0 {
+        return 0.0;
+    }
+    let tier = furnace_tier.clamp(1, 3) as f64;
+    base_damage * (1.0 + (tier - 1.0) * 0.5)
+}
+
+fn scale_alchemy_explosion_crack(base_severity: f64, furnace_tier: u8) -> f64 {
+    if !base_severity.is_finite() || base_severity <= 0.0 {
+        return 0.0;
+    }
+    let tier = furnace_tier.clamp(1, 3) as f64;
+    (base_severity * (1.0 + (tier - 1.0) * 0.25)).clamp(0.0, 1.0)
 }
 
 fn furnace_zone_is_collapsed(
@@ -4335,6 +5708,7 @@ fn furnace_zone_is_collapsed(
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
+    instance_id: Option<u64>,
     commands: &mut Commands,
     clock: &CombatClock,
     inventories: &mut Query<&mut PlayerInventory>,
@@ -4366,9 +5740,47 @@ fn handle_alchemy_take_pill(
             return;
         }
     };
-    if !consume_one_by_template(&mut inventory, pill_item_id) {
+    let Some(consumed_item) = resolve_pill_consume_target(&inventory, pill_item_id, instance_id)
+    else {
         tracing::warn!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` not in inventory"
+        );
+        return;
+    };
+
+    let (spoil, age) = shelflife_checks_for_item(
+        &consumed_item,
+        clock.tick,
+        combat_params.decay_profiles.as_deref(),
+    );
+    emit_shelflife_consume_events(
+        entity,
+        consumed_item.instance_id,
+        &spoil,
+        &age,
+        &mut combat_params.spoil_warnings,
+        &mut combat_params.age_bonus_rolls,
+    );
+
+    if matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }) {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` blocked by spoil CriticalBlock"
+        );
+        resync_snapshot(
+            entity,
+            &inventory,
+            clients,
+            player_states,
+            cultivations,
+            "take_pill_spoil_blocked",
+        );
+        return;
+    }
+
+    let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);
+    if let Err(error) = consume_result {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` consume failed: {error}"
         );
         return;
     }
@@ -4416,10 +5828,15 @@ fn handle_alchemy_take_pill(
             );
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
-            // 需对应 tick 系统（meridian_heal / contamination_cleanse）消费，当前尚未 wire。
-            tracing::warn!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` effect {:?} not yet wired to runtime",
-                effect
+            let meridians = combat_params.meridians.get_mut(entity).ok();
+            let contamination = combat_params.contaminations.get_mut(entity).ok();
+            apply_item_effect(
+                &effect,
+                None,
+                meridians,
+                contamination,
+                pill_item_id,
+                entity,
             );
         }
     }
@@ -4483,6 +5900,144 @@ fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -
         }
     }
     false
+}
+
+fn inventory_has_template_count(
+    inventory: &PlayerInventory,
+    template_id: &str,
+    required: u32,
+) -> bool {
+    let mut total = 0u32;
+    for item in inventory.hotbar.iter().flatten() {
+        if item.template_id == template_id {
+            total = total.saturating_add(item.stack_count);
+        }
+    }
+    for container in &inventory.containers {
+        for placed in &container.items {
+            if placed.instance.template_id == template_id {
+                total = total.saturating_add(placed.instance.stack_count);
+            }
+        }
+    }
+    for item in inventory.equipped.values() {
+        if item.template_id == template_id {
+            total = total.saturating_add(item.stack_count);
+        }
+    }
+    total >= required
+}
+
+fn resolve_pill_consume_target(
+    inventory: &PlayerInventory,
+    template_id: &str,
+    instance_id: Option<u64>,
+) -> Option<crate::inventory::ItemInstance> {
+    if let Some(instance_id) = instance_id {
+        return inventory_item_by_instance_borrow(inventory, instance_id)
+            .and_then(|item| (item.template_id == template_id).then(|| item.clone()));
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template_id)
+        .cloned()
+        .or_else(|| {
+            inventory
+                .containers
+                .iter()
+                .flat_map(|container| container.items.iter())
+                .find(|placed| placed.instance.template_id == template_id)
+                .map(|placed| placed.instance.clone())
+        })
+        .or_else(|| {
+            inventory
+                .equipped
+                .values()
+                .find(|item| item.template_id == template_id)
+                .cloned()
+        })
+}
+
+fn shelflife_checks_for_item(
+    item: &crate::inventory::ItemInstance,
+    now_tick: u64,
+    profiles: Option<&DecayProfileRegistry>,
+) -> (SpoilCheckOutcome, AgePeakCheck) {
+    let Some(freshness) = item.freshness.as_ref() else {
+        return (
+            SpoilCheckOutcome::NotApplicable,
+            AgePeakCheck::NotApplicable,
+        );
+    };
+    let Some(profile) = profiles.and_then(|profiles| profiles.get(&freshness.profile)) else {
+        tracing::warn!(
+            "[bong][network][alchemy] freshness profile `{}` missing for consumed item instance={}",
+            freshness.profile.as_str(),
+            item.instance_id
+        );
+        return (
+            SpoilCheckOutcome::NotApplicable,
+            AgePeakCheck::NotApplicable,
+        );
+    };
+
+    let multiplier = container_storage_multiplier(&ContainerFreshnessBehavior::Normal, profile);
+    (
+        spoil_check(freshness, profile, now_tick, multiplier),
+        age_peak_check(freshness, profile, now_tick, multiplier),
+    )
+}
+
+fn emit_shelflife_consume_events(
+    entity: Entity,
+    instance_id: u64,
+    spoil: &SpoilCheckOutcome,
+    age: &AgePeakCheck,
+    spoil_warnings: &mut Option<ResMut<Events<SpoilConsumeWarning>>>,
+    age_bonus_rolls: &mut Option<ResMut<Events<AgeBonusRoll>>>,
+) {
+    if let Some(spoil_warnings) = spoil_warnings.as_deref_mut() {
+        match spoil {
+            SpoilCheckOutcome::Warn {
+                current_qi,
+                spoil_threshold,
+            } => {
+                spoil_warnings.send(SpoilConsumeWarning {
+                    player: entity,
+                    instance_id,
+                    severity: SpoilSeverity::Sharp,
+                    current_qi: *current_qi,
+                    spoil_threshold: *spoil_threshold,
+                });
+            }
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi,
+                spoil_threshold,
+            } => {
+                spoil_warnings.send(SpoilConsumeWarning {
+                    player: entity,
+                    instance_id,
+                    severity: SpoilSeverity::CriticalBlock,
+                    current_qi: *current_qi,
+                    spoil_threshold: *spoil_threshold,
+                });
+            }
+            SpoilCheckOutcome::NotApplicable | SpoilCheckOutcome::Safe { .. } => {}
+        }
+    }
+
+    if let (Some(age_bonus_rolls), AgePeakCheck::Peaking { bonus_strength }) =
+        (age_bonus_rolls.as_deref_mut(), age)
+    {
+        age_bonus_rolls.send(AgeBonusRoll {
+            player: entity,
+            instance_id,
+            bonus_strength: *bonus_strength,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -4566,5 +6121,67 @@ mod take_pill_tests {
         let mut inv = fresh_inventory();
         assert!(!consume_one_by_template(&mut inv, "ghost_pill"));
         assert_eq!(inv.revision.0, 0);
+    }
+
+    #[test]
+    fn resolve_pill_consume_target_uses_exact_instance_when_provided() {
+        let mut inv = fresh_inventory();
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(7, "guyuan_pill", 1),
+            });
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 1,
+                instance: make_pill(8, "guyuan_pill", 1),
+            });
+
+        let item = resolve_pill_consume_target(&inv, "guyuan_pill", Some(8)).unwrap();
+
+        assert_eq!(item.instance_id, 8);
+    }
+
+    #[test]
+    fn shelflife_warn_emits_spoil_warning() {
+        let profile = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 100,
+            },
+            spoil_threshold: 60.0,
+        };
+        let mut profiles = DecayProfileRegistry::new();
+        profiles.insert(profile.clone()).unwrap();
+        let mut item = make_pill(9, "guyuan_pill", 1);
+        item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
+
+        let (spoil, age) = shelflife_checks_for_item(&item, 100, Some(&profiles));
+
+        assert!(matches!(spoil, SpoilCheckOutcome::Warn { .. }));
+        assert!(matches!(age, AgePeakCheck::NotApplicable));
+    }
+
+    #[test]
+    fn shelflife_critical_block_is_detected_before_consumption() {
+        let profile = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 100,
+            },
+            spoil_threshold: 60.0,
+        };
+        let mut profiles = DecayProfileRegistry::new();
+        profiles.insert(profile.clone()).unwrap();
+        let mut item = make_pill(9, "guyuan_pill", 1);
+        item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
+
+        let (spoil, _age) = shelflife_checks_for_item(&item, 1_000, Some(&profiles));
+
+        assert!(matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }));
     }
 }

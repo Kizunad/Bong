@@ -2,7 +2,9 @@ package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import net.minecraft.util.math.BlockPos;
 
 /**
  * 客户端 → 服务端 {@code bong:client_request} 通道的协议常量与 JSON 编码。
@@ -161,9 +163,9 @@ public final class ClientRequestProtocol {
 
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
-    public static String encodeAlchemyOpenFurnace(String furnaceId) {
+    public static String encodeAlchemyOpenFurnace(BlockPos pos) {
         JsonObject obj = envelope("alchemy_open_furnace");
-        obj.addProperty("furnace_id", furnaceId);
+        addBlockPos(obj, pos);
         return obj.toString();
     }
 
@@ -179,28 +181,32 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    public static String encodeAlchemyIgnite(String recipeId) {
+    public static String encodeAlchemyIgnite(BlockPos pos, String recipeId) {
         JsonObject obj = envelope("alchemy_ignite");
+        addBlockPos(obj, pos);
         obj.addProperty("recipe_id", recipeId);
         return obj.toString();
     }
 
-    public static String encodeAlchemyFeedSlot(int slotIdx, String material, int count) {
+    public static String encodeAlchemyFeedSlot(BlockPos pos, int slotIdx, String material, int count) {
         JsonObject obj = envelope("alchemy_feed_slot");
+        addBlockPos(obj, pos);
         obj.addProperty("slot_idx", slotIdx);
         obj.addProperty("material", material);
         obj.addProperty("count", count);
         return obj.toString();
     }
 
-    public static String encodeAlchemyTakeBack(int slotIdx) {
+    public static String encodeAlchemyTakeBack(BlockPos pos, int slotIdx) {
         JsonObject obj = envelope("alchemy_take_back");
+        addBlockPos(obj, pos);
         obj.addProperty("slot_idx", slotIdx);
         return obj.toString();
     }
 
-    public static String encodeAlchemyInjectQi(double qi) {
+    public static String encodeAlchemyInjectQi(BlockPos pos, double qi) {
         JsonObject obj = envelope("alchemy_intervention");
+        addBlockPos(obj, pos);
         JsonObject inner = new JsonObject();
         inner.addProperty("kind", "inject_qi");
         inner.addProperty("qi", qi);
@@ -208,8 +214,9 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    public static String encodeAlchemyAdjustTemp(double temp) {
+    public static String encodeAlchemyAdjustTemp(BlockPos pos, double temp) {
         JsonObject obj = envelope("alchemy_intervention");
+        addBlockPos(obj, pos);
         JsonObject inner = new JsonObject();
         inner.addProperty("kind", "adjust_temp");
         inner.addProperty("temp", temp);
@@ -220,6 +227,15 @@ public final class ClientRequestProtocol {
     public static String encodeAlchemyTakePill(String pillItemId) {
         JsonObject obj = envelope("alchemy_take_pill");
         obj.addProperty("pill_item_id", pillItemId);
+        return obj.toString();
+    }
+
+    public static String encodeAlchemyFurnacePlace(BlockPos pos, long itemInstanceId) {
+        JsonObject obj = envelope("alchemy_furnace_place");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("item_instance_id", itemInstanceId);
         return obj.toString();
     }
 
@@ -355,6 +371,71 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
+        JsonObject obj = envelope("spirit_niche_place");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeSpiritNicheGaze(int x, int y, int z) {
+        JsonObject obj = envelope("spirit_niche_gaze");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
+    public static String encodeSpiritNicheMarkCoordinate(int x, int y, int z) {
+        JsonObject obj = envelope("spirit_niche_mark_coordinate");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
+    public static String encodeSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
+        if (inviteId == null || inviteId.isBlank()) {
+            throw new IllegalArgumentException("inviteId must not be blank");
+        }
+        JsonObject obj = envelope("sparring_invite_response");
+        obj.addProperty("invite_id", inviteId);
+        obj.addProperty("accepted", accepted);
+        obj.addProperty("timed_out", timedOut);
+        return obj.toString();
+    }
+
+    public static String encodeTradeOfferRequest(String target, long offeredInstanceId) {
+        if (target == null || target.isBlank()) {
+            throw new IllegalArgumentException("target must not be blank");
+        }
+        if (offeredInstanceId < 0) {
+            throw new IllegalArgumentException("offeredInstanceId must be >= 0, got " + offeredInstanceId);
+        }
+        JsonObject obj = envelope("trade_offer_request");
+        obj.addProperty("target", target.trim());
+        obj.addProperty("offered_instance_id", offeredInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeTradeOfferResponse(String offerId, boolean accepted, Long requestedInstanceId) {
+        if (offerId == null || offerId.isBlank()) {
+            throw new IllegalArgumentException("offerId must not be blank");
+        }
+        JsonObject obj = envelope("trade_offer_response");
+        obj.addProperty("offer_id", offerId);
+        obj.addProperty("accepted", accepted);
+        if (requestedInstanceId != null) {
+            if (requestedInstanceId < 0) {
+                throw new IllegalArgumentException("requestedInstanceId must be >= 0, got " + requestedInstanceId);
+            }
+            obj.addProperty("requested_instance_id", requestedInstanceId.longValue());
+        }
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
@@ -419,8 +500,15 @@ public final class ClientRequestProtocol {
     }
 
     public static String encodeSkillBarCast(int slot) {
+        return encodeSkillBarCast(slot, null);
+    }
+
+    public static String encodeSkillBarCast(int slot, String target) {
         JsonObject obj = envelope("skill_bar_cast");
         obj.addProperty("slot", slot);
+        if (target != null && !target.isBlank()) {
+            obj.addProperty("target", target.trim());
+        }
         return obj.toString();
     }
 
@@ -549,5 +637,13 @@ public final class ClientRequestProtocol {
         obj.addProperty("type", type);
         obj.addProperty("v", VERSION);
         return obj;
+    }
+
+    private static void addBlockPos(JsonObject obj, BlockPos pos) {
+        JsonArray arr = new JsonArray();
+        arr.add(pos.getX());
+        arr.add(pos.getY());
+        arr.add(pos.getZ());
+        obj.add("furnace_pos", arr);
     }
 }

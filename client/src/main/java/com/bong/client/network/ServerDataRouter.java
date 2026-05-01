@@ -24,6 +24,7 @@ public final class ServerDataRouter {
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
+        BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
@@ -64,10 +65,14 @@ public final class ServerDataRouter {
         TechniquesSnapshotHandler techniquesSnapshotHandler = new TechniquesSnapshotHandler();
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
+        BurstMeridianHandler burstMeridianHandler = new BurstMeridianHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
+        RealmVisionParamsHandler realmVisionParamsHandler = new RealmVisionParamsHandler();
+        SpiritualSenseTargetsHandler spiritualSenseTargetsHandler = new SpiritualSenseTargetsHandler();
         ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
+        SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
             new com.bong.client.network.lingtian.LingtianSessionHandler();
 
@@ -84,6 +89,7 @@ public final class ServerDataRouter {
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);
         handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
+        handlers.put("botany_plant_v2_render_profiles", botanyPlantRenderProfileHandler);
         handlers.put("botany_skill", botanySkillHandler);
         handlers.put("alchemy_furnace", alchemyFurnaceHandler);
         handlers.put("alchemy_session", alchemySessionHandler);
@@ -109,9 +115,12 @@ public final class ServerDataRouter {
         handlers.put("techniques_snapshot", techniquesSnapshotHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
+        handlers.put("burst_meridian_event", burstMeridianHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
+        handlers.put("realm_vision_params", realmVisionParamsHandler);
+        handlers.put("spiritual_sense_targets", spiritualSenseTargetsHandler);
         handlers.put("rift_portal_state", extractServerDataHandler);
         handlers.put("rift_portal_removed", extractServerDataHandler);
         handlers.put("extract_started", extractServerDataHandler);
@@ -135,6 +144,13 @@ public final class ServerDataRouter {
         handlers.put("forge_session", forgeSessionHandler);
         handlers.put("forge_outcome", forgeOutcomeHandler);
         handlers.put("forge_blueprint_book", forgeBlueprintBookHandler);
+        // plan-social-v1 §7 — 匿名、暴露、关系、声名、切磋邀请。
+        handlers.put("social_anonymity", socialServerDataHandler);
+        handlers.put("social_exposure", socialServerDataHandler);
+        handlers.put("social_pact", socialServerDataHandler);
+        handlers.put("social_feud", socialServerDataHandler);
+        handlers.put("social_renown_delta", socialServerDataHandler);
+        handlers.put("sparring_invite", socialServerDataHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());

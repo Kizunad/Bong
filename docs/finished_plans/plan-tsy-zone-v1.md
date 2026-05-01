@@ -773,6 +773,7 @@ fn strip_name(template_id: &str, original: &str) -> String {
 
 ### 遗留 / 后续
 
+- 迁移注释（plan-server-cmd-system-v1，2026-05-01）：历史 `!tsy-spawn` 调试命令已迁移为 Valence brigadier `/tsy_spawn <family_id>`；正文保留历史记录不重写。
 - P1 死亡分流（`DeathEvent.attacker / attacker_player_id`、秘境内死亡分流、干尸 component）已在 `plan-tsy-loot-v1`（merge 9fb8d2b7）落地
 - P2 lifecycle（zone 状态机 / 塌缩 / 道伥转化 / 强制弹出）已在 `plan-tsy-lifecycle-v1`（merge 99c29ebd）落地
 - worldgen 自动 POI 生成（双 manifest + POI consumer）已在 `plan-tsy-worldgen-v1`（merge 77d042fb）落地

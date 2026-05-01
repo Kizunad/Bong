@@ -72,6 +72,22 @@ mod tests {
     use valence::prelude::{Events, Position};
 
     #[test]
+    fn family_id_parser_accepts_single_word_family_id() {
+        assert_eq!(
+            String::arg_from_str("tsy_lingxu_01").unwrap(),
+            "tsy_lingxu_01"
+        );
+    }
+
+    #[test]
+    fn family_id_parser_stops_at_whitespace() {
+        assert_eq!(
+            String::arg_from_str("tsy_lingxu_01 extra").unwrap(),
+            "tsy_lingxu_01"
+        );
+    }
+
+    #[test]
     fn tsy_spawn_emits_requested_event() {
         let mut app = App::new();
         app.add_event::<TsySpawnRequested>();
@@ -128,5 +144,28 @@ mod tests {
             collected.as_slice(),
             [TsySpawnRequested { player_pos, .. }] if *player_pos == Position::new([8.0, 66.0, 8.0]).get()
         ));
+    }
+
+    #[test]
+    fn tsy_spawn_without_executor_does_not_emit_request() {
+        let mut app = App::new();
+        app.add_event::<TsySpawnRequested>();
+        app.add_event::<CommandResultEvent<TsySpawnCmd>>();
+        app.add_systems(Update, handle_tsy_spawn);
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<TsySpawnCmd>>>()
+            .send(CommandResultEvent {
+                result: TsySpawnCmd::Spawn {
+                    family_id: "tsy_lingxu_01".to_string(),
+                },
+                executor: valence::prelude::Entity::PLACEHOLDER,
+                modifiers: Default::default(),
+            });
+
+        run_update(&mut app);
+
+        let events = app.world().resource::<Events<TsySpawnRequested>>();
+        let mut reader = events.get_reader();
+        assert_eq!(reader.read(events).count(), 0);
     }
 }

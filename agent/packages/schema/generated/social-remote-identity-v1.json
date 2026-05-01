@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "player_uuid",
+    "anonymous",
+    "renown_tags"
+  ],
+  "properties": {
+    "player_uuid": {
+      "type": "string"
+    },
+    "anonymous": {
+      "type": "boolean"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "realm_band": {
+      "type": "string"
+    },
+    "breath_hint": {
+      "type": "string"
+    },
+    "renown_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 {
   "v": 1,
   "type": "alchemy_ignite",
+  "furnace_pos": [-12, 64, 38],
   "recipe_id": "kai_mai_pill_v0"
 }

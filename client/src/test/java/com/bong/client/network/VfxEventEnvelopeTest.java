@@ -44,6 +44,30 @@ public class VfxEventEnvelopeTest {
     }
 
     @Test
+    void parsesPlayAnimInlineFixture() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-anim-inline.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+
+        assertTrue(result.isSuccess(), "play_anim_inline payload should parse: " + result.errorMessage());
+        assertTrue(result.payload() instanceof VfxEventPayload.PlayAnimInline, "expected PlayAnimInline variant");
+        VfxEventPayload.PlayAnimInline inline = (VfxEventPayload.PlayAnimInline) result.payload();
+        assertEquals(FIXTURE_UUID, inline.targetPlayer());
+        assertEquals(new Identifier("bong", "inline_test_pose"), inline.animId());
+        assertTrue(inline.animJson().contains("inline_test_pose"));
+        assertEquals(3000, inline.priority());
+        assertEquals(OptionalInt.of(3), inline.fadeInTicks());
+    }
+
+    @Test
+    void rejectsPlayAnimInlineEmptyJson() throws IOException {
+        String json = PayloadFixtureLoader.readText("invalid-vfx-inline-empty-json.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("anim_json"));
+    }
+
+    @Test
     void parsesStopAnimFixture() throws IOException {
         String json = PayloadFixtureLoader.readText("valid-vfx-stop-anim.json");
         VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));

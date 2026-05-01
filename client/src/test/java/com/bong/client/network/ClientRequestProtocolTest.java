@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
+import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -171,6 +172,52 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSpiritNichePlace() {
+        String json = ClientRequestProtocol.encodeSpiritNichePlace(11, 64, 10, 4242L);
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
+    void encodesSpiritNicheRevealRequests() {
+        assertEquals(
+            "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",
+            ClientRequestProtocol.encodeSpiritNicheGaze(11, 64, 10)
+        );
+        assertEquals(
+            "{\"type\":\"spirit_niche_mark_coordinate\",\"v\":1,\"x\":12,\"y\":65,\"z\":11}",
+            ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(12, 65, 11)
+        );
+    }
+
+    @Test
+    void encodesSparringInviteResponse() {
+        String json = ClientRequestProtocol.encodeSparringInviteResponse("sparring:1:a:b", true, false);
+        assertEquals(
+            "{\"type\":\"sparring_invite_response\",\"v\":1,\"invite_id\":\"sparring:1:a:b\",\"accepted\":true,\"timed_out\":false}",
+            json
+        );
+    }
+
+    @Test
+    void encodesTradeOfferRequests() {
+        assertEquals(
+            "{\"type\":\"trade_offer_request\",\"v\":1,\"target\":\"entity:42\",\"offered_instance_id\":1001}",
+            ClientRequestProtocol.encodeTradeOfferRequest("entity:42", 1001L)
+        );
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":true,\"requested_instance_id\":2002}",
+            ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", true, 2002L)
+        );
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":false}",
+            ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", false, null)
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(
@@ -207,6 +254,40 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesAlchemyFurnaceRequestsWithBlockPos() {
+        BlockPos pos = new BlockPos(-12, 64, 38);
+
+        assertEquals(
+            "{\"type\":\"alchemy_open_furnace\",\"v\":1,\"furnace_pos\":[-12,64,38]}",
+            ClientRequestProtocol.encodeAlchemyOpenFurnace(pos)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_ignite\",\"v\":1,\"furnace_pos\":[-12,64,38],\"recipe_id\":\"kai_mai_pill_v0\"}",
+            ClientRequestProtocol.encodeAlchemyIgnite(pos, "kai_mai_pill_v0")
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_feed_slot\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0,\"material\":\"ci_she_hao\",\"count\":3}",
+            ClientRequestProtocol.encodeAlchemyFeedSlot(pos, 0, "ci_she_hao", 3)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_take_back\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0}",
+            ClientRequestProtocol.encodeAlchemyTakeBack(pos, 0)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_intervention\",\"v\":1,\"furnace_pos\":[-12,64,38],\"intervention\":{\"kind\":\"inject_qi\",\"qi\":1.0}}",
+            ClientRequestProtocol.encodeAlchemyInjectQi(pos, 1.0)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_intervention\",\"v\":1,\"furnace_pos\":[-12,64,38],\"intervention\":{\"kind\":\"adjust_temp\",\"temp\":0.6}}",
+            ClientRequestProtocol.encodeAlchemyAdjustTemp(pos, 0.6)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_furnace_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242}",
+            ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, 4242L)
+        );
+    }
+
+    @Test
     void encodesDuoSheRequest() {
         String json = ClientRequestProtocol.encodeDuoSheRequest("npc_12v0");
         assertEquals(
@@ -229,6 +310,10 @@ public class ClientRequestProtocolTest {
         assertEquals(
             "{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}",
             ClientRequestProtocol.encodeSkillBarCast(0)
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0,\"target\":\"entity:42\"}",
+            ClientRequestProtocol.encodeSkillBarCast(0, "entity:42")
         );
         assertEquals(
             "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"skill\",\"skill_id\":\"burst_meridian.beng_quan\"}}",

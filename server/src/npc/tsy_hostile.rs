@@ -19,7 +19,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Wounds;
-use crate::combat::events::AttackIntent;
+use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::components::Cultivation;
 use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
@@ -477,7 +477,7 @@ pub fn spawn_tsy_hostiles_for_family(
 
     let budget = npc_registry
         .as_deref_mut()
-        .map(|registry| registry.reserve_spawn_batch(desired as usize) as u32)
+        .map(|registry| reserve_tsy_family_budget(registry, family_id, pool, sentinel_desired))
         .unwrap_or(desired);
     if budget == 0 {
         return TsyHostileSpawnSummary::default();
@@ -524,10 +524,31 @@ pub fn spawn_tsy_hostiles_for_family(
     }
 
     if let Some(registry) = npc_registry {
-        registry.release_spawn_batch(remaining as usize);
+        registry.release_zone_batch(&format!("{family_id}_deep"), remaining as usize);
     }
 
     summary
+}
+
+fn reserve_tsy_family_budget(
+    registry: &mut NpcRegistry,
+    family_id: &str,
+    pool: &TsyOriginSpawnPool,
+    sentinel_desired: u32,
+) -> u32 {
+    [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep]
+        .into_iter()
+        .map(|depth| {
+            registry.reserve_zone_batch(
+                &format!("{family_id}_{}", depth_suffix(depth)),
+                pool.for_depth(depth).total() as usize,
+            ) as u32
+        })
+        .sum::<u32>()
+        .saturating_add(
+            registry.reserve_zone_batch(&format!("{family_id}_deep"), sentinel_desired as usize)
+                as u32,
+        )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1042,6 +1063,7 @@ fn daoxiang_instinct_action_system(
                         reach: profile.reach,
                         qi_invest: 25.0,
                         wound_kind: profile.wound_kind,
+                        source: AttackSource::Melee,
                         debug_command: None,
                     });
                 }
@@ -1155,6 +1177,7 @@ fn zhinian_combo_step_action_system(
                         reach: profile.reach,
                         qi_invest,
                         wound_kind: profile.wound_kind,
+                        source: AttackSource::Melee,
                         debug_command: None,
                     });
                 }
@@ -1276,6 +1299,7 @@ fn sentinel_phase_action_system(
                                 _ => 30.0,
                             },
                             wound_kind: profile.wound_kind,
+                            source: AttackSource::Melee,
                             debug_command: None,
                         });
                     }

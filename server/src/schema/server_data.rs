@@ -5,6 +5,7 @@ use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
+use super::botany::BotanyPlantV2RenderProfileV1;
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1, QuickSlotConfigV1,
     SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1,
@@ -18,9 +19,14 @@ use super::forge::{
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
+use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
 use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
     SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
+};
+use super::social::{
+    PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
+    SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
 use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
 pub const SERVER_DATA_VERSION: u8 = 1;
@@ -72,6 +78,8 @@ pub enum ServerDataType {
     InventoryEvent,
     DroppedLootSync,
     BotanyHarvestProgress,
+    BotanyPlantV2RenderProfiles,
+    MiningProgress,
     BotanySkill,
     AlchemyFurnace,
     AlchemySession,
@@ -115,6 +123,16 @@ pub enum ServerDataType {
     TribulationBroadcast,
     AscensionQuota,
     HeartDemonOffer,
+    BurstMeridianEvent,
+    SocialAnonymity,
+    SocialExposure,
+    SocialPact,
+    SocialFeud,
+    SocialRenownDelta,
+    SparringInvite,
+    TradeOffer,
+    RealmVisionParams,
+    SpiritualSenseTargets,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +167,7 @@ pub enum ServerDataPayloadV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
         ui: Option<String>,
@@ -190,7 +209,16 @@ pub enum ServerDataPayloadV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+        hazard_hints: Vec<String>,
         target_pos: Option<[f64; 3]>,
+    },
+    BotanyPlantV2RenderProfiles(Vec<BotanyPlantV2RenderProfileV1>),
+    MiningProgress {
+        session_id: String,
+        ore_pos: [i32; 3],
+        progress: f64,
+        interrupted: bool,
+        completed: bool,
     },
     BotanySkill {
         level: u64,
@@ -257,6 +285,16 @@ pub enum ServerDataPayloadV1 {
     TribulationBroadcast(TribulationBroadcastV1),
     AscensionQuota(AscensionQuotaV1),
     HeartDemonOffer(HeartDemonOfferV1),
+    BurstMeridianEvent(BurstMeridianEventV1),
+    SocialAnonymity(SocialAnonymityPayloadV1),
+    SocialExposure(SocialExposureEventV1),
+    SocialPact(SocialPactEventV1),
+    SocialFeud(SocialFeudEventV1),
+    SocialRenownDelta(SocialRenownDeltaV1),
+    SparringInvite(SparringInvitePayloadV1),
+    TradeOffer(TradeOfferPayloadV1),
+    RealmVisionParams(RealmVisionParamsV1),
+    SpiritualSenseTargets(SpiritualSenseTargetsV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -405,6 +443,18 @@ impl AscensionQuotaV1 {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BurstMeridianEventV1 {
+    pub skill: String,
+    pub caster: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub tick: u64,
+    pub overload_ratio: f64,
+    pub integrity_snapshot: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 enum ServerDataPayloadWireV1 {
@@ -443,6 +493,8 @@ enum ServerDataPayloadWireV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -488,8 +540,20 @@ enum ServerDataPayloadWireV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hazard_hints: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_pos: Option<[f64; 3]>,
+    },
+    BotanyPlantV2RenderProfiles {
+        profiles: Vec<BotanyPlantV2RenderProfileV1>,
+    },
+    MiningProgress {
+        session_id: String,
+        ore_pos: [i32; 3],
+        progress: f64,
+        interrupted: bool,
+        completed: bool,
     },
     BotanySkill {
         level: u64,
@@ -691,6 +755,61 @@ enum ServerDataPayloadWireV1 {
     HeartDemonOffer {
         #[serde(flatten)]
         data: HeartDemonOfferV1,
+    },
+    BurstMeridianEvent {
+        #[serde(flatten)]
+        event: BurstMeridianEventV1,
+    },
+    SocialAnonymity {
+        #[serde(flatten)]
+        payload: SocialAnonymityPayloadV1,
+    },
+    SocialExposure {
+        actor: String,
+        kind: super::social::ExposureKindV1,
+        witnesses: Vec<String>,
+        tick: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<String>,
+    },
+    SocialPact {
+        left: String,
+        right: String,
+        terms: String,
+        tick: u64,
+        broken: bool,
+    },
+    SocialFeud {
+        left: String,
+        right: String,
+        tick: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        place: Option<String>,
+    },
+    SocialRenownDelta {
+        char_id: String,
+        fame_delta: i32,
+        notoriety_delta: i32,
+        #[serde(default)]
+        tags_added: Vec<super::social::RenownTagV1>,
+        tick: u64,
+        reason: String,
+    },
+    SparringInvite {
+        #[serde(flatten)]
+        invite: SparringInvitePayloadV1,
+    },
+    TradeOffer {
+        #[serde(flatten)]
+        offer: TradeOfferPayloadV1,
+    },
+    RealmVisionParams {
+        #[serde(flatten)]
+        params: RealmVisionParamsV1,
+    },
+    SpiritualSenseTargets {
+        #[serde(flatten)]
+        targets: SpiritualSenseTargetsV1,
     },
 }
 
@@ -960,6 +1079,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             } => Ok(Self::PlayerState {
                 player,
                 realm,
@@ -968,6 +1088,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             }),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
@@ -1014,6 +1135,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+                hazard_hints,
                 target_pos,
             } => Ok(Self::BotanyHarvestProgress {
                 session_id,
@@ -1027,7 +1149,24 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+                hazard_hints,
                 target_pos,
+            }),
+            ServerDataPayloadWireV1::BotanyPlantV2RenderProfiles { profiles } => {
+                Ok(Self::BotanyPlantV2RenderProfiles(profiles))
+            }
+            ServerDataPayloadWireV1::MiningProgress {
+                session_id,
+                ore_pos,
+                progress,
+                interrupted,
+                completed,
+            } => Ok(Self::MiningProgress {
+                session_id,
+                ore_pos,
+                progress,
+                interrupted,
+                completed,
             }),
             ServerDataPayloadWireV1::BotanySkill {
                 level,
@@ -1181,6 +1320,77 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::AscensionQuota { data } => Ok(Self::AscensionQuota(data)),
             ServerDataPayloadWireV1::HeartDemonOffer { data } => Ok(Self::HeartDemonOffer(data)),
+            ServerDataPayloadWireV1::BurstMeridianEvent { event } => {
+                validate_burst_meridian_event(&event)?;
+                Ok(Self::BurstMeridianEvent(event))
+            }
+            ServerDataPayloadWireV1::SocialAnonymity { payload } => {
+                Ok(Self::SocialAnonymity(payload))
+            }
+            ServerDataPayloadWireV1::SocialExposure {
+                actor,
+                kind,
+                witnesses,
+                tick,
+                zone,
+            } => Ok(Self::SocialExposure(SocialExposureEventV1 {
+                v: 1,
+                actor,
+                kind,
+                witnesses,
+                tick,
+                zone,
+            })),
+            ServerDataPayloadWireV1::SocialPact {
+                left,
+                right,
+                terms,
+                tick,
+                broken,
+            } => Ok(Self::SocialPact(SocialPactEventV1 {
+                v: 1,
+                left,
+                right,
+                terms,
+                tick,
+                broken,
+            })),
+            ServerDataPayloadWireV1::SocialFeud {
+                left,
+                right,
+                tick,
+                place,
+            } => Ok(Self::SocialFeud(SocialFeudEventV1 {
+                v: 1,
+                left,
+                right,
+                tick,
+                place,
+            })),
+            ServerDataPayloadWireV1::SocialRenownDelta {
+                char_id,
+                fame_delta,
+                notoriety_delta,
+                tags_added,
+                tick,
+                reason,
+            } => Ok(Self::SocialRenownDelta(SocialRenownDeltaV1 {
+                v: 1,
+                char_id,
+                fame_delta,
+                notoriety_delta,
+                tags_added,
+                tick,
+                reason,
+            })),
+            ServerDataPayloadWireV1::SparringInvite { invite } => Ok(Self::SparringInvite(invite)),
+            ServerDataPayloadWireV1::TradeOffer { offer } => Ok(Self::TradeOffer(offer)),
+            ServerDataPayloadWireV1::RealmVisionParams { params } => {
+                Ok(Self::RealmVisionParams(params))
+            }
+            ServerDataPayloadWireV1::SpiritualSenseTargets { targets } => {
+                Ok(Self::SpiritualSenseTargets(targets))
+            }
         }
     }
 }
@@ -1229,6 +1439,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             } => Self::PlayerState {
                 player: player.clone(),
                 realm: realm.clone(),
@@ -1237,6 +1448,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power: *composite_power,
                 breakdown: breakdown.clone(),
                 zone: zone.clone(),
+                social: social.clone(),
             },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
                 ui: ui.clone(),
@@ -1288,6 +1500,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted,
                 completed,
                 detail,
+                hazard_hints,
                 target_pos,
             } => Self::BotanyHarvestProgress {
                 session_id: session_id.clone(),
@@ -1301,7 +1514,26 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted: *interrupted,
                 completed: *completed,
                 detail: detail.clone(),
+                hazard_hints: hazard_hints.clone(),
                 target_pos: *target_pos,
+            },
+            ServerDataPayloadV1::BotanyPlantV2RenderProfiles(profiles) => {
+                Self::BotanyPlantV2RenderProfiles {
+                    profiles: profiles.clone(),
+                }
+            }
+            ServerDataPayloadV1::MiningProgress {
+                session_id,
+                ore_pos,
+                progress,
+                interrupted,
+                completed,
+            } => Self::MiningProgress {
+                session_id: session_id.clone(),
+                ore_pos: *ore_pos,
+                progress: *progress,
+                interrupted: *interrupted,
+                completed: *completed,
             },
             ServerDataPayloadV1::BotanySkill {
                 level,
@@ -1465,8 +1697,73 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::HeartDemonOffer(data) => {
                 Self::HeartDemonOffer { data: data.clone() }
             }
+            ServerDataPayloadV1::BurstMeridianEvent(event) => Self::BurstMeridianEvent {
+                event: event.clone(),
+            },
+            ServerDataPayloadV1::SocialAnonymity(payload) => Self::SocialAnonymity {
+                payload: payload.clone(),
+            },
+            ServerDataPayloadV1::SocialExposure(event) => Self::SocialExposure {
+                actor: event.actor.clone(),
+                kind: event.kind,
+                witnesses: event.witnesses.clone(),
+                tick: event.tick,
+                zone: event.zone.clone(),
+            },
+            ServerDataPayloadV1::SocialPact(event) => Self::SocialPact {
+                left: event.left.clone(),
+                right: event.right.clone(),
+                terms: event.terms.clone(),
+                tick: event.tick,
+                broken: event.broken,
+            },
+            ServerDataPayloadV1::SocialFeud(event) => Self::SocialFeud {
+                left: event.left.clone(),
+                right: event.right.clone(),
+                tick: event.tick,
+                place: event.place.clone(),
+            },
+            ServerDataPayloadV1::SocialRenownDelta(event) => Self::SocialRenownDelta {
+                char_id: event.char_id.clone(),
+                fame_delta: event.fame_delta,
+                notoriety_delta: event.notoriety_delta,
+                tags_added: event.tags_added.clone(),
+                tick: event.tick,
+                reason: event.reason.clone(),
+            },
+            ServerDataPayloadV1::SparringInvite(invite) => Self::SparringInvite {
+                invite: invite.clone(),
+            },
+            ServerDataPayloadV1::TradeOffer(offer) => Self::TradeOffer {
+                offer: offer.clone(),
+            },
+            ServerDataPayloadV1::RealmVisionParams(params) => Self::RealmVisionParams {
+                params: params.clone(),
+            },
+            ServerDataPayloadV1::SpiritualSenseTargets(targets) => Self::SpiritualSenseTargets {
+                targets: targets.clone(),
+            },
         }
     }
+}
+
+fn validate_burst_meridian_event(event: &BurstMeridianEventV1) -> Result<(), String> {
+    if event.skill.trim().is_empty() {
+        return Err("BurstMeridianEventV1.skill must not be empty".to_string());
+    }
+    if event.caster.trim().is_empty() {
+        return Err("BurstMeridianEventV1.caster must not be empty".to_string());
+    }
+    if event.target.as_deref().is_some_and(str::is_empty) {
+        return Err("BurstMeridianEventV1.target must not be empty when present".to_string());
+    }
+    if !event.overload_ratio.is_finite() || event.overload_ratio < 0.0 {
+        return Err("BurstMeridianEventV1.overload_ratio must be finite and >= 0".to_string());
+    }
+    if !event.integrity_snapshot.is_finite() || !(0.0..=1.0).contains(&event.integrity_snapshot) {
+        return Err("BurstMeridianEventV1.integrity_snapshot must be finite in 0..=1".to_string());
+    }
+    Ok(())
 }
 
 impl Serialize for ServerDataPayloadV1 {
@@ -1562,6 +1859,8 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
+            Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
+            Self::MiningProgress { .. } => ServerDataType::MiningProgress,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
@@ -1605,6 +1904,16 @@ impl ServerDataPayloadV1 {
             Self::TribulationBroadcast(..) => ServerDataType::TribulationBroadcast,
             Self::AscensionQuota(..) => ServerDataType::AscensionQuota,
             Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
+            Self::BurstMeridianEvent(..) => ServerDataType::BurstMeridianEvent,
+            Self::SocialAnonymity(..) => ServerDataType::SocialAnonymity,
+            Self::SocialExposure(..) => ServerDataType::SocialExposure,
+            Self::SocialPact(..) => ServerDataType::SocialPact,
+            Self::SocialFeud(..) => ServerDataType::SocialFeud,
+            Self::SocialRenownDelta(..) => ServerDataType::SocialRenownDelta,
+            Self::SparringInvite(..) => ServerDataType::SparringInvite,
+            Self::TradeOffer(..) => ServerDataType::TradeOffer,
+            Self::RealmVisionParams(..) => ServerDataType::RealmVisionParams,
+            Self::SpiritualSenseTargets(..) => ServerDataType::SpiritualSenseTargets,
         }
     }
 }
@@ -1742,6 +2051,43 @@ mod tests {
                     style_hint: "稳妥".to_string(),
                 }],
             }),
+            ServerDataPayloadV1::BurstMeridianEvent(BurstMeridianEventV1 {
+                skill: "beng_quan".to_string(),
+                caster: "offline:Kiz".to_string(),
+                target: Some("entity:42".to_string()),
+                tick: 12,
+                overload_ratio: 1.5,
+                integrity_snapshot: 0.9,
+            }),
+            ServerDataPayloadV1::BotanyPlantV2RenderProfiles(vec![BotanyPlantV2RenderProfileV1 {
+                plant_id: "ying_yuan_gu".to_string(),
+                base_mesh_ref: "red_mushroom".to_string(),
+                tint_rgb: 0xFFA040,
+                tint_rgb_secondary: None,
+                model_overlay: super::super::botany::BotanyModelOverlayV1::Emissive,
+            }]),
+            ServerDataPayloadV1::RealmVisionParams(RealmVisionParamsV1 {
+                fog_start: 30.0,
+                fog_end: 60.0,
+                fog_color_rgb: 0xB8B0A8,
+                fog_shape: super::super::realm_vision::FogShapeV1::Cylinder,
+                vignette_alpha: 0.55,
+                tint_color_argb: 0x0FF0EDE8,
+                particle_density: 0.0,
+                transition_ticks: 100,
+                server_view_distance_chunks: 4,
+                post_fx_sharpen: 0.0,
+            }),
+            ServerDataPayloadV1::SpiritualSenseTargets(SpiritualSenseTargetsV1 {
+                generation: 1,
+                entries: vec![super::super::realm_vision::SenseEntryV1 {
+                    kind: super::super::realm_vision::SenseKindV1::LivingQi,
+                    x: 8.0,
+                    y: 64.0,
+                    z: -4.0,
+                    intensity: 0.75,
+                }],
+            }),
         ];
 
         for payload in cases {
@@ -1757,6 +2103,44 @@ mod tests {
                 wire_type, label,
                 "wire type {wire_type} does not match payload_type_label {label}"
             );
+        }
+    }
+
+    #[test]
+    fn social_server_data_wire_uses_single_envelope_version() {
+        let envelope =
+            ServerDataV1::new(ServerDataPayloadV1::SocialExposure(SocialExposureEventV1 {
+                v: 1,
+                actor: "char:alice".to_string(),
+                kind: super::super::social::ExposureKindV1::Chat,
+                witnesses: vec!["char:bob".to_string()],
+                tick: 42,
+                zone: Some("spawn".to_string()),
+            }));
+        let value = serde_json::to_value(&envelope).expect("serialize social exposure");
+        assert_eq!(value["v"], 1);
+        assert_eq!(value["type"], "social_exposure");
+        assert_eq!(value["kind"], "chat");
+        assert!(
+            value.get("event_v").is_none(),
+            "server_data payload must not duplicate nested event version"
+        );
+    }
+
+    #[test]
+    fn social_server_data_deserializes_without_nested_event_version() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.social-renown-delta.sample.json"
+        );
+        let payload: ServerDataV1 = serde_json::from_str(json).expect("social renown sample");
+
+        match payload.payload {
+            ServerDataPayloadV1::SocialRenownDelta(event) => {
+                assert_eq!(event.v, 1);
+                assert_eq!(event.char_id, "char:steve");
+                assert_eq!(event.tags_added[0].tag, "kept_pact");
+            }
+            other => panic!("expected SocialRenownDelta, got {other:?}"),
         }
     }
 
@@ -1948,6 +2332,36 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.heart-demon-offer.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.burst-meridian-event.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-anonymity.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-exposure.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-pact.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-feud.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-renown-delta.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.sparring-invite.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.trade-offer.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.realm-vision-params.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json"
             ),
         ];
 

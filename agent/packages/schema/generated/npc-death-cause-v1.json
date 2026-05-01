@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "natural_aging",
+      "type": "string"
+    },
+    {
+      "const": "combat",
+      "type": "string"
+    },
+    {
+      "const": "despawned",
+      "type": "string"
+    },
+    {
+      "const": "duo_she",
+      "type": "string"
+    }
+  ]
+}

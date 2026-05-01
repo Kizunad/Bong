@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "type": "trade_offer",
+  "offer_id": "trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70",
+  "initiator": "char:alice",
+  "target": "char:bob",
+  "offered_item": {
+    "instance_id": 1001,
+    "item_id": "spirit_grass",
+    "display_name": "Spirit Grass",
+    "stack_count": 1
+  },
+  "requested_items": [
+    {
+      "instance_id": 2002,
+      "item_id": "bone_coin",
+      "display_name": "Bone Coin",
+      "stack_count": 3
+    }
+  ],
+  "expires_at_ms": 1700000010000
+}

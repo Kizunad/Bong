@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "session_id": "alchemy:-12:64:38:offline:Azure:kai_mai_pill_v0",
+  "recipe_id": "kai_mai_pill_v0",
+  "furnace_pos": [-12, 64, 38],
+  "caster_id": "offline:Azure",
+  "intervention": {
+    "kind": "inject_qi",
+    "qi": 3.0
+  },
+  "temp_current": 0.6,
+  "qi_injected": 3.0,
+  "accepted": true,
+  "ts": 84020
+}

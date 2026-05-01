@@ -157,6 +157,13 @@ pub enum BiographyEntry {
         choice_idx: Option<u32>,
         tick: u64,
     },
+    /// plan-social-v1 §6.2 — 交易写入双方生平卷。只记物品摘要与匿名对手。
+    TradeCompleted {
+        counterparty_id: String,
+        offered_item: String,
+        received_item: String,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,6 +418,12 @@ fn format_entry(entry: &BiographyEntry) -> String {
             choice_idx,
             tick,
         } => format!("t{tick}:heart_demon:{outcome:?}:{choice_idx:?}"),
+        BiographyEntry::TradeCompleted {
+            counterparty_id,
+            offered_item,
+            received_item,
+            tick,
+        } => format!("t{tick}:trade:{counterparty_id}:{offered_item}->{received_item}"),
     }
 }
 

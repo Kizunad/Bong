@@ -10,7 +10,7 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
-import { AlchemyInterventionV1 } from "./alchemy.js";
+import { AlchemyInterventionV1, BlockPosV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
@@ -338,8 +338,7 @@ export const AlchemyOpenFurnaceRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_open_furnace"),
-    /** 炉的逻辑 ID（BlockEntity 位置 hash 或 Entity ID 字符串化）。 */
-    furnace_id: Type.String(),
+    furnace_pos: BlockPosV1,
   },
   { additionalProperties: false },
 );
@@ -349,6 +348,7 @@ export const AlchemyFeedSlotRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_feed_slot"),
+    furnace_pos: BlockPosV1,
     /** 槽位 0..3（plan §3.3 四投料槽）。 */
     slot_idx: Type.Integer({ minimum: 0, maximum: 7 }),
     material: Type.String(),
@@ -362,6 +362,7 @@ export const AlchemyTakeBackRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_take_back"),
+    furnace_pos: BlockPosV1,
     slot_idx: Type.Integer({ minimum: 0, maximum: 7 }),
   },
   { additionalProperties: false },
@@ -372,6 +373,7 @@ export const AlchemyIgniteRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_ignite"),
+    furnace_pos: BlockPosV1,
     /** 起炉绑定的配方 — 决定 fire_profile / stages。 */
     recipe_id: Type.String(),
   },
@@ -383,6 +385,7 @@ export const AlchemyInterventionRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("alchemy_intervention"),
+    furnace_pos: BlockPosV1,
     intervention: AlchemyInterventionV1,
   },
   { additionalProperties: false },
@@ -434,6 +437,79 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
+
+export const SpiritNichePlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    /** 龛石 inventory instance_id — server 校验并消耗一个。 */
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNichePlaceRequestV1 = Static<typeof SpiritNichePlaceRequestV1>;
+
+export const SpiritNicheGazeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_gaze"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheGazeRequestV1 = Static<typeof SpiritNicheGazeRequestV1>;
+
+export const SpiritNicheMarkCoordinateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_mark_coordinate"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheMarkCoordinateRequestV1 = Static<typeof SpiritNicheMarkCoordinateRequestV1>;
+
+export const SparringInviteResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("sparring_invite_response"),
+    invite_id: Type.String({ minLength: 1 }),
+    accepted: Type.Boolean(),
+    timed_out: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+export type SparringInviteResponseRequestV1 = Static<typeof SparringInviteResponseRequestV1>;
+
+export const TradeOfferRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer_request"),
+    target: Type.String({ minLength: 1, maxLength: 64 }),
+    offered_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferRequestV1 = Static<typeof TradeOfferRequestV1>;
+
+export const TradeOfferResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer_response"),
+    offer_id: Type.String({ minLength: 1, maxLength: 128 }),
+    accepted: Type.Boolean(),
+    requested_instance_id: Type.Optional(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
 
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
@@ -591,6 +667,12 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  SpiritNichePlaceRequestV1,
+  SpiritNicheGazeRequestV1,
+  SpiritNicheMarkCoordinateRequestV1,
+  SparringInviteResponseRequestV1,
+  TradeOfferRequestV1,
+  TradeOfferResponseRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,

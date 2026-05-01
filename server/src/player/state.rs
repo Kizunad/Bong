@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use valence::prelude::{bevy_ecs, Component, Resource};
+use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::cultivation::components::{Cultivation, Realm};
@@ -16,6 +16,7 @@ use crate::inventory::PlayerInventory;
 use crate::persistence::DEFAULT_DATABASE_PATH;
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::social::PlayerSocialSnapshotV1;
 use crate::schema::world_state::PlayerPowerBreakdown;
 use crate::skill::components::SkillSet;
 use crate::world::dimension::DimensionKind;
@@ -197,11 +198,12 @@ impl PlayerState {
         )
     }
 
-    pub fn server_payload(
+    pub fn server_payload_with_social(
         &self,
         cultivation: &Cultivation,
         player: Option<String>,
         zone: impl Into<String>,
+        social: Option<PlayerSocialSnapshotV1>,
     ) -> ServerDataV1 {
         let normalized = self.normalized();
         let breakdown = normalized.power_breakdown(cultivation);
@@ -221,6 +223,7 @@ impl PlayerState {
             composite_power,
             breakdown,
             zone: zone.into(),
+            social,
         })
     }
 }
@@ -298,6 +301,10 @@ pub fn player_username_from_character_id(character_id: &str) -> Option<&str> {
     } else {
         Some(username)
     }
+}
+
+pub fn position_array_from_dvec3(position: DVec3) -> [f64; 3] {
+    [position.x, position.y, position.z]
 }
 
 pub fn load_current_character_id(
@@ -2508,10 +2515,11 @@ mod player_state_tests {
             ..Cultivation::default()
         };
 
-        let payload = state.server_payload(
+        let payload = state.server_payload_with_social(
             &cultivation,
             Some(canonical_player_id("Steve")),
             "blood_valley",
+            None,
         );
         let bytes =
             serialize_server_data_payload(&payload).expect("PlayerState payload should serialize");

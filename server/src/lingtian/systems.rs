@@ -17,17 +17,23 @@ use std::collections::HashMap;
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, BlockState, ChunkLayer, Commands, DVec3, Entity, EventReader, EventWriter, Query,
-    Res, ResMut, Resource, With,
+    bevy_ecs, BlockState, ChunkLayer, Client, Commands, DVec3, Entity, EventReader, EventWriter,
+    Events, Query, Res, ResMut, Resource, Username, With,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
+use crate::combat::events::DeathEvent;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, ItemTemplate, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
 };
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::npc::spawn::NpcMarker;
+use crate::player::state::PlayerState;
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 
 use super::environment::compute_plot_qi_cap;
 use super::events::{
@@ -560,6 +566,7 @@ pub fn apply_completed_sessions(
     clock: Res<LingtianClock>,
     mut writers: CompletionEventWriters,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -580,6 +587,7 @@ pub fn apply_completed_sessions(
                     hoe: s.hoe,
                     hoe_instance_id: s.hoe_instance_id,
                 });
+                emit_lingtian_skill_xp(&mut skill_xp_events, player, 1, "till");
             }
             ActiveSession::Renew(s) => {
                 if let Ok(mut inv) = inventories.get_mut(player) {
@@ -597,6 +605,7 @@ pub fn apply_completed_sessions(
                         hoe: s.hoe,
                         hoe_instance_id: s.hoe_instance_id,
                     });
+                    emit_lingtian_skill_xp(&mut skill_xp_events, player, 2, "renew");
                 } else {
                     tracing::warn!(
                         "[bong][lingtian] RenewSession finished but plot at {:?} vanished",
@@ -613,6 +622,7 @@ pub fn apply_completed_sessions(
                     &mut plots,
                     &seeds,
                     &mut writers.planting,
+                    &mut skill_xp_events,
                 );
             }
             ActiveSession::Harvest(s) => {
@@ -629,6 +639,8 @@ pub fn apply_completed_sessions(
                     &mut harvest_rng,
                     clock.lingtian_tick,
                     &mut writers.harvest,
+                    &mut skill_xp_events,
+                    s.mode,
                 );
                 // plan §1.6 — 收获若使 plot 贫瘠，外观改 CoarseDirt 以示灰化。
                 if plots.iter().any(|(_, p)| p.pos == s.pos && p.is_barren()) {
@@ -647,6 +659,7 @@ pub fn apply_completed_sessions(
                     &mut zone_qi,
                     &clock,
                     &mut writers.replenish,
+                    &mut skill_xp_events,
                 );
             }
             ActiveSession::DrainQi(s) => {
@@ -665,6 +678,58 @@ pub fn apply_completed_sessions(
     }
 }
 
+pub fn emit_harvest_inventory_snapshots(
+    mut events: EventReader<HarvestCompleted>,
+    inventories: Query<&PlayerInventory>,
+    player_states: Query<&PlayerState>,
+    cultivations: Query<&Cultivation>,
+    mut clients: Query<(&Username, &mut Client)>,
+) {
+    for event in events.read() {
+        let Ok(inventory) = inventories.get(event.player) else {
+            continue;
+        };
+        let Ok(player_state) = player_states.get(event.player) else {
+            continue;
+        };
+        let Ok(cultivation) = cultivations.get(event.player) else {
+            continue;
+        };
+        let Ok((username, mut client)) = clients.get_mut(event.player) else {
+            continue;
+        };
+
+        send_inventory_snapshot_to_client(
+            event.player,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            cultivation,
+            "lingtian_harvest",
+        );
+    }
+}
+
+pub fn release_lingtian_plot_owner_on_npc_death(
+    mut deaths: EventReader<DeathEvent>,
+    dead_npcs: Query<(), With<NpcMarker>>,
+    mut plots: Query<&mut LingtianPlot>,
+) {
+    for death in deaths.read() {
+        if dead_npcs.get(death.target).is_err() {
+            continue;
+        }
+
+        for mut plot in &mut plots {
+            if plot.owner == Some(death.target) {
+                plot.owner = None;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn apply_planting_completion(
     player: Entity,
     pos: &valence::prelude::BlockPos,
@@ -673,6 +738,7 @@ fn apply_planting_completion(
     plots: &mut Query<(Entity, &mut LingtianPlot)>,
     seeds: &SeedRegistry,
     planting_completed: &mut EventWriter<PlantingCompleted>,
+    skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
 ) {
     let Some(seed_id) = seeds.seed_for_plant(plant_id).cloned() else {
         tracing::warn!(
@@ -706,6 +772,7 @@ fn apply_planting_completion(
         pos: *pos,
         plant_id: plant_id.clone(),
     });
+    emit_lingtian_skill_xp(skill_xp_events, player, 1, "plant");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -722,6 +789,8 @@ fn apply_harvest_completion(
     rng: &mut LingtianHarvestRng,
     now_lingtian_tick: u64,
     harvest_completed: &mut EventWriter<HarvestCompleted>,
+    skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
+    mode: super::session::SessionMode,
 ) {
     let Some(kind) = plant_registry.get(plant_id) else {
         tracing::warn!(
@@ -791,6 +860,11 @@ fn apply_harvest_completion(
             plant_id: plant_id.clone(),
             seed_dropped,
         });
+        let (amount, action) = match mode {
+            super::session::SessionMode::Manual => (2, "harvest_manual"),
+            super::session::SessionMode::Auto => (5, "harvest_auto"),
+        };
+        emit_lingtian_skill_xp(skill_xp_events, player, amount, action);
 
         owner
     };
@@ -998,6 +1072,7 @@ fn apply_replenish_completion(
     zone_qi: &mut ZoneQiAccount,
     clock: &LingtianClock,
     replenish_completed: &mut EventWriter<ReplenishCompleted>,
+    skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
 ) {
     let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
         tracing::warn!("[bong][lingtian] ReplenishSession finished but plot at {pos:?} vanished");
@@ -1076,6 +1151,26 @@ fn apply_replenish_completion(
         plot_qi_added: added,
         overflow_to_zone: overflow,
     });
+    emit_lingtian_skill_xp(skill_xp_events, player, 1, "replenish");
+}
+
+fn emit_lingtian_skill_xp(
+    skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
+    player: Entity,
+    amount: u32,
+    action: &'static str,
+) {
+    if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
+        skill_xp_events.send(SkillXpGain {
+            char_entity: player,
+            skill: SkillId::Herbalism,
+            amount,
+            source: XpGainSource::Action {
+                plan_id: "lingtian",
+                action,
+            },
+        });
+    }
 }
 
 /// plan §1.2.1 / §1.6 — 主手锄扣 1 次耐久。归一化 [0, 1]。归零移除装备。
@@ -1299,6 +1394,7 @@ fn plot_zone_is_collapsed(plot: &LingtianPlot, zone_registry: Option<&ZoneRegist
 mod tests {
     use super::*;
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
+    use crate::npc::spawn::NpcMarker;
     use std::collections::HashMap;
     use valence::prelude::{App, BlockPos, DVec3, IntoSystemConfigs, Update};
 
@@ -1308,6 +1404,7 @@ mod tests {
     use super::super::hoe::HoeKind;
     use super::super::session::{SessionMode, RENEW_TICKS, TILL_MANUAL_TICKS};
     use super::super::terrain::TerrainKind;
+    use crate::skill::events::XpGainSource;
 
     fn make_hoe_instance(kind: HoeKind, durability: f64) -> ItemInstance {
         ItemInstance {
@@ -1370,6 +1467,7 @@ mod tests {
             .add_event::<ReplenishCompleted>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
                 (
@@ -1518,6 +1616,57 @@ mod tests {
             max_weight: 45.0,
         };
         assert!(equipped_main_hand_hoe(&inv).is_none());
+    }
+
+    #[test]
+    fn release_lingtian_plot_owner_on_npc_death_clears_npc_owner() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, release_lingtian_plot_owner_on_npc_death);
+
+        let owner = app.world_mut().spawn(NpcMarker).id();
+        let plot = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(1, 64, 1), Some(owner)))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: owner,
+            cause: "test".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(app.world().get::<LingtianPlot>(plot).unwrap().owner, None);
+    }
+
+    #[test]
+    fn release_lingtian_plot_owner_ignores_player_death() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, release_lingtian_plot_owner_on_npc_death);
+
+        let owner = app.world_mut().spawn_empty().id();
+        let plot = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(1, 64, 1), Some(owner)))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: owner,
+            cause: "test".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<LingtianPlot>(plot).unwrap().owner,
+            Some(owner)
+        );
     }
 
     #[test]
@@ -1917,6 +2066,7 @@ mod tests {
             .add_event::<ReplenishCompleted>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
                 (
@@ -2154,6 +2304,7 @@ mod tests {
             .add_event::<ReplenishCompleted>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
                 (
@@ -2351,6 +2502,39 @@ mod tests {
     }
 
     #[test]
+    fn harvest_completion_emits_herbalism_skill_xp() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        let xp = xp_events
+            .iter_current_update_events()
+            .next()
+            .expect("harvest should emit herbalism xp");
+        assert_eq!(xp.char_entity, player);
+        assert_eq!(xp.skill, SkillId::Herbalism);
+        assert_eq!(xp.amount, 2);
+        assert!(matches!(
+            &xp.source,
+            XpGainSource::Action {
+                plan_id: "lingtian",
+                action: "harvest_manual",
+            }
+        ));
+    }
+
+    #[test]
     fn harvest_drops_seed_when_rng_under_drop_rate() {
         // 先确认：seed=2 的第一 roll < 0.30（Common 掉率），otherwise 测试无意义
         let mut probe = LingtianHarvestRng::new(2);
@@ -2380,6 +2564,7 @@ mod tests {
             .add_event::<ReplenishCompleted>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
                 (

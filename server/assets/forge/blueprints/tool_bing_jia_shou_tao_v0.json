@@ -1,0 +1,23 @@
+{
+  "id": "tool_bing_jia_shou_tao_v0",
+  "name": "冰甲手套",
+  "station_tier_min": 1,
+  "tier_cap": 1,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [{ "material": "fan_tie", "count": 1 }],
+        "optional_carriers": [{ "material": "fake_spirit_hide", "unlocks_tier": 1 }],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "bing_jia_shou_tao", "quality": 1.0 },
+    "good": { "weapon": "bing_jia_shou_tao", "quality": 0.8 },
+    "flawed": { "weapon": "bing_jia_shou_tao", "quality": 0.5 },
+    "waste": null,
+    "explode": { "damage": 3.0, "station_wear": 0.01 }
+  }
+}

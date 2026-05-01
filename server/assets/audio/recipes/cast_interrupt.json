@@ -1,0 +1,10 @@
+{
+  "id": "cast_interrupt",
+  "layers": [
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.45, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:block.note_block.bass", "volume": 0.25, "pitch": 0.6, "delay_ticks": 2 }
+  ],
+  "priority": 80,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

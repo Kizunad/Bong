@@ -1,0 +1,33 @@
+{
+  "id": "fu_yuan_dan_v1",
+  "name": "负元丹",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "fu_yuan_jue", "count": 2 },
+      { "material": "bai_yan_peng", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.42,
+    "target_duration_ticks": 150,
+    "qi_cost": 12.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 24 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "fu_yuan_dan", "quality": 1.0, "toxin_amount": 0.55, "toxin_color": "Turbid", "qi_gain": 12.0 },
+    "good": { "pill": "fu_yuan_dan", "quality": 0.7, "toxin_amount": 0.70, "toxin_color": "Turbid", "qi_gain": 8.0 },
+    "flawed": { "pill": "fu_yuan_dan_flawed", "quality": 0.35, "toxin_amount": 1.05, "toxin_color": "Insidious", "qi_gain": 4.0 },
+    "waste": null,
+    "explode": { "damage": 16.0, "meridian_crack": 0.08 }
+  },
+  "flawed_fallback": {
+    "pill": "fu_yuan_dan_flawed",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.6,
+    "side_effect_pool": [
+      { "tag": "negative_pressure_reflux", "duration_s": 20, "weight": 2 },
+      { "tag": "qi_leak_5s", "duration_s": 5, "weight": 1 }
+    ]
+  }
+}

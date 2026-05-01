@@ -4,6 +4,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "health",
     "npc_scenario",
     "ping",
+    "preview_tp",
     "shrine",
     "spawn",
     "stamina",
@@ -12,6 +13,28 @@ pub const COMMAND_NAMES: &[&str] = &[
     "tpzone",
     "tsy_spawn",
     "wound",
+    "zones",
+];
+
+#[cfg(test)]
+pub const COMMAND_TREE_PATHS: &[&str] = &[
+    "bong breakthrough",
+    "bong combat <target:string> <qi_invest:double>",
+    "bong gather <resource:string>",
+    "gm <mode:string>",
+    "health set <value:float>",
+    "npc_scenario <scenario:string>",
+    "ping",
+    "preview_tp <x:double> <y:double> <z:double> <yaw:float> <pitch:float>",
+    "shrine <action:string>",
+    "spawn",
+    "stamina set <value:float>",
+    "top",
+    "tptree <tree:string>",
+    "tpzone <zone:string>",
+    "tsy_spawn <family_id:string>",
+    "wound add <part:string>",
+    "wound add <part:string> <severity:float>",
     "zones",
 ];
 
@@ -37,6 +60,7 @@ mod tests {
                 "health",
                 "npc_scenario",
                 "ping",
+                "preview_tp",
                 "shrine",
                 "spawn",
                 "stamina",
@@ -47,6 +71,14 @@ mod tests {
                 "wound",
                 "zones",
             ]
+        );
+    }
+
+    #[test]
+    fn command_tree_paths_are_sorted_and_unique() {
+        assert!(
+            COMMAND_TREE_PATHS.windows(2).all(|pair| pair[0] < pair[1]),
+            "COMMAND_TREE_PATHS must stay sorted so command tree diffs are reviewable"
         );
     }
 }

@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "social_pact",
+  "left": "char:steve",
+  "right": "char:new_player_1",
+  "terms": "同行守望",
+  "tick": 84200,
+  "broken": false
+}

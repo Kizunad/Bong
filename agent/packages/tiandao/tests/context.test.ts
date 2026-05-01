@@ -8,7 +8,9 @@ import {
   createContextInput,
   chatSignalsBlock,
   keyPlayerBlock,
+  perceptionEnvelopeBlock,
   peerDecisionsBlock,
+  recentNarrationsBlock,
   worldSnapshotBlock,
   worldTrendBlock,
 } from "../src/context.js";
@@ -110,17 +112,24 @@ function createSeededWorldModel(): { model: WorldModel; state: WorldStateV1 } {
     );
   }
 
-  model.recordDecision("calamity", {
-    commands: [
+    model.recordDecision("calamity", {
+      commands: [
       {
         type: "spawn_event",
         target: "blood_valley",
         params: { event: "thunder_tribulation", intensity: 0.6 },
       },
-    ],
-    narrations: [],
-    reasoning: "punish the strongest",
-  });
+      ],
+      narrations: [
+        {
+          scope: "zone",
+          target: "blood_valley",
+          text: "血谷旧雷未散，草木尚伏。下一轮若仍有人争杀，云气必再低三寸。",
+          style: "system_warning",
+        },
+      ],
+      reasoning: "punish the strongest",
+    });
   model.recordDecision("mutation", {
     commands: [
       { type: "modify_zone", target: "blood_valley", params: { spirit_qi_delta: -0.05 } },
@@ -248,6 +257,39 @@ describe("context with task-21 world model blocks", () => {
     expect(text).not.toContain("灾劫 Agent");
   });
 
+  it("renders recent narrations so prompts can avoid near-duplicates", () => {
+    const { model, state } = createSeededWorldModel();
+
+    const text = recentNarrationsBlock.render(
+      createContextInput(state, [], 1_710_000_123, {
+        agentName: "mutation",
+        worldModel: model,
+      }),
+    );
+
+    expect(text).toContain("## 近轮天道叙事");
+    expect(text).toContain("灾劫 Agent: zone target=blood_valley system_warning");
+    expect(text).toContain("必须换物象、换句式");
+  });
+
+  it("renders per-player perception envelope for viewpoint clipping", () => {
+    const state = createState({
+      tick: 10,
+      players: [
+        createPlayer("Novice", { realm: "Induce", pos: [1.2, 64, -4.8] }),
+        createPlayer("VoidWalker", { realm: "Void", zone: "blood_valley", pos: [100, 70, 200] }),
+      ],
+    });
+
+    const text = perceptionEnvelopeBlock.render(createContextInput(state));
+
+    expect(text).toContain("## 玩家可感知边界");
+    expect(text).toContain("叙事只能写玩家肉眼或神识可感之事");
+    expect(text).toContain("offline:Novice: Induce @ starter_zone (1,64,-5)；神识 50m");
+    expect(text).toContain("offline:VoidWalker: Void @ blood_valley (100,70,200)；神识三圈");
+    expect(text).toContain("匿名：正文不要主动写玩家名");
+  });
+
   it("renders world trend, balance, and key-player blocks from the shared world model", () => {
     const { model, state } = createSeededWorldModel();
     const input = createContextInput(state, [], 1_710_000_123, {
@@ -295,10 +337,14 @@ describe("context with task-21 world model blocks", () => {
     );
 
     expect(calamityContext).toContain("## 关键人物");
+    expect(calamityContext).toContain("## 玩家可感知边界");
     expect(calamityContext).toContain("## 天道平衡态");
+    expect(calamityContext).toContain("## 近轮天道叙事");
     expect(calamityContext).toContain("## 其他天道意志");
     expect(eraContext).toContain("## 当前时代");
+    expect(eraContext).toContain("## 玩家可感知边界");
     expect(eraContext).toContain("## 世界趋势 (最近 10 轮)");
+    expect(eraContext).toContain("## 近轮天道叙事");
     expect(eraContext).toContain("## 其他天道意志");
   });
 

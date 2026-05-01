@@ -2,7 +2,8 @@ package com.bong.client.botany;
 
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
-import com.bong.client.hud.BotanyHudPlanner;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillSetStore;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -15,6 +16,8 @@ import org.lwjgl.glfw.GLFW;
 public final class BotanyHudBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String AUTO_KEY_TRANSLATION = "key.bong-client.botany_auto_harvest";
+    /** plan-skill-v1 §6.1：herbalism Lv.3 解锁自动采集。 */
+    private static final int HERBALISM_AUTO_UNLOCK_LV = 3;
     private static KeyBinding autoHarvestKey;
 
     private BotanyHudBootstrap() {
@@ -34,6 +37,7 @@ public final class BotanyHudBootstrap {
 
     static void resetOnDisconnect() {
         HarvestSessionStore.clearOnDisconnect();
+        BotanyPlantRenderProfileStore.clearOnDisconnect();
         com.bong.client.skill.SkillSetStore.clearOnDisconnect();
         com.bong.client.skill.SkillMilestoneStore.clearOnDisconnect();
         com.bong.client.skill.SkillRecentEventStore.clearOnDisconnect();
@@ -108,12 +112,14 @@ public final class BotanyHudBootstrap {
     }
 
     private static void dispatchModeRequest(HarvestSessionViewModel session, BotanyHarvestMode mode) {
-        BotanySkillViewModel skill = BotanyHudPlanner.herbalismView();
         if (!session.interactive() || session.sessionId().isEmpty() || session.requestPending()) {
             return;
         }
-        if (mode == BotanyHarvestMode.AUTO && (!session.autoSelectable() || !skill.autoUnlocked())) {
-            return;
+        if (mode == BotanyHarvestMode.AUTO) {
+            int herbalismLv = SkillSetStore.snapshot().get(SkillId.HERBALISM).effectiveLv();
+            if (!session.autoSelectable() || herbalismLv < HERBALISM_AUTO_UNLOCK_LV) {
+                return;
+            }
         }
         HarvestSessionStore.requestMode(mode, System.currentTimeMillis());
         ClientRequestSender.sendBotanyHarvestRequest(session.sessionId(), mode);

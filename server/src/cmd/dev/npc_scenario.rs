@@ -117,6 +117,24 @@ mod tests {
     }
 
     #[test]
+    fn scenario_action_maps_all_variants_to_runtime_scenario_type() {
+        for (action, scenario) in [
+            (NpcScenarioAction::Chase, ScenarioType::Chase),
+            (NpcScenarioAction::Flee, ScenarioType::Flee),
+            (NpcScenarioAction::Fight, ScenarioType::Fight),
+            (NpcScenarioAction::Kite, ScenarioType::Kite),
+            (NpcScenarioAction::Swarm, ScenarioType::Swarm),
+            (NpcScenarioAction::Duel, ScenarioType::Duel),
+            (NpcScenarioAction::Clear, ScenarioType::Clear),
+        ] {
+            assert_eq!(
+                std::mem::discriminant(&action.into_scenario_type()),
+                std::mem::discriminant(&scenario)
+            );
+        }
+    }
+
+    #[test]
     fn scenario_command_queues_request() {
         let mut app = App::new();
         app.insert_resource(PendingScenario::default());

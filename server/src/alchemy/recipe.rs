@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::Resource;
 
 use crate::cultivation::components::ColorKind;
+use crate::inventory::ItemInstance;
+use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
 
 /// 单个配方 ID — 与 JSON `id` 字段一致。
 pub type RecipeId = String;
@@ -48,6 +50,34 @@ impl IngredientSpec {
             (Some(req), Some(got)) => req == got,
         }
     }
+
+    pub fn validate_item(&self, item: &ItemInstance) -> Result<(), IngredientMismatch> {
+        if self.matches_mineral(item.mineral_id.as_deref()) {
+            Ok(())
+        } else if item.mineral_id.is_none() {
+            Err(IngredientMismatch::MissingMineralId {
+                material: self.material.clone(),
+            })
+        } else {
+            Err(IngredientMismatch::WrongMineralId {
+                material: self.material.clone(),
+                expected: self.mineral_id.clone().unwrap_or_default(),
+                got: item.mineral_id.clone().unwrap_or_default(),
+            })
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IngredientMismatch {
+    MissingMineralId {
+        material: String,
+    },
+    WrongMineralId {
+        material: String,
+        expected: String,
+        got: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -267,6 +297,14 @@ pub fn load_recipe_registry() -> Result<RecipeRegistry, String> {
 }
 
 pub fn load_recipe_registry_from_dir(path: impl AsRef<Path>) -> Result<RecipeRegistry, String> {
+    let minerals = build_default_mineral_registry();
+    load_recipe_registry_from_dir_with_minerals(path, Some(&minerals))
+}
+
+pub fn load_recipe_registry_from_dir_with_minerals(
+    path: impl AsRef<Path>,
+    minerals: Option<&MineralRegistry>,
+) -> Result<RecipeRegistry, String> {
     let path = path.as_ref();
     let entries = fs::read_dir(path).map_err(|error| {
         format!(
@@ -301,6 +339,14 @@ pub fn load_recipe_registry_from_dir(path: impl AsRef<Path>) -> Result<RecipeReg
             .map_err(|error| format!("failed to read {}: {error}", json_path.display()))?;
         let recipe: Recipe = serde_json::from_str(&content)
             .map_err(|error| format!("failed to parse recipe {}: {error}", json_path.display()))?;
+        if let Some(minerals) = minerals {
+            validate_recipe_minerals(&recipe, minerals).map_err(|error| {
+                format!(
+                    "failed to validate recipe minerals from {}: {error}",
+                    json_path.display()
+                )
+            })?;
+        }
         registry.insert(recipe).map_err(|error| {
             format!(
                 "failed to register recipe from {}: {error}",
@@ -309,6 +355,46 @@ pub fn load_recipe_registry_from_dir(path: impl AsRef<Path>) -> Result<RecipeReg
         })?;
     }
     Ok(registry)
+}
+
+pub fn validate_recipe_minerals(recipe: &Recipe, minerals: &MineralRegistry) -> Result<(), String> {
+    for stage in &recipe.stages {
+        for ingredient in &stage.required {
+            let Some(mineral_id) = ingredient.mineral_id.as_deref() else {
+                continue;
+            };
+            if !minerals.is_valid_mineral_id(mineral_id) {
+                return Err(format!(
+                    "recipe `{}` ingredient `{}` references unknown mineral_id `{}`",
+                    recipe.id, ingredient.material, mineral_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_stage_mineral_items<'a>(
+    ingredients: impl IntoIterator<Item = &'a IngredientSpec>,
+    items: impl IntoIterator<Item = &'a ItemInstance>,
+) -> Result<(), IngredientMismatch> {
+    let mut remaining: Vec<&ItemInstance> = items.into_iter().collect();
+    for ingredient in ingredients {
+        if ingredient.mineral_id.is_none() {
+            continue;
+        }
+        let Some(index) = remaining
+            .iter()
+            .position(|item| item.template_id == ingredient.material || item.mineral_id.is_some())
+        else {
+            return Err(IngredientMismatch::MissingMineralId {
+                material: ingredient.material.clone(),
+            });
+        };
+        let item = remaining.remove(index);
+        ingredient.validate_item(item)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -450,7 +536,7 @@ mod tests {
 
     #[test]
     fn ingredient_mineral_id_legacy_recipe_json_omits_field() {
-        let json = r#"{ "material": "bai_cao", "count": 2 }"#;
+        let json = r#"{ "material": "hui_yuan_zhi", "count": 2 }"#;
         let ing: IngredientSpec = serde_json::from_str(json).expect("legacy ingredient must parse");
         assert!(ing.mineral_id.is_none());
     }
@@ -465,7 +551,7 @@ mod tests {
     #[test]
     fn ingredient_mineral_id_serialization_omits_when_none() {
         let ing = IngredientSpec {
-            material: "bai_cao".into(),
+            material: "hui_yuan_zhi".into(),
             count: 2,
             mineral_id: None,
         };
@@ -479,7 +565,7 @@ mod tests {
     #[test]
     fn ingredient_matches_mineral_when_no_constraint() {
         let ing = IngredientSpec {
-            material: "bai_cao".into(),
+            material: "hui_yuan_zhi".into(),
             count: 1,
             mineral_id: None,
         };
@@ -499,5 +585,139 @@ mod tests {
         assert!(!ing.matches_mineral(Some("zhu_sha")));
         // 没 mineral_id NBT 的物品不可冒充矿物来源（plan §2.2 极端情况第 5 条）
         assert!(!ing.matches_mineral(None));
+    }
+
+    #[test]
+    fn default_recipes_include_mineral_auxiliary_specs() {
+        let registry = load_recipe_registry().unwrap();
+        let jie_du = registry.get("jie_du_dan_v1").expect("jie_du_dan_v1");
+        assert!(jie_du
+            .stages
+            .iter()
+            .flat_map(|stage| stage.required.iter())
+            .any(|ingredient| ingredient.mineral_id.as_deref() == Some("dan_sha")));
+        let pei_yuan = registry
+            .get("pei_yuan_dan_zhu_sha_v1")
+            .expect("pei_yuan_dan_zhu_sha_v1");
+        assert!(pei_yuan
+            .stages
+            .iter()
+            .flat_map(|stage| stage.required.iter())
+            .any(|ingredient| ingredient.mineral_id.as_deref() == Some("zhu_sha")));
+    }
+
+    #[test]
+    fn default_recipes_include_botany_v2_materials() {
+        let registry = load_recipe_registry().unwrap();
+        let botany_v2_recipes = [
+            "fu_yuan_dan_v1",
+            "shuang_gu_dan_v1",
+            "jing_xin_san_v1",
+            "yuan_xi_dan_v1",
+            "qing_zhuo_san_v1",
+            "mao_xin_san_v1",
+        ];
+        for recipe_id in botany_v2_recipes {
+            let recipe = registry
+                .get(recipe_id)
+                .unwrap_or_else(|| panic!("missing {recipe_id}"));
+            assert!(
+                recipe
+                    .stages
+                    .iter()
+                    .flat_map(|stage| stage.required.iter())
+                    .any(|ingredient| matches!(
+                        ingredient.material.as_str(),
+                        "fu_yuan_jue"
+                            | "xue_po_lian"
+                            | "yuan_ni_hong_yu"
+                            | "lie_yuan_tai"
+                            | "bei_wen_zhi"
+                            | "xue_se_mai_cao"
+                            | "mao_xin_wei"
+                    )),
+                "{recipe_id} should consume at least one botany v2 herb"
+            );
+        }
+    }
+
+    #[test]
+    fn test_recipes_use_canonical_registered_material_ids() {
+        let registry = load_recipe_registry().unwrap();
+        let expected = [
+            ("kai_mai_pill_v0", "ci_she_hao"),
+            ("hui_yuan_pill_v0", "hui_yuan_zhi"),
+            ("du_ming_san_v0", "chi_sui_cao"),
+            ("du_ming_san_v0", "hui_yuan_zhi"),
+            ("du_ming_san_v0", "shao_hou_man"),
+        ];
+        for (recipe_id, material_id) in expected {
+            let recipe = registry
+                .get(recipe_id)
+                .unwrap_or_else(|| panic!("missing {recipe_id}"));
+            assert!(
+                recipe
+                    .stages
+                    .iter()
+                    .flat_map(|stage| stage.required.iter())
+                    .any(|ingredient| ingredient.material == material_id),
+                "{recipe_id} should include canonical material {material_id}"
+            );
+        }
+
+        for legacy in ["kai_mai_cao", "bai_cao", "xue_cao", "shou_gu", "huo_jing"] {
+            assert!(
+                registry.iter().all(|recipe| recipe
+                    .stages
+                    .iter()
+                    .flat_map(|stage| stage.required.iter())
+                    .all(|ingredient| ingredient.material != legacy)),
+                "default alchemy recipes should not reference legacy material id {legacy}"
+            );
+        }
+    }
+
+    #[test]
+    fn recipe_mineral_validation_rejects_unknown_id() {
+        let minerals = build_default_mineral_registry();
+        let mut recipe = sample_recipe();
+        recipe.stages[0].required[0].mineral_id = Some("unknown_ore".into());
+        let err = validate_recipe_minerals(&recipe, &minerals).unwrap_err();
+        assert!(err.contains("unknown_ore"));
+    }
+
+    #[test]
+    fn validate_stage_mineral_items_rejects_wrong_mineral() {
+        let ing = IngredientSpec {
+            material: "dan_sha_aux".into(),
+            count: 1,
+            mineral_id: Some("dan_sha".into()),
+        };
+        let item = ItemInstance {
+            instance_id: 1,
+            template_id: "dan_sha_aux".into(),
+            display_name: "灵铁".into(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: crate::inventory::ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: Some("ling_tie".into()),
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        };
+        let err = validate_stage_mineral_items([&ing], [&item]).unwrap_err();
+        assert!(matches!(
+            err,
+            IngredientMismatch::WrongMineralId { expected, got, .. }
+                if expected == "dan_sha" && got == "ling_tie"
+        ));
     }
 }

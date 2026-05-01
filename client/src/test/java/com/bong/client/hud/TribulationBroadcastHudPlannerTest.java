@@ -133,7 +133,8 @@ class TribulationBroadcastHudPlannerTest {
     private static PlayerStateViewModel playerState(String playerId) {
         return PlayerStateViewModel.create(
             "Spirit", playerId, 80.0, 100.0, 0.0, 0.5,
-            PlayerStateViewModel.PowerBreakdown.empty(), "green_cloud_peak", "青云峰", 0.8
+            PlayerStateViewModel.PowerBreakdown.empty(), PlayerStateViewModel.SocialSnapshot.empty(),
+            "green_cloud_peak", "青云峰", 0.8
         );
     }
 }

@@ -1,0 +1,36 @@
+{
+  "id": "jing_xin_san_v1",
+  "name": "井心散",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "jing_xin_zao", "count": 1 },
+      { "material": "yuan_ni_hong_yu", "count": 1 }
+    ], "window": 0 },
+    { "at_tick": 45, "required": [
+      { "material": "ying_yuan_gu", "count": 1 }
+    ], "window": 10 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.48,
+    "target_duration_ticks": 160,
+    "qi_cost": 16.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 24 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "jing_xin_san", "quality": 1.0, "toxin_amount": 0.42, "toxin_color": "Mellow", "qi_gain": 22.0 },
+    "good": { "pill": "jing_xin_san", "quality": 0.7, "toxin_amount": 0.60, "toxin_color": "Mellow", "qi_gain": 16.0 },
+    "flawed": { "pill": "jing_xin_san_flawed", "quality": 0.38, "toxin_amount": 0.95, "toxin_color": "Turbid", "qi_gain": 8.0 },
+    "waste": null,
+    "explode": { "damage": 18.0, "meridian_crack": 0.09 }
+  },
+  "flawed_fallback": {
+    "pill": "jing_xin_san_flawed",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      { "tag": "water_pulse_reflux", "duration_s": 15, "weight": 1 },
+      { "tag": "wet_qi_drag", "duration_s": 45, "weight": 2 }
+    ]
+  }
+}

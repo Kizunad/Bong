@@ -6,6 +6,7 @@ import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 
 import java.nio.charset.StandardCharsets;
 
@@ -118,6 +119,30 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
     }
 
+    public static void sendSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeSpiritNichePlace(x, y, z, itemInstanceId));
+    }
+
+    public static void sendSpiritNicheGaze(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheGaze(x, y, z));
+    }
+
+    public static void sendSpiritNicheMarkCoordinate(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(x, y, z));
+    }
+
+    public static void sendSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
+        dispatch(ClientRequestProtocol.encodeSparringInviteResponse(inviteId, accepted, timedOut));
+    }
+
+    public static void sendTradeOfferRequest(String target, long offeredInstanceId) {
+        dispatch(ClientRequestProtocol.encodeTradeOfferRequest(target, offeredInstanceId));
+    }
+
+    public static void sendTradeOfferResponse(String offerId, boolean accepted, Long requestedInstanceId) {
+        dispatch(ClientRequestProtocol.encodeTradeOfferResponse(offerId, accepted, requestedInstanceId));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,
@@ -146,6 +171,10 @@ public final class ClientRequestSender {
 
     public static void sendSkillBarCast(int slot) {
         dispatch(ClientRequestProtocol.encodeSkillBarCast(slot));
+    }
+
+    public static void sendSkillBarCast(int slot, String target) {
+        dispatch(ClientRequestProtocol.encodeSkillBarCast(slot, target));
     }
 
     public static void sendSkillBarBindClear(int slot) {
@@ -182,28 +211,32 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipe(recipeId));
     }
 
-    public static void sendAlchemyOpenFurnace(String furnaceId) {
-        dispatch(ClientRequestProtocol.encodeAlchemyOpenFurnace(furnaceId));
+    public static void sendAlchemyOpenFurnace(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeAlchemyOpenFurnace(pos));
     }
 
-    public static void sendAlchemyIgnite(String recipeId) {
-        dispatch(ClientRequestProtocol.encodeAlchemyIgnite(recipeId));
+    public static void sendAlchemyIgnite(BlockPos pos, String recipeId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyIgnite(pos, recipeId));
     }
 
-    public static void sendAlchemyFeedSlot(int slotIdx, String material, int count) {
-        dispatch(ClientRequestProtocol.encodeAlchemyFeedSlot(slotIdx, material, count));
+    public static void sendAlchemyFeedSlot(BlockPos pos, int slotIdx, String material, int count) {
+        dispatch(ClientRequestProtocol.encodeAlchemyFeedSlot(pos, slotIdx, material, count));
     }
 
-    public static void sendAlchemyTakeBack(int slotIdx) {
-        dispatch(ClientRequestProtocol.encodeAlchemyTakeBack(slotIdx));
+    public static void sendAlchemyTakeBack(BlockPos pos, int slotIdx) {
+        dispatch(ClientRequestProtocol.encodeAlchemyTakeBack(pos, slotIdx));
     }
 
-    public static void sendAlchemyInjectQi(double qi) {
-        dispatch(ClientRequestProtocol.encodeAlchemyInjectQi(qi));
+    public static void sendAlchemyInjectQi(BlockPos pos, double qi) {
+        dispatch(ClientRequestProtocol.encodeAlchemyInjectQi(pos, qi));
     }
 
-    public static void sendAlchemyAdjustTemp(double temp) {
-        dispatch(ClientRequestProtocol.encodeAlchemyAdjustTemp(temp));
+    public static void sendAlchemyAdjustTemp(BlockPos pos, double temp) {
+        dispatch(ClientRequestProtocol.encodeAlchemyAdjustTemp(pos, temp));
+    }
+
+    public static void sendAlchemyFurnacePlace(BlockPos pos, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, itemInstanceId));
     }
 
     public static void sendAlchemyTakePill(String pillItemId) {

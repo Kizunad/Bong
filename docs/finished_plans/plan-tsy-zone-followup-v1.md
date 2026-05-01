@@ -32,6 +32,8 @@
 - `qi_drained_total` 累计 — 归 `plan-tsy-loot-v1`
 - `/tsy-spawn` 与 `!tsy-spawn` 命名差（zone-v1 §6 用 `/`，落地用 `!` 跟仓库 dev-command 习惯）— 不改
 
+迁移注释（plan-server-cmd-system-v1，2026-05-01）：历史 `!tsy-spawn` 调试命令已迁移为 Valence brigadier `/tsy_spawn <family_id>`；正文保留历史记录不重写。
+
 ---
 
 ## §1 集成测试（zone-v1 §5.2）

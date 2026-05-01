@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "play_anim_inline",
+  "target_player": "550e8400-e29b-41d4-a716-446655440000",
+  "anim_id": "bong:inline_test_pose",
+  "anim_json": "{\"version\":3,\"name\":\"inline_test_pose\",\"emote\":{\"beginTick\":0,\"endTick\":4,\"isLoop\":false,\"moves\":[{\"tick\":0,\"rightArm\":{\"pitch\":-0.6},\"easing\":\"LINEAR\"},{\"tick\":4,\"rightArm\":{\"pitch\":0.4},\"easing\":\"INOUTSINE\"}]}}",
+  "priority": 3000,
+  "fade_in_ticks": 3
+}

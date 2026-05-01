@@ -4,7 +4,9 @@ import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataHandler;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import net.minecraft.util.math.BlockPos;
 
 /** plan-alchemy-v1 §4 — `alchemy_furnace` payload → {@link AlchemyFurnaceStore}. */
 public final class AlchemyFurnaceHandler implements ServerDataHandler {
@@ -18,7 +20,15 @@ public final class AlchemyFurnaceHandler implements ServerDataHandler {
                 ? p.get("integrity_max").getAsDouble() : 100.0);
             String owner = p.has("owner_name") && p.get("owner_name").isJsonPrimitive()
                 ? p.get("owner_name").getAsString() : "self";
-            AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(tier, integrity, integrityMax, owner));
+            boolean hasSession = p.has("has_session") && p.get("has_session").getAsBoolean();
+            BlockPos pos = null;
+            if (p.has("pos") && p.get("pos").isJsonArray()) {
+                JsonArray arr = p.getAsJsonArray("pos");
+                if (arr.size() == 3) {
+                    pos = new BlockPos(arr.get(0).getAsInt(), arr.get(1).getAsInt(), arr.get(2).getAsInt());
+                }
+            }
+            AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(pos, tier, integrity, integrityMax, owner, hasSession));
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied alchemy_furnace snapshot to AlchemyFurnaceStore (tier=" + tier + ")");
         } catch (RuntimeException e) {

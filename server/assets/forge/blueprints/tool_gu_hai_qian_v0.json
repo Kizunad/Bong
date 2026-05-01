@@ -1,0 +1,23 @@
+{
+  "id": "tool_gu_hai_qian_v0",
+  "name": "骨骸钳",
+  "station_tier_min": 1,
+  "tier_cap": 1,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [{ "material": "fan_tie", "count": 2 }],
+        "optional_carriers": [{ "material": "yi_beast_bone", "unlocks_tier": 1 }],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "gu_hai_qian", "quality": 1.0 },
+    "good": { "weapon": "gu_hai_qian", "quality": 0.8 },
+    "flawed": { "weapon": "gu_hai_qian", "quality": 0.5 },
+    "waste": null,
+    "explode": { "damage": 4.0, "station_wear": 0.01 }
+  }
+}

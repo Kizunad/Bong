@@ -1,9 +1,11 @@
 package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
+import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.network.AudioEventRouter;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
@@ -31,10 +33,12 @@ public class BongNetworkHandler {
     private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
     private static final VfxEventRouter VFX_ROUTER =
         new VfxEventRouter(new ClientAnimationBridge(), new BongVfxParticleBridge());
+    private static final AudioEventRouter AUDIO_ROUTER = new AudioEventRouter(SoundRecipePlayer.instance());
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
     private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
     private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
     private static final Map<String, Long> VFX_BRIDGE_MISS_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
+    private static final Map<String, Long> AUDIO_BRIDGE_MISS_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
 
     public static ParseResult parseServerPayload(String jsonPayload) {
         return BongServerPayloadParser.parse(jsonPayload);
@@ -43,6 +47,8 @@ public class BongNetworkHandler {
     public static void register() {
         registerServerDataChannel();
         registerVfxEventChannel();
+        registerAudioPlayChannel();
+        registerAudioStopChannel();
     }
 
     private static void registerServerDataChannel() {
@@ -107,6 +113,50 @@ public class BongNetworkHandler {
                     return;
                 }
                 BongClient.LOGGER.info("Processed bong:vfx_event payload: {}", result.logMessage());
+            });
+        });
+    }
+
+    private static void registerAudioPlayChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "audio/play"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                AudioEventRouter.RouteResult result = AUDIO_ROUTER.routePlay(jsonPayload, readableBytes);
+                if (result.isParseError()) {
+                    BongClient.LOGGER.error("Failed to parse bong:audio/play payload: {}", result.logMessage());
+                    return;
+                }
+                if (result.isBridgeMiss()) {
+                    logAudioBridgeMiss(result);
+                    return;
+                }
+                BongClient.LOGGER.info("Processed bong:audio/play payload: {}", result.logMessage());
+            });
+        });
+    }
+
+    private static void registerAudioStopChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "audio/stop"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                AudioEventRouter.RouteResult result = AUDIO_ROUTER.routeStop(jsonPayload, readableBytes);
+                if (result.isParseError()) {
+                    BongClient.LOGGER.error("Failed to parse bong:audio/stop payload: {}", result.logMessage());
+                    return;
+                }
+                if (result.isBridgeMiss()) {
+                    logAudioBridgeMiss(result);
+                    return;
+                }
+                BongClient.LOGGER.info("Processed bong:audio/stop payload: {}", result.logMessage());
             });
         });
     }
@@ -202,6 +252,13 @@ public class BongNetworkHandler {
         }
     }
 
+    private static void logAudioBridgeMiss(AudioEventRouter.RouteResult result) {
+        String payloadType = result.payload() != null ? result.payload().getClass().getSimpleName() : "unknown";
+        if (shouldLogAudioBridgeMiss(payloadType)) {
+            BongClient.LOGGER.warn("Ignoring bong:audio payload: {}", result.logMessage());
+        }
+    }
+
     static boolean shouldLogNoOp(String payloadType) {
         return shouldLogNoOp(payloadType, System.currentTimeMillis());
     }
@@ -225,6 +282,19 @@ public class BongNetworkHandler {
             pruneExpired(VFX_BRIDGE_MISS_LOG_TIMES, nowMillis);
             Long previous = VFX_BRIDGE_MISS_LOG_TIMES.put(payloadType, nowMillis);
             trimToLimit(VFX_BRIDGE_MISS_LOG_TIMES);
+            return previous == null || nowMillis - previous >= UNKNOWN_LOG_THROTTLE_MS;
+        }
+    }
+
+    static boolean shouldLogAudioBridgeMiss(String payloadType) {
+        return shouldLogAudioBridgeMiss(payloadType, System.currentTimeMillis());
+    }
+
+    static boolean shouldLogAudioBridgeMiss(String payloadType, long nowMillis) {
+        synchronized (AUDIO_BRIDGE_MISS_LOG_TIMES) {
+            pruneExpired(AUDIO_BRIDGE_MISS_LOG_TIMES, nowMillis);
+            Long previous = AUDIO_BRIDGE_MISS_LOG_TIMES.put(payloadType, nowMillis);
+            trimToLimit(AUDIO_BRIDGE_MISS_LOG_TIMES);
             return previous == null || nowMillis - previous >= UNKNOWN_LOG_THROTTLE_MS;
         }
     }

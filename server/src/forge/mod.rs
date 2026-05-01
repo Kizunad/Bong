@@ -47,6 +47,7 @@ use self::steps::{
 };
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
+use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
@@ -113,6 +114,7 @@ fn handle_start_forge_requests(
     learned: Query<&LearnedBlueprints>,
     mut accepted: EventWriter<ForgeStartAccepted>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
+    mut feedback: EventWriter<MineralFeedbackEvent>,
 ) {
     for req in ev.read() {
         let Some(bp) = registry.get(&req.blueprint) else {
@@ -137,6 +139,32 @@ fn handle_start_forge_requests(
                 station.tier,
                 bp.station_tier_min
             );
+            continue;
+        }
+
+        if let Err(error) = bp.validate_with(&minerals, station.tier) {
+            match error {
+                blueprint::ForgeValidationError::TierMismatch {
+                    material_name,
+                    required_tier,
+                    ..
+                } => {
+                    feedback.send(MineralFeedbackEvent::forge_tier_mismatch(
+                        req.caster,
+                        forge_station_tier_name(station.tier),
+                        material_name,
+                        required_tier,
+                    ));
+                }
+                blueprint::ForgeValidationError::UnknownMaterial { .. } => {
+                    feedback.send(MineralFeedbackEvent::unknown_for_forge(req.caster));
+                }
+                blueprint::ForgeValidationError::NotForgeMetal { material } => {
+                    feedback.send(MineralFeedbackEvent::invalid_for_forge(
+                        req.caster, material,
+                    ));
+                }
+            }
             continue;
         }
 
@@ -227,6 +255,16 @@ fn invalid_required_forge_material<'a>(
         }
     }
     None
+}
+
+fn forge_station_tier_name(tier: u8) -> &'static str {
+    match tier {
+        1 => "凡铁炉",
+        2 => "灵铁炉",
+        3 => "稀铁炉",
+        4..=u8::MAX => "道炉",
+        0 => "无炉",
+    }
 }
 
 fn handle_tempering_hits(
@@ -753,5 +791,13 @@ mod tests {
             other => panic!("expected consecration state, got {other:?}"),
         }
         assert!(app.world().entity(station).contains::<WeaponForgeStation>());
+    }
+
+    #[test]
+    fn forge_station_tier_name_matches_chat_templates() {
+        assert_eq!(forge_station_tier_name(1), "凡铁炉");
+        assert_eq!(forge_station_tier_name(2), "灵铁炉");
+        assert_eq!(forge_station_tier_name(3), "稀铁炉");
+        assert_eq!(forge_station_tier_name(4), "道炉");
     }
 }

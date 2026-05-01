@@ -206,6 +206,55 @@ impl Blueprint {
     pub fn has_step(&self, kind: StepKind) -> bool {
         self.step_index(kind).is_some()
     }
+
+    pub fn validate_with(
+        &self,
+        minerals: &MineralRegistry,
+        station_tier: u8,
+    ) -> Result<(), ForgeValidationError> {
+        for step in &self.steps {
+            let StepSpec::Billet { profile } = step else {
+                continue;
+            };
+            for required in &profile.required {
+                let Some(entry) = minerals.get_by_str(required.material.as_str()) else {
+                    return Err(ForgeValidationError::UnknownMaterial {
+                        material: required.material.clone(),
+                    });
+                };
+                if entry.forge_tier_min == 0 {
+                    return Err(ForgeValidationError::NotForgeMetal {
+                        material: required.material.clone(),
+                    });
+                }
+                if station_tier < entry.forge_tier_min {
+                    return Err(ForgeValidationError::TierMismatch {
+                        material: required.material.clone(),
+                        material_name: entry.display_name_zh.to_string(),
+                        station_tier,
+                        required_tier: entry.forge_tier_min,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForgeValidationError {
+    UnknownMaterial {
+        material: String,
+    },
+    NotForgeMetal {
+        material: String,
+    },
+    TierMismatch {
+        material: String,
+        material_name: String,
+        station_tier: u8,
+        required_tier: u8,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -386,10 +435,21 @@ mod tests {
         let reg =
             BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
                 .expect("assets/forge/blueprints should load");
-        assert_eq!(reg.len(), 3, "expected 3 test blueprints");
+        assert_eq!(reg.len(), 10, "expected 3 weapon + 7 tool blueprints");
         assert!(reg.get("iron_sword_v0").is_some());
         assert!(reg.get("qing_feng_v0").is_some());
         assert!(reg.get("ling_feng_v0").is_some());
+        for id in [
+            "tool_cai_yao_dao_v0",
+            "tool_bao_chu_v0",
+            "tool_cao_lian_v0",
+            "tool_dun_qi_jia_v0",
+            "tool_gua_dao_v0",
+            "tool_gu_hai_qian_v0",
+            "tool_bing_jia_shou_tao_v0",
+        ] {
+            assert!(reg.get(id).is_some(), "missing tool blueprint `{id}`");
+        }
     }
 
     #[test]
@@ -422,6 +482,55 @@ mod tests {
         assert!(bp.has_step(StepKind::Inscription));
         assert!(bp.has_step(StepKind::Consecration));
         assert_eq!(bp.tier_cap, 4);
+    }
+
+    #[test]
+    fn ling_feng_accepts_botany_v2_carriers() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("ling_feng_v0").unwrap();
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("ling_feng first step should be billet");
+        };
+        assert!(profile
+            .optional_carriers
+            .iter()
+            .any(|carrier| { carrier.material == "xuan_gen_wei" && carrier.unlocks_tier == 3 }));
+        assert!(profile
+            .optional_carriers
+            .iter()
+            .any(|carrier| { carrier.material == "yuan_ni_hong_yu" && carrier.unlocks_tier == 4 }));
+    }
+
+    #[test]
+    fn tool_blueprints_are_single_step_fanqi_outputs() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+
+        for (id, item_id) in [
+            ("tool_cai_yao_dao_v0", "cai_yao_dao"),
+            ("tool_bao_chu_v0", "bao_chu"),
+            ("tool_cao_lian_v0", "cao_lian"),
+            ("tool_dun_qi_jia_v0", "dun_qi_jia"),
+            ("tool_gua_dao_v0", "gua_dao"),
+            ("tool_gu_hai_qian_v0", "gu_hai_qian"),
+            ("tool_bing_jia_shou_tao_v0", "bing_jia_shou_tao"),
+        ] {
+            let bp = reg.get(id).unwrap_or_else(|| panic!("missing {id}"));
+            assert_eq!(
+                bp.steps.len(),
+                1,
+                "tool blueprint `{id}` should be one-step"
+            );
+            assert_eq!(bp.steps[0].kind(), StepKind::Billet);
+            assert_eq!(bp.tier_cap, 1);
+            assert_eq!(
+                bp.outcomes
+                    .good
+                    .as_ref()
+                    .map(|outcome| outcome.weapon.as_str()),
+                Some(item_id),
+                "tool blueprint `{id}` should produce `{item_id}`"
+            );
+        }
     }
 
     #[test]
@@ -485,5 +594,37 @@ mod tests {
         let err = validate_forge_material(Path::new("bad.json"), "bad", "dan_sha", &minerals)
             .unwrap_err();
         assert!(matches!(err, BlueprintLoadError::InvalidMaterial { .. }));
+    }
+
+    #[test]
+    fn validate_with_rejects_station_tier_below_required_material() {
+        let minerals = crate::mineral::build_default_registry();
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("ling_feng_v0").expect("ling_feng fixture");
+        let err = bp.validate_with(&minerals, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            ForgeValidationError::TierMismatch {
+                material,
+                station_tier: 1,
+                required_tier: 3,
+                ..
+            } if material == "sui_tie"
+        ));
+    }
+
+    #[test]
+    fn validate_with_accepts_tier_three_rare_metals() {
+        let minerals = crate::mineral::build_default_registry();
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let ling_feng = reg.get("ling_feng_v0").expect("ling_feng fixture");
+        ling_feng
+            .validate_with(&minerals, 3)
+            .expect("tier 3 station should accept sui_tie/rare metal blueprint");
+        assert_eq!(
+            minerals.get_by_str("ku_jin").unwrap().forge_tier_min,
+            3,
+            "plan-mineral-v2 P2: 稀铁炉可承接枯金"
+        );
     }
 }

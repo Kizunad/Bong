@@ -1,7 +1,7 @@
 use serde_json::json;
 use valence::prelude::{
-    Client, Commands, DVec3, Entity, EventReader, EventWriter, ParamSet, Position, Query, Res,
-    ResMut, Username, With,
+    Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, ParamSet, Position, Query,
+    Res, ResMut, Username, With,
 };
 
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
@@ -17,8 +17,8 @@ use crate::combat::{
         JIEMAI_DEFENSE_WINDOW_MS, LEG_SLOWED_DURATION_TICKS, LEG_SLOWED_SEVERITY_THRESHOLD,
     },
     events::{
-        ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DefenseIntent,
-        StatusEffectKind,
+        ApplyStatusEffectIntent, AttackIntent, AttackSource, CombatEvent, DeathEvent,
+        DefenseIntent, StatusEffectKind,
     },
     raycast::raycast_humanoid,
 };
@@ -37,6 +37,8 @@ use crate::player::state::canonical_player_id;
 use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::events::ActiveEventsResource;
 
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
@@ -135,6 +137,7 @@ pub fn resolve_attack_intents(
     npc_markers: Query<(), With<NpcMarker>>,
     npc_positions: Query<(Entity, &Position), With<NpcMarker>>,
     statuses: Query<&StatusEffects>,
+    sparring_sessions: Query<&crate::social::components::SparringState>,
     mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
@@ -147,6 +150,7 @@ pub fn resolve_attack_intents(
         Commands,
         Query<&mut PlayerInventory>,
         Option<ResMut<DroppedLootRegistry>>,
+        Option<ResMut<Events<SkillXpGain>>>,
     ),
 ) {
     let (
@@ -155,6 +159,7 @@ pub fn resolve_attack_intents(
         mut commands,
         mut inventories,
         mut dropped_loot_registry,
+        mut skill_xp_events,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -183,7 +188,9 @@ pub fn resolve_attack_intents(
                 continue;
             };
 
-            if attacker_cultivation.qi_current + f64::EPSILON < qi_invest {
+            if intent.source != AttackSource::BurstMeridian
+                && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
+            {
                 continue;
             }
         }
@@ -205,8 +212,10 @@ pub fn resolve_attack_intents(
                 continue;
             };
 
-            attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
-                .clamp(0.0, attacker_cultivation.qi_max);
+            if intent.source != AttackSource::BurstMeridian {
+                attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
+                    .clamp(0.0, attacker_cultivation.qi_max);
+            }
             if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut attacker_meridians)
             {
                 primary_meridian.throughput_current += qi_invest * ATTACK_QI_THROUGHPUT_FACTOR;
@@ -243,12 +252,20 @@ pub fn resolve_attack_intents(
         let defender_damage_multiplier = defender_attrs
             .map(|attrs| attrs.defense_power)
             .unwrap_or(1.0);
-        // plan-weapon-v1 §6.1：查 attacker 的 Weapon component 得伤害倍率。
-        // 无武器(赤手) → 1.0 基线;有武器 → attack × quality × durability。
-        let weapon_multiplier: f32 = weapons
-            .get(intent.attacker)
-            .map(|w| w.damage_multiplier())
-            .unwrap_or(1.0);
+        // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
+        let mut hit_tool: Option<crate::tools::ToolKind> = None;
+        let weapon_multiplier: f32 = match weapons.get(intent.attacker) {
+            Ok(weapon) => weapon.damage_multiplier(),
+            Err(_) => {
+                hit_tool = inventories
+                    .get(intent.attacker)
+                    .ok()
+                    .and_then(crate::tools::main_hand_tool_in_inventory);
+                hit_tool
+                    .map(crate::tools::ToolKind::combat_damage_multiplier)
+                    .unwrap_or(1.0)
+            }
+        };
         let damage = (hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
             * damage_multiplier
@@ -364,6 +381,17 @@ pub fn resolve_attack_intents(
                     instance_id,
                     template_id,
                 });
+            }
+        }
+
+        if let Some(tool) = hit_tool {
+            if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
+                crate::tools::damage_main_hand_tool(
+                    intent.attacker,
+                    &mut inventory,
+                    &mut durability_changed_tx,
+                    tool.durability_cost_ratio_per_use(),
+                );
             }
         }
 
@@ -631,6 +659,25 @@ pub fn resolve_attack_intents(
             });
         }
 
+        let active_sparring = crate::social::active_sparring_between(
+            &sparring_sessions,
+            intent.attacker,
+            target_entity,
+        );
+        if let Some(sparring) = active_sparring.as_ref() {
+            if clock.tick <= sparring.expires_at_tick && was_alive && wounds.health_current <= 0.0 {
+                wounds.health_current = (wounds.health_max.max(1.0) * 0.05).max(1.0);
+                crate::social::conclude_sparring_defeat(
+                    &mut commands,
+                    &mut status_effect_intents,
+                    target_entity,
+                    intent.attacker,
+                    clock.tick,
+                );
+                continue;
+            }
+        }
+
         if was_alive
             && wounds.health_current <= 0.0
             && !lifecycle.is_some_and(|lifecycle| {
@@ -653,6 +700,20 @@ pub fn resolve_attack_intents(
                 attacker_player_id,
                 at_tick: clock.tick,
             });
+            if let (true, Some(skill_xp_events)) = (
+                attacker_id.starts_with("offline:"),
+                skill_xp_events.as_deref_mut(),
+            ) {
+                skill_xp_events.send(SkillXpGain {
+                    char_entity: intent.attacker,
+                    skill: SkillId::Combat,
+                    amount: 4,
+                    source: XpGainSource::Action {
+                        plan_id: "combat",
+                        action: "kill_npc",
+                    },
+                });
+            }
         }
     }
 }
@@ -846,7 +907,7 @@ mod tests {
         Wounds, JIEMAI_CONTAM_MULTIPLIER, JIEMAI_DEFENSE_QI_COST,
     };
     use crate::combat::events::{
-        ApplyStatusEffectIntent, AttackIntent, StatusEffectKind, FIST_REACH,
+        ApplyStatusEffectIntent, AttackIntent, AttackSource, StatusEffectKind, FIST_REACH,
     };
     use crate::cultivation::components::{
         Contamination, CrackCause, Cultivation, MeridianId, MeridianSystem,
@@ -860,6 +921,7 @@ mod tests {
     use crate::npc::spawn::NpcMeleeProfile;
     use crate::npc::spawn::{spawn_test_npc_runtime_shape, NpcMarker};
     use crate::player::state::PlayerState;
+    use crate::social::components::SparringState;
     use valence::prelude::{
         bevy_ecs, App, Entity, Events, IntoSystemConfigs, Position, Resource, Update,
     };
@@ -1011,6 +1073,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
 
@@ -1100,6 +1163,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.update();
@@ -1156,6 +1220,79 @@ mod tests {
     }
 
     #[test]
+    fn sparring_lethal_hit_ends_without_death_event() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                resolve_attack_intents,
+                crate::combat::status::status_effect_apply_tick,
+            ),
+        );
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 8.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(SparringState {
+            partner: target,
+            invite_id: "sparring:1:a:b".to_string(),
+            started_at_tick: 40,
+            expires_at_tick: 6000,
+        });
+        app.world_mut().entity_mut(target).insert(SparringState {
+            partner: attacker,
+            invite_id: "sparring:1:a:b".to_string(),
+            started_at_tick: 40,
+            expires_at_tick: 6000,
+        });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 40.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+        app.update();
+
+        assert!(app.world().get::<SparringState>(attacker).is_none());
+        assert!(app.world().get::<SparringState>(target).is_none());
+        assert!(app.world().resource::<Events<DeathEvent>>().is_empty());
+        let wounds = app.world().get::<Wounds>(target).unwrap();
+        assert!(wounds.health_current > 0.0);
+        let statuses = app.world().get::<StatusEffects>(target).unwrap();
+        assert!(statuses
+            .active
+            .iter()
+            .any(|effect| effect.kind == StatusEffectKind::Humility));
+    }
+
+    #[test]
     fn resolve_debug_attack_applies_damage_contamination_throughput_and_death() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 12 });
@@ -1202,6 +1339,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 40.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: "Crimson".to_string(),
                 qi_invest: 40.0,
@@ -1294,6 +1432,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
@@ -1334,6 +1473,7 @@ mod tests {
                 reach: FIST_REACH,
                 qi_invest: action.qi_invest as f32,
                 wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
                 debug_command: Some(action),
             });
             app.update();
@@ -1385,6 +1525,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
@@ -1414,6 +1555,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 10.0,
             wound_kind: NpcMeleeProfile::spear().wound_kind,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1455,6 +1597,10 @@ mod tests {
             !death_events.is_empty(),
             "npc entity-target intent should emit DeathEvent when lethal"
         );
+        assert!(
+            app.world().resource::<Events<SkillXpGain>>().is_empty(),
+            "NPC attackers should not earn player skill XP"
+        );
     }
 
     #[test]
@@ -1465,6 +1611,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
@@ -1490,6 +1637,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 12.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -1499,6 +1647,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 10.0,
             wound_kind: NpcMeleeProfile::spear().wound_kind,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1550,6 +1699,59 @@ mod tests {
     }
 
     #[test]
+    fn player_killing_npc_emits_combat_skill_xp() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 92 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let player = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let npc = spawn_npc(
+            &mut app,
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 3.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: player,
+            target: Some(npc),
+            issued_at_tick: 91,
+            reach: FIST_REACH,
+            qi_invest: 12.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        let xp = xp_events
+            .iter_current_update_events()
+            .next()
+            .expect("lethal player->npc hit should award combat xp");
+        assert_eq!(xp.char_entity, player);
+        assert_eq!(xp.skill, SkillId::Combat);
+        assert_eq!(xp.amount, 4);
+    }
+
+    #[test]
     fn player_to_runtime_spawned_zombie_npc_target_resolves_without_dropping_intent() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 128 });
@@ -1592,6 +1794,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1663,6 +1866,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.update();
@@ -1674,6 +1878,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 10.0,
             wound_kind: NpcMeleeProfile::spear().wound_kind,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.update();
@@ -1724,6 +1929,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 40.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: npc_id.clone(),
                 qi_invest: 40.0,
@@ -1795,6 +2001,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1850,6 +2057,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1912,6 +2120,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 18.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: "Crimson".to_string(),
                 qi_invest: 18.0,
@@ -1942,6 +2151,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 18.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: "Sable".to_string(),
                 qi_invest: 999.0,
@@ -2011,6 +2221,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 20.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2089,6 +2300,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 20.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2166,6 +2378,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 20.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2230,6 +2443,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2318,6 +2532,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2401,6 +2616,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2410,6 +2626,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2500,6 +2717,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2509,6 +2727,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2643,6 +2862,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2652,6 +2872,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2782,6 +3003,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2791,6 +3013,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2813,6 +3036,282 @@ mod tests {
             (iron_sword_damage - unarmed_damage * 1.2).abs() < 0.001,
             "expected full-durability iron_sword to land exactly at 1.2x baseline"
         );
+    }
+
+    #[test]
+    fn tool_main_hand_deals_low_damage_above_unarmed_below_entry_sword() {
+        for (index, tool_kind) in crate::tools::ALL_TOOL_KINDS.into_iter().enumerate() {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 1430 });
+            app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
+            app.add_event::<WeaponBroken>();
+            app.add_event::<InventoryDurabilityChangedEvent>();
+            app.add_systems(
+                Update,
+                (
+                    crate::combat::status::attribute_aggregate_tick,
+                    resolve_attack_intents,
+                ),
+            );
+
+            let z = (index as f64) * 3.0;
+            let unarmed = spawn_player(
+                &mut app,
+                "BareHandBaseline",
+                [0.0, 64.0, z],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let tool_user = spawn_player(
+                &mut app,
+                "ToolUser",
+                [0.0, 64.0, z + 1.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            app.world_mut()
+                .entity_mut(tool_user)
+                .insert(PlayerInventory {
+                    revision: InventoryRevision(1),
+                    containers: vec![ContainerState {
+                        id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                        name: "主背包".to_string(),
+                        rows: 5,
+                        cols: 7,
+                        items: vec![],
+                    }],
+                    equipped: std::collections::HashMap::from([(
+                        crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                        ItemInstance {
+                            instance_id: 130 + index as u64,
+                            template_id: tool_kind.item_id().to_string(),
+                            display_name: tool_kind.display_name().to_string(),
+                            grid_w: 1,
+                            grid_h: 2,
+                            weight: 0.9,
+                            rarity: crate::inventory::ItemRarity::Common,
+                            description: String::new(),
+                            stack_count: 1,
+                            spirit_quality: 0.0,
+                            durability: 1.0,
+                            freshness: None,
+                            mineral_id: None,
+                            charges: None,
+                            forge_quality: None,
+                            forge_color: None,
+                            forge_side_effects: Vec::new(),
+                            forge_achieved_tier: None,
+                        },
+                    )]),
+                    hotbar: Default::default(),
+                    bone_coins: 0,
+                    max_weight: 50.0,
+                });
+            let unarmed_target = spawn_player(
+                &mut app,
+                "BareHandTarget",
+                [1.0, 64.0, z],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let tool_target = spawn_player(
+                &mut app,
+                "ToolTarget",
+                [1.0, 64.0, z + 1.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+
+            app.update();
+
+            app.world_mut().send_event(AttackIntent {
+                attacker: unarmed,
+                target: Some(unarmed_target),
+                issued_at_tick: 1429,
+                reach: FIST_REACH,
+                qi_invest: 10.0,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: None,
+            });
+            app.world_mut().send_event(AttackIntent {
+                attacker: tool_user,
+                target: Some(tool_target),
+                issued_at_tick: 1429,
+                reach: FIST_REACH,
+                qi_invest: 10.0,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: None,
+            });
+
+            app.update();
+
+            let combat_events = app.world().resource::<Events<CombatEvent>>();
+            let events: Vec<_> = combat_events.iter_current_update_events().collect();
+            assert_eq!(events.len(), 2, "{tool_kind:?} should emit two hits");
+            let unarmed_damage = events[0].damage;
+            let tool_damage = events[1].damage;
+            assert!(
+                tool_damage > unarmed_damage,
+                "{tool_kind:?} should beat bare hands"
+            );
+            assert!(
+                tool_damage < unarmed_damage * 1.2,
+                "{tool_kind:?} should stay below entry iron sword"
+            );
+            assert!(
+                (tool_damage - unarmed_damage * tool_kind.combat_damage_multiplier()).abs() < 0.001,
+                "{tool_kind:?} should use its ToolKind multiplier"
+            );
+
+            let inventory = app.world().get::<PlayerInventory>(tool_user).unwrap();
+            assert_eq!(
+                inventory
+                    .equipped
+                    .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                    .unwrap()
+                    .durability,
+                0.99,
+                "{tool_kind:?} hit should tick durability"
+            );
+            let durability_events = app
+                .world()
+                .resource::<Events<InventoryDurabilityChangedEvent>>();
+            let events: Vec<_> = durability_events.iter_current_update_events().collect();
+            assert_eq!(
+                events.len(),
+                1,
+                "{tool_kind:?} should emit one durability event"
+            );
+            assert_eq!(events[0].entity, tool_user);
+            assert_eq!(events[0].instance_id, 130 + index as u64);
+            assert_eq!(events[0].durability, 0.99);
+        }
+    }
+
+    #[test]
+    fn broken_tool_main_hand_uses_unarmed_baseline() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1431 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let broken_tool_user = spawn_player(
+            &mut app,
+            "BrokenToolUser",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(broken_tool_user)
+            .insert(PlayerInventory {
+                revision: InventoryRevision(1),
+                containers: vec![ContainerState {
+                    id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows: 5,
+                    cols: 7,
+                    items: vec![],
+                }],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                    ItemInstance {
+                        instance_id: 131,
+                        template_id: "cao_lian".to_string(),
+                        display_name: "草镰".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 0.9,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 0.0,
+                        durability: 0.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                    },
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            });
+        let unarmed = spawn_player(
+            &mut app,
+            "UnarmedPeer",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let broken_tool_target = spawn_player(
+            &mut app,
+            "BrokenToolTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let unarmed_target = spawn_player(
+            &mut app,
+            "UnarmedPeerTarget",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: broken_tool_user,
+            target: Some(broken_tool_target),
+            issued_at_tick: 1430,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: unarmed,
+            target: Some(unarmed_target),
+            issued_at_tick: 1430,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].damage, events[1].damage);
+
+        let durability_events = app
+            .world()
+            .resource::<Events<InventoryDurabilityChangedEvent>>();
+        assert_eq!(durability_events.iter_current_update_events().count(), 0);
     }
 
     // 耐久归零后 Weapon component 被移除 + WeaponBroken 事件发出。
@@ -2914,6 +3413,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3067,6 +3567,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3146,6 +3647,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -3155,6 +3657,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3245,6 +3748,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Pierce,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -3254,6 +3758,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3279,6 +3784,66 @@ mod tests {
             .amount;
 
         assert!(pierce_contam > blunt_contam);
+    }
+
+    #[test]
+    fn burst_meridian_attack_source_uses_prepaid_qi_without_second_spend() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1550 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "BurstUser",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(Cultivation {
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        });
+        let target = spawn_player(
+            &mut app,
+            "BurstTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1549,
+            reach: FIST_REACH,
+            qi_invest: 80.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::BurstMeridian,
+            debug_command: None,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(attacker)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            60.0,
+            "BurstMeridian source is already paid by skill resolver and must not spend qi again"
+        );
+        assert!(
+            !app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "prepaid burst attack should still resolve even when qi_invest exceeds remaining qi"
+        );
     }
 
     /// 端到端验证 NPC↔NPC 互殴走 shared resolver：使用 `npc_runtime_bundle`
@@ -3332,6 +3897,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 8.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -3341,6 +3907,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 12.0,
             wound_kind: WoundKind::Pierce,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 

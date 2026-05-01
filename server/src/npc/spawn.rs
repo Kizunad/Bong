@@ -1,10 +1,13 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
+use valence::entity::player::PlayerEntityBundle;
 use valence::entity::villager::VillagerEntityBundle;
+use valence::entity::witch::WitchEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
-    IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, Update, With,
+    EventWriter, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId,
+    Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -18,28 +21,47 @@ use crate::npc::brain::{
     WanderState,
 };
 use crate::npc::faction::{
-    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteState, MissionQueue,
-    Reputation,
+    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
+    MissionQueue, MissionQueueScorer, Reputation,
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
-    npc_runtime_bundle, NpcArchetype, NpcLifespan, NpcRegistry, NpcReproductionRequest,
+    npc_runtime_bundle, npc_runtime_bundle_with_age, NpcArchetype, NpcRegistry,
+    NpcReproductionRequest, NpcSpawnNotice, NpcSpawnSource,
 };
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-// Scorer/Action symbols (TerritoryIntruderScorer / LoyaltyScorer / GuardianDutyScorer / ...)
-// 暂不 import —— thinker 已降级到 core scorers，直到 ccfbb458 撤回的 ECS
-// 注册恢复后再接回。状态组件 (HuntState / GuardState / TrialState / MissionExecuteState)
-// 仍保留，等后续 PR 挂新 Scorer/Action 时不用重写 spawn 流程。
-use crate::npc::relic::{GuardState, GuardianDuty, GuardianRelicTag, TrialEval, TrialState};
-use crate::npc::territory::{HuntState, ProtectYoungState, Territory, TerritoryPatrolState};
+use crate::npc::relic::{
+    GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
+    TrialEval, TrialEvalScorer, TrialState,
+};
+use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
+use crate::npc::territory::{
+    HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
+    TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
+};
+use crate::skin::{npc_uuid, NpcPlayerSkin, NpcSkinFallbackPolicy, SignedSkin, SkinPool};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
 
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct NpcMarker;
+
+pub struct NpcSkinSpawnContext<'a> {
+    pub pool: Option<&'a mut SkinPool>,
+    pub policy: NpcSkinFallbackPolicy,
+}
+
+impl NpcSkinSpawnContext<'_> {
+    pub const fn new(
+        pool: Option<&mut SkinPool>,
+        policy: NpcSkinFallbackPolicy,
+    ) -> NpcSkinSpawnContext<'_> {
+        NpcSkinSpawnContext { pool, policy }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Component)]
 #[allow(dead_code, unfulfilled_lint_expectations)]
@@ -266,9 +288,12 @@ pub(crate) fn initial_age_for_index(index: u32, max_age_ticks: f64, max_ratio: f
     (bucket * max_ratio).clamp(0.0, 1.0) * max_age_ticks
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seed_initial_rogue_population_on_startup(
     mut commands: Commands,
+    mut notices: EventWriter<NpcSpawnNotice>,
     config: Option<Res<RoguePopulationSeedConfig>>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
@@ -284,6 +309,17 @@ fn seed_initial_rogue_population_on_startup(
         *already_seeded = true;
         return;
     }
+    let skin_policy = match skin_pool.as_deref_mut() {
+        Some(pool) => {
+            pool.drain_ready();
+            if pool.ready_for_spawn() {
+                NpcSkinFallbackPolicy::AllowFallback
+            } else {
+                return;
+            }
+        }
+        None => NpcSkinFallbackPolicy::AllowFallback,
+    };
     let Some(zones) = zone_registry.as_deref() else {
         tracing::warn!("[bong][npc] rogue seed skipped — ZoneRegistry missing");
         return;
@@ -303,10 +339,30 @@ fn seed_initial_rogue_population_on_startup(
         return;
     }
 
-    let reserved = match registry.as_deref_mut() {
-        Some(r) => r.reserve_spawn_batch(cfg.target_count as usize) as u32,
-        None => cfg.target_count,
-    };
+    let (desired_resource_count, desired_other_count) =
+        match (resource_zones.is_empty(), other_zones.is_empty()) {
+            (true, true) => {
+                return;
+            }
+            (true, false) => (0u32, cfg.target_count),
+            (false, true) => (cfg.target_count, 0u32),
+            (false, false) => {
+                let r = ((cfg.target_count as f32) * cfg.resource_fraction).round() as u32;
+                (
+                    r.min(cfg.target_count),
+                    cfg.target_count.saturating_sub(r.min(cfg.target_count)),
+                )
+            }
+        };
+
+    let resource_dist = reserve_zone_distribution(
+        registry.as_deref_mut(),
+        &resource_zones,
+        desired_resource_count,
+    );
+    let other_dist =
+        reserve_zone_distribution(registry.as_deref_mut(), &other_zones, desired_other_count);
+    let reserved = resource_dist.iter().sum::<u32>() + other_dist.iter().sum::<u32>();
     if reserved == 0 {
         tracing::warn!(
             "[bong][npc] rogue seed skipped — NpcRegistry budget exhausted (desired={})",
@@ -314,25 +370,6 @@ fn seed_initial_rogue_population_on_startup(
         );
         return;
     }
-
-    let (resource_count, other_count) = match (resource_zones.is_empty(), other_zones.is_empty()) {
-        (true, true) => {
-            // classify 已兜底，这里不可达；保守回滚再退出。
-            if let Some(r) = registry.as_deref_mut() {
-                r.release_spawn_batch(reserved as usize);
-            }
-            return;
-        }
-        (true, false) => (0u32, reserved),
-        (false, true) => (reserved, 0u32),
-        (false, false) => {
-            let r = ((reserved as f32) * cfg.resource_fraction).round() as u32;
-            (r.min(reserved), reserved.saturating_sub(r.min(reserved)))
-        }
-    };
-
-    let resource_dist = distribute_counts_evenly(resource_count, resource_zones.len());
-    let other_dist = distribute_counts_evenly(other_count, other_zones.len());
 
     let max_age = NpcArchetype::Rogue.default_max_age_ticks();
     let mut global_index: u32 = 0;
@@ -345,14 +382,23 @@ fn seed_initial_rogue_population_on_startup(
         for _ in 0..count {
             let (pos, patrol_target) = seed_position_for_zone(zone, global_index);
             let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
-            spawn_rogue_npc_at(
+            let entity = spawn_rogue_npc_at(
                 &mut commands,
+                NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
                 layer,
                 zone.name.as_str(),
                 pos,
                 patrol_target,
                 age,
             );
+            notices.send(spawn_notice(
+                entity,
+                NpcArchetype::Rogue,
+                NpcSpawnSource::Seed,
+                zone.name.as_str(),
+                pos,
+                age,
+            ));
             global_index += 1;
         }
     }
@@ -361,9 +407,9 @@ fn seed_initial_rogue_population_on_startup(
         "[bong][npc] seeded {} rogue NPCs (resource_zones={} @ {} / other_zones={} @ {})",
         global_index,
         resource_zones.len(),
-        resource_count,
+        resource_dist.iter().sum::<u32>(),
         other_zones.len(),
-        other_count,
+        other_dist.iter().sum::<u32>(),
     );
     *already_seeded = true;
 }
@@ -371,6 +417,8 @@ fn seed_initial_rogue_population_on_startup(
 fn process_npc_reproduction_requests(
     mut commands: Commands,
     mut requests: EventReader<NpcReproductionRequest>,
+    mut notices: EventWriter<NpcSpawnNotice>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
 ) {
@@ -404,7 +452,7 @@ fn process_npc_reproduction_requests(
         }
 
         if let Some(registry) = registry.as_deref_mut() {
-            if registry.reserve_spawn_batch(1) == 0 {
+            if registry.reserve_zone_batch(request.home_zone.as_str(), 1) == 0 {
                 tracing::info!(
                     "[bong][npc] reproduction for `{}` rejected — registry budget exhausted",
                     request.home_zone
@@ -416,6 +464,10 @@ fn process_npc_reproduction_requests(
         let entity = match request.archetype {
             NpcArchetype::Commoner => spawn_commoner_npc_at(
                 &mut commands,
+                NpcSkinSpawnContext::new(
+                    skin_pool.as_deref_mut(),
+                    NpcSkinFallbackPolicy::AllowFallback,
+                ),
                 layer,
                 request.home_zone.as_str(),
                 request.position,
@@ -445,7 +497,33 @@ fn process_npc_reproduction_requests(
             request.home_zone,
             request.position
         );
+        notices.send(spawn_notice(
+            entity,
+            request.archetype,
+            NpcSpawnSource::Reproduction,
+            request.home_zone.as_str(),
+            request.position,
+            request.initial_age_ticks.max(0.0),
+        ));
     }
+}
+
+fn reserve_zone_distribution(
+    mut registry: Option<&mut NpcRegistry>,
+    zones: &[&crate::world::zone::Zone],
+    desired_total: u32,
+) -> Vec<u32> {
+    let desired = distribute_counts_evenly(desired_total, zones.len());
+    zones
+        .iter()
+        .zip(desired)
+        .map(|(zone, count)| match registry.as_deref_mut() {
+            Some(registry) => {
+                registry.reserve_zone_batch(zone.name.as_str(), count as usize) as u32
+            }
+            None => count,
+        })
+        .collect()
 }
 
 fn startup_npc_thinker() -> ThinkerBuilder {
@@ -460,12 +538,25 @@ fn startup_npc_thinker() -> ThinkerBuilder {
 fn spawn_single_zombie_npc_on_startup(
     mut commands: Commands,
     dimension_layers: Option<Res<crate::world::dimension::DimensionLayers>>,
+    mut notices: EventWriter<NpcSpawnNotice>,
 ) {
     let Some(dimension_layers) = dimension_layers else {
         return;
     };
     let layer = dimension_layers.overworld;
     let npc_entity = spawn_single_zombie_npc(&mut commands, layer);
+    notices.send(spawn_notice(
+        npc_entity,
+        NpcArchetype::Zombie,
+        NpcSpawnSource::Startup,
+        DEFAULT_SPAWN_ZONE_NAME,
+        DVec3::new(
+            NPC_SPAWN_POSITION[0],
+            NPC_SPAWN_POSITION[1],
+            NPC_SPAWN_POSITION[2],
+        ),
+        0.0,
+    ));
 
     tracing::info!(
         "[bong][npc] spawned zombie npc entity {npc_entity:?} at [{}, {}, {}]",
@@ -496,31 +587,18 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
-/// Beast thinker（plan §2）：
-/// 完整行为链是 ProtectYoung → Hunt（入侵者）→ 近战 → Chase → 领地巡逻
-/// → Wander。但 Phase 4 的 `TerritoryIntruder` / `ProtectYoung` Scorer
-/// 与 `Hunt` / `TerritoryPatrol` / `ProtectYoung` Action 的 ECS 注册在
-/// `ccfbb458` 因 e2e TPS 回归被撤回，尚未接入。
-///
-/// 当前降级到已注册的 core scorers / actions —— 幼崽繁衍真的 spawn
-/// 后仍能走"老化退休 / 近战 / 追击 / 游荡"的基础链，不会卡在
-/// `TerritoryPatrolAction::Requested`。下一 PR 恢复 Scorer/Action
-/// 注册时把 territory 行为接回来。
 fn beast_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
+        .when(ProtectYoungScorer, ProtectYoungAction)
+        .when(TerritoryIntruderScorer, HuntAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
+        .when(WanderScorer, TerritoryPatrolAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// Disciple thinker（plan §2）：完整设计是 Rogue 基线 + `MissionQueue` /
-/// `Loyalty` 的派系任务链；`MissionExecuteAction` / `LoyaltyScorer` /
-/// `MissionQueueScorer` 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到
-/// Rogue 行为链，行为和 `rogue_npc_thinker` 等价（保留独立 fn 是为了
-/// 让 spawn_disciple_npc_at 的 FactionMembership 组件仍有唯一入口，
-/// 等任务行为接入时从此处扩展）。
 #[allow(dead_code)]
 fn disciple_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
@@ -528,30 +606,30 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(FactionDuelScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
+        .when(MissionQueueScorer, MissionExecuteAction)
         .when(CultivationDriveScorer, CultivateAction)
+        .when(SocializeScorer, SocializeAction)
         .when(CuriosityScorer, WanderAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// GuardianRelic thinker（plan §2）：完整行为包括 `GuardianDuty` 追入侵者
-/// 和 `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
-/// 的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander。
-///
-/// 兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
-///
-/// 不走 AgeingScorer —— GuardianRelic 不老。
 #[allow(dead_code)]
 fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
+        .when(GuardianDutyScorer, GuardAction)
+        .when(TrialEvalScorer, TrialAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// Spawn a Rogue (散修) NPC. 用 `VillagerEntityBundle` 外观（未来接 GeyserMC skin 再区分）。
+/// Spawn a Rogue (散修) NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
 pub fn spawn_rogue_npc_at(
     commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
     spawn_position: DVec3,
@@ -559,33 +637,21 @@ pub fn spawn_rogue_npc_at(
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let entity = commands
-        .spawn((
-            VillagerEntityBundle {
-                kind: EntityKind::VILLAGER,
-                layer: EntityLayerId(layer),
-                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                ..Default::default()
-            },
-            Transform::from_xyz(
-                spawn_position.x as f32,
-                spawn_position.y as f32,
-                spawn_position.z as f32,
-            ),
-            GlobalTransform::default(),
-            NpcMarker,
-            NpcBlackboard::default(),
-            loadout.clone(),
-            loadout.melee_archetype,
-            loadout.melee_profile(),
-            NpcArchetype::Rogue,
-            Navigator::new(),
-            MovementController::new(),
-            loadout.movement_capabilities,
-            MovementCooldowns::default(),
-            NpcPatrol::new(home_zone, patrol_target),
-        ))
-        .id();
+    let skin = draw_npc_skin(skin_context, NpcArchetype::Rogue, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        loadout.clone(),
+        NpcArchetype::Rogue,
+        home_zone,
+        patrol_target,
+    );
+
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Rogue, skin);
+    }
 
     commands.entity(entity).insert((
         WanderState::default(),
@@ -594,23 +660,19 @@ pub fn spawn_rogue_npc_at(
         rogue_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Rogue);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Rogue.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
 }
 
-/// Spawn a Commoner NPC. Uses [`VillagerEntityBundle`] for visual distinction
-/// from the combat-oriented zombie. Starting age is controlled by
+/// Spawn a Commoner NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
+/// Starting age is controlled by
 /// `initial_age_ticks` — newborns pass `0.0`, agent-spawned adults can pass
-/// any value `< NpcLifespan::for_archetype(Commoner).max_age_ticks`.
+/// any value below the Commoner default max age.
 pub fn spawn_commoner_npc_at(
     commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
     spawn_position: DVec3,
@@ -618,14 +680,95 @@ pub fn spawn_commoner_npc_at(
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let entity = commands
-        .spawn((
-            VillagerEntityBundle {
+    let skin = draw_npc_skin(skin_context, NpcArchetype::Commoner, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        loadout.clone(),
+        NpcArchetype::Commoner,
+        home_zone,
+        patrol_target,
+    );
+
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Commoner, skin);
+    }
+
+    commands.entity(entity).insert((
+        Hunger::default(),
+        WanderState::default(),
+        commoner_npc_thinker(),
+    ));
+
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, initial_age_ticks);
+    commands.entity(entity).insert(runtime);
+
+    entity
+}
+
+fn draw_npc_skin(
+    skin_context: NpcSkinSpawnContext<'_>,
+    archetype: NpcArchetype,
+    spawn_position: DVec3,
+) -> Option<SignedSkin> {
+    let pool = skin_context.pool?;
+    if skin_context.policy == NpcSkinFallbackPolicy::WaitForReady && !pool.ready_for_spawn() {
+        return None;
+    }
+
+    let salt = skin_salt(spawn_position);
+    Some(pool.next_for(archetype, salt))
+}
+
+fn skin_salt(spawn_position: DVec3) -> u64 {
+    spawn_position.x.to_bits()
+        ^ spawn_position.y.to_bits().rotate_left(17)
+        ^ spawn_position.z.to_bits().rotate_left(31)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_rogue_commoner_base(
+    commands: &mut Commands,
+    layer: Entity,
+    spawn_position: DVec3,
+    skin: &Option<SignedSkin>,
+    loadout: NpcCombatLoadout,
+    archetype: NpcArchetype,
+    home_zone: &str,
+    patrol_target: DVec3,
+) -> Entity {
+    let mut entity_commands = commands.spawn_empty();
+    match fallback_rogue_commoner_kind(skin) {
+        EntityKind::PLAYER => {
+            entity_commands.insert(PlayerEntityBundle {
+                kind: EntityKind::PLAYER,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            });
+        }
+        EntityKind::WITCH => {
+            entity_commands.insert(WitchEntityBundle {
+                kind: EntityKind::WITCH,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            });
+        }
+        _ => {
+            entity_commands.insert(VillagerEntityBundle {
                 kind: EntityKind::VILLAGER,
                 layer: EntityLayerId(layer),
                 position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
                 ..Default::default()
-            },
+            });
+        }
+    }
+
+    entity_commands
+        .insert((
             Transform::from_xyz(
                 spawn_position.x as f32,
                 spawn_position.y as f32,
@@ -637,30 +780,37 @@ pub fn spawn_commoner_npc_at(
             loadout.clone(),
             loadout.melee_archetype,
             loadout.melee_profile(),
-            NpcArchetype::Commoner,
+            archetype,
             Navigator::new(),
             MovementController::new(),
             loadout.movement_capabilities,
             MovementCooldowns::default(),
             NpcPatrol::new(home_zone, patrol_target),
         ))
-        .id();
+        .id()
+}
 
+fn attach_player_skin(
+    commands: &mut Commands,
+    entity: Entity,
+    archetype: NpcArchetype,
+    skin: SignedSkin,
+) {
+    let uuid = npc_uuid(entity);
     commands.entity(entity).insert((
-        Hunger::default(),
-        WanderState::default(),
-        commoner_npc_thinker(),
+        UniqueId(uuid),
+        NpcPlayerSkin {
+            uuid,
+            name: npc_skin_name(entity, archetype),
+            skin,
+        },
     ));
+}
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Commoner);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Commoner.default_max_age_ticks(),
-    );
-
-    commands.entity(entity).insert(runtime);
-
-    entity
+fn npc_skin_name(entity: Entity, archetype: NpcArchetype) -> String {
+    let mut name = format!("bong_{}_{}", archetype.as_str(), entity.index());
+    name.truncate(16);
+    name
 }
 
 /// Spawn a Beast (妖兽) NPC. 用 `ZombieEntityBundle` 视觉占位（未来换真实 entity model）。
@@ -713,15 +863,20 @@ pub fn spawn_beast_npc_at(
         beast_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Beast.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
+}
+
+pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
+    if skin.as_ref().is_some_and(|skin| !skin.is_fallback()) {
+        EntityKind::PLAYER
+    } else if skin.as_ref().is_some_and(SignedSkin::is_fallback) {
+        EntityKind::WITCH
+    } else {
+        EntityKind::VILLAGER
+    }
 }
 
 /// Spawn a Disciple (宗门弟子) NPC. 基于 Rogue 外观 + 挂 FactionMembership。
@@ -773,6 +928,7 @@ pub fn spawn_disciple_npc_at(
         WanderState::default(),
         CultivateState::default(),
         CultivationDriveHistory::default(),
+        SocializeState::default(),
         MissionExecuteState::default(),
         FactionMembership {
             faction_id,
@@ -787,12 +943,7 @@ pub fn spawn_disciple_npc_at(
         disciple_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Disciple);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Disciple.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Disciple, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -914,6 +1065,24 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             NPC_SPAWN_POSITION[2],
         ),
     )
+}
+
+pub fn spawn_notice(
+    entity: Entity,
+    archetype: NpcArchetype,
+    source: NpcSpawnSource,
+    home_zone: &str,
+    position: DVec3,
+    initial_age_ticks: f64,
+) -> NpcSpawnNotice {
+    NpcSpawnNotice {
+        npc_id: crate::npc::brain::canonical_npc_id(entity),
+        archetype,
+        source,
+        home_zone: home_zone.to_string(),
+        position,
+        initial_age_ticks,
+    }
 }
 
 #[cfg(test)]
@@ -1200,6 +1369,7 @@ mod tests {
     fn spawn_test_commoner(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_commoner_npc_at(
             &mut commands,
+            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(20.0, 66.0, 20.0),
@@ -1246,14 +1416,150 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rogue_commoner_visual_kind_uses_player_only_for_real_skin() {
+        assert_eq!(fallback_rogue_commoner_kind(&None), EntityKind::VILLAGER);
+        assert_eq!(
+            fallback_rogue_commoner_kind(&Some(SignedSkin::fallback())),
+            EntityKind::WITCH,
+            "MineSkin fallback sentinel should produce visible vanilla fallback, not Steve"
+        );
+        assert_eq!(
+            fallback_rogue_commoner_kind(&Some(SignedSkin {
+                value: "value".into(),
+                signature: "sig".into(),
+                source: crate::skin::SkinSource::MineSkinRandom {
+                    hash: "hash".into(),
+                },
+            })),
+            EntityKind::PLAYER
+        );
+    }
+
     fn spawn_test_rogue(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_rogue_npc_at(
             &mut commands,
+            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(18.0, 66.0, 18.0),
             DVec3::new(18.0, 66.0, 18.0),
             0.0,
+        );
+    }
+
+    #[test]
+    fn spawn_beast_npc_at_attaches_live_territory_brain_components() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (setup_test_layer, spawn_test_beast.after(setup_test_layer)),
+        );
+        app.update();
+        app.update();
+
+        let beast = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<TerritoryPatrolState>(beast).is_some());
+        assert!(app.world().get::<HuntState>(beast).is_some());
+        assert!(app.world().get::<ProtectYoungState>(beast).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(beast)
+            .expect("beast should carry the live territory thinker");
+    }
+
+    #[test]
+    fn spawn_disciple_npc_at_attaches_mission_and_social_state() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_disciple.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let disciple = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<MissionExecuteState>(disciple).is_some());
+        assert!(app.world().get::<SocializeState>(disciple).is_some());
+        assert!(app.world().get::<FactionMembership>(disciple).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(disciple)
+            .expect("disciple should carry the live faction/social thinker");
+    }
+
+    #[test]
+    fn spawn_relic_guard_npc_at_attaches_guardian_trial_state() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<GuardState>(guard).is_some());
+        assert!(app.world().get::<TrialState>(guard).is_some());
+        assert!(app.world().get::<GuardianDuty>(guard).is_some());
+        assert!(app.world().get::<TrialEval>(guard).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(guard)
+            .expect("relic guard should carry the live guardian thinker");
+    }
+
+    fn only_spawned_npc(app: &mut App) -> Entity {
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+        let npcs = query.iter(world).collect::<Vec<_>>();
+        assert_eq!(npcs.len(), 1);
+        npcs[0]
+    }
+
+    fn spawn_test_beast(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_beast_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(40.0, 66.0, 40.0),
+            Territory::new(DVec3::new(40.0, 66.0, 40.0), 30.0),
+            0.0,
+        );
+    }
+
+    fn spawn_test_disciple(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_disciple_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(42.0, 66.0, 42.0),
+            DVec3::new(42.0, 66.0, 42.0),
+            FactionId::Attack,
+            FactionRank::Disciple,
+            None,
+            0.0,
+        );
+    }
+
+    fn spawn_test_relic_guard(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_relic_guard_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(44.0, 66.0, 44.0),
+            24.0,
+            "relic:test",
+            "trial:test",
         );
     }
 
@@ -1349,6 +1655,7 @@ mod tests {
         app.insert_resource(zones);
         app.insert_resource(NpcRegistry::default());
         app.insert_resource(RoguePopulationSeedConfig::default());
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1402,6 +1709,7 @@ mod tests {
             target_count: 0,
             ..RoguePopulationSeedConfig::default()
         });
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1427,6 +1735,7 @@ mod tests {
             target_count: 10,
             ..RoguePopulationSeedConfig::default()
         });
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1451,6 +1760,7 @@ mod tests {
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1487,6 +1797,7 @@ mod tests {
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1523,6 +1834,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1558,6 +1870,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1590,6 +1903,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         let mut registry = NpcRegistry::default();
         registry.live_npc_count = registry.max_npc_count;
         registry.spawn_paused = true;

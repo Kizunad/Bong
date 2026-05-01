@@ -38,6 +38,16 @@ final class InventoryEquipRules {
         "hoe_xuantie"
     );
 
+    private static final Set<String> TOOL_TEMPLATE_IDS = Set.of(
+        "cai_yao_dao",
+        "bao_chu",
+        "cao_lian",
+        "dun_qi_jia",
+        "gua_dao",
+        "gu_hai_qian",
+        "bing_jia_shou_tao"
+    );
+
     private static final Set<String> TREASURE_TEMPLATE_IDS = Set.of(
         "starter_talisman",
         "broken_artifact"
@@ -56,10 +66,11 @@ final class InventoryEquipRules {
 
         WeaponKind weaponKind = weaponKindOf(item.itemId());
         boolean hoe = isHoe(item.itemId());
+        boolean tool = isTool(item.itemId());
         boolean fromTwoHand = sourceSlot == EquipSlotType.TWO_HAND;
 
         return switch (targetSlot) {
-            case MAIN_HAND -> (weaponKind != null || hoe)
+            case MAIN_HAND -> (weaponKind != null || hoe || tool)
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
             case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
                 || isTreasure(item))
@@ -69,7 +80,7 @@ final class InventoryEquipRules {
                     || (!isOccupied(equipped, EquipSlotType.MAIN_HAND)
                     && !isOccupied(equipped, EquipSlotType.OFF_HAND)));
             case TREASURE_BELT_0, TREASURE_BELT_1, TREASURE_BELT_2, TREASURE_BELT_3 -> isTreasure(item);
-            case HEAD, CHEST, LEGS, FEET -> weaponKind == null && !hoe;
+            case HEAD, CHEST, LEGS, FEET -> weaponKind == null && !hoe && !tool;
         };
     }
 
@@ -92,7 +103,7 @@ final class InventoryEquipRules {
     }
 
     static boolean canPlaceIntoHotbar(InventoryItem item) {
-        return isSingleCell(item) && !isWeapon(item) && !isTreasure(item);
+        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item);
     }
 
     static boolean canPlaceIntoQuickUse(InventoryItem item) {
@@ -111,6 +122,10 @@ final class InventoryEquipRules {
         return item != null && isTreasure(item.itemId());
     }
 
+    static boolean isTool(InventoryItem item) {
+        return item != null && isTool(item.itemId());
+    }
+
     private static boolean isSingleCell(InventoryItem item) {
         return item != null && item.gridWidth() == 1 && item.gridHeight() == 1;
     }
@@ -127,6 +142,10 @@ final class InventoryEquipRules {
 
     private static boolean isTreasure(String itemId) {
         return itemId != null && TREASURE_TEMPLATE_IDS.contains(itemId);
+    }
+
+    private static boolean isTool(String itemId) {
+        return itemId != null && TOOL_TEMPLATE_IDS.contains(itemId);
     }
 
     private static WeaponKind weaponKindOf(String itemId) {

@@ -85,7 +85,7 @@
           },
           "qi_cost": {
             "minimum": 0,
-            "type": "integer"
+            "type": "number"
           },
           "cast_ticks": {
             "minimum": 0,

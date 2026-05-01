@@ -30,5 +30,38 @@
       "type": "mentor",
       "mentor_char": 9999
     }
+  },
+  {
+    "v": 1,
+    "char_id": 3003,
+    "skill": "combat",
+    "amount": 4,
+    "source": {
+      "type": "action",
+      "plan_id": "combat",
+      "action": "kill_npc"
+    }
+  },
+  {
+    "v": 1,
+    "char_id": 3003,
+    "skill": "mineral",
+    "amount": 1,
+    "source": {
+      "type": "action",
+      "plan_id": "mineral",
+      "action": "ore_drop"
+    }
+  },
+  {
+    "v": 1,
+    "char_id": 3003,
+    "skill": "cultivation",
+    "amount": 2,
+    "source": {
+      "type": "action",
+      "plan_id": "cultivation",
+      "action": "meridian_open"
+    }
   }
 ]

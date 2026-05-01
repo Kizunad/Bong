@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,6 +30,7 @@ public class BotanyHarvestProgressHandlerTest {
         assertEquals("session-botany-01", snapshot.sessionId());
         assertEquals(BotanyHarvestMode.MANUAL, snapshot.mode());
         assertEquals(0.6, snapshot.progress(), 0.0001);
+        assertEquals(List.of("靠近后真元每秒缓慢流失"), snapshot.hazardHints());
     }
 
     @Test

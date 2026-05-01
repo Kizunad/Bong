@@ -8,12 +8,13 @@ const TREND_WINDOW = 3;
 const TREND_EPSILON = 0.02;
 const KEY_PLAYER_LIMIT = 3;
 
-const AGENT_ORDER = ["calamity", "mutation", "era"] as const;
+const AGENT_ORDER = ["calamity", "mutation", "era", "npc_producer"] as const;
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
   calamity: "灾劫 Agent",
   mutation: "变化 Agent",
   era: "演绎时代 Agent",
+  npc_producer: "NPC 推演器",
 };
 
 export type TrendDirection = "rising" | "stable" | "falling";
@@ -47,6 +48,15 @@ export interface PeerDecisionSummary {
   reasoning: string;
   commandCount: number;
   narrationCount: number;
+}
+
+export interface RecentNarrationSummary {
+  agentName: string;
+  displayName: string;
+  scope: AgentDecision["narrations"][number]["scope"];
+  target?: string;
+  style: AgentDecision["narrations"][number]["style"];
+  text: string;
 }
 
 export interface KeyPlayerSummary {
@@ -337,6 +347,31 @@ export class WorldModel {
       }));
   }
 
+  getRecentNarrations(limit = 6): RecentNarrationSummary[] {
+    const boundedLimit = Math.max(0, Math.trunc(limit));
+    if (boundedLimit === 0) {
+      return [];
+    }
+
+    const entries: RecentNarrationSummary[] = [];
+    for (const [agentName, decision] of [...this.lastDecisions.entries()].sort(([left], [right]) =>
+      compareAgentNames(left, right),
+    )) {
+      for (const narration of decision.narrations) {
+        entries.push({
+          agentName,
+          displayName: AGENT_DISPLAY_NAMES[agentName] ?? `${agentName} Agent`,
+          scope: narration.scope,
+          target: narration.target,
+          style: narration.style,
+          text: narration.text,
+        });
+      }
+    }
+
+    return entries.slice(-boundedLimit);
+  }
+
   private applySnapshot(snapshot: Partial<WorldModelSnapshot>): void {
     this.currentEraValue = sanitizeCurrentEra(snapshot.currentEra);
 
@@ -557,6 +592,7 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
   const clonedNpcs: NpcSnapshot[] = state.npcs.map((npc): NpcSnapshot => ({
     id: npc.id,
     kind: npc.kind,
+    zone: npc.zone,
     pos: [...npc.pos],
     state: npc.state,
     blackboard: { ...npc.blackboard },
@@ -601,6 +637,22 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
             })),
           }
         : undefined,
+      social: player.social
+        ? {
+            renown: {
+              ...player.social.renown,
+              top_tags: player.social.renown.top_tags.map((tag) => ({ ...tag })),
+            },
+            relationships: player.social.relationships.map((relationship) => ({
+              ...relationship,
+              metadata: cloneJsonValue(relationship.metadata),
+            })),
+            exposed_to_count: player.social.exposed_to_count,
+            faction_membership: player.social.faction_membership
+              ? { ...player.social.faction_membership }
+              : undefined,
+          }
+        : undefined,
     })),
     npcs: clonedNpcs,
     factions: state.factions?.map((faction): NonNullable<WorldStateV1["factions"]>[number] => ({
@@ -618,6 +670,11 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       details: event.details ? { ...event.details } : undefined,
     })),
   };
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined || value === null) return value;
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function cloneZoneSnapshot(zone: ZoneSnapshot): ZoneSnapshot {
@@ -642,6 +699,7 @@ function cloneDecision(decision: AgentDecision): AgentDecision {
       target: narration.target,
       text: narration.text,
       style: narration.style,
+      kind: narration.kind,
     })),
     reasoning: decision.reasoning,
   };
@@ -804,11 +862,13 @@ function sanitizeDecision(decision: unknown): AgentDecision | null {
     const target = narration.target;
     const text = narration.text;
     const style = narration.style;
+    const kind = narration.kind;
     if (
       typeof scope !== "string" ||
       (target !== undefined && typeof target !== "string") ||
       typeof text !== "string" ||
-      typeof style !== "string"
+      typeof style !== "string" ||
+      (kind !== undefined && typeof kind !== "string")
     ) {
       continue;
     }
@@ -818,6 +878,7 @@ function sanitizeDecision(decision: unknown): AgentDecision | null {
       target,
       text,
       style: style as AgentDecision["narrations"][number]["style"],
+      kind: kind as AgentDecision["narrations"][number]["kind"],
     });
   }
 

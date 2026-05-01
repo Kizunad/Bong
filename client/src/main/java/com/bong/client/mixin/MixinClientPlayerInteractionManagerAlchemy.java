@@ -1,0 +1,59 @@
+package com.bong.client.mixin;
+
+import com.bong.client.alchemy.AlchemyFurnaceItems;
+import com.bong.client.alchemy.AlchemyScreen;
+import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.inventory.model.EquipSlotType;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.network.ClientRequestSender;
+import net.minecraft.block.Blocks;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.network.ClientPlayerInteractionManager;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+@Mixin(ClientPlayerInteractionManager.class)
+public abstract class MixinClientPlayerInteractionManagerAlchemy {
+    @Inject(method = "interactBlock", at = @At("HEAD"), cancellable = true)
+    private void bong$alchemyInteractBlock(
+        ClientPlayerEntity player,
+        Hand hand,
+        BlockHitResult hit,
+        CallbackInfoReturnable<ActionResult> cir
+    ) {
+        if (hand != Hand.MAIN_HAND || player == null || hit == null) return;
+
+        InventoryItem mainHand = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
+        if (mainHand != null
+            && AlchemyFurnaceItems.isFurnaceItem(mainHand.itemId())
+            && mainHand.instanceId() > 0) {
+            BlockPos placePos = hit.getBlockPos().offset(hit.getSide());
+            ClientRequestSender.sendAlchemyFurnacePlace(placePos, mainHand.instanceId());
+            cir.setReturnValue(ActionResult.SUCCESS);
+            return;
+        }
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) return;
+        BlockPos pos = hit.getBlockPos();
+        if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
+            && shouldOpenAlchemyFurnace(pos, AlchemyFurnaceStore.snapshot())) {
+            ClientRequestSender.sendAlchemyOpenFurnace(pos);
+            client.execute(() -> client.setScreen(new AlchemyScreen(pos)));
+            cir.setReturnValue(ActionResult.SUCCESS);
+        }
+    }
+
+    static boolean shouldOpenAlchemyFurnace(BlockPos clickedPos, AlchemyFurnaceStore.Snapshot snapshot) {
+        if (clickedPos == null || snapshot == null || snapshot.pos() == null) return false;
+        return clickedPos.equals(snapshot.pos());
+    }
+}

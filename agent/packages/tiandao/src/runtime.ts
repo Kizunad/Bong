@@ -23,6 +23,10 @@ import {
   formatNarrationLowScoreWarning,
   summarizeNarrationAverage,
 } from "./narration-eval.js";
+import {
+  produceDeterministicNpcDecisions,
+  type DeterministicNpcProducer,
+} from "./npc-producer.js";
 import type { AgentDecision } from "./parse.js";
 import { RedisIpc } from "./redis-ipc.js";
 import {
@@ -128,6 +132,7 @@ export interface RuntimeDeps {
   logger?: Pick<typeof console, "log" | "error" | "warn">;
   maxLoopIterations?: number;
   telemetrySink?: TelemetrySink;
+  deterministicNpcProducer?: DeterministicNpcProducer;
 }
 
 interface WorldStateCursor {
@@ -153,6 +158,7 @@ export interface TickDeps {
   chatSignalCount?: number;
   telemetrySink?: TelemetrySink;
   telemetryWarnLogger?: Pick<typeof console, "warn">;
+  deterministicNpcProducer?: DeterministicNpcProducer;
 }
 
 export interface TickPublishMetadata {
@@ -387,6 +393,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     chatSignalCount,
     telemetrySink,
     telemetryWarnLogger,
+    deterministicNpcProducer,
   } = deps;
   const measuredTickStartMs = tickStartedAtMs ?? Date.now();
   const effectiveModelOverrides = modelOverrides ?? {
@@ -490,9 +497,19 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     }
   }
 
-  const merged = new Arbiter(state).merge(sourcedDecisions);
-  const totalCommands = sourcedDecisions.reduce((sum, { decision }) => sum + decision.commands.length, 0);
-  const totalNarrations = sourcedDecisions.reduce((sum, { decision }) => sum + decision.narrations.length, 0);
+  const producer = deterministicNpcProducer ?? produceDeterministicNpcDecisions;
+  const producedNpcDecisions = producer({
+    state,
+    worldModel,
+    sourcedDecisions,
+    metadata,
+  });
+  const decisionsForMerge = producedNpcDecisions.length > 0
+    ? [...sourcedDecisions, ...producedNpcDecisions]
+    : sourcedDecisions;
+  const merged = new Arbiter(state).merge(decisionsForMerge);
+  const totalCommands = decisionsForMerge.reduce((sum, { decision }) => sum + decision.commands.length, 0);
+  const totalNarrations = decisionsForMerge.reduce((sum, { decision }) => sum + decision.narrations.length, 0);
   const narrationScores = evaluateNarrations(merged.narrations);
   const narrationLowScoreCount = narrationScores.filter(
     (entry) => entry.score < NARRATION_LOW_SCORE_THRESHOLD,
@@ -529,7 +546,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   }
 
   if (worldModel) {
-    for (const { source, decision } of sourcedDecisions) {
+    for (const { source, decision } of decisionsForMerge) {
       worldModel.recordDecision(source, decision);
     }
   }
@@ -593,7 +610,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   return {
     totalCommands,
     totalNarrations,
-    skipped: sourcedDecisions.length === 0,
+    skipped: decisionsForMerge.length === 0,
     metadata,
     metrics,
   };
@@ -713,6 +730,7 @@ export async function runRuntime(
       chatSignalCount: 0,
       telemetrySink,
       telemetryWarnLogger: logger,
+      deterministicNpcProducer: deps.deterministicNpcProducer,
     });
     try {
       await telemetrySink.flush();
@@ -830,6 +848,7 @@ export async function runRuntime(
                   chatSignalCount: latestChatSignals.length,
                   telemetrySink,
                   telemetryWarnLogger: logger,
+                  deterministicNpcProducer: deps.deterministicNpcProducer,
                 });
               },
               publish: async () => {

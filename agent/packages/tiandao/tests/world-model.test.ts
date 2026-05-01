@@ -236,6 +236,39 @@ describe("WorldModel", () => {
     });
   });
 
+  it("summarizes recent narrations with optional kind for prompt dedupe", () => {
+    const model = new WorldModel();
+
+    model.recordDecision("calamity", {
+      commands: [],
+      narrations: [
+        {
+          scope: "player",
+          target: "offline:Elder",
+          text: "其人死处尚有余念，风从骨缝里过，下一回未必还认得归路。",
+          style: "perception",
+          kind: "death_insight",
+        },
+      ],
+      reasoning: "death insight",
+    });
+
+    const snapshot = model.toJSON();
+    const restored = WorldModel.fromJSON(snapshot);
+
+    expect(restored.getRecentNarrations()).toEqual([
+      {
+        agentName: "calamity",
+        displayName: "灾劫 Agent",
+        scope: "player",
+        target: "offline:Elder",
+        text: "其人死处尚有余念，风从骨缝里过，下一回未必还认得归路。",
+        style: "perception",
+      },
+    ]);
+    expect(snapshot.lastDecisions.calamity?.narrations[0]?.kind).toBe("death_insight");
+  });
+
   it("round-trips durable snapshot via toJSON/fromJSON and keeps ephemeral newcomers out", () => {
     const model = new WorldModel();
 
@@ -367,6 +400,7 @@ describe("WorldModel", () => {
         {
           id: "npc_disciple_001",
           kind: "zombie",
+          zone: "starter_zone",
           pos: [1, 64, 1],
           state: "idle",
           blackboard: {},

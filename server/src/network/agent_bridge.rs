@@ -55,6 +55,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
+        ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
+        ServerDataType::MiningProgress => "mining_progress",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
         ServerDataType::AlchemySession => "alchemy_session",
@@ -98,6 +100,16 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TribulationBroadcast => "tribulation_broadcast",
         ServerDataType::AscensionQuota => "ascension_quota",
         ServerDataType::HeartDemonOffer => "heart_demon_offer",
+        ServerDataType::BurstMeridianEvent => "burst_meridian_event",
+        ServerDataType::SocialAnonymity => "social_anonymity",
+        ServerDataType::SocialExposure => "social_exposure",
+        ServerDataType::SocialPact => "social_pact",
+        ServerDataType::SocialFeud => "social_feud",
+        ServerDataType::SocialRenownDelta => "social_renown_delta",
+        ServerDataType::SparringInvite => "sparring_invite",
+        ServerDataType::TradeOffer => "trade_offer",
+        ServerDataType::RealmVisionParams => "realm_vision_params",
+        ServerDataType::SpiritualSenseTargets => "spiritual_sense_targets",
     }
 }
 
@@ -472,6 +484,7 @@ mod server_data_tests {
                     composite_power: 0.35,
                     breakdown: sample_player_breakdown(),
                     zone: "blood_valley".to_string(),
+                    social: None,
                 }),
                 json!({
                     "v": SERVER_DATA_VERSION,
@@ -639,8 +652,20 @@ mod server_data_tests {
             "botany_harvest_progress"
         );
         assert_eq!(
+            payload_type_label(ServerDataType::MiningProgress),
+            "mining_progress"
+        );
+        assert_eq!(
             payload_type_label(ServerDataType::BotanySkill),
             "botany_skill"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::RealmVisionParams),
+            "realm_vision_params"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::SpiritualSenseTargets),
+            "spiritual_sense_targets"
         );
     }
 
@@ -721,6 +746,7 @@ mod server_data_tests {
             interrupted: false,
             completed: false,
             detail: "晨露未散".to_string(),
+            hazard_hints: Vec::new(),
             target_pos: Some([10.5, 64.0, 10.5]),
         });
         let botany_bytes = serialize_server_data_payload(&botany_payload)

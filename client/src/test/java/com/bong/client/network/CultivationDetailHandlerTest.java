@@ -175,6 +175,9 @@ public class CultivationDetailHandlerTest {
         assertEquals(5, SkillSetStore.snapshot().get(SkillId.HERBALISM).cap());
         assertEquals(5, SkillSetStore.snapshot().get(SkillId.ALCHEMY).cap());
         assertEquals(5, SkillSetStore.snapshot().get(SkillId.FORGING).cap());
+        assertEquals(5, SkillSetStore.snapshot().get(SkillId.COMBAT).cap());
+        assertEquals(5, SkillSetStore.snapshot().get(SkillId.MINERAL).cap());
+        assertEquals(5, SkillSetStore.snapshot().get(SkillId.CULTIVATION).cap());
     }
 
     @Test

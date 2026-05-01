@@ -1,0 +1,23 @@
+{
+  "id": "tool_cao_lian_v0",
+  "name": "草镰",
+  "station_tier_min": 1,
+  "tier_cap": 1,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [{ "material": "fan_tie", "count": 2 }],
+        "optional_carriers": [],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "cao_lian", "quality": 1.0 },
+    "good": { "weapon": "cao_lian", "quality": 0.8 },
+    "flawed": { "weapon": "cao_lian", "quality": 0.5 },
+    "waste": null,
+    "explode": { "damage": 4.0, "station_wear": 0.01 }
+  }
+}

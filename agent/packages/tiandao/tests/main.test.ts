@@ -80,7 +80,8 @@ describe("main mock execution", () => {
         ],
         narrations: [
           {
-            scope: "broadcast",
+            scope: "zone",
+            target: "blood_valley",
             text: "天象突变，兽潮将至。",
             style: "system_warning",
           },

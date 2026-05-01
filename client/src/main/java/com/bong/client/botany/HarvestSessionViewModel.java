@@ -1,5 +1,7 @@
 package com.bong.client.botany;
 
+import java.util.List;
+
 public record HarvestSessionViewModel(
     String sessionId,
     String targetId,
@@ -12,6 +14,7 @@ public record HarvestSessionViewModel(
     boolean interrupted,
     boolean completed,
     String detail,
+    List<String> hazardHints,
     double[] targetPos,
     long updatedAtMillis
 ) {
@@ -27,6 +30,7 @@ public record HarvestSessionViewModel(
         false,
         false,
         "",
+        List.of(),
         null,
         0L
     );
@@ -38,6 +42,7 @@ public record HarvestSessionViewModel(
         plantKindId = normalize(plantKindId);
         progress = clamp(progress);
         detail = normalize(detail);
+        hazardHints = normalizeHazardHints(hazardHints);
         targetPos = normalizePos(targetPos);
         updatedAtMillis = Math.max(0L, updatedAtMillis);
     }
@@ -72,6 +77,7 @@ public record HarvestSessionViewModel(
             interrupted,
             completed,
             detail,
+            List.of(),
             null,
             updatedAtMillis
         );
@@ -92,6 +98,40 @@ public record HarvestSessionViewModel(
         double[] targetPos,
         long updatedAtMillis
     ) {
+        return create(
+            sessionId,
+            targetId,
+            targetName,
+            plantKindId,
+            mode,
+            progress,
+            autoSelectable,
+            requestPending,
+            interrupted,
+            completed,
+            detail,
+            List.of(),
+            targetPos,
+            updatedAtMillis
+        );
+    }
+
+    public static HarvestSessionViewModel create(
+        String sessionId,
+        String targetId,
+        String targetName,
+        String plantKindId,
+        BotanyHarvestMode mode,
+        double progress,
+        boolean autoSelectable,
+        boolean requestPending,
+        boolean interrupted,
+        boolean completed,
+        String detail,
+        List<String> hazardHints,
+        double[] targetPos,
+        long updatedAtMillis
+    ) {
         if (normalize(sessionId).isEmpty()) {
             return empty();
         }
@@ -107,6 +147,7 @@ public record HarvestSessionViewModel(
             interrupted,
             completed,
             detail,
+            hazardHints,
             targetPos,
             updatedAtMillis
         );
@@ -150,6 +191,7 @@ public record HarvestSessionViewModel(
             false,
             false,
             detail,
+            hazardHints,
             targetPos,
             nowMillis
         );
@@ -171,6 +213,7 @@ public record HarvestSessionViewModel(
             true,
             false,
             reason,
+            hazardHints,
             targetPos,
             nowMillis
         );
@@ -197,5 +240,16 @@ public record HarvestSessionViewModel(
             }
         }
         return new double[] { src[0], src[1], src[2] };
+    }
+
+    private static List<String> normalizeHazardHints(List<String> src) {
+        if (src == null || src.isEmpty()) {
+            return List.of();
+        }
+        return src.stream()
+            .map(HarvestSessionViewModel::normalize)
+            .filter(s -> !s.isEmpty())
+            .limit(4)
+            .toList();
     }
 }

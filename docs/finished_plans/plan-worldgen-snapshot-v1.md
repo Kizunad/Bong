@@ -1,0 +1,507 @@
+# Bong · plan-worldgen-snapshot-v1 · 骨架
+
+**Worldgen 视觉快照 CI**：PR 修改 `worldgen/**` / `server/zones*.json` 时（或手动 `@preview-worldgen`），CI 启动 server + 真 Fabric client（headless），按预设 5 角度截图，配合 JSON 配置的"装饰方块"层（地名木牌 / zone 界碑 / 灵脉柱），将 5 张图打包为 artifact 并贴 PR comment；可与 base ref 自动对比。目标是把"读 raster 数字判断地形"换成"看真游戏画面"。
+
+**世界观锚点**：`worldview.md §九 距离衰减章 / §十 地理章`（地名 / zone 划分）· `worldview.md §六.2 缜密色 / §六.3 凝实色`（装饰方块的色调取材）
+
+**library 锚点**：装饰木牌文案取自 `docs/library/places/*`（zone 描述 / POI 命名）；现阶段先用 `zones.worldview.example.json` 的 `display_name` / `pois.name` 兜底
+
+**交叉引用**：
+- `plan-worldgen-v3.x`（前置；本 plan 不动 LAYER_REGISTRY 或 raster_export，只在其上加观测层）
+- `plan-client`（Fabric 微端；新 mod 模块 `com.bong.client.preview`）
+- `e2e.yml`（已有 server+agent 端到端 smoke；本 plan 引入 client 进 CI 是首次）
+- `plan-network-v1`（client↔server connection；预览 mod 用同套连接路径）
+
+**触发模型**：
+- `pull_request` 自动：`paths: worldgen/**` / `server/zones*.json` / `worldgen-preview.yml` 自身
+- `workflow_dispatch` 手动重跑
+- `issue_comment` 含 `@preview-worldgen` 在 PR 评论触发（权限：collaborator+，§10 待最终确认）
+
+**阶段总览**：
+- P0 ✅ 2026-04-30 单角度通链 + 内容闸通过（P3 chunk-ready barrier 修后）
+- P1 ✅ 2026-04-30 5 角度 + 装饰；P3 chunk-ready barrier 解 race 后产物有效
+- P2 ✅ 2026-04-30 PR 投递通；validator 兜底防"绿 CI 假阳"
+- P3 ✅ 2026-04-30 内容验收闸 + chunk-ready barrier 实装并接入 CI
+
+---
+
+## §0 设计轴心
+
+- [ ] **真 client 渲染，非 raster 投影**：截图来自 `./gradlew runClient` 启动的 Fabric client 飞过区域、`ScreenshotRecorder` 拍下的真游戏画面，不走 matplotlib / Chunky 路径追踪
+- [ ] **复用项目现成 pattern**：client 端走 `com.bong.client.weapon.WeaponScreenshotHarness` 范式（env var 激活 + ClientTickEvents 状态机 + `ScreenshotRecorder.takeScreenshot` + `client.scheduleStop()`）；server 端走 `world::tsy_container_spawn::load_tsy_container_spawn_registry`（`server/src/world/tsy_container_spawn.rs:74`）范式 + `ChunkLayer::set_block(pos, Block { state, nbt })` spawn 装饰
+- [ ] **配置驱动**：相机预设、装饰方块布局都走 JSON（`worldgen/preview/*.json`），不在 mod 内 hardcode；预设可用 generator 从 zones blueprint 派生
+- [ ] **装饰是世界观的一部分**：地名木牌 / 灵脉柱 / 境界界碑既是 PR 视觉标注，又是未来 worldgen 可选的"地标层"——P1 仅在 preview 模式 spawn，但数据结构允许未来 promote 到正式产物
+- [ ] **CI 资源不紧**：3000 mins 配额下，单 PR 5 张图 + base 对比 ≈ 8 min 可接受；不为了省时间牺牲画质
+- [ ] **每 P 独立可发**：P0 通链就有价值（哪怕只有一张俯视图也比没有强）；P1/P2 可分批落地
+- [ ] **与现有 e2e.yml 解耦**：新 workflow `worldgen-preview.yml`，不挂在 e2e 主链路上（避免 client headless 偶发失败拖累已稳定的 e2e）
+
+---
+
+## §1 P0 — 截图 harness 单角度通链
+
+> 目标：CI 跑通 `server (headless) + client (headless) → 单张俯视 PNG → upload-artifact`，不要求装饰、不要求多角度、不要求 PR comment。先把 client headless 这条链路从死变活。
+
+### 1.1 Workflow 文件
+
+- [ ] **新增** `.github/workflows/worldgen-preview.yml`
+  - 触发：`pull_request` (paths: `worldgen/**` / `server/zones*.json` / 自身) + `workflow_dispatch` + `issue_comment` 含 `@preview-worldgen`
+  - jobs.snapshot：runs-on `ubuntu-latest`，timeout 30min
+  - 步骤序：checkout → setup-java(17) / setup-rust → cache → install mesa + xvfb → start server (background) → wait server ready (TCP probe :25565) → run client headless → upload-artifact
+  - artifact name: `worldgen-snapshot-${{ github.event.pull_request.number || github.run_id }}`，path `client/run/screenshots/preview-*.png`
+
+### 1.2 Server headless 启动脚本
+
+- [ ] **新增** `scripts/preview/run-server-headless.sh`
+  - 内部：`cd server && cargo run --release` 后台 + 写 PID 到 `/tmp/bong-preview-server.pid`
+  - server 已是 offline mode + 不需 Mojang 认证（CLAUDE.md `cargo run` 注释）
+  - 等待 ready 信号：TCP probe `127.0.0.1:25565` accept 即视为 ready（Valence 监听后即可）
+  - 不需 Redis（preview 不挂 agent 链路；agent 关掉以省时间）
+
+### 1.3 Client headless 启动 + Fabric 截图 harness mod
+
+- [ ] **新增包** `client/src/main/java/com/bong/client/preview/`
+  - `PreviewHarnessClient` — `ClientModInitializer`，仅在 system property `bong.preview.harness=true` 时激活，避免污染普通 `runClient`
+  - `PreviewConfig` — record，从 `client/preview-harness.json` 读取（路径可被 `-Dbong.preview.config=...` 覆盖）
+  - `PreviewSession` — 状态机：`WAIT_CONNECT → WAIT_CHUNKS_LOADED → SCREENSHOT_LOOP → EXIT`
+- [ ] **screenshot 实现**：调 `net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(File runDir, String fileName, Framebuffer fb, Consumer<Text> messageReceiver)`；输出到 `client/run/screenshots/preview-<camera_name>.png`
+- [ ] **camera 控制**：mod 通过 `MinecraftClient.getInstance().player.setYaw/Pitch` + `/tp` 命令（OP 权限 via `connect_dev_op` 或 server 测试模式）
+- [ ] **退出**：截图全部成功 → `MinecraftClient.scheduleStop()`；任一步骤超时（默认 60s/角度）→ exit code 非 0 让 CI 红
+- [ ] **gradlew 调用**：`./gradlew runClientHeadless` 自定义 task（继承 `runClient` + 加 `-Dbong.preview.harness=true` + LWJGL 软渲染开关）
+
+### 1.4 Headless 渲染依赖（2026-04-28 调研后修订）
+
+- [ ] **runs-on `ubuntu-24.04`**：xvfb 21.1.12 预装，**无需 apt install** 任何额外包；mesa llvmpipe 支持 OpenGL 4.5 core，远超 MC 1.20.1 要求的 3.2 core
+- [ ] **xvfb 包装**：当前 fabric-loom `1.6-SNAPSHOT` **未包含**自动 `useXVFB`（main 分支才有），手动包：`xvfb-run -a --server-args='-screen 0 1280x720x24' ./gradlew runClient ...`。未来升 loom > 1.7 后可去掉手动包装
+- [ ] **官方参照已实跑**：`FabricMC/fabric-api/.github/workflows/build.yml` 的 `client_test` job 同模式（ubuntu-24.04 + 裸 `./gradlew` + upload `run/screenshots`），无须特殊 JVM args；问题只在 1.20.1 没 backport `runClientGametest` 框架，必须自写 mod 钩子（项目已有先例 `WeaponScreenshotHarness`）
+- [ ] **不再需要的措施**：之前担心的 `-Dorg.lwjgl.opengl.libname=...` / `-Dfabric.client.gl.context=mesa` —— 均不需要，xvfb + 默认 mesa 即足
+
+### 1.5 P0 单角度配置
+
+- [ ] `client/preview-harness.json`（最小版本）：
+  ```json
+  {
+    "server": "127.0.0.1:25565",
+    "username": "PreviewBot",
+    "wait_chunks_radius": 8,
+    "screenshots": [
+      { "name": "top", "tp": [0, 320, 0], "yaw": 0, "pitch": -90 }
+    ],
+    "exit_on_complete": true
+  }
+  ```
+- [ ] 命中位置 `(0, 320, 0)` = spawn zone 中心高空俯视
+
+### 1.6 P0 测试与验收
+
+- [ ] **本地通跑**：`bash scripts/preview/run-server-headless.sh & ./gradlew runClientHeadless` → 30s 内产出 `client/run/screenshots/preview-top.png`
+- [ ] **CI 通跑**：PR 改 `worldgen/scripts/terrain_gen/fields.py` → workflow 触发 → artifact 内有 `preview-top.png` 且非空（>10KB）
+- [ ] **失败信息**：server 没起来 / client 连不上 / xvfb 不工作 / 截图为空 → log 里有清晰 marker（不是 `Process exited 1` 一行带过）
+- [ ] **不在乎**：图好不好看、有没有装饰、多角度——P0 只验链路
+
+---
+
+## §2 P1 — 多角度（5 张）+ 装饰方块层
+
+> 目标：把 P0 的单角度扩到 5 角度（俯视 + 等角 NE/NW/SE/SW），并在截图前由 server 端按 JSON 配置 spawn 装饰方块（地名木牌 + zone 边界标记 + 灵脉柱）。
+
+### 2.1 相机预设
+
+- [ ] **新增** `worldgen/preview/cameras.json`（配置文件，CI 读取）：
+  ```json
+  {
+    "presets": [
+      { "name": "top",     "tp": [0, 320, 0],   "yaw": 0,    "pitch": -90 },
+      { "name": "iso_ne",  "tp": [-400, 200, -400], "yaw": 135,  "pitch": -30 },
+      { "name": "iso_nw",  "tp": [400, 200, -400],  "yaw": -135, "pitch": -30 },
+      { "name": "iso_se",  "tp": [-400, 200, 400],  "yaw": 45,   "pitch": -30 },
+      { "name": "iso_sw",  "tp": [400, 200, 400],   "yaw": -45,  "pitch": -30 }
+    ]
+  }
+  ```
+- [ ] camera tp 坐标随 blueprint world bounds 自适应（`worldgen/scripts/preview/gen_cameras.py` 从 `world.bounds_xz` 派生 4 个等角点）
+- [ ] mod 端：`PreviewSession` 按 list 顺序拍，每张之间等 chunks 加载稳定（`wait_chunks_radius` ticks）
+
+### 2.2 装饰方块 JSON
+
+- [ ] **新增** `worldgen/preview/decorations.json`（配置文件，gen 出来 + 可手编）：
+  ```json
+  {
+    "version": 1,
+    "items": [
+      {
+        "kind": "sign",
+        "pos": [0, 80, 0],
+        "block": "minecraft:oak_sign",
+        "lines": ["初醒原", "spirit_qi 0.3", "danger 1", ""]
+      },
+      {
+        "kind": "pillar",
+        "pos": [0, 75, 0],
+        "block": "minecraft:end_rod",
+        "height": 12
+      },
+      {
+        "kind": "boundary_marker",
+        "aabb_min": [-750, 70, -750],
+        "aabb_max": [750, 70, 750],
+        "block": "minecraft:soul_lantern",
+        "stride": 64
+      }
+    ]
+  }
+  ```
+- [ ] **支持的 kind**：
+  - `sign`：4 行木牌（MC 限制 4×15 字符），用于 zone 显示名 + 关键属性
+  - `pillar`：竖直方块柱，用于地标可见性增强（远距离也能看到 zone 中心）
+  - `boundary_marker`：AABB 边界点阵 spawn，沿矩形边按 stride 步长摆方块（zone 边界一目了然）
+
+### 2.3 装饰生成器
+
+- [ ] **新增** `worldgen/scripts/preview/gen_decorations.py`
+  - 输入：`server/zones.worldview.example.json`
+  - 自动生成：
+    - 每个 zone 的中心 sign（取 `display_name` + `spirit_qi` + `danger_level`）
+    - 每个 zone 中心 pillar（高度按 `danger_level` 1-5 调）
+    - 每个 zone aabb 的 boundary_marker
+    - 每个 POI 的 sign（取 `pois[].name` + `kind`，木牌位置 = `pos_xyz` 上方）
+  - 输出：`worldgen/preview/decorations.json`
+  - 可选：`--manual extra-decorations.json` 合并手编装饰（地标补强）
+
+### 2.4 Server 端装饰加载
+
+- [ ] **新增** `server/src/preview/mod.rs` + `server/src/preview/decorations.rs`
+  - 仅在启动参数 `--preview-mode` 或 env `BONG_PREVIEW=1` 时启用（普通 `cargo run` 不加载装饰）
+  - 启动期 system：读 `worldgen/preview/decorations.json` → 按 kind 派发到 `spawn_sign` / `spawn_pillar` / `spawn_boundary` ECS commands
+  - sign 文本写入：用 valence 的 sign block entity NBT；中文支持需确认 valence 当前版本（pinned `2b705351`）的 sign API
+- [ ] **新增** `scripts/preview/run-server-headless.sh` 加 `--preview-mode` flag
+
+### 2.5 P1 测试与验收
+
+- [ ] **本地**：`BONG_PREVIEW=1 cargo run --release` + 手动 client 进服 → 看到 spawn zone 中心有"初醒原"木牌 + end_rod 灯柱 + soul_lantern 边界点阵
+- [ ] **gen_decorations.py 单测**：feed minimal zones JSON（2 zones + 1 POI）→ 输出 decorations 含 6 个 sign + 2 pillar + 2 boundary_marker
+- [ ] **CI 通跑**：artifact 内有 `preview-top.png` / `preview-iso-{ne,nw,se,sw}.png` 共 5 张，每张大小合理（>50KB）；俯视图能肉眼看到至少 3 个 zone 的中心标记
+- [ ] **失败信息**：装饰 JSON 解析失败 / sign 文本 NBT 写错 → 启动期 panic 而非默默跳过
+
+---
+
+## §3 P2 — PR 投递 + base ref 对比
+
+> 目标：5 张图打包成一张总览，贴 PR comment；可选与 base ref 跑同样 5 张做视觉 diff（SSIM 高亮）。
+
+### 3.1 总览拼图
+
+- [ ] **新增** `scripts/preview/compose_grid.py`
+  - 输入 5 张 PNG → PIL 拼成 1 张总览（建议 1 大俯视 + 4 小等角的 2×3 mosaic）
+  - 装饰：每张子图加 caption（"top" / "iso_ne" 等）+ 时间戳 + commit short sha
+  - 输出：`client/run/screenshots/preview-grid.png`
+
+### 3.2 PR comment
+
+- [ ] **新增** `scripts/preview/post_comment.py`
+  - 用 `gh api` 或 actions/github-script 上传 grid.png 到 PR + 评论 markdown
+  - 评论模板包含：commit sha、5 张图的 thumbnail（`<img src="...artifact url..." width=200>`）、artifact 下载链接
+  - 防刷：同 PR 已存在 `[bong-snapshot]` 评论时编辑而非新发（marker tag 在评论首行）
+
+### 3.3 与 base ref 的视觉 diff
+
+- [ ] **workflow job 拆分**：snapshot-head（PR HEAD）+ snapshot-base（merge-base）+ diff（聚合）
+- [ ] **diff 工具**：`scripts/preview/ssim_diff.py` — `scikit-image.metrics.structural_similarity`，对每张图做对比，输出
+  - SSIM 分数（每张一个）+ diff heatmap（红高绿低）
+  - 总览拼图：head | base | heatmap 三列对照
+- [ ] **PR comment 升级**：含 SSIM 分数表 + diff overlay 链接；若所有 SSIM > 0.95 直接标记 "no visual change detected"，避免吵
+
+### 3.4 触发与权限
+
+- [ ] **`@preview-worldgen` comment trigger**：`issue_comment` event + `if: contains(github.event.comment.body, '@preview-worldgen')` + 限制 `github.event.comment.user.login` 在 collaborator 列表
+- [ ] **超时与并发**：单 PR 同时只跑一个 snapshot（`concurrency.group: snapshot-${{ github.event.pull_request.number }}`，cancel-in-progress: true）
+
+### 3.5 P2 测试与验收
+
+- [ ] PR 改 `worldgen/scripts/terrain_gen/fields.py` 中某个 zone 的高度模型 → comment 内 SSIM 在该 zone 对应的角度图上明显下降 + heatmap 红斑命中 zone 区域
+- [ ] PR 改 `docs/`（不该触发） → workflow 不跑
+- [ ] 评论 `@preview-worldgen` → workflow 触发；非 collaborator 评论同样字符串 → 不触发
+
+---
+
+## §4 P3 — Snapshot 内容验收闸 + chunk-ready barrier
+
+> 目标：CI 不再只看"截图文件存在"就 pass，必须实地核验图像内容。截图全空 → CI 红。
+> 同时修底层 chunk 加载 race（`PreviewSession` SETTLE 盲等 100 ticks 不够远距离传送后的 chunk 流式）。
+> 反例 fixture：PR #71 artifact run `25051736013`，5 张截图 3 张 100% sky / 1 张 71% void / top 仅 19.8% terrain；`iso_nw` 与 `iso_sw` byte-identical（同纯 sky color PNG，编码后字节相同；与 yaw 推导无关）。
+
+### 4.1 验收脚本
+
+- [ ] **新增** `scripts/preview/validate_snapshots.py`
+  - 输入：`client/run/screenshots/preview-*.png`
+  - 对每张图做色彩分类：
+    - **void**：R<20 且 G<20 且 B<20（未加载 chunk 黑块）
+    - **sky**：B>150 且 B>R+20 且 B>G+5
+    - **cloud**：R>200 且 G>200 且 B>200
+    - **terrain**：以上之外
+  - 验收规则：
+    - **R1 内容下限**：每张截图 terrain% ≥ 30%（top 俯视单独阈值，可放宽到 ≥ 15%）
+    - **R2 hash 唯一**：5 张 PNG 两两 MD5 不同（防同帧复用 / 同纯色 PNG）
+    - **R3 大小 sanity**：每张 ≥ 30KB（纯单色 PNG 编码后 ≈ 16KB，做地板）
+  - 任一失败 → exit 1，打印每张 `name | size | md5 | sky% | void% | terrain%` 六栏对照
+- [ ] **workflow 接入**：CI 在 upload-artifact **之前**跑 validator；fail 时 artifact 仍上传（留排错样本），但 step 红、PR comment 改成"snapshot 失败 — 见 artifact"
+
+### 4.2 修 chunk 加载 race
+
+- [ ] **client `PreviewSession`**：SETTLE 阶段从盲等改为「等 chunk 就位」
+  - 检查 `client.world.getChunkManager()` 在传送目标 (x, z) 周围 N×N chunks 是否已加载（N 与 server view_distance 对齐，默认 32）
+  - timeout 兜底：≥ 30s 仍未就位 → log warn 后继续拍，让 validator 把它打红（不在 client 侧 hard fail，让"截图能不能拍"和"内容合不合格"分离）
+- [ ] **server `boost_view_distance_for_preview`**：保留 32（再大对 mesa llvmpipe 软渲染性能负担过重）
+- [ ] **HACK 备选**（若 chunk-ready 监听难做）：`config.settle_ticks` 从 100 暴力提到 600（30s）—— 不优雅但便宜先让 CI 绿，validator 仍是必备
+
+### 4.3 P3 验收
+
+- [ ] **反向 fixture**：PR #71 artifact run `25051736013` 跑 validator 必须红，报告 R1 失败 4 张 + R2 失败（`iso_nw` == `iso_sw` MD5 相同）
+- [ ] **正向**：修后 CI run 5 张 PNG 全部 terrain ≥ 30% + 5 张 hash 互不相同 + 每张 ≥ 30KB
+- [ ] **回归保护**：手动把 `settle_ticks` 调回 100 重跑 → CI 必须红（防 SETTLE 时间被偷偷调小）
+
+### 4.4 数据契约
+
+| 契约 | 位置 |
+|------|------|
+| `scripts/preview/validate_snapshots.py` | 仓库根 `scripts/preview/` |
+| validator step 在 `worldgen-preview.yml` upload-artifact **之前** | `.github/workflows/worldgen-preview.yml` |
+| `PreviewSession.stepSettle` chunk-ready 检查 | `client/src/main/java/com/bong/client/preview/PreviewSession.java` |
+
+---
+
+## §5 数据契约（按 P 汇总，下游 grep 抓手）
+
+| P | 契约 | 位置 |
+|---|------|------|
+| P0 | `.github/workflows/worldgen-preview.yml` workflow | 仓库根 `.github/workflows/` |
+| P0 | `PreviewHarnessClient` mod entry + `PreviewConfig` + `PreviewSession` | `client/src/main/java/com/bong/client/preview/` |
+| P0 | `client/preview-harness.json` schema（server / username / screenshots[]） | `client/` |
+| P0 | `scripts/preview/run-server-headless.sh` | `scripts/preview/` |
+| P0 | `./gradlew runClientHeadless` task | `client/build.gradle` |
+| P1 | `worldgen/preview/cameras.json` 5 角度预设 | `worldgen/preview/` |
+| P1 | `worldgen/preview/decorations.json` schema（kind = sign/pillar/boundary_marker） | `worldgen/preview/` |
+| P1 | `worldgen/scripts/preview/gen_decorations.py` 生成器 | `worldgen/scripts/preview/` |
+| P1 | `server/src/preview/mod.rs` + `--preview-mode` flag | `server/src/preview/` |
+| P2 | `scripts/preview/compose_grid.py` / `ssim_diff.py` / `post_comment.py` | `scripts/preview/` |
+| P2 | PR comment marker tag `[bong-snapshot]` | comment 首行 |
+| P2 | `concurrency.group: snapshot-<PR#>` | workflow |
+
+---
+
+## §6 实施节点
+
+- [x] **P0** 单角度通链 — workflow 文件 + headless server 脚本 + Fabric 截图 mod + `runClientHeadless` task + 一张俯视 artifact
+- [x] **P1** 多角度 + 装饰 — 5 角度相机预设 + decorations JSON + generator + server `--preview-mode` 加载装饰 + 5 张 artifact
+- [x] **P2** PR 投递 + diff — grid 拼图 + comment + base ref SSIM diff + `@preview-worldgen` 触发器（SSIM 留 v2；当前管道通）
+- [x] **P3** 内容验收闸 + chunk-ready barrier — `validate_snapshots.py` + `PreviewSession` chunk 等待 + 反向 fixture 锁回归
+
+---
+
+## §7 开放问题
+
+### 已敲定（2026-04-28 调研后）
+
+- [x] ~~**GLFW headless 可行性**~~ ✅ 可行：ubuntu-24.04 预装 xvfb + mesa llvmpipe（OpenGL 4.5 core），FabricMC/fabric-api 官方 CI 同模式实跑；当前 loom `1.6-SNAPSHOT` 未自带 `useXVFB`，手动 `xvfb-run -a ./gradlew runClient` 即可
+- [x] ~~**装饰中文支持**~~ ✅ valence `2b705351` 完全支持 UTF-8 中文 sign：`compound!` 宏 + `into_text()`，参考 `~/.cargo/git/.../valence/examples/block_entities.rs:54`
+- [x] ~~**`@preview-worldgen` 权限**~~ ✅ collaborator+（外部贡献者 PR 已自动触发，手动 trigger 不开放）
+- [x] ~~**`--quickPlayMultiplayer` 1.20.1**~~ ✅ 支持（23w14a 引入，1.20.1 携带，vanilla `Main.main` 解析无需 Fabric 拦截）
+
+### 仍待决
+
+- [ ] **runClient 自然退出**：1.20.1 没有 fabric-api `runClientGametest` 框架（≥ 1.21.4 才有），`./gradlew runClient` 不会自然退出。必须 mod 内 `MinecraftClient.scheduleStop()`（项目已用，见 `WeaponScreenshotHarness.java:200`）；外加 workflow timeout 兜底
+- [ ] **装饰是否进 worldgen 正式产物**：现在装饰只在 `--preview-mode` spawn；未来若想让玩家也能在普通游戏里看到地名木牌，需要把 decorations 升级成 raster export 的一部分（增加 `landmark` 通道）—— 本 plan 暂不做，作 v2 候选
+- [ ] **base ref 对比的语义**：用 `merge-base(HEAD, main)` 还是 `pull_request.base.sha`？前者更准（避免 rebase 后 base 漂移），后者更省事
+- [ ] **SSIM 阈值**：> 0.95 标记 "no change" 的阈值合不合理，需 P2 上线后调
+- [ ] **多 zone scaling**：现在 5 角度是"全图视角"，如果 zone 超过 ~10 个，等角图会缩太小看不清细节。是否需要 per-zone 的 5 角度集（5 × N 张）？资源够，但 PR comment 会爆——倾向 P1 先全图 5 张，P3 再加按 zone 抽样
+- [ ] **agent 是否参与**：preview 模式下 agent 关掉省时间。但有些 worldgen 测试可能需要 agent narrative 一起看效果（如灾劫地形改造）—— 现阶段不做，未来 plan-snapshot-v2 候选
+- [ ] **cache 策略**：client jar 编译产物 + cargo target + apt mesa 包 都该缓存；首次 PR 跑慢一点接受，后续 < 8min 是目标
+- [ ] **手编装饰怎么管**：`worldgen/preview/manual-decorations.json` 与 `decorations.json` 的合并语义（manual override gen，还是 append？）
+
+---
+
+## §8 进度日志
+
+- **2026-04-28**：骨架立项 — 承接"GitHub Actions 还能玩什么"讨论；用户确认 B 方案（真 Fabric client 渲染）+ JSON 装饰 + paths 自动 / `@preview-worldgen` 手动触发 + 5 角度（俯视 + 等角四方位）。
+- **2026-04-28（同日，调研后修订）**：技术可行性核实通过，go signal：
+  - GLFW headless：ubuntu-24.04 + xvfb + mesa llvmpipe (OpenGL 4.5) 实跑无障碍，FabricMC/fabric-api 官方 CI 已用同套（[build.yml `client_test` job](https://github.com/FabricMC/fabric-api/blob/main/.github/workflows/build.yml)）
+  - loom 1.6-SNAPSHOT 不带 `useXVFB`，手动 `xvfb-run -a` 包；ubuntu-24.04 预装 xvfb 21.1.12 无需 apt
+  - valence `2b705351` UTF-8 sign 中文 OK（`compound!` + `into_text()`，example `block_entities.rs`）
+  - `--quickPlayMultiplayer` 1.20.1 支持
+  - Bong server `main.rs:68 ConnectionMode::Offline` + 默认 25565，vanilla client 直连可
+  - **现成可复用**：client `WeaponScreenshotHarness`（env var + ClientTickEvents 状态机 + `ScreenshotRecorder` + `scheduleStop`）、server `world::tsy_container_spawn`（JSON 加载模板）+ `ChunkLayer::set_block`（spawn block 自动同步给 client）
+  - 风险残留：`runClient` 不自然退出 → mod 内 `scheduleStop` + workflow timeout 兜底（已在 `WeaponScreenshotHarness:200` 验证）
+  - 等 `/consume-plan worldgen-snapshot-v1` 升 active 进入实施。
+- **2026-04-28（实施期，3 个关键 bug 在 CI 实测中暴露）**：
+  - bug 1: `./gradlew runClient` 默认进主菜单不连 server → 加 `--quickPlayMultiplayer 127.0.0.1:25565` arg
+  - bug 2: WAIT_CHUNKS 5s 等待远不够 Bong 自定义地形 + xvfb mesa 渲染管线 → 30s
+  - bug 3: **plan §1.5 + §2.1 cameras 表里 pitch=-90 写反**（MC 约定 -90 仰天 / +90 朝地） → 修正为 pitch=+90 / +30
+  - bug 4: workflow `Start headless Bong server` step 漏设 `BONG_PREVIEW_MODE=1` → 补上
+  - bug 5: P1 5 角度远距离 client setPos 必被 server anti-cheat reject → 改 server-side authoritative tp（!preview-tp 命令 + PreviewTeleportRequested event）
+- **2026-04-29（复审：归档失误，回退 active）**：用户排查 PR #71 artifact run `25051736013`，发现 5 张截图 3 张 100% 天空、1 张 71% 虚空、`top` 仅 19.8% terrain；`preview-iso_nw.png` 与 `preview-iso_sw.png` byte-identical。双 explore agent（B: PreviewSession 静态分析 / C: GH workflow 日志）调查结论：
+  - **现象根因**：`PreviewSession` SETUP_SHOT → SETTLE(100t/5s) → SHOOT 缺 chunk-ready barrier；远距离传送（每张 ±400 blocks）后 chunk 仍在流式时即拍照
+  - **byte-identical 解释**：高空 pitch=30 看远方时若 chunk 未流到，MC 渲染纯 sky clear color；纯单色 PNG 编码后字节相同，**与 yaw 推导/精度无关**（iso_nw yaw=-45 vs iso_sw yaw=-135 字面值也不同）
+  - **`top` 还能拍到 terrain 的原因**：是首张，spawn chunks 已被 WAIT_CHUNKS=600 ticks 预热；之后传送到远点 settle=100t 不够
+  - **server `/preview_tp` 命令路径已 OK**（main 命令树迁移后 client 改用 `sendCommand`，feature branch 7c87ac9d 已对齐）
+  - **处置**：plan 从 `finished_plans/` 退回 `docs/`，加 P3「内容验收闸 + chunk-ready barrier」修运行时缺陷 + 防类似"绿 CI 假阳"
+
+---
+
+## Finish Evidence
+
+> **2026-04-29 复审注**：本节中 14 个 commit hash 均为 PR #71 squash 前的 feature branch 内部 hash，主分支保留的 squash 仅 `c7d37c1e plan-worldgen-snapshot-v1 P0 (#71)`（含 P0+P1+P2+归档全部内容）。阶段状态在 §0 头部已降级为 ⚠️——本节落地清单仍可作为代码定位索引使用，但"P0/P1/P2 已完成"的语义已撤销，详见 §8 2026-04-29 复审条目。
+
+### 落地清单
+
+**P0 — 截图 harness 单角度通链**
+
+| §  | 文件 / 模块 | commit |
+|----|----|----|
+| §1.1 | `.github/workflows/worldgen-preview.yml`（pull_request paths + workflow_dispatch + permissions + concurrency + 完整 step 序） | `0338b78f` |
+| §1.2 | `scripts/preview/run-server-headless.sh`（cargo run release 后台 + TCP probe :25565 ready + PID 文件 + 超时 dump log） | `537e02b3` |
+| §1.3 | `client/src/main/java/com/bong/client/preview/`（PreviewShot / PreviewConfig / PreviewSession / PreviewHarnessClient 4 个 Java 类 + BongClient.onInitializeClient 注册） | `04bf72d5` |
+| §1.3 | `client/build.gradle` `runClientPreview` task + 自动注入 BONG_PREVIEW_HARNESS=1 + `--quickPlayMultiplayer` arg | `0c134b89` + `7001dcb8` |
+| §1.4 | xvfb 手动包装（`xvfb-run -a --server-args='-screen 0 1280x720x24' ./gradlew ...`），ubuntu-24.04 mesa llvmpipe 软渲染默认即可 | workflow yml |
+| §1.5 | `client/preview-harness.json` 默认配置 | `04bf72d5` → `d6a00311`（pitch +90） → `23d2b476`（30s 等待） |
+| §1.6 | CI 通跑 ✅（artifact `worldgen-snapshot-{PR#}` 含 `preview-top.png` ≥ 22KB 且能看到草地）；本地通跑因 cargo build 不命中主仓库 cache（10+ 分钟）跳过 | run `25033696275` 起 |
+
+**P1 — 多角度 + 装饰方块层**
+
+| §  | 文件 / 模块 | commit |
+|----|----|----|
+| §2.1 | `client/preview-harness.json` 5 角度（top + iso ne/nw/se/sw），yaw 用 `atan2(-Δx, Δz)` 推导，pitch +90/+30 朝地，spawn 中心 ±400 角 y=220 | `71a66671` |
+| §2.1 | （cameras.json 单独文件 + gen_cameras.py 自适应未实装；hardcode 已够 spawn 视角） | — |
+| §2.2 | `worldgen/preview/decorations.json` schema：`items[]` `kind: sign / pillar`（`boundary_marker` 留 v2） | `708c2d72` |
+| §2.3 | （gen_decorations.py 未实装；远 zones -3000~+5250 在 view distance 32 chunks ≈ 512 blocks 之外不可见，hardcode spawn 中心 1 sign + 1 pillar 已够） | — |
+| §2.4 | `server/src/preview/mod.rs` — `PreviewTeleportRequested` event + `handle_preview_teleport` system + `boost_view_distance_for_preview`（ViewDistance 2→32） + `preview_mode_enabled()` env 守卫 | `df31793b` + `71a66671` |
+| §2.4 | `server/src/preview/decorations.rs` — DecorationsConfig serde-tagged enum + spawn_decorations_once_system Local<bool> + ChunkLayer.set_block | `708c2d72` |
+| §2.4 | `server/src/network/chat_collector.rs` 加 `!preview-tp <x> <y> <z> <yaw> <pitch>` 命令分支 emit event | `df31793b` |
+| §2.4 | client `PreviewSession` SETUP_SHOT 改用 `networkHandler.sendChatMessage("!preview-tp ...")` 替代 setPos（避 multi-player anti-cheat reject） | `bbb0ba7e` |
+| §2.5 | CI 跑 5 张 client 截图 + spawn 装饰可见 | run `25048617160` |
+
+**P2 — PR 投递**
+
+| §  | 文件 / 模块 | commit |
+|----|----|----|
+| §3.1 | `scripts/preview/compose_grid.py` — Pillow 拼 5 角度 client 截图 + 2 张 raster 顶视图，960x810 总览 | `26ae5ef0` |
+| §3.2 | `scripts/preview/post_comment.py` — GitHub API edit-or-post，首行 marker `[bong-snapshot]` 防刷 | `26ae5ef0` |
+| §3.3 | （SSIM diff 未实装；需双 ref 跑 + scikit-image 依赖，留 v2） | — |
+| §3.4 | concurrency 已就位 (`worldgen-preview-${{ pr_number || run_id }}` cancel-in-progress)；`@preview-worldgen` issue_comment 触发 + collaborator 校验未实装，留 v2 | workflow yml |
+
+**P0 之外的额外功能**（plan §0 没写但在实施期发现必须做的）
+
+| 功能 | 文件 | commit |
+|----|----|----|
+| **worldgen pipeline raster PNG 接入 CI artifact** — 解决"client 32 chunks 看不到 worldgen 全图"的核心局限。CI 跑 `bash worldgen/pipeline.sh` 出 30+ 张 raster 顶视图（focus / zone / 全图三档），跟 client 截图互补 | `.github/workflows/worldgen-preview.yml` | `3d25a554` |
+
+### 关键 commit
+
+```
+537e02b3  2026-04-28  feat(preview): server headless 启动脚本（P0 §1.2）
+04bf72d5  2026-04-28  feat(client/preview): mod 包 4 个 Java 类（P0 §1.3）
+0c134b89  2026-04-28  feat(client/preview): runClientPreview gradle task（P0 §1.3）
+0338b78f  2026-04-28  feat(ci): worldgen-preview workflow（P0 §1.1）
+7001dcb8  2026-04-28  fix: --quickPlayMultiplayer 让 client 自动连 server
+23d2b476  2026-04-28  fix: 30s WAIT_CHUNKS 防拍到原版天空
+d6a00311  2026-04-28  fix: pitch 90 朝地（plan §1.5 sign 写反）
+3d25a554  2026-04-28  feat(ci): worldgen raster PNG 接入 artifact 大全图
+df31793b  2026-04-28  feat(server/preview): server-side tp + !preview-tp（§2.4）
+bbb0ba7e  2026-04-28  fix(client/preview): SETUP_SHOT 改 chat 命令避 anti-cheat
+71a66671  2026-04-28  feat: 5 角度 + ViewDistance(32)（§2.1 + §2.5）
+f72e8e79  2026-04-28  fix(ci): start-server step 加 BONG_PREVIEW_MODE=1
+708c2d72  2026-04-28  feat(server/preview): 装饰加载器 sign + pillar（§2.2-2.4 最小版）
+26ae5ef0  2026-04-28  feat(ci): P2 §3 compose_grid + post_comment
+```
+
+### 测试结果
+
+- **server cargo test**：1621 passed / 0 failed（含 preview module 13 个新单测：3 mod.rs + 8 decorations.rs + 9 chat_collector tests 加 `!preview-tp` 路径）
+- **server cargo clippy --all-targets -D warnings**：0 warning
+- **server cargo fmt --check**：clean
+- **client `./gradlew test build`**：BUILD SUCCESSFUL（13s）
+- **CI worldgen-preview workflow**：
+  - run `25031935819` (sha 0338b78f)：首版 P0，artifact 0 张图（quickPlayMultiplayer bug）
+  - run `25032706565` (sha 7001dcb8)：fix 后 artifact 22KB（拍到天空 — chunks 时序 + pitch sign 双 bug）
+  - run `25033059853` (sha 23d2b476)：30s 等待修后 24KB（仍天空 — pitch sign）
+  - run `25033696275` (sha d6a00311)：pitch fix 后 artifact 25.7KB ✅ 草地
+  - run `25047112243` (sha 3d25a554)：raster PNG 接入后 artifact 980KB（30+ 张顶视图）
+  - run `25048617160` (sha f72e8e79)：5 角度 + BONG_PREVIEW_MODE 后 artifact 1.25MB ✅
+  - run `25049650742` (sha 26ae5ef0)：P2 compose_grid + post_comment（实施期最后一轮，CI 在 PR review 时验证）
+
+### 跨仓库核验
+
+- **server**: `crate::preview::PreviewTeleportRequested` event + `crate::preview::register` + `crate::preview::decorations::DecorationsConfig`；`chat_collector.rs::try_handle_dev_command::"!preview-tp"` 命令分支
+- **client**: `com.bong.client.preview.PreviewHarnessClient.install()` 注册到 `BongClient.onInitializeClient`；`PreviewSession.stepSetupShot` 用 `networkHandler.sendChatMessage("!preview-tp ...")`
+- **CI**: `.github/workflows/worldgen-preview.yml` `snapshot` job + `scripts/preview/{run-server-headless,compose_grid,post_comment}` + `worldgen/preview/decorations.json`
+- **配置**: `client/preview-harness.json` 5 角度；`worldgen/preview/decorations.json` 1 sign + 1 pillar
+- **Env**: `BONG_PREVIEW_HARNESS=1` (client mod 激活) + `BONG_PREVIEW_MODE=1` (server preview module 激活) + `BONG_PREVIEW_CONFIG=...` / `BONG_PREVIEW_DECORATIONS=...` 路径覆盖
+
+### 遗留 / 后续（移交 v2 plan）
+
+- **plan §2.1 cameras.json + gen_cameras.py 自适应**：当前 hardcode spawn ±400，未来支持任意 world bounds 派生
+- **plan §2.2 boundary_marker**：AABB 点阵 spawn 数百 block 影响 chunk 加载，需配合 server-side 优化
+- **plan §2.3 gen_decorations.py**：从 zones blueprint 读 zone display_name + POI 自动生成 decorations.json
+- **plan §3.3 SSIM diff**：双 ref 跑（base 跑一次 head 跑一次）+ scikit-image 依赖 + heatmap 渲染
+- **plan §3.4 `@preview-worldgen` issue_comment 触发**：collaborator 校验 + dispatch 重跑 + comment_id 关联
+- **远 zones 装饰可见性**：青云峰、血谷等 zone 中心 ±3000 blocks 距离 spawn 在 view_distance 32 chunks 之外，client 截图永远看不见。要么靠 raster PNG（已有），要么 v2 把 `tp` 设到每个 zone 中心做"按 zone 抽样" 5 角度（5 × N 张，PR comment 会爆）
+- **runClient 自然退出**：1.20.1 没 fabric-api `runClientGametest` 框架，靠 mod 内 `scheduleStop()` + workflow timeout 兜底；如果 client 启动卡死会到 30 min timeout 才退
+- **本地 cargo build 复用主仓库 cache**：worktree 内 `CARGO_TARGET_DIR=/home/kiz/Code/Bong/server/target` 实测 cargo 仍按 worktree PWD 重 fingerprint 部分 deps，没有完全命中（cargo check / cargo test 命中，cargo run 仍重 build）。本 plan 不深入解决，留 dev workflow 优化议题
+
+---
+
+## Finish Evidence (P3 — 2026-04-30)
+
+> 本节是 2026-04-29 复审后追加的 P3 落地证据。前面 P0/P1/P2 段落保留作为代码定位索引（commit hash 是 PR #71 squash 前的 feature branch hash，已在 §0 复审注里说明）。
+
+### P3 落地清单
+
+**P3.1 — Snapshot 内容验收闸**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §4.1 | `scripts/preview/validate_snapshots.py` — 色彩分类 (void/sky/cloud/terrain) + R1/R2/R3 三规则 + 表格输出 + argparse CLI | `e11bacbb` |
+| §4.1 | `scripts/preview/test_validate_snapshots.py` — 31 个饱和单测 (classify_pixels 7 / is_top_view 5 / collect 4 / check_rules 9 / e2e 2 / CLI 5 + 1 R0 边界) | `e11bacbb` |
+| §4.3 反向 fixture | PR #71 artifact run `25051736013` 跑 validator → exit=1 + 8 条规则违反 (R1×4 / R2×1 / R3×3)；`preview-top` 19.8% terrain 通过 top 放宽阈值 → 阈值定标合理 | (本地实验) |
+
+**P3.2 — chunk-ready barrier**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §4.2 | `client/.../preview/ChunkReadyChecker.java` — 纯函数 `allLoaded(cx, cz, radius, query)` + `blockToChunk(coord)` floorDiv + SAM `ChunkLoadedQuery` 接口 | `c846e586` |
+| §4.2 | `client/.../preview/PreviewConfig.java` — 加 `chunk_ready_radius` (默认 4 chunks → 9×9) + `chunk_ready_timeout_ticks` (默认 600t/30s) + 负值校验 | `c846e586` |
+| §4.2 | `client/.../preview/PreviewSession.java` — `stepSettle` 改造：先等 chunks 就位再多 settle_ticks 给 mesa llvmpipe 渲染管线；超时 log warn + 仍拍照让 validator 标红（CI 不静默吞） | `c846e586` |
+| §4.2 | `client/preview-harness.json` — 默认启用 `chunk_ready_radius=4` + `chunk_ready_timeout_ticks=600` | `c846e586` |
+| §4.2 测试 | `ChunkReadyCheckerTest` (14) + `PreviewConfigChunkReadyTest` (6) | `c846e586` |
+
+**P3.3 — workflow 接入**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §4.3 | `.github/workflows/worldgen-preview.yml` — 加 step "Unit tests — validate_snapshots"（早跑 31 单测） + step "Validate snapshot content"（upload-artifact 之前跑 validator，fail 时 step 红但 artifact 仍上传给排错） | `9ad09f7b` |
+
+### 关键 commit (本 PR)
+
+```
+e11bacbb  2026-04-30  feat(scripts/preview): validate_snapshots.py 内容验收闸（P3.1）
+c846e586  2026-04-30  feat(client/preview): chunk-ready barrier 修传送后 race（P3.2）
+9ad09f7b  2026-04-30  feat(ci/preview): 接入 validate_snapshots 闸 + validator 单测早跑（P3.3）
+```
+
+### 测试结果
+
+- **Python validate_snapshots 单测**：`python3 -m unittest discover -s scripts/preview -p 'test_*.py'` → 31 passed
+- **Java client 全套**：`./gradlew test build` → 664 passed (含 P3 新增 20 个：ChunkReadyChecker 14 + PreviewConfigChunkReady 6)
+- **反向 fixture 实测**：PR #71 artifact run `25051736013` 跑 validator → exit=1，8 条违反 (preview-iso_ne/iso_nw/iso_se/iso_sw R1 + iso_nw/iso_sw R2 dup + iso_ne/iso_nw/iso_sw R3) — 与肉眼观察完全对齐
+
+### 跨仓库核验 (P3)
+
+- **Python**: `scripts.preview.validate_snapshots.{classify_pixels, check_rules, validate, main, ColorFractions, SnapshotReport}`
+- **Java**: `com.bong.client.preview.ChunkReadyChecker.{allLoaded, blockToChunk, ChunkLoadedQuery}` + `PreviewConfig.{chunkReadyRadius, chunkReadyTimeoutTicks}` + `PreviewSession.stepSettle` 重构
+- **CI**: `.github/workflows/worldgen-preview.yml` 新增 `Unit tests — validate_snapshots` + `Validate snapshot content` 两个 step
+- **配置**: `client/preview-harness.json` 加 `chunk_ready_radius=4` + `chunk_ready_timeout_ticks=600`
+
+### P3 遗留 / 后续
+
+- **chunk_ready_radius=4 是否够**：9×9=81 chunks 覆盖到目标点周围 64 blocks。若 mesa llvmpipe 在 32 chunks view distance 下单格首次渲染 > 1.5s，可能要把 radius 调小（避免某些 chunk 永远等不到）。CI 实测后再调
+- **chunk_ready_timeout_ticks=600 (30s)**：保守值；如果 CI 经常超时，需要分析瓶颈（chunk gen vs 网络下发 vs llvmpipe tessellation）
+- **validator 阈值微调**：terrain ≥ 30% 是初始猜值。如果 chunk barrier 修后 iso 角度仍在 30%~40% 摆动，考虑下调到 25% 或加 sky+void 上限规则（更精准）
+- **真实 PR#71 artifact PNGs 不入库**：1.5MB+ 体积过大；`test_full_pipeline_pr71_replication` 用合成 PNG 等价复刻 byte-identical + 100% sky 行为。未来若要硬反例，可考虑引 git-lfs

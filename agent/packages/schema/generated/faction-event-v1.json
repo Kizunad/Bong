@@ -1,0 +1,84 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "faction_id",
+    "event_kind",
+    "loyalty_bias",
+    "mission_queue_size",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "faction_event",
+      "type": "string"
+    },
+    "faction_id": {
+      "anyOf": [
+        {
+          "const": "attack",
+          "type": "string"
+        },
+        {
+          "const": "defend",
+          "type": "string"
+        },
+        {
+          "const": "neutral",
+          "type": "string"
+        }
+      ]
+    },
+    "event_kind": {
+      "anyOf": [
+        {
+          "const": "set_leader",
+          "type": "string"
+        },
+        {
+          "const": "clear_leader",
+          "type": "string"
+        },
+        {
+          "const": "set_leader_lineage",
+          "type": "string"
+        },
+        {
+          "const": "adjust_loyalty_bias",
+          "type": "string"
+        },
+        {
+          "const": "enqueue_mission",
+          "type": "string"
+        },
+        {
+          "const": "pop_mission",
+          "type": "string"
+        }
+      ]
+    },
+    "leader_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "loyalty_bias": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "mission_queue_size": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

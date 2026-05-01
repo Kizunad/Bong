@@ -2,7 +2,10 @@ package com.bong.client.state;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class PlayerStateViewModelTest {
@@ -32,6 +35,7 @@ public class PlayerStateViewModelTest {
             1.6,
             -0.25,
             PlayerStateViewModel.PowerBreakdown.create(1.4, -0.5, Double.NaN, 0.75),
+            PlayerStateViewModel.SocialSnapshot.create(7, 12, List.of("背盟者"), "defend", 0, 10, 1),
             " azure_peak ",
             "   ",
             4.0
@@ -48,6 +52,10 @@ public class PlayerStateViewModelTest {
         assertEquals(0.0, state.breakdown().wealth(), 0.0001);
         assertEquals(0.0, state.breakdown().social(), 0.0001);
         assertEquals(0.75, state.breakdown().territory(), 0.0001);
+        assertEquals(7, state.social().fame());
+        assertEquals(12, state.social().notoriety());
+        assertEquals(List.of("背盟者"), state.social().topTags());
+        assertEquals("defend", state.social().faction());
         assertEquals("azure_peak", state.zoneId());
         assertEquals("azure_peak", state.zoneLabel());
         assertEquals(1.0, state.zoneSpiritQiNormalized(), 0.0001);
@@ -63,6 +71,7 @@ public class PlayerStateViewModelTest {
             -1.6,
             0.6,
             null,
+            null,
             "",
             "Qingyun Peak",
             -0.4
@@ -76,6 +85,8 @@ public class PlayerStateViewModelTest {
         assertEquals("Qingyun Peak", state.zoneLabel());
         assertEquals(0.0, state.zoneSpiritQiNormalized(), 0.0001);
         assertEquals(0.0, state.breakdown().combat(), 0.0001);
+        assertTrue(state.social().topTags().isEmpty());
+        assertFalse(state.social().hasFaction());
     }
 
     @Test
@@ -88,6 +99,7 @@ public class PlayerStateViewModelTest {
             0.2,
             0.4,
             PlayerStateViewModel.PowerBreakdown.create(0.1, 0.2, 0.3, 0.4),
+            PlayerStateViewModel.SocialSnapshot.empty(),
             "qingyun_peak",
             "Qingyun Peak",
             0.5

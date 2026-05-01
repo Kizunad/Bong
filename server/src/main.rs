@@ -1,10 +1,13 @@
 #[allow(dead_code)]
 mod alchemy;
+mod audio;
 mod botany;
 mod cmd;
 mod combat;
 #[allow(dead_code)]
 mod cultivation;
+#[allow(dead_code)]
+mod fauna;
 #[allow(dead_code)]
 mod forge;
 mod inventory;
@@ -18,14 +21,24 @@ mod network;
 mod npc;
 mod persistence;
 mod player;
+// preview：worldgen-snapshot harness 用的 server-side teleport hook。仅在
+// BONG_PREVIEW_MODE=1 env 下激活实际 system；register() 一定会注册 event 类型
+// 让 chat_collector 编译通过。
+mod preview;
 #[allow(dead_code)]
 mod schema;
+mod skin;
+mod social;
 // shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
 // 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
 #[allow(dead_code)]
 mod shelflife;
 mod skill;
+#[allow(dead_code)]
+mod tools;
 mod world;
+#[allow(dead_code)]
+mod zhenfa_hooks;
 
 use crossbeam_channel::unbounded;
 use network::agent_bridge::{
@@ -74,13 +87,18 @@ fn run_server() {
 
     world::register(&mut app);
     player::register(&mut app);
+    skin::register(&mut app);
     inventory::register(&mut app);
     botany::register(&mut app);
     cmd::register(&mut app);
     skill::register(&mut app);
+    tools::register(&mut app);
     cultivation::register(&mut app);
+    fauna::register(&mut app);
     alchemy::register(&mut app);
+    audio::register(&mut app);
     combat::register(&mut app);
+    social::register(&mut app);
     forge::register(&mut app);
     lingtian::register(&mut app);
     mineral::register(&mut app);
@@ -88,6 +106,7 @@ fn run_server() {
     npc::register(&mut app);
     network::register(&mut app);
     persistence::register(&mut app);
+    preview::register(&mut app);
 
     app.run();
 }

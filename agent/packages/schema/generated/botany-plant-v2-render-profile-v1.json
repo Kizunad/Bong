@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "plant_id",
+    "base_mesh_ref",
+    "tint_rgb",
+    "model_overlay"
+  ],
+  "properties": {
+    "plant_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "base_mesh_ref": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tint_rgb": {
+      "minimum": 0,
+      "maximum": 16777215,
+      "type": "integer"
+    },
+    "tint_rgb_secondary": {
+      "minimum": 0,
+      "maximum": 16777215,
+      "type": "integer"
+    },
+    "model_overlay": {
+      "anyOf": [
+        {
+          "const": "none",
+          "type": "string"
+        },
+        {
+          "const": "emissive",
+          "type": "string"
+        },
+        {
+          "const": "dual_phase",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

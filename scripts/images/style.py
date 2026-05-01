@@ -3,7 +3,7 @@
 三档画风（对齐 local_images/generation_guide.md）：
 
 - **item** —— 物品图标（药材、符牌、武器、法宝等），photorealistic 3D render 风，
-  纯色背景便于后期抠图。默认背景 solid black，浅色物品要在调用时指定 solid white。
+  默认透明背景，便于直接接入 icon 资源。
 - **particle** —— MC 粒子/VFX 贴图，纯黑 #000000 底，白色/近白形状 + 软羽化，
   生成后走 lum_to_alpha.py 转 alpha 通道。
 - **hud** —— HUD overlay 贴图（水墨边框、结霜角、符阵等），真正透明 RGBA，
@@ -19,7 +19,7 @@ STYLE_ITEM = (
     "dark xianxia game item icon, shattered dark stone and crystal material, "
     "glowing energy cracks as the only light source, high contrast, "
     "dramatic self-illumination, photorealistic 3D render, "
-    "solid black background, centered, no shadows, no gradients"
+    "fully transparent background (alpha=0), no background fill, centered, no shadows, no gradients"
 )
 
 STYLE_PARTICLE = (
@@ -52,19 +52,24 @@ def apply(style: str, body: str, transparent: bool = False) -> str:
 
     - `style` 不在 PREFIXES 中：原样返回 body（允许自定义）
     - body 开头三个词已与 prefix 的开头三个词一致：跳过拼接（手动叠写）
-    - item 档 + transparent=True：把 prefix 里 "solid black background"
-      换成透明描述，避免 prompt 文字和 API background=transparent 打架
+    - item 档 + transparent=True：剔除 body 内手写纯色背景描述，避免
+      prompt 文字和 API background=transparent 打架
     - 否则返回 `<prefix> — <body>`
     """
     prefix = PREFIXES.get(style)
     if not prefix:
         return body
-    if transparent and style == "item":
-        prefix = prefix.replace(
-            "solid black background",
-            "fully transparent background (alpha=0), no background fill",
-        )
     body_stripped = body.strip()
+    if transparent and style == "item":
+        for bg in (
+            "solid black background, ",
+            "solid white background, ",
+            "solid magenta background, ",
+            "solid black background",
+            "solid white background",
+            "solid magenta background",
+        ):
+            body_stripped = body_stripped.replace(bg, "")
     prefix_head = " ".join(prefix.split()[:3]).lower()
     body_head = " ".join(body_stripped.split()[:3]).lower()
     if prefix_head == body_head:

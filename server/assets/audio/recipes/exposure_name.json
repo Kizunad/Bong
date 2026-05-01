@@ -1,0 +1,10 @@
+{
+  "id": "exposure_name",
+  "layers": [
+    { "sound": "minecraft:item.book.page_turn", "volume": 0.25, "pitch": 0.9, "delay_ticks": 0 },
+    { "sound": "minecraft:block.note_block.harp", "volume": 0.18, "pitch": 0.8, "delay_ticks": 3 }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

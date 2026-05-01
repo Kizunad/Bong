@@ -1,6 +1,7 @@
 pub mod gm;
 pub mod health;
 pub mod npc_scenario;
+pub mod preview_tp;
 pub mod shrine;
 pub mod spawn;
 pub mod stamina;
@@ -26,6 +27,7 @@ pub fn register(app: &mut App) {
     wound::register(app);
     tsy_spawn::register(app);
     npc_scenario::register(app);
+    preview_tp::register(app);
 }
 
 #[cfg(test)]

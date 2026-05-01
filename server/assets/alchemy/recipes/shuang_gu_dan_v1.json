@@ -1,0 +1,36 @@
+{
+  "id": "shuang_gu_dan_v1",
+  "name": "霜骨丹",
+  "furnace_tier_min": 3,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "xue_po_lian", "count": 1 },
+      { "material": "ming_gu_gu", "count": 2 }
+    ], "window": 0 },
+    { "at_tick": 60, "required": [
+      { "material": "xuan_rong_tai", "count": 1 }
+    ], "window": 12 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.35,
+    "target_duration_ticks": 190,
+    "qi_cost": 18.0,
+    "tolerance": { "temp_band": 0.08, "duration_band": 30 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "shuang_gu_dan", "quality": 1.0, "toxin_amount": 0.60, "toxin_color": "Sharp", "qi_gain": 20.0 },
+    "good": { "pill": "shuang_gu_dan", "quality": 0.72, "toxin_amount": 0.78, "toxin_color": "Sharp", "qi_gain": 14.0 },
+    "flawed": { "pill": "shuang_gu_dan_flawed", "quality": 0.40, "toxin_amount": 1.10, "toxin_color": "Turbid", "qi_gain": 7.0 },
+    "waste": null,
+    "explode": { "damage": 22.0, "meridian_crack": 0.12 }
+  },
+  "flawed_fallback": {
+    "pill": "shuang_gu_dan_flawed",
+    "quality_scale": 0.4,
+    "toxin_scale": 1.7,
+    "side_effect_pool": [
+      { "tag": "frost_meridian_stall", "duration_s": 30, "weight": 2 },
+      { "tag": "bone_echo_vision", "duration_s": 8, "weight": 1 }
+    ]
+  }
+}
