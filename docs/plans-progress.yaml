@@ -1,20 +1,12 @@
 # Bong 项目 plan 进度索引
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
-# 上一次刷新：2026-04-30 由 5 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）+
-#   /plans-status 阶段级核验回扫 + 3 份 skeleton 升 active 调研（niche-defense-v1 / tools-v1 / lingtian-npc-v1）+
-#   8 份 skeleton 批量升 active 调研（fauna-v1 / spirit-eye-v1 / spiritwood-v1 / narrative-v1 /
-#   alchemy-client-v1 / alchemy-recycle-v1 / botany-agent-v1 / zhenfa-v1）。
-#   - 8 份 plan 中 7 份发现 worldview 章节号 / 行号错位问题，升 active 时同步修正头部锚点段。
-#   - 8 份 plan 已归档迁入 finished：plan-player-animation-v1（PR #82）、plan-weapon-v1.1（PR #69/#80）、
-#     plan-mineral-v2（commit 00df063f）、plan-social-v1（PR #77）、plan-worldgen-anvil-export-v1（PR #79）、
-#     plan-combat-ui_impl（PR #20 + commit 62dd84b）、plan-particle-system-v1（PR #17 + commit 链）、
-#     plan-weapon-v1（PR #41 + W2-W8 commit 链）。后三份归档原因：/plans-status 实地核验确认代码 ≥95%，
-#     文档维护滞后是阻碍归档的唯一原因，本次补 ✅ + Finish Evidence 后归档。
-#   - server-cmd-system-v1 / persistence-v1 微调，尤其 server-cmd-system-v1
-#     代码超前文档（cmd/ 21 个文件 + 78 测，文档阶段还标 ⬜）。
-#   - plan-library-web-content-v1 / plan-opencode-workflow-v1 决定不再继续，文档移入 finished_plans/，
-#     从 dashboard 移除。
+# 上一次刷新：2026-05-01 由 6 个 scout subagent 并发实地核对（grep + git log + 文档对照）全审 5 组。
+#   主要发现：botany-v2、tools-v1、perception-v1 已落地但文档滞后（其中 perception-v1.1 已归档 to finished_plans）；
+#   narrative-v1、persistence-v1、server-cmd-system-v1 代码大幅超前文档；
+#   layer-query-v1 已 partial 实施（active-implementing / 55%）；
+#   tribulation-v1、alchemy-client-v1、spiritwood-v1、fauna-v1 推进中有可观测代码；
+#   lingtian-process-v1、lingtian-weather-v1 仍纯设计，percent 从 3% 归零（无代码）；
 #
 # state 取值：
 #   - merged              代码已合并（PR 在主线），plan 主体已落地
@@ -23,7 +15,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/）
 #   - finished            已归档（在 finished_plans/）
 
-generated_at: "2026-04-30"
+generated_at: "2026-05-01"
 project: Bong
 
 groups:
@@ -69,7 +61,7 @@ plans:
     last_updated: "2026-04-25"
     pr_refs: [18, 43]
     blocking_on: []
-    summary: "C1–C5（除伪皮/涡流角标）+ C7 全部落地（36 个 HUD Java 文件可验）；C6 InspectScreen 第 5 tab + 拖拽 QuickSlotBindIntent / C8 事件流隐藏 toggle 仍 ⏳，文档与代码一致。"
+    summary: "BongHud/BongHudOrchestrator + InspectScreen 已覆 C1-C5+C7；仅伪皮/涡流、C6 拖拽+第5 tab、事件流隐藏 toggle 未做。文档与代码一致。"
 
   - file: plan-zhenfa-v1.md
     group: combat-vfx
@@ -78,8 +70,8 @@ plans:
     percent: 5
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["阵石 item 归属决定（mineral 体系 vs zhenfa 自持）", "P3 欺天阵依赖 plan-tsy-dimension / 天道叙事接口"]
-    summary: "2026-04-30 从 skeleton 升 active。**红旗**：client/.../ZhenfaLayoutScreen 已发包但 server 无 handler（combat.zhenfa_place 有发无收）+ FormationCoreDemoPlayer VFX 已就位。前置：ColorKind::Intricate（缜密色）已注册；server/src/zhenfa/ 模块需新建。worldview 锚点修正：§七 欺天阵 line 494→§八 line 614-618（气运劫持/欺天阵）；§十三 禁止传送阵→§十三'末法无传送'行走规则（不是禁阵立章）；§六.2 缜密色 line 421。niche-defense P4 直接受益。"
+    blocking_on: ["阵石归属未决（mineral 体系 vs zhenfa 自持）", "欺天阵依赖 plan-tsy-dimension / 天道叙事接口"]
+    summary: "文档头仍写骨架，但进度日志已升 active-design；client ZhenfaLayoutScreen/FormationActivatePlayer，server 仅 environment.rs + zhenfa_hooks 占位。"
 
   - file: plan-iris-integration-v1.md
     group: combat-vfx
@@ -89,228 +81,226 @@ plans:
     last_updated: "2026-04-25"
     pr_refs: []
     blocking_on: ["plan-vfx-v1", "plan-particle-system-v1"]
-    summary: "代码端零落地：fabric.mod.json 无 iris recommends、client/src 无 IrisApi/CommonUniforms Mixin/shader pack 资源；仅完成 §1 调研文档，§2–§5 全部未启动，Phase A 技术验证未开跑。"
+    summary: "仅 §1 调研；fabric.mod.json 无 iris recommends，client 无 IrisApi/CommonUniforms/shader pack，§2–§5 未启。"
 
   # ============================================================
   # Group: cultivation-economy
   # ============================================================
+  - file: plan-alchemy-client-v1.md
+    group: cultivation-economy
+    title: "炼丹系统 Fabric 客户端全接入"
+    state: active-implementing
+    percent: 20
+    last_updated: "2026-05-01"
+    pr_refs: []
+    blocking_on: []
+    summary: "文档仍写 5%/P1，但 client 屏和发送器已成型；右键拦截、furnace_pos、多炉路由未接。"
+
+  - file: plan-alchemy-recycle-v1.md
+    group: cultivation-economy
+    title: "炼丹废料反哺灵田"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-27"
+    pr_refs: []
+    blocking_on: []
+    summary: "灵田仅有 4 源补灵；PillResidue、dye_contamination、第五档全无。文档仍是骨架。"
+
   - file: plan-botany-v2.md
     group: cultivation-economy
-    title: "末法残土植物生态扩展 — 17 新物种 + 三层抽象"
-    state: active-design
-    percent: 0
-    last_updated: "2026-04-29"
+    title: "末法残土植物生态扩展"
+    state: merged
+    percent: 90
+    last_updated: "2026-04-30"
+    pr_refs: [83]
+    blocking_on: ["plan-fauna-v1", "plan-lingtian-weather-v1"]
+    summary: "文档仍写 0%，代码已落 39 种与渲染/图标/生态快照；SeasonRequired/AttractsMobs 仍依 weather/fauna stub。"
+
+  - file: plan-fauna-v1.md
+    group: cultivation-economy
+    title: "妖兽骨系材料"
+    state: active-implementing
+    percent: 10
+    last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["plan-fauna-v1", "plan-tools-v1", "plan-lingtian-weather-v1"]
-    summary: "BotanyKindRegistry 现有 22 种 v1 正典；SurvivalMode/EnvLock/HarvestHazard/v2 实体类型零实装；TerrainProvider::sample 仅单列采样，sample_layer 接口缺口待 plan-terrain-layer-query-v1 补；library 入卷前置未完。"
+    blocking_on: []
+    summary: "文档仍 5%，代码只到 ButcherRequest/ButcherDropKind/工具耐久；FaunaTag/DropTable/骨币链未见。"
 
   - file: plan-forge-leftovers-v1.md
     group: cultivation-economy
-    title: "炼器全链路收口 — schema / bridge / 装备写入 / 三块 UI"
+    title: "炼器全链路收口"
     state: merged
     percent: 88
     last_updated: "2026-04-28"
     pr_refs: [62, 66]
     blocking_on: ["plan-persistence-v1"]
-    summary: "PR #66 落地 P0–P4：14 份 forge schema samples、forge_outcome_to_inventory bridge、TemperingTrackComponent/InscriptionPanelComponent/ConsecrationPanelComponent 三块 UI 全在 client；P5 仅含 3 处 TODO(plan-persistence-v1) 注释锚点。"
+    summary: "14 份 sample、Redis bridge、ForgeStationPlace、forge→inventory 与三块 UI 已落；仅 plan-persistence-v1 的 P5 锚点 TODO。"
 
   - file: plan-lingtian-process-v1.md
     group: cultivation-economy
-    title: "作物二级加工 — 晾晒/碾粉/炮制/萃取 + 保鲜度"
+    title: "作物二级加工"
     state: active-design
-    percent: 3
+    percent: 0
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: ["plan-lingtian-weather-v1"]
-    summary: "ProcessingKind/ProcessingSession/ProcessingRecipeRegistry/FreshnessTracker 零实装；2026-04-29 从 skeleton 升 active，设计完整（freshness=game-tick 决策入文档），代码层零起步。"
+    summary: "代码里尚无 ProcessingKind/ProcessingSession/FreshnessTracker；仅见对 weather 的依赖声明。"
 
   - file: plan-lingtian-v1.md
     group: cultivation-economy
-    title: "灵田人工种植 — 开垦→种植→补灵→收获闭环"
+    title: "灵田人工种植"
     state: merged
     percent: 93
     last_updated: "2026-04-26"
     pr_refs: [26]
     blocking_on: ["plan-persistence-v1", "plan-skill-v1", "plan-zhenfa-v1"]
-    summary: "PR #26 合并；server/src/lingtian/ 14 模块全齐，P0–P6 + 道伥 spawn + LingtianSessionHud + LingtianActionScreen + 锄头 FP 全 ✅，server 627 测；skill XP / forge 灵木 / zhenfa 阵法三处跨 plan 钩子未接。"
+    summary: "P0-P6、道伥 spawn、HUD 与 ActionScreen 全已合；skill/forge/zhenfa 三处跨 plan 钩子仍待接。"
 
   - file: plan-lingtian-weather-v1.md
     group: cultivation-economy
-    title: "天气季节 → 灵田生长 — 夏冬二季 + 汐转"
+    title: "天气季节→灵田生长"
     state: active-design
-    percent: 3
+    percent: 0
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: []
-    summary: "Season/ZoneSeasonState/season_tick_system/WeatherEvent/ActiveWeather 零实装；worldview §十七 已落地（commit d4b3a10b）设计风险解除；P0–P4 全 ⬜，2026-04-29 升 active 纯设计状态。"
+    summary: "代码里尚无 Season/WeatherEvent/ZoneSeasonState；只有 worldview §十七 与 botany 零散相位 hook。"
 
   - file: plan-mineral-v1.md
     group: cultivation-economy
-    title: "矿物材料正典 — 18 矿物 + worldgen + forge/alchemy 钩子"
+    title: "矿物材料正典"
     state: merged
     percent: 90
     last_updated: "2026-04-27"
     pr_refs: [31, 44, 57]
     blocking_on: []
-    summary: "M0–M6 主链 ✅：MineralRegistry 18 种 / MineralOreNode / BlockBreakEvent drop / mineral_id NBT / forge blueprint 校验 / alchemy IngredientSpec / 耗尽持久化 / KarmaFlag bridge / 14 张 ore 改色全落地；炉品阶 runtime 校验已由 mineral-v2 收尾。"
-
-  - file: plan-fauna-v1.md
-    group: cultivation-economy
-    title: "妖兽骨系材料（噬元鼠 / 灰烬蛛 / 缝合兽 → 异兽骨/兽核）"
-    state: active-design
-    percent: 5
-    last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: []
-    summary: "2026-04-30 从 skeleton 升 active。**关键瓶颈 plan**——niche-defense P0 守家傀儡材料 / tools-v1 P0 两件工具材料 / lingtian-npc 异变兽袭击逻辑全等本 plan 输出。前置全 finished：NpcArchetype::Beast 已存在 / DeathEvent 与 tsy_hostile drop 链路完整可复用 / shelflife 注册表注释已写'M7 时由 fauna 注入'/ forge.toml 三处 TODO[fauna]。worldview 锚点修正：§十 封灵骨币→§九 货币、§九 资源→§十、§七 负压畸变体→§十六.五。"
-
-  - file: plan-alchemy-client-v1.md
-    group: cultivation-economy
-    title: "炼丹系统 Fabric 客户端全接入（拦截放置 / 多炉路由 / owo UI / 炸炉）"
-    state: active-design
-    percent: 5
-    last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["P6 Server Explode → MeridianCrackEvent（在本 plan 范围内）"]
-    summary: "2026-04-30 从 skeleton 升 active。alchemy-v1 server 完整 + AlchemyScreen.java 814 行已覆盖 owo 骨架/4 格投料/DragState/双 store/丹毒预测面板。缺：客户端拦截放置 / 多炉 session 路由（furnace_id 仅 String 单炉 MVP）/ Explode 伤害链。worldview 锚点修正：§七 丹道虚指→§六.2 染色谱（炼丹师→温润色）+ §八 灵物密度阈值（炼丹炉触发天道）+ §九 顶级资产（丹方残卷）。色名 Mellow/Sharp/Violent 与 worldview 温润/锋锐/暴烈对位。"
-
-  - file: plan-alchemy-recycle-v1.md
-    group: cultivation-economy
-    title: "炼丹废料反哺灵田（失败丹 / 药渣 → ReplenishSource 第 5 档）"
-    state: active-design
-    percent: 5
-    last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["alchemy 侧失败丹 ItemKind 注册（P0 第一步）"]
-    summary: "2026-04-30 从 skeleton 升 active。前置：lingtian ReplenishSource enum 4 variant 极易扩第 5 档 + plot_qi_amount/duration_ticks 两 match 加臂即可。**关键缺口**：alchemy Waste/Explode 路径仅记 XP 不产物，失败丹 ItemKind 完全未注册。worldview 锚点修正：§十二 末法噬蚀虚指（§十二 是死亡章）→ §十 灵气零和 + plan-shelflife-v1 衰减；§六 真元染色概念冲突→修正 dye_contamination 为 §四 异体排斥延伸的 plot 级污染（不是 §六 染色）。"
+    summary: "18 矿物、矿脉锚点、drop/NBT、forge/alchemy、耗尽持久化已合；仅少量 worldgen/表现后续。"
 
   - file: plan-spirit-eye-v1.md
     group: cultivation-economy
-    title: "灵眼系统（坐标注册 + worldgen + 凝脉→固元突破必需 + 天道迁移）"
+    title: "灵眼系统"
     state: active-design
     percent: 5
-    last_updated: "2026-04-30"
+    last_updated: "2026-04-27"
     pr_refs: []
-    blocking_on: ["plan-perception-v1 P1（神识感知发现机制；建议 P1 先 proximity-only 退化）", "breakthrough_precondition_error 函数签名扩展（加 player_pos / zone_qi）"]
-    summary: "2026-04-30 从 skeleton 升 active。前置 cultivation-v1 finished 突破系统 + worldgen LAYER_REGISTRY 可扩 + botany/registry.rs 已有「灵眼未实装」占位注释。worldview 锚点修正：§七 天道动态→§八 天道行为准则（温和手段：重分配灵气）；§七 negative 区域→§十三 世界地理（血谷「灵眼不固定」在 line 1023）。「灵眼主动迁移」是 §八「温和手段：把灵气从过度聚集区域匀给贫瘠区」的设计延伸。"
+    blocking_on: ["plan-perception-v1"]
+    summary: "root 里只有灵眼未实装注释；注册表、候选 raster、突破检测都没落。"
 
   - file: plan-spiritwood-v1.md
     group: cultivation-economy
-    title: "灵木材料体系（spawn 区 SpiritWood 已实装，缺 item/forge/weapon 集成）"
+    title: "灵木材料体系"
     state: active-design
-    percent: 5
-    last_updated: "2026-04-30"
+    percent: 15
+    last_updated: "2026-04-27"
     pr_refs: []
-    blocking_on: ["plan-fauna-v1 P0（feng_he_gu 异兽骨—— P3 封灵匣联合配方阻塞）"]
-    summary: "2026-04-30 从 skeleton 升 active。前置 worldgen-v3.1 MegaTreeKind::SpiritWood 已实装；forge.toml 4 处 ling_wood 占位明确 batch replace 目标。worldview 锚点修正：§十 封灵匣→§十六.三（实际位置）；§七 末法约束'灵木砍倒永久消失'**不存在 worldview 明文**（注释为 plan 自定稀缺约束，需后续在 worldview §十 末尾补正典化小节，不擅改）。"
+    blocking_on: ["plan-fauna-v1"]
+    summary: "SpiritWood 巨树与灵木苗/种子已在；采集 session、灵木系列物品与 forge 正典化仍缺。"
 
   - file: plan-tools-v1.md
     group: cultivation-economy
-    title: "采集 / 加工凡器工具体系（7 件 = §四 暗器流凡铁档的工具化）"
-    state: active-design
-    percent: 5
+    title: "采集/加工凡器工具体系"
+    state: merged
+    percent: 100
     last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["plan-botany-v2 P4（WoundOnBareHand 反向依赖；P0 不阻塞）", "plan-fauna-v1 P0（异兽骨 item，2 件工具材料阻塞，5 件不阻塞）"]
-    summary: "2026-04-30 重写。核心认知：凡器不是新概念——worldview §四 暗器流'凡铁/木石（劣质）'档已是凡器档位。本 plan 把这条线索工具化落地：7 件初版工具 + ToolKind enum + 主手识别 helper；空手采高阶植物的真伤口完全沿用 §四 既有 6 档伤口模型（LACERATION/FRACTURE）+ §四 异体排斥，无新代码新概念。P0 起手：ItemCategory::Tool variant + 新建 server/src/tools/ 模块 + 7 件 toml。P5 可选正典化 worldview §四 加'凡器与凡夫战力'小节。"
+    pr_refs: [84, 86]
+    blocking_on: []
+    summary: "文档已归档；root 里 7 件工具、ItemCategory::Tool、主手识别、采集/屠宰/耐久都已进主线。"
 
   - file: plan-tribulation-v1.md
     group: cultivation-economy
-    title: "天劫 — 渡虚劫 / 域崩 / 定向天罚"
+    title: "天劫：渡虚劫/域崩/天罚"
     state: active-implementing
-    percent: 18
+    percent: 35
     last_updated: "2026-04-25"
     pr_refs: []
     blocking_on: []
-    summary: "Phase 0 数据层 ✅（TribulationState/AscensionQuotaStore/DB 持久化）；Phase 1 化虚成功 + 退境失败两条结算路径 ✅，TribulationAnnounce + 预警雷 VFX 已 emit；锁定期 / 3 波 AOE / 心魔劫 / 截胡 / 半步化虚 / 域崩 / 定向天罚 / 起劫菜单均未实装。"
+    summary: "文档仍停 18%；root 已有起劫/波次/失败/持久化/NPC 推波，但锁定、心魔、域崩、定向天罚未落。"
 
   # ============================================================
   # Group: gameplay-npc
   # ============================================================
   - file: plan-inventory-v1.md
     group: gameplay-npc
-    title: "背包 / 物品 / 死亡掉落 / G 键拾取全链路"
+    title: "背包与死亡掉落拾取闭环"
     state: merged
     percent: 95
     last_updated: "2026-04-25"
     pr_refs: [27]
     blocking_on: []
-    summary: "P1–P5 全部落地：InventoryStateStore/SnapshotHandler/EventHandler/DroppedLootRegistry/apply_pill_system/weight_penalty_system/DroppedItemWorldRenderer 均已存在于 server+client+schema 三端，145 server 测 + 72 client 测通过；剩余仅待实机 QA 一轮。"
-
-  - file: plan-perception-v1.md
-    group: gameplay-npc
-    title: "视野 / 神识双感知（雾化 + 边缘指示器）"
-    state: active-design
-    percent: 5
-    last_updated: "2026-04-25"
-    pr_refs: []
-    blocking_on: ["plan-particle-system-v1"]
-    summary: "Phase 0 服务端推送通道已就绪（ServerDataPayloadV1），其余全为模板态：无 BackgroundRenderer Mixin、无视距表推送、无 PerceptionHudRenderer，仓库内 perception 字样均指 NarrationStyle/InsightCategory，与本 plan 无关。"
-
-  - file: plan-niche-defense-v1.md
-    group: gameplay-npc
-    title: "灵龛抄家防守体系（守家傀儡 + 阵法陷阱 + 守宅道伥 三档）"
-    state: active-design
-    percent: 5
-    last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["plan-fauna-v1 P0（异变兽骨 / 道伥残骸）", "plan-zhenfa-v1 P1（阵石）", "worldview §七 道伥绑定章节扩展（P2 前置）", "worldview §六.2 异种染色小节扩展（P5 正典化）"]
-    summary: "2026-04-30 重写。核心隐喻从'激光炮塔反击'转向'抄家防守'——让抄家慢/亏/留痕。三档独立守家载体（傀儡/陷阱/道伥）+ 龛侵色染色 + 物品异体残留 + 一生记录联动。仇家 NPC 来源（worldview §十一 散修翻脸 + §九 食腐者）。P0 守家傀儡最简档；P1 陷阱+染色；P2 道伥（需先扩 worldview §七）；P3 残留+生平卷；P4 perception 追凶+NPC 抄家；P5 worldview §六.2 染色谱扩异种染色小节。"
+    summary: "文档仍写进行中，但代码已通过 PR #27 合并闭环；InventorySnapshot / DroppedLoot / G 键拾取三端已对齐，只剩实机 QA。"
 
   - file: plan-lingtian-npc-v1.md
     group: gameplay-npc
-    title: "NPC 散修种田 = 末法残土生态的压力指示器（§七/§八 触发器）"
+    title: "散修种田生态指示器"
     state: active-design
     percent: 5
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["lingtian-v1 prep PR（ActiveLingtianSessions.by_player → by_actor 重构，独立 PR 不在本 plan 范围）"]
-    summary: "2026-04-30 重写。核心认知：散修种田不是机械 NPC 刷资源，而是 worldview §七（散修利己主义者 + 没灵龛 + 寻路追踪灵气浓度）/ §八（灵物密度阈值触发天道注视）闭环的实例化。散修主动迁徙到玩家高灵气区扎根 → 推高 ZonePressure → 触发道伥刷新 / 灵气归零 / 天劫——形成玩家 vs 散修 vs 天道三方博弈。本 plan 不创新机制只让 worldview 文字变成可观测 entity 行为。P0 起手两件（lingtian by_actor 重构是前置 PR + ScatteredCultivator 组件）；P3 玩家-散修博弈接 niche-defense P4 NPC 抄家来源。"
+    blocking_on: ["lingtian-v1 prep PR（ActiveLingtianSessions.by_player → by_actor 重构）"]
+    summary: "直接实现仅见 ZonePressureCrossed→道伥 spawn 旧钩子；ScatteredCultivator / farming brain 未见，仍卡 by_actor 重构前置。"
+
+  - file: plan-niche-defense-v1.md
+    group: gameplay-npc
+    title: "灵龛抄家防守体系"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-30"
+    pr_refs: []
+    blocking_on: ["plan-fauna-v1 P0（异变兽骨 / 道伥残骸）", "plan-zhenfa-v1 P1（阵石）", "worldview 道伥绑定 + 异种染色章节扩展"]
+    summary: "仅 social.defense_mode hook 存在；守家傀儡/阵法/道伥/龛侵色/生平卷代码未落。"
+
+  - file: plan-perception-v1.md
+    group: gameplay-npc
+    title: "视觉与神识感知系统"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-01"
+    pr_refs: [85]
+    blocking_on: []
+    summary: "旧 v1 已被 v1.1 取代并归档；RealmVision / SpiritualSense、server_data 与客户端边缘指示器已合并，功能已完成。"
 
   # ============================================================
   # Group: infrastructure
   # ============================================================
-  # 注：plan-library-web-content-v1 / plan-opencode-workflow-v1 已于 2026-04-30 决定不再继续，
-  # 文档移入 docs/finished_plans/ 保留调研痕迹，从 dashboard 中移除。
-  - file: plan-narrative-v1.md
-    group: infrastructure
-    title: "天道叙事内容侧（何时 narrate / 节奏 / 风格 / 反例黑名单）"
-    state: active-design
-    percent: 8
-    last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["§6/§7 节空白需填实施节点", "本 plan 是文档/代码混合 plan，需明确哪些是代码任务哪些是后续占位"]
-    summary: "2026-04-30 从 skeleton 升 active。agent finished + NarrationKind enum（仅 1 个 death_insight）+ NarrationStyle 4 个 + NarrationDedupeResource 已实装 15s window；MODERN_SLANG_RE 黑名单需补；recent_narrations context block 未实装。worldview 锚点修正：line 500-510 行号错→§八 line ~620-638（天道叙事的语调）。**红旗**：plan §6/§7 全空，是文档骨架混待办，升 active 后需先填实施节点才能跟踪进度。"
-
   - file: plan-botany-agent-v1.md
     group: infrastructure
-    title: "植物生态快照接入天道 agent（订阅 + 摄取 + 灵气重分配决策）"
+    title: "植物生态快照接入天道 agent"
     state: active-design
     percent: 5
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["P3 lingtian ZonePressureCrossed 跨边界改动（需 server 补 Redis 发布 + agent schema 加 LingtianZonePressureV1）"]
-    summary: "2026-04-30 从 skeleton 升 active。server emit 完整：botany/ecology.rs + redis_bridge BotanyEcology 分支 + schema 双端对齐 + Rust struct + JSON Schema generated；tiandao subscribe 机制完整但未订阅 botany channel。P0/P1/P2 可立即启动；P3 阻塞需 lingtian 侧补 Redis 发布。worldview 锚点修正：三条都标 §七，实际灵气零和→§十、灵物密度阈值→§八、天道叙事→§八。"
+    blocking_on: ["补发 bong:lingtian/zone_pressure"]
+    summary: "快照/Schema 已齐，但 tiandao 仍未订阅 BOTANY_ECOLOGY；P0-P2 仍未做，P3 还缺 zone_pressure。"
+
+  - file: plan-narrative-v1.md
+    group: infrastructure
+    title: "天道叙事内容侧（风格/节奏/黑名单）"
+    state: active-implementing
+    percent: 76
+    last_updated: "2026-04-30"
+    pr_refs: []
+    blocking_on: ["视角剪裁", "模板轮换", "去重 prompt", "黑名单补词"]
+    summary: "schema、风格评分、去重与客户端分流已上线；文档仍缺视角剪裁、模板轮换与黑名单补词，§6/§7 仍空白。"
 
   - file: plan-persistence-v1.md
     group: infrastructure
-    title: "server/agent 跨重启存档持久化（SQLite WAL）"
+    title: "SQLite/WAL 存档持久化"
     state: active-implementing
-    percent: 72
-    last_updated: "2026-04-25"
-    pr_refs: []
+    percent: 90
+    last_updated: "2026-04-29"
+    pr_refs: [24]
     blocking_on: []
-    summary: "server/src/persistence/mod.rs 已实装 rusqlite WAL、user_version=12 迁移链、AscensionQuotaRecord/renown/exposures/spirit_niches 多表；缺 r2d2 连接池、Redis AOF、quest_log 表、Phase 7 迁移演练、Phase 9 性能回归。"
+    summary: "SQLite/WAL、user_version=15、zone_overlays/tribulations/social/亡者快照都在；文档还停在 12 版且缺 r2d2/quest_log/AOF。"
 
   - file: plan-server-cmd-system-v1.md
     group: infrastructure
-    title: "server chat 命令从 hard-parser 迁移到 Valence brigadier /xxx"
+    title: "brigadier /xxx 命令迁移"
     state: active-implementing
-    percent: 70
-    last_updated: "2026-04-25"
+    percent: 88
+    last_updated: "2026-04-29"
     pr_refs: [72]
     blocking_on: []
-    summary: "server/src/cmd/ 已有 21 个 .rs 文件（ping + 11 dev + 3 gameplay + registry_pin）共 78 测；但 chat_collector.rs 仍 411 行（未删 hard parser），plan 文档各阶段仍标 ⬜，P3 e2e 测试与 P4 文档同步未完成，代码超前文档。"
+    summary: "brigadier `/ping`+11 dev+3 gameplay 已注册，旧 `!` 仅丢弃；文档仍标 P3 e2e 与 P4 同步未做。"
 
   # ============================================================
   # Group: skeleton
@@ -368,68 +358,66 @@ plans:
 
   # ============================================================
   # Group: worldgen（地形 / 世界生成）
-  # 注：本组按"主题"分类，不按 state——已归档的 worldgen plan 仍在 finished 组下；
-  # 本组放等待优先级排定的 terrain plan，state 可为 active-design 或 skeleton。
   # ============================================================
   - file: plan-terrain-ash-deadzone-v1.md
     group: worldgen
-    title: "余烬死域 ash_dead_zone terrain profile"
+    title: "余烬死域地形"
     state: active-design
     percent: 10
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: []
-    summary: "无代码落地：worldgen/profiles/ 无 ash_dead_zone.py，terrain-profiles.example.json 无对应 profile，server 无 DeadZoneTickHandler。文档完整度高（§0-§9 + Finish Evidence 占位），升 active 于 2026-04-29，仅设计阶段。"
+    summary: "grep 未见 ash_dead_zone 专属实现；worldgen/server 仅有通用 dead_zone/shelflife 底座。文档一致。"
 
   - file: plan-terrain-jiuzong-ruin-v1.md
     group: worldgen
-    title: "九宗故地 — 上古七崩宗门废墟群"
+    title: "九宗故地废墟群"
     state: skeleton
     percent: 7
     last_updated: "2026-04-29"
     pr_refs: []
-    blocking_on: ["library-jiuzong-history（7篇宗门志）", "plan-skill-v1（残卷功法绑定）"]
-    summary: "在 plans-skeleton/ 目录。零代码实装，LAYER_REGISTRY 无 zongmen_origin_id，worldgen/profiles/ 无 jiu_zong_ruin.py。2026-04-29 审核明确保留骨架，升 active 条件：7 篇宗门志入库 + 残卷功法对齐。"
+    blocking_on: ["library-jiuzong-history", "plan-skill-v1"]
+    summary: "grep 未见 jiu_zong_ruin.py 或 zongmen_origin_id；只见 rift_valley/TSY 同类底座。文档一致。"
 
   - file: plan-terrain-layer-query-v1.md
     group: worldgen
-    title: "TerrainProvider 按 layer 名查询 thin adapter"
-    state: active-design
-    percent: 8
-    last_updated: "2026-04-29"
+    title: "TerrainProvider layer 查询"
+    state: active-implementing
+    percent: 55
+    last_updated: "2026-04-30"
     pr_refs: []
     blocking_on: []
-    summary: "无代码落地：raster.rs 中 sample_layer_f32/u8、LayerSchema、LAYER_SCHEMAS 均为 0 命中。底层 ColumnSample 28 字段已就绪（文档核验属实），仅缺 ~30-50 行 thin adapter + 单测，文档完整但代码尚未动。"
+    summary: "文档低估进度：grep 命中 sample_layer，botany/env_lock 已消费且有测试；但 sample_layer_f32/u8、layer_names、LayerSchema 仍缺。"
 
   - file: plan-terrain-pseudo-vein-v1.md
     group: worldgen
-    title: "伪灵脉绿洲 transient zone + 生命周期"
+    title: "伪灵脉绿洲"
     state: active-design
     percent: 10
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: []
-    summary: "无代码落地：worldgen/profiles/ 无 pseudo_vein_oasis.py，terrain-profiles.example.json 无对应 profile，server 无 PseudoVeinLifecycle。文档含完整 IPC schema 草稿 + §9 进度日志，升 active 于 2026-04-29，仅设计阶段。"
+    summary: "grep 未见 pseudo_vein 专属实现；agent/packages/tiandao 的 tribulation 底座可复用。"
 
   - file: plan-terrain-rift-mouth-v1.md
     group: worldgen
-    title: "渊口荒丘主世界入口地表 profile"
+    title: "渊口荒丘地表"
     state: skeleton
-    percent: 6
+    percent: 8
     last_updated: "2026-04-29"
     pr_refs: []
-    blocking_on: ["LAYER_REGISTRY portal_anchor_sdf 未加", "ColumnSample 缺字段", "terrain-profiles.example.json 无 rift_mouth_barrens profile"]
-    summary: "在 plans-skeleton/ 目录。零代码落地：fields.py 无 portal_anchor_sdf 条目，raster.rs ColumnSample 无对应字段。2026-04-29 审核明确保留骨架，三项 P0 工程产出全缺，升 active 需先动 worldgen 代码。"
+    blocking_on: ["portal_anchor_sdf", "ColumnSample 缺字段", "rift_mouth_barrens profile"]
+    summary: "grep 命中 rift_portal/tsy_portal 与 rift_axis_sdf/neg_pressure，但未见 portal_anchor_sdf 或 rift_mouth_barrens。"
 
   - file: plan-terrain-tribulation-scorch-v1.md
     group: worldgen
-    title: "烬焰焦土天劫积累地形 profile"
+    title: "烬焰焦土地形"
     state: skeleton
-    percent: 6
+    percent: 9
     last_updated: "2026-04-29"
     pr_refs: []
-    blocking_on: ["plan-tribulation-v1 P1（预兆锁定/雷劫渲染/location广播RPC）", "plan-cultivation-v1 暴露染色查询 API"]
-    summary: "在 plans-skeleton/ 目录。零代码落地，worldgen/profiles/ 无 tribulation_scorch.py。2026-04-29 审核标强阻塞：前置 plan-tribulation-v1 P1 未实装，plan-cultivation-v1 无独立 plan 文档且无染色查询 API。"
+    blocking_on: ["plan-tribulation-v1 P1", "plan-cultivation-v1 染色查询 API"]
+    summary: "grep 命中 combat/tiandao 的天劫底座，但 worldgen 无 tribulation_scorch / tianjie_ascension_pit。"
 
   # ============================================================
   # Group: finished（M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan）

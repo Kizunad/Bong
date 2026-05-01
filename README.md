@@ -13,13 +13,13 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-04-30 · 共 79 份 plan_
+_自动生成于 2026-05-01 · 共 79 份 plan_
 
 ```
-总进度  ████████████████████░░░░░░░░░░  65.2%
+总进度  █████████████████████░░░░░░░░░  71.3%
 ```
 
-**分布**：`merged` 4 · `wip` 4 · `design` 19 · `skeleton` 8 · `done` 44
+**分布**：`merged` 7 · `wip` 8 · `design` 12 · `skeleton` 8 · `done` 44
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 3 份 · 组均 31%_
@@ -31,55 +31,55 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 3 份 · 组均 31%_
 | `design` | **地师·阵法流（真元诡雷 + 欺天阵 + 防御阵 + 缜密色亲和）** <br/><sub>`plan-zhenfa-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
 
 ### 修炼 / 经济
-_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 13 份 · 组均 25%_
+_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 13 份 · 组均 42%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **灵田人工种植 — 开垦→种植→补灵→收获闭环** <br/><sub>`plan-lingtian-v1.md`</sub> | `███████████░`  93% | #26 | 2026-04-26 |
-| `merged` | **矿物材料正典 — 18 矿物 + worldgen + forge/alchemy 钩子** <br/><sub>`plan-mineral-v1.md`</sub> | `███████████░`  90% | #31 #44 #57 | 2026-04-27 |
-| `merged` | **炼器全链路收口 — schema / bridge / 装备写入 / 三块 UI** <br/><sub>`plan-forge-leftovers-v1.md`</sub> | `███████████░`  88% | #62 #66 | 2026-04-28 |
-| `wip` | **天劫 — 渡虚劫 / 域崩 / 定向天罚** <br/><sub>`plan-tribulation-v1.md`</sub> | `██░░░░░░░░░░`  18% | — | 2026-04-25 |
-| `design` | **炼丹系统 Fabric 客户端全接入（拦截放置 / 多炉路由 / owo UI / 炸炉）** <br/><sub>`plan-alchemy-client-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **炼丹废料反哺灵田（失败丹 / 药渣 → ReplenishSource 第 5 档）** <br/><sub>`plan-alchemy-recycle-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **妖兽骨系材料（噬元鼠 / 灰烬蛛 / 缝合兽 → 异兽骨/兽核）** <br/><sub>`plan-fauna-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **灵眼系统（坐标注册 + worldgen + 凝脉→固元突破必需 + 天道迁移）** <br/><sub>`plan-spirit-eye-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **灵木材料体系（spawn 区 SpiritWood 已实装，缺 item/forge/weapon 集成）** <br/><sub>`plan-spiritwood-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **采集 / 加工凡器工具体系（7 件 = §四 暗器流凡铁档的工具化）** <br/><sub>`plan-tools-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **作物二级加工 — 晾晒/碾粉/炮制/萃取 + 保鲜度** <br/><sub>`plan-lingtian-process-v1.md`</sub> | `░░░░░░░░░░░░`   3% | — | 2026-04-29 |
-| `design` | **天气季节 → 灵田生长 — 夏冬二季 + 汐转** <br/><sub>`plan-lingtian-weather-v1.md`</sub> | `░░░░░░░░░░░░`   3% | — | 2026-04-29 |
-| `design` | **末法残土植物生态扩展 — 17 新物种 + 三层抽象** <br/><sub>`plan-botany-v2.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-04-29 |
+| `merged` | **采集/加工凡器工具体系** <br/><sub>`plan-tools-v1.md`</sub> | `████████████` 100% | #84 #86 | 2026-04-30 |
+| `merged` | **灵田人工种植** <br/><sub>`plan-lingtian-v1.md`</sub> | `███████████░`  93% | #26 | 2026-04-26 |
+| `merged` | **末法残土植物生态扩展** <br/><sub>`plan-botany-v2.md`</sub> | `███████████░`  90% | #83 | 2026-04-30 |
+| `merged` | **矿物材料正典** <br/><sub>`plan-mineral-v1.md`</sub> | `███████████░`  90% | #31 #44 #57 | 2026-04-27 |
+| `merged` | **炼器全链路收口** <br/><sub>`plan-forge-leftovers-v1.md`</sub> | `███████████░`  88% | #62 #66 | 2026-04-28 |
+| `wip` | **天劫：渡虚劫/域崩/天罚** <br/><sub>`plan-tribulation-v1.md`</sub> | `████░░░░░░░░`  35% | — | 2026-04-25 |
+| `wip` | **炼丹系统 Fabric 客户端全接入** <br/><sub>`plan-alchemy-client-v1.md`</sub> | `██░░░░░░░░░░`  20% | — | 2026-05-01 |
+| `design` | **灵木材料体系** <br/><sub>`plan-spiritwood-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-04-27 |
+| `wip` | **妖兽骨系材料** <br/><sub>`plan-fauna-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-30 |
+| `design` | **炼丹废料反哺灵田** <br/><sub>`plan-alchemy-recycle-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-27 |
+| `design` | **灵眼系统** <br/><sub>`plan-spirit-eye-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-27 |
+| `design` | **作物二级加工** <br/><sub>`plan-lingtian-process-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-04-29 |
+| `design` | **天气季节→灵田生长** <br/><sub>`plan-lingtian-weather-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-04-29 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 4 份 · 组均 28%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 4 份 · 组均 51%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **背包 / 物品 / 死亡掉落 / G 键拾取全链路** <br/><sub>`plan-inventory-v1.md`</sub> | `███████████░`  95% | #27 | 2026-04-25 |
-| `design` | **NPC 散修种田 = 末法残土生态的压力指示器（§七/§八 触发器）** <br/><sub>`plan-lingtian-npc-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **灵龛抄家防守体系（守家傀儡 + 阵法陷阱 + 守宅道伥 三档）** <br/><sub>`plan-niche-defense-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
-| `design` | **视野 / 神识双感知（雾化 + 边缘指示器）** <br/><sub>`plan-perception-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
+| `merged` | **视觉与神识感知系统** <br/><sub>`plan-perception-v1.md`</sub> | `████████████` 100% | #85 | 2026-05-01 |
+| `merged` | **背包与死亡掉落拾取闭环** <br/><sub>`plan-inventory-v1.md`</sub> | `███████████░`  95% | #27 | 2026-04-25 |
+| `design` | **散修种田生态指示器** <br/><sub>`plan-lingtian-npc-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
+| `design` | **灵龛抄家防守体系** <br/><sub>`plan-niche-defense-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
 
 ### 基础设施 / 工作流
-_IPC schema、持久化、工作流、内容、音效 · 4 份 · 组均 39%_
+_IPC schema、持久化、工作流、内容、音效 · 4 份 · 组均 65%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `wip` | **server/agent 跨重启存档持久化（SQLite WAL）** <br/><sub>`plan-persistence-v1.md`</sub> | `█████████░░░`  72% | — | 2026-04-25 |
-| `wip` | **server chat 命令从 hard-parser 迁移到 Valence brigadier /xxx** <br/><sub>`plan-server-cmd-system-v1.md`</sub> | `████████░░░░`  70% | #72 | 2026-04-25 |
-| `design` | **天道叙事内容侧（何时 narrate / 节奏 / 风格 / 反例黑名单）** <br/><sub>`plan-narrative-v1.md`</sub> | `█░░░░░░░░░░░`   8% | — | 2026-04-30 |
-| `design` | **植物生态快照接入天道 agent（订阅 + 摄取 + 灵气重分配决策）** <br/><sub>`plan-botany-agent-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
+| `wip` | **SQLite/WAL 存档持久化** <br/><sub>`plan-persistence-v1.md`</sub> | `███████████░`  90% | #24 | 2026-04-29 |
+| `wip` | **brigadier /xxx 命令迁移** <br/><sub>`plan-server-cmd-system-v1.md`</sub> | `███████████░`  88% | #72 | 2026-04-29 |
+| `wip` | **天道叙事内容侧（风格/节奏/黑名单）** <br/><sub>`plan-narrative-v1.md`</sub> | `█████████░░░`  76% | — | 2026-04-30 |
+| `design` | **植物生态快照接入天道 agent** <br/><sub>`plan-botany-agent-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-30 |
 
 ### 地形 / 世界生成
-_末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 · 组均 8%_
+_末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 · 组均 16%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `design` | **余烬死域 ash_dead_zone terrain profile** <br/><sub>`plan-terrain-ash-deadzone-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-29 |
-| `design` | **伪灵脉绿洲 transient zone + 生命周期** <br/><sub>`plan-terrain-pseudo-vein-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-29 |
-| `design` | **TerrainProvider 按 layer 名查询 thin adapter** <br/><sub>`plan-terrain-layer-query-v1.md`</sub> | `█░░░░░░░░░░░`   8% | — | 2026-04-29 |
-| `skeleton` | **九宗故地 — 上古七崩宗门废墟群** <br/><sub>`plan-terrain-jiuzong-ruin-v1.md`</sub> | `█░░░░░░░░░░░`   7% | — | 2026-04-29 |
-| `skeleton` | **渊口荒丘主世界入口地表 profile** <br/><sub>`plan-terrain-rift-mouth-v1.md`</sub> | `█░░░░░░░░░░░`   6% | — | 2026-04-29 |
-| `skeleton` | **烬焰焦土天劫积累地形 profile** <br/><sub>`plan-terrain-tribulation-scorch-v1.md`</sub> | `█░░░░░░░░░░░`   6% | — | 2026-04-29 |
+| `wip` | **TerrainProvider layer 查询** <br/><sub>`plan-terrain-layer-query-v1.md`</sub> | `███████░░░░░`  55% | — | 2026-04-30 |
+| `design` | **余烬死域地形** <br/><sub>`plan-terrain-ash-deadzone-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-29 |
+| `design` | **伪灵脉绿洲** <br/><sub>`plan-terrain-pseudo-vein-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-29 |
+| `skeleton` | **烬焰焦土地形** <br/><sub>`plan-terrain-tribulation-scorch-v1.md`</sub> | `█░░░░░░░░░░░`   9% | — | 2026-04-29 |
+| `skeleton` | **渊口荒丘地表** <br/><sub>`plan-terrain-rift-mouth-v1.md`</sub> | `█░░░░░░░░░░░`   8% | — | 2026-04-29 |
+| `skeleton` | **九宗故地废墟群** <br/><sub>`plan-terrain-jiuzong-ruin-v1.md`</sub> | `█░░░░░░░░░░░`   7% | — | 2026-04-29 |
 
 ### 骨架 plan
 _战斗流派 + 工具 + 灵田扩展 + 叙事，等待开工 · 5 份 · 组均 5%_
