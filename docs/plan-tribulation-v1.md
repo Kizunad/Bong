@@ -11,11 +11,11 @@
 ## §0 设计轴心
 
 - [x] **唯一境界天劫 = 渡虚劫**（通灵→化虚）；其他境界突破无天劫
-- [x] **全服广播 + 地点公开**——"有人在渡虚劫"；所有玩家获地理坐标，鼓励截胡 ✅（事件层 `TribulationAnnounce` 已 emit + 预警雷 VFX；network → 客户端聊天栏接线待补）
-- [ ] **高风险高回报 · 无辅助 · 无捷径**（worldview line 130）
-- [ ] **天道激烈手段**分三类：渡虚劫（玩家主动）/ 域崩（区域事件）/ 定向天罚（天道精准打击高消耗修士）
-- [ ] 渡虚劫**失败不死透**：退回通灵初期、不掉物品、不扣寿（plan-death §1）；但截胡杀死走正常死亡
-- [ ] 所有天劫事件走 `bong:tribulation` channel，agent 消费后生成冷漠 narration
+- [x] **全服广播 + 地点公开**——"有人在渡虚劫"；所有玩家获地理坐标，鼓励截胡 ✅（`TribulationAnnounce` → `tribulation_broadcast` HUD + `bong:tribulation/omen`；坐标按约 200 格 POI 网格公开）
+- [x] **高风险高回报 · 无辅助 · 无捷径**（worldview line 130）✅（100 格同强度 AOE、截胡者 PVP+天劫双压、丹药只补当前真元；阵法新布置完整限制待 `plan-zhenfa`）
+- [x] **天道激烈手段**分三类：渡虚劫（玩家主动）/ 域崩（区域事件）/ 定向天罚（天道精准打击高消耗修士）✅（`TribulationKind::{DuXu, ZoneCollapse, Targeted}` + Redis/agent/worldgen 接线）
+- [x] 渡虚劫**失败不死透**：退回通灵初期、不掉物品、不扣寿（plan-death §1）；但截胡杀死走正常死亡 ✅（`TribulationFailed` 不进 death roll；`Killed` 走正常 death + 全物品转移）
+- [x] 所有天劫 narration 事件走 `bong:tribulation` channel，agent 消费后生成冷漠 narration ✅（心魔预生成/offer 另走 `bong:heart_demon_request` / `bong:heart_demon_offer` 专用工作流）
 
 ## §1 触发条件
 
@@ -25,9 +25,9 @@
 | **域崩**（区域事件） | 区域灵气持续低于阈值 X 分钟 + 区域内有高消耗行为 | 撤离即可 | 区域毁灭，域内未撤者全部横死 |
 | **定向天罚**（针对个人） | 化虚修士 / 短期内突破多次 / 灵物密度阈值超标（worldview §八.1） | 躲进负灵域 / 欺天阵诱饵 | 局部落雷、异变兽刷新、负面事件概率拉高 |
 
-- [ ] 渡虚劫**不能被强制触发**（没有"天道强行降劫"）——这是设计红线，确保玩家有"万年通灵不突破"的选项
-- [ ] 域崩在区域侧先发两轮预警（narration + HUD 顶栏），倒计时结束才崩
-- [ ] 定向天罚是**隐性**的，不弹窗；走叙事提示（"近日运道不佳"）+ 概率操控
+- [x] 渡虚劫**不能被强制触发**（没有"天道强行降劫"）——这是设计红线，确保玩家有"万年通灵不突破"的选项 ✅（仅 `StartDuXu`/NPC action 触发；玩家 `AbortTribulation` 请求被忽略）
+- [x] 域崩在区域侧先发两轮预警（narration + HUD 顶栏），倒计时结束才崩 ✅（低灵气累计 → `zone_collapse` omen；撤离窗口 lock + HUD 倒计时 + 每分钟 reminder；1h 累计本身仍是后台监控）
+- [x] 定向天罚是**隐性**的，不弹窗；走叙事提示（"近日运道不佳"）+ 概率操控 ✅（`karma_backlash` hidden schedule + targeted zone-scoped narration guard）
 
 ## §2 渡虚劫阶段流程
 
@@ -40,11 +40,11 @@
 
 ### §2.1 预兆期（60 秒）
 
-- [ ] 天象：渡劫者上空雷云聚拢（worldgen 临时覆盖云层 block）
-- [ ] 全服广播：`"北风忽起，雷云自聚。又有修士在逆天。"`（坐标公开到 POI 精度 ~200 格圆）
-- [ ] HUD 顶栏红幅："渡虚劫 · 坐标 (X, Z) · 方位 · 距离"
-- [ ] 玩家可做：跑路赶去截胡 / 撤离附近避免被波及
-- [ ] 渡劫者本人**不能取消**（过了确认起劫点就不可退出）
+- [x] 天象：渡劫者上空雷云聚拢（worldgen 临时覆盖云层 block）✅（`tribulation_omen_cloud_block_overlay_system` 写临时云层方块并在预兆结束恢复；另有 `bong:tribulation_omen_cloud` VFX）
+- [x] 全服广播：`"北风忽起，雷云自聚。又有修士在逆天。"`（坐标公开到 POI 精度 ~200 格圆）✅（agent fallback 文案锁定原句；server/client broadcast 坐标按 200 格网格）
+- [x] HUD 顶栏红幅："渡虚劫 · 坐标 (X, Z) · 方位 · 距离" ✅（`TribulationBroadcastHudPlanner` + `TribulationStateStore` / `TribulationBroadcastStore`）
+- [x] 玩家可做：跑路赶去截胡 / 撤离附近避免被波及 ✅（100 格外安全；20 格内攻击登记截胡者）
+- [x] 渡劫者本人**不能取消**（过了确认起劫点就不可退出）✅（client `abort_tribulation` 被 server 明确忽略；离线/逃离按 `Fled` 退境）
 
 ### §2.2 锁定期（30 秒，逐步锁定）
 
@@ -58,9 +58,9 @@
 | 锁定期 T+15s | 不可新布阵法（已布的保留可用） |
 | 首波雷落（T+30s） | 锁定圈收到 **10 格**（强迫贴脸接雷，禁止苟窗口） |
 
-- [ ] **丹药不锁定**：worldview §三 的"无辅助"指"不改进突破条件"，战斗中用恢复丹属于正常 PVE 消耗，允许使用（但丹药不补"真元上限"，仅补当前值）
-- [ ] 下线视为放弃，判定等同"死于首波雷劫"（退境 + "畏劫而逃"标记）
-- [ ] 观战者聚集：锁定圈外自由围观；**会有观战伤害**——天道不偏袒任何一人，参见 §2.5
+- [x] **丹药不锁定**：worldview §三 的"无辅助"指"不改进突破条件"，战斗中用恢复丹属于正常 PVE 消耗，允许使用（但丹药不补"真元上限"，仅补当前值）✅（`apply_pill_during_tribulation_recovers_current_qi_only`）
+- [x] 下线视为放弃，判定等同"死于首波雷劫"（退境 + "畏劫而逃"标记）✅（`abort_du_xu_on_client_removed` → `TribulationFled` + `BiographyEntry::TribulationFled`）
+- [x] 观战者聚集：锁定圈外自由围观；**会有观战伤害**——天道不偏袒任何一人，参见 §2.5 ✅（100 格内同强度 AOE；范围外安全）
 
 ### §2.3 劫波（3~5 波）
 
@@ -74,33 +74,33 @@
 | 4（加波） | 极高 | 「心魔劫」· **非战斗波**，选项式叙事（见 §2.4） |
 | 5（圆满波） | 终 | 「开天雷」· 不可格挡，只能用满血满真元硬扛 |
 
-- [ ] 波间冷却 15 秒 · 渡劫者可在此窗口调整真元 / 使用阵法 / 接战截胡者
-- [ ] **截胡**：任何玩家进入渡劫 20 格内主动攻击渡劫者 → 进入正常 PVP；渡劫者受天劫 AOE + PVP 双重压力
-- [ ] 截胡杀死渡劫者 → **渡劫者身上物品全部归截胡者**（worldview 零和博弈：天道只在乎世界寿命，不在乎谁拿到遗产）
+- [x] 波间冷却 15 秒 · 渡劫者可在此窗口调整真元 / 使用阵法 / 接战截胡者 ✅（`DUXU_WAVE_COOLDOWN_TICKS`；新布阵法限制仍待 `plan-zhenfa`）
+- [x] **截胡**：任何玩家进入渡劫 20 格内主动攻击渡劫者 → 进入正常 PVP；渡劫者受天劫 AOE + PVP 双重压力 ✅（`record_tribulation_interceptor_system` 20 格登记，结算要求 killer 已登记）
+- [x] 截胡杀死渡劫者 → **渡劫者身上物品全部归截胡者**（worldview 零和博弈：天道只在乎世界寿命，不在乎谁拿到遗产）✅（`tribulation_intercept_death_system` + `transfer_all_inventory_contents`）
 
 ### §2.4 心魔劫（选项式，非战斗波）
 
-- [ ] **预兆期开始时（T-60s）就启动 LLM 生成**——agent 读取渡劫者生平卷 + 真元染色 + 近期重大事件，生成 3–5 个叙事情境 + 每情境 2–4 个抉择选项
-- [ ] **Prompt 硬约束**：每局必须至少 1 个「坚心」选项可达（不能被前置情境屏蔽）。后端返回后做校验器兜底；agent 违规 → 降级到预设 fallback 选项池
-- [ ] 生成完成即可出波——不必严格排在第 4 波，可插队在任何波次之间（通常排在连环雷之后、开天雷之前）
-- [ ] 期间渡劫者不受雷劫 AOE（UI 聚焦选项面板），但**观战者仍可截胡**（PVP 不受保护）
-- [ ] 选项评判：
+- [ ] **预兆期开始时（T-60s）就启动 LLM 生成**——agent 读取渡劫者生平卷 + 真元染色 + 近期重大事件，生成 3–5 个叙事情境 + 每情境 2–4 个抉择选项。`部分完成`：已在预兆期发 `HeartDemonPregenRequestV1`，读取生平卷/真元染色/近期事件；当前 MVP 是固定三选项 offer，未实现多情境树。
+- [x] **Prompt 硬约束**：每局必须至少 1 个「坚心」选项可达（不能被前置情境屏蔽）。后端返回后做校验器兜底；agent 违规 → 降级到预设 fallback 选项池 ✅（canonical choice 0 + agent arbiter + server guard + steadfast trap fallback）
+- [x] 生成完成即可出波——不必严格排在第 4 波，可插队在任何波次之间（通常排在连环雷之后、开天雷之前）✅（pregen offer 可在连环雷后波间插入，缺席则回落第 4 槽）
+- [x] 期间渡劫者不受雷劫 AOE（UI 聚焦选项面板），但**观战者仍可截胡**（PVP 不受保护）✅（AOE 只处理 `Wave(_)`；心魔期仍可登记截胡攻击）
+- [x] 选项评判：
   - **坚心**选项（放弃执念 / 直面过往）→ 通过，少量真元恢复
   - **执念**选项（执着于仇恨 / 回避）→ 失败，当前真元 -30% + 下波雷强度 +20%
   - **无解**选项（agent 故意留的陷阱选项）→ 直接淘汰心魔劫，但不扣真元；用来刻画"愿意 stay true 但接受代价"的人格
-- [ ] 心魔劫结算写入生平卷 `heart_demon_record`，公开（亡者博物馆可查）——**天道不会替玩家保密**
-- [ ] 超时未选（30s）→ 判定为"执念"分支
+- [x] 心魔劫结算写入生平卷 `heart_demon_record`，公开（亡者博物馆可查）——**天道不会替玩家保密** ✅（`BiographyEntry::HeartDemonRecord`）
+- [x] 超时未选（30s）→ 判定为"执念"分支 ✅（`heart_demon_timeout_system`）
 
 ### §2.5 观战伤害（天道不偏袒 · 阻止多人辅助）
 
 原则：**天道不偏袒任何一人**。渡劫范围内的雷霆属于天地现象，所有人一视同仁——围观就要承受，不分敌我。
 
-- [ ] **渡劫范围 = 100 格半径**；范围内任何玩家（含截胡者、观战者、无关路人）一律承受与渡劫者**同等强度**的雷劫 AOE
-- [ ] **AOE 伤害不因人数/距离削弱**——避免"多人蹲守分摊伤害"或"陪着挨雷帮渡劫者硬扛"的辅助套路
-- [ ] 范围外（100 格+）：完全安全，可看天象 VFX 但不受影响
-- [ ] 观战者被雷劈死 → 走正常死亡流程（plan-death）· 非截胡战绩（无凶手，生平卷标注"观劫而亡"）
-- [ ] 心魔劫波次期间无 AOE（因为没有实际落雷）
-- [ ] 截胡者承受 PVP 伤害 **+** 天劫 AOE 双份——这是截胡者自己选的代价，不做任何平衡补偿
+- [x] **渡劫范围 = 100 格半径**；范围内任何玩家（含截胡者、观战者、无关路人）一律承受与渡劫者**同等强度**的雷劫 AOE ✅
+- [x] **AOE 伤害不因人数/距离削弱**——避免"多人蹲守分摊伤害"或"陪着挨雷帮渡劫者硬扛"的辅助套路 ✅
+- [x] 范围外（100 格+）：完全安全，可看天象 VFX 但不受影响 ✅
+- [x] 观战者被雷劈死 → 走正常死亡流程（plan-death）· 非截胡战绩（无凶手，生平卷标注"观劫而亡"）✅（DeathEvent cause `观劫而亡`）
+- [x] 心魔劫波次期间无 AOE（因为没有实际落雷）✅
+- [x] 截胡者承受 PVP 伤害 **+** 天劫 AOE 双份——这是截胡者自己选的代价，不做任何平衡补偿 ✅
 
 ### §2.6 结算
 
@@ -115,30 +115,30 @@
 
 worldview line 72：服务器内仅容 1-2 人化虚。
 
-- [ ] `化虚名额 = floor(max(1, player_count / 50))` · 硬上限 3（防止大服满街化虚）
-- [ ] 达上限时新渡虚劫 → 即使扛过最后一波也只能"半步化虚"
+- [x] `化虚名额 = floor(max(1, player_count / 50))` · 硬上限 3（防止大服满街化虚）✅（`ascension_quota_limit`，Phase 7 回归已锁定公式）
+- [x] 达上限时新渡虚劫 → 即使扛过最后一波也只能"半步化虚" ✅（`DuXuOutcomeV1::HalfStep` + 真元上限/寿元 buff；最终结算仍建议补事务性 quota 再校验，见 §9）
   - 半步化虚：获得通灵圆满永久 buff（真元上限 +10%、寿元 +200 年），但不占名额，可在未来名额空出时重渡
-- [ ] 现有化虚修士**死透 / 老死 / 降境** → 名额释放 → 天道广播"化虚有位，叩关者可往"
+- [x] 现有化虚修士**死透 / 老死 / 降境** → 名额释放 → 天道广播"化虚有位，叩关者可往" ✅（quota release hooks + `AscensionQuotaOpened` + agent narration）
 
 ## §4 域崩
 
 ### §4.1 触发
 
-- [ ] 区域 `spirit_qi < 0.1` 持续 **1 小时**（服务器时间）**且**该区域内有未撤离玩家/NPC
-- [ ] 触发后区域锁定：新玩家不能进入，已在内者进入撤离窗口
+- [x] 区域 `spirit_qi < 0.1` 持续 **1 小时**（服务器时间）**且**该区域内有未撤离玩家/NPC ✅（`RealmCollapseLowQiMonitor`；“高消耗行为”当前由灵气已被耗空间接体现，未作为显式 gate）
+- [x] 触发后区域锁定：新玩家不能进入，已在内者进入撤离窗口 ✅（entry lock 发 `realm_collapse_entry_lock` DeathEvent）
 
 ### §4.2 撤离窗口（10 分钟）
 
-- [ ] **首版仅用系统广播**——HUD 顶栏倒计时 + 每分钟 narration 催促；不做 NPC "观察员"机制（散修商人/灵龛守护者的提前提醒留到后续扩展）
-- [ ] 域边界 VFX：对接 plan-combat 最新 vfx 配置（参考 particle system Phase 1 实装的 `ParticleEffectSpec`），沿边界铺"灰黑渐变"粒子场
-- [ ] 玩家对策：尽快跑到域外；若有灵龛在此，灵龛归属作废
-- [ ] 倒计时结束未撤离 → 区域内所有未撤者**直接横死**（跳过 roll，同死域死亡规则 `plan-death §1`）
+- [x] **首版仅用系统广播**——HUD 顶栏倒计时 + 每分钟 narration 催促；不做 NPC "观察员"机制（散修商人/灵龛守护者的提前提醒留到后续扩展）✅（`RealmCollapseHudPlanner` + event alert + minute reminders；无 NPC 观察员）
+- [x] 域边界 VFX：对接 plan-combat 最新 vfx 配置（参考 particle system Phase 1 实装的 `ParticleEffectSpec`），沿边界铺"灰黑渐变"粒子场 ✅（`bong:realm_collapse_boundary`）
+- [ ] 玩家对策：尽快跑到域外；若有灵龛在此，灵龛归属作废。`部分完成`：跑出域外有效；灵龛归属作废缺现有灵龛模型/模块，暂阻塞。
+- [x] 倒计时结束未撤离 → 区域内所有未撤者**直接横死**（跳过 roll，同死域死亡规则 `plan-death §1`）✅（collapse 发 `realm_collapse` DeathEvent；death lifecycle 已按 `ZoneDeathKind::Death` 处理，严格 terminal kill 仍见 §9）
 
 ### §4.3 崩后
 
-- [ ] 区域变为死域（灵气 = 0 永久，除非天道后期"恢复"）
-- [ ] worldgen 标记该区域为 `ZoneStatus::Collapsed`
-- [ ] 区域内建筑 / 灵龛 / 炉鼎保留但灵气相关功能失效
+- [x] 区域变为死域（灵气 = 0 永久，除非天道后期"恢复"）✅（`collapse_zone` + collapsed overlay hydrate）
+- [x] worldgen 标记该区域为 `ZoneStatus::Collapsed` ✅（server overlay `zone_status=collapsed` + `ZoneStatusV1::Collapsed` + worldgen `realm_collapse_mask` / `collapsed_zones` manifest）
+- [ ] 区域内建筑 / 灵龛 / 炉鼎保留但灵气相关功能失效。`部分完成`：经脉打通/自愈与炉鼎注灵已禁用；灵龛及所有 qi-dependent structure 全覆盖待后续系统盘点。
 
 ## §5 定向天罚
 
@@ -151,16 +151,16 @@ worldview line 72：服务器内仅容 1-2 人化虚。
 | 灵物密度超阈值（箱子 + 炉鼎聚集） | 区域局部"天道注视"：灵气归零 or 道伥刷新 |
 | 频繁操作灵物（inventory 频率） | 物品耐久/纯度扣除 1–5% 每次 |
 
-- [ ] **欺天阵**（worldview §八.3）作为未来玩家对策（**首版不实装，待 plan-zhenfa 立项**）：
+- [ ] **欺天阵**（worldview §八.3）作为未来玩家对策（**首版不实装，待 plan-zhenfa 立项**）：`延后，不计入首版完成`
   - 远离基地 500 格外放置"假人木桩"
   - 吸引天道注意力，假广播高劫气权重
   - 单阵最长持效 10 min 即失效（**线性衰减，0→10 min 匀速降到 0**）
   - 材料/配方由 plan-zhenfa 承接
   - 期间玩家对策仅靠搬家 / 分仓 / 降消耗
 
-- [ ] 定向天罚**不直接弹窗**，仅通过叙事透露："近日运道不佳" / "天道注视着你"；玩家要从概率异常反推
-- [ ] **不提供卜算/查询接口**——天道不偏袒任何一人，也不给任何人"查劫气"的便利；玩家只能靠自己观察概率异常 + 对策（欺天阵 / 搬家 / 分仓）
-- [ ] 数据契约：`KarmaWeight` / `QiDensityHeatmap`（天道巡查用，仅 server 内部，玩家不可读）
+- [x] 定向天罚**不直接弹窗**，仅通过叙事透露："近日运道不佳" / "天道注视着你"；玩家要从概率异常反推 ✅（targeted narration zone-scoped，泄露机制词回退）
+- [x] **不提供卜算/查询接口**——天道不偏袒任何一人，也不给任何人"查劫气"的便利；玩家只能靠自己观察概率异常 + 对策（欺天阵 / 搬家 / 分仓）✅（`KarmaWeightStore` / `QiDensityHeatmap` server 内部资源，无玩家查询接口）
+- [x] 数据契约：`KarmaWeight` / `QiDensityHeatmap`（天道巡查用，仅 server 内部，玩家不可读）✅（server `world::karma`）
 
 ## §6 数据契约
 
@@ -192,68 +192,68 @@ pub struct DuXuResult {
 
 ### Channel / Store
 
-- [ ] `bong:tribulation/omen` — 预兆广播（全服）
-- [ ] `bong:tribulation/lock` — 锁定广播（截胡者决策窗口）
-- [ ] `bong:tribulation/wave` — 波次事件（观战 HUD 更新）
-- [ ] `bong:tribulation/settle` — 结算（触发 death-lifecycle / cultivation 升级）
-- [ ] `bong:tribulation/collapse` — 域崩广播
-- [ ] `TribulationStateStore`（client 端，HUD 消费）
-- [ ] `AscensionQuotaStore`（化虚名额计数）
+- [x] `bong:tribulation/omen` — 预兆广播（全服）✅
+- [x] `bong:tribulation/lock` — 锁定广播（截胡者决策窗口）✅
+- [x] `bong:tribulation/wave` — 波次事件（观战 HUD 更新）✅
+- [x] `bong:tribulation/settle` — 结算（触发 death-lifecycle / cultivation 升级）✅
+- [x] `bong:tribulation/collapse` — 域崩广播 ✅
+- [x] `TribulationStateStore`（client 端，HUD 消费）✅
+- [x] `AscensionQuotaStore`（化虚名额计数）✅（store/handler 已有；独立 UI 展示可后续增强）
 
 ### Intent
 
-- [ ] `StartDuXu { char_id }` — 玩家主动起劫
-- [ ] `AbortTribulation` — server 触发（渡劫者离线等异常）
+- [x] `StartDuXu { char_id }` — 玩家主动起劫 ✅（wire 为 `start_du_xu`，server 使用 client entity + lifecycle character_id）
+- [x] `AbortTribulation` — server 触发（渡劫者离线等异常）✅（玩家 `abort_tribulation` 请求被忽略；离线/逃离由 server `abort_du_xu_on_client_removed` / `tribulation_escape_boundary_system` 结算为 `Fled`）
 
 ## §7 实施节点
 
 **Phase 0 — 数据层 + 名额**
-- [x] `TribulationState` schema ✅（`server/src/cultivation/tribulation.rs`）；`TribulationKind` / `DuXuResult` enum 仍待补
-- [x] `AscensionQuotaStore`（server 全局）✅（`server/src/npc/tribulation.rs`，固定 `max_concurrent=4`，未读 player count；持久化 quota 已落 `ascension_quota` 表）
+- [x] `TribulationState` schema ✅（`server/src/cultivation/tribulation.rs`；`TribulationKind` / `DuXuResultV1` 已补）
+- [x] `AscensionQuotaStore`（server 全局）✅（动态 player_count/50，硬上限 3；持久化 quota 已落 `ascension_quota` 表）
 - [x] 与 plan-death §7 `LifespanEvent` 对齐（渡虚失败不扣寿标记）
 
 **Phase 1 — 渡虚劫核心流程**
-- [ ] 起劫菜单（cultivation 面板"奇经八脉全通"后解锁按钮）
-- [x] 预兆期（天象 VFX + 全服广播）✅（`start_tribulation_system` emit `TribulationAnnounce` + `bong:tribulation_lightning` VFX；network 层下发待补）
-- [ ] 锁定期（20 格边界 + 下线检测 + 丹药栏锁定）
-- [ ] 3 波雷劫机制（落雷 AOE + 噬灵雷）
-- [x] 结算分支（化虚 / 半步化虚 / 退境 / 被截胡）：化虚成功 + 退境失败两条已通（`tribulation_wave_system` / `tribulation_failure_system`）；**半步化虚 / 被截胡** 未实装
+- [x] 起劫菜单（cultivation 面板"奇经八脉全通"后解锁按钮）✅（client 已有按钮与 `start_du_xu`；二次确认 UX 待增强，见 §9）
+- [x] 预兆期（天象 VFX + 全服广播）✅（`TribulationAnnounce` + `bong:tribulation_lightning` / `bong:tribulation_omen_cloud` + 临时云层方块 + network/server_data）
+- [x] 锁定期（20 格边界 + 下线检测 + 丹药栏锁定）✅（锁定半径 100→50→20→10、下线/逃离 `Fled`；丹药不锁，阵法/传送硬禁见 §9）
+- [x] 3 波雷劫机制（落雷 AOE + 噬灵雷）✅（含连环雷、噬灵雷、开天雷满资源校验）
+- [x] 结算分支（化虚 / 半步化虚 / 退境 / 被截胡）✅（全分支已通；quota 最终事务性再校验仍建议补强，见 §9）
 
 **Phase 2 — 观战 / 截胡**
-- [ ] 渡劫 HUD（渡劫者本人 + 观战者差异化）
-- [ ] 截胡 PVP 叠加天劫 AOE
-- [ ] 截胡者战绩记录（生平卷 "戮道者" tag）
+- [x] 渡劫 HUD（渡劫者本人 + 观战者差异化）✅
+- [x] 截胡 PVP 叠加天劫 AOE ✅
+- [x] 截胡者战绩记录（生平卷 "戮道者" tag）✅
 
 **Phase 3 — 心魔劫（选项式）+ 开天雷**
-- [ ] 预兆期 T-60s 启动 agent 预生成（读生平卷 + 真元染色 + 近期事件）
-- [ ] 心魔劫选项 UI（owo-lib Screen + 选项列表 + 30s 倒计时）
-- [ ] 坚心/执念/无解三类评判逻辑
-- [ ] 心魔劫记录入生平卷 `heart_demon_record`
-- [ ] 开天雷不可格挡机制
-- [ ] 加波触发条件（通灵圆满累计时长）
+- [ ] 预兆期 T-60s 启动 agent 预生成（读生平卷 + 真元染色 + 近期事件）`部分完成`：MVP 固定三选项；未实现 3–5 情境树。
+- [x] 心魔劫选项 UI（owo-lib Screen + 选项列表 + 30s 倒计时）✅（复用 Insight offer screen + `heart_demon_offer`）
+- [x] 坚心/执念/无解三类评判逻辑 ✅
+- [x] 心魔劫记录入生平卷 `heart_demon_record` ✅
+- [x] 开天雷不可格挡机制 ✅（第 5 波要求满血满真元硬扛）
+- [x] 加波触发条件（通灵圆满累计时长）✅
 
 **Phase 4 — 域崩**
-- [ ] 区域灵气阈值监控（tick job）
-- [ ] 撤离窗口 HUD + 系统广播（首版，不做 NPC 观察员）
-- [ ] 域边界 VFX（对接最新 particle system 配置）
-- [ ] 崩后 `ZoneStatus::Collapsed` + worldgen 标记
+- [x] 区域灵气阈值监控（tick job）✅
+- [x] 撤离窗口 HUD + 系统广播（首版，不做 NPC 观察员）✅
+- [x] 域边界 VFX（对接最新 particle system 配置）✅
+- [x] 崩后 `ZoneStatus::Collapsed` + worldgen 标记 ✅（runtime authority 为 DB overlay/ZoneRegistry；raster mask 为离线导出语义层）
 
 **Phase 5 — 定向天罚（隐性层）**
-- [ ] 劫气标记组件
-- [ ] 概率操控管道（负面事件 roll 前叠权重）
-- [ ] 灵物密度热图（server 内部，玩家不可读）
+- [x] 劫气标记组件 ✅（`KarmaWeightStore`）
+- [x] 概率操控管道（负面事件 roll 前叠权重）✅（`targeted_calamity_roll` / hidden `karma_backlash`）
+- [x] 灵物密度热图（server 内部，玩家不可读）✅（`QiDensityHeatmap`）
 - [ ] ~~欺天阵接口~~ **延后到 plan-zhenfa 立项后实装**（阵法系统尚未做）；已登记到 `plans-skeleton/reminder.md`。期间玩家对策仅靠搬家/分仓/降消耗
 
 **Phase 6 — Agent / 叙事集成**
-- [ ] 冷漠语调 prompt 模板（worldview §八 好/坏叙事对照）
-- [ ] 化虚成功广播
-- [ ] 截胡讽刺 narration
-- [ ] 域崩哀歌
+- [x] 冷漠语调 prompt 模板（worldview §八 好/坏叙事对照）✅（含 dist prompt fallback、传统境界名/targeted 泄密 guard）
+- [x] 化虚成功广播 ✅
+- [x] 截胡讽刺 narration ✅
+- [x] 域崩哀歌 ✅
 
 **Phase 7 — 平衡回归**
-- [ ] 3 波强度曲线（真元消耗 vs 渡劫者池深）
-- [ ] 截胡窗口时长是否合理
-- [ ] 化虚名额公式系数
+- [x] 3 波强度曲线（真元消耗 vs 渡劫者池深）✅
+- [x] 截胡窗口时长是否合理 ✅
+- [x] 化虚名额公式系数 ✅
 
 ## §8 已决定
 
@@ -276,10 +276,18 @@ pub struct DuXuResult {
 - ✅ **心魔选项 fallback**（§2.4）：agent 违规 / 超时 → 降级到预设选项池，保证流程不卡
 - ✅ **半步化虚 buff 强度**：延后决定，已登记到 `plans-skeleton/reminder.md`
 
-## §9 剩余开放问题
+## §9 剩余开放问题 / 非阻塞后续
 
-_（无未决项，所有设计问题均已收口）_
+- `心魔劫多情境结构`：首版 MVP 已可玩（固定三 canonical choices + LLM flavor + fallback/arbiter/server guard），但未达到“3–5 情境 × 2–4 选项”的树状结构；需 schema + server + client UI 联动后续 plan。
+- `起劫确认 UX`：client 已有“渡虚劫”按钮与 server 权威校验，但缺二次确认弹窗/tooltip 文案；不影响玩法闭环，属于 UX 补强。
+- `阵法/传送硬禁`：锁定半径、VFX、逃劫判定已落；“不可新布阵法”和真正物理墙/传送禁用依赖 movement / plan-zhenfa，当前不抢做。
+- `灵龛归属作废`：缺现有灵龛模块/归属数据模型；域崩已禁用经脉打通/自愈与炉鼎注灵，但灵龛侧需等对应系统成型。
+- `quota 最终事务性再校验`：当前名额公式、持久化、半步结算与释放广播已落；多人同时起劫/结算场景仍建议把最终 Ascended/HalfStep 判定移入 DB transaction 再校验。
+- `active tribulation 恢复字段`：现有恢复已能回 active 渡劫，但 `tribulations_active` 仍缺 phase/epicenter/participants/pending heart demon 等完整上下文；建议后续迁移补全或改为保守失败恢复。
+- `域崩 terminal 语义`：域崩 cause 已映射 `ZoneDeathKind::Death` 并跳过运数保底，但仍沿现有 death lifecycle；若“直接横死”要求完全不可复活，需要在 death lifecycle 增加 terminal cause。
+- `worldgen raster mask runtime 消费`：`realm_collapse_mask` 已导出/校验；server runtime authority 当前仍是 DB overlay / `ZoneRegistry`，若要让 terrain raster 成为权威需另接 `TerrainProvider`。
 
 ## §10 进度日志
 
 - 2026-04-25：核对实装。Phase 0 数据层 + Quota 已落库（`TribulationState` / `AscensionQuotaStore` / `tribulations_active` / `ascension_quota`），Phase 1 仅渡虚劫成功(化虚) / 失败(退境) 两条结算闭环；预兆事件 `TribulationAnnounce` + 预警雷 VFX 已 emit，network → 客户端聊天栏未接；锁定期/3 波 AOE/心魔劫/截胡/半步化虚/域崩/定向天罚均未启动。
+- 2026-05-01：重新核对代码并更新状态。渡虚劫主链（主动起劫、预兆/锁定/雷云临时方块、3~5 波、AOE、心魔 MVP、截胡、失败/逃劫/化虚/半步结算、跨维度过滤）、client HUD、agent narration、域崩 runtime/HUD/VFX/overlay/worldgen mask、定向天罚隐性层、Phase 7 回归均已落地。仍保留 §9 非阻塞后续：心魔多情境树、起劫确认 UX、阵法/传送硬禁、灵龛归属、quota 最终事务性再校验、active tribulation 完整恢复、域崩 terminal kill 与 raster mask runtime 消费。
