@@ -51,24 +51,28 @@ pub enum ClientRequestV1 {
     // ─── 炼丹（plan-alchemy-v1 §4） ─────────────────────────
     AlchemyOpenFurnace {
         v: u8,
-        furnace_id: String,
+        furnace_pos: (i32, i32, i32),
     },
     AlchemyFeedSlot {
         v: u8,
+        furnace_pos: (i32, i32, i32),
         slot_idx: u8,
         material: String,
         count: u32,
     },
     AlchemyTakeBack {
         v: u8,
+        furnace_pos: (i32, i32, i32),
         slot_idx: u8,
     },
     AlchemyIgnite {
         v: u8,
+        furnace_pos: (i32, i32, i32),
         recipe_id: String,
     },
     AlchemyIntervention {
         v: u8,
+        furnace_pos: (i32, i32, i32),
         intervention: AlchemyInterventionV1,
     },
     AlchemyTurnPage {
@@ -784,12 +788,12 @@ mod tests {
 
     #[test]
     fn alchemy_open_furnace_roundtrip() {
-        let json = r#"{"type":"alchemy_open_furnace","v":1,"furnace_id":"block_-12_64_38"}"#;
+        let json = r#"{"type":"alchemy_open_furnace","v":1,"furnace_pos":[-12,64,38]}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequestV1::AlchemyOpenFurnace { v, furnace_id } => {
+            ClientRequestV1::AlchemyOpenFurnace { v, furnace_pos } => {
                 assert_eq!(v, 1);
-                assert_eq!(furnace_id, "block_-12_64_38");
+                assert_eq!(furnace_pos, (-12, 64, 38));
             }
             other => panic!("expected AlchemyOpenFurnace, got {other:?}"),
         }
@@ -797,18 +801,19 @@ mod tests {
 
     #[test]
     fn alchemy_feed_slot_roundtrip() {
-        let json =
-            r#"{"type":"alchemy_feed_slot","v":1,"slot_idx":0,"material":"kai_mai_cao","count":3}"#;
+        let json = r#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[-12,64,38],"slot_idx":0,"material":"ci_she_hao","count":3}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
             ClientRequestV1::AlchemyFeedSlot {
+                furnace_pos,
                 slot_idx,
                 material,
                 count,
                 ..
             } => {
+                assert_eq!(furnace_pos, (-12, 64, 38));
                 assert_eq!(slot_idx, 0);
-                assert_eq!(material, "kai_mai_cao");
+                assert_eq!(material, "ci_she_hao");
                 assert_eq!(count, 3);
             }
             other => panic!("expected AlchemyFeedSlot, got {other:?}"),
@@ -816,15 +821,40 @@ mod tests {
     }
 
     #[test]
-    fn alchemy_intervention_inject_qi_roundtrip() {
-        let json =
-            r#"{"type":"alchemy_intervention","v":1,"intervention":{"kind":"inject_qi","qi":1.0}}"#;
+    fn alchemy_take_back_roundtrip() {
+        let json = r#"{"type":"alchemy_take_back","v":1,"furnace_pos":[-12,64,38],"slot_idx":2}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequestV1::AlchemyIntervention { intervention, .. } => match intervention {
-                super::AlchemyInterventionV1::InjectQi { qi } => assert!((qi - 1.0).abs() < 1e-9),
-                other => panic!("expected InjectQi, got {other:?}"),
-            },
+            ClientRequestV1::AlchemyTakeBack {
+                furnace_pos,
+                slot_idx,
+                ..
+            } => {
+                assert_eq!(furnace_pos, (-12, 64, 38));
+                assert_eq!(slot_idx, 2);
+            }
+            other => panic!("expected AlchemyTakeBack, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_intervention_inject_qi_roundtrip() {
+        let json = r#"{"type":"alchemy_intervention","v":1,"furnace_pos":[-12,64,38],"intervention":{"kind":"inject_qi","qi":1.0}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyIntervention {
+                furnace_pos,
+                intervention,
+                ..
+            } => {
+                assert_eq!(furnace_pos, (-12, 64, 38));
+                match intervention {
+                    super::AlchemyInterventionV1::InjectQi { qi } => {
+                        assert!((qi - 1.0).abs() < 1e-9)
+                    }
+                    other => panic!("expected InjectQi, got {other:?}"),
+                }
+            }
             other => panic!("expected AlchemyIntervention, got {other:?}"),
         }
     }
@@ -995,14 +1025,28 @@ mod tests {
 
     #[test]
     fn alchemy_ignite_roundtrip() {
-        let json = r#"{"type":"alchemy_ignite","v":1,"recipe_id":"kai_mai_pill_v0"}"#;
+        let json = r#"{"type":"alchemy_ignite","v":1,"furnace_pos":[-12,64,38],"recipe_id":"kai_mai_pill_v0"}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequestV1::AlchemyIgnite { recipe_id, .. } => {
+            ClientRequestV1::AlchemyIgnite {
+                furnace_pos,
+                recipe_id,
+                ..
+            } => {
+                assert_eq!(furnace_pos, (-12, 64, 38));
                 assert_eq!(recipe_id, "kai_mai_pill_v0");
             }
             other => panic!("expected AlchemyIgnite, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn alchemy_furnace_payloads_reject_unknown_fields() {
+        let old_open = r#"{"type":"alchemy_open_furnace","v":1,"furnace_id":"block_-12_64_38","furnace_pos":[-12,64,38]}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(old_open).is_err());
+
+        let typo_feed = r#"{"type":"alchemy_feed_slot","v":1,"furnace_position":[-12,64,38],"slot_idx":0,"material":"ci_she_hao","count":3}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(typo_feed).is_err());
     }
 
     #[test]

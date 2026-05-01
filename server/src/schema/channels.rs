@@ -57,6 +57,11 @@ pub const CH_TSY_EVENT: &str = "bong:tsy_event";
 pub const CH_FORGE_START: &str = "bong:forge/start";
 pub const CH_FORGE_OUTCOME: &str = "bong:forge/outcome";
 
+// 炼丹（plan-alchemy-client-v1 §6 / P4）—— server → agent 观测频道。
+pub const CH_ALCHEMY_SESSION_START: &str = "bong:alchemy/session_start";
+pub const CH_ALCHEMY_SESSION_END: &str = "bong:alchemy/session_end";
+pub const CH_ALCHEMY_INTERVENTION_RESULT: &str = "bong:alchemy/intervention_result";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +98,11 @@ mod tests {
         assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
         assert_eq!(CH_FORGE_START, "bong:forge/start");
         assert_eq!(CH_FORGE_OUTCOME, "bong:forge/outcome");
+        assert_eq!(CH_ALCHEMY_SESSION_START, "bong:alchemy/session_start");
+        assert_eq!(CH_ALCHEMY_SESSION_END, "bong:alchemy/session_end");
+        assert_eq!(
+            CH_ALCHEMY_INTERVENTION_RESULT,
+            "bong:alchemy/intervention_result"
+        );
     }
 }

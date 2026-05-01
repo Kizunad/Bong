@@ -2,6 +2,7 @@ package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -189,6 +190,31 @@ public class ClientRequestSenderTest {
         assertEquals(
             "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
             sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendAlchemyFurnaceRequestsUseCorrectChannelAndBlockPosJson() {
+        install();
+        BlockPos pos = new BlockPos(-12, 64, 38);
+
+        ClientRequestSender.sendAlchemyOpenFurnace(pos);
+        ClientRequestSender.sendAlchemyFurnacePlace(pos, 4242L);
+        ClientRequestSender.sendAlchemyFeedSlot(pos, 0, "ci_she_hao", 3);
+
+        assertEquals(3, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"alchemy_open_furnace\",\"v\":1,\"furnace_pos\":[-12,64,38]}",
+            sent.get(0).body()
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_furnace_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242}",
+            sent.get(1).body()
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_feed_slot\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0,\"material\":\"ci_she_hao\",\"count\":3}",
+            sent.get(2).body()
         );
     }
 

@@ -3,9 +3,9 @@
   "name": "赌命散（测试）",
   "furnace_tier_min": 2,
   "stages": [
-    { "at_tick": 0,   "required": [{ "material": "xue_cao",  "count": 4 }], "window": 0 },
-    { "at_tick": 80,  "required": [{ "material": "shou_gu",  "count": 1 }], "window": 20 },
-    { "at_tick": 160, "required": [{ "material": "huo_jing", "count": 1 }], "window": 10 }
+    { "at_tick": 0,   "required": [{ "material": "chi_sui_cao",  "count": 4 }], "window": 0 },
+    { "at_tick": 80,  "required": [{ "material": "hui_yuan_zhi", "count": 1 }], "window": 20 },
+    { "at_tick": 160, "required": [{ "material": "shao_hou_man", "count": 1 }], "window": 10 }
   ],
   "fire_profile": {
     "target_temp": 0.85,

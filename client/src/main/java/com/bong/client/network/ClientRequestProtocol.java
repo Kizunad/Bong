@@ -2,7 +2,9 @@ package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import net.minecraft.util.math.BlockPos;
 
 /**
  * 客户端 → 服务端 {@code bong:client_request} 通道的协议常量与 JSON 编码。
@@ -139,9 +141,9 @@ public final class ClientRequestProtocol {
 
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
-    public static String encodeAlchemyOpenFurnace(String furnaceId) {
+    public static String encodeAlchemyOpenFurnace(BlockPos pos) {
         JsonObject obj = envelope("alchemy_open_furnace");
-        obj.addProperty("furnace_id", furnaceId);
+        addBlockPos(obj, pos);
         return obj.toString();
     }
 
@@ -157,28 +159,32 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    public static String encodeAlchemyIgnite(String recipeId) {
+    public static String encodeAlchemyIgnite(BlockPos pos, String recipeId) {
         JsonObject obj = envelope("alchemy_ignite");
+        addBlockPos(obj, pos);
         obj.addProperty("recipe_id", recipeId);
         return obj.toString();
     }
 
-    public static String encodeAlchemyFeedSlot(int slotIdx, String material, int count) {
+    public static String encodeAlchemyFeedSlot(BlockPos pos, int slotIdx, String material, int count) {
         JsonObject obj = envelope("alchemy_feed_slot");
+        addBlockPos(obj, pos);
         obj.addProperty("slot_idx", slotIdx);
         obj.addProperty("material", material);
         obj.addProperty("count", count);
         return obj.toString();
     }
 
-    public static String encodeAlchemyTakeBack(int slotIdx) {
+    public static String encodeAlchemyTakeBack(BlockPos pos, int slotIdx) {
         JsonObject obj = envelope("alchemy_take_back");
+        addBlockPos(obj, pos);
         obj.addProperty("slot_idx", slotIdx);
         return obj.toString();
     }
 
-    public static String encodeAlchemyInjectQi(double qi) {
+    public static String encodeAlchemyInjectQi(BlockPos pos, double qi) {
         JsonObject obj = envelope("alchemy_intervention");
+        addBlockPos(obj, pos);
         JsonObject inner = new JsonObject();
         inner.addProperty("kind", "inject_qi");
         inner.addProperty("qi", qi);
@@ -186,8 +192,9 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    public static String encodeAlchemyAdjustTemp(double temp) {
+    public static String encodeAlchemyAdjustTemp(BlockPos pos, double temp) {
         JsonObject obj = envelope("alchemy_intervention");
+        addBlockPos(obj, pos);
         JsonObject inner = new JsonObject();
         inner.addProperty("kind", "adjust_temp");
         inner.addProperty("temp", temp);
@@ -198,6 +205,15 @@ public final class ClientRequestProtocol {
     public static String encodeAlchemyTakePill(String pillItemId) {
         JsonObject obj = envelope("alchemy_take_pill");
         obj.addProperty("pill_item_id", pillItemId);
+        return obj.toString();
+    }
+
+    public static String encodeAlchemyFurnacePlace(BlockPos pos, long itemInstanceId) {
+        JsonObject obj = envelope("alchemy_furnace_place");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("item_instance_id", itemInstanceId);
         return obj.toString();
     }
 
@@ -599,5 +615,13 @@ public final class ClientRequestProtocol {
         obj.addProperty("type", type);
         obj.addProperty("v", VERSION);
         return obj;
+    }
+
+    private static void addBlockPos(JsonObject obj, BlockPos pos) {
+        JsonArray arr = new JsonArray();
+        arr.add(pos.getX());
+        arr.add(pos.getY());
+        arr.add(pos.getZ());
+        obj.add("furnace_pos", arr);
     }
 }

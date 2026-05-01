@@ -95,12 +95,65 @@ pub struct AlchemyContaminationLevelV1 {
     pub ok: bool,
 }
 
+// ─── server → agent Redis payload（plan-alchemy-client-v1 §6 / P4） ─────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemySessionStartV1 {
+    pub v: u8,
+    pub session_id: String,
+    pub recipe_id: String,
+    pub furnace_pos: (i32, i32, i32),
+    pub furnace_tier: u8,
+    pub caster_id: String,
+    pub ts: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemySessionEndV1 {
+    pub v: u8,
+    pub session_id: String,
+    pub recipe_id: Option<String>,
+    pub furnace_pos: (i32, i32, i32),
+    pub furnace_tier: u8,
+    pub caster_id: String,
+    pub bucket: AlchemyOutcomeBucketV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pill: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub damage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meridian_crack: Option<f64>,
+    pub elapsed_ticks: u32,
+    pub ts: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemyInterventionResultV1 {
+    pub v: u8,
+    pub session_id: String,
+    pub recipe_id: String,
+    pub furnace_pos: (i32, i32, i32),
+    pub caster_id: String,
+    pub intervention: AlchemyInterventionV1,
+    pub temp_current: f64,
+    pub qi_injected: f64,
+    pub accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub ts: u64,
+}
+
 // ─── server → client 推送 payload（plan §4） ────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AlchemyFurnaceDataV1 {
-    pub furnace_id: String,
+    pub pos: Option<(i32, i32, i32)>,
     pub tier: u8,
     pub integrity: f64,
     pub integrity_max: f64,
@@ -231,6 +284,34 @@ mod tests {
     }
 
     #[test]
+    fn alchemy_bridge_payload_samples_roundtrip() {
+        let start: AlchemySessionStartV1 = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/alchemy-session-start.sample.json"
+        ))
+        .expect("alchemy session start sample should deserialize");
+        assert_eq!(start.v, 1);
+        assert_eq!(start.recipe_id, "kai_mai_pill_v0");
+        assert_eq!(start.furnace_pos, (-12, 64, 38));
+
+        let end: AlchemySessionEndV1 = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/alchemy-session-end-explode.sample.json"
+        ))
+        .expect("alchemy session end sample should deserialize");
+        assert_eq!(end.bucket, AlchemyOutcomeBucketV1::Explode);
+        assert_eq!(end.damage, Some(12.0));
+
+        let intervention: AlchemyInterventionResultV1 = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/alchemy-intervention-result.sample.json"
+        ))
+        .expect("alchemy intervention result sample should deserialize");
+        assert!(intervention.accepted);
+        assert!(matches!(
+            intervention.intervention,
+            AlchemyInterventionV1::InjectQi { .. }
+        ));
+    }
+
+    #[test]
     fn recipe_entry_roundtrip() {
         let entry = AlchemyRecipeEntryV1 {
             id: "kai_mai_pill_v0".into(),
@@ -250,7 +331,7 @@ mod tests {
         let h = AlchemyStageHintV1 {
             at_tick: 80,
             window: 20,
-            summary: "shou_gu × 1".into(),
+            summary: "hui_yuan_zhi × 1".into(),
             completed: false,
             missed: false,
         };

@@ -27,6 +27,7 @@ import io.wispforest.owo.ui.core.*;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 
 import java.util.function.Consumer;
 
@@ -72,12 +73,18 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private BackpackGridPanel backpack;
     private final InventoryModel mockModel;
     private final DragState dragState = new DragState();
+    private final BlockPos furnacePos;
     private Consumer<SkillSetSnapshot> skillListener;
 
     private int dupFlashTicks = 0;
 
     public AlchemyScreen() {
+        this(new BlockPos(0, 64, 0));
+    }
+
+    public AlchemyScreen(BlockPos furnacePos) {
         super(TITLE);
+        this.furnacePos = furnacePos;
         this.mockModel = MockInventoryData.create();
     }
 
@@ -133,7 +140,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         alchemySkillLabel.color(Color.ofArgb(0xFFE0B060));
         h.child(alchemySkillLabel);
         h.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
-        h.child(Components.label(Text.literal("§7ESC 关闭 · session 续 tick")));
+        h.child(Components.label(Text.literal("§7I 起炉 · F 注真元 · T 结算")));
         return h;
     }
 
@@ -434,8 +441,14 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private void refreshFurnaceText() {
         if (furnaceInfoLabel == null) return;
         AlchemyFurnaceStore.Snapshot f = AlchemyFurnaceStore.snapshot();
+        BlockPos shownPos = f.pos() != null ? f.pos() : furnacePos;
         furnaceInfoLabel.text(Text.literal(String.format(
-            "§7t%d 完整 %.0f/%.0f · %s", f.tier(), f.integrity(), f.integrityMax(), f.ownerName())));
+            "§7%s · t%d 完整 %.0f/%.0f · %s",
+            posLabel(shownPos), f.tier(), f.integrity(), f.integrityMax(), f.ownerName())));
+    }
+
+    private static String posLabel(BlockPos pos) {
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
     }
 
     private void refreshSessionText() {
@@ -659,6 +672,9 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
                 id, id, "§7新悟得方子: " + id
             ));
             if (ok) {
+                try {
+                    com.bong.client.network.ClientRequestSender.sendAlchemyLearnRecipe(id);
+                } catch (RuntimeException ignore) { }
                 dragState.drop();
                 clearHighlights();
                 refreshRecipeText();
@@ -686,6 +702,15 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             if (furnaceItems[fIdx] == null) {
                 furnaceItems[fIdx] = dragged;
                 furnaceSlots[fIdx].setItem(dragged, true);
+                int count = feedCountForSlot(activeRecipeId(), fIdx, dragged);
+                try {
+                    com.bong.client.network.ClientRequestSender.sendAlchemyFeedSlot(
+                        furnacePos,
+                        fIdx,
+                        dragged.itemId(),
+                        count
+                    );
+                } catch (RuntimeException ignore) { }
                 dragState.drop();
                 clearHighlights();
                 return;
@@ -715,6 +740,57 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs) return i;
         }
         return -1;
+    }
+
+    private String activeRecipeId() {
+        AlchemySessionStore.Snapshot session = AlchemySessionStore.snapshot();
+        if (AlchemyFurnaceStore.snapshot().hasSession() && session.isActive()) return session.recipeId();
+        RecipeScrollStore.RecipeEntry current = RecipeScrollStore.snapshot().current();
+        return current == null ? "" : current.id();
+    }
+
+    static int feedCountForSlot(String recipeId, int slotIdx, InventoryItem item) {
+        if (item == null) return 1;
+        int required = requiredMaterialCount(recipeId, slotIdx, item.itemId());
+        int target = required > 0 ? required : 1;
+        return Math.max(1, Math.min(item.stackCount(), target));
+    }
+
+    static String canonicalRecipeId(String recipeId) {
+        if (recipeId == null) return "";
+        return switch (recipeId) {
+            case "kaimai_pill", "kai_mai_pill" -> "kai_mai_pill_v0";
+            case "huiyuan_pill", "hui_yuan_pill" -> "hui_yuan_pill_v0";
+            case "duming_san", "du_ming_san" -> "du_ming_san_v0";
+            default -> recipeId;
+        };
+    }
+
+    private static int requiredMaterialCount(String recipeId, int slotIdx, String material) {
+        String normalized = canonicalRecipeId(recipeId);
+        return switch (normalized) {
+            case "kai_mai_pill_v0" -> slotIdx == 0
+                ? switch (material) {
+                    case "ci_she_hao" -> 3;
+                    case "ling_shui" -> 1;
+                    default -> 0;
+                }
+                : 0;
+            case "hui_yuan_pill_v0" -> slotIdx == 0
+                ? switch (material) {
+                    case "hui_yuan_zhi" -> 2;
+                    case "ling_shui" -> 1;
+                    default -> 0;
+                }
+                : 0;
+            case "du_ming_san_v0" -> switch (slotIdx) {
+                case 0 -> "chi_sui_cao".equals(material) ? 4 : 0;
+                case 1 -> "hui_yuan_zhi".equals(material) ? 1 : 0;
+                case 2 -> "shao_hou_man".equals(material) ? 1 : 0;
+                default -> 0;
+            };
+            default -> 0;
+        };
     }
 
     private void updateHighlights(double mx, double my) {
@@ -794,7 +870,33 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         // GLFW key codes: F=70, UP=265, DOWN=264
         if (keyCode == 70) {
             try {
-                com.bong.client.network.ClientRequestSender.sendAlchemyInjectQi(QI_INJECT_PER_TAP);
+                com.bong.client.network.ClientRequestSender.sendAlchemyInjectQi(furnacePos, QI_INJECT_PER_TAP);
+            } catch (RuntimeException ignore) { }
+            return true;
+        }
+        if (keyCode == 73) {
+            RecipeScrollStore.RecipeEntry current = RecipeScrollStore.snapshot().current();
+            if (current != null) {
+                try {
+                    com.bong.client.network.ClientRequestSender.sendAlchemyIgnite(
+                        furnacePos,
+                        canonicalRecipeId(current.id())
+                    );
+                } catch (RuntimeException ignore) { }
+            }
+            return true;
+        }
+        if (keyCode == 84) {
+            for (int i = 0; i < FURNACE_SLOTS; i++) {
+                if (furnaceItems[i] != null) {
+                    try {
+                        com.bong.client.network.ClientRequestSender.sendAlchemyTakeBack(furnacePos, i);
+                    } catch (RuntimeException ignore) { }
+                    return true;
+                }
+            }
+            try {
+                com.bong.client.network.ClientRequestSender.sendAlchemyTakeBack(furnacePos, 0);
             } catch (RuntimeException ignore) { }
             return true;
         }
@@ -805,7 +907,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
                 ? Math.min(1.0, cur + TEMP_ADJUST_STEP)
                 : Math.max(0.0, cur - TEMP_ADJUST_STEP);
             try {
-                com.bong.client.network.ClientRequestSender.sendAlchemyAdjustTemp(next);
+                com.bong.client.network.ClientRequestSender.sendAlchemyAdjustTemp(furnacePos, next);
             } catch (RuntimeException ignore) { }
             return true;
         }

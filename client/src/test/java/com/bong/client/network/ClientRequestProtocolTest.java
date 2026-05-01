@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
+import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -243,6 +244,40 @@ public class ClientRequestProtocolTest {
         assertEquals(
             "{\"type\":\"botany_harvest_request\",\"v\":1,\"session_id\":\"session-botany-01\",\"mode\":\"auto\"}",
             json
+        );
+    }
+
+    @Test
+    void encodesAlchemyFurnaceRequestsWithBlockPos() {
+        BlockPos pos = new BlockPos(-12, 64, 38);
+
+        assertEquals(
+            "{\"type\":\"alchemy_open_furnace\",\"v\":1,\"furnace_pos\":[-12,64,38]}",
+            ClientRequestProtocol.encodeAlchemyOpenFurnace(pos)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_ignite\",\"v\":1,\"furnace_pos\":[-12,64,38],\"recipe_id\":\"kai_mai_pill_v0\"}",
+            ClientRequestProtocol.encodeAlchemyIgnite(pos, "kai_mai_pill_v0")
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_feed_slot\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0,\"material\":\"ci_she_hao\",\"count\":3}",
+            ClientRequestProtocol.encodeAlchemyFeedSlot(pos, 0, "ci_she_hao", 3)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_take_back\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0}",
+            ClientRequestProtocol.encodeAlchemyTakeBack(pos, 0)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_intervention\",\"v\":1,\"furnace_pos\":[-12,64,38],\"intervention\":{\"kind\":\"inject_qi\",\"qi\":1.0}}",
+            ClientRequestProtocol.encodeAlchemyInjectQi(pos, 1.0)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_intervention\",\"v\":1,\"furnace_pos\":[-12,64,38],\"intervention\":{\"kind\":\"adjust_temp\",\"temp\":0.6}}",
+            ClientRequestProtocol.encodeAlchemyAdjustTemp(pos, 0.6)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_furnace_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242}",
+            ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, 4242L)
         );
     }
 

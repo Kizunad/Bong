@@ -12,7 +12,7 @@
 //! 本 plan **不含炼器** — 炼器走 plan-forge-v1。
 //!
 //! 跨 plan 钩子：
-//!   * plan-botany-v1：§3.2 placeholder 材料（kai_mai_cao / ling_shui / ...）等 botany 落地后替换
+//!   * plan-botany-v1：正典药材名（ci_she_hao / hui_yuan_zhi / ...）直接入配方
 //!   * plan-inventory-v1：pill item / 丹方残卷 item / 材料 item 需登记到 ItemRegistry
 //!   * plan-cultivation-v1：pill 效果 → meridian_progress_bonus 待接
 //!   * plan-HUD-v1 §10：快捷使用栏消费 pill item
@@ -86,8 +86,10 @@ pub struct InterventionRequest {
 pub struct AlchemyOutcomeEvent {
     pub furnace: valence::prelude::Entity,
     pub caster_id: String,
+    pub recipe_id: Option<String>,
     pub bucket: outcome::OutcomeBucket,
     pub outcome: ResolvedOutcome,
+    pub elapsed_ticks: u32,
 }
 
 /// plan §1.2 — 玩家手持炉类物品右键地面，客户端发 `AlchemyFurnacePlace` 后
@@ -303,7 +305,10 @@ mod integration_tests {
             .feed_stage(
                 &recipe,
                 0,
-                &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+                &[
+                    ("hui_yuan_zhi".into(), 2, 1.0),
+                    ("ling_shui".into(), 1, 1.0),
+                ],
             )
             .unwrap();
         session.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -448,6 +453,7 @@ mod integration_tests {
         app.world_mut().send_event(AlchemyOutcomeEvent {
             furnace,
             caster_id: canonical_player_id("Azure"),
+            recipe_id: Some("hui_yuan_pill_v0".to_string()),
             bucket: outcome::OutcomeBucket::Perfect,
             outcome: ResolvedOutcome::Pill {
                 recipe_id: "hui_yuan_pill_v0".into(),
@@ -459,6 +465,7 @@ mod integration_tests {
                 side_effect: None,
                 flawed_path: false,
             },
+            elapsed_ticks: 120,
         });
 
         app.update();

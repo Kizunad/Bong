@@ -386,7 +386,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -416,7 +419,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -437,7 +443,7 @@ mod tests {
         let registry = load_recipe_registry().unwrap();
         let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
         let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
-        s.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3, 1.0)])
+        s.feed_stage(&recipe, 0, &[("ci_she_hao".into(), 3, 1.0)])
             .unwrap_or_default();
         s.apply_intervention(Intervention::AdjustTemp(0.60));
         s.apply_intervention(Intervention::InjectQi(15.0));
@@ -462,7 +468,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(1.0));
@@ -483,7 +492,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.72));
@@ -527,7 +539,7 @@ mod tests {
         let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
         let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
         // 缺 ling_shui
-        s.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3, 1.0)])
+        s.feed_stage(&recipe, 0, &[("ci_she_hao".into(), 3, 1.0)])
             .unwrap_or_default();
         s.apply_intervention(Intervention::AdjustTemp(0.60));
         s.apply_intervention(Intervention::InjectQi(15.0));
@@ -553,7 +565,7 @@ mod tests {
         let registry = load_recipe_registry().unwrap();
         let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
         let mut base = AlchemySession::new(recipe.id.clone(), "alice".into());
-        base.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3, 1.0)])
+        base.feed_stage(&recipe, 0, &[("ci_she_hao".into(), 3, 1.0)])
             .unwrap_or_default();
         base.apply_intervention(Intervention::AdjustTemp(0.60));
         base.apply_intervention(Intervention::InjectQi(15.0));
@@ -610,7 +622,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(1.0));
@@ -680,7 +695,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -703,7 +721,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 0.5), ("ling_shui".into(), 1, 0.5)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 0.5),
+                ("ling_shui".into(), 1, 0.5),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -722,7 +743,7 @@ mod tests {
 
     #[test]
     fn quality_factor_mixed_fresh_and_half_weighted_average() {
-        // 2 个 bai_cao factor=1.0 + 1 个 ling_shui factor=0.5 → acc = (2×1.0 + 1×0.5) / 3 = 0.833...
+        // 2 个 hui_yuan_zhi factor=1.0 + 1 个 ling_shui factor=0.5 → acc = (2×1.0 + 1×0.5) / 3 = 0.833...
         // qi_gain = 24 × 0.833... = 20.0
         let registry = load_recipe_registry().unwrap();
         let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
@@ -730,7 +751,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 0.5)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 0.5),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -760,7 +784,10 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2, 0.0), ("ling_shui".into(), 1, 0.0)],
+            &[
+                ("hui_yuan_zhi".into(), 2, 0.0),
+                ("ling_shui".into(), 1, 0.0),
+            ],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));

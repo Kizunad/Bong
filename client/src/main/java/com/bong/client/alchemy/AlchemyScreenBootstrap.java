@@ -6,6 +6,9 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
 public final class AlchemyScreenBootstrap {
@@ -42,7 +45,11 @@ public final class AlchemyScreenBootstrap {
             if (client.currentScreen instanceof AlchemyScreen) {
                 return;
             }
-            client.setScreen(new AlchemyScreen());
+            BlockPos pos = client.crosshairTarget instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK
+                ? hit.getBlockPos()
+                : new BlockPos(0, 64, 0);
+            com.bong.client.network.ClientRequestSender.sendAlchemyOpenFurnace(pos);
+            client.setScreen(new AlchemyScreen(pos));
         });
     }
 }

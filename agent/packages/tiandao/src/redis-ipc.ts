@@ -2,6 +2,7 @@ import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 import {
   CHANNELS,
+  validateAlchemySessionEndV1Contract,
   validateFactionEventV1Contract,
   validateNpcDeathV1Contract,
   validateNpcSpawnedV1Contract,
@@ -12,6 +13,7 @@ import type {
   AgentWorldModelEnvelopeV1,
   AgentWorldModelSnapshotV1,
   AgentCommandV1,
+  AlchemySessionEndV1,
   FactionEventV1,
   NarrationV1,
   NpcDeathV1,
@@ -34,11 +36,13 @@ const {
   NPC_SPAWN,
   NPC_DEATH,
   FACTION_EVENT,
+  ALCHEMY_SESSION_END,
 } = CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const TSY_HOSTILE_EVENT_BUFFER_LIMIT = 128;
 const NPC_EVENT_BUFFER_LIMIT = 128;
+const ALCHEMY_EVENT_BUFFER_LIMIT = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
 export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
@@ -61,6 +65,7 @@ export interface PublishAgentWorldModelRequest {
 
 export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
 export type NpcRuntimeEventV1 = NpcSpawnedV1 | NpcDeathV1 | FactionEventV1;
+export type AlchemyRuntimeEventV1 = AlchemySessionEndV1;
 
 const DRAIN_SCRIPT = `
 local items = redis.call('lrange', ARGV[1], 0, -1)
@@ -112,9 +117,11 @@ export class RedisIpc {
   private latestState: WorldStateV1 | null = null;
   private latestTsyHostileEvents: TsyHostileEventV1[] = [];
   private latestNpcEvents: NpcRuntimeEventV1[] = [];
+  private latestAlchemyEvents: AlchemyRuntimeEventV1[] = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
   private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
+  private alchemyEventCallbacks: Array<(event: AlchemyRuntimeEventV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel === WORLD_STATE) {
@@ -130,6 +137,11 @@ export class RedisIpc {
 
     if (channel === NPC_SPAWN || channel === NPC_DEATH || channel === FACTION_EVENT) {
       this.handleNpcRuntimeEventMessage(channel, message);
+      return;
+    }
+
+    if (channel === ALCHEMY_SESSION_END) {
+      this.handleAlchemyRuntimeEventMessage(message);
     }
   };
 
@@ -217,6 +229,30 @@ export class RedisIpc {
     }
   }
 
+  private handleAlchemyRuntimeEventMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateAlchemySessionEndV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid alchemy session_end event:", result.errors.join("; "));
+        return;
+      }
+      this.recordAlchemyRuntimeEvent(data as AlchemyRuntimeEventV1);
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse alchemy session_end event:", e);
+    }
+  }
+
+  private recordAlchemyRuntimeEvent(event: AlchemyRuntimeEventV1): void {
+    this.latestAlchemyEvents.push(event);
+    if (this.latestAlchemyEvents.length > ALCHEMY_EVENT_BUFFER_LIMIT) {
+      this.latestAlchemyEvents = this.latestAlchemyEvents.slice(-ALCHEMY_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.alchemyEventCallbacks) {
+      cb(event);
+    }
+  }
+
   constructor(config: RedisIpcConfig, deps?: RedisIpcDeps) {
     const createClient =
       config.createClient ??
@@ -236,11 +272,12 @@ export class RedisIpc {
     await this.sub.subscribe(NPC_SPAWN);
     await this.sub.subscribe(NPC_DEATH);
     await this.sub.subscribe(FACTION_EVENT);
+    await this.sub.subscribe(ALCHEMY_SESSION_END);
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(
-      `[redis-ipc] subscribed to ${WORLD_STATE}, ${TSY_EVENT}, ${NPC_SPAWN}, ${NPC_DEATH}, ${FACTION_EVENT}`,
+      `[redis-ipc] subscribed to ${WORLD_STATE}, ${TSY_EVENT}, ${NPC_SPAWN}, ${NPC_DEATH}, ${FACTION_EVENT}, ${ALCHEMY_SESSION_END}`,
     );
   }
 
@@ -266,6 +303,14 @@ export class RedisIpc {
 
   onNpcRuntimeEvent(cb: (event: NpcRuntimeEventV1) => void): void {
     this.npcEventCallbacks.push(cb);
+  }
+
+  getLatestAlchemyEvents(): AlchemyRuntimeEventV1[] {
+    return [...this.latestAlchemyEvents];
+  }
+
+  onAlchemyRuntimeEvent(cb: (event: AlchemyRuntimeEventV1) => void): void {
+    this.alchemyEventCallbacks.push(cb);
   }
 
   async publishCommands(request: CommandPublishRequest): Promise<void> {
