@@ -258,6 +258,55 @@ Rust 镜像：`server/src/schema/pseudo_vein.rs`。Redis 通道：
 - [ ] 玩家挖出的伪泉眼/幻灵柱方块带回基地是否保留？（建议 inventory 操作即化为 `gravel`——与"灵物磨损税"同源）
 - [ ] 多个伪灵脉是否互相干涉？（首版禁止 500 格内并存）
 - [ ] 与既有六域 zone 的边界处理——若伪灵脉生成在 broken_peaks 边缘（高低差大），是否强制贴地？（首版强制 base_y 取局部地表中位）
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 blueprint + profile spec：
+  - `worldgen/terrain-profiles.example.json` 注册 `pseudo_vein_oasis`
+  - `server/src/worldgen/transient_zone.rs` 提供 `build_pseudo_vein_blueprint_zone` / `pseudo_vein_*` 动态模板接口
+- P1 generator：
+  - `worldgen/scripts/terrain_gen/profiles/pseudo_vein_oasis.py`
+  - `PseudoVeinOasisGenerator` / `fill_pseudo_vein_oasis_tile`
+  - `PSEUDO_VEIN_DECORATIONS` 5 项装饰物与 ecology notes
+  - `worldgen/scripts/terrain_gen/stitcher.py` 接入 profile dispatch
+- P2 生命周期 + IPC：
+  - `server/src/worldgen/pseudo_vein.rs` 实装 `PseudoVeinLifecycle { spawned_at, decay_rate, occupant_count }`、30/90 分钟衰减、消散事件、1-3 个负灵风暴、饥渴圈回灌、龛石拒绝、汐转期 spawn multiplier
+  - `agent/packages/schema/src/pseudo-vein.ts` / `server/src/schema/pseudo_vein.rs` 双端 schema
+  - Redis channel：`bong:pseudo_vein:active` / `bong:pseudo_vein:dissipate`
+- P3 narration + 天劫诱饵：
+  - `agent/packages/tiandao/src/narration/templates.ts` 提供 `pseudo_vein.lure` / `pseudo_vein.warning` / `pseudo_vein.dissipate`
+  - `agent/packages/tiandao/src/redis-ipc.ts` 将伪灵脉 active/dissipate 纳入 cross-system event buffer
+  - `server/src/worldgen/pseudo_vein.rs` 实装最高境界占用者选择、24h 天劫诱饵标记、`+30%` 概率、`tribulation_bait_event`
+
+### 关键 commit
+
+- `9e1ee047`（2026-05-02）`feat(worldgen): 注册伪灵脉绿洲地形`
+- `81aa0e6d`（2026-05-02）`feat(schema): 增加伪灵脉 IPC 契约`
+- `b21ee27a`（2026-05-02）`feat(server): 实装伪灵脉生命周期逻辑`
+- `efebc926`（2026-05-02）`feat(agent): 增加伪灵脉叙事钩子`
+- `399cdb6f`（2026-05-02）`fix(server): 标注伪灵脉 Redis 出口预留`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`2091 passed`
+- `cd worldgen && python3 -m unittest discover`：通过，`42 passed`
+- `cd worldgen && python3 -m scripts.terrain_gen --tile-size 512 --output-dir /tmp/bong-terrain-pseudo-vein-smoke`：通过，生成 raster manifest 与 previews
+- `cd agent && npm run build`：通过
+- `cd agent/packages/schema && npm run generate:check && npm test`：通过，`249 passed`
+- `cd agent/packages/tiandao && npm test`：通过，`209 passed`
+
+### 跨仓库核验
+
+- worldgen：`pseudo_vein_oasis`、`PseudoVeinOasisGenerator`、`fill_pseudo_vein_oasis_tile`、`PSEUDO_VEIN_DECORATIONS`
+- server：`build_pseudo_vein_blueprint_zone`、`PseudoVeinLifecycle`、`PseudoVeinSnapshotV1`、`PseudoVeinDissipateEventV1`、`CH_PSEUDO_VEIN_ACTIVE`、`CH_PSEUDO_VEIN_DISSIPATE`、`tribulation_bait_event`
+- agent/schema：`PseudoVeinSnapshotV1`、`PseudoVeinDissipateEventV1`、`CHANNELS.PSEUDO_VEIN_ACTIVE`、`CHANNELS.PSEUDO_VEIN_DISSIPATE`
+- agent/tiandao：`PSEUDO_VEIN_NARRATION_TEMPLATES`、`pseudo_vein.lure`、`pseudo_vein.warning`、`pseudo_vein.dissipate`
+
+### 遗留 / 后续
+
+- 本 plan 按 §8 保留 spawn cadence、伪泉眼 inventory 行为、500 格并存约束、复杂地形贴地策略为后续调参/调度问题；首版已提供可消费的 profile、IPC、生命周期和 narration/tribulation 接口。
 - [ ] anomaly 风暴的可视化——客户端粒子方案 vs 完全靠 HUD 灵压条提示？（依赖 plan-particle-system-v1）
 - [ ] 玩家凝脉/固元期跑去伪灵脉真实修炼，被抓的概率统计——伪灵脉给的 +60% 加速是否要做总量上限（避免被刷）
 
@@ -273,25 +322,3 @@ Rust 镜像：`server/src/schema/pseudo_vein.rs`。Redis 通道：
   - 工程性 gap 补完：§6.1 加完整 IPC schema 草稿（PseudoVeinSnapshotV1 / PseudoVeinDissipateEventV1）+ §7 测试阈值数量化（≥ 15 条单测 / e2e）+ Finish Evidence 占位。
   - 前置 plan 状态：`plan-narrative-v1` 骨架（不阻塞——P3 narration template 可在 narrative-v1 立项前先写 stub）；`plan-tribulation-v1` active（劫气标记 hook 已暴露）；`plan-perception-v1` 骨架（不阻塞 P0–P2）。
   - 准备 `git mv` 进 docs/ active。
-
----
-
-## Finish Evidence
-
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
-- 落地清单：
-  - P0：`worldgen/terrain-profiles.example.json` 加 `pseudo_vein_oasis` profile + `server/src/worldgen/transient_zone.rs`（动态 zone 注入接口）
-  - P1：`worldgen/scripts/terrain_gen/profiles/pseudo_vein_oasis.py`（PseudoVeinOasisGenerator + 5 装饰物）
-  - P2：`server/src/worldgen/pseudo_vein.rs`（PseudoVeinLifecycle + decay system + dissipate event）+ Redis pub
-  - P3：`agent/packages/schema/src/pseudo-vein.ts` + Rust 镜像 + `agent/packages/tiandao/src/narration/templates.ts` 三档 + 劫气标记 hook
-- 关键 commit：
-- 测试结果：（目标 P0 ≥ 2 + P1 ≥ 7 + P2 ≥ 8 + P3 ≥ 4）
-- 跨仓库核验：
-  - worldgen：`pseudo_vein_oasis` profile / `PseudoVeinOasisGenerator` / `PSEUDO_VEIN_DECORATIONS`
-  - server：`PseudoVeinLifecycle` / `transient_zone` / Redis `bong:pseudo_vein:*`
-  - agent：`PseudoVeinSnapshotV1` / `PseudoVeinDissipateEventV1` / `pseudo_vein.lure/warning/dissipate` narration
-- 遗留 / 后续：
-  - 多个伪灵脉互相干涉（§8 开放问题——首版禁止 500 格内并存）
-  - +60% 加速总量上限（§8 开放问题——v1 暂不限）
-  - 客户端粒子方案（依 plan-particle-system-v1 / plan-narrative-v1）
