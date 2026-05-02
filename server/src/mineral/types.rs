@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn from_str_rejects_unknown() {
         assert_eq!(MineralId::from_str("xuan_tie"), None);
-        assert_eq!(MineralId::from_str("yi_beast_bone"), None);
+        assert_eq!(MineralId::from_str("yi_shou_gu"), None);
         assert_eq!(MineralId::from_str(""), None);
     }
 

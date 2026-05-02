@@ -231,7 +231,7 @@ mod tests {
     fn registry_rejects_unknown_id() {
         let reg = build_default_registry();
         assert!(!reg.is_valid_mineral_id("xuan_tie"));
-        assert!(!reg.is_valid_mineral_id("yi_beast_bone"));
+        assert!(!reg.is_valid_mineral_id("yi_shou_gu"));
         assert!(reg.is_valid_mineral_id("fan_tie"));
     }
 
