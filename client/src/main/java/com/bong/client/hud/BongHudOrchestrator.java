@@ -201,6 +201,11 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
+        commands.addAll(SearchProgressHudPlanner.buildCommands(
+            SearchHudStateStore.snapshot(),
+            screenWidth,
+            screenHeight
+        ));
         commands.addAll(RealmCollapseHudPlanner.buildCommands(
             com.bong.client.state.RealmCollapseHudStateStore.snapshot(),
             widthMeasurer,

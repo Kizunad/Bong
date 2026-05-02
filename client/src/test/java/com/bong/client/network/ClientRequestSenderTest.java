@@ -256,6 +256,22 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendSearchRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendStartSearch(42L);
+        ClientRequestSender.sendCancelSearch();
+
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"start_search\",\"v\":1,\"container_entity_id\":42}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals("{\"type\":\"cancel_search\",\"v\":1}", sent.get(1).body());
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

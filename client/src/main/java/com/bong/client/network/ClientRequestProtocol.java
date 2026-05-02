@@ -559,6 +559,19 @@ public final class ClientRequestProtocol {
         return envelope("cancel_extract_request").toString();
     }
 
+    public static String encodeStartSearch(long containerEntityId) {
+        if (containerEntityId < 0) {
+            throw new IllegalArgumentException("containerEntityId must be >= 0, got " + containerEntityId);
+        }
+        JsonObject obj = envelope("start_search");
+        obj.addProperty("container_entity_id", containerEntityId);
+        return obj.toString();
+    }
+
+    public static String encodeCancelSearch() {
+        return envelope("cancel_search").toString();
+    }
+
     // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
 
     /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */
