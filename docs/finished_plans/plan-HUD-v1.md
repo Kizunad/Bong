@@ -783,15 +783,17 @@ Channel：
 - `64b29658` · 2026-05-02 · `feat(client): 渲染伪皮与涡流 HUD 角标`
 - `f980cbf0` · 2026-05-02 · `feat(client): 补 InspectScreen 快捷使用 tab`
 - `9d894c6c` · 2026-05-02 · `feat(server): 补 HUD DerivedAttrs 同步`
+- `de4846a0` · 2026-05-02 · `fix(server): 修复天劫锁定同步陈旧`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 2048 passed / 0 failed。
 - `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过；JUnit report 764 tests / 0 failures / 0 errors。
+- review 修复后重跑 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 2050 passed / 0 failed。
 
 ### 跨仓库核验
 
-- server：`DerivedAttrsSyncV1`、`ServerDataPayloadV1::DerivedAttrsSync`、`ServerDataType::DerivedAttrsSync`、`derived_attrs_emit::emit_derived_attrs_sync_payloads`、`payload_type_label(DerivedAttrsSync)`。
+- server：`DerivedAttrsSyncV1`、`ServerDataPayloadV1::DerivedAttrsSync`、`ServerDataType::DerivedAttrsSync`、`derived_attrs_emit::emit_derived_attrs_sync_payloads`、`Changed<TribulationState>` / `RemovedComponents<TribulationState>` 清除态同步、`payload_type_label(DerivedAttrsSync)`。
 - client：`StyleBadgeHudPlanner`、`DerivedAttrsStore`、`UnlockedStylesStore`、`EventStreamHudPlanner`、`HudConfig.toggleEventStreamVisible()`、`InspectScreen` 的 `快捷使用` tab 与 `QuickUseSlotStore` 共享状态。
 - agent：本 plan 不涉及 agent 包，未改动。
 
