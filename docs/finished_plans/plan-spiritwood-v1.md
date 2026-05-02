@@ -154,3 +154,44 @@
 ## §10 进度日志
 
 - **2026-04-27**：骨架立项。来源：`docs/plans-skeleton/reminder.md` "通用/跨 plan"节（`plan-spiritwood-v1 待立`）+ plan-forge-v1 `ling_wood` 正典化缺口。server 侧 `MegaTreeKind::SpiritWood` 巨树已在 worldgen 实装（`server/src/world/terrain/mega_tree.rs`，spawn 区，trunk_height 140–180 格）；`server/src/lingtian/systems.rs:2616` 有 `"灵木苗"` 展示名但无 item_id。`server/src/forge/` 中 `"ling_wood"` 占位 2 处待替换。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- P0/P1 灵木采集运行时：`server/src/spiritwood/session.rs`、`server/src/spiritwood/mod.rs`、`server/src/main.rs` 注册 `WoodSession`，SpiritWood 树干启动 240 tick 采集，移动 / 受击 / 切换工具中断，完成后方块置 AIR、记录 `SpiritWoodHarvestedLogs`、掉落 `ling_mu_gun` 并挂 `ling_mu_gun_v1` freshness。
+- P0/P1 worldgen 与再生成约束：`server/src/world/terrain/mega_tree.rs` 暴露 SpiritWood log 命中检测，`server/src/world/terrain/mod.rs` 在 chunk 生成时按已采伐日志擦除树干，避免已砍方块被同 seed 重新生成。
+- P0/P1 物品与保质期：`server/assets/items/spiritwood/*.toml` 新增 `ling_mu_gun`、`ling_mu_ban`、`ling_mu_jing`、`ling_xia`、`ling_mu_miao`、`feng_he_gu`；`server/src/shelflife/registry.rs` 注册 24h 半衰期的 `ling_mu_gun_v1`。
+- P1 HUD / schema：`server/src/schema/channels.rs`、`server/src/schema/server_data.rs`、`server/src/network/agent_bridge.rs` 与 `agent/packages/schema/` 新增 `bong:lumber_progress` / `lumber_progress` server-data 契约、样例和 generated schema。
+- P2 forge 正典化：`server/assets/forge/blueprints/ling_feng_v0.json`、`server/src/forge/*.rs`、`agent/packages/schema/samples/*forge*.json` 将 `ling_wood` 正典化为 `ling_mu_ban`；`server/src/inventory/mod.rs` 支持递归加载 `server/assets/items/**.toml`。
+- P3 封灵匣：`server/assets/forge/blueprints/ling_xia_v1.json` 新增 `ling_mu_ban` + `feng_he_gu` 配方；`server/src/forge/inventory_bridge.rs` 允许 forge 产出 Treasure 类 `ling_xia`；`server/src/spiritwood/mod.rs` 保留 `ling_xia` Freeze 行为契约，专用背包槽 UI 仍归 inventory 后续计划。
+- P4 阵法载体：`server/assets/zhenfa_hooks/spiritwood_v1_hooks.json` 与 `server/src/zhenfa_hooks.rs` 记录 `ling_mu_gun` 4h、`ling_mu_ban` 12h 的 zhenfa 对接钩子；正式 `CarrierMaterial` registry 等 plan-zhenfa P0 定义后接入。
+
+### 关键 commit
+
+- `632c15d82bea0a606b3e0baa844f5171b2a8e5c3` · 2026-05-02 · `feat(spiritwood): 接入灵木采集运行时`
+- `c82d3420f919620821052ed328c77d714ef81760` · 2026-05-02 · `feat(forge): 正典化灵木材料与封灵匣`
+- `5da06b53ad1d29e3f560cdc7769bc6d5005f19d5` · 2026-05-02 · `feat(schema): 同步灵木伐木进度契约`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 2074 passed。
+- `cd agent && npm run build`：通过。
+- `cd agent/packages/schema && npm test`：通过，247 passed。
+- `cd agent/packages/tiandao && npm test`：通过，205 passed。
+- `rg -n "ling_wood" "server" "agent" "client"`：无命中。
+- `git diff --check`：通过。
+
+### 跨仓库核验
+
+- server：`WoodSession`、`SpiritWoodHarvestedLogs`、`LING_MU_GUN_PROFILE_ID`、`ServerDataPayloadV1::LumberProgress`、`CH_LUMBER_PROGRESS`、`ling_xia_v1`。
+- agent/schema：`ServerDataLumberProgressV1`、`CHANNELS.LUMBER_PROGRESS`、`server-data-lumber-progress-v1.json`、`server-data.lumber-progress.sample.json`。
+- client：本 plan 未改 Java client；`ling_wood` 在 `client/` 无命中。
+
+### 遗留 / 后续
+
+- `plan-zhenfa-v1` 的 `CarrierMaterial` registry 尚未落地，本 plan 只提交 hook manifest 与测试锚点。
+- `ling_xia` 的专用保养槽拖拽 UI 仍归 inventory plan；当前完成 item、forge 产出和 server-side Freeze 行为契约。
+- `ling_mu_jing` 的量产炼器/木工加工链仍按 §9 开放问题保留给后续专用加工计划。
