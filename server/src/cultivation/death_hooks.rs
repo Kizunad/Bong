@@ -245,8 +245,8 @@ mod tests {
         assert_eq!(c.realm, Realm::Awaken);
         assert_eq!(c.qi_current, 0.0);
         assert!((c.composure - 0.3).abs() < 1e-9);
-        // Awaken 要求 0 条，但保留至少 1（下限 special case）
-        assert!(ms.opened_count() <= 3);
+        // 醒灵正典门槛为 1 条，重生降境后只保留最低门槛。
+        assert_eq!(ms.opened_count(), Realm::Awaken.required_meridians());
     }
 
     #[test]

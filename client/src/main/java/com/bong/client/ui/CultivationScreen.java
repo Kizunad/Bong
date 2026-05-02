@@ -1,6 +1,7 @@
 package com.bong.client.ui;
 
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.util.RealmLabel;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.container.Containers;
@@ -68,7 +69,7 @@ public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         List<String> lines = new ArrayList<>();
-        lines.add("境界: " + safePlayerState.realm());
+        lines.add("境界: " + RealmLabel.displayName(safePlayerState.realm()));
         lines.add(
             "真元: "
                 + buildBar(safePlayerState.spiritQiFillRatio())

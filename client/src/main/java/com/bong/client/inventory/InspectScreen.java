@@ -10,6 +10,7 @@ import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.util.RealmLabel;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import net.minecraft.client.MinecraftClient;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -344,7 +345,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (b == null) { bodyStatusLabel.text(Text.literal("")); return; }
             StringBuilder sb = new StringBuilder();
             if (b.realm() != null && !b.realm().isEmpty()) {
-                sb.append("§7境界 §f").append(b.realm());
+                sb.append("§7境界 §f").append(RealmLabel.displayName(b.realm()));
             }
             if (b.contaminationTotal() > 0.0) {
                 if (sb.length() > 0) sb.append("  §8·  ");

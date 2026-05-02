@@ -45,7 +45,7 @@ public class CultivationScreenTest {
         ));
 
         assertFalse(content.placeholder());
-        assertEquals("境界: Induce", content.lines().get(0));
+        assertEquals("境界: 引气", content.lines().get(0));
         assertEquals("真元: ████████░░ 78/100", content.lines().get(1));
         assertEquals("因果 (karma): +0.20", content.lines().get(2));
         assertEquals("善恶刻度: [═════●══════] 善 ←→ 恶", content.lines().get(3));

@@ -29,7 +29,7 @@ export const Realm = Type.Union(
     Type.Literal("Spirit"),
     Type.Literal("Void"),
   ],
-  { description: "6 境界" },
+  { description: "6 境界：醒灵/引气/凝脉/固元/通灵/化虚" },
 );
 export type Realm = Static<typeof Realm>;
 

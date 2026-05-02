@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import com.bong.client.util.RealmLabel;
+
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -93,23 +95,7 @@ public record PlayerStateViewModel(
     }
 
     static String humanizeRealm(String realmKey) {
-        Objects.requireNonNull(realmKey, "realmKey");
-
-        String trimmed = realmKey.trim();
-        if (trimmed.isEmpty()) {
-            return "凡体";
-        }
-
-        String normalized = trimmed.toLowerCase(Locale.ROOT);
-        return switch (normalized) {
-            case "awaken" -> "醒灵";
-            case "induce" -> "引气";
-            case "condense" -> "凝脉";
-            case "solidify" -> "固元";
-            case "spirit" -> "通灵";
-            case "void" -> "化虚";
-            default -> trimmed;
-        };
+        return RealmLabel.displayName(realmKey);
     }
 
     static String blockBar(double ratio) {

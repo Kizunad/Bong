@@ -4853,9 +4853,11 @@ mod tests {
             flush_all_client_packets(&mut app);
             let _ = collect_server_data_payloads(&mut helper);
 
-            // Cultivation breakthrough requires at least one opened meridian.
+            // 引气正典门槛：3 条正经。
             let mut meridians = MeridianSystem::default();
-            meridians.get_mut(MeridianId::Lung).opened = true;
+            for id in MeridianId::REGULAR.iter().take(3) {
+                meridians.get_mut(*id).opened = true;
+            }
             app.world_mut().entity_mut(entity).insert(meridians);
 
             app.world_mut()

@@ -204,7 +204,7 @@
                     ],
                     "properties": {
                       "realm_target": {
-                        "description": "6 境界",
+                        "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
                         "anyOf": [
                           {
                             "const": "Awaken",
@@ -255,7 +255,7 @@
                     ],
                     "properties": {
                       "realm": {
-                        "description": "6 境界",
+                        "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
                         "anyOf": [
                           {
                             "const": "Awaken",
@@ -307,7 +307,7 @@
                     ],
                     "properties": {
                       "realm_target": {
-                        "description": "6 境界",
+                        "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
                         "anyOf": [
                           {
                             "const": "Awaken",
@@ -952,7 +952,7 @@
                     ],
                     "properties": {
                       "prior_realm": {
-                        "description": "6 境界",
+                        "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
                         "anyOf": [
                           {
                             "const": "Awaken",
@@ -981,7 +981,7 @@
                         ]
                       },
                       "new_realm": {
-                        "description": "6 境界",
+                        "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
                         "anyOf": [
                           {
                             "const": "Awaken",

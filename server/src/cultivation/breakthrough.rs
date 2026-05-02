@@ -122,6 +122,8 @@ pub enum BreakthroughError {
     AtMaxRealm,
     RequiresTribulation, // Spirit→Void 必须走 tribulation 流程
     NotEnoughMeridians { need: usize, have: usize },
+    NotEnoughRegularMeridians { need: usize, have: usize },
+    NotEnoughExtraordinaryMeridians { need: usize, have: usize },
     NotEnoughQi { need: f64, have: f64 },
     ZoneTooWeak { need: f64, have: f64 },
     RolledFailure { severity: f64 }, // 骰子输了
@@ -165,6 +167,43 @@ fn breakthrough_precondition_error(
     if have < need {
         return Some(BreakthroughError::NotEnoughMeridians { need, have });
     }
+
+    let regular_have = meridians.regular_opened_count();
+    let extraordinary_have = meridians.extraordinary_opened_count();
+    match next {
+        Realm::Induce if regular_have < 3 => {
+            return Some(BreakthroughError::NotEnoughRegularMeridians {
+                need: 3,
+                have: regular_have,
+            });
+        }
+        Realm::Condense if regular_have < 6 => {
+            return Some(BreakthroughError::NotEnoughRegularMeridians {
+                need: 6,
+                have: regular_have,
+            });
+        }
+        Realm::Solidify if regular_have < 12 => {
+            return Some(BreakthroughError::NotEnoughRegularMeridians {
+                need: 12,
+                have: regular_have,
+            });
+        }
+        Realm::Spirit if regular_have < 12 => {
+            return Some(BreakthroughError::NotEnoughRegularMeridians {
+                need: 12,
+                have: regular_have,
+            });
+        }
+        Realm::Spirit if extraordinary_have < 4 => {
+            return Some(BreakthroughError::NotEnoughExtraordinaryMeridians {
+                need: 4,
+                have: extraordinary_have,
+            });
+        }
+        _ => {}
+    }
+
     let cost = breakthrough_qi_cost(next);
     if cultivation.qi_current < cost {
         return Some(BreakthroughError::NotEnoughQi {
@@ -518,8 +557,20 @@ mod tests {
         };
         c.realm = Realm::Awaken;
         let mut m = MeridianSystem::default();
-        m.get_mut(MeridianId::Lung).opened = true;
+        open_regular(&mut m, 3);
         (c, m)
+    }
+
+    fn open_regular(meridians: &mut MeridianSystem, count: usize) {
+        for id in MeridianId::REGULAR.iter().take(count) {
+            meridians.get_mut(*id).opened = true;
+        }
+    }
+
+    fn open_extraordinary(meridians: &mut MeridianSystem, count: usize) {
+        for id in MeridianId::EXTRAORDINARY.iter().take(count) {
+            meridians.get_mut(*id).opened = true;
+        }
     }
 
     #[test]
@@ -613,12 +664,122 @@ mod tests {
             ..Default::default()
         };
         let mut m = MeridianSystem::default();
-        m.get_mut(MeridianId::Lung).opened = true;
+        open_regular(&mut m, 3);
 
         let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
 
         assert!(matches!(err, BreakthroughError::NotEnoughQi { .. }));
         assert!((c.pending_material_bonus - 0.12).abs() < 1e-9);
+    }
+
+    #[test]
+    fn induce_requires_three_regular_meridians_not_extraordinary_padding() {
+        let mut c = Cultivation {
+            realm: Realm::Awaken,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            composure: 1.0,
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_extraordinary(&mut m, 3);
+
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
+
+        assert_eq!(
+            err,
+            BreakthroughError::NotEnoughRegularMeridians { need: 3, have: 0 }
+        );
+        assert_eq!(c.realm, Realm::Awaken);
+        assert_eq!(c.qi_current, 100.0);
+    }
+
+    #[test]
+    fn solidify_requires_all_twelve_regular_meridians() {
+        let mut c = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 500.0,
+            qi_max: 500.0,
+            composure: 1.0,
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_regular(&mut m, 10);
+        open_extraordinary(&mut m, 6);
+
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
+
+        assert_eq!(
+            err,
+            BreakthroughError::NotEnoughRegularMeridians { need: 12, have: 10 }
+        );
+        assert_eq!(c.realm, Realm::Condense);
+        assert_eq!(c.qi_current, 500.0);
+    }
+
+    #[test]
+    fn spirit_rejects_before_structure_when_total_meridians_are_too_few() {
+        let mut c = Cultivation {
+            realm: Realm::Solidify,
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            composure: 1.0,
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_regular(&mut m, 12);
+        open_extraordinary(&mut m, 3);
+
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
+
+        assert_eq!(
+            err,
+            BreakthroughError::NotEnoughMeridians { need: 16, have: 15 }
+        );
+        assert_eq!(c.realm, Realm::Solidify);
+        assert_eq!(c.qi_current, 1000.0);
+    }
+
+    #[test]
+    fn spirit_rejects_extraordinary_padding_without_regular_foundation() {
+        let mut c = Cultivation {
+            realm: Realm::Solidify,
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            composure: 1.0,
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_regular(&mut m, 8);
+        open_extraordinary(&mut m, 8);
+
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
+
+        assert_eq!(
+            err,
+            BreakthroughError::NotEnoughRegularMeridians { need: 12, have: 8 }
+        );
+        assert_eq!(c.realm, Realm::Solidify);
+        assert_eq!(c.qi_current, 1000.0);
+    }
+
+    #[test]
+    fn spirit_allows_twelve_regular_and_four_extraordinary_meridians() {
+        let mut c = Cultivation {
+            realm: Realm::Solidify,
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            composure: 1.0,
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_regular(&mut m, 12);
+        open_extraordinary(&mut m, 4);
+
+        let out = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
+
+        assert_eq!(out.to, Realm::Spirit);
+        assert_eq!(c.realm, Realm::Spirit);
     }
 
     #[test]

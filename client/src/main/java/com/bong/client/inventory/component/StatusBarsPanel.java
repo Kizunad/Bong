@@ -1,6 +1,7 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.util.RealmLabel;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
@@ -38,7 +39,7 @@ public class StatusBarsPanel extends BaseComponent {
         int cy = y;
 
         // Realm label
-        context.drawTextWithShadow(textRenderer, Text.literal("境界: " + realm), x + 2, cy, TEXT_COLOR);
+        context.drawTextWithShadow(textRenderer, Text.literal("境界: " + RealmLabel.displayName(realm)), x + 2, cy, TEXT_COLOR);
         cy += textRenderer.fontHeight + 2;
 
         // Qi bar

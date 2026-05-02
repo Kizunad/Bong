@@ -6,9 +6,8 @@
 //!   * open_progress 清零（但 tier 保留 — 作为"温柔"惩罚）
 //!   * qi_max 按剩余经脉 capacity 重算
 //!
-//! P1 简化：`opened_at` 尚未在结构上记录（需要新增字段），这里用数组索引
-//! 顺序代替——越靠后打通的索引越大，作为 opened_at 的代理（数组顺序稳定）。
-//! 等客户端打通流程落地后，再把 opened_at 作为真实时戳写入。
+//! P1 简化：`Meridian::opened_at` 已在结构上记录；当前 demo 仍用数组索引
+//! 代理关闭顺序，等打通流程统一写真实 tick 后再切换到时间戳排序。
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventWriter, Query, Res};
 
