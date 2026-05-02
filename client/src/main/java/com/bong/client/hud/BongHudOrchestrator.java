@@ -123,6 +123,13 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            if (combatSnapshot.combatHudState().active()) {
+                commands.addAll(StyleBadgeHudPlanner.buildCommands(
+                    combatSnapshot.unlockedStyles(),
+                    screenWidth,
+                    screenHeight
+                ));
+            }
             commands.addAll(QuickBarHudPlanner.buildCommands(
                 combatSnapshot.quickSlotConfig(),
                 combatSnapshot.skillBarConfig(),

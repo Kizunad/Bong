@@ -763,3 +763,40 @@ Channel：
 - `docs/svg/ui-architecture.svg`（三层渲染骨架总览）
 - `docs/svg/defense-ui.svg` / `inspect-*.svg`（相关 Screen / 面板草图）
 - `client/src/main/java/com/bong/client/ui/`（现有渲染骨架：UiOpenScreens / DynamicXmlScreen / BaseOwoScreen）
+
+## Finish Evidence
+
+### 落地清单
+
+- C1 · HUD 骨架 + 左下状态小控件：已由 `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java` 统一编排，复用 `MiniBodyHudPlanner`、`StaminaBarHudPlanner`、`CombatHudStateStore`、`PhysicalBodyStore`。
+- C2 · 两层快捷栏：已由 `QuickBarHudPlanner`、`QuickUseSlotStore`、`client/src/main/java/com/bong/client/combat/CombatKeybindings.java` 与 server quickslot config/bind 闭环支撑。
+- C3 · cast 状态机 + 打断：已由 `CastStateStore`、`CastSyncHandler`、server cast/cooldown/interrupt 规则闭环支撑，并在快捷栏下方渲染 cast bar。
+- C4 · 通用事件流 + 节流折叠：已由 `UnifiedEventStore`、`UnifiedEventStream`、`EventStreamPushHandler`、`client/src/main/java/com/bong/client/hud/EventStreamHudPlanner.java` 与 server `event_stream_push` payload 支撑。
+- C5 · 条件渲染元素：本次补齐伪皮 / 涡流角标，新增 `client/src/main/java/com/bong/client/hud/StyleBadgeHudPlanner.java` 并接入 `BongHudOrchestrator`；server 侧新增 `DerivedAttrsSyncV1` 与 `server/src/network/derived_attrs_emit.rs`，同步 `vortex_fake_skin_layers` / `vortex_ready` 给 client。
+- C6 · InspectScreen 快捷使用 tab：本次在 `client/src/main/java/com/bong/client/inventory/InspectScreen.java` 增加第 5 个 tab `快捷使用`，复用 `QuickUseSlotStore` 与左侧 quick-use strip 的同一份槽位状态。
+- C7 · 特殊场景：已由 `ScreenHudVisibility`、死亡/断线可见性分发、`NarrationHandler` / `NarrationState` 双通道路由覆盖。
+- C8 · 调参 + QoL：本次在 `client/src/main/java/com/bong/client/combat/HudConfig.java` 增加事件流显示状态，`CombatKeybindings` 注册默认未绑定的 `event_stream_toggle`，`CombatHudBootstrap` 接入 toggle handler，`EventStreamHudPlanner` 在隐藏时不渲染且不清空事件。
+
+### 关键 commit
+
+- `3e8d33a7` · 2026-05-02 · `feat(client): 接入 HUD 事件流隐藏开关`
+- `64b29658` · 2026-05-02 · `feat(client): 渲染伪皮与涡流 HUD 角标`
+- `f980cbf0` · 2026-05-02 · `feat(client): 补 InspectScreen 快捷使用 tab`
+- `9d894c6c` · 2026-05-02 · `feat(server): 补 HUD DerivedAttrs 同步`
+- `de4846a0` · 2026-05-02 · `fix(server): 修复天劫锁定同步陈旧`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 2048 passed / 0 failed。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过；JUnit report 764 tests / 0 failures / 0 errors。
+- review 修复后重跑 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 2050 passed / 0 failed。
+
+### 跨仓库核验
+
+- server：`DerivedAttrsSyncV1`、`ServerDataPayloadV1::DerivedAttrsSync`、`ServerDataType::DerivedAttrsSync`、`derived_attrs_emit::emit_derived_attrs_sync_payloads`、`Changed<TribulationState>` / `RemovedComponents<TribulationState>` 清除态同步、`payload_type_label(DerivedAttrsSync)`。
+- client：`StyleBadgeHudPlanner`、`DerivedAttrsStore`、`UnlockedStylesStore`、`EventStreamHudPlanner`、`HudConfig.toggleEventStreamVisible()`、`InspectScreen` 的 `快捷使用` tab 与 `QuickUseSlotStore` 共享状态。
+- agent：本 plan 不涉及 agent 包，未改动。
+
+### 遗留 / 后续
+
+- 无本 plan 范围内遗留项。

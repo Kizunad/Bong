@@ -13,6 +13,19 @@ public final class HudConfig {
     private HudConfig() {
     }
 
+    public static boolean isEventStreamVisible() {
+        return eventStreamVisible;
+    }
+
+    public static void setEventStreamVisible(boolean visible) {
+        eventStreamVisible = visible;
+    }
+
+    public static boolean toggleEventStreamVisible() {
+        eventStreamVisible = !eventStreamVisible;
+        return eventStreamVisible;
+    }
+
     public static void resetToDefaults() {
         quickSlotCastInterruptMovement = CastInterruptRules.MOVEMENT_THRESHOLD_METERS;
         quickSlotCastInterruptContam = CastInterruptRules.CONTAM_RATE_PER_MAXHP_PER_SECOND;

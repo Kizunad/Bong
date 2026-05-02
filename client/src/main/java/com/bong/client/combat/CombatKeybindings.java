@@ -25,10 +25,12 @@ public final class CombatKeybindings {
     private static final KeyBinding[] QUICK_SLOT_KEYS = new KeyBinding[QuickSlotConfig.SLOT_COUNT];
     private static KeyBinding jiemaiKey;
     private static KeyBinding spellVolumeKey;
+    private static KeyBinding eventStreamToggleKey;
 
     private static volatile IntConsumer quickSlotHandler = slot -> { };
     private static volatile Runnable jiemaiHandler = () -> { };
     private static volatile SpellVolumeHoldHandler spellVolumeHandler = pressed -> { };
+    private static volatile Runnable eventStreamToggleHandler = () -> { };
 
     private static boolean spellVolumeHeldLastTick = false;
 
@@ -56,9 +58,15 @@ public final class CombatKeybindings {
             GLFW.GLFW_KEY_R,
             CATEGORY
         ));
+        eventStreamToggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+            "key.bong-client.event_stream_toggle",
+            InputUtil.Type.KEYSYM,
+            GLFW.GLFW_KEY_UNKNOWN,
+            CATEGORY
+        ));
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
-        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R).");
+        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R, event stream toggle).");
     }
 
     public static void setQuickSlotHandler(IntConsumer handler) {
@@ -73,6 +81,10 @@ public final class CombatKeybindings {
         spellVolumeHandler = handler == null ? pressed -> { } : handler;
     }
 
+    public static void setEventStreamToggleHandler(Runnable handler) {
+        eventStreamToggleHandler = handler == null ? () -> { } : handler;
+    }
+
     private static void onTick(MinecraftClient client) {
         if (client == null || client.player == null) return;
 
@@ -84,6 +96,10 @@ public final class CombatKeybindings {
 
         while (jiemaiKey.wasPressed()) {
             jiemaiHandler.run();
+        }
+
+        while (eventStreamToggleKey.wasPressed()) {
+            eventStreamToggleHandler.run();
         }
 
         // Spell-volume is hold-to-show: detect edge transitions via the

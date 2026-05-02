@@ -7,9 +7,9 @@ use super::alchemy::{
 };
 use super::botany::BotanyPlantV2RenderProfileV1;
 use super::combat_hud::{
-    CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1, QuickSlotConfigV1,
-    SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1,
-    WeaponEquippedV1, WoundsSnapshotV1,
+    CastSyncV1, CombatHudStateV1, DefenseWindowV1, DerivedAttrsSyncV1, EventStreamPushV1,
+    QuickSlotConfigV1, SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1,
+    WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::cultivation::SkillMilestoneSnapshotV1;
@@ -95,6 +95,7 @@ pub enum ServerDataType {
     SkillBarConfig,
     TechniquesSnapshot,
     UnlocksSync,
+    DerivedAttrsSync,
     EventStreamPush,
     WeaponEquipped,
     WeaponBroken,
@@ -240,6 +241,7 @@ pub enum ServerDataPayloadV1 {
     SkillBarConfig(SkillBarConfigV1),
     TechniquesSnapshot(TechniquesSnapshotV1),
     UnlocksSync(UnlocksSyncV1),
+    DerivedAttrsSync(DerivedAttrsSyncV1),
     EventStreamPush(EventStreamPushV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
@@ -620,6 +622,10 @@ enum ServerDataPayloadWireV1 {
     UnlocksSync {
         #[serde(flatten)]
         unlocks: UnlocksSyncV1,
+    },
+    DerivedAttrsSync {
+        #[serde(flatten)]
+        attrs: DerivedAttrsSyncV1,
     },
     EventStreamPush {
         #[serde(flatten)]
@@ -1207,6 +1213,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::TechniquesSnapshot(snapshot))
             }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
+            ServerDataPayloadWireV1::DerivedAttrsSync { attrs } => {
+                Ok(Self::DerivedAttrsSync(attrs))
+            }
             ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
             ServerDataPayloadWireV1::WeaponEquipped { weapon_equipped } => {
                 Ok(Self::WeaponEquipped(weapon_equipped))
@@ -1580,6 +1589,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 snapshot: snapshot.clone(),
             },
             ServerDataPayloadV1::UnlocksSync(unlocks) => Self::UnlocksSync { unlocks: *unlocks },
+            ServerDataPayloadV1::DerivedAttrsSync(attrs) => Self::DerivedAttrsSync {
+                attrs: attrs.clone(),
+            },
             ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
                 event: event.clone(),
             },
@@ -1876,6 +1888,7 @@ impl ServerDataPayloadV1 {
             Self::SkillBarConfig(..) => ServerDataType::SkillBarConfig,
             Self::TechniquesSnapshot(..) => ServerDataType::TechniquesSnapshot,
             Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
+            Self::DerivedAttrsSync(..) => ServerDataType::DerivedAttrsSync,
             Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
@@ -1958,6 +1971,18 @@ mod tests {
             }),
             ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 { entries: vec![] }),
             ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
+            ServerDataPayloadV1::DerivedAttrsSync(DerivedAttrsSyncV1 {
+                flying: false,
+                flying_qi_remaining: 0.0,
+                flying_force_descent_at_ms: 0,
+                phasing: false,
+                phasing_until_ms: 0,
+                tribulation_locked: false,
+                tribulation_stage: String::new(),
+                throughput_peak_norm: 0.0,
+                vortex_fake_skin_layers: 0,
+                vortex_ready: false,
+            }),
             ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
                 channel: EventChannelV1::Combat,
                 priority: EventPriorityV1::P1Important,

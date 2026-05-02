@@ -41,6 +41,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private static final int TAB_ACTIVE_COLOR = 0xFFCCCCCC;
     private static final int TAB_INACTIVE_COLOR = 0xFF555555;
+    private static final int TAB_EQUIP = 0;
+    private static final int TAB_CULTIVATION = 1;
+    private static final int TAB_SKILL = 2;
+    private static final int TAB_COMBAT_TRAINING = 3;
+    private static final int TAB_QUICK_USE = 4;
+    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "战斗·修炼", "快捷使用"};
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
@@ -60,14 +66,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private BottomInfoBar bottomBar;
 
     // Tabs (left panel)
-    private int activeTab = 0;
+    private int activeTab = TAB_EQUIP;
         // plan-skill-v1 §5.1 第三个 tab "技艺"
-    private final LabelComponent[] tabLabels = new LabelComponent[4];
+    private final LabelComponent[] tabLabels = new LabelComponent[TAB_NAMES.length];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
     private FlowLayout skillTabContent;
     private com.bong.client.combat.inspect.CombatTrainingPanel combatTrainingPanel;
     private FlowLayout combatTrainingTabContent;
+    private FlowLayout quickUseTabContent;
     private FlowLayout skillScrollDropZone;
     private LabelComponent skillScrollDropTitle;
     private LabelComponent skillScrollDropHint;
@@ -95,6 +102,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Quick-use bar (F1-F9, plan-HUD-v1 §2.2 上层)
     private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
+    private final GridSlotComponent[] quickUseTabSlots = new GridSlotComponent[HOTBAR_SLOTS];
     private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout quickUseStrip;
 
@@ -200,10 +208,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         tabBar.gap(6);
         tabBar.padding(Insets.of(1, 2, 1, 2));
-        String[] tabNames = {"装备", "修仙", "技艺", "战斗·修炼"};
-        for (int i = 0; i < tabNames.length; i++) {
+        for (int i = 0; i < TAB_NAMES.length; i++) {
             final int idx = i;
-            var label = Components.label(Text.literal(tabNames[i]));
+            var label = Components.label(Text.literal(TAB_NAMES[i]));
             label.color(Color.ofArgb(i == 0 ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
             label.cursorStyle(CursorStyle.HAND);
             label.mouseDown().subscribe((mx, my, btn) -> {
@@ -423,6 +430,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.child(combatTrainingTabContent);
         combatTrainingTabContent.positioning(Positioning.absolute(-9999, -9999));
 
+        // Tab 4: 快捷使用（plan-HUD-v1 §10）
+        quickUseTabContent = buildQuickUseTabContent();
+        leftCol.child(quickUseTabContent);
+        quickUseTabContent.positioning(Positioning.absolute(-9999, -9999));
+
         middle.child(leftCol);
 
         // 经脉详情直接绘制在 body 画布内部（见 BodyInspectComponent.drawMeridianDetailInline）
@@ -582,22 +594,65 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return strip;
     }
 
+    private FlowLayout buildQuickUseTabContent() {
+        FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+        panel.gap(3);
+        panel.padding(Insets.of(2));
+
+        LabelComponent title = Components.label(Text.literal("F1-F9 快捷使用"));
+        title.color(Color.ofArgb(0xFF80FFCC));
+        panel.child(title);
+
+        LabelComponent hint = Components.label(Text.literal("拖入右侧背包物品绑定"));
+        hint.color(Color.ofArgb(0xFF888888));
+        hint.maxWidth(160);
+        panel.child(hint);
+
+        for (int row = 0; row < 3; row++) {
+            FlowLayout slotRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+            slotRow.gap(3);
+            for (int col = 0; col < 3; col++) {
+                int index = row * 3 + col;
+                FlowLayout cell = Containers.verticalFlow(Sizing.content(), Sizing.content());
+                cell.horizontalAlignment(HorizontalAlignment.CENTER);
+                LabelComponent label = Components.label(Text.literal("F" + (index + 1)));
+                label.color(Color.ofArgb(0xFF80FFCC));
+                GridSlotComponent slot = new GridSlotComponent(index, 0);
+                quickUseTabSlots[index] = slot;
+                cell.child(label);
+                cell.child(slot);
+                slotRow.child(cell);
+            }
+            panel.child(slotRow);
+        }
+
+        return panel;
+    }
+
     private void hydrateQuickUseFromStore() {
         QuickSlotConfig config = QuickUseSlotStore.snapshot();
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             QuickSlotEntry entry = config.slot(i);
             if (entry == null) {
                 quickUseItems[i] = null;
-                if (quickUseSlots[i] != null) quickUseSlots[i].clearItem();
+                setQuickUseSlotVisual(i, null);
                 continue;
             }
             InventoryItem matched = findItemInModel(entry.itemId());
             quickUseItems[i] = matched;
-            if (quickUseSlots[i] != null) {
-                if (matched != null) quickUseSlots[i].setItem(matched, true);
-                else quickUseSlots[i].clearItem();
-            }
+            setQuickUseSlotVisual(i, matched);
         }
+    }
+
+    private void setQuickUseSlotVisual(int index, InventoryItem item) {
+        setSlotVisual(quickUseSlots[index], item);
+        setSlotVisual(quickUseTabSlots[index], item);
+    }
+
+    private void setSlotVisual(GridSlotComponent slot, InventoryItem item) {
+        if (slot == null) return;
+        if (item != null) slot.setItem(item, true);
+        else slot.clearItem();
     }
 
     private void hydrateSkillBarFromStore() {
@@ -644,6 +699,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             ""
         );
         QuickUseSlotStore.replace(current.withSlot(index, entry));
+        quickUseItems[index] = item;
+        setQuickUseSlotVisual(index, item);
         com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
             index, item == null ? null : item.itemId());
     }
@@ -673,9 +730,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Tab / Container switching ====================
 
     private void switchTab(int idx) {
-        if (idx == activeTab) return;
+        if (idx == activeTab || idx < 0 || idx >= TAB_NAMES.length) return;
         activeTab = idx;
-        FlowLayout[] tabs = {equipTabContent, cultivationTabContent, skillTabContent, combatTrainingTabContent};
+        FlowLayout[] tabs = {
+            equipTabContent,
+            cultivationTabContent,
+            skillTabContent,
+            combatTrainingTabContent,
+            quickUseTabContent
+        };
         for (int i = 0; i < tabs.length; i++) {
             tabLabels[i].color(Color.ofArgb(i == idx ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
             if (tabs[i] != null) {
@@ -683,12 +746,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
         // 切到技艺 tab 时刷一次最新快照（离开其他 tab 时可能积攒了若干事件）。
-        if (idx == 2) {
+        if (idx == TAB_SKILL) {
             refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
-        } else if (idx == 3 && combatTrainingPanel != null) {
+        } else if (idx == TAB_COMBAT_TRAINING && combatTrainingPanel != null) {
             combatTrainingPanel.refreshFromStores();
             hydrateSkillBarFromStore();
+        } else if (idx == TAB_QUICK_USE) {
+            hydrateQuickUseFromStore();
         }
+    }
+
+    static java.util.List<String> tabNamesForTests() {
+        return java.util.List.of(TAB_NAMES);
     }
 
     /** plan-skill-v1 §5.1 三行固定刷新；listener / switchTab 共用此入口。 */
@@ -1271,6 +1340,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
                 return i;
         }
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            GridSlotComponent s = quickUseTabSlots[i];
+            if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
+                return i;
+        }
         return -1;
     }
 
@@ -1309,7 +1383,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
 
-            if (activeTab == 0) {
+            if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
                     return true;
@@ -1363,7 +1437,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             // Equip
-            if (activeTab == 0) {
+            if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 if (eq != null && eq.item() != null) {
                     InventoryItem item = eq.item();
@@ -1377,7 +1451,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             // Body inspect applied items (physical or meridian layer)
-            if (activeTab == 1 && bodyInspect != null) {
+            if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
                 if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                     BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
                     if (bp != null) {
@@ -1406,14 +1480,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
             // Hotbar
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-            if (button == 0 && activeTab == 3 && hIdx >= 0 && combatTrainingPanel != null
+            if (button == 0 && activeTab == TAB_COMBAT_TRAINING && hIdx >= 0 && combatTrainingPanel != null
                     && combatTrainingPanel.selectedTechnique() != null) {
                 if (combatTrainingPanel.bindSelectedTechniqueToSlot(hIdx)) {
                     hydrateSkillBarFromStore();
                     return true;
                 }
             }
-            if (button == 1 && activeTab == 3 && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
+            if (button == 1 && activeTab == TAB_COMBAT_TRAINING && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
                 if (combatTrainingPanel != null && combatTrainingPanel.clearSkillSlot(hIdx)) {
                     hydrateSkillBarFromStore();
                     return true;
@@ -1437,7 +1511,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (shift) quickMoveQuickUseToGrid(qIdx);
                 else {
                     quickUseItems[qIdx] = null;
-                    quickUseSlots[qIdx].clearItem();
+                    setQuickUseSlotVisual(qIdx, null);
                     publishQuickUseSlot(qIdx, null);
                     dragState.pickupFromQuickUse(item, qIdx);
                 }
@@ -1469,7 +1543,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == GLFW.GLFW_KEY_Q && activeTab == 0 && !dragState.isDragging()) {
+        if (keyCode == GLFW.GLFW_KEY_Q && activeTab == TAB_EQUIP && !dragState.isDragging()) {
             var eq = equipPanel.slotAtScreen(mouseX(), mouseY());
             if (eq != null && eq.item() != null && InventoryEquipRules.isWeapon(eq.item())) {
                 if (dispatchDropWeaponFromEquip(eq.slotType(), eq.item())) {
@@ -1502,7 +1576,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
 
-        if (activeTab == 2 && isOverSkillScrollDropZone(mouseX, mouseY)) {
+        if (activeTab == TAB_SKILL && isOverSkillScrollDropZone(mouseX, mouseY)) {
             if (tryLearnSkillScroll(dragged)) {
                 dragState.drop();
             } else {
@@ -1528,7 +1602,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Equip (with hand restriction from physical body)
-        if (activeTab == 0) {
+        if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
                 if (!isEquipSlotDropValid(dragged, eq.slotType())) {
@@ -1554,7 +1628,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Body inspect drop (physical or meridian layer) — only 1×1 items
-        if (activeTab == 1 && bodyInspect != null
+        if (activeTab == TAB_CULTIVATION && bodyInspect != null
                 && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                 BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
@@ -1604,7 +1678,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (qIdx >= 0 && InventoryEquipRules.canPlaceIntoQuickUse(dragged)) {
             InventoryItem old = quickUseItems[qIdx];
             quickUseItems[qIdx] = dragged;
-            quickUseSlots[qIdx].setItem(dragged, true);
+            setQuickUseSlotVisual(qIdx, dragged);
             publishQuickUseSlot(qIdx, dragged);
             dragState.drop();
             if (old != null) placeItemAnywhere(old);
@@ -1753,10 +1827,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dispatchApplyPillSelf(item);
             }
             case MERIDIAN_TARGET -> {
-                if (tabLabels[0] != null && tabLabels[1] != null) {
-                    switchTab(1);
+                if (tabLabels[TAB_EQUIP] != null && tabLabels[TAB_CULTIVATION] != null) {
+                    switchTab(TAB_CULTIVATION);
                 } else {
-                    activeTab = 1;
+                    activeTab = TAB_CULTIVATION;
                 }
                 if (bodyInspect != null) {
                     switchBodyLayer(BodyInspectComponent.Layer.MERIDIAN);
@@ -1953,7 +2027,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 int idx = r.sourceQuickUseIndex();
                 if (idx >= 0 && idx < HOTBAR_SLOTS) {
                     quickUseItems[idx] = item;
-                    quickUseSlots[idx].setItem(item, true);
+                    setQuickUseSlotVisual(idx, item);
                     publishQuickUseSlot(idx, item);
                 }
             }
@@ -1999,7 +2073,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) return;
 
-        if (activeTab == 2 && skillScrollDropZone != null && isOverSkillScrollDropZone(mouseX, mouseY)) {
+        if (activeTab == TAB_SKILL && skillScrollDropZone != null && isOverSkillScrollDropZone(mouseX, mouseY)) {
             setSkillScrollDropZoneState(skillScrollDropState(dragged));
         }
 
@@ -2013,7 +2087,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
 
-        if (activeTab == 0) {
+        if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
                 boolean valid = isEquipSlotDropValid(dragged, eq.slotType());
@@ -2024,7 +2098,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Body inspect highlight
-        if (activeTab == 1 && bodyInspect != null) {
+        if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
             boolean valid1x1 = dragged.gridWidth() == 1 && dragged.gridHeight() == 1;
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                 BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
@@ -2045,8 +2119,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
         if (qIdx >= 0) {
             boolean valid = InventoryEquipRules.canPlaceIntoQuickUse(dragged);
-            quickUseSlots[qIdx].setHighlightState(
-                valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
+            GridSlotComponent.HighlightState state = valid
+                ? GridSlotComponent.HighlightState.VALID
+                : GridSlotComponent.HighlightState.INVALID;
+            if (quickUseSlots[qIdx] != null) quickUseSlots[qIdx].setHighlightState(state);
+            if (quickUseTabSlots[qIdx] != null) quickUseTabSlots[qIdx].setHighlightState(state);
         }
 
         discardStrip.surface(Surface.flat(isOverDiscard(mouseX, mouseY) ? 0xFF331111 : 0xFF201010));
@@ -2058,6 +2135,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
             if (quickUseSlots[i] != null) quickUseSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+            if (quickUseTabSlots[i] != null) quickUseTabSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         discardStrip.surface(Surface.flat(0xFF201010));
@@ -2276,7 +2354,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         var pos = activeGrid().findFreeSpace(item);
         if (pos != null) {
             quickUseItems[index] = null;
-            quickUseSlots[index].clearItem();
+            setQuickUseSlotVisual(index, null);
             publishQuickUseSlot(index, null);
             activeGrid().place(item, pos.row(), pos.col());
         }
@@ -2294,7 +2372,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         drawPendingMeridianPrompt(context);
 
         // Body inspect tooltip — drawn here to escape owo-lib component clipping
-        if (activeTab == 1 && bodyInspect != null) {
+        if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
             var matrices = context.getMatrices();
             matrices.push();
             matrices.translate(0, 0, 400);
@@ -2473,11 +2551,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             var pos = grid.screenToGrid(mx, my);
             if (pos != null) hovered = grid.itemAt(pos.row(), pos.col());
         }
-        if (hovered == null && activeTab == 0) {
+        if (hovered == null && activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mx, my);
             if (eq != null) hovered = eq.item();
         }
-        if (hovered == null && activeTab == 1 && bodyInspect != null) {
+        if (hovered == null && activeTab == TAB_CULTIVATION && bodyInspect != null) {
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                 BodyPart bp = bodyInspect.bodyPartAtScreen(mx, my);
                 if (bp != null) hovered = bodyInspect.physicalItemAt(bp);
