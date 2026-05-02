@@ -142,3 +142,37 @@ DropTable 设计：
 ## §9 进度日志
 
 - **2026-04-27**：骨架立项。来源：`docs/plans-skeleton/reminder.md` "通用/跨 plan"节 (`plan-fauna-v1 待立`) + plan-forge-v1 正典化缺口（`yi_beast_bone` placeholder）。`docs/library/ecology/ecology-0005 异兽三形考.json` 已于 2026-04-24 落库，物理逻辑锚点完备。server 侧当前仅有 `mutant_beast_core` item（lingtian 补灵用），无完整 fauna drop 系统。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 妖兽 item + drop 链路：`server/assets/items/fauna.toml`、`server/src/fauna/components.rs`、`server/src/fauna/drop.rs`、`server/src/fauna/mod.rs`
+- P1 封灵骨币制作：`server/src/fauna/bone_coin.rs`，输出 `bone_coin_5` / `bone_coin_15` / `bone_coin_40` 并挂 `Freshness`
+- P2 forge 正典化：`server/assets/forge/blueprints/ling_feng_v0.json`、`server/assets/forge/blueprints/tool_gu_hai_qian_v0.json`、`server/src/forge/steps.rs`，旧 `yi_beast_bone` 全量替换为 `yi_shou_gu`
+- P3 骨骼 / 骨币 shelflife：`server/src/shelflife/registry.rs` 注册 `fauna_bone_*_v1` 与 `bone_coin_*_v1`，`server/src/shelflife/variant.rs` 统一腐骨币切换
+- P4 高阶掉落：`server/src/fauna/drop.rs` 负压畸变体保底 `fu_ya_hesui`，稀有 `bian_yi_hexin`，命中核心时对 attacker 发 `StatusEffectKind::InsightHallucination`
+
+### 关键 commit
+
+- `d2ee8a0b` · 2026-05-02 · `feat(fauna): 接入妖兽掉落与封灵骨币`
+- `2ef474a0` · 2026-05-02 · `refactor(forge): 正典化异兽骨材料名`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test` ✅ 2072 passed
+- 定向核验：`cargo test fauna::` ✅ 16 passed；`cargo test forge::` ✅ 65 passed；`cargo test inventory::tests::loads_item_registry_from_assets` ✅；`cargo test shelflife::registry::tests::default_registry_registers_all_ling_shi_profiles` ✅；`cargo test shelflife::variant::tests::bone_coin_dead_switches_to_rotten` ✅
+
+### 跨仓库核验
+
+- server 命中：`FaunaTag`、`BeastKind`、`BeastVariant`、`FaunaDropIssued`、`roll_fauna_drops`、`fauna_drop_system`、`BoneCoinCraftSession`、`bone_coin_5_v1` / `bone_coin_15_v1` / `bone_coin_40_v1`
+- agent：`agent/packages/schema/src/forge.ts` 未含旧 `yi_beast_bone` 占位，无需同步改动
+- client：本 plan 未新增客户端协议；掉落沿用现有 `DroppedLootRegistry` / inventory snapshot 链路
+
+### 遗留 / 后续
+
+- `bian_yi_hexin` 与修炼突破消耗的直接契约留给 `plan-cultivation-*` 后续接入。
+- 本次不新增自动刷怪；按 plan §0，怪物密度仍由天道 / worldgen 动态控制。
+- `fu_ya_hesui` 后续用途仍等待 `plan-tsy-*` 材料体系定义。
