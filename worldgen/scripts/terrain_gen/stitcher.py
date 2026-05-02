@@ -28,6 +28,7 @@ from .profiles.ancient_battlefield import fill_ancient_battlefield_tile
 from .profiles.broken_peaks import fill_broken_peaks_tile
 from .profiles.cave_network import fill_cave_network_tile
 from .profiles.spawn_plain import fill_spawn_plain_tile
+from .profiles.pseudo_vein_oasis import fill_pseudo_vein_oasis_tile
 from .profiles.rift_valley import fill_rift_valley_tile
 from .profiles.sky_isle import fill_sky_isle_tile
 from .profiles.spring_marsh import fill_spring_marsh_tile
@@ -429,6 +430,8 @@ def _build_zone_overlay_tile(
         buffer = fill_cave_network_tile(zone, tile, tile_size, palette)
     elif profile == "waste_plateau":
         buffer = fill_waste_plateau_tile(zone, tile, tile_size, palette)
+    elif profile == "pseudo_vein_oasis":
+        buffer = fill_pseudo_vein_oasis_tile(zone, tile, tile_size, palette)
     elif profile == "ash_dead_zone":
         buffer = fill_ash_dead_zone_tile(zone, tile, tile_size, palette)
     elif profile == "sky_isle":
@@ -500,6 +503,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: rift_valley overlay synthesis and zone-to-wilderness blending.",
             "Implemented: cave_network surface proxy synthesis.",
             "Implemented: waste_plateau overlay synthesis.",
+            "Implemented: pseudo_vein_oasis overlay (false qi oasis + hungry ring ecology).",
             "Implemented: ash_dead_zone overlay (zero qi core + ash ecology).",
             "Implemented: sky_isle overlay (sky_island_* vertical layers).",
             "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",

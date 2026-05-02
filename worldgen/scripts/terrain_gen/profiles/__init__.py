@@ -6,6 +6,7 @@ from .ancient_battlefield import AncientBattlefieldGenerator
 from .base import ProfileContext, TerrainProfileGenerator
 from .broken_peaks import BrokenPeaksGenerator
 from .cave_network import CaveNetworkGenerator
+from .pseudo_vein_oasis import PseudoVeinOasisGenerator
 from .rift_valley import RiftValleyGenerator
 from .sky_isle import SkyIsleGenerator
 from .spawn_plain import SpawnPlainGenerator
@@ -25,6 +26,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         RiftValleyGenerator(),
         CaveNetworkGenerator(),
         WastePlateauGenerator(),
+        PseudoVeinOasisGenerator(),
         SkyIsleGenerator(),
         AshDeadZoneGenerator(),
         AbyssalMazeGenerator(),

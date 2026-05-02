@@ -40,6 +40,8 @@ mod skill;
 mod tools;
 mod world;
 #[allow(dead_code)]
+mod worldgen;
+#[allow(dead_code)]
 mod zhenfa_hooks;
 
 use crossbeam_channel::unbounded;
