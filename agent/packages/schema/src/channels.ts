@@ -95,6 +95,12 @@ export const CHANNELS = {
   /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
   ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
 
+  /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
+  PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
+
+  /** Server → Agent: 伪灵脉消散事件（plan-terrain-pseudo-vein-v1 §6.1） */
+  PSEUDO_VEIN_DISSIPATE: "bong:pseudo_vein:dissipate",
+
   /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
   BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
 
@@ -171,6 +177,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,
+  CHANNELS.PSEUDO_VEIN_ACTIVE,
+  CHANNELS.PSEUDO_VEIN_DISSIPATE,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
   CHANNELS.LUMBER_PROGRESS,

@@ -43,6 +43,16 @@
       "water": { "level": "none", "coverage": 0.0 },
       "passability": "high"
     },
+    "pseudo_vein_oasis": {
+      "height": { "base": [68, 76], "peak": 80 },
+      "boundary": { "mode": "soft", "width": 32 },
+      "surface": ["grass_block", "moss_block", "flowering_azalea_leaves", "warped_wart_block"],
+      "water": { "level": "low", "coverage": 0.04 },
+      "passability": "high",
+      "lifetime_minutes": [30, 90],
+      "core_radius": 60,
+      "rim_radius": 120
+    },
     "ash_dead_zone": {
       "height": { "base": [70, 82], "peak": 88 },
       "boundary": { "mode": "hard", "width": 64 },

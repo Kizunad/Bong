@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "id": "pseudo_vein_42",
+  "center_xz": [1280, -640],
+  "spirit_qi_current": 0.6,
+  "occupants": ["offline:Azure", "offline:Kiz"],
+  "spawned_at_tick": 24000,
+  "estimated_decay_at_tick": 60000,
+  "season_at_spawn": "summer_to_winter"
+}

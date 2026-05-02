@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "id": "pseudo_vein_42",
+  "center_xz": [1280, -640],
+  "storm_anchors": [[1380, -650], [1160, -720]],
+  "storm_duration_ticks": 9000,
+  "qi_redistribution": {
+    "refill_to_hungry_ring": 0.7,
+    "collected_by_tiandao": 0.3
+  }
+}

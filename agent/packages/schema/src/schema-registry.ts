@@ -147,6 +147,11 @@ import {
   NpcSpawnedV1,
   NpcSpawnSourceV1,
 } from "./npc.js";
+import {
+  PseudoVeinDissipateEventV1,
+  PseudoVeinSeasonV1,
+  PseudoVeinSnapshotV1,
+} from "./pseudo-vein.js";
 import { FogShapeV1, RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ServerDataAlchemyContaminationV1,
@@ -273,6 +278,9 @@ export const SCHEMA_REGISTRY = {
   npcSpawnedV1: NpcSpawnedV1,
   npcDeathV1: NpcDeathV1,
   factionEventV1: FactionEventV1,
+  pseudoVeinSeasonV1: PseudoVeinSeasonV1,
+  pseudoVeinSnapshotV1: PseudoVeinSnapshotV1,
+  pseudoVeinDissipateEventV1: PseudoVeinDissipateEventV1,
   chatMessageV1: ChatMessageV1,
   chatSignal: ChatSignal,
   inventorySnapshotV1: InventorySnapshotV1,
@@ -513,6 +521,10 @@ export const GENERATED_SCHEMA_FILES = {
   "npc-spawned-v1.json": SCHEMA_REGISTRY.npcSpawnedV1,
   "npc-death-v1.json": SCHEMA_REGISTRY.npcDeathV1,
   "faction-event-v1.json": SCHEMA_REGISTRY.factionEventV1,
+  "pseudo-vein-season-v1.json": SCHEMA_REGISTRY.pseudoVeinSeasonV1,
+  "pseudo-vein-snapshot-v1.json": SCHEMA_REGISTRY.pseudoVeinSnapshotV1,
+  "pseudo-vein-dissipate-event-v1.json":
+    SCHEMA_REGISTRY.pseudoVeinDissipateEventV1,
   "chat-message-v1.json": SCHEMA_REGISTRY.chatMessageV1,
   "chat-signal.json": SCHEMA_REGISTRY.chatSignal,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,

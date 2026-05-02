@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "id",
+    "center_xz",
+    "spirit_qi_current",
+    "occupants",
+    "spawned_at_tick",
+    "estimated_decay_at_tick",
+    "season_at_spawn"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "center_xz": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "spirit_qi_current": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "occupants": {
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "spawned_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "estimated_decay_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "season_at_spawn": {
+      "anyOf": [
+        {
+          "const": "summer",
+          "type": "string"
+        },
+        {
+          "const": "summer_to_winter",
+          "type": "string"
+        },
+        {
+          "const": "winter",
+          "type": "string"
+        },
+        {
+          "const": "winter_to_summer",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

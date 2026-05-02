@@ -46,6 +46,10 @@ pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
 pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 
+// 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
+pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
+pub const CH_PSEUDO_VEIN_DISSIPATE: &str = "bong:pseudo_vein:dissipate";
+
 // botany 观测通道（server-agent 侧），客户端 gameplay 仍走 bong:server_data / bong:client_request
 // 注：每株 spawn / wither 不单推（agent 难处理高频事件）——聚合走 `bong:botany/ecology`，
 // 从两次 snapshot 的 plant_counts 差即可算出 zone 级 spawn/wither 量。未来如需"阈值告警"，
@@ -114,6 +118,8 @@ mod tests {
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
+        assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
+        assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
         assert_eq!(CH_LUMBER_PROGRESS, "bong:lumber_progress");
