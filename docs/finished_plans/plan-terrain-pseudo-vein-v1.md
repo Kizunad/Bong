@@ -291,13 +291,12 @@ Rust 镜像：`server/src/schema/pseudo_vein.rs`。Redis 通道：
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`2091 passed`
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`2093 passed`
 - `cd worldgen && python3 -m unittest discover`：通过，`42 passed`
 - `cd worldgen && python3 -m scripts.terrain_gen --tile-size 512 --output-dir /tmp/bong-terrain-pseudo-vein-smoke`：通过，生成 raster manifest 与 previews
 - `cd agent && npm run build`：通过
 - `cd agent/packages/schema && npm run generate:check && npm test`：通过，`249 passed`
 - `cd agent/packages/tiandao && npm test`：通过，`209 passed`
-- review 修复后 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过
 - review 修复后 `cd server && cargo test worldgen::`：通过，`16 passed`
 
 ### 跨仓库核验
