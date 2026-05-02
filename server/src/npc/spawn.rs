@@ -12,6 +12,7 @@ use valence::prelude::{
 
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
+use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction, CultivateState,
     CultivationDriveHistory, CultivationDriveScorer, CuriosityScorer, DashAction, DashScorer,
@@ -829,6 +830,7 @@ pub fn spawn_beast_npc_at(
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler);
+    let fauna_seed = fauna_spawn_seed(home_zone, spawn_position.x, spawn_position.z);
     let entity = commands
         .spawn((
             ZombieEntityBundle {
@@ -849,6 +851,7 @@ pub fn spawn_beast_npc_at(
             loadout.melee_archetype,
             loadout.melee_profile(),
             NpcArchetype::Beast,
+            fauna_tag_for_beast_spawn(home_zone, fauna_seed),
             Navigator::new(),
             MovementController::new(),
             loadout.movement_capabilities,
@@ -1467,6 +1470,10 @@ mod tests {
         assert!(app.world().get::<TerritoryPatrolState>(beast).is_some());
         assert!(app.world().get::<HuntState>(beast).is_some());
         assert!(app.world().get::<ProtectYoungState>(beast).is_some());
+        assert!(app
+            .world()
+            .get::<crate::fauna::components::FaunaTag>(beast)
+            .is_some());
         let _thinker = app
             .world()
             .get::<ThinkerBuilder>(beast)

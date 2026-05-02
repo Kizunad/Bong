@@ -1,0 +1,134 @@
+# plan-fauna-v1：妖兽骨系材料、变异核心与封灵骨币面值档。
+
+[[item]]
+id = "shu_gu"
+name = "噬元鼠骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "噬元鼠细骨，封真元能力极弱，只够铸最低档骨币。"
+
+[[item]]
+id = "zhu_gu"
+name = "拟态蛛骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.35
+rarity = "uncommon"
+spirit_quality_initial = 0.65
+description = "拟态灰烬蛛的硬节骨，能短时压住下品灵材的乱流。"
+
+[[item]]
+id = "feng_he_gu"
+name = "缝合兽骨"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.2
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "异变缝合兽身上的厚骨，骨纹里还锁着残余真元。"
+
+[[item]]
+id = "yi_shou_gu"
+name = "异兽骨"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.0
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "妖兽骨材的通称，炼器与封灵骨币共用的正典载体名。"
+
+[[item]]
+id = "bian_yi_hexin"
+name = "变异核心"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "异变兽体内的驻波核心，吸收时会震荡感知，固元破关前少有人敢碰。"
+
+[[item]]
+id = "fu_ya_hesui"
+name = "负压核碎"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "负压畸变体碎裂后留下的核屑，触手冰冷却吸附真元。"
+
+[[item]]
+id = "zhen_shi_chu"
+name = "初级阵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "uncommon"
+spirit_quality_initial = 0.7
+description = "粗劣阵石，可在铸骨币时替代一部分封闭阵耗。"
+
+[[item]]
+id = "raw_beast_meat"
+name = "生异兽肉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "刚割下的异兽肉，未经处理时污染风险很高。"
+
+[[item]]
+id = "raw_beast_hide"
+name = "生异兽皮"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.4
+description = "带着余温的异兽皮，可作粗陋护具和伪装材料。"
+
+[[item]]
+id = "bone_coin_5"
+name = "封灵骨币·五"
+category = "bone_coin"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "以低阶兽骨封入五点真元的骨币，流失很快，不宜久藏。"
+
+[[item]]
+id = "bone_coin_15"
+name = "封灵骨币·十五"
+category = "bone_coin"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "以拟态蛛骨或混合异兽骨封入十五点真元的骨币。"
+
+[[item]]
+id = "bone_coin_40"
+name = "封灵骨币·四十"
+category = "bone_coin"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "以缝合兽骨封入四十点真元的高额骨币，足以支撑一场小型交易。"
+

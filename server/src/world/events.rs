@@ -12,6 +12,7 @@ use valence::prelude::{
 
 use super::zone::ZoneRegistry;
 use crate::combat::events::DeathEvent;
+use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
@@ -1554,6 +1555,7 @@ fn spawn_beast_tide_zombie(
     spawn_position: DVec3,
     zone_center: DVec3,
 ) -> Entity {
+    let fauna_seed = fauna_spawn_seed(zone_name, spawn_position.x, spawn_position.z);
     let entity = commands
         .spawn((
             ZombieEntityBundle {
@@ -1571,6 +1573,7 @@ fn spawn_beast_tide_zombie(
             NpcMarker,
             NpcBlackboard::default(),
             NpcArchetype::Beast,
+            fauna_tag_for_beast_spawn(zone_name, fauna_seed),
             NpcPatrol::new(zone_name, zone_center),
             Thinker::build()
                 .picker(FirstToScore {
@@ -2044,6 +2047,12 @@ mod events_tests {
                         .expect("spawned beast should have EntityKind"),
                     EntityKind::ZOMBIE,
                     "beast_tide runtime should spawn zombie entities"
+                );
+                assert!(
+                    world
+                        .get::<crate::fauna::components::FaunaTag>(*entity)
+                        .is_some(),
+                    "beast_tide runtime should tag fauna drops"
                 );
                 let patrol = world
                     .get::<NpcPatrol>(*entity)

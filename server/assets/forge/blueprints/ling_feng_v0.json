@@ -12,7 +12,7 @@
           { "material": "ling_wood",     "unlocks_tier": 3 },
           { "material": "xuan_gen_wei",  "unlocks_tier": 3 },
           { "material": "yuan_ni_hong_yu", "unlocks_tier": 4 },
-          { "material": "yi_beast_bone", "unlocks_tier": 4 }
+          { "material": "yi_shou_gu", "unlocks_tier": 4 }
         ],
         "tolerance": { "count_miss": 0 }
       }

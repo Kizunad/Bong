@@ -15,7 +15,7 @@ pub enum ButcherDropKind {
 impl ButcherDropKind {
     pub fn item_id(self) -> &'static str {
         match self {
-            Self::Bone => "yi_beast_bone",
+            Self::Bone => "yi_shou_gu",
             Self::Meat => "raw_beast_meat",
             Self::Hide => "raw_beast_hide",
         }
@@ -261,7 +261,7 @@ mod tests {
                 }),
             }
         );
-        assert_eq!(ButcherDropKind::Bone.item_id(), "yi_beast_bone");
+        assert_eq!(ButcherDropKind::Bone.item_id(), "yi_shou_gu");
     }
 
     #[test]

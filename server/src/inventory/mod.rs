@@ -2223,7 +2223,7 @@ pub fn transfer_all_inventory_contents(
     }
 }
 
-fn force_attach_item_to_inventory(inventory: &mut PlayerInventory, item: ItemInstance) {
+pub(crate) fn force_attach_item_to_inventory(inventory: &mut PlayerInventory, item: ItemInstance) {
     if let Some(location) = find_first_fit_container_location(inventory, &item) {
         if attach_at_location(inventory, item.clone(), &location).is_ok() {
             return;
@@ -3220,7 +3220,7 @@ mod tests {
             "ling_feng_sword",
             "ling_feng_sword_flawed",
             "ling_wood",
-            "yi_beast_bone",
+            "yi_shou_gu",
             "xuan_iron",
             "qing_steel",
         ] {

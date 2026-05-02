@@ -74,7 +74,9 @@ fn dead_variant_mapping(profile_id: &str) -> Option<&'static str> {
         "ling_shi_zhong_v1" => Some("dead_mineral_ling_shi_zhong"),
         "ling_shi_shang_v1" => Some("dead_mineral_ling_shi_shang"),
         "ling_shi_yi_v1" => Some("dead_mineral_ling_shi_yi"),
-        "bone_coin_v1" => Some("rotten_bone_coin"),
+        "bone_coin_v1" | "bone_coin_5_v1" | "bone_coin_15_v1" | "bone_coin_40_v1" => {
+            Some("rotten_bone_coin")
+        }
         _ => None,
     }
 }
