@@ -13,6 +13,10 @@ use super::drop::{
     build_fauna_item_instance, FENG_HE_GU, SHU_GU, YI_SHOU_GU, ZHEN_SHI_CHU, ZHU_GU,
 };
 
+const BONE_COIN_5_QI: f64 = 5.0;
+const BONE_COIN_15_QI: f64 = 15.0;
+const BONE_COIN_40_QI: f64 = 40.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoneGrade {
     Rat,
@@ -24,20 +28,10 @@ pub enum BoneGrade {
 impl BoneGrade {
     pub const fn qi_cap(self) -> f64 {
         match self {
-            Self::Rat => 5.0,
-            Self::Spider => 15.0,
-            Self::Hybrid => 40.0,
+            Self::Rat => BONE_COIN_5_QI,
+            Self::Spider => BONE_COIN_15_QI,
+            Self::Hybrid => BONE_COIN_40_QI,
             Self::General => 20.0,
-        }
-    }
-
-    pub const fn output_template(self, sealed_qi: f64) -> &'static str {
-        if sealed_qi <= 5.0 {
-            "bone_coin_5"
-        } else if sealed_qi <= 15.0 {
-            "bone_coin_15"
-        } else {
-            "bone_coin_40"
         }
     }
 }
@@ -107,15 +101,29 @@ pub fn plan_bone_coin_craft(
     }
     let bone_grade =
         bone_grade_for_template(bone_template_id).ok_or(BoneCoinCraftError::NotFaunaBone)?;
-    let sealed_qi = qi_invest.min(bone_grade.qi_cap());
+    let capped_qi = qi_invest.min(bone_grade.qi_cap());
+    let (sealed_qi, output_template) =
+        coin_output_for_qi(capped_qi).ok_or(BoneCoinCraftError::InvalidQi)?;
     let seal_cost = if has_catalyst { 0.0 } else { sealed_qi * 0.2 };
     let total_qi_cost = sealed_qi + seal_cost;
     Ok(BoneCoinCraftPlan {
         bone_grade,
         sealed_qi,
         total_qi_cost,
-        output_template: bone_grade.output_template(sealed_qi),
+        output_template,
     })
+}
+
+fn coin_output_for_qi(sealed_qi: f64) -> Option<(f64, &'static str)> {
+    if sealed_qi + f64::EPSILON >= BONE_COIN_40_QI {
+        Some((BONE_COIN_40_QI, "bone_coin_40"))
+    } else if sealed_qi + f64::EPSILON >= BONE_COIN_15_QI {
+        Some((BONE_COIN_15_QI, "bone_coin_15"))
+    } else if sealed_qi + f64::EPSILON >= BONE_COIN_5_QI {
+        Some((BONE_COIN_5_QI, "bone_coin_5"))
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -328,10 +336,25 @@ mod tests {
         assert_eq!(plan.total_qi_cost, 40.0);
         assert_eq!(plan.output_template, "bone_coin_40");
 
-        let without_catalyst = plan_bone_coin_craft(ZHU_GU, 10.0, false).unwrap();
-        assert_eq!(without_catalyst.sealed_qi, 10.0);
-        assert_eq!(without_catalyst.total_qi_cost, 12.0);
+        let without_catalyst = plan_bone_coin_craft(ZHU_GU, 15.0, false).unwrap();
+        assert_eq!(without_catalyst.sealed_qi, 15.0);
+        assert_eq!(without_catalyst.total_qi_cost, 18.0);
         assert_eq!(without_catalyst.output_template, "bone_coin_15");
+    }
+
+    #[test]
+    fn craft_plan_quantizes_to_paid_coin_denominations() {
+        let under_fifteen = plan_bone_coin_craft(ZHU_GU, 5.1, true).unwrap();
+        assert_eq!(under_fifteen.sealed_qi, 5.0);
+        assert_eq!(under_fifteen.output_template, "bone_coin_5");
+
+        let under_forty = plan_bone_coin_craft(FENG_HE_GU, 15.1, true).unwrap();
+        assert_eq!(under_forty.sealed_qi, 15.0);
+        assert_eq!(under_forty.output_template, "bone_coin_15");
+
+        let full_hybrid = plan_bone_coin_craft(FENG_HE_GU, 40.0, true).unwrap();
+        assert_eq!(full_hybrid.sealed_qi, 40.0);
+        assert_eq!(full_hybrid.output_template, "bone_coin_40");
     }
 
     #[test]
@@ -342,6 +365,10 @@ mod tests {
         );
         assert_eq!(
             plan_bone_coin_craft(SHU_GU, 0.0, true),
+            Err(BoneCoinCraftError::InvalidQi)
+        );
+        assert_eq!(
+            plan_bone_coin_craft(SHU_GU, 4.9, true),
             Err(BoneCoinCraftError::InvalidQi)
         );
     }

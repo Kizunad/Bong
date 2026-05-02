@@ -282,7 +282,7 @@ pub fn freshness_profile_for_template(template_id: &str) -> Option<(&'static str
 
 fn fallback_tag(archetype: Option<NpcArchetype>) -> Option<FaunaTag> {
     match archetype? {
-        NpcArchetype::Beast => Some(FaunaTag::new(BeastKind::HybridBeast)),
+        NpcArchetype::Beast => Some(FaunaTag::new(BeastKind::Rat)),
         NpcArchetype::Fuya => Some(FaunaTag::new(BeastKind::VoidDistorted)),
         _ => None,
     }
@@ -476,6 +476,56 @@ mod tests {
         assert!(
             app.world().get::<FaunaDropIssued>(beast).is_some(),
             "processed beast should be marked to prevent duplicate drops"
+        );
+    }
+
+    #[test]
+    fn untagged_legacy_beast_falls_back_to_rat_table() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(fauna_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::new(10));
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, fauna_drop_system);
+
+        let beast = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Beast,
+                Position::new([1.0, 64.0, 2.0]),
+            ))
+            .id();
+        app.world_mut().send_event(DeathEvent {
+            target: beast,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 55,
+        });
+
+        app.update();
+
+        let dropped_templates = app
+            .world()
+            .resource::<DroppedLootRegistry>()
+            .entries
+            .values()
+            .map(|entry| entry.item.template_id.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            dropped_templates
+                .iter()
+                .any(|template_id| template_id == SHU_GU),
+            "legacy Beast fallback should use low-tier rat table"
+        );
+        assert!(
+            !dropped_templates
+                .iter()
+                .any(|template_id| template_id == FENG_HE_GU),
+            "legacy Beast fallback must not mint hybrid-tier bones"
         );
     }
 

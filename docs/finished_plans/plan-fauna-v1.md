@@ -147,8 +147,8 @@ DropTable 设计：
 
 ### 落地清单
 
-- P0 妖兽 item + drop 链路：`server/assets/items/fauna.toml`、`server/src/fauna/components.rs`、`server/src/fauna/drop.rs`、`server/src/fauna/mod.rs`
-- P1 封灵骨币制作：`server/src/fauna/bone_coin.rs`，输出 `bone_coin_5` / `bone_coin_15` / `bone_coin_40` 并挂 `Freshness`
+- P0 妖兽 item + drop 链路：`server/assets/items/fauna.toml`、`server/src/fauna/components.rs`、`server/src/fauna/drop.rs`、`server/src/fauna/mod.rs`；生产 `spawn_beast_npc_at` 与 `beast_tide` 路径会挂 `FaunaTag`，旧无标签 Beast 兼容 fallback 降到低阶 Rat 表
+- P1 封灵骨币制作：`server/src/fauna/bone_coin.rs`，输出 `bone_coin_5` / `bone_coin_15` / `bone_coin_40` 并挂 `Freshness`；面额按 5 / 15 / 40 真元向下量化，低于 5 真元拒绝制作
 - P2 forge 正典化：`server/assets/forge/blueprints/ling_feng_v0.json`、`server/assets/forge/blueprints/tool_gu_hai_qian_v0.json`、`server/src/forge/steps.rs`，旧 `yi_beast_bone` 全量替换为 `yi_shou_gu`
 - P3 骨骼 / 骨币 shelflife：`server/src/shelflife/registry.rs` 注册 `fauna_bone_*_v1` 与 `bone_coin_*_v1`，`server/src/shelflife/variant.rs` 统一腐骨币切换
 - P4 高阶掉落：`server/src/fauna/drop.rs` 负压畸变体保底 `fu_ya_hesui`，稀有 `bian_yi_hexin`，命中核心时对 attacker 发 `StatusEffectKind::InsightHallucination`
@@ -163,7 +163,12 @@ DropTable 设计：
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
 - `cd server && cargo test` ✅ 2072 passed
-- 定向核验：`cargo test fauna::` ✅ 16 passed；`cargo test forge::` ✅ 65 passed；`cargo test inventory::tests::loads_item_registry_from_assets` ✅；`cargo test shelflife::registry::tests::default_registry_registers_all_ling_shi_profiles` ✅；`cargo test shelflife::variant::tests::bone_coin_dead_switches_to_rotten` ✅
+- 定向核验：`cargo test fauna::` ✅ 18 passed；`cargo test forge::` ✅ 65 passed；`cargo test npc::spawn::tests::spawn_beast_npc_at_attaches_live_territory_brain_components` ✅；`cargo test world::events::events_tests::beast_tide_event_spawns_and_cleans_up` ✅；`cargo test inventory::tests::loads_item_registry_from_assets` ✅；`cargo test shelflife::registry::tests::default_registry_registers_all_ling_shi_profiles` ✅；`cargo test shelflife::variant::tests::bone_coin_dead_switches_to_rotten` ✅
+
+### Review 处理
+
+- Codex P1：修复无 `FaunaTag` Beast 统一落到高阶 Hybrid 表的问题，改为生产 spawn 挂标签、旧实体 fallback 到 Rat 表，并加 `untagged_legacy_beast_falls_back_to_rat_table` 回归。
+- Codex P1：修复 5.1 / 15.1 真元可铸出高一档骨币的问题，骨币面额改为已支付门槛 5 / 15 / 40 的向下量化，并加 `craft_plan_quantizes_to_paid_coin_denominations` 回归。
 
 ### 跨仓库核验
 

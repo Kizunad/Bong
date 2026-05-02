@@ -24,6 +24,42 @@ impl BeastKind {
     }
 }
 
+pub fn fauna_tag_for_beast_spawn(home_zone: &str, seed: u64) -> FaunaTag {
+    FaunaTag::new(beast_kind_for_spawn_context(home_zone, seed))
+}
+
+pub fn fauna_spawn_seed(home_zone: &str, x: f64, z: f64) -> u64 {
+    let mut seed = 0xFA17_A5EED_u64;
+    for byte in home_zone.bytes() {
+        seed = seed.wrapping_mul(0x100_0000_01B3).wrapping_add(byte as u64);
+    }
+    seed ^ x.to_bits().rotate_left(17) ^ z.to_bits().rotate_right(11)
+}
+
+pub fn beast_kind_for_spawn_context(home_zone: &str, seed: u64) -> BeastKind {
+    let zone = home_zone.to_ascii_lowercase();
+    if zone.contains("spider") || zone.contains("zhu") || zone.contains("蛛") {
+        return BeastKind::Spider;
+    }
+    if zone.contains("hybrid")
+        || zone.contains("feng_he")
+        || zone.contains("fenghe")
+        || zone.contains("缝合")
+        || zone.contains("异变")
+    {
+        return BeastKind::HybridBeast;
+    }
+    if zone.contains("rat") || zone.contains("shu") || zone.contains("鼠") {
+        return BeastKind::Rat;
+    }
+
+    match seed % 20 {
+        0 => BeastKind::HybridBeast,
+        1..=5 => BeastKind::Spider,
+        _ => BeastKind::Rat,
+    }
+}
+
 /// 同种妖兽的变体。当前只修饰稀有掉落率，不改变保底骨材。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
