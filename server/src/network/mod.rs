@@ -14,6 +14,7 @@ pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
 pub mod defense_window_emit;
+pub mod derived_attrs_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
 pub mod extract_emit;
@@ -426,6 +427,7 @@ pub fn register(app: &mut App) {
             .after(client_request_handler::handle_client_request_payloads),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
+    app.add_systems(Update, derived_attrs_emit::emit_derived_attrs_sync_payloads);
     app.add_systems(
         Update,
         (

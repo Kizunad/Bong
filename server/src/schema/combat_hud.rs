@@ -169,6 +169,23 @@ pub struct UnlocksSyncV1 {
     pub jueling: bool,
 }
 
+/// plan-HUD-v1 §3.3 / §3.4：扩展 DerivedAttrs 同步。
+/// 客户端用于飞行/虚化/天劫短显，以及替尸伪皮、绝灵涡流 HUD 角标。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DerivedAttrsSyncV1 {
+    pub flying: bool,
+    pub flying_qi_remaining: f32,
+    pub flying_force_descent_at_ms: u64,
+    pub phasing: bool,
+    pub phasing_until_ms: u64,
+    pub tribulation_locked: bool,
+    pub tribulation_stage: String,
+    pub throughput_peak_norm: f32,
+    pub vortex_fake_skin_layers: u8,
+    pub vortex_ready: bool,
+}
+
 /// plan-HUD-v1 §2.3 / §11.4 右侧统一事件流单条推送。
 /// `channel` 与 client `UnifiedEvent.Channel` 1:1：combat / cultivation / world / social / system。
 /// `priority` 与 client `Priority` 1:1，决定事件存活时间。
