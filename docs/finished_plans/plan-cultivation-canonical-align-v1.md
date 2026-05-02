@@ -259,3 +259,40 @@ match next {
 - 2026-05-01：骨架创建。plan-gameplay-journey-v1 §Q Wave 0 硬阻塞，所有下游依赖。
 - 2026-05-01：实地核验完成。确认代码现状与正典差异（详见 §1），填充 §0-§5 完整设计。
 - 2026-05-01：审批驳回（reviewer）。P0 从「total count 常量表」升级为「正经/奇经分结构检查」，新增 `regular_opened_count()` / `extraordinary_opened_count()` helper + 3 个结构约束测试。P2 收窄为纯 client UI。风险表补全。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 核心门槛：`server/src/cultivation/components.rs` 将 `Realm::required_meridians()` 对齐为 `[1, 3, 6, 12, 16, 20]`，新增 `MeridianSystem::regular_opened_count()` / `extraordinary_opened_count()`；`server/src/cultivation/breakthrough.rs` 增加正经/奇经结构前置检查和 `NotEnoughRegularMeridians` / `NotEnoughExtraordinaryMeridians` 错误变体。
+- P0 回归面：`server/src/cultivation/death_hooks.rs`、`server/src/cultivation/qi_zero_decay.rs`、`server/src/network/mod.rs`、`server/src/npc/brain.rs` 已同步正典阈值测试与注释；`server/src/cultivation/tribulation.rs` 继续通过 `Realm::Spirit.required_meridians()` 自动使用 16。
+- P1 文案：`agent/packages/schema/src/cultivation.ts` 与 generated schema 将 Realm description 更新为「醒灵/引气/凝脉/固元/通灵/化虚」；`client/src/main/java/com/bong/client/util/RealmLabel.java` 统一 client 端 wire realm 中文标签；`CultivationScreen`、旧 `PlayerStateViewModel`、库存面板使用共享 helper。
+- P2 可视化：`client/src/main/java/com/bong/client/util/MeridianGateLabel.java` 提供奇经 `N/4` 计数；`MeridianDetailPanel.java` 与 `MeridianMiniView.java` 显示通灵门槛提示。
+- 流水线清理：删除过期同名 skeleton `docs/plans-skeleton/plan-cultivation-canonical-align-v1.md`，避免 active plan 消费前置校验误判。
+
+### 关键 commit
+
+- `2961dff4` · 2026-05-02 · `docs(plan-cultivation-canonical-align-v1): 移除过期骨架`
+- `b4c8fdcd` · 2026-05-02 · `fix(cultivation): 对齐正典经脉门槛与结构检查`
+- `5bf30d8f` · 2026-05-02 · `fix(client): 统一境界标签与奇经门槛提示`
+- `da090ea6` · 2026-05-02 · `fix(schema): 更新境界正典描述`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test -p bong-server -- cultivation`：247 passed。
+- `cd server && cargo test`：2054 passed。
+- `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：tiandao 205 passed；schema 236 passed。
+- `JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn cd client && ./gradlew test build`：BUILD SUCCESSFUL；JUnit XML 汇总 762 tests。
+- `rg -n '觉醒|引灵|凝气|灵动|虚明' server/src agent client/src --glob '*.rs' --glob '*.ts' --glob '*.java'`：返回空。
+
+### 跨仓库核验
+
+- server：`Realm::required_meridians`、`MeridianSystem::regular_opened_count`、`MeridianSystem::extraordinary_opened_count`、`BreakthroughError::NotEnoughRegularMeridians`、`BreakthroughError::NotEnoughExtraordinaryMeridians`。
+- agent：`agent/packages/schema/src/cultivation.ts` 的 `Realm` TypeBox description；generated `world-state-v1.json` / `breakthrough-event-v1.json` / `death-insight-request-v1.json` 等同步描述。
+- client：`RealmLabel.displayName`、`MeridianGateLabel.spiritExtraordinaryProgress`、`CultivationScreen.describe`、`MeridianDetailPanel`、`MeridianMiniView`。
+
+### 遗留 / 后续
+
+- XP 曲线独立模块化仍按 plan 决策延期，不在本 PR 范围。
+- `qi_zero_decay.rs` 的 1% demo 阈值升到 worldview 20% 仍需 telemetry 回填后单独调整。
+- `opened_at` 已存在，但归零降境关闭排序仍用数组索引代理；真实 tick 排序留给后续小 issue。
