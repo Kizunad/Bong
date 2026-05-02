@@ -64,6 +64,8 @@
 
 ## 3. 禁止动作
 
+- 用户明确要求 `commit` / `push` / `commit + push` / `开 PR` / `gh pr create` 时，视为已授权普通提交、普通推送和 PR 创建，**无需二次确认**。
+- 仍需明确确认：`git push --force`、`git reset --hard`、`git commit --amend`、交互式 rebase、`--no-verify`、批量删除/移动文件、依赖版本或生产配置改动。
 - `git push --force`、`git reset --hard`、`git commit --amend`（无明确用户授权时）
 - `--no-verify`、`--no-gpg-sign`、`-c commit.gpgsign=false`
 - 绕过 "Java 17 for Fabric" 约定
