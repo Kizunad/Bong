@@ -405,3 +405,45 @@ CLAUDE.md 强约束"饱和测试"：
 ## §11 进度日志
 
 - 2026-04-28：plan 立项。基于 `plan-forge-v1` 已归档 Finish Evidence + 红旗（forge sample 缺失）+ 五项自报遗留拆出本 plan。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：补齐 forge schema / sample / bridge 契约：`agent/packages/schema/src/forge-bridge.ts`、`agent/packages/schema/src/client-request.ts`、`agent/packages/schema/src/channels.ts`、`agent/packages/schema/samples/*forge*.sample.json`、`server/src/schema/forge_bridge.rs`、`server/src/network/forge_bridge.rs`、`server/src/network/redis_bridge.rs`。
+- P0：接通 `ForgeStationPlace` 放砧链路：`server/src/schema/client_request.rs`、`server/src/network/client_request_handler.rs`、`server/src/forge/station.rs`、`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java`、`client/src/main/java/com/bong/client/network/ClientRequestSender.java`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java`。
+- P1：扩展装备 item forge 运行时字段与 forge -> inventory 写入：`server/src/inventory/mod.rs`、`server/src/schema/inventory.rs`、`server/src/network/inventory_snapshot_emit.rs`、`server/src/forge/inventory_bridge.rs`、`agent/packages/schema/src/inventory.ts`、`client/src/main/java/com/bong/client/inventory/model/InventoryItem.java`、`client/src/main/java/com/bong/client/network/InventorySnapshotHandler.java`。
+- P1：注册砧、图谱残卷、铭文残卷、载体材料：`server/assets/items/forge.toml`，并接入 `BlueprintScrollSpec` / `InscriptionScrollSpec` 解析与学习 / 投放校验。
+- P2：实现 Tempering 节奏轨道与 J/K/L 输入：`client/src/main/java/com/bong/client/forge/ForgeScreen.java`、`client/src/main/java/com/bong/client/forge/screen/TemperingTrackComponent.java`、`client/src/main/java/com/bong/client/forge/input/TemperingInputHandler.java`。
+- P3：实现 Inscription 铭文槽与 scroll drop：`client/src/main/java/com/bong/client/forge/screen/InscriptionPanelComponent.java`。
+- P4：实现 Consecration 真元注入 UI 与颜色预览：`client/src/main/java/com/bong/client/forge/screen/ConsecrationPanelComponent.java`、`client/src/main/java/com/bong/client/cultivation/ColorKind.java`。
+- P5：仅锚定持久化接入位，不在本 plan 扩面实现 BlockEntity 持久化：`server/src/forge/station.rs`、`server/src/forge/session.rs`、`server/src/forge/mod.rs` 已含 `plan-persistence-v1` 注释与 `Serialize, Deserialize` 派生。
+
+### 关键 commit
+
+- `4ba8f081` · 2026-04-28 · `plan-forge-leftovers-v1: 补齐炼器 schema 契约样本`
+- `cef1900f` · 2026-04-28 · `plan-forge-leftovers-v1: 接通服务端炼器桥与放砧`
+- `df758e17` · 2026-04-28 · `plan-forge-leftovers-v1: 写回炼器结算产物`
+- `46fe1b14` · 2026-04-28 · `plan-forge-leftovers-v1: 补齐炼器残卷与载体契约`
+- `85cf38a0` · 2026-04-28 · `plan-forge-leftovers-v1: 接入淬炼节奏轨道`
+- `1b92a2c2` · 2026-04-28 · `plan-forge-leftovers-v1: 接入铭文槽投放`
+- `6c2542a7` · 2026-04-28 · `plan-forge-leftovers-v1: 接入开光真元注入`
+- `77acd3b9` · 2026-04-28 · `fix(forge): 收紧铭文投放校验`
+- `5e272d3d` · 2026-04-30 · `feat(forge): 增加凡器工具图谱`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 2063 passed。
+- `cd agent && npm run build && cd packages/tiandao && npm test && cd ../schema && npm test`：通过；tiandao 26 files / 205 tests passed，schema 7 files / 246 tests passed。
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`：通过；Gradle test XML 汇总 787 tests / 0 failures / 0 errors / 0 skipped。
+
+### 跨仓库核验
+
+- Server：`ForgeStartPayloadV1` / `ForgeOutcomePayloadV1`、`RedisOutbound::ForgeStart` / `RedisOutbound::ForgeOutcome`、`ClientRequestV1::ForgeStationPlace`、`ForgeStationSpec`、`handle_place_station_request`、`forge_outcome_to_inventory`。
+- Agent schema：`ForgeStartPayloadV1` / `ForgeOutcomePayloadV1`、`ForgeStationPlaceRequestV1`、`REDIS_V1_CHANNELS` 中的 `bong:forge/start` 与 `bong:forge/outcome`、14 份 forge sample。
+- Client：`TemperingTrackComponent`、`TemperingInputHandler`、`InscriptionPanelComponent`、`ConsecrationPanelComponent`、`ColorKind`、`InventoryItem.forgeQuality/forgeColor/forgeSideEffects/forgeAchievedTier`。
+
+### 遗留 / 后续
+
+- `plan-combat-v1` 仍负责把 weapon `quality/color/side_effects` 纳入伤害判定；本 plan 只保证 forge 产物写入 inventory 并保留字段。
+- BlockEntity 实际持久化仍不在本 plan 范围；P5 只保留 forge 模块序列化与 `plan-persistence-v1` 接入锚点，避免重复扩面。
