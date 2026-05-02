@@ -40,6 +40,10 @@ import {
   NpcDeathV1,
   NpcSpawnedV1,
 } from "../src/npc.js";
+import {
+  PseudoVeinDissipateEventV1,
+  PseudoVeinSnapshotV1,
+} from "../src/pseudo-vein.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
@@ -126,6 +130,13 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_INTERVENTION_RESULT);
   });
 
+  it("declares pseudo vein Redis channels", () => {
+    expect(CHANNELS.PSEUDO_VEIN_ACTIVE).toBe("bong:pseudo_vein:active");
+    expect(CHANNELS.PSEUDO_VEIN_DISSIPATE).toBe("bong:pseudo_vein:dissipate");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_ACTIVE);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_DISSIPATE);
+  });
+
   it("world-state.sample.json", () => {
     const data = loadSample("world-state.sample.json");
     const result = validate(WorldStateV1, data);
@@ -147,6 +158,18 @@ describe("sample files pass schema validation", () => {
   it("chat-message.sample.json", () => {
     const data = loadSample("chat-message.sample.json");
     const result = validate(ChatMessageV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("pseudo-vein-snapshot.sample.json", () => {
+    const data = loadSample("pseudo-vein-snapshot.sample.json");
+    const result = validate(PseudoVeinSnapshotV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("pseudo-vein-dissipate-event.sample.json", () => {
+    const data = loadSample("pseudo-vein-dissipate-event.sample.json");
+    const result = validate(PseudoVeinDissipateEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

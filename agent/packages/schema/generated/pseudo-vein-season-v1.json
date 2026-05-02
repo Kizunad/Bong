@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "summer",
+      "type": "string"
+    },
+    {
+      "const": "summer_to_winter",
+      "type": "string"
+    },
+    {
+      "const": "winter",
+      "type": "string"
+    },
+    {
+      "const": "winter_to_summer",
+      "type": "string"
+    }
+  ]
+}

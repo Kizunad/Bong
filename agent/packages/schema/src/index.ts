@@ -19,6 +19,7 @@ export * from "./combat-event.js";
 export * from "./inventory.js";
 export * from "./narration.js";
 export * from "./npc.js";
+export * from "./pseudo-vein.js";
 export * from "./realm-vision.js";
 export * from "./server-data.js";
 export * from "./social.js";

@@ -1,0 +1,80 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "id",
+    "center_xz",
+    "storm_anchors",
+    "storm_duration_ticks",
+    "qi_redistribution"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "center_xz": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "storm_anchors": {
+      "minItems": 1,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          }
+        ],
+        "additionalItems": false,
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "storm_duration_ticks": {
+      "minimum": 6000,
+      "maximum": 12000,
+      "type": "integer"
+    },
+    "qi_redistribution": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "refill_to_hungry_ring",
+        "collected_by_tiandao"
+      ],
+      "properties": {
+        "refill_to_hungry_ring": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "collected_by_tiandao": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        }
+      }
+    }
+  }
+}
