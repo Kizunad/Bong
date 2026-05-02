@@ -35,6 +35,13 @@ import {
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
 import {
+  ContainerStateV1,
+  SearchAbortedV1,
+  SearchCompletedV1,
+  SearchProgressV1,
+  SearchStartedV1,
+} from "./container-interaction.js";
+import {
   ForgeBlueprintBookDataV1,
   ForgeOutcomeDataV1,
   ForgeSessionDataV1,
@@ -161,6 +168,11 @@ export const ServerDataType = Type.Union([
   Type.Literal("extract_aborted"),
   Type.Literal("extract_failed"),
   Type.Literal("tsy_collapse_started_ipc"),
+  Type.Literal("container_state"),
+  Type.Literal("search_started"),
+  Type.Literal("search_progress"),
+  Type.Literal("search_completed"),
+  Type.Literal("search_aborted"),
   Type.Literal("forge_station"),
   Type.Literal("forge_session"),
   Type.Literal("forge_outcome"),
@@ -1103,6 +1115,51 @@ export type ServerDataSpiritualSenseTargetsV1 = Static<
   typeof ServerDataSpiritualSenseTargetsV1
 >;
 
+export const ServerDataContainerStateV1 = Type.Object(
+  {
+    type: Type.Literal("container_state"),
+    ...ContainerStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataContainerStateV1 = Static<typeof ServerDataContainerStateV1>;
+
+export const ServerDataSearchStartedV1 = Type.Object(
+  {
+    type: Type.Literal("search_started"),
+    ...SearchStartedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSearchStartedV1 = Static<typeof ServerDataSearchStartedV1>;
+
+export const ServerDataSearchProgressV1 = Type.Object(
+  {
+    type: Type.Literal("search_progress"),
+    ...SearchProgressV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSearchProgressV1 = Static<typeof ServerDataSearchProgressV1>;
+
+export const ServerDataSearchCompletedV1 = Type.Object(
+  {
+    type: Type.Literal("search_completed"),
+    ...SearchCompletedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSearchCompletedV1 = Static<typeof ServerDataSearchCompletedV1>;
+
+export const ServerDataSearchAbortedV1 = Type.Object(
+  {
+    type: Type.Literal("search_aborted"),
+    ...SearchAbortedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSearchAbortedV1 = Static<typeof ServerDataSearchAbortedV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -1146,6 +1203,11 @@ export const ServerDataV1 = Type.Union([
   ServerDataExtractAbortedV1,
   ServerDataExtractFailedV1,
   ServerDataTsyCollapseStartedIpcV1,
+  ServerDataContainerStateV1,
+  ServerDataSearchStartedV1,
+  ServerDataSearchProgressV1,
+  ServerDataSearchCompletedV1,
+  ServerDataSearchAbortedV1,
   ServerDataForgeStationV1,
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,

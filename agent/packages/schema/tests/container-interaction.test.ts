@@ -162,18 +162,33 @@ describe("SearchStartedV1 / SearchProgressV1 / SearchCompletedV1 / SearchAborted
 describe("StartSearchRequestV1 / CancelSearchRequestV1", () => {
   it("StartSearchRequestV1 minimal valid", () => {
     expect(
-      validateStartSearchRequestV1Contract({ v: 1, container_entity_id: 5 })
+      validateStartSearchRequestV1Contract({
+        type: "start_search",
+        v: 1,
+        container_entity_id: 5,
+      })
         .ok,
     ).toBe(true);
   });
 
   it("CancelSearchRequestV1 minimal valid", () => {
-    expect(validateCancelSearchRequestV1Contract({ v: 1 }).ok).toBe(true);
+    expect(
+      validateCancelSearchRequestV1Contract({ type: "cancel_search", v: 1 })
+        .ok,
+    ).toBe(true);
+  });
+
+  it("StartSearchRequestV1 rejects missing type", () => {
+    expect(
+      validateStartSearchRequestV1Contract({ v: 1, container_entity_id: 5 })
+        .ok,
+    ).toBe(false);
   });
 
   it("StartSearchRequestV1 rejects negative entity id", () => {
     expect(
       validateStartSearchRequestV1Contract({
+        type: "start_search",
         v: 1,
         container_entity_id: -1,
       }).ok,

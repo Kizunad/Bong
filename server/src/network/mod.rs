@@ -36,6 +36,7 @@ pub mod treasure_equipped_emit;
 pub mod tribulation_broadcast_emit;
 pub mod tribulation_heart_demon_offer_emit;
 pub mod tribulation_state_emit;
+pub mod tsy_container_search_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
@@ -493,6 +494,22 @@ pub fn register(app: &mut App) {
                 .after(crate::world::extract_system::on_tsy_collapse_started),
             extract_emit::emit_tsy_collapse_started_payloads
                 .after(crate::world::extract_system::on_tsy_collapse_started),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            tsy_container_search_emit::emit_container_state_payloads,
+            tsy_container_search_emit::emit_container_state_payloads_to_joined_clients,
+            tsy_container_search_emit::emit_search_started_payloads
+                .after(crate::world::tsy_container_search::start_search_container),
+            tsy_container_search_emit::emit_search_progress_payloads
+                .after(crate::world::tsy_container_search::tick_search_progress),
+            tsy_container_search_emit::emit_search_completed_payloads
+                .after(crate::world::tsy_container_search::tick_search_progress),
+            tsy_container_search_emit::emit_search_aborted_payloads
+                .after(crate::world::tsy_container_search::tick_search_progress)
+                .after(crate::world::tsy_container_search::handle_cancel_search),
         ),
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();

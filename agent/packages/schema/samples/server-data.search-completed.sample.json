@@ -1,0 +1,15 @@
+{
+  "type": "search_completed",
+  "v": 1,
+  "player_id": "offline:Kiz",
+  "container_entity_id": 42,
+  "family_id": "tsy_lingxu_01",
+  "loot_preview": [
+    {
+      "template_id": "bone_coin",
+      "display_name": "骨币",
+      "stack_count": 3
+    }
+  ],
+  "at_tick": 300
+}

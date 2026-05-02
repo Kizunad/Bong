@@ -2072,6 +2072,47 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "type",
+        "v",
+        "container_entity_id"
+      ],
+      "properties": {
+        "type": {
+          "const": "start_search",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "container_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v"
+      ],
+      "properties": {
+        "type": {
+          "const": "cancel_search",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "v",
         "type",
         "station_id",

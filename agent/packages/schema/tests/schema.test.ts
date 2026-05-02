@@ -519,6 +519,20 @@ describe("sample files pass schema validation", () => {
   });
 
   for (const sample of [
+    "server-data.container-state.sample.json",
+    "server-data.search-started.sample.json",
+    "server-data.search-progress.sample.json",
+    "server-data.search-completed.sample.json",
+    "server-data.search-aborted.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
+  for (const sample of [
     "client-request.alchemy-open-furnace.sample.json",
     "client-request.alchemy-feed-slot.sample.json",
     "client-request.alchemy-take-back.sample.json",
@@ -582,6 +596,17 @@ describe("sample files pass schema validation", () => {
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  for (const sample of [
+    "client-request.start-search.sample.json",
+    "client-request.cancel-search.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
 
   for (const sample of [
     "client-request.forge-start.sample.json",
@@ -830,6 +855,17 @@ describe("negative sample files fail schema validation", () => {
     const result = validate(ClientRequestV1, data);
     expect(result.ok).toBe(false);
   });
+
+  for (const sample of [
+    "client-request.start-search.invalid-missing-type.sample.json",
+    "client-request.start-search.invalid-negative-id.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok).toBe(false);
+    });
+  }
 
   it("rejects extra weapon payload fields", () => {
     const data = loadObjectSample("server-data.weapon-equipped.sample.json");

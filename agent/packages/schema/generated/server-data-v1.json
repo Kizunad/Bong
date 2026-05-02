@@ -7888,6 +7888,296 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "type",
+        "v",
+        "entity_id",
+        "kind",
+        "family_id",
+        "world_pos",
+        "depleted"
+      ],
+      "properties": {
+        "type": {
+          "const": "container_state",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "dry_corpse",
+              "type": "string"
+            },
+            {
+              "const": "skeleton",
+              "type": "string"
+            },
+            {
+              "const": "storage_pouch",
+              "type": "string"
+            },
+            {
+              "const": "stone_casket",
+              "type": "string"
+            },
+            {
+              "const": "relic_core",
+              "type": "string"
+            }
+          ]
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "locked": {
+          "anyOf": [
+            {
+              "const": "stone_casket_key",
+              "type": "string"
+            },
+            {
+              "const": "jade_coffin_seal",
+              "type": "string"
+            },
+            {
+              "const": "array_core_sigil",
+              "type": "string"
+            }
+          ]
+        },
+        "depleted": {
+          "type": "boolean"
+        },
+        "searched_by_player_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "player_id",
+        "container_entity_id",
+        "required_ticks",
+        "at_tick"
+      ],
+      "properties": {
+        "type": {
+          "const": "search_started",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "container_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "required_ticks": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "player_id",
+        "container_entity_id",
+        "elapsed_ticks",
+        "required_ticks"
+      ],
+      "properties": {
+        "type": {
+          "const": "search_progress",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "container_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "elapsed_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "required_ticks": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "player_id",
+        "container_entity_id",
+        "family_id",
+        "loot_preview",
+        "at_tick"
+      ],
+      "properties": {
+        "type": {
+          "const": "search_completed",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "container_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "loot_preview": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "template_id",
+              "display_name",
+              "stack_count"
+            ],
+            "properties": {
+              "template_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "stack_count": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "player_id",
+        "container_entity_id",
+        "reason",
+        "at_tick"
+      ],
+      "properties": {
+        "type": {
+          "const": "search_aborted",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "container_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "moved",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "damaged",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "type": "string"
+            }
+          ]
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "v",
         "type",
         "station_id",
