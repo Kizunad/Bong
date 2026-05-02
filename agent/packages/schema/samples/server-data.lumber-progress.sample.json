@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "lumber_progress",
+  "session_id": "offline:Kiz",
+  "log_pos": [12, 96, 18],
+  "progress": 0.5,
+  "interrupted": false,
+  "completed": false,
+  "detail": ""
+}
