@@ -6,7 +6,8 @@ pub const PSEUDO_VEIN_DISPLAY_NAME: &str = "伪灵脉";
 pub const PSEUDO_VEIN_SPIRIT_QI: f64 = 0.60;
 pub const PSEUDO_VEIN_DANGER_LEVEL: u8 = 4;
 pub const PSEUDO_VEIN_SIZE_XZ: [i32; 2] = [300, 300];
-pub const PSEUDO_VEIN_Y_RANGE: [i32; 2] = [60, 90];
+pub const PSEUDO_VEIN_DEFAULT_BASE_Y: i32 = 60;
+pub const PSEUDO_VEIN_HEIGHT: i32 = 30;
 pub const PSEUDO_VEIN_CORE_RADIUS: i32 = 60;
 pub const PSEUDO_VEIN_RIM_RADIUS: i32 = 120;
 
@@ -67,21 +68,14 @@ pub fn build_pseudo_vein_blueprint_zone(
     let name = pseudo_vein_zone_name(id)?;
     let half_x = PSEUDO_VEIN_SIZE_XZ[0] / 2;
     let half_z = PSEUDO_VEIN_SIZE_XZ[1] / 2;
+    let max_y = base_y + PSEUDO_VEIN_HEIGHT;
 
     Ok(TransientBlueprintZoneTemplate {
         name,
         display_name: PSEUDO_VEIN_DISPLAY_NAME.to_string(),
         aabb: AabbTemplate {
-            min: [
-                center_xz[0] - half_x,
-                base_y + PSEUDO_VEIN_Y_RANGE[0],
-                center_xz[1] - half_z,
-            ],
-            max: [
-                center_xz[0] + half_x,
-                base_y + PSEUDO_VEIN_Y_RANGE[1],
-                center_xz[1] + half_z,
-            ],
+            min: [center_xz[0] - half_x, base_y, center_xz[1] - half_z],
+            max: [center_xz[0] + half_x, max_y, center_xz[1] + half_z],
         },
         center_xz,
         size_xz: PSEUDO_VEIN_SIZE_XZ,
@@ -127,7 +121,7 @@ mod tests {
 
     #[test]
     fn builds_plan_pinned_dynamic_blueprint_template() {
-        let zone = build_pseudo_vein_blueprint_zone("unit", [100, -40], 0)
+        let zone = build_pseudo_vein_blueprint_zone("unit", [100, -40], PSEUDO_VEIN_DEFAULT_BASE_Y)
             .expect("pseudo vein template should build");
 
         assert_eq!(zone.name, "pseudo_vein_unit");
@@ -148,5 +142,14 @@ mod tests {
             zone.worldgen.landmarks,
             vec!["phantom_qi_pillar", "tiandao_seal_stele"]
         );
+    }
+
+    #[test]
+    fn build_uses_base_y_as_actual_zone_floor_without_double_offset() {
+        let zone = build_pseudo_vein_blueprint_zone("unit", [0, 0], 72)
+            .expect("pseudo vein template should build");
+
+        assert_eq!(zone.aabb.min, [-150, 72, -150]);
+        assert_eq!(zone.aabb.max, [150, 102, 150]);
     }
 }

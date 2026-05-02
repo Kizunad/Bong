@@ -11,6 +11,8 @@ pub const TICKS_PER_SECOND: u64 = 20;
 pub const TICKS_PER_MINUTE: u64 = TICKS_PER_SECOND * 60;
 pub const TICKS_PER_HOUR: u64 = TICKS_PER_MINUTE * 60;
 pub const PSEUDO_VEIN_INITIAL_QI: f64 = 0.60;
+// §7 pins 3 occupants to a 30 minute lifetime at the 1.8x crowd band.
+pub const PSEUDO_VEIN_MULTI_OCCUPANT_BASE_MINUTES: f64 = 54.0;
 pub const PSEUDO_VEIN_HUNGRY_RING_BASE_QI: f64 = 0.08;
 pub const PSEUDO_VEIN_HUNGRY_RING_REFILL_MAX: f64 = 0.08;
 pub const PSEUDO_VEIN_TRIBULATION_BONUS: f64 = 0.30;
@@ -158,7 +160,7 @@ pub fn decay_lifetime_minutes_for_occupants(occupant_count: usize) -> f64 {
     if occupant_count <= 1 {
         90.0
     } else {
-        54.0 / decay_multiplier_for_occupants(occupant_count)
+        PSEUDO_VEIN_MULTI_OCCUPANT_BASE_MINUTES / decay_multiplier_for_occupants(occupant_count)
     }
 }
 
@@ -350,6 +352,16 @@ mod tests {
         assert_eq!(decay_multiplier_for_occupants(4), 2.5);
         assert_eq!(decay_multiplier_for_occupants(5), 3.5);
         assert_eq!(decay_multiplier_for_occupants(99), 3.5);
+    }
+
+    #[test]
+    fn decay_lifetime_derives_multi_occupant_base_from_three_player_anchor() {
+        assert_eq!(decay_lifetime_minutes_for_occupants(0), 90.0);
+        assert_eq!(decay_lifetime_minutes_for_occupants(1), 90.0);
+        assert!((decay_lifetime_minutes_for_occupants(2) - 38.571).abs() < 0.001);
+        assert_eq!(decay_lifetime_minutes_for_occupants(3), 30.0);
+        assert!((decay_lifetime_minutes_for_occupants(4) - 21.6).abs() < 0.001);
+        assert!((decay_lifetime_minutes_for_occupants(5) - 15.429).abs() < 0.001);
     }
 
     #[test]
