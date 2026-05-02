@@ -1,0 +1,10 @@
+[[item]]
+id = "feng_he_gu"
+name = "封合骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.45
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "异兽骨骼中最适合编匣的封合骨，可与灵木板材咬合成保养容器。"

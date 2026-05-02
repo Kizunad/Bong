@@ -1,0 +1,10 @@
+[[item]]
+id = "ling_mu_miao"
+name = "灵木苗"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "灵田可栽的灵木幼苗；它不是成材灵木原木。"

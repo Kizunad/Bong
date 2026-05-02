@@ -1,0 +1,10 @@
+[[item]]
+id = "ling_xia"
+name = "封灵匣"
+category = "treasure"
+grid_w = 2
+grid_h = 2
+base_weight = 1.8
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "灵木板材与封合骨编成的保养匣，封住法宝搬运时的磨损。"

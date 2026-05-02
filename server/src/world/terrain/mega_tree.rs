@@ -3,7 +3,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use valence::prelude::{BlockState, Chunk, ChunkPos, DVec3, UnloadedChunk};
+use valence::prelude::{BlockPos, BlockState, Chunk, ChunkPos, DVec3, UnloadedChunk};
 
 use super::{column, raster::TerrainProvider, spatial::ChunkBounds};
 
@@ -198,6 +198,75 @@ enum MegaTreeKind {
     AncientPine,
     Deadwood,
     SwampCypress,
+}
+
+pub(crate) fn is_spiritwood_log_at(pos: BlockPos, terrain: &TerrainProvider) -> bool {
+    let chunk_pos = ChunkPos::new(pos.x.div_euclid(16), pos.z.div_euclid(16));
+    let chunk_bounds = ChunkBounds::from_chunk_pos(chunk_pos);
+    let Some(profile) = TREE_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| matches!(profile.kind, MegaTreeKind::SpiritWood))
+    else {
+        return false;
+    };
+
+    let cell_min_x = (chunk_bounds.min_x - profile.max_extent).div_euclid(profile.seed_spacing);
+    let cell_max_x = (chunk_bounds.max_x + profile.max_extent).div_euclid(profile.seed_spacing);
+    let cell_min_z = (chunk_bounds.min_z - profile.max_extent).div_euclid(profile.seed_spacing);
+    let cell_max_z = (chunk_bounds.max_z + profile.max_extent).div_euclid(profile.seed_spacing);
+
+    for cell_z in cell_min_z..=cell_max_z {
+        for cell_x in cell_min_x..=cell_max_x {
+            let Some(instance) = instantiate_tree(
+                profile,
+                cell_x,
+                cell_z,
+                super::MIN_Y,
+                super::WORLD_HEIGHT as i32,
+                terrain,
+            ) else {
+                continue;
+            };
+            if !instance.bounds.intersects_chunk(&chunk_bounds) {
+                continue;
+            }
+            if spiritwood_log_placement_contains(pos, &chunk_bounds, &instance) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn spiritwood_log_placement_contains(
+    pos: BlockPos,
+    chunk_bounds: &ChunkBounds,
+    instance: &MegaTreeInstance,
+) -> bool {
+    let skeleton = cached_skeleton(instance);
+    let mut placements = HashMap::new();
+
+    for node in &skeleton {
+        let Some(parent_index) = node.parent else {
+            continue;
+        };
+        let parent = &skeleton[parent_index];
+        rasterize_segment(
+            &mut placements,
+            chunk_bounds,
+            parent.pos,
+            node.pos,
+            segment_radius(instance, node),
+            log_block(instance.params.kind),
+            2,
+        );
+    }
+
+    placements
+        .get(&(pos.x, pos.y, pos.z))
+        .is_some_and(|placement| placement.block == BlockState::OAK_LOG)
 }
 
 #[derive(Clone, Copy)]
