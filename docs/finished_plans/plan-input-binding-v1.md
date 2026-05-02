@@ -325,9 +325,10 @@ cd client && ./gradlew test build
 - 关键 commit：
   - `4e0027fa` 2026-05-02 `feat(client): 统一 G 键环境交互路由`
   - `1ab15397` 2026-05-02 `feat(schema): 补齐容器搜刮 search 契约`
+  - `1fc18f9a` 2026-05-02 `fix(input): 对齐容器搜刮距离与占用同步`
 - 测试结果：
   - agent：`npm run build && cd packages/schema && npm test` ✅（7 files / 246 tests）
-  - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅（2052 tests passed）
+  - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅（2053 tests passed）
   - client：`JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` ✅
 - 跨仓库核验：
   - client：`InteractionKeybindings.INTERACT_KEY_TRANSLATION`、`InteractKeyRouter`、`ReservedInteractionIntents.SEARCH_CONTAINER_PRIORITY`、`TsyContainerSearchIntentHandler`、`ClientRequestProtocol.encodeStartSearch`。
