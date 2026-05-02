@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStream;
+import com.bong.client.combat.HudConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +31,7 @@ public final class EventStreamHudPlanner {
     ) {
         List<HudRenderCommand> out = new ArrayList<>();
         if (stream == null || screenWidth <= 0 || screenHeight <= 0) return out;
+        if (!HudConfig.isEventStreamVisible()) return out;
 
         // Drop expired events before reading the snapshot.
         stream.expire(nowMillis);

@@ -19,6 +19,7 @@ public final class CombatHudBootstrap {
         CombatKeybindings.setQuickSlotHandler(CombatHudBootstrap::onQuickSlotPressed);
         CombatKeybindings.setJiemaiHandler(CombatHudBootstrap::onJiemaiPressed);
         CombatKeybindings.setSpellVolumeHoldHandler(CombatHudBootstrap::onSpellVolumeHold);
+        CombatKeybindings.setEventStreamToggleHandler(CombatHudBootstrap::onEventStreamToggle);
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(CombatHudBootstrap::resetOnDisconnect));
         BongClient.LOGGER.info("Combat HUD bootstrap ready.");
@@ -60,6 +61,11 @@ public final class CombatHudBootstrap {
         } else {
             SpellVolumeStore.hide();
         }
+    }
+
+    private static void onEventStreamToggle() {
+        boolean visible = HudConfig.toggleEventStreamVisible();
+        BongClient.LOGGER.info("Combat event stream HUD {}", visible ? "shown" : "hidden");
     }
 
     static void resetOnDisconnect() {
