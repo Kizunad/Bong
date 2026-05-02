@@ -268,3 +268,54 @@
 - **2026-04-27**：M2/M3/M4 缺口全部闭环 ——（a）`spawn_mineral_anchor_nodes` startup system 实装并注册（commit `eed0dda6` 物化固定矿脉锚点 + `4b481e37` 限制探矿范围并隔离维度索引），从 `mineral_anchors.json` spawn `MineralOreNode` 实体写 `MineralOreIndex`；（b）`MineralProbeIntent` listener `process_mineral_probe`（`server/src/mineral/probe.rs`） + client request path（`network/client_request_handler.rs:515`）接通（commit `4febea14`）；（c）forge `ForgeBlueprint::validate_with` 接入 `MineralRegistry::is_valid_mineral_id`（`server/src/forge/blueprint.rs:346`）；（d）灵石四档 decay profile 注册（commit `f04a18db`）。M2/M3/M4 全部 ✅；M0–M6 主链路收口。剩余缺口：shelflife 生产 profile (`ling_shi_*_v1`) 仍 test-only、ClientResourcePack 推送方案选型、鲸落化石 structure 生成算法、§2.2 极端情况 chat 提示。
 - **2026-04-25**：实装审计 — server `mineral` 模块骨架完成 8 文件（types/registry/components/events/break_handler/inventory_grant/persistence/bridge），覆盖 M0/M3/M4/M6 主链路 + M2 锚点（`mineral_anchors.json` + `mineral_density` LAYER）；剩余缺口：M2 worldgen 实际 spawn `MineralOreNode` 入 ECS、M1 资源包改色、M5 alchemy 钩子、`MineralProbeIntent` listener、forge 配方运行时校验、shelflife 生产 profile (`ling_shi_*_v1`) 出 test。
 - **2026-04-24**：PR #44 合并（merge commit 0530f0b6）—— M1/M2/M3/M4/M5/M6 全链路落地：M1 client 14 张 ore 改色（commit f537f808）/ M2 worldgen `mineral_anchors.json` + `mineral_density` LAYER（commit 4f788305）/ M3 server `mineral` 8 文件 runtime（commit 127a3ffd）/ M4 schema+forge `InventoryItem.mineral_id` NBT 流转 + forge placeholder 替换（commit 0209cb4c）/ M5 alchemy `IngredientSpec.mineral_id` 校验（commit a7050089）/ M6 矿脉耗尽持久化 + KarmaFlag agent bridge（commit 91fa3392）+ Codex P1+P2 修补 `MineralDropEvent` 消费者 + 启动期 hydrate（commit aff43c9a）+ library `矿物录` 馆藏（commit 88eca5d6）。剩余缺口：M2 worldgen 运行时 spawn `MineralOreNode` 入 ECS、`MineralProbeIntent` listener、forge 配方运行时 `is_valid_mineral_id` 校验、shelflife `ling_shi_*_v1` 生产 profile。
+
+## Finish Evidence
+
+### 落地清单
+
+- **M0 正典定稿**：`docs/library/ecology/矿物录.json` 收录金属、灵晶、炼丹辅料、灵石四档；`server/src/mineral/types.rs` 固化 `MineralId` / `MineralRarity` / `MineralCategory`，禁用 `xuan_tie` 等上古命名。
+- **M1 资源包改色**：`client/src/main/resources/assets/minecraft/textures/block/*.png` 覆盖 vanilla ore 贴图；`scripts/build-resourcepack.sh` 产出 `client/resourcepack/bong-mineral-v1.zip` 与 SHA1 sidecar；`server/src/network/resourcepack.rs` 在玩家加入时推送资源包并记录加载/降级状态。
+- **M2 worldgen 接入**：`worldgen/blueprint/mineral_anchors.json` 固定青云、血谷、洞穴矿脉锚点；`worldgen/scripts/terrain_gen/fields.py` 注册 `mineral_density` / `mineral_kind` / `fossil_bbox`；`server/src/mineral/anchors.rs` 将锚点和鲸落 fossil bbox 物化为 `MineralOreNode` 并写入 `MineralOreIndex`。
+- **M3 server runtime + mineral_id 流转**：`server/src/mineral/{types,registry,components,events,break_handler,inventory_grant,probe,persistence,bridge}.rs` 完成 registry、探矿、挖矿、掉落、freshness、耗尽、劫气桥接；`server/src/network/client_request_handler.rs` 接入 `mineral_probe` 请求。
+- **M4 inventory NBT + forge 钩子**：`server/src/schema/inventory.rs` 与 `agent/packages/schema/src/inventory.ts` 暴露 `mineral_id`；`server/src/forge/blueprint.rs` / `server/src/forge/mod.rs` 校验 forge required material 必须是注册金属，并按 `forge_tier_min` 拒绝低阶炉；`server/assets/forge/blueprints/qing_feng_v0.json` / `ling_feng_v0.json` 使用 `za_gang` / `sui_tie`。
+- **M5 alchemy 辅料钩子**：`server/src/alchemy/recipe.rs` 支持 `IngredientSpec.mineral_id`，拒绝无 NBT 的凡俗矿物冒充；`server/assets/alchemy/recipes/jie_du_dan_v1.json`、`pei_yuan_dan_zhu_sha_v1.json`、`jie_gu_dan_xiong_huang_placeholder_v1.json`、`xie_dan_xie_fen_placeholder_v1.json` 分别接入 `dan_sha`、`zhu_sha`、`xiong_huang`、`xie_fen`。
+- **M6 有限性 + 劫气钩子**：`server/src/mineral/persistence.rs` 持久化 `data/minerals/exhausted.json`；`server/src/mineral/break_handler.rs` 在剩余单位归零时 despawn 并 emit `MineralExhaustedEvent`，品阶 3/4 按 15%/30% 发 `KarmaFlagIntent`；`server/src/mineral/bridge.rs` 转发到 agent bridge。
+
+### 关键 commit
+
+- `f537f808` · 2026-04-24 · `feat(client): plan-mineral-v1 M1 — vanilla ore 改色资源包 14 张`
+- `127a3ffd` · 2026-04-24 · `feat(server): plan-mineral-v1 M3 — mineral 模块 runtime`
+- `0209cb4c` · 2026-04-24 · `feat(schema+forge): plan-mineral-v1 M4 — InventoryItem.mineral_id NBT + forge placeholder 替换`
+- `a7050089` · 2026-04-24 · `feat(alchemy): plan-mineral-v1 M5 — IngredientSpec.mineral_id 矿物辅料校验`
+- `4f788305` · 2026-04-24 · `feat(worldgen): plan-mineral-v1 M2 — 矿脉锚点 + LAYER_REGISTRY mineral_density/kind`
+- `91fa3392` · 2026-04-24 · `feat(server): plan-mineral-v1 M6 — 矿脉耗尽持久化 + KarmaFlag agent bridge`
+- `aff43c9a` · 2026-04-24 · `fix(mineral): Codex P1+P2 — MineralDropEvent 消费者 + 启动期 hydrate 耗尽记录`
+- `f04a18db` · 2026-04-27 · `feat(mineral): 注册灵石衰变 profile`
+- `4febea14` · 2026-04-27 · `feat(mineral): 接入神识探矿请求`
+- `eed0dda6` · 2026-04-27 · `feat(mineral): 物化固定矿脉锚点`
+- `0df9bee9` · 2026-04-27 · `feat(mineral): 校验 forge 矿物材料`
+- `4b481e37` · 2026-04-27 · `fix(mineral): 限制探矿范围并隔离维度索引`
+- `00df063f` · 2026-04-30 · `完成 plan-mineral-v2 矿物体系收尾`（补齐 v1 进度日志中遗留的资源包推送、鲸落化石、炉阶/炼丹配方等收口项）
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`2063 passed`。
+- `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：通过，tiandao `205 passed`，schema `246 passed`。首次运行因 worktree 未安装依赖报 `tsc: not found`，执行 `npm ci` 后重跑通过；未改依赖版本。
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：通过，Gradle `BUILD SUCCESSFUL in 59s`，JUnit XML 汇总 `787 tests / 0 failures / 0 errors`。
+- `bash scripts/build-resourcepack.sh`：通过，产物 SHA1 `3723e0156118023c9206d7605666bb90b23bc10d`。
+- `cd worldgen && python3 -m scripts.terrain_gen`：通过，`tiles synthesized: 208`，生成 raster manifest。
+- `cd worldgen && bash pipeline.sh`：通过，默认 raster smoke `tiles synthesized: 208`。
+- `cd worldgen && python3 -c "from scripts.terrain_gen.harness.raster_check import validate_rasters; ok, msg = validate_rasters('generated/terrain-gen-smoke/rasters'); print(msg); raise SystemExit(0 if ok else 1)"`：通过，`All 208 tiles passed validation (manifest_kind=overworld).`
+
+### 跨仓库核验
+
+- **server**：`MineralId` / `MineralRegistry` / `MineralOreNode` / `MineralOreIndex` / `MineralProbeIntent` / `MineralDropEvent` / `MineralExhaustedEvent` / `KarmaFlagIntent` / `ResourcePackConfig` / `ServerDataPayloadV1::MiningProgress`。
+- **agent/schema**：`InventoryItemViewV1.mineral_id` / `MineralProbeRequestV1` / `ServerDataPayloadV1` 的 `mining_progress` schema artifacts。
+- **client**：vanilla ore texture overrides、resource pack zip、Fabric test/build 通过；客户端通过既有 inventory snapshot / server-data schema 消费 `mineral_id` 与 `mining_progress`。
+- **worldgen**：`mineral_anchors.json`、`mineral_density`、`mineral_kind`、`fossil_bbox`、`whale_fossil.py`、raster manifest + harness 校验。
+
+### 遗留 / 后续
+
+- `bong:mineral_meta` 专用注册表广播仍按原文延后到 `plan-ipc-schema-v1` 协调；当前 v1 通过 `bong:inventory_snapshot` 携带 `mineral_id`，不阻断玩法闭环。
+- `yi_beast_bone` 属 fauna 材料范围，已按本 plan 依赖切分保留给 `plan-fauna-v1`；forge required 金属主料已改为 `fan_tie` / `za_gang` / `sui_tie` 等正典矿物。
+- `docs/finished_plans/plan-forge-v1.md` 是历史归档文档，示例仍含旧 placeholder；本次消费遵守 docs 写入边界，不回写其他已归档 plan。运行时 blueprint 与校验逻辑已经使用正典矿物。
