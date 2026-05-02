@@ -74,7 +74,9 @@ pub enum RedisOutbound {
     CombatRealtime(CombatRealtimeEventV1),
     CombatSummary(CombatSummaryV1),
     ArmorDurabilityChanged(ArmorDurabilityChangedV1),
+    #[allow(dead_code)]
     PseudoVeinSnapshot(PseudoVeinSnapshotV1),
+    #[allow(dead_code)]
     PseudoVeinDissipate(PseudoVeinDissipateEventV1),
     BreakthroughEvent(BreakthroughEventV1),
     ForgeEvent(ForgeEventV1),
