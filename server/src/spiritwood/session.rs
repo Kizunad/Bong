@@ -67,6 +67,12 @@ impl WoodSessionStore {
         self.sessions.get(&player)
     }
 
+    pub fn has_session_at(&self, dimension: DimensionKind, log_pos: BlockPos) -> bool {
+        self.sessions
+            .values()
+            .any(|session| session.dimension == dimension && session.log_pos == log_pos)
+    }
+
     pub fn upsert(&mut self, session: WoodSession) {
         self.sessions.insert(session.player, session);
     }
@@ -100,5 +106,24 @@ mod tests {
         assert_eq!(session.progress_at(100), 0.0);
         assert!((session.progress_at(220) - 0.5).abs() < f64::EPSILON);
         assert_eq!(session.progress_at(999), 1.0);
+    }
+
+    #[test]
+    fn store_blocks_duplicate_session_for_same_log() {
+        let mut store = WoodSessionStore::default();
+        let log_pos = BlockPos::new(1, 80, 2);
+        store.upsert(WoodSession::new(
+            Entity::from_raw(7),
+            "offline:a".to_string(),
+            DimensionKind::Overworld,
+            log_pos,
+            100,
+            [0.0, 64.0, 0.0],
+            Some(9),
+        ));
+
+        assert!(store.has_session_at(DimensionKind::Overworld, log_pos));
+        assert!(!store.has_session_at(DimensionKind::Overworld, BlockPos::new(2, 80, 2)));
+        assert!(!store.has_session_at(DimensionKind::Tsy, log_pos));
     }
 }

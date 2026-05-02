@@ -119,6 +119,9 @@ fn start_spiritwood_sessions(
             .get(event.client)
             .map(|current| current.0)
             .unwrap_or(DimensionKind::Overworld);
+        if store.has_session_at(dimension, event.position) {
+            continue;
+        }
         let block_state = block_state_at(
             event.position,
             dimension,
@@ -194,7 +197,7 @@ fn enforce_spiritwood_session_constraints(
         let tool_switched = inventories
             .get(session.player)
             .ok()
-            .and_then(main_hand_instance_id)
+            .and_then(equipped_harvest_tool_instance_id)
             != session.tool_instance_id;
 
         if hit || moved || tool_switched {
@@ -409,11 +412,8 @@ fn axe_tier_from_item(item: &ItemInstance) -> Option<u8> {
     }
 }
 
-fn main_hand_instance_id(inventory: &PlayerInventory) -> Option<u64> {
-    inventory
-        .equipped
-        .get(EQUIP_SLOT_MAIN_HAND)
-        .map(|item| item.instance_id)
+fn equipped_harvest_tool_instance_id(inventory: &PlayerInventory) -> Option<u64> {
+    equipped_axe_tier(inventory).map(|(instance_id, _tier)| instance_id)
 }
 
 fn position_xyz(position: &Position) -> [f64; 3] {
@@ -566,6 +566,16 @@ mod tests {
             let count = ling_mu_drop_count(BlockPos::new(1, 80, 2), Entity::from_raw(9), tick);
             assert!((2..=4).contains(&count));
         }
+    }
+
+    #[test]
+    fn harvest_tool_identity_accepts_two_hand_axe() {
+        let mut inventory = empty_inventory();
+        inventory
+            .equipped
+            .insert(EQUIP_SLOT_TWO_HAND.to_string(), item("ling_iron_axe", 42));
+
+        assert_eq!(equipped_harvest_tool_instance_id(&inventory), Some(42));
     }
 
     #[test]
