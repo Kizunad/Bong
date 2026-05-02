@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs::query::QueryFilter, Added, Changed, Client, Entity, EventReader, Or, Position, Query,
-    Res, Username, With,
+    bevy_ecs::query::QueryFilter, Added, Changed, Client, Entity, EventReader, Or, ParamSet,
+    Position, Query, Res, Username, With,
 };
 
 use crate::combat::CombatClock;
@@ -28,18 +28,27 @@ pub fn emit_container_state_payloads(
     containers: Query<ContainerStateQueryItem, ChangedContainerFilter>,
     mut clients: Query<(Entity, &Username, &mut Client)>,
 ) {
-    let player_ids = player_ids(&clients);
+    let player_ids = player_ids(
+        clients
+            .iter()
+            .map(|(entity, username, _)| (entity, username)),
+    );
     let payloads = container_state_payloads(containers.iter(), &player_ids);
     broadcast(&mut clients, &payloads);
 }
 
+#[allow(clippy::type_complexity)]
 pub fn emit_container_state_payloads_to_joined_clients(
     containers: Query<(Entity, &LootContainer, &Position)>,
-    mut clients: Query<(Entity, &Username, &mut Client), Added<Client>>,
+    mut clients: ParamSet<(
+        Query<(Entity, &Username), With<Client>>,
+        Query<(Entity, &Username, &mut Client), Added<Client>>,
+    )>,
 ) {
-    let player_ids = player_ids(&clients);
+    let player_ids = player_ids(clients.p0().iter());
     let payloads = container_state_payloads(containers.iter(), &player_ids);
-    broadcast(&mut clients, &payloads);
+    let mut joined_clients = clients.p1();
+    broadcast(&mut joined_clients, &payloads);
 }
 
 pub fn emit_search_started_payloads(
@@ -212,12 +221,11 @@ fn serialize_payload(payload: ServerDataV1) -> Option<Vec<u8>> {
     }
 }
 
-fn player_ids<F: QueryFilter>(
-    clients: &Query<(Entity, &Username, &mut Client), F>,
+fn player_ids<'a>(
+    clients: impl Iterator<Item = (Entity, &'a Username)>,
 ) -> HashMap<Entity, String> {
     clients
-        .iter()
-        .map(|(entity, username, _)| (entity, canonical_player_id(username.0.as_str())))
+        .map(|(entity, username)| (entity, canonical_player_id(username.0.as_str())))
         .collect()
 }
 
@@ -252,5 +260,45 @@ fn abort_reason_wire(reason: SearchAbortReason) -> SearchAbortReasonV1 {
         SearchAbortReason::Combat => SearchAbortReasonV1::Combat,
         SearchAbortReason::Damaged => SearchAbortReasonV1::Damaged,
         SearchAbortReason::Cancelled => SearchAbortReasonV1::Cancelled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::server_data::ServerDataPayloadV1;
+    use crate::world::zone::TsyDepth;
+    use valence::math::DVec3;
+
+    #[test]
+    fn container_state_payload_preserves_active_searcher_id() {
+        let player = Entity::from_raw(7);
+        let container_entity = Entity::from_raw(42);
+        let mut container = LootContainer::new(
+            ContainerKind::StoragePouch,
+            "tsy_lingxu_01".to_string(),
+            TsyDepth::Shallow,
+            "loot_pool".to_string(),
+            100,
+        );
+        container.searched_by = Some(player);
+        let position = Position(DVec3::new(8.0, 64.0, -4.0));
+        let player_ids = HashMap::from([(player, "offline:Searcher".to_string())]);
+
+        let payloads = container_state_payloads(
+            vec![(container_entity, &container, &position)].into_iter(),
+            &player_ids,
+        );
+
+        assert_eq!(payloads.len(), 1);
+        let decoded: ServerDataV1 = serde_json::from_slice(&payloads[0]).expect("payload decodes");
+        let ServerDataPayloadV1::ContainerState(state) = decoded.payload else {
+            panic!("expected container_state payload");
+        };
+        assert_eq!(state.entity_id, container_entity.to_bits());
+        assert_eq!(
+            state.searched_by_player_id.as_deref(),
+            Some("offline:Searcher")
+        );
     }
 }

@@ -19,8 +19,13 @@ public class TsyContainerStateStoreTest {
         TsyContainerStateStore.upsert(new TsyContainerView(3, "dry_corpse", "f", 10, 0, 0, null, false, null));
         TsyContainerStateStore.upsert(new TsyContainerView(4, "storage_pouch", "f", 3, 0, 0, null, false, null));
 
-        assertEquals(4L, TsyContainerStateStore.nearestInteractable(0, 0, 0, 5.0).entityId());
+        assertEquals(4L, TsyContainerStateStore.nearestInteractable(0, 0, 0, 3.0).entityId());
         assertNull(TsyContainerStateStore.nearestInteractable(0, 0, 0, 2.5));
+    }
+
+    @Test
+    void handlerRangeMatchesServerSearchValidation() {
+        assertEquals(3.0, TsyContainerSearchIntentHandler.MAX_INTERACT_DISTANCE);
     }
 
     @Test

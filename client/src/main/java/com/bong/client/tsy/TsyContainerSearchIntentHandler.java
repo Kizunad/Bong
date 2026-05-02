@@ -10,7 +10,7 @@ import net.minecraft.client.MinecraftClient;
 import java.util.Optional;
 
 public final class TsyContainerSearchIntentHandler implements IntentHandler {
-    public static final double MAX_INTERACT_DISTANCE = 5.0;
+    public static final double MAX_INTERACT_DISTANCE = 3.0;
 
     @Override
     public Optional<InteractCandidate> candidate(MinecraftClient client) {
