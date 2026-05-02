@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -29,6 +30,7 @@ use crate::schema::social::{
 };
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
+pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 const CURRENT_USER_VERSION: i32 = 15;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
@@ -43,6 +45,7 @@ pub const WORLD_MODEL_STATE_FIELD_LAST_STATE_TS: &str = "last_state_ts";
 const CURRENT_SCHEMA_VERSION: i32 = 1;
 const EVENT_SCHEMA_VERSION: i32 = 1;
 const EVENT_PAYLOAD_VERSION: i32 = 1;
+pub const ZONE_OVERLAY_PAYLOAD_VERSION: i32 = 2;
 const NPC_ROW_SCHEMA_VERSION: i32 = 1;
 const NPC_DIGEST_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_DIGEST_SWEEP_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
@@ -200,13 +203,14 @@ struct LifeEventPayload {
     biography_entry: BiographyEntry,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct StagedDeceasedExport {
     snapshot_path: PathBuf,
     index_path: PathBuf,
     previous_snapshot: Option<Vec<u8>>,
     previous_index: Option<Vec<u8>>,
     relative_snapshot_path: String,
+    _guard: MutexGuard<'static, ()>,
 }
 
 impl StagedDeceasedExport {
@@ -711,7 +715,8 @@ fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
         )));
     }
 
-    connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    connection.busy_timeout(Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))?;
     Ok(())
 }
 
@@ -729,6 +734,13 @@ fn run_integrity_check(connection: &Connection) -> rusqlite::Result<()> {
 fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
     let current_version: i32 =
         connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version > CURRENT_USER_VERSION {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "sqlite user_version {current_version} is newer than supported {CURRENT_USER_VERSION}; refusing to open without modifying database"
+            )),
+        )));
+    }
 
     if current_version < 1 {
         let transaction = connection.transaction()?;
@@ -1708,6 +1720,67 @@ fn hydrate_zone_overlays(
         .apply_overlay_records(&overlay_rows)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(())
+}
+
+fn normalize_zone_overlay_payload(
+    record: ZoneOverlayRecord,
+    supported_payload_version: i32,
+) -> io::Result<Option<ZoneOverlayRecord>> {
+    if record.payload_version < 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "zone overlay payload_version {} must be >= 1",
+                record.payload_version
+            ),
+        ));
+    }
+    if record.payload_version > supported_payload_version {
+        tracing::warn!(
+            "[bong][persistence] skip zone overlay `{}`/`{}` at {}: payload_version {} is newer than supported {}",
+            record.zone_id,
+            record.overlay_kind,
+            record.since_wall,
+            record.payload_version,
+            supported_payload_version
+        );
+        return Ok(None);
+    }
+
+    let mut migrated = record;
+    while migrated.payload_version < supported_payload_version {
+        migrated = match migrated.payload_version {
+            1 => migrate_zone_overlay_payload_v1_to_v2(migrated)?,
+            unsupported => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("no zone overlay payload migration from version {unsupported}"),
+                ));
+            }
+        };
+    }
+
+    Ok(Some(migrated))
+}
+
+fn migrate_zone_overlay_payload_v1_to_v2(
+    mut record: ZoneOverlayRecord,
+) -> io::Result<ZoneOverlayRecord> {
+    let mut payload: serde_json::Value = serde_json::from_str(record.payload_json.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let Some(payload_object) = payload.as_object_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "zone overlay v1 payload must be a JSON object",
+        ));
+    };
+    payload_object
+        .entry("payload_schema".to_string())
+        .or_insert_with(|| serde_json::Value::String("zone_overlay_v2".to_string()));
+    record.payload_json = serde_json::to_string(&payload)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    record.payload_version = 2;
+    Ok(record)
 }
 
 fn record_bootstrap_event(connection: &Connection, server_run_id: &str) -> rusqlite::Result<()> {
@@ -3024,6 +3097,16 @@ fn upsert_zone_overlay(
     record: &ZoneOverlayRecord,
     wall_clock: i64,
 ) -> io::Result<()> {
+    let record = normalize_zone_overlay_payload(record.clone(), ZONE_OVERLAY_PAYLOAD_VERSION)?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "zone overlay payload_version {} is newer than supported {}",
+                    record.payload_version, ZONE_OVERLAY_PAYLOAD_VERSION
+                ),
+            )
+        })?;
     transaction
         .execute(
             "
@@ -3145,7 +3228,11 @@ fn load_zone_overlays_from_connection(
 
     let mut overlays = Vec::new();
     for row in rows {
-        overlays.push(row.map_err(io::Error::other)?);
+        let record = row.map_err(io::Error::other)?;
+        if let Some(record) = normalize_zone_overlay_payload(record, ZONE_OVERLAY_PAYLOAD_VERSION)?
+        {
+            overlays.push(record);
+        }
     }
     Ok(overlays)
 }
@@ -4417,6 +4504,11 @@ fn termination_category_from_entry(entry: &BiographyEntry) -> String {
     .to_string()
 }
 
+fn deceased_export_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn stage_public_deceased_export(
     settings: &PersistenceSettings,
     char_id: &str,
@@ -4424,6 +4516,9 @@ fn stage_public_deceased_export(
     died_at_tick: u64,
     termination_category: &str,
 ) -> io::Result<StagedDeceasedExport> {
+    let guard = deceased_export_lock()
+        .lock()
+        .map_err(|_| io::Error::other("deceased public export lock poisoned"))?;
     fs::create_dir_all(settings.deceased_public_dir())?;
 
     let snapshot_stem = sanitize_deceased_snapshot_stem(char_id);
@@ -4459,6 +4554,7 @@ fn stage_public_deceased_export(
         previous_snapshot,
         previous_index,
         relative_snapshot_path,
+        _guard: guard,
     })
 }
 
@@ -4796,6 +4892,7 @@ mod persistence_tests {
     use rusqlite::{params, OptionalExtension};
     use serde_json::Value;
     use std::sync::{Arc, Barrier};
+    use std::time::Instant;
     use valence::prelude::{App, DVec3, EntityKind, Position};
 
     #[test]
@@ -5023,6 +5120,158 @@ mod persistence_tests {
         assert_eq!(bundle["cultivation"]["qi_max"].as_f64(), Some(123.0));
         assert_eq!(
             bundle["life_record"]["character_id"].as_str(),
+            Some(canonical_player_id("Azure").as_str())
+        );
+
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+    }
+
+    #[test]
+    fn phase7_migration_drill_upgrades_legacy_v12_fixture_to_current_schema() {
+        let db_path = database_path("phase7-v12-fixture");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+
+        let mut connection = Connection::open(&db_path).expect("legacy db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_core (
+                    username TEXT PRIMARY KEY,
+                    current_char_id TEXT NOT NULL,
+                    realm TEXT NOT NULL,
+                    spirit_qi REAL NOT NULL,
+                    spirit_qi_max REAL NOT NULL,
+                    karma REAL NOT NULL,
+                    experience INTEGER NOT NULL,
+                    inventory_score REAL NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                CREATE TABLE player_slow (
+                    username TEXT PRIMARY KEY,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                PRAGMA user_version = 12;
+                ",
+            )
+            .expect("legacy v12 fixture schema should be created");
+        connection
+            .execute(
+                "
+                INSERT INTO player_core (
+                    username, current_char_id, realm, spirit_qi, spirit_qi_max,
+                    karma, experience, inventory_score, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ",
+                params![
+                    "Azure",
+                    canonical_player_id("Azure"),
+                    "foundation_2",
+                    51.0_f64,
+                    90.0_f64,
+                    -0.25_f64,
+                    700_i64,
+                    0.42_f64,
+                    CURRENT_SCHEMA_VERSION,
+                    12_i64,
+                ],
+            )
+            .expect("legacy player_core row should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO player_slow (
+                    username, pos_x, pos_y, pos_z, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
+                params![
+                    "Azure",
+                    7.0_f64,
+                    70.0_f64,
+                    -9.0_f64,
+                    CURRENT_SCHEMA_VERSION,
+                    12_i64,
+                ],
+            )
+            .expect("legacy player_slow row should insert");
+
+        apply_migrations(&mut connection).expect("legacy v12 fixture should migrate to current");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        for table in [
+            "player_shrine",
+            "player_cultivation",
+            "social_anonymity",
+            "social_relationships",
+            "social_exposures",
+            "social_renown",
+            "social_spirit_niches",
+            "social_faction_memberships",
+        ] {
+            let exists: Option<String> = connection
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .optional()
+                .expect("sqlite_master table query should succeed");
+            assert_eq!(exists.as_deref(), Some(table), "{table} should exist");
+        }
+
+        let social_index: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_social_exposures_char_tick'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("social exposure index query should succeed");
+        assert_eq!(
+            social_index.as_deref(),
+            Some("idx_social_exposures_char_tick")
+        );
+
+        let last_dimension: String = connection
+            .query_row(
+                "SELECT last_dimension FROM player_slow WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_slow migrated row should exist");
+        assert_eq!(last_dimension, "overworld");
+
+        let player_core: (String, f64, f64) = connection
+            .query_row(
+                "SELECT current_char_id, karma, inventory_score FROM player_core WHERE username = ?1",
+                params!["Azure"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("player_core migrated row should exist");
+        assert_eq!(player_core.0, canonical_player_id("Azure"));
+        assert_eq!(player_core.1, -0.25);
+        assert_eq!(player_core.2, 0.42);
+
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_cultivation backfill should exist");
+        let cultivation_bundle: Value = serde_json::from_str(cultivation_json.as_str())
+            .expect("player_cultivation backfill should be JSON");
+        assert_eq!(
+            cultivation_bundle["life_record"]["character_id"].as_str(),
             Some(canonical_player_id("Azure").as_str())
         );
 
@@ -6031,7 +6280,7 @@ mod persistence_tests {
                 zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 overlay_kind: "collapsed".to_string(),
                 payload_json: serde_json::json!({"danger_level": 3}).to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 10,
             },
             ZoneOverlayRecord {
@@ -6039,7 +6288,7 @@ mod persistence_tests {
                 overlay_kind: "ruins_discovered".to_string(),
                 payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
                     .to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 20,
             },
         ];
@@ -6054,17 +6303,85 @@ mod persistence_tests {
                     overlay_kind: "ruins_discovered".to_string(),
                     payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
                         .to_string(),
-                    payload_version: 1,
+                    payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                     since_wall: 20,
                 },
                 ZoneOverlayRecord {
                     zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                     overlay_kind: "collapsed".to_string(),
                     payload_json: serde_json::json!({"danger_level": 3}).to_string(),
-                    payload_version: 1,
+                    payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                     since_wall: 10,
                 },
             ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_overlay_payload_migration_upgrades_v1_and_skips_future_versions() {
+        let (settings, root) = persistence_settings("zone-overlay-payload-migration");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO zone_overlays (
+                    zone_id, overlay_kind, payload_json, payload_version,
+                    since_wall, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    DEFAULT_SPAWN_ZONE_NAME,
+                    "collapsed",
+                    serde_json::json!({"danger_level": 4}).to_string(),
+                    1_i64,
+                    10_i64,
+                    CURRENT_SCHEMA_VERSION,
+                    10_i64,
+                ],
+            )
+            .expect("legacy v1 zone overlay should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO zone_overlays (
+                    zone_id, overlay_kind, payload_json, payload_version,
+                    since_wall, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    DEFAULT_SPAWN_ZONE_NAME,
+                    "qi_eye_formed",
+                    serde_json::json!({"active_events": ["future_qi_eye"]}).to_string(),
+                    i64::from(ZONE_OVERLAY_PAYLOAD_VERSION + 1),
+                    11_i64,
+                    CURRENT_SCHEMA_VERSION,
+                    11_i64,
+                ],
+            )
+            .expect("future zone overlay should insert for read-path rejection drill");
+        drop(connection);
+
+        let loaded = load_zone_overlays(&settings).expect("zone overlays should load");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "future payload_version rows should be skipped instead of corrupting bootstrap"
+        );
+        let overlay = &loaded[0];
+        assert_eq!(overlay.overlay_kind, "collapsed");
+        assert_eq!(overlay.payload_version, ZONE_OVERLAY_PAYLOAD_VERSION);
+        let payload: Value = serde_json::from_str(overlay.payload_json.as_str())
+            .expect("migrated overlay payload should remain JSON");
+        assert_eq!(payload["danger_level"].as_u64(), Some(4));
+        assert_eq!(
+            payload["payload_schema"].as_str(),
+            Some("zone_overlay_v2"),
+            "v1 payload migration should stamp the v2 marker field"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -6087,7 +6404,7 @@ mod persistence_tests {
                     "blocked_tiles": [[7, 8]],
                 })
                 .to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 100,
             }],
         )
@@ -6123,7 +6440,7 @@ mod persistence_tests {
                     "blocked_tiles": [[7, 8]],
                 })
                 .to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 100,
             }],
         )
@@ -6179,7 +6496,7 @@ mod persistence_tests {
                 zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 overlay_kind: "collapsed".to_string(),
                 payload_json: serde_json::json!({"danger_level": 4}).to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 42,
             }],
         )
@@ -6192,7 +6509,10 @@ mod persistence_tests {
         assert_eq!(bundle.zone_overlays.len(), 1);
         assert_eq!(bundle.zones_runtime[0].zone_id, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(bundle.zone_overlays[0].overlay_kind, "collapsed");
-        assert_eq!(bundle.zone_overlays[0].payload_version, 1);
+        assert_eq!(
+            bundle.zone_overlays[0].payload_version,
+            ZONE_OVERLAY_PAYLOAD_VERSION
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6223,7 +6543,7 @@ mod persistence_tests {
                 zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 overlay_kind: "collapsed".to_string(),
                 payload_json: serde_json::json!({"danger_level": 5}).to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 1,
             }],
         )
@@ -6242,7 +6562,7 @@ mod persistence_tests {
                 overlay_kind: "ruins_discovered".to_string(),
                 payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
                     .to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: 99,
             }],
         };
@@ -6310,9 +6630,15 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let connection = Connection::open(&db_path).expect("db should open");
+        let bootstrap_events_before: i64 = connection
+            .query_row("SELECT COUNT(*) FROM bootstrap_events", [], |row| {
+                row.get(0)
+            })
+            .expect("bootstrap event count should be readable before rejection");
         connection
             .execute_batch("PRAGMA user_version = 999;")
             .expect("user_version override should succeed");
+        drop(connection);
 
         let error = bootstrap_sqlite(&db_path, "future-user-version-rejected")
             .expect_err("future user_version should be rejected");
@@ -6321,10 +6647,23 @@ mod persistence_tests {
             "unexpected error when rejecting future user_version: {error:?}"
         );
         assert!(
-            error
-                .to_string()
-                .contains("sqlite user_version mismatch after migrations"),
+            error.to_string().contains("is newer than supported"),
             "future user_version rejection should include a specific mismatch message: {error:?}"
+        );
+
+        let connection = Connection::open(&db_path).expect("db should reopen");
+        let user_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("user_version should remain readable after rejection");
+        let bootstrap_events_after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM bootstrap_events", [], |row| {
+                row.get(0)
+            })
+            .expect("bootstrap event count should be readable after rejection");
+        assert_eq!(user_version, 999);
+        assert_eq!(
+            bootstrap_events_after, bootstrap_events_before,
+            "future user_version rejection must not record a new bootstrap event"
         );
     }
 
@@ -7096,6 +7435,170 @@ mod persistence_tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct WriteBatchMetrics {
+        writes: usize,
+        total_write_ms: u128,
+        max_write_ms: u128,
+        errors: Vec<String>,
+    }
+
+    impl WriteBatchMetrics {
+        fn record(&mut self, started_at: Instant, result: io::Result<()>) {
+            let write_ms = started_at.elapsed().as_millis();
+            self.writes += 1;
+            self.total_write_ms += write_ms;
+            self.max_write_ms = self.max_write_ms.max(write_ms);
+            if let Err(error) = result {
+                self.errors.push(error.to_string());
+            }
+        }
+
+        fn merge(mut self, other: Self) -> Self {
+            self.writes += other.writes;
+            self.total_write_ms += other.total_write_ms;
+            self.max_write_ms = self.max_write_ms.max(other.max_write_ms);
+            self.errors.extend(other.errors);
+            self
+        }
+    }
+
+    #[test]
+    fn phase9_throttled_write_regression_handles_1000_npc_and_50_players() {
+        let (settings, root) = persistence_settings("phase9-throttled-write-regression");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let player_count = 50usize;
+        let npc_count = 1_000usize;
+        for index in 0..player_count {
+            save_player_state(
+                &player_persistence,
+                format!("PerfPlayer{index}").as_str(),
+                &PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            )
+            .expect("seed player state should persist");
+        }
+
+        let npc_captures = (0..npc_count)
+            .map(|index| sample_npc_capture(format!("npc_perf_{index}").as_str()))
+            .collect::<Vec<_>>();
+        let settings = Arc::new(settings);
+        let player_persistence = Arc::new(player_persistence);
+        let npc_captures = Arc::new(npc_captures);
+        let npc_worker_count = 16usize;
+        let player_worker_count = 4usize;
+        let barrier = Arc::new(Barrier::new(npc_worker_count + player_worker_count + 1));
+
+        let npc_handles = (0..npc_worker_count)
+            .map(|worker| {
+                let settings = Arc::clone(&settings);
+                let captures = Arc::clone(&npc_captures);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let start = worker * npc_count / npc_worker_count;
+                    let end = (worker + 1) * npc_count / npc_worker_count;
+                    let mut metrics = WriteBatchMetrics::default();
+                    barrier.wait();
+                    for index in start..end {
+                        let started_at = Instant::now();
+                        metrics.record(
+                            started_at,
+                            persist_npc_capture(settings.as_ref(), &captures[index]),
+                        );
+                    }
+                    metrics
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let player_handles = (0..player_worker_count)
+            .map(|worker| {
+                let persistence = Arc::clone(&player_persistence);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let start = worker * player_count / player_worker_count;
+                    let end = (worker + 1) * player_count / player_worker_count;
+                    let mut metrics = WriteBatchMetrics::default();
+                    barrier.wait();
+                    for index in start..end {
+                        let username = format!("PerfPlayer{index}");
+                        let state = PlayerState {
+                            karma: ((index as f64 / player_count as f64) * 2.0 - 1.0)
+                                .clamp(-1.0, 1.0),
+                            inventory_score: (index as f64 / player_count as f64).clamp(0.0, 1.0),
+                        };
+                        let started_at = Instant::now();
+                        metrics.record(
+                            started_at,
+                            save_player_core_slice(persistence.as_ref(), username.as_str(), &state)
+                                .map(|_| ()),
+                        );
+                    }
+                    metrics
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let batch_started = Instant::now();
+        barrier.wait();
+        let metrics = npc_handles
+            .into_iter()
+            .map(|handle| handle.join().expect("npc worker should not panic"))
+            .chain(
+                player_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("player worker should not panic")),
+            )
+            .fold(WriteBatchMetrics::default(), WriteBatchMetrics::merge);
+        let elapsed = batch_started.elapsed();
+        let lock_failures = metrics
+            .errors
+            .iter()
+            .filter(|error| error.contains("locked") || error.contains("busy"))
+            .count();
+        let failure_rate = metrics.errors.len() as f64 / metrics.writes as f64;
+        eprintln!(
+            "[phase9] sqlite throttled write regression: writes={} elapsed_ms={} total_write_ms={} max_write_ms={} lock_failures={} failure_rate={:.4}",
+            metrics.writes,
+            elapsed.as_millis(),
+            metrics.total_write_ms,
+            metrics.max_write_ms,
+            lock_failures,
+            failure_rate
+        );
+
+        assert_eq!(metrics.writes, npc_count + player_count);
+        assert!(
+            metrics.errors.is_empty(),
+            "1000 NPC + 50 player throttled writes should not fail; lock_failures={lock_failures}, errors={:?}",
+            metrics.errors
+        );
+        assert!(
+            elapsed.as_secs() < 60,
+            "1000 NPC + 50 player throttled writes should remain inside the 60s regression envelope; elapsed={elapsed:?}"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let npc_state_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_state", [], |row| row.get(0))
+            .expect("npc_state count should be readable");
+        let player_count_actual: i64 = connection
+            .query_row("SELECT COUNT(*) FROM player_core", [], |row| row.get(0))
+            .expect("player_core count should be readable");
+        assert_eq!(npc_state_count, npc_count as i64);
+        assert_eq!(player_count_actual, player_count as i64);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn semantic_event_writers_serialize_under_wal_busy_timeout() {
         let (settings, root) = persistence_settings("near-death-concurrency");
@@ -7189,6 +7692,140 @@ mod persistence_tests {
         assert_eq!(life_events, writer_count as i64);
         assert_eq!(death_registry, writer_count as i64);
         assert_eq!(lifespan_events, writer_count as i64);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_death_peak_keeps_life_registry_and_public_exports_consistent() {
+        let (settings, root) = persistence_settings("semantic-death-peak");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let writer_count = 10usize;
+        let settings = Arc::new(settings);
+        let barrier = Arc::new(Barrier::new(writer_count + 1));
+        let handles = (0..writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:PeakDeath{index}");
+                    let tick = 2_000 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(100),
+                        biography: vec![BiographyEntry::Terminated {
+                            cause: "peak_death".to_string(),
+                            tick,
+                        }],
+                        insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
+                        skill_milestones: Vec::new(),
+                        spirit_root_first: None,
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id,
+                        death_count: 1,
+                        fortune_remaining: 0,
+                        last_death_tick: Some(tick),
+                        last_revive_tick: None,
+                        spawn_anchor: None,
+                        near_death_deadline_tick: None,
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
+                        weakened_until_tick: None,
+                        state: LifecycleState::Terminated,
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "termination".to_string(),
+                        delta_years: -999,
+                        source: "peak_death".to_string(),
+                    };
+
+                    barrier.wait();
+                    let started_at = Instant::now();
+                    let result = persist_termination_transition_with_death_context(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        Some("peak_death"),
+                        Some(&lifespan_event),
+                    );
+                    let mut metrics = WriteBatchMetrics::default();
+                    metrics.record(started_at, result);
+                    metrics
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let batch_started = Instant::now();
+        barrier.wait();
+        let metrics = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("death writer should not panic"))
+            .fold(WriteBatchMetrics::default(), WriteBatchMetrics::merge);
+        let elapsed = batch_started.elapsed();
+        let lock_failures = metrics
+            .errors
+            .iter()
+            .filter(|error| error.contains("locked") || error.contains("busy"))
+            .count();
+        eprintln!(
+            "[phase9] semantic death peak: writes={} elapsed_ms={} max_write_ms={} lock_failures={} failure_rate={:.4}",
+            metrics.writes,
+            elapsed.as_millis(),
+            metrics.max_write_ms,
+            lock_failures,
+            metrics.errors.len() as f64 / metrics.writes as f64
+        );
+        assert!(
+            metrics.errors.is_empty(),
+            "10 concurrent termination events should persist atomically: {:?}",
+            metrics.errors
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        for (table, expected) in [
+            ("life_records", writer_count as i64),
+            ("life_events", writer_count as i64),
+            ("death_registry", writer_count as i64),
+            ("lifespan_events", writer_count as i64),
+            ("deceased_snapshots", writer_count as i64),
+        ] {
+            let sql = format!("SELECT COUNT(*) FROM {table}");
+            let count: i64 = connection
+                .query_row(sql.as_str(), [], |row| row.get(0))
+                .expect("table count should be readable");
+            assert_eq!(count, expected, "{table} should contain all peak rows");
+        }
+
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let index_entries: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            fs::read_to_string(&index_path)
+                .expect("deceased index should exist")
+                .as_str(),
+        )
+        .expect("deceased index should decode");
+        assert_eq!(index_entries.len(), writer_count);
+
+        for index in 0..writer_count {
+            let char_id = format!("offline:PeakDeath{index}");
+            assert!(
+                index_path
+                    .parent()
+                    .expect("deceased dir should exist")
+                    .join(format!("offline_PeakDeath{index}.json"))
+                    .exists(),
+                "public deceased snapshot for {char_id} should exist"
+            );
+            assert!(
+                index_entries.iter().any(|entry| entry.char_id == char_id
+                    && entry.path == format!("deceased/offline_PeakDeath{index}.json")),
+                "deceased index should contain {char_id}"
+            );
+        }
 
         let _ = fs::remove_dir_all(root);
     }
