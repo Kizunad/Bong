@@ -1,0 +1,27 @@
+{
+  "id": "ling_xia_v1",
+  "name": "封灵匣",
+  "station_tier_min": 2,
+  "tier_cap": 2,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [
+          { "material": "ling_mu_ban", "count": 2 },
+          { "material": "feng_he_gu", "count": 2 }
+        ],
+        "optional_carriers": [],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": null,
+    "good": { "weapon": "ling_xia", "quality": 1.0 },
+    "flawed": { "weapon": "ling_xia", "quality": 0.7 },
+    "waste": null,
+    "explode": null
+  },
+  "flawed_fallback": null
+}

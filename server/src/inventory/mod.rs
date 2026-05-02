@@ -721,24 +721,8 @@ pub fn load_item_registry() -> Result<ItemRegistry, String> {
 
 fn load_item_registry_from_dir(path: impl AsRef<Path>) -> Result<ItemRegistry, String> {
     let path = path.as_ref();
-    let entries = fs::read_dir(path).map_err(|error| {
-        format!(
-            "failed to read inventory item registry directory {}: {error}",
-            path.display()
-        )
-    })?;
-
-    let mut toml_paths: Vec<PathBuf> = entries
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let file_path = entry.path();
-            let is_toml = file_path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
-            is_toml.then_some(file_path)
-        })
-        .collect();
+    let mut toml_paths = Vec::new();
+    collect_item_toml_paths(path, &mut toml_paths)?;
     toml_paths.sort();
 
     if toml_paths.is_empty() {
@@ -774,6 +758,38 @@ fn load_item_registry_from_dir(path: impl AsRef<Path>) -> Result<ItemRegistry, S
     }
 
     Ok(ItemRegistry { templates })
+}
+
+fn collect_item_toml_paths(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(path).map_err(|error| {
+        format!(
+            "failed to read inventory item registry directory {}: {error}",
+            path.display()
+        )
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to read inventory item registry entry under {}: {error}",
+                path.display()
+            )
+        })?;
+        let file_path = entry.path();
+        if file_path.is_dir() {
+            collect_item_toml_paths(&file_path, out)?;
+            continue;
+        }
+        let is_toml = file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
+        if is_toml {
+            out.push(file_path);
+        }
+    }
+
+    Ok(())
 }
 
 pub fn load_default_loadout(registry: &ItemRegistry) -> Result<LoadoutSpec, String> {
@@ -3219,7 +3235,12 @@ mod tests {
             "qing_feng_sword_flawed",
             "ling_feng_sword",
             "ling_feng_sword_flawed",
-            "ling_wood",
+            "ling_mu_gun",
+            "ling_mu_ban",
+            "ling_mu_jing",
+            "ling_xia",
+            "ling_mu_miao",
+            "feng_he_gu",
             "yi_shou_gu",
             "xuan_iron",
             "qing_steel",

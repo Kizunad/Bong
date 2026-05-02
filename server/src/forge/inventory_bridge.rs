@@ -56,7 +56,10 @@ pub fn forge_outcome_to_inventory(
             continue;
         };
         if template.weapon_spec.is_none()
-            && !matches!(template.category, crate::inventory::ItemCategory::Tool)
+            && !matches!(
+                template.category,
+                crate::inventory::ItemCategory::Tool | crate::inventory::ItemCategory::Treasure
+            )
         {
             tracing::warn!(
                 "[bong][forge] outcome for session {:?} references non-craftable item `{}`; inventory grant skipped",
@@ -360,15 +363,36 @@ mod tests {
     #[test]
     fn outcome_rejects_non_weapon_non_tool_template() {
         let mut templates = HashMap::new();
-        templates.insert("ling_wood".to_string(), misc_template("ling_wood"));
+        templates.insert("ling_mu_ban".to_string(), misc_template("ling_mu_ban"));
         let mut app = app_with_templates(templates);
         let caster = app.world_mut().spawn(empty_inventory()).id();
 
         app.world_mut()
-            .send_event(outcome(caster, ForgeBucket::Good, Some("ling_wood")));
+            .send_event(outcome(caster, ForgeBucket::Good, Some("ling_mu_ban")));
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         assert!(inventory.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn outcome_allows_ling_xia_treasure_container() {
+        let mut templates = HashMap::new();
+        templates.insert("ling_xia".to_string(), {
+            let mut template = misc_template("ling_xia");
+            template.category = ItemCategory::Treasure;
+            template
+        });
+        let mut app = app_with_templates(templates);
+        let caster = app.world_mut().spawn(empty_inventory()).id();
+
+        app.world_mut()
+            .send_event(outcome(caster, ForgeBucket::Good, Some("ling_xia")));
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        let item = &inventory.containers[0].items[0].instance;
+        assert_eq!(item.template_id, "ling_xia");
+        assert_eq!(item.forge_quality, Some(0.93));
     }
 }

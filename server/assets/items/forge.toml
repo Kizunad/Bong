@@ -133,17 +133,6 @@ inscription_id = "qi_amplify_v0"
 # ─── 载体材料 ────────────────────────────────────────────────────────────────
 
 [[item]]
-id = "ling_wood"
-name = "灵木"
-category = "misc"
-grid_w = 1
-grid_h = 2
-base_weight = 0.8
-rarity = "uncommon"
-spirit_quality_initial = 0.8
-description = "仍带木脉灵性的旧木芯，可作灵器级载体材料。"
-
-[[item]]
 id = "xuan_iron"
 name = "玄铁"
 category = "misc"
