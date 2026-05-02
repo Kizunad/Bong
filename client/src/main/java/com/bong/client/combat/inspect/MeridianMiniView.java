@@ -1,5 +1,7 @@
 package com.bong.client.combat.inspect;
 
+import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.util.MeridianGateLabel;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
@@ -28,6 +30,13 @@ public final class MeridianMiniView extends BaseComponent {
         drawBorder(context, 0xFF345048);
         var tr = MinecraftClient.getInstance().textRenderer;
         context.drawTextWithShadow(tr, Text.literal("经脉需求"), x + 4, y + 4, 0xFF9FE0D0);
+        context.drawTextWithShadow(
+            tr,
+            Text.literal(MeridianGateLabel.spiritExtraordinaryProgress(MeridianStateStore.snapshot())),
+            x + 94,
+            y + 4,
+            0xFFDDAAFF
+        );
         if (required.isEmpty()) {
             context.drawTextWithShadow(tr, Text.literal("无特定经脉要求"), x + 4, y + 20, 0xFFAAAAAA);
             return;

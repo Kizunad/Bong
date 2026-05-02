@@ -3,6 +3,7 @@ package com.bong.client.inventory.component;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.util.MeridianGateLabel;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
@@ -79,6 +80,17 @@ public class MeridianDetailPanel extends BaseComponent {
         String fam = focused.family() == MeridianChannel.Family.REGULAR ? "§8正经" : "§d奇经";
         ctx.drawTextWithShadow(tr, Text.literal(fam), bx + 5, cy, 0xFFAAAAAA);
         cy += 12;
+        if (MeridianGateLabel.countsTowardSpiritGate(focused)) {
+            int color = cs.blocked() ? 0xFF777777 : 0xFFDDAAFF;
+            ctx.drawTextWithShadow(
+                tr,
+                Text.literal(MeridianGateLabel.spiritExtraordinaryProgress(body)),
+                bx + 5,
+                cy,
+                color
+            );
+            cy += 12;
+        }
 
         // 分隔线
         ctx.fill(bx + 4, cy, bx + WIDTH - 4, cy + 1, 0x33FFFFFF);
