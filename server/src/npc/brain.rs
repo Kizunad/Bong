@@ -2819,9 +2819,11 @@ mod tests {
             cultivate_action_system.in_set(BigBrainSet::Actions),
         );
 
-        // 预开 1 条经脉（>= required_meridians(Induce)=1）并注满 qi。
+        // 预开 3 条正经（>= required_meridians(Induce)=3）并注满 qi。
         let mut meridians = MeridianSystem::default();
-        meridians.regular[0].opened = true;
+        for meridian in meridians.regular.iter_mut().take(3) {
+            meridian.opened = true;
+        }
         let cultivation = Cultivation {
             realm: Realm::Awaken,
             qi_current: 50.0,
@@ -3402,10 +3404,10 @@ mod tests {
         let cultivation = app.world().get::<Cultivation>(rogue).unwrap();
         let meridians = app.world().get::<MeridianSystem>(rogue).unwrap();
 
-        // 推脉：Condense 阈 4 脉。
+        // 推脉：Condense 正典阈值 6 脉。
         assert!(
-            meridians.opened_count() >= 4,
-            "rogue should open at least 4 meridians, got {}",
+            meridians.opened_count() >= 6,
+            "rogue should open at least 6 meridians, got {}",
             meridians.opened_count()
         );
         // 升境：至少到 Condense（证明 Awaken→Induce→Condense 连续多跳）。

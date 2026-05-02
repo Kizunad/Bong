@@ -11,12 +11,12 @@ use valence::prelude::{bevy_ecs, Component};
 /// 修为境界 — see plan §1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Realm {
-    Awaken,   // 觉醒
-    Induce,   // 引灵
-    Condense, // 凝气
+    Awaken,   // 醒灵
+    Induce,   // 引气
+    Condense, // 凝脉
     Solidify, // 固元
-    Spirit,   // 灵动
-    Void,     // 虚明
+    Spirit,   // 通灵
+    Void,     // 化虚
 }
 
 impl Realm {
@@ -34,11 +34,11 @@ impl Realm {
     /// 此境界需要已打通的经脉数量（含正经 + 奇经，参考 plan §3.1）。
     pub fn required_meridians(self) -> usize {
         match self {
-            Realm::Awaken => 0,
-            Realm::Induce => 1,
-            Realm::Condense => 4,
-            Realm::Solidify => 8,
-            Realm::Spirit => 14,
+            Realm::Awaken => 1,
+            Realm::Induce => 3,
+            Realm::Condense => 6,
+            Realm::Solidify => 12,
+            Realm::Spirit => 16,
             Realm::Void => 20,
         }
     }
@@ -226,6 +226,14 @@ impl MeridianSystem {
         self.iter().filter(|m| m.opened).count()
     }
 
+    pub fn regular_opened_count(&self) -> usize {
+        self.regular.iter().filter(|m| m.opened).count()
+    }
+
+    pub fn extraordinary_opened_count(&self) -> usize {
+        self.extraordinary.iter().filter(|m| m.opened).count()
+    }
+
     pub fn sum_capacity(&self) -> f64 {
         self.iter()
             .filter(|m| m.opened)
@@ -369,9 +377,10 @@ mod tests {
         let mut prev = 0;
         for r in chain {
             let n = r.required_meridians();
-            assert!(n >= prev, "required_meridians must be non-decreasing");
+            assert!(n > prev, "required_meridians must strictly increase");
             prev = n;
         }
+        assert_eq!(chain.map(Realm::required_meridians), [1, 3, 6, 12, 16, 20]);
         assert_eq!(Realm::Void.required_meridians(), 20);
     }
 
@@ -415,6 +424,20 @@ mod tests {
         ms.get_mut(MeridianId::Lung).opened = true;
         assert!(ms.get(MeridianId::Lung).opened);
         assert_eq!(ms.opened_count(), 1);
+        assert_eq!(ms.regular_opened_count(), 1);
+        assert_eq!(ms.extraordinary_opened_count(), 0);
+    }
+
+    #[test]
+    fn meridian_family_opened_counts_are_separate() {
+        let mut ms = MeridianSystem::default();
+        ms.get_mut(MeridianId::Lung).opened = true;
+        ms.get_mut(MeridianId::Ren).opened = true;
+        ms.get_mut(MeridianId::Du).opened = true;
+
+        assert_eq!(ms.opened_count(), 3);
+        assert_eq!(ms.regular_opened_count(), 1);
+        assert_eq!(ms.extraordinary_opened_count(), 2);
     }
 
     #[test]
