@@ -77,6 +77,29 @@ pub fn build_default_registry() -> DecayProfileRegistry {
         })
         .expect("built-in bone_coin profile should validate");
 
+    // plan-fauna-v1 §4：封灵骨币面值档。面值越高，骨材越好，半衰期越长。
+    for profile in [
+        fauna_decay_profile("bone_coin_5_v1", 3, 0.0),
+        fauna_decay_profile("bone_coin_15_v1", 7, 0.0),
+        fauna_decay_profile("bone_coin_40_v1", 14, 0.0),
+    ] {
+        registry
+            .insert(profile)
+            .expect("built-in fauna bone coin profile should validate");
+    }
+
+    // plan-fauna-v1 §7 P3：骨骼也会失去封真元能力，击杀掉落即挂 freshness。
+    for profile in [
+        fauna_decay_profile("fauna_bone_shu_gu_v1", 1, 0.0),
+        fauna_decay_profile("fauna_bone_zhu_gu_v1", 3, 0.0),
+        fauna_decay_profile("fauna_bone_yi_shou_gu_v1", 5, 0.0),
+        fauna_decay_profile("fauna_bone_feng_he_gu_v1", 7, 0.0),
+    ] {
+        registry
+            .insert(profile)
+            .expect("built-in fauna bone profile should validate");
+    }
+
     // plan-shelflife-v1 M6: 陈酒 Age PeakAndFall → 过峰迁 Spoil（chen_cu_v1）
     // chen_cu_v1 作为 Spoil profile 先注册，chen_jiu_v1 引用它
     registry
@@ -119,12 +142,16 @@ pub fn register_production_profiles(registry: &mut DecayProfileRegistry) {
 }
 
 fn ling_shi_profile(id: &'static str, half_life_days: u64) -> DecayProfile {
+    fauna_decay_profile(id, half_life_days, 0.0)
+}
+
+fn fauna_decay_profile(id: &'static str, half_life_days: u64, floor_qi: f32) -> DecayProfile {
     DecayProfile::Decay {
         id: DecayProfileId::new(id),
         formula: DecayFormula::Exponential {
             half_life_ticks: half_life_days * TICKS_PER_REAL_DAY,
         },
-        floor_qi: 0.0,
+        floor_qi,
     }
 }
 
@@ -234,8 +261,21 @@ mod tests {
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        // M6 新增 bone_coin_v1 + chen_cu_v1 + chen_jiu_v1
-        assert_eq!(r.len(), 7);
+        for id in [
+            "bone_coin_v1",
+            "bone_coin_5_v1",
+            "bone_coin_15_v1",
+            "bone_coin_40_v1",
+            "fauna_bone_shu_gu_v1",
+            "fauna_bone_zhu_gu_v1",
+            "fauna_bone_yi_shou_gu_v1",
+            "fauna_bone_feng_he_gu_v1",
+            "chen_cu_v1",
+            "chen_jiu_v1",
+        ] {
+            assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
+        }
+        assert_eq!(r.len(), 14);
     }
 
     #[test]

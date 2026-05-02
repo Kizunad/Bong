@@ -68,7 +68,11 @@ pub enum StatusEffectKind {
     BreakthroughBoost,
     /// plan-social-v1 §6.1：切磋失败后的 5 分钟谦抑状态。
     Humility,
+    /// plan-fauna-v1 §4 / §7 P4：变异核心震荡感知系统，短暂制造幻觉。
+    InsightHallucination,
 }
+
+pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct ApplyStatusEffectIntent {
