@@ -254,6 +254,13 @@ pub enum ClientRequestV1 {
     CancelExtractRequest {
         v: u8,
     },
+    StartSearch {
+        v: u8,
+        container_entity_id: u64,
+    },
+    CancelSearch {
+        v: u8,
+    },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
     /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
@@ -1080,6 +1087,35 @@ mod tests {
             req,
             ClientRequestV1::CancelExtractRequest { v: 1 }
         ));
+    }
+
+    #[test]
+    fn search_requests_roundtrip() {
+        let start = r#"{"type":"start_search","v":1,"container_entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(start).unwrap();
+        match req {
+            ClientRequestV1::StartSearch {
+                v,
+                container_entity_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(container_entity_id, 42);
+            }
+            other => panic!("expected StartSearch, got {other:?}"),
+        }
+
+        let cancel = r#"{"type":"cancel_search","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(cancel).unwrap();
+        assert!(matches!(req, ClientRequestV1::CancelSearch { v: 1 }));
+    }
+
+    #[test]
+    fn search_requests_reject_missing_type_and_negative_id() {
+        let missing_type = r#"{"v":1,"container_entity_id":42}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(missing_type).is_err());
+
+        let negative_id = r#"{"type":"start_search","v":1,"container_entity_id":-1}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(negative_id).is_err());
     }
 
     #[test]

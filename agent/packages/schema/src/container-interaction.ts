@@ -132,6 +132,7 @@ export function validateSearchAbortedV1Contract(data: unknown): ValidationResult
 // client → server：玩家点容器请求开搜
 export const StartSearchRequestV1 = Type.Object(
   {
+    type: Type.Literal("start_search"),
     v: Type.Literal(1),
     container_entity_id: Type.Integer({ minimum: 0 }),
   },
@@ -146,6 +147,7 @@ export function validateStartSearchRequestV1Contract(data: unknown): ValidationR
 // client → server：玩家按 ESC / 切武器主动取消
 export const CancelSearchRequestV1 = Type.Object(
   {
+    type: Type.Literal("cancel_search"),
     v: Type.Literal(1),
   },
   { additionalProperties: false },

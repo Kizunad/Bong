@@ -72,6 +72,7 @@ public final class ServerDataRouter {
         RealmVisionParamsHandler realmVisionParamsHandler = new RealmVisionParamsHandler();
         SpiritualSenseTargetsHandler spiritualSenseTargetsHandler = new SpiritualSenseTargetsHandler();
         ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
+        ContainerInteractionHandler containerInteractionHandler = new ContainerInteractionHandler();
         SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
             new com.bong.client.network.lingtian.LingtianSessionHandler();
@@ -130,6 +131,11 @@ public final class ServerDataRouter {
         handlers.put("extract_failed", extractServerDataHandler);
         handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
         handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
+        handlers.put("container_state", containerInteractionHandler);
+        handlers.put("search_started", containerInteractionHandler);
+        handlers.put("search_progress", containerInteractionHandler);
+        handlers.put("search_completed", containerInteractionHandler);
+        handlers.put("search_aborted", containerInteractionHandler);
         handlers.put("lingtian_session", lingtianSessionHandler);
         // plan-forge-v1 §4 — 炼器（武器）
         com.bong.client.network.forge.ForgeStationHandler forgeStationHandler =

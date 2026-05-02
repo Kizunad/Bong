@@ -2,14 +2,14 @@
 
 通用环境交互键体系。**G 键是统一环境交互入口**：TSY 容器搜刮、地面物品拾取、玩家/NPC 互动、未来资源点/灵龛激活都通过一个客户端路由器分发，避免继续注册多个互相抢同一默认键的 `KeyBinding`。
 
-状态：Active（待实施，2026-05-02 从骨架升级）
+状态：Finished（2026-05-02 验收通过并归档）
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | `InteractKeyRouter` 框架 + 唯一 G KeyBinding | 新路由器可注册 handler，空路由/冲突/屏幕打开时行为有测试 |
-| **P1** ⬜ | 迁移现有两个 G 用户：地面物品拾取 + 社交交易 | 旧 G 行为保持，交易优先于拾取，不再有重复 G keybinding |
-| **P2** ⬜ | TSY 容器搜刮接入 G，并补齐 C2S search 契约 | G 可触发 `start_search`，取消/进度 payload 双端 schema 对齐 |
-| **P3** ⬜ | 扩展点与优先级 pin 测试 | 新增 handler 只注册，不改核心路由；优先级表锁死 |
+| **P0** ✅ 2026-05-02 | `InteractKeyRouter` 框架 + 唯一 G KeyBinding | 新路由器可注册 handler，空路由/冲突/屏幕打开时行为有测试 |
+| **P1** ✅ 2026-05-02 | 迁移现有两个 G 用户：地面物品拾取 + 社交交易 | 旧 G 行为保持，交易优先于拾取，不再有重复 G keybinding |
+| **P2** ✅ 2026-05-02 | TSY 容器搜刮接入 G，并补齐 C2S search 契约 | G 可触发 `start_search`，取消/进度 payload 双端 schema 对齐 |
+| **P3** ✅ 2026-05-02 | 扩展点与优先级 pin 测试 | 新增 handler 只注册，不改核心路由；优先级表锁死 |
 
 **世界观锚点**：纯工程 plan，无新增 worldview 语义。决策来源为 `docs/plans-skeleton/plan-gameplay-journey-v1.md` §O.1 #5：TSY 搜刮和 item 摄取统一绑定到 G。
 
@@ -311,3 +311,30 @@ cd client && ./gradlew test build
 
 - 2026-05-01：骨架创建。由 `plan-gameplay-journey-v1` §O.1 #5 派生。
 - 2026-05-02：升级为 Active plan。实地审计现有 G key 冲突、dropped loot pickup、social trade、TSY container schema 缺口，明确 v1 只做客户端统一路由 + 既有 intent 复用 + TSY search 契约补齐。
+- 2026-05-02：P0-P3 落地并通过 agent / server / client 三栈验收。
+
+---
+
+## Finish Evidence
+
+- 落地清单：
+  - P0：`client/src/main/java/com/bong/client/input/InteractKeyRouter.java`、`InteractionKeybindings.java`、`InteractPriorityResolver.java`、`InteractCandidate.java`、`IntentHandler.java` 落地统一 G 路由；`BongClient` 只注册一个默认 G 环境交互入口。
+  - P1：`DroppedItemPickupIntentHandler.java`、`TradeOfferIntentHandler.java` 接入路由；`DroppedItemPickupBootstrap.java` / `TradeOfferScreenBootstrap.java` 移除各自 G keybinding；`DefaultInteractionHandlers.java` 固定 container > trade > pickup 注册顺序。
+  - P2：`agent/packages/schema/src/client-request.ts` / `container-interaction.ts` / `server-data.ts`、samples 与 generated JSON 补齐 `start_search` / `cancel_search` 及 search S2C payload；client `ClientRequestProtocol` / `ClientRequestSender` 新增 search 请求；`ContainerInteractionHandler`、`TsyContainerStateStore`、`TsyContainerSearchIntentHandler`、`SearchHudStateStore` 接入 G 搜刮与 HUD 状态；server `ClientRequestV1::StartSearch` / `CancelSearch` 转发到 TSY search event，`tsy_container_search_emit.rs` 推送 container/search server_data。
+  - P3：`ReservedInteractionIntents.java`、`InteractionPriorityContractTest.java`、`NoDuplicateDefaultGKeybindingTest.java` 锁定扩展优先级和唯一默认 G；`zh_cn.json` / `en_us.json` 增加统一交互文案。
+- 关键 commit：
+  - `4e0027fa` 2026-05-02 `feat(client): 统一 G 键环境交互路由`
+  - `1ab15397` 2026-05-02 `feat(schema): 补齐容器搜刮 search 契约`
+  - `1fc18f9a` 2026-05-02 `fix(input): 对齐容器搜刮距离与占用同步`
+- 测试结果：
+  - agent：`npm run build && cd packages/schema && npm test` ✅（7 files / 246 tests）
+  - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅（2053 tests passed）
+  - client：`JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` ✅
+- 跨仓库核验：
+  - client：`InteractionKeybindings.INTERACT_KEY_TRANSLATION`、`InteractKeyRouter`、`ReservedInteractionIntents.SEARCH_CONTAINER_PRIORITY`、`TsyContainerSearchIntentHandler`、`ClientRequestProtocol.encodeStartSearch`。
+  - agent/schema：`ClientRequestV1` union 接受 `start_search` / `cancel_search`；`ServerDataV1` union 接受 `container_state` / `search_started` / `search_progress` / `search_completed` / `search_aborted`。
+  - server：`ClientRequestV1::StartSearch` / `CancelSearch`、`StartSearchRequestEvent` / `CancelSearchRequestEvent`、`tsy_container_search_emit::emit_search_*`。
+- 遗留 / 后续：
+  - 未做长按 G / Shift+G / 目标重叠 UI 选择器，保持 v1 scope。
+  - `ActivateShrine`、`HarvestResource`、`TalkNpc` 仅锁定优先级常量，具体玩法由后续 plan 接入 handler。
+  - 未跑图形化 `./gradlew runClient`；本次以单元/构建/协议验收覆盖。

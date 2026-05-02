@@ -2,9 +2,14 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "type",
     "v"
   ],
   "properties": {
+    "type": {
+      "const": "cancel_search",
+      "type": "string"
+    },
     "v": {
       "const": 1,
       "type": "number"

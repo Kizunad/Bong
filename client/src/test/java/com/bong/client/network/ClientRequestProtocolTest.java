@@ -218,6 +218,18 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSearchRequests() {
+        assertEquals(
+            "{\"type\":\"start_search\",\"v\":1,\"container_entity_id\":42}",
+            ClientRequestProtocol.encodeStartSearch(42L)
+        );
+        assertEquals(
+            "{\"type\":\"cancel_search\",\"v\":1}",
+            ClientRequestProtocol.encodeCancelSearch()
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(

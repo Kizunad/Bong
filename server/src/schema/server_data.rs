@@ -111,6 +111,11 @@ pub enum ServerDataType {
     ExtractAborted,
     ExtractFailed,
     TsyCollapseStartedIpc,
+    ContainerState,
+    SearchStarted,
+    SearchProgress,
+    SearchCompleted,
+    SearchAborted,
     SkillXpGain,
     SkillLvUp,
     SkillCapChanged,
@@ -274,6 +279,11 @@ pub enum ServerDataPayloadV1 {
     ExtractAborted(ExtractAbortedV1),
     ExtractFailed(ExtractFailedV1),
     TsyCollapseStartedIpc(TsyCollapseStartedIpcV1),
+    ContainerState(ContainerStateV1),
+    SearchStarted(SearchStartedV1),
+    SearchProgress(SearchProgressV1),
+    SearchCompleted(SearchCompletedV1),
+    SearchAborted(SearchAbortedV1),
     SkillXpGain(Box<SkillXpGainPayloadV1>),
     SkillLvUp(SkillLvUpPayloadV1),
     SkillCapChanged(SkillCapChangedPayloadV1),
@@ -702,6 +712,26 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: TsyCollapseStartedIpcV1,
     },
+    ContainerState {
+        #[serde(flatten)]
+        data: ContainerStateV1,
+    },
+    SearchStarted {
+        #[serde(flatten)]
+        data: SearchStartedV1,
+    },
+    SearchProgress {
+        #[serde(flatten)]
+        data: SearchProgressV1,
+    },
+    SearchCompleted {
+        #[serde(flatten)]
+        data: SearchCompletedV1,
+    },
+    SearchAborted {
+        #[serde(flatten)]
+        data: SearchAbortedV1,
+    },
     SkillXpGain {
         char_id: u64,
         skill: SkillIdV1,
@@ -964,6 +994,92 @@ pub struct TsyCollapseStartedIpcV1 {
     pub at_tick: u64,
     pub remaining_ticks: u64,
     pub collapse_tear_entity_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerKindV1 {
+    DryCorpse,
+    Skeleton,
+    StoragePouch,
+    StoneCasket,
+    RelicCore,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyKindV1 {
+    StoneCasketKey,
+    JadeCoffinSeal,
+    ArrayCoreSigil,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchAbortReasonV1 {
+    Moved,
+    Combat,
+    Damaged,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerStateV1 {
+    pub entity_id: u64,
+    pub kind: ContainerKindV1,
+    pub family_id: String,
+    pub world_pos: [f64; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locked: Option<KeyKindV1>,
+    pub depleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub searched_by_player_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SearchStartedV1 {
+    pub player_id: String,
+    pub container_entity_id: u64,
+    pub required_ticks: u32,
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SearchProgressV1 {
+    pub player_id: String,
+    pub container_entity_id: u64,
+    pub elapsed_ticks: u32,
+    pub required_ticks: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LootPreviewItemV1 {
+    pub template_id: String,
+    pub display_name: String,
+    pub stack_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SearchCompletedV1 {
+    pub player_id: String,
+    pub container_entity_id: u64,
+    pub family_id: String,
+    pub loot_preview: Vec<LootPreviewItemV1>,
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SearchAbortedV1 {
+    pub player_id: String,
+    pub container_entity_id: u64,
+    pub reason: SearchAbortReasonV1,
+    pub at_tick: u64,
 }
 
 impl TryFrom<ServerDataInventoryEventWireV1> for InventoryEventV1 {
@@ -1277,6 +1393,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TsyCollapseStartedIpc { data } => {
                 Ok(Self::TsyCollapseStartedIpc(data))
             }
+            ServerDataPayloadWireV1::ContainerState { data } => Ok(Self::ContainerState(data)),
+            ServerDataPayloadWireV1::SearchStarted { data } => Ok(Self::SearchStarted(data)),
+            ServerDataPayloadWireV1::SearchProgress { data } => Ok(Self::SearchProgress(data)),
+            ServerDataPayloadWireV1::SearchCompleted { data } => Ok(Self::SearchCompleted(data)),
+            ServerDataPayloadWireV1::SearchAborted { data } => Ok(Self::SearchAborted(data)),
             ServerDataPayloadWireV1::SkillXpGain {
                 char_id,
                 skill,
@@ -1665,6 +1786,17 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TsyCollapseStartedIpc(data) => {
                 Self::TsyCollapseStartedIpc { data: data.clone() }
             }
+            ServerDataPayloadV1::ContainerState(data) => {
+                Self::ContainerState { data: data.clone() }
+            }
+            ServerDataPayloadV1::SearchStarted(data) => Self::SearchStarted { data: data.clone() },
+            ServerDataPayloadV1::SearchProgress(data) => {
+                Self::SearchProgress { data: data.clone() }
+            }
+            ServerDataPayloadV1::SearchCompleted(data) => {
+                Self::SearchCompleted { data: data.clone() }
+            }
+            ServerDataPayloadV1::SearchAborted(data) => Self::SearchAborted { data: data.clone() },
             ServerDataPayloadV1::SkillXpGain(data) => Self::SkillXpGain {
                 char_id: data.char_id,
                 skill: data.skill,
@@ -1904,6 +2036,11 @@ impl ServerDataPayloadV1 {
             Self::ExtractAborted(..) => ServerDataType::ExtractAborted,
             Self::ExtractFailed(..) => ServerDataType::ExtractFailed,
             Self::TsyCollapseStartedIpc(..) => ServerDataType::TsyCollapseStartedIpc,
+            Self::ContainerState(..) => ServerDataType::ContainerState,
+            Self::SearchStarted(..) => ServerDataType::SearchStarted,
+            Self::SearchProgress(..) => ServerDataType::SearchProgress,
+            Self::SearchCompleted(..) => ServerDataType::SearchCompleted,
+            Self::SearchAborted(..) => ServerDataType::SearchAborted,
             Self::SkillXpGain(..) => ServerDataType::SkillXpGain,
             Self::SkillLvUp(..) => ServerDataType::SkillLvUp,
             Self::SkillCapChanged(..) => ServerDataType::SkillCapChanged,
@@ -2035,6 +2172,44 @@ mod tests {
                 at_tick: 100,
                 remaining_ticks: 600,
                 collapse_tear_entity_ids: vec![2, 3, 4],
+            }),
+            ServerDataPayloadV1::ContainerState(ContainerStateV1 {
+                entity_id: 42,
+                kind: ContainerKindV1::StoragePouch,
+                family_id: "tsy_lingxu_01".to_string(),
+                world_pos: [8.0, 64.0, -4.0],
+                locked: None,
+                depleted: false,
+                searched_by_player_id: None,
+            }),
+            ServerDataPayloadV1::SearchStarted(SearchStartedV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 42,
+                required_ticks: 200,
+                at_tick: 100,
+            }),
+            ServerDataPayloadV1::SearchProgress(SearchProgressV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 42,
+                elapsed_ticks: 20,
+                required_ticks: 200,
+            }),
+            ServerDataPayloadV1::SearchCompleted(SearchCompletedV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 42,
+                family_id: "tsy_lingxu_01".to_string(),
+                loot_preview: vec![LootPreviewItemV1 {
+                    template_id: "bone_coin".to_string(),
+                    display_name: "骨币".to_string(),
+                    stack_count: 3,
+                }],
+                at_tick: 300,
+            }),
+            ServerDataPayloadV1::SearchAborted(SearchAbortedV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 42,
+                reason: SearchAbortReasonV1::Cancelled,
+                at_tick: 150,
             }),
             ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
                 "Kiz", "warn", 12.0, -34.0, 60_000,

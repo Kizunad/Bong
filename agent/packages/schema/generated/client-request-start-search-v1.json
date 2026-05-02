@@ -2,10 +2,15 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "type",
     "v",
     "container_entity_id"
   ],
   "properties": {
+    "type": {
+      "const": "start_search",
+      "type": "string"
+    },
     "v": {
       "const": 1,
       "type": "number"

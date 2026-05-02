@@ -12,6 +12,10 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { AlchemyInterventionV1, BlockPosV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
+import {
+  CancelSearchRequestV1,
+  StartSearchRequestV1,
+} from "./container-interaction.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
@@ -676,6 +680,8 @@ export const ClientRequestV1 = Type.Union([
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,
+  StartSearchRequestV1,
+  CancelSearchRequestV1,
   ForgeStartSessionRequestV1,
   ForgeTemperingHitRequestV1,
   ForgeInscriptionScrollRequestV1,

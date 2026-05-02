@@ -76,6 +76,12 @@ public class ServerDataRouterTest {
             "extract_aborted",
             "extract_failed",
             "tsy_collapse_started_ipc",
+            // plan-input-binding-v1 §4 — TSY 容器搜刮 / 搜刮 HUD 推送。
+            "container_state",
+            "search_started",
+            "search_progress",
+            "search_completed",
+            "search_aborted",
             // plan-lingtian-v1 §4 active session 推送。
             "lingtian_session",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。

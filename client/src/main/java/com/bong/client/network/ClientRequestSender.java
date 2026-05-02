@@ -201,6 +201,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeCancelExtractRequest());
     }
 
+    public static void sendStartSearch(long containerEntityId) {
+        dispatch(ClientRequestProtocol.encodeStartSearch(containerEntityId));
+    }
+
+    public static void sendCancelSearch() {
+        dispatch(ClientRequestProtocol.encodeCancelSearch());
+    }
+
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static void sendAlchemyTurnPage(int delta) {

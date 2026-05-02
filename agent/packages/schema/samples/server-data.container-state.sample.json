@@ -1,0 +1,9 @@
+{
+  "type": "container_state",
+  "v": 1,
+  "entity_id": 42,
+  "kind": "storage_pouch",
+  "family_id": "tsy_lingxu_01",
+  "world_pos": [8.0, 64.0, -4.0],
+  "depleted": false
+}

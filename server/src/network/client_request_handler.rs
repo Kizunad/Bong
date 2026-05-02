@@ -107,6 +107,9 @@ use crate::world::extract_system::{
     StartExtractRequest as StartExtractRequestEvent,
 };
 use crate::world::karma::KarmaWeightStore;
+use crate::world::tsy_container_search::{
+    CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
+};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
@@ -136,6 +139,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
     pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
+    pub start_search_tx: Option<ResMut<'w, Events<StartSearchRequestEvent>>>,
+    pub cancel_search_tx: Option<ResMut<'w, Events<CancelSearchRequestEvent>>>,
     pub meridians: Query<'w, 's, &'static mut crate::cultivation::components::MeridianSystem>,
     pub contaminations: Query<'w, 's, &'static mut crate::cultivation::components::Contamination>,
     pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
@@ -317,6 +322,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CombatCreateNewCharacter { v }
             | ClientRequestV1::StartExtractRequest { v, .. }
             | ClientRequestV1::CancelExtractRequest { v }
+            | ClientRequestV1::StartSearch { v, .. }
+            | ClientRequestV1::CancelSearch { v }
             | ClientRequestV1::LingtianStartTill { v, .. }
             | ClientRequestV1::LingtianStartRenew { v, .. }
             | ClientRequestV1::LingtianStartPlanting { v, .. }
@@ -995,6 +1002,38 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 cancel_extract_tx.send(CancelExtractRequestEvent { player: ev.client });
+            }
+            ClientRequestV1::StartSearch {
+                container_entity_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request start_search entity={:?} container_bits={container_entity_id}",
+                    ev.client
+                );
+                let Some(start_search_tx) = combat_params.start_search_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped start_search because StartSearchRequest event resource is missing"
+                    );
+                    continue;
+                };
+                start_search_tx.send(StartSearchRequestEvent {
+                    player: ev.client,
+                    container: Entity::from_bits(container_entity_id),
+                });
+            }
+            ClientRequestV1::CancelSearch { .. } => {
+                tracing::info!(
+                    "[bong][network] client_request cancel_search entity={:?}",
+                    ev.client
+                );
+                let Some(cancel_search_tx) = combat_params.cancel_search_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped cancel_search because CancelSearchRequest event resource is missing"
+                    );
+                    continue;
+                };
+                cancel_search_tx.send(CancelSearchRequestEvent { player: ev.client });
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
