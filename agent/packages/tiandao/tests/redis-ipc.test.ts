@@ -12,6 +12,8 @@ const {
   BOTANY_ECOLOGY,
   BREAKTHROUGH_EVENT,
   COMBAT_REALTIME,
+  PSEUDO_VEIN_ACTIVE,
+  PSEUDO_VEIN_DISSIPATE,
   FORGE_OUTCOME,
   REBIRTH,
   SKILL_XP_GAIN,
@@ -467,6 +469,8 @@ describe("redis-ipc", () => {
         BREAKTHROUGH_EVENT,
         SOCIAL_FEUD,
         COMBAT_REALTIME,
+        PSEUDO_VEIN_ACTIVE,
+        PSEUDO_VEIN_DISSIPATE,
         FORGE_OUTCOME,
         REBIRTH,
         SKILL_XP_GAIN,
@@ -487,13 +491,42 @@ describe("redis-ipc", () => {
     );
     await sub.publish(SOCIAL_FEUD, JSON.stringify({ v: 1, left: "char:a", right: "char:b", tick: 86 }));
     await sub.publish(SKILL_XP_GAIN, JSON.stringify({ v: 1, char_id: 1, skill: "herbalism", amount: 2 }));
+    await sub.publish(
+      PSEUDO_VEIN_ACTIVE,
+      JSON.stringify({
+        v: 1,
+        id: "pseudo_vein_42",
+        center_xz: [1280, -640],
+        spirit_qi_current: 0.3,
+        occupants: ["offline:Azure"],
+        spawned_at_tick: 1,
+        estimated_decay_at_tick: 2,
+        season_at_spawn: "summer_to_winter",
+      }),
+    );
+    await sub.publish(
+      PSEUDO_VEIN_DISSIPATE,
+      JSON.stringify({
+        v: 1,
+        id: "pseudo_vein_42",
+        center_xz: [1280, -640],
+        storm_anchors: [[1380, -650]],
+        storm_duration_ticks: 9000,
+        qi_redistribution: { refill_to_hungry_ring: 0.7, collected_by_tiandao: 0.3 },
+      }),
+    );
 
-    expect(callback).toHaveBeenCalledTimes(4);
+    expect(callback).toHaveBeenCalledTimes(6);
     expect(ipc.getLatestCrossSystemEvents()).toEqual([
       expect.objectContaining({ channel: BOTANY_ECOLOGY, payload: expect.objectContaining({ tick: 84 }) }),
       expect.objectContaining({ channel: AGING, payload: expect.objectContaining({ character_id: "offline:Azure" }) }),
       expect.objectContaining({ channel: SOCIAL_FEUD, payload: expect.objectContaining({ left: "char:a" }) }),
       expect.objectContaining({ channel: SKILL_XP_GAIN, payload: expect.objectContaining({ skill: "herbalism" }) }),
+      expect.objectContaining({ channel: PSEUDO_VEIN_ACTIVE, payload: expect.objectContaining({ id: "pseudo_vein_42" }) }),
+      expect.objectContaining({
+        channel: PSEUDO_VEIN_DISSIPATE,
+        payload: expect.objectContaining({ storm_duration_ticks: 9000 }),
+      }),
     ]);
   });
 
