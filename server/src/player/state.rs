@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
 use crate::inventory::PlayerInventory;
-use crate::persistence::DEFAULT_DATABASE_PATH;
+use crate::persistence::{DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::PlayerSocialSnapshotV1;
@@ -852,7 +853,14 @@ fn open_player_connection(persistence: &PlayerStatePersistence) -> io::Result<Co
         fs::create_dir_all(parent)?;
     }
 
-    Connection::open(persistence.db_path()).map_err(io::Error::other)
+    let connection = Connection::open(persistence.db_path()).map_err(io::Error::other)?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(io::Error::other)?;
+    connection
+        .busy_timeout(Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))
+        .map_err(io::Error::other)?;
+    Ok(connection)
 }
 
 fn load_player_state_from_sqlite(

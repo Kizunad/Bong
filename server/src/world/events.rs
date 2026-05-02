@@ -19,6 +19,7 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::persistence::{
     load_zone_overlays, persist_zone_overlays, PersistenceSettings, ZoneOverlayRecord,
+    ZONE_OVERLAY_PAYLOAD_VERSION,
 };
 use crate::player::state::canonical_player_id;
 use crate::schema::agent_command::Command;
@@ -1405,7 +1406,7 @@ pub(crate) fn persist_zone_collapsed_overlays(
                     "blocked_tiles": [],
                 })
                 .to_string(),
-                payload_version: 1,
+                payload_version: ZONE_OVERLAY_PAYLOAD_VERSION,
                 since_wall: current_unix_seconds_for_overlay(),
             });
         }
@@ -1700,7 +1701,9 @@ mod events_tests {
     use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
-    use crate::persistence::{bootstrap_sqlite, load_zone_overlays, PersistenceSettings};
+    use crate::persistence::{
+        bootstrap_sqlite, load_zone_overlays, PersistenceSettings, ZONE_OVERLAY_PAYLOAD_VERSION,
+    };
     use crate::schema::agent_command::Command;
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
@@ -2478,7 +2481,7 @@ mod events_tests {
         assert!(overlays.iter().any(|overlay| {
             overlay.zone_id == DEFAULT_SPAWN_ZONE_NAME
                 && overlay.overlay_kind == "collapsed"
-                && overlay.payload_version == 1
+                && overlay.payload_version == ZONE_OVERLAY_PAYLOAD_VERSION
                 && overlay
                     .payload_json
                     .contains("\"zone_status\":\"collapsed\"")
