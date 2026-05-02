@@ -287,6 +287,7 @@ Rust 镜像：`server/src/schema/pseudo_vein.rs`。Redis 通道：
 - `b21ee27a`（2026-05-02）`feat(server): 实装伪灵脉生命周期逻辑`
 - `efebc926`（2026-05-02）`feat(agent): 增加伪灵脉叙事钩子`
 - `399cdb6f`（2026-05-02）`fix(server): 标注伪灵脉 Redis 出口预留`
+- `12c11bf8`（2026-05-02）`fix(server): 修正伪灵脉高度基准与衰减锚点`
 
 ### 测试结果
 
@@ -296,6 +297,8 @@ Rust 镜像：`server/src/schema/pseudo_vein.rs`。Redis 通道：
 - `cd agent && npm run build`：通过
 - `cd agent/packages/schema && npm run generate:check && npm test`：通过，`249 passed`
 - `cd agent/packages/tiandao && npm test`：通过，`209 passed`
+- review 修复后 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过
+- review 修复后 `cd server && cargo test worldgen::`：通过，`16 passed`
 
 ### 跨仓库核验
 
