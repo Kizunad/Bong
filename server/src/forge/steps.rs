@@ -424,7 +424,7 @@ mod tests {
             }],
             optional_carriers: vec![
                 CarrierSpec {
-                    material: "ling_wood".into(),
+                    material: "ling_mu_ban".into(),
                     unlocks_tier: 3,
                 },
                 CarrierSpec {

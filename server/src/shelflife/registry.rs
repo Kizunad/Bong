@@ -134,10 +134,11 @@ pub fn register_production_profiles(registry: &mut DecayProfileRegistry) {
         ling_shi_profile("ling_shi_zhong_v1", 5),
         ling_shi_profile("ling_shi_shang_v1", 7),
         ling_shi_profile("ling_shi_yi_v1", 14),
+        ling_mu_gun_profile(),
     ] {
         registry
             .insert(profile)
-            .expect("built-in ling_shi profile should validate");
+            .expect("built-in production shelflife profile should validate");
     }
 }
 
@@ -152,6 +153,16 @@ fn fauna_decay_profile(id: &'static str, half_life_days: u64, floor_qi: f32) -> 
             half_life_ticks: half_life_days * TICKS_PER_REAL_DAY,
         },
         floor_qi,
+    }
+}
+
+fn ling_mu_gun_profile() -> DecayProfile {
+    DecayProfile::Decay {
+        id: DecayProfileId::new("ling_mu_gun_v1"),
+        formula: DecayFormula::Exponential {
+            half_life_ticks: TICKS_PER_REAL_DAY,
+        },
+        floor_qi: 0.0,
     }
 }
 
@@ -262,6 +273,7 @@ mod tests {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
         for id in [
+            "ling_mu_gun_v1",
             "bone_coin_v1",
             "bone_coin_5_v1",
             "bone_coin_15_v1",
@@ -275,16 +287,17 @@ mod tests {
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        assert_eq!(r.len(), 14);
+        assert_eq!(r.len(), 15);
     }
 
     #[test]
-    fn register_production_profiles_registers_only_ling_shi_ladder() {
+    fn register_production_profiles_registers_ling_shi_ladder_and_spiritwood() {
         let mut r = DecayProfileRegistry::new();
         register_production_profiles(&mut r);
-        assert_eq!(r.len(), 4);
+        assert_eq!(r.len(), 5);
         assert!(r.contains(&DecayProfileId::new("ling_shi_fan_v1")));
         assert!(r.contains(&DecayProfileId::new("ling_shi_yi_v1")));
+        assert!(r.contains(&DecayProfileId::new("ling_mu_gun_v1")));
     }
 
     #[test]
@@ -307,5 +320,21 @@ mod tests {
                 } if *half_life_ticks == days * TICKS_PER_REAL_DAY
             ));
         }
+    }
+
+    #[test]
+    fn ling_mu_gun_half_life_is_one_real_day() {
+        let r = build_default_registry();
+        let profile = r
+            .get(&DecayProfileId::new("ling_mu_gun_v1"))
+            .expect("ling_mu_gun profile exists");
+        assert!(matches!(
+            profile,
+            DecayProfile::Decay {
+                formula: DecayFormula::Exponential { half_life_ticks },
+                floor_qi: 0.0,
+                ..
+            } if *half_life_ticks == TICKS_PER_REAL_DAY
+        ));
     }
 }

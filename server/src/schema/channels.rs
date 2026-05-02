@@ -52,6 +52,7 @@ pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 // 可扩 ecology snapshot 加 delta 字段或新增 alert 专用 channel。
 pub const CH_BOTANY_HARVEST_PROGRESS: &str = "bong:botany/harvest_progress";
 pub const CH_BOTANY_ECOLOGY: &str = "bong:botany/ecology";
+pub const CH_LUMBER_PROGRESS: &str = "bong:lumber_progress";
 
 // 子技能 (plan-skill-v1 §8)：server → agent，agent 消费生成升级 narration / NPC skill 画像
 pub const CH_SKILL_XP_GAIN: &str = "bong:skill/xp_gain";
@@ -115,6 +116,7 @@ mod tests {
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
+        assert_eq!(CH_LUMBER_PROGRESS, "bong:lumber_progress");
         assert_eq!(CH_SKILL_XP_GAIN, "bong:skill/xp_gain");
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
         assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");

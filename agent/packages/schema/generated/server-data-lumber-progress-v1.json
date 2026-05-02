@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "session_id",
+    "log_pos",
+    "progress",
+    "interrupted",
+    "completed",
+    "detail"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "lumber_progress",
+      "type": "string"
+    },
+    "session_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "log_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "progress": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "interrupted": {
+      "type": "boolean"
+    },
+    "completed": {
+      "type": "boolean"
+    },
+    "detail": {
+      "type": "string"
+    }
+  }
+}

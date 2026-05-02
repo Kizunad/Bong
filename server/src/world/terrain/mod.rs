@@ -4,7 +4,7 @@ pub mod broken_peaks;
 mod column;
 mod decoration;
 mod flora;
-mod mega_tree;
+pub(crate) mod mega_tree;
 mod noise;
 mod raster;
 mod spatial;
@@ -158,6 +158,7 @@ fn load_tsy_provider_from_env(biomes: &BiomeRegistry) -> Option<TerrainProvider>
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_chunks_around_players(
     mut layers: Query<&mut ChunkLayer>,
     clients: Query<(View, &VisibleChunkLayer), With<Client>>,
@@ -166,6 +167,7 @@ fn generate_chunks_around_players(
     mut generated: ResMut<GeneratedChunks>,
     mineral_index: Option<Res<MineralOreIndex>>,
     mineral_nodes: Query<&MineralOreNode>,
+    harvested_spiritwood: Option<Res<crate::spiritwood::SpiritWoodHarvestedLogs>>,
 ) {
     let Some(providers) = providers else {
         return;
@@ -196,6 +198,7 @@ fn generate_chunks_around_players(
                 &mut generated.loaded,
                 mineral_index.as_deref(),
                 &mineral_nodes,
+                harvested_spiritwood.as_deref(),
             );
         }
     }
@@ -242,6 +245,7 @@ fn ensure_chunk_generated(
     generated: &mut HashSet<ChunkPos>,
     mineral_index: Option<&MineralOreIndex>,
     mineral_nodes: &Query<&MineralOreNode>,
+    harvested_spiritwood: Option<&crate::spiritwood::SpiritWoodHarvestedLogs>,
 ) {
     if generated.contains(&pos) || layer.chunk(pos).is_some() {
         return;
@@ -264,9 +268,30 @@ fn ensure_chunk_generated(
     flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
     overlay_mineral_ores(&mut chunk, pos, min_y, mineral_index, mineral_nodes);
+    erase_harvested_spiritwood_logs(&mut chunk, pos, min_y, harvested_spiritwood);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);
     layer.insert_chunk(pos, chunk);
     generated.insert(pos);
+}
+
+fn erase_harvested_spiritwood_logs(
+    chunk: &mut UnloadedChunk,
+    pos: ChunkPos,
+    min_y: i32,
+    harvested_spiritwood: Option<&crate::spiritwood::SpiritWoodHarvestedLogs>,
+) {
+    let Some(harvested_spiritwood) = harvested_spiritwood else {
+        return;
+    };
+    for block_pos in harvested_spiritwood.positions_in_chunk(DimensionKind::Overworld, pos) {
+        let local_y = block_pos.y - min_y;
+        if !(0..WORLD_HEIGHT as i32).contains(&local_y) {
+            continue;
+        }
+        let local_x = block_pos.x.rem_euclid(16) as u32;
+        let local_z = block_pos.z.rem_euclid(16) as u32;
+        chunk.set_block_state(local_x, local_y as u32, local_z, BlockState::AIR);
+    }
 }
 
 fn overlay_mineral_ores(

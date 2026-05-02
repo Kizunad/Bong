@@ -57,6 +57,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
         ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
         ServerDataType::MiningProgress => "mining_progress",
+        ServerDataType::LumberProgress => "lumber_progress",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
         ServerDataType::AlchemySession => "alchemy_session",
@@ -660,6 +661,10 @@ mod server_data_tests {
         assert_eq!(
             payload_type_label(ServerDataType::MiningProgress),
             "mining_progress"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::LumberProgress),
+            "lumber_progress"
         );
         assert_eq!(
             payload_type_label(ServerDataType::BotanySkill),

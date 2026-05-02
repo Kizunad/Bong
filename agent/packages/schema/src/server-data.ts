@@ -140,6 +140,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("dropped_loot_sync"),
   Type.Literal("botany_harvest_progress"),
   Type.Literal("botany_plant_v2_render_profiles"),
+  Type.Literal("lumber_progress"),
   Type.Literal("botany_skill"),
   Type.Literal("alchemy_furnace"),
   Type.Literal("alchemy_session"),
@@ -438,6 +439,23 @@ export const ServerDataBotanyPlantV2RenderProfilesV1 = Type.Object(
 );
 export type ServerDataBotanyPlantV2RenderProfilesV1 = Static<
   typeof ServerDataBotanyPlantV2RenderProfilesV1
+>;
+
+export const ServerDataLumberProgressV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("lumber_progress"),
+    session_id: Type.String({ minLength: 1 }),
+    log_pos: BlockPosV1,
+    progress: Type.Number({ minimum: 0, maximum: 1 }),
+    interrupted: Type.Boolean(),
+    completed: Type.Boolean(),
+    detail: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataLumberProgressV1 = Static<
+  typeof ServerDataLumberProgressV1
 >;
 
 export const ServerDataBotanySkillV1 = Type.Object(
@@ -1174,6 +1192,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataDroppedLootSyncV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
+  ServerDataLumberProgressV1,
   ServerDataBotanySkillV1,
   ServerDataAlchemyFurnaceV1,
   ServerDataAlchemySessionV1,

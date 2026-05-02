@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "note": "plan-zhenfa-v1 has no runtime CarrierMaterial registry yet. This manifest reserves spiritwood carrier material IDs without inventing that schema in plan-spiritwood-v1.",
+  "hooks": [
+    {
+      "hook_id": "spiritwood_ling_mu_array_carrier",
+      "future_plan": "plan-zhenfa-v1",
+      "materials": ["ling_mu_gun", "ling_mu_ban"],
+      "intended_use": "灵木原木镜印保持 4 小时；灵木板材镜印保持 12 小时"
+    }
+  ]
+}

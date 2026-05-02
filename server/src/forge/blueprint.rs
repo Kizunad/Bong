@@ -389,15 +389,49 @@ pub fn validate_blueprint_minerals(
             continue;
         };
         for required in &profile.required {
-            validate_forge_material(path, &bp.id, required.material.as_str(), minerals)?;
+            validate_forge_or_item_material(path, &bp.id, required.material.as_str(), minerals)?;
         }
         for carrier in &profile.optional_carriers {
-            if minerals.is_valid_mineral_id(&carrier.material) {
-                validate_forge_material(path, &bp.id, carrier.material.as_str(), minerals)?;
-            }
+            validate_forge_or_item_material(path, &bp.id, carrier.material.as_str(), minerals)?;
         }
     }
     Ok(())
+}
+
+fn validate_forge_or_item_material(
+    path: &Path,
+    blueprint_id: &str,
+    material: &str,
+    minerals: &MineralRegistry,
+) -> Result<(), BlueprintLoadError> {
+    if minerals.is_valid_mineral_id(material) {
+        return validate_forge_material(path, blueprint_id, material, minerals);
+    }
+    if is_allowed_item_material(material) {
+        return Ok(());
+    }
+    Err(BlueprintLoadError::InvalidMaterial {
+        path: path.to_path_buf(),
+        blueprint_id: blueprint_id.to_string(),
+        material: material.to_string(),
+        reason: "unknown mineral_id or forge item material".to_string(),
+    })
+}
+
+pub fn is_allowed_item_material(material: &str) -> bool {
+    matches!(
+        material,
+        "ling_mu_gun"
+            | "ling_mu_ban"
+            | "ling_mu_jing"
+            | "fake_spirit_hide"
+            | "feng_he_gu"
+            | "yi_shou_gu"
+            | "xuan_gen_wei"
+            | "yuan_ni_hong_yu"
+            | "lie_yuan_tai"
+            | "bei_wen_zhi"
+    )
 }
 
 pub fn validate_forge_material(
@@ -435,7 +469,11 @@ mod tests {
         let reg =
             BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
                 .expect("assets/forge/blueprints should load");
-        assert_eq!(reg.len(), 10, "expected 3 weapon + 7 tool blueprints");
+        assert_eq!(
+            reg.len(),
+            11,
+            "expected 3 weapon + 7 tool + 1 spiritwood blueprint"
+        );
         assert!(reg.get("iron_sword_v0").is_some());
         assert!(reg.get("qing_feng_v0").is_some());
         assert!(reg.get("ling_feng_v0").is_some());
@@ -447,9 +485,35 @@ mod tests {
             "tool_gua_dao_v0",
             "tool_gu_hai_qian_v0",
             "tool_bing_jia_shou_tao_v0",
+            "ling_xia_v1",
         ] {
             assert!(reg.get(id).is_some(), "missing tool blueprint `{id}`");
         }
+    }
+
+    #[test]
+    fn ling_xia_recipe_uses_spiritwood_and_feng_he_gu_materials() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("ling_xia_v1").expect("ling_xia blueprint exists");
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("ling_xia first step should be billet");
+        };
+
+        assert!(profile
+            .required
+            .iter()
+            .any(|stack| stack.material == "ling_mu_ban" && stack.count == 2));
+        assert!(profile
+            .required
+            .iter()
+            .any(|stack| stack.material == "feng_he_gu" && stack.count == 2));
+        assert_eq!(
+            bp.outcomes
+                .good
+                .as_ref()
+                .map(|outcome| outcome.weapon.as_str()),
+            Some("ling_xia")
+        );
     }
 
     #[test]

@@ -248,7 +248,13 @@ fn invalid_required_forge_material<'a>(
 ) -> Option<(&'a str, &'static str)> {
     for required in &billet_profile.required {
         let Some(entry) = minerals.get_by_str(required.material.as_str()) else {
-            return Some((required.material.as_str(), "is not a registered mineral_id"));
+            if blueprint::is_allowed_item_material(required.material.as_str()) {
+                continue;
+            }
+            return Some((
+                required.material.as_str(),
+                "is not a registered mineral_id or forge item material",
+            ));
         };
         if entry.forge_tier_min == 0 {
             return Some((required.material.as_str(), "is not a forge metal"));
@@ -716,9 +722,30 @@ mod tests {
                 count: 3,
             }],
             optional_carriers: vec![CarrierSpec {
-                material: "ling_wood".into(),
+                material: "ling_mu_ban".into(),
                 unlocks_tier: 3,
             }],
+            tolerance: BilletTolerance::default(),
+        };
+
+        assert_eq!(invalid_required_forge_material(&profile, &minerals), None);
+    }
+
+    #[test]
+    fn runtime_required_material_accepts_spiritwood_item_materials() {
+        let minerals = build_default_mineral_registry();
+        let profile = BilletProfile {
+            required: vec![
+                MaterialStack {
+                    material: "ling_mu_ban".into(),
+                    count: 2,
+                },
+                MaterialStack {
+                    material: "feng_he_gu".into(),
+                    count: 2,
+                },
+            ],
+            optional_carriers: vec![],
             tolerance: BilletTolerance::default(),
         };
 
