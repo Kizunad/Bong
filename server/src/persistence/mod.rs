@@ -1737,14 +1737,14 @@ fn normalize_zone_overlay_payload(
     }
     if record.payload_version > supported_payload_version {
         tracing::warn!(
-            "[bong][persistence] skip zone overlay `{}`/`{}` at {}: payload_version {} is newer than supported {}",
+            "[bong][persistence] preserve future zone overlay `{}`/`{}` at {}: payload_version {} is newer than supported {}",
             record.zone_id,
             record.overlay_kind,
             record.since_wall,
             record.payload_version,
             supported_payload_version
         );
-        return Ok(None);
+        return Ok(Some(record));
     }
 
     let mut migrated = record;
@@ -6320,7 +6320,7 @@ mod persistence_tests {
     }
 
     #[test]
-    fn zone_overlay_payload_migration_upgrades_v1_and_skips_future_versions() {
+    fn zone_overlay_payload_migration_upgrades_v1_and_preserves_future_versions() {
         let (settings, root) = persistence_settings("zone-overlay-payload-migration");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
@@ -6363,14 +6363,14 @@ mod persistence_tests {
                     11_i64,
                 ],
             )
-            .expect("future zone overlay should insert for read-path rejection drill");
+            .expect("future zone overlay should insert for preservation drill");
         drop(connection);
 
         let loaded = load_zone_overlays(&settings).expect("zone overlays should load");
         assert_eq!(
             loaded.len(),
-            1,
-            "future payload_version rows should be skipped instead of corrupting bootstrap"
+            2,
+            "future payload_version rows should be preserved so delete+reinsert writers cannot drop them"
         );
         let overlay = &loaded[0];
         assert_eq!(overlay.overlay_kind, "collapsed");
@@ -6382,6 +6382,34 @@ mod persistence_tests {
             payload["payload_schema"].as_str(),
             Some("zone_overlay_v2"),
             "v1 payload migration should stamp the v2 marker field"
+        );
+        assert_eq!(loaded[1].overlay_kind, "qi_eye_formed");
+        assert_eq!(loaded[1].payload_version, ZONE_OVERLAY_PAYLOAD_VERSION + 1);
+
+        persist_zone_overlays(&settings, &loaded)
+            .expect("delete+reinsert writer should preserve future overlay rows atomically");
+        let connection = Connection::open(settings.db_path()).expect("db should reopen");
+        let future_count: i64 = connection
+            .query_row(
+                "
+                SELECT COUNT(*) FROM zone_overlays
+                WHERE overlay_kind = 'qi_eye_formed' AND payload_version = ?1
+                ",
+                params![i64::from(ZONE_OVERLAY_PAYLOAD_VERSION + 1)],
+                |row| row.get(0),
+            )
+            .expect("future overlay count should be readable");
+        assert_eq!(future_count, 1);
+
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        hydrate_zone_overlays(&settings, &mut registry)
+            .expect("future overlay should be skipped at runtime apply only");
+        assert!(
+            !registry.zones[0]
+                .active_events
+                .iter()
+                .any(|event| event == "future_qi_eye"),
+            "future payload_version should not be applied to runtime zones"
         );
 
         let _ = fs::remove_dir_all(root);

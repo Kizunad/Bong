@@ -7,7 +7,7 @@ use valence::prelude::{App, Commands, DVec3, Resource, Startup};
 
 use super::dimension::DimensionKind;
 use super::TEST_AREA_BLOCK_EXTENT;
-use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord};
+use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord, ZONE_OVERLAY_PAYLOAD_VERSION};
 
 pub const DEFAULT_ZONES_PATH: &str = "zones.json";
 pub const DEFAULT_SPAWN_ZONE_NAME: &str = "spawn";
@@ -293,6 +293,9 @@ impl ZoneRegistry {
         overlay_records: &[ZoneOverlayRecord],
     ) -> Result<(), String> {
         for overlay_record in overlay_records {
+            if overlay_record.payload_version > ZONE_OVERLAY_PAYLOAD_VERSION {
+                continue;
+            }
             let Some(zone) = self.find_zone_mut(overlay_record.zone_id.as_str()) else {
                 continue;
             };
