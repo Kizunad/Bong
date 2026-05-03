@@ -3285,6 +3285,7 @@ pub fn persist_player_cultivation_bundle(
     insight_quota: &crate::cultivation::insight::InsightQuota,
     unlocked_perceptions: &crate::cultivation::insight_apply::UnlockedPerceptions,
     insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
+    tutorial_state: Option<&crate::world::spawn_tutorial::TutorialState>,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let bundle = serde_json::json!({
@@ -3299,6 +3300,7 @@ pub fn persist_player_cultivation_bundle(
         "insight_quota": insight_quota,
         "unlocked_perceptions": unlocked_perceptions,
         "insight_modifiers": insight_modifiers,
+        "tutorial_state": tutorial_state,
     });
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -3953,6 +3955,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::TradeCompleted { .. } => "trade_completed",
         BiographyEntry::VortexProjectileDrained { .. } => "vortex_projectile_drained",
         BiographyEntry::VortexBackfired { .. } => "vortex_backfired",
+        BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
     }
 }
 
@@ -4029,7 +4032,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::HeartDemonRecord { tick, .. }
         | BiographyEntry::TradeCompleted { tick, .. }
         | BiographyEntry::VortexProjectileDrained { tick, .. }
-        | BiographyEntry::VortexBackfired { tick, .. } => *tick,
+        | BiographyEntry::VortexBackfired { tick, .. }
+        | BiographyEntry::SpawnTutorialCompleted { tick, .. } => *tick,
     }
 }
 

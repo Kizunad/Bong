@@ -108,6 +108,13 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    /// plan-spawn-tutorial-v1 P0 — 玩家右键出生石棺，服务端授予龛石一次。
+    CoffinOpen {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     /// plan-social-v1 §2.1 — 消耗龛石，在目标坐标放置/替换当前角色唯一灵龛。
     SpiritNichePlace {
         v: u8,
@@ -435,6 +442,19 @@ mod tests {
         let json = r#"{"type":"breakthrough_request","v":1}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         assert!(matches!(req, ClientRequestV1::BreakthroughRequest { v: 1 }));
+    }
+
+    #[test]
+    fn coffin_open_roundtrip() {
+        let json = r#"{"type":"coffin_open","v":1,"x":0,"y":69,"z":0}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::CoffinOpen { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!([x, y, z], [0, 69, 0]);
+            }
+            other => panic!("expected CoffinOpen, got {other:?}"),
+        }
     }
 
     #[test]

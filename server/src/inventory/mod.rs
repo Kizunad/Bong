@@ -3406,6 +3406,10 @@ mod tests {
                 "default loadout missing required textured item `{required}`; have: {all_template_ids:?}"
             );
         }
+        assert!(
+            !all_template_ids.contains(&"spirit_niche_stone"),
+            "spirit_niche_stone must be granted by spawn coffin, not default loadout"
+        );
     }
 
     #[test]

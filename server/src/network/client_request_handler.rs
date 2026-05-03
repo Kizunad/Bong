@@ -107,6 +107,7 @@ use crate::world::extract_system::{
     StartExtractRequest as StartExtractRequestEvent,
 };
 use crate::world::karma::KarmaWeightStore;
+use crate::world::spawn_tutorial::CoffinOpenRequest;
 use crate::world::tsy_container_search::{
     CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
 };
@@ -204,6 +205,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
     pub spirit_niche_coordinate_reveal_tx:
         Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
+    pub coffin_open_tx: Option<ResMut<'w, Events<CoffinOpenRequest>>>,
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
@@ -300,6 +302,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
+            | ClientRequestV1::CoffinOpen { v, .. }
             | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
@@ -541,6 +544,23 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     pos,
                     item_instance_id,
+                });
+            }
+            ClientRequestV1::CoffinOpen { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][spawn-tutorial] coffin_open entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(coffin_open_tx) = dispatch.coffin_open_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_open because CoffinOpenRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_open_tx.send(CoffinOpenRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    tick: combat_clock.tick,
                 });
             }
             ClientRequestV1::SpiritNichePlace {
@@ -1871,6 +1891,11 @@ mod tests {
     impl valence::prelude::Resource for CapturedSpiritNicheCoordinateReveals {}
 
     #[derive(Default)]
+    struct CapturedCoffinOpenRequests(Vec<CoffinOpenRequest>);
+
+    impl valence::prelude::Resource for CapturedCoffinOpenRequests {}
+
+    #[derive(Default)]
     struct CapturedInscriptionScrolls(Vec<InscriptionScrollSubmit>);
 
     impl valence::prelude::Resource for CapturedInscriptionScrolls {}
@@ -1935,6 +1960,13 @@ mod tests {
     fn capture_spirit_niche_coordinate_reveals(
         mut events: EventReader<SpiritNicheCoordinateRevealRequest>,
         mut captured: ResMut<CapturedSpiritNicheCoordinateReveals>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_coffin_open_requests(
+        mut events: EventReader<CoffinOpenRequest>,
+        mut captured: ResMut<CapturedCoffinOpenRequests>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -2234,6 +2266,7 @@ mod tests {
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<CoffinOpenRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -2890,6 +2923,38 @@ mod tests {
         assert_eq!(captured.0[0].pos, [11, 64, 10]);
         assert_eq!(captured.0[0].item_instance_id, Some(4242));
         assert_eq!(captured.0[0].tick, 88);
+    }
+
+    #[test]
+    fn coffin_open_request_emits_spawn_tutorial_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedCoffinOpenRequests::default());
+        register_request_app(&mut app);
+        app.insert_resource(CombatClock { tick: 91 });
+        app.add_systems(
+            Update,
+            capture_coffin_open_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"coffin_open","v":1,"x":0,"y":69,"z":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedCoffinOpenRequests>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(captured.0[0].pos, [0, 69, 0]);
+        assert_eq!(captured.0[0].tick, 91);
     }
 
     #[test]
