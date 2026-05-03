@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event,
-    EventReader, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Startup, Update,
-    Username, With, Without,
+    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Startup,
+    Update, Username, With, Without,
 };
 
 use crate::combat::CombatClock;
@@ -21,14 +21,21 @@ use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
-use crate::npc::spawn::spawn_zombie_npc_at;
+use crate::npc::lifecycle::{NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
+use crate::npc::spawn::{
+    spawn_notice, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcSkinSpawnContext,
+};
 use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
+use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::DimensionLayers;
 use crate::world::setup_world;
 use crate::world::terrain::TerrainProviders;
+use crate::world::tsy_container::{ContainerKind, LootContainer};
+use crate::world::zone::TsyDepth;
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
 pub const SPIRIT_NICHE_STONE_TEMPLATE_ID: &str = "spirit_niche_stone";
+pub const TUTORIAL_KAIMAI_LOOT_POOL_ID: &str = "tutorial_kaimai_chest";
 pub const TUTORIAL_LINGQUAN_REACH_RADIUS: f64 = 8.0;
 pub const RAT_SWARM_SPAWN_DISTANCE: f64 = 20.0;
 pub const RAT_SWARM_TRIGGER_DISTANCE: f64 = 80.0;
@@ -190,6 +197,8 @@ fn attach_tutorial_state_to_joined_clients(
 
 fn spawn_tutorial_poi_markers(
     mut commands: Commands,
+    mut notices: EventWriter<NpcSpawnNotice>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     providers: Option<Res<TerrainProviders>>,
     layers: Option<Res<DimensionLayers>>,
 ) {
@@ -199,6 +208,15 @@ fn spawn_tutorial_poi_markers(
 
     let mut coffin_count = 0usize;
     let mut lingquan_count = 0usize;
+    let mut chest_count = 0usize;
+    let mut rogue_count = 0usize;
+    let first_lingquan = providers
+        .overworld
+        .pois()
+        .iter()
+        .filter(|poi| poi.kind == "tutorial_lingquan")
+        .min_by_key(|poi| parse_tag_u8(&poi.tags, "index").unwrap_or(u8::MAX))
+        .map(|poi| poi_pos_dvec3(poi.pos_xyz));
     for poi in providers.overworld.pois().iter() {
         match poi.kind.as_str() {
             "spawn_tutorial_coffin" => {
@@ -232,12 +250,51 @@ fn spawn_tutorial_poi_markers(
                 ));
                 lingquan_count += 1;
             }
+            "tutorial_chest" => {
+                commands.spawn((
+                    LootContainer::new(
+                        ContainerKind::StoragePouch,
+                        "spawn_tutorial".to_string(),
+                        TsyDepth::Shallow,
+                        TUTORIAL_KAIMAI_LOOT_POOL_ID.to_string(),
+                        0,
+                    ),
+                    Position(poi_pos_dvec3(poi.pos_xyz)),
+                    EntityLayerId(layers.overworld),
+                ));
+                chest_count += 1;
+            }
+            "tutorial_rogue_anchor" => {
+                let pos = poi_pos_dvec3(poi.pos_xyz);
+                let patrol_target = first_lingquan.unwrap_or(pos);
+                let entity = spawn_rogue_npc_at(
+                    &mut commands,
+                    NpcSkinSpawnContext::new(
+                        skin_pool.as_deref_mut(),
+                        NpcSkinFallbackPolicy::AllowFallback,
+                    ),
+                    layers.overworld,
+                    poi.zone.as_str(),
+                    pos,
+                    patrol_target,
+                    0.0,
+                );
+                notices.send(spawn_notice(
+                    entity,
+                    NpcArchetype::Rogue,
+                    NpcSpawnSource::Startup,
+                    poi.zone.as_str(),
+                    pos,
+                    0.0,
+                ));
+                rogue_count += 1;
+            }
             _ => {}
         }
     }
 
     tracing::info!(
-        "[bong][spawn-tutorial] spawned {coffin_count} coffin marker(s), {lingquan_count} lingquan marker(s) from POIs; client channel={SERVER_DATA_CHANNEL}"
+        "[bong][spawn-tutorial] spawned {coffin_count} coffin marker(s), {lingquan_count} lingquan marker(s), {chest_count} chest marker(s), {rogue_count} rogue(s) from POIs; client channel={SERVER_DATA_CHANNEL}"
     );
 }
 
@@ -599,6 +656,10 @@ fn parse_tag_u8(tags: &[String], key: &str) -> Option<u8> {
     tags.iter()
         .find_map(|tag| tag.strip_prefix(prefix.as_str()))
         .and_then(|value| value.parse().ok())
+}
+
+fn poi_pos_dvec3(pos: [f32; 3]) -> DVec3 {
+    DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]))
 }
 
 #[cfg(test)]

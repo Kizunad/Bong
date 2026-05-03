@@ -27,6 +27,12 @@
         { "template_id": "starter_talisman",   "weight": 15, "count": [1, 1] }
       ]
     },
+    "tutorial_kaimai_chest": {
+      "rolls": [1, 1],
+      "entries": [
+        { "template_id": "kaimai_dan", "weight": 100, "count": [1, 1] }
+      ]
+    },
     "stone_casket_mid": {
       "rolls": [1, 2],
       "entries": [
