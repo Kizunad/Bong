@@ -30,7 +30,6 @@ pub struct ZongKeeper {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ZongKeeperAggressionTrigger {
     FormationActivated,
     CoreContainerLooted,
@@ -46,7 +45,31 @@ pub struct ZongCanjuanLootEntry {
 }
 
 pub fn register(_app: &mut App) {
-    tracing::info!("[bong][npc][zong_keeper] registered seven zong keeper contract profiles");
+    let profiles = zong_keeper_profiles();
+    let loot_entries: Vec<_> = ZongmenOrigin::ALL
+        .into_iter()
+        .map(canjuan_loot_entry)
+        .collect();
+    let hostility_contract_ready = profiles.iter().all(|keeper| {
+        should_zong_keeper_turn_hostile(
+            keeper,
+            &keeper.home_zone,
+            keeper.origin,
+            ZongKeeperAggressionTrigger::FormationActivated,
+        ) && should_zong_keeper_turn_hostile(
+            keeper,
+            &keeper.home_zone,
+            keeper.origin,
+            ZongKeeperAggressionTrigger::CoreContainerLooted,
+        )
+    });
+
+    tracing::info!(
+        keeper_count = profiles.len(),
+        canjuan_loot_table_count = loot_entries.len(),
+        hostility_contract_ready,
+        "[bong][npc][zong_keeper] registered seven zong keeper contract profiles"
+    );
 }
 
 pub fn zong_keeper_profile(origin: ZongmenOrigin) -> ZongKeeper {
