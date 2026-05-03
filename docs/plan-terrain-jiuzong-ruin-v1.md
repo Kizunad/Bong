@@ -301,12 +301,20 @@ extra_layers = (
 
 ## §9 开放问题
 
-- [ ] 七宗特征流派与现有 plan 的对齐——爆脉流（plan-baomai-v1） vs 血溪宗 / 阵法（plan-zhenfa-v1）vs 北陵宗，是否要把"残卷 = 该 plan 的功法"明确化？
+- [x] **Q-J1 ✅**（user 2026-05-04 A）：**强绑定** —— 残卷 = 该宗对应 plan 的功法。一一对应表：
+  - 血溪 → plan-baomai-v1（爆脉流，残卷 = 体修功法）
+  - 北陵 → plan-zhenfa-v1（阵法，残卷 = 阵法图）
+  - 南渊 → plan-dugu-v1（毒蛊 / 医道，残卷 = 蛊术 / 丹方）
+  - 赤霞 → plan-anqi-v1（雷法 / 暗器，残卷 = 雷符 / 暗器谱）
+  - 玄水 → plan-zhenmai-v1（御剑 / 截脉，残卷 = 剑诀 / 截脉术）
+  - 太初 → plan-multi-style-v1（任督全能，残卷 = 经脉拓扑图）
+  - 幽暗 → plan-tuike-v1（暗器 / 隐遁 / 替尸，残卷 = 替尸 / 隐遁术）
+  - **跨 plan 耦合**：每个流派 plan vN+1 都得加"接收残卷 → 解锁高阶招式"接口；§7 P3 抓手新增 `RecipeFragment::Style(StyleId)` 物品 dispatch 表
 - [x] ~~`zongmen_origin_id` 新增独立层 vs 复用 `tsy_origin_id` 的高位段~~ **已决议**（用户 2026-04-29）：**新增独立层**——复用 tsy_origin_id 高位段会让 layer 语义混淆（地表宗门遗迹 vs TSY 位面遗迹是不同物理位置 / 不同探索路径），独立 layer 更清晰；schema 层成本可接受（uint8 + 8 个 origin 值 + safe_default=0 + swap blend）
-- [ ] 阵核激活的"招异变兽 / 道伥"是否走 anomaly_kind 还是单独 event？建议复用 anomaly_kind=5 (wild_formation)
-- [ ] 守墓人 NPC 是否会对**激活了别宗废墟**的玩家产生跨宗仇视（"你不该激活同道之坟"）？倾向 P3+ 才考虑
-- [ ] 与 plan-tsy-zongmen-ruin-v1 的"内容差异度"：本 plan 残卷是否一律是低阶？高阶残卷必须去 TSY 取？倾向 **是**（地表低阶 + TSY 高阶）
-- [ ] 壁文 narration 七宗各自的 lore 来源——是否要先在 library 立 7 篇宗门志（peoples 或 world 分馆）？不是硬阻塞，但建议立项 `library-jiuzong-history`
+- [x] **Q-J3 ✅**（user 2026-05-04，my recommendation A）：阵核激活复用 `anomaly_kind=5 (wild_formation)`，已预留。"野化阵法" 语义本身契合"阵核异常激活"；用 `anomaly_intensity` 字段携带强度（投入材料量决定）。独立 event 方案弃。
+- [x] **Q-J4 ✅**（user 2026-05-04 A）：跨宗仇视守墓人 P3 不做。守墓人只对自宗废墟激活 / 自宗核心容器被挖时敌对。
+- [x] **Q-J5 ✅**（user 2026-05-04 B）：本 plan **允许小概率高阶残卷**（不一律低阶）。掉率：低阶 1-2%（基础）/ 高阶 0.1-0.3%（仅在阵核激活后 30 分钟窗口期内 + origin 染色亲和加成时触发）。TSY plan-tsy-zongmen-ruin-v1 仍是高阶残卷主产地（高阶 5-15%），但本地形不是"绝对低阶"。
+- [x] **Q-J2 ✅**（user 2026-05-04）：library-jiuzong-history 7 篇宗门志 **先立 plan-library-jiuzong-history-v1 skeleton 提取要点**（与 P0 worldgen 代码并行）。lore 入库后 unblock 壁文 narration / 残卷功法绑定细节。
 
 ## §10 进度日志
 
@@ -317,9 +325,10 @@ extra_layers = (
   - **weak-14** 修：§3 七宗特征流派表加注"以下流派为推演"提示 + 建议先立 `library-jiuzong-history` 锚 lore。
 - **2026-04-29**：实地核验 + 决策标注（**保留骨架**，不升 active——schema 决策已锁但 7 宗 lore 仍缺 library 背书；前置 plan-tsy-zongmen-ruin-v1 状态自报有误，实际仅有 worldgen 侧 `tsy_zongmen_ruin.py` 生成器存在，无独立 plan 文档）。
 - **2026-05-04**：skeleton → active 升级（user 拍板覆盖 04-29 决议）。原 hard block 改列为 P0 任务跟进，不阻塞升 active：
-  - **P0 新增子任务 a**：起 `library-jiuzong-history`（7 篇宗门志，可与 P0 worldgen 代码并行；lore 入库 + `/review-book` 通过后 unblock 壁文 narration / 残卷功法绑定）
-  - **P0 新增子任务 b**：与 plan-baomai-v1 / plan-zhenfa-v1 / plan-skill-v1 协调"残卷 = 该 plan 的功法"对齐（§9 第 1 项）
+  - **P0 新增子任务 a**：起 `plan-library-jiuzong-history-v1` skeleton（7 篇宗门志要点提取，user Q-J2 决策）；可与 P0 worldgen 代码并行；lore 入库 + `/review-book` 通过后 unblock 壁文 narration
+  - **P0 新增子任务 b**：与 7 流派 plan（baomai / zhenpa / dugu / anqi / zhenmai / tuike / multi-style）协调"残卷 = 该 plan 的功法"对齐（user Q-J1 强绑定，详 §9 决策表）
   - 下一步：起 P0 worktree（`zongmen_origin_id` LAYER_REGISTRY 层 + `jiu_zong_ruin` profile + 7 zone JSON，与 lore 写作并行）
+- **2026-05-04**：§9 全部 5 决策闭环（Q-J1 强绑定 / Q-J3 复用 anomaly_kind=5 / Q-J4 P3 不做跨宗仇视 / Q-J5 允许小概率高阶残卷 / Q-J2 立 library 子 plan，详 §9）。
   - **季节联动**（用户决策 2026-04-29）：汐转期阵核激活率 ×2（worldview §十七 锚定）。已写入头部锚点 + §0 设计轴心。
   - **schema 决策**（用户决策）：`zongmen_origin_id` 新增独立 LAYER_REGISTRY 层（不复用 tsy_origin_id 高位段）。§9 第 2 项已标决议。
   - 7 宗特征流派 + 残卷功法绑定（§9 第 1 项）+ lore 来源（§9 第 6 项 `library-jiuzong-history`）仍待立——这是升 active 前的硬阻塞。建议**先用 `/write-book` 起草 7 篇宗门志**入 library，再立 lore-anchored plan。

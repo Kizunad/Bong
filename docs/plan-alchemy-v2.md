@@ -37,8 +37,8 @@
 
 - [ ] **side_effect_pool 从字符串映射到真实效果**——当前 `tag` 只是字符串，P0 落地后丹药副作用才真正生效
 - [ ] **丹方残卷体现末法残缺感**——丹方不是完整知识，玩家只能从残卷学到有限配方；残缺版成品品阶受限
-- [ ] **品阶/铭文/开光是进深系统**——晋升炼丹路线的进深层，不影响 v1 基础炼丹
-- [ ] **AutoProfile 是低频高效工具**——傀儡绑炉，玩家设定曲线后可半自挂机炼丹；高境界特权
+- [ ] **品阶/开光是进深系统**——晋升炼丹路线的进深层，不影响 v1 基础炼丹（铭文不在本 plan，已并入 forge）
+- [ ] **AutoProfile 炉子有自己的 qi 储量**（user Q-A3）——`FurnaceQiReserve` 挂在 station 上，玩家通过 `InjectQiIntent` 注入；战斗不抽 player；炉 qi 与 PlayerQi 完全隔离
 - [ ] **丹心识别对应 worldview §九 情报换命**——消耗材料换情报，不是免费获取配方
 
 ---
@@ -49,7 +49,7 @@
 |---|---|---|
 | **P0** ⬜ | `side_effect_pool` tag → `StatusEffectKind` 枚举映射 + 丹药服用触发副作用 | 单元：各 tag 映射不缺失；`ApplyStatusEffectIntent` 正确发出 |
 | **P1** ⬜ | 丹方残卷损坏（`RecipeFragment` 物品 + 残缺版学习路径） | 残缺丹方品阶上限 < 完整版；无法学到残缺段之外 |
-| **P2** ⬜ | 品阶 / 铭文 / 开光系统（v2 炼丹结果分层） | 品阶 1-5 对应不同效果幅度；铭文 / 开光为可选附加 |
+| **P2** ⬜ | 品阶 / 开光系统（v2 炼丹结果分层；~~铭文~~ 已并入 forge） | 品阶 1-5 对应不同效果幅度；开光为可选附加 |
 | **P3** ⬜ | AutoProfile 自动炼丹（傀儡绑炉，读火候曲线，高境界解锁） | 傀儡绑炉后 AutoProfile 输出品质 ≥ 手工 85%（平衡目标） |
 | **P4** ⬜ | 丹心识别（worldview §九 情报换命） | 消耗一颗丹药 → `RecipeHint` 物品入背包；agent narration 触发 |
 
@@ -104,16 +104,13 @@ pub struct RecipeFragment {
 
 ---
 
-## §4 P2：品阶 / 铭文 / 开光
+## §4 P2：品阶 / 开光（铭文 → forge）
+
+> **2026-05-04 范围修正**（user Q-A2）：~~铭文~~ 不属于本 plan。铭文是 forge 体系（`server/src/forge/session.rs:67 InscriptionState` + `forge/events.rs:39 InscriptionScrollSubmit` + 铭文残卷 / 失败率已实装）。**alchemy v2 不再涉及铭文**——丹药只走品阶 + 开光。
 
 **品阶（1-5）**：
 - 由炼丹结果的 deviation 分布决定（plan-alchemy-v1 已落 deviation 逻辑）
 - 品阶 1 = 劣品，品阶 5 = 极品；效果幅度与品阶线性/指数映射
-
-**铭文**：
-- 只有品阶 3+ 的丹药才可铭文
-- 需要额外材料（灵石 / 特定草药）+ 手动"刻铭"操作
-- 铭文效果：额外一条 `StatusEffect`（类似 bonus mod）
 
 **开光**：
 - 品阶 5 丹药 + 化虚修士在场祝圣
@@ -129,15 +126,28 @@ pub struct RecipeFragment {
 pub struct AlchemyAutoProfile {
     pub profile_id: String,
     pub fire_curve: Vec<(f32, f32)>,   // (time_pct, temperature) 序列
-    pub qi_feed_rate: f32,             // 每秒真元注入量
+    pub qi_feed_rate: f32,             // 每秒真元消耗量（从 FurnaceQiReserve 抽）
     pub max_sessions: u32,             // 单次绑炉最多自动炼几炉
+}
+
+// 炉子专属真元储量（user Q-A3 决策：与 PlayerQi 完全隔离）
+pub struct FurnaceQiReserve {
+    pub current: f32,
+    pub capacity: f32,                 // 由炉子品阶决定
+    pub injection_rate_cap: f32,       // 玩家 InjectQiIntent 时的每秒注入上限
+}
+
+pub struct InjectQiIntent {
+    pub furnace_entity: Entity,
+    pub amount_per_sec: f32,           // 玩家选择的注入速率（≤ injection_rate_cap）
 }
 ```
 
 **约束**：
 - AutoProfile 炼丹品质上限 = 手工该配方最高历史品质 × 85%（防全自动满品质）
-- 真元消耗由玩家事先注入"真元储量"（不实时抽），储量耗尽后停炉
+- **真元由 `FurnaceQiReserve` 持有**（user Q-A3）：玩家通过 `InjectQiIntent` 主动注入；战斗时**不抽 PlayerQi**（炉子是独立账户）；储量耗尽 → 停炉
 - 不能同时设定多个炉子（绑炉单一）
+- **离场不停炉**：玩家走开后炉子继续按 AutoProfile 跑，直到 reserve 耗尽（核心价值——离场炼丹）
 
 ---
 
@@ -162,10 +172,10 @@ accuracy = min(1.0, (realm_tier / pill_tier) × random(0.5, 1.0))
 
 ## §7 开放问题
 
-- [ ] `InsightFlash` tag：触发顿悟机会的具体实现依赖 plan-cultivation 顿悟池，P0 可先 log + stub
-- [ ] 铭文操作 UI：需要 client plan 承接；P2 先落 server 逻辑，client 后接
-- [ ] AutoProfile 的"真元储量"：是新的 component 还是复用现有 PlayerQi？是否可被战斗抽干？
-- [ ] 丹方残卷掉落来源：tsy 副本 loot table（`plan-tsy-loot-v1`）、NPC 交易、顿悟事件——需与对应 plan 协商
+- [x] **Q-A1 ✅**（user 2026-05-04）：~~`InsightFlash` tag log+stub~~——顿悟系统已完整实装（`server/src/cultivation/insight.rs`：InsightCategory 7 类 + InsightQuota + InsightRequest/Offer/Chosen + InsightTriggerRegistry + apply_choice）。**P0 直接发 InsightRequest，不 stub**；具体走哪个 InsightCategory 由 tag 决定（如 `rare_insight_flash` → `Composure` 类一次性 +5%）。
+- [x] **Q-A2 ✅**（user 2026-05-04）：~~铭文操作 UI~~——铭文不在本 plan，已并入 forge（`server/src/forge/session.rs:67 InscriptionState`）。alchemy v2 P2 仅做品阶 + 开光。
+- [x] **Q-A3 ✅**（user 2026-05-04）：AutoProfile 真元储量 = 炉子专属 component `FurnaceQiReserve`，与 PlayerQi 完全隔离；玩家通过 `InjectQiIntent` 主动注入；战斗不抽。详 §5。
+- [x] **Q-A4 ✅**（user 2026-05-04 D）：丹方残卷掉落来源留 P1 实施时拍（候选：tsy loot / NPC 交易 / 顿悟事件，三选 1 或全开）。
 
 ---
 
@@ -173,3 +183,4 @@ accuracy = min(1.0, (realm_tier / pill_tier) × random(0.5, 1.0))
 
 - 2026-05-01：从 plan-alchemy-v1 reminder 整理立项。现有代码：`SideEffect { tag, duration_s, weight, perm, color, amount }` 结构已落（`server/src/alchemy/recipe.rs:134`）；`StatusEffectKind` enum 已有 7 个 variant（`server/src/combat/events.rs:60`）；side_effect → StatusEffect 映射、丹方残卷、品阶/铭文/开光、AutoProfile、丹心识别全部未实装。
 - **2026-05-04**：skeleton → active 升级（user 拍板）。前置 plan-alchemy-v1 / plan-alchemy-client-v1 / plan-combat-no_ui 全 ✅ finished，依赖闭合。下一步起 P0 worktree（StatusEffectKind 扩展 + side_effect_apply.rs）。
+- **2026-05-04**：§7 全部 4 决策闭环（Q-A1/A2/A3/A4 详 §7）。范围修正：删除 P2 铭文章节（移交 forge），新增 §5 `FurnaceQiReserve` + `InjectQiIntent` 结构。P0 直接接 InsightRequest（顿悟系统已实装）。

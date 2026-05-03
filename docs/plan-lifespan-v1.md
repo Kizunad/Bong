@@ -130,12 +130,20 @@ Client IPC 扩展（inspect 面板）：
 ## §4 风烛（Frailty）buff
 
 - 触发：`years_lived / cap_by_realm >= 0.9`（剩余 < 10%）
-- 效果：
-  - 真元回复速率 ×0.5
-  - 遗念频率提升（每 in-game 年触发一次 death_insight 前置 narration）
-  - 每 10 in-game 年强制一条老化 agent narration
 - 解除：续命使剩余 > 10%（但"续命后风烛判定不刷新"——只要剩余 < 10% 仍风烛；仅在真正超过 10% 后解除）
 - 实装位置：`server/src/cultivation/lifespan.rs::frailty_check_system`
+
+**境界差异化数值**（user Q-L2 决策，2026-05-04）——高境风烛更狠，符合 worldview "修士越强越苟" 叙事：
+
+| 境界 | 真元回复倍率 | 遗念 narration 周期 | 强制老化 narration 周期 |
+|---|---:|---:|---:|
+| 醒灵/引气 | ×0.7 | 2 年 / 次 | 20 年 / 条 |
+| 凝脉 | ×0.6 | 1.5 年 / 次 | 15 年 / 条 |
+| 固元 | ×0.5 | 1 年 / 次 | 10 年 / 条 |
+| 通灵 | ×0.4 | 0.7 年 / 次 | 7 年 / 条 |
+| 化虚 | ×0.3 | 0.5 年 / 次 | 5 年 / 条 |
+
+设计意图：低境界风烛只是"提醒"，高境界风烛是"窒息"——化虚修士若真到风烛，真元 -70% 战力大跌（对应 worldview "化虚后世界变量"——化虚修士不可能轻易战死，但寿元到了真活不下去）。
 
 ---
 
@@ -143,7 +151,11 @@ Client IPC 扩展（inspect 面板）：
 
 1. 不触发运数/劫数 roll，直接进终结流水线
 2. 生平卷写入 `death_kind = "natural"`（与 `combat_kill` / `tribulation` 区分；亡者博物馆"善终"筛选依赖此字段）
-3. 不掉落物品——身旁 3×3 生成"遗骸"容器（特殊 block entity），其他玩家可开取
+3. 不掉落物品——身旁就地生成 `NaturalDeathCorpse` entity（**复用 TSY `CorpseEmbalmed` / `BodyInstance` 模式**，user Q-L1 决策 2026-05-04）：
+   - 共享底层 `BodyInstance` 结构（pose / inventory snapshot / origin / 流派）
+   - 与 `CorpseEmbalmed` 区别：deathkind=natural（不转道伥；冬季 7 天 / 夏季 3 天后自然降解为骨堆 → 最终消失）
+   - 容器化：其他玩家右键打开看到死者 inventory 全副 + 取走（worldview §十二"老死遗物就地留容器"）
+   - 视觉：复用 PlayerAnimator 死亡 pose（参考 third_party/serious-player-animations）
 4. 触发长遗念 agent 请求（category = `natural`，agent 读 LifeRecord 合成回顾性 narration）
 5. 最终走 `plan-death-lifecycle-v1::terminate_character` 流水（生平卷冻结 + 亡者博物馆）
 
@@ -151,15 +163,37 @@ Client IPC 扩展（inspect 面板）：
 
 ## §6 开放问题
 
-- [ ] 遗骸容器使用哪种 block entity？是否复用现有 chest 类型？容器内物品何时清除？
-- [ ] `风烛 buff 数值`（真元回复减半 / 遗念频率）是否需要按境界差异化？（当前统一）
-- [ ] 悟道延寿与顿悟池冲突：plan-cultivation-v1 尚未定义"顿悟池深度"数据结构，P4 依赖此定义落地
-- [ ] 坍缩渊换寿"寿核"：worldgen 负灵域 POI 的具体掉落量和刷新率（与 plan-tsy-zone-v1 协商）
-- [ ] NPC 共用 `LifespanComponent`（P5 后扩展）：性能 vs 真实感权衡未定
+- [x] **Q-L1 ✅**（user 2026-05-04 B）：遗骸做成尸体 entity（不是 chest）。**复用 TSY `CorpseEmbalmed` / `BodyInstance` 模式**（`server/src/world/tsy_lifecycle.rs:531`）：新 entity `NaturalDeathCorpse` 共享底层 `BodyInstance` 结构（pose / inventory / origin），但 deathkind=natural（不转道伥；冬季 7 天后自然降解 / 夏季 3 天）。容器内物品 = 死者 inventory 全副（worldview §十二"老死不掉物品"= 不强制丢，仍由其他玩家可开取）。详 §5。
+- [x] **Q-L2 ✅**（user 2026-05-04 B）：风烛 buff 按境界差异化。详 §4（数值表）。
+- [x] **Q-L3 ✅**（user 2026-05-04）：~~plan-cultivation 尚未定义~~——顿悟系统已完整实装（`server/src/cultivation/insight.rs`：InsightQuota + realm_quota + InsightCategory）。P4 直接消费 `InsightQuota::has_quota` + `apply_accumulation`：悟道延寿 = 走一次 `InsightCategory::Composure` 类 effect（一次性 +X 年 + 悟境天花板 -1）。
+- [x] **Q-L4 ✅**（user 2026-05-04 A）：寿核 P5 stub，等 plan-tsy-zone-v1 / plan-terrain-rift-mouth-v1 P3 联动后再拍数值。
+- [x] **Q-L5 ✅**（user 2026-05-04 B）：`LifespanComponent` 玩家 NPC 共用（减少重复开发）。NPC 直接挂同 component；性能优化用"NPC 寿命 tick rate ×0.01"低频 + only-online-chunk 判定。详 §8。
 
 ---
 
-## §7 进度日志
+## §7 NPC 共用扩展（user Q-L5 决策 2026-05-04）
+
+`LifespanComponent` 玩家 + NPC 共用同一 component，但 tick rate 差异化：
+
+| Entity | 在线 tick 倍率 | 离线 tick 倍率 | 备注 |
+|---|---:|---:|---|
+| 玩家 | 1.0 | 0.1 | §2 默认表 |
+| NPC（chunk 加载中）| 0.1 | 0.001 | 1 real h ≈ 6 NPC year（活在线 chunk）|
+| NPC（chunk 卸载）| 0 | 0 | 完全暂停（防 chunk 流失 NPC 自然老化大批死） |
+
+**性能保护**：
+- NPC 寿命 tick 系统每 100 game tick 跑一次（5 秒），不每 tick 跑
+- only-online-chunk 判定：unloaded chunk 的 NPC 不入循环
+- 老死的 NPC：直接 despawn + 在原位 spawn `NaturalDeathCorpse` entity（NPC 也走与玩家相同的遗骸路径）
+
+**NPC 老死对玩法的影响**：
+- NPC 散修可能"老死前传授残卷"——触发 narration "X 临死前将口诀告知与你"
+- 长寿 NPC（化虚遗老）寿元到了→ 老死事件成为全服话题（worldview §十二"亡者博物馆 + 善终筛选"）
+
+---
+
+## §8 进度日志
 
 - 2026-05-01：从 plan-death-lifecycle-v1 reminder 整理立项。现有代码：`Lifecycle` component + `apply_revive_penalty` ✅（`server/src/combat/lifecycle.rs`）；`LifespanComponent` / `LifespanCapTable` / `TickRateModifier` / `LifespanEvent` 均未实装。
 - **2026-05-04**：skeleton → active 升级（user 拍板）。前置 plan-death-lifecycle-v1 / plan-cultivation-v1 ✅ finished。P0/P1/P2 可立刻起；P3-P5 待并行 plan（alchemy-v2 / cultivation 顿悟池 / rift-mouth）补齐再做。下一步起 P0 worktree（LifespanComponent + LifespanCapTable + tick 推进）。
+- **2026-05-04**：§6 全部 5 决策闭环（Q-L1/L2/L3/L4/L5 详 §6）。范围扩展：§4 加境界差异化风烛表；§5 老死遗骸复用 TSY `CorpseEmbalmed` / `BodyInstance` 模式；§7 新增 NPC 共用 LifespanComponent 章节。P4 悟道延寿直接接 `server/src/cultivation/insight.rs`（顿悟系统已实装），不依赖新接口。
