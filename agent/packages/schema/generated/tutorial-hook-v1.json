@@ -1,0 +1,40 @@
+{
+  "anyOf": [
+    {
+      "const": "spawn_entered",
+      "type": "string"
+    },
+    {
+      "const": "coffin_opened",
+      "type": "string"
+    },
+    {
+      "const": "moved200_blocks",
+      "type": "string"
+    },
+    {
+      "const": "first_sit_meditate",
+      "type": "string"
+    },
+    {
+      "const": "first_meridian_opened",
+      "type": "string"
+    },
+    {
+      "const": "rat_swarm_encounter",
+      "type": "string"
+    },
+    {
+      "const": "lingquan_reached",
+      "type": "string"
+    },
+    {
+      "const": "breakthrough_window",
+      "type": "string"
+    },
+    {
+      "const": "realm_advanced_to_induce",
+      "type": "string"
+    }
+  ]
+}

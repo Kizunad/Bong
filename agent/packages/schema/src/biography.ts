@@ -192,6 +192,16 @@ const TradeCompleted = Type.Object(
   { additionalProperties: false },
 );
 
+const SpawnTutorialCompleted = Type.Object(
+  {
+    SpawnTutorialCompleted: Type.Object({
+      minutes_since_spawn: Type.Integer({ minimum: 0, maximum: 24 * 60 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 export const BiographyEntryV1 = Type.Union([
   BreakthroughStarted,
   BreakthroughSucceeded,
@@ -212,6 +222,7 @@ export const BiographyEntryV1 = Type.Union([
   TribulationFled,
   HeartDemonRecord,
   TradeCompleted,
+  SpawnTutorialCompleted,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;
 

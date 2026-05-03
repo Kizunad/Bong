@@ -45,6 +45,7 @@ import {
   BreakthroughRequestV1,
   AbortTribulationRequestV1,
   CancelExtractRequestV1,
+  CoffinOpenRequestV1,
   CombatCreateNewCharacterRequestV1,
   CombatReincarnateRequestV1,
   CombatTerminateRequestV1,
@@ -253,6 +254,11 @@ import {
   SpiritualSenseTargetsV1,
 } from "./spiritual-sense.js";
 import {
+  CoffinOpenedV1,
+  TutorialHookEventV1,
+  TutorialHookV1,
+} from "./spawn-tutorial.js";
+import {
   DaoxiangSpawnedV1,
   TsyCollapseCompletedV1,
   TsyCollapseStartedV1,
@@ -362,6 +368,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestQuickSlotBindV1: QuickSlotBindRequestV1,
   clientRequestSkillBarCastV1: SkillBarCastRequestV1,
   clientRequestSkillBarBindV1: SkillBarBindRequestV1,
+  clientRequestCoffinOpenV1: CoffinOpenRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
@@ -442,6 +449,9 @@ export const SCHEMA_REGISTRY = {
   senseEntryV1: SenseEntryV1,
   spiritualSenseTargetsV1: SpiritualSenseTargetsV1,
   serverDataSpiritualSenseTargetsV1: ServerDataSpiritualSenseTargetsV1,
+  tutorialHookV1: TutorialHookV1,
+  tutorialHookEventV1: TutorialHookEventV1,
+  coffinOpenedV1: CoffinOpenedV1,
   // 炼丹 (plan-alchemy-v1 §4)
   alchemyOutcomeBucket: AlchemyOutcomeBucket,
   alchemyInterventionV1: AlchemyInterventionV1,
@@ -626,6 +636,7 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestSkillBarCastV1,
   "client-request-skill-bar-bind-v1.json":
     SCHEMA_REGISTRY.clientRequestSkillBarBindV1,
+  "client-request-coffin-open-v1.json": SCHEMA_REGISTRY.clientRequestCoffinOpenV1,
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
@@ -734,6 +745,9 @@ export const GENERATED_SCHEMA_FILES = {
   "spiritual-sense-targets-v1.json": SCHEMA_REGISTRY.spiritualSenseTargetsV1,
   "server-data-spiritual-sense-targets-v1.json":
     SCHEMA_REGISTRY.serverDataSpiritualSenseTargetsV1,
+  "tutorial-hook-v1.json": SCHEMA_REGISTRY.tutorialHookV1,
+  "tutorial-hook-event-v1.json": SCHEMA_REGISTRY.tutorialHookEventV1,
+  "coffin-opened-v1.json": SCHEMA_REGISTRY.coffinOpenedV1,
   "client-request-sparring-invite-response-v1.json":
     SCHEMA_REGISTRY.clientRequestSparringInviteResponseV1,
   "audio-event-v1.json": SCHEMA_REGISTRY.audioEventV1,

@@ -1123,6 +1123,33 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "SpawnTutorialCompleted"
+      ],
+      "properties": {
+        "SpawnTutorialCompleted": {
+          "type": "object",
+          "required": [
+            "minutes_since_spawn",
+            "tick"
+          ],
+          "properties": {
+            "minutes_since_spawn": {
+              "minimum": 0,
+              "maximum": 1440,
+              "type": "integer"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
     }
   ]
 }

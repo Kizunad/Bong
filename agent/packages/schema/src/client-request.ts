@@ -442,6 +442,18 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
+export const CoffinOpenRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_open"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type CoffinOpenRequestV1 = Static<typeof CoffinOpenRequestV1>;
+
 export const SpiritNichePlaceRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -730,6 +742,7 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  CoffinOpenRequestV1,
   SpiritNichePlaceRequestV1,
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,
