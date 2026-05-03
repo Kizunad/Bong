@@ -1,7 +1,7 @@
 package com.bong.client.combat;
 
 /**
- * Server-pushed 200ms Jiemai (截脉) parry window (§3.2 / §11.4).
+ * Server-pushed Jiemai (截脉) prep window (§3.2 / §11.4).
  */
 public final class DefenseWindowState {
     private static final DefenseWindowState IDLE = new DefenseWindowState(false, 0, 0L, 0L);
