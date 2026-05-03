@@ -342,6 +342,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesQiColorInspect() {
+        String json = ClientRequestProtocol.encodeQiColorInspect("entity_bits:42");
+        assertEquals(
+            "{\"type\":\"qi_color_inspect\",\"v\":1,\"observed\":\"entity_bits:42\"}",
+            json
+        );
+    }
+
+    @Test
     void encodesUseLifeCore() {
         String json = ClientRequestProtocol.encodeUseLifeCore(4242L);
         assertEquals(

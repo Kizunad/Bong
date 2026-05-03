@@ -3,8 +3,10 @@ package com.bong.client.inventory;
 import com.bong.client.BongClient;
 import com.bong.client.combat.TreasureEquippedStore;
 import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.network.ClientRequestSender;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -13,6 +15,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
+import net.minecraft.util.hit.EntityHitResult;
 import org.lwjgl.glfw.GLFW;
 
 public final class InspectScreenBootstrap {
@@ -71,6 +74,7 @@ public final class InspectScreenBootstrap {
                 return;
             }
 
+            requestQiColorInspectForCrosshairTarget(client);
             client.setScreen(screen);
         });
     }
@@ -83,6 +87,25 @@ public final class InspectScreenBootstrap {
         InventoryStateStore.clearOnDisconnect();
         WeaponEquippedStore.clearOnDisconnect();
         TreasureEquippedStore.clearOnDisconnect();
+        QiColorObservedStore.clear();
+    }
+
+    static void requestQiColorInspectForCrosshairTarget(MinecraftClient client) {
+        QiColorObservedStore.clear();
+        String target = crosshairEntityTarget(client);
+        if (target != null) {
+            ClientRequestSender.sendQiColorInspect(target);
+        }
+    }
+
+    static String crosshairEntityTarget(MinecraftClient client) {
+        if (client == null || client.player == null || !(client.crosshairTarget instanceof EntityHitResult hit)) {
+            return null;
+        }
+        if (hit.getEntity() == client.player) {
+            return null;
+        }
+        return "entity:" + hit.getEntity().getId();
     }
 
     static InspectScreen createScreenForCurrentState() {

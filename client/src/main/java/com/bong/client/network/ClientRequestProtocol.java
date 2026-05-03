@@ -199,6 +199,15 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeQiColorInspect(String observed) {
+        if (observed == null || observed.isBlank()) {
+            throw new IllegalArgumentException("observed must not be blank");
+        }
+        JsonObject obj = envelope("qi_color_inspect");
+        obj.addProperty("observed", observed.trim());
+        return obj.toString();
+    }
+
     public static String encodeUseLifeCore(long instanceId) {
         if (instanceId < 0) {
             throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);

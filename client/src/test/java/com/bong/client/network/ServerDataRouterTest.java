@@ -25,6 +25,7 @@ public class ServerDataRouterTest {
             "player_state",
             "ui_open",
             "cultivation_detail",
+            "qi_color_observed",
             "inventory_snapshot",
             "inventory_event",
             "dropped_loot_sync",
