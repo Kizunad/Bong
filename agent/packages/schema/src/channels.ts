@@ -107,6 +107,15 @@ export const CHANNELS = {
   /** Server → Client/Agent: 涡流持涡 HUD 状态（plan-woliu-v1 §8） */
   WOLIU_VORTEX_STATE: "bong:woliu/vortex_state",
 
+  /** Server → Agent: 暗器载体封元完成（plan-anqi-v1 P2 narration） */
+  ANQI_CARRIER_CHARGED: "bong:combat/carrier_charged",
+
+  /** Server → Agent: 暗器载体命中注射（plan-anqi-v1 P2 narration） */
+  ANQI_CARRIER_IMPACT: "bong:combat/carrier_impact",
+
+  /** Server → Agent: 暗器投射物射空 / 蒸发（plan-anqi-v1 P2 narration） */
+  ANQI_PROJECTILE_DESPAWNED: "bong:combat/projectile_despawned",
+
   /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
 

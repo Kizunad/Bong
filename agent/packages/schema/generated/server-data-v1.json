@@ -7466,6 +7466,71 @@
       "required": [
         "v",
         "type",
+        "carrier",
+        "phase",
+        "progress",
+        "sealed_qi",
+        "sealed_qi_initial",
+        "half_life_remaining_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "carrier_state",
+          "type": "string"
+        },
+        "carrier": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "idle",
+              "type": "string"
+            },
+            {
+              "const": "charging",
+              "type": "string"
+            },
+            {
+              "const": "charged",
+              "type": "string"
+            }
+          ]
+        },
+        "progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "sealed_qi": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "sealed_qi_initial": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "half_life_remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "item_instance_id": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {
