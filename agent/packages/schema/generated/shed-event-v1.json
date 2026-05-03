@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "target_id",
+    "kind",
+    "layers_shed",
+    "layers_remaining",
+    "contam_absorbed",
+    "contam_overflow",
+    "tick"
+  ],
+  "properties": {
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "attacker_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "spider_silk",
+          "type": "string"
+        },
+        {
+          "const": "rotten_wood_armor",
+          "type": "string"
+        }
+      ]
+    },
+    "layers_shed": {
+      "minimum": 1,
+      "maximum": 3,
+      "type": "integer"
+    },
+    "layers_remaining": {
+      "minimum": 0,
+      "maximum": 3,
+      "type": "integer"
+    },
+    "contam_absorbed": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "contam_overflow": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

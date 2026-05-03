@@ -68,6 +68,7 @@ import {
   TradeOfferPayloadV1,
 } from "./social.js";
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
+import { FalseSkinStateV1 } from "./tuike.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -194,6 +195,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("trade_offer"),
   Type.Literal("realm_vision_params"),
   Type.Literal("spiritual_sense_targets"),
+  Type.Literal("false_skin_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -846,6 +848,16 @@ export const ServerDataCarrierStateV1 = Type.Object(
 );
 export type ServerDataCarrierStateV1 = Static<typeof ServerDataCarrierStateV1>;
 
+export const ServerDataFalseSkinStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("false_skin_state"),
+    ...FalseSkinStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataFalseSkinStateV1 = Static<typeof ServerDataFalseSkinStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1258,6 +1270,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataTechniquesSnapshotV1,
   ServerDataVortexStateV1,
   ServerDataCarrierStateV1,
+  ServerDataFalseSkinStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

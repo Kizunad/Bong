@@ -54,6 +54,8 @@ import {
   ClientRequestV1,
   DuoSheRequestV1,
   QiColorInspectRequestV1,
+  EquipFalseSkinRequestV1,
+  ForgeFalseSkinRequestV1,
   ForgeRequestV1,
   HeartDemonDecisionRequestV1,
   ForgeStartSessionRequestV1,
@@ -202,6 +204,7 @@ import {
   ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
+  ServerDataFalseSkinStateV1,
   ServerDataVortexStateV1,
   ServerDataCarrierStateV1,
   ServerDataTsyCollapseStartedIpcV1,
@@ -237,6 +240,11 @@ import {
   CarrierStateV1,
   ProjectileDespawnedEventV1,
 } from "./combat-carrier.js";
+import {
+  FalseSkinKindV1,
+  FalseSkinStateV1,
+  ShedEventV1,
+} from "./tuike.js";
 import {
   ProjectileQiDrainedEventV1,
   VortexBackfireEventV1,
@@ -387,6 +395,8 @@ export const SCHEMA_REGISTRY = {
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
   clientRequestQiColorInspectV1: QiColorInspectRequestV1,
+  clientRequestEquipFalseSkinV1: EquipFalseSkinRequestV1,
+  clientRequestForgeFalseSkinV1: ForgeFalseSkinRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
@@ -448,6 +458,10 @@ export const SCHEMA_REGISTRY = {
   carrierImpactEventV1: CarrierImpactEventV1,
   projectileDespawnedEventV1: ProjectileDespawnedEventV1,
   serverDataCarrierStateV1: ServerDataCarrierStateV1,
+  falseSkinKindV1: FalseSkinKindV1,
+  falseSkinStateV1: FalseSkinStateV1,
+  shedEventV1: ShedEventV1,
+  serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -672,6 +686,10 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
   "client-request-qi-color-inspect-v1.json":
     SCHEMA_REGISTRY.clientRequestQiColorInspectV1,
+  "client-request-equip-false-skin-v1.json":
+    SCHEMA_REGISTRY.clientRequestEquipFalseSkinV1,
+  "client-request-forge-false-skin-v1.json":
+    SCHEMA_REGISTRY.clientRequestForgeFalseSkinV1,
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
@@ -755,6 +773,11 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataWeaponBrokenV1,
   "server-data-treasure-equipped-v1.json":
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
+  "false-skin-kind-v1.json": SCHEMA_REGISTRY.falseSkinKindV1,
+  "false-skin-state-v1.json": SCHEMA_REGISTRY.falseSkinStateV1,
+  "shed-event-v1.json": SCHEMA_REGISTRY.shedEventV1,
+  "server-data-false-skin-state-v1.json":
+    SCHEMA_REGISTRY.serverDataFalseSkinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7

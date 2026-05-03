@@ -19,6 +19,7 @@ import {
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
+import { FalseSkinKindV1 } from "./tuike.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 const HOTBAR_SLOT_COUNT = 9;
@@ -149,6 +150,27 @@ export const InventoryMoveIntentRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type InventoryMoveIntentRequestV1 = Static<typeof InventoryMoveIntentRequestV1>;
+
+export const EquipFalseSkinRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("equip_false_skin"),
+    slot: Type.Literal("false_skin"),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type EquipFalseSkinRequestV1 = Static<typeof EquipFalseSkinRequestV1>;
+
+export const ForgeFalseSkinRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_false_skin"),
+    kind: FalseSkinKindV1,
+  },
+  { additionalProperties: false },
+);
+export type ForgeFalseSkinRequestV1 = Static<typeof ForgeFalseSkinRequestV1>;
 
 export const ApplyPillRequestV1 = Type.Object(
   {
@@ -756,6 +778,8 @@ export const ClientRequestV1 = Type.Union([
   ForgeRequestV1,
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
+  EquipFalseSkinRequestV1,
+  ForgeFalseSkinRequestV1,
   ApplyPillRequestV1,
   DuoSheRequestV1,
   QiColorInspectRequestV1,

@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "slot",
+    "item_instance_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "equip_false_skin",
+      "type": "string"
+    },
+    "slot": {
+      "const": "false_skin",
+      "type": "string"
+    },
+    "item_instance_id": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    }
+  }
+}

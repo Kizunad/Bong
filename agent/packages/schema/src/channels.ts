@@ -116,6 +116,12 @@ export const CHANNELS = {
   /** Server → Agent: 暗器投射物射空 / 蒸发（plan-anqi-v1 P2 narration） */
   ANQI_PROJECTILE_DESPAWNED: "bong:combat/projectile_despawned",
 
+  /** Server → Agent: 替尸 / 蜕壳流脱壳事件（plan-tuike-v1 §P1） */
+  TUIKE_SHED: "bong:tuike/shed",
+
+  /** Server → Client/Agent: 伪皮 HUD 状态（plan-tuike-v1 §P0） */
+  TUIKE_FALSE_SKIN_STATE: "bong:tuike/false_skin_state",
+
   /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
 

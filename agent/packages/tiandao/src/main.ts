@@ -6,6 +6,7 @@ import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
+import { TuikeNarrationRuntime } from "./tuike-narration.js";
 import { WoliuNarrationRuntime } from "./woliu-narration.js";
 import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
@@ -147,6 +148,12 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey,
     model: options.model,
   });
+  const tuikeCleanup = await startTuikeRuntime({
+    redisUrl: config.redisUrl,
+    baseUrl: options.baseUrl,
+    apiKey: options.apiKey,
+    model: options.model,
+  });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
     redisUrl: config.redisUrl,
@@ -161,6 +168,7 @@ export async function main(options: MainOptions): Promise<void> {
     await heartDemonCleanup();
     await anqiCleanup();
     await zhenmaiCleanup();
+    await tuikeCleanup();
     await woliuCleanup();
     await tribulationCleanup();
     await skillLvUpCleanup();
@@ -203,6 +211,44 @@ async function startAnqiRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] anqi runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startTuikeRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TuikeNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TuikeNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new TuikeNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] tuike runtime online"))
+    .catch((error) => console.warn("[tiandao] tuike runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] tuike runtime disconnect error:", error);
     }
   };
 }
