@@ -67,8 +67,8 @@
 
 ### P0 缺口
 
-- spawn_plain 教学注入(灵泉/箱子/友善 NPC)：**新增 worldgen quest blueprint 任务**(派生 `plan-spawn-tutorial-v1`)
-- 首次突破 vs 后续突破 narration 区分：派生 `plan-narrative-v1` 子任务
+- spawn_plain 教学注入(灵泉/箱子/友善 NPC)：plan-spawn-tutorial-v1 ✅ active (2026-05-03，commit 521e3a81，7 决策闭环)
+- 首次突破 vs 后续突破 narration 区分：派生 `plan-narrative-v1` 子任务（5 句风格基准已写入本 plan §A.5 plan-spawn-tutorial-v1 P2 落地清单）
 
 ---
 
@@ -107,7 +107,7 @@
 - forge client UI 收尾(plan-forge-leftovers-v1 ⬜ → 必须升 active)
 - alchemy client UI 进度(plan-alchemy-client-v1 P1-P6 ⬜ → 必须升 active)
 - 妖兽骨系统(plan-fauna-v1 ⬜ → 必须起 active；P1 暂用 zombie 占位但 P2+ 必须正典化)
-- POI 注入(派生 `plan-poi-novice-v1`)
+- POI 注入：plan-poi-novice-v1 ✅ active (2026-05-03，commit b68b8d45)
 
 ---
 
@@ -1329,12 +1329,12 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
 | 8 | `plan-fauna-v1` | ⬜ | npc-ai ✅ | §L 噬元鼠 + §G P1 |
-| 9 | `plan-spawn-tutorial-v1` | 🆕 | worldgen ✅, fauna-v1, narrative-v1 | §L 30min 钩子 |
+| 9 | `plan-spawn-tutorial-v1` | ✅ active (2026-05-03，commit 521e3a81) | worldgen ✅, fauna-v1, narrative-v1 | §L 30min 钩子 |
 | 10 | `plan-spiritwood-v1` | ⬜ | botany-v1 ✅ | §G + 暗器/封灵匣 |
 | 11 | `plan-mineral-v1` | ⏳ | mineral-v2 ✅ | §G P1 |
 | 12 | `plan-forge-leftovers-v1` | ⬜ | forge-v1 ✅, input-binding-v1 | §G + O.6 硬依赖 |
 | 13 | `plan-alchemy-client-v1` | ⏳ | alchemy-v1 ✅, input-binding-v1 | §G + O.6 硬依赖 |
-| 14 | `plan-poi-novice-v1` | 🆕 | spawn-tutorial-v1, forge-leftovers-v1, alchemy-client-v1 | §L + 新手 POI |
+| 14 | `plan-poi-novice-v1` | ✅ active (2026-05-03，commit b68b8d45) | spawn-tutorial-v1, forge-leftovers-v1, alchemy-client-v1 | §L + 新手 POI |
 | 15 | `plan-terrain-ash-deadzone-v1` | ⏳ | worldgen ✅ | §M.2 避劫 |
 | 16 | `plan-terrain-pseudo-vein-v1` | ⏳ | worldgen ✅, narrative-v1 | §G 教学诱饵 |
 
