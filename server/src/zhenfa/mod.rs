@@ -23,6 +23,7 @@ use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTarge
 
 const TICKS_PER_SECOND: u64 = 20;
 const MIN_QI_INVEST_RATIO: f64 = 0.05;
+const ZHENFA_FLAG_ITEM_ID: &str = "array_flag";
 const ZHENFA_PEARL_ITEM_ID: &str = "scattered_qi_pearl";
 const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
@@ -386,6 +387,7 @@ fn handle_zhenfa_place_requests(
         &mut Cultivation,
         &QiColor,
         Option<&InsightModifiers>,
+        Option<&PlayerInventory>,
     )>,
 ) {
     for req in requests.read() {
@@ -397,7 +399,8 @@ fn handle_zhenfa_place_requests(
             continue;
         }
 
-        let Ok((username, mut cultivation, qi_color, modifiers)) = players.get_mut(req.player)
+        let Ok((username, mut cultivation, qi_color, modifiers, inventory)) =
+            players.get_mut(req.player)
         else {
             tracing::warn!(
                 "[bong][zhenfa] place rejected: player {:?} missing cultivation bundle",
@@ -405,6 +408,13 @@ fn handle_zhenfa_place_requests(
             );
             continue;
         };
+        if !has_zhenfa_flag(inventory) {
+            tracing::warn!(
+                "[bong][zhenfa] place rejected: player {:?} has no array flag",
+                req.player
+            );
+            continue;
+        }
 
         let spec = carrier_spec(req.carrier);
         let invest_ratio = sanitize_invest_ratio(req.qi_invest_ratio, spec.cap_ratio);
@@ -476,7 +486,7 @@ fn handle_zhenfa_place_requests(
 fn handle_zhenfa_trigger_requests(
     mut requests: EventReader<ZhenfaTriggerRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
-    players: Query<(&Position, &Cultivation, &QiColor)>,
+    players: Query<(&Position, &Cultivation, &QiColor, Option<&PlayerInventory>)>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut combat_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
@@ -484,13 +494,20 @@ fn handle_zhenfa_trigger_requests(
     mut sense_pulses: EventWriter<ZhenfaSensePulse>,
 ) {
     for req in requests.read() {
-        let Ok((position, cultivation, qi_color)) = players.get(req.player) else {
+        let Ok((position, cultivation, qi_color, inventory)) = players.get(req.player) else {
             tracing::warn!(
                 "[bong][zhenfa] active trigger rejected: player {:?} missing position/cultivation",
                 req.player
             );
             continue;
         };
+        if !has_zhenfa_flag(inventory) {
+            tracing::warn!(
+                "[bong][zhenfa] active trigger rejected: player {:?} has no array flag",
+                req.player
+            );
+            continue;
+        }
 
         let player_pos = position.get();
         let sense_range = active_trigger_range(cultivation, qi_color);
@@ -995,6 +1012,17 @@ fn trap_contam_delta(main: ColorKind, secondary: Option<ColorKind>) -> f64 {
     }
 }
 
+fn has_zhenfa_flag(inventory: Option<&PlayerInventory>) -> bool {
+    let Some(inventory) = inventory else {
+        return false;
+    };
+    inventory
+        .equipped
+        .values()
+        .chain(inventory.hotbar.iter().flatten())
+        .any(|item| item.template_id == ZHENFA_FLAG_ITEM_ID)
+}
+
 fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
     match kind {
         ZhenfaKind::Trap => 0.5,
@@ -1085,7 +1113,8 @@ mod tests {
     use crate::combat::events::{CombatEvent, DeathEvent};
     use crate::cultivation::components::{QiColor, Realm};
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, PlayerInventory,
+        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
+        PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     };
     use valence::prelude::{App, DVec3, Events};
 
@@ -1129,8 +1158,40 @@ mod tests {
                 Wounds::default(),
                 Contamination::default(),
                 MeridianSystem::default(),
+                zhenfa_flag_inventory(),
             ))
             .id()
+    }
+
+    fn array_flag_item(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: ZHENFA_FLAG_ITEM_ID.to_string(),
+            display_name: "阵旗".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 0.6,
+            rarity: ItemRarity::Uncommon,
+            description: "地师用来牵引阵眼气机的短旗。".to_string(),
+            stack_count: 1,
+            spirit_quality: 0.8,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        }
+    }
+
+    fn zhenfa_flag_inventory() -> PlayerInventory {
+        let mut inventory = empty_inventory();
+        inventory
+            .equipped
+            .insert(EQUIP_SLOT_MAIN_HAND.to_string(), array_flag_item(9001));
+        inventory
     }
 
     fn pearl_registry() -> ItemRegistry {
@@ -1222,6 +1283,30 @@ mod tests {
         assert_eq!(
             app.world().get::<Cultivation>(owner).unwrap().qi_current,
             90.0
+        );
+    }
+
+    #[test]
+    fn placement_requires_array_flag() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().entity_mut(owner).insert(empty_inventory());
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [2, 64, 2],
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.10,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            100.0
         );
     }
 
