@@ -48,6 +48,7 @@ pub mod meridian_open;
 pub mod negative_zone;
 pub mod overload;
 pub mod possession;
+pub mod qi_field;
 pub mod qi_zero_decay;
 pub mod realm_vision;
 pub mod skill_registry;

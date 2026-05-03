@@ -44,6 +44,7 @@ import {
   PseudoVeinDissipateEventV1,
   PseudoVeinSnapshotV1,
 } from "../src/pseudo-vein.js";
+import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
@@ -142,6 +143,11 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_DISSIPATE);
   });
 
+  it("declares zong formation Redis channel", () => {
+    expect(CHANNELS.ZONG_CORE_ACTIVATED).toBe("bong:zong_core_activated");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONG_CORE_ACTIVATED);
+  });
+
   it("declares spirit eye Redis channels", () => {
     expect(CHANNELS.SPIRIT_EYE_MIGRATE).toBe("bong:spirit_eye/migrate");
     expect(CHANNELS.SPIRIT_EYE_DISCOVERED).toBe("bong:spirit_eye/discovered");
@@ -188,6 +194,12 @@ describe("sample files pass schema validation", () => {
   it("pseudo-vein-dissipate-event.sample.json", () => {
     const data = loadSample("pseudo-vein-dissipate-event.sample.json");
     const result = validate(PseudoVeinDissipateEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("zong-core-activation.sample.json", () => {
+    const data = loadSample("zong-core-activation.sample.json");
+    const result = validate(ZongCoreActivationV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

@@ -1,0 +1,10 @@
+{
+  "origin": "xuanshui",
+  "origin_id": 5,
+  "pool": "zong_canjuan_xuanshui",
+  "fragment": { "type": "style", "style_id": "zhenmai", "plan": "plan-zhenmai-v1" },
+  "drops": {
+    "low_tier_active_core": { "min": 0.01, "max": 0.02 },
+    "high_tier_active_affinity": { "min": 0.001, "max": 0.003 }
+  }
+}

@@ -23,7 +23,7 @@ use crate::schema::channels::{
     CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
     CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
     CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WOLIU_BACKFIRE,
-    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -56,6 +56,7 @@ use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
+use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
@@ -85,6 +86,8 @@ pub enum RedisOutbound {
     PseudoVeinSnapshot(PseudoVeinSnapshotV1),
     #[allow(dead_code)]
     PseudoVeinDissipate(PseudoVeinDissipateEventV1),
+    #[allow(dead_code)]
+    ZongCoreActivated(ZongCoreActivationV1),
     BreakthroughEvent(BreakthroughEventV1),
     ForgeEvent(ForgeEventV1),
     ForgeStart(ForgeStartPayloadV1),
@@ -397,6 +400,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_PSEUDO_VEIN_DISSIPATE,
+                payload,
+            })
+        }
+        RedisOutbound::ZongCoreActivated(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ZongCoreActivationV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ZONG_CORE_ACTIVATED,
                 payload,
             })
         }

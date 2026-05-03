@@ -18,6 +18,7 @@ pub mod sync;
 pub mod territory;
 pub mod tribulation;
 pub mod tsy_hostile;
+pub mod zong_keeper;
 
 use valence::prelude::App;
 
@@ -43,5 +44,6 @@ pub fn register(app: &mut App) {
     social::register(app);
     relic::register(app);
     lod::register(app);
+    zong_keeper::register(app);
     poi_rogue_village::log_rogue_village_contract();
 }
