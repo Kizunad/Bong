@@ -91,6 +91,7 @@ pub struct ItemTemplate {
     pub id: String,
     pub display_name: String,
     pub category: ItemCategory,
+    pub max_stack_count: u32,
     pub grid_w: u8,
     pub grid_h: u8,
     pub base_weight: f64,
@@ -854,8 +855,141 @@ pub fn add_item_to_player_inventory(
         .get(template_id)
         .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
 
-    let instance_id = allocator.next_id()?;
-    let instance = ItemInstance {
+    let Some(main_pack_index) = inventory
+        .containers
+        .iter()
+        .position(|container| container.id == MAIN_PACK_CONTAINER_ID)
+    else {
+        return Err(format!(
+            "player inventory missing required `{MAIN_PACK_CONTAINER_ID}` container"
+        ));
+    };
+
+    let max_stack_count = template.max_stack_count.max(1);
+    let mut remaining = stack_count;
+    let mut staged = inventory.containers[main_pack_index].clone();
+
+    if max_stack_count > 1 {
+        for placed in staged
+            .items
+            .iter_mut()
+            .filter(|placed| placed.instance.template_id == template.id)
+        {
+            let available = max_stack_count.saturating_sub(placed.instance.stack_count);
+            let merged = remaining.min(available);
+            placed.instance.stack_count = placed.instance.stack_count.saturating_add(merged);
+            remaining -= merged;
+            if remaining == 0 {
+                break;
+            }
+        }
+    }
+
+    let mut new_stacks = Vec::new();
+    while remaining > 0 {
+        let new_stack_count = remaining.min(max_stack_count);
+        let Some((row, col)) = find_free_slot(&staged, template.grid_w, template.grid_h) else {
+            return Err(format!("inventory full: {template_id}"));
+        };
+        staged.items.push(PlacedItemState {
+            row,
+            col,
+            instance: runtime_instance_from_template(template, 0, new_stack_count),
+        });
+        new_stacks.push((row, col, new_stack_count));
+        remaining -= new_stack_count;
+    }
+
+    let mut new_instance_ids = Vec::with_capacity(new_stacks.len());
+    for _ in 0..new_stacks.len() {
+        new_instance_ids.push(allocator.next_id()?);
+    }
+
+    let main_pack = &mut inventory.containers[main_pack_index];
+    let mut affected_instance_id = None;
+    let mut remaining = stack_count;
+    if max_stack_count > 1 {
+        for placed in main_pack
+            .items
+            .iter_mut()
+            .filter(|placed| placed.instance.template_id == template.id)
+        {
+            let available = max_stack_count.saturating_sub(placed.instance.stack_count);
+            let merged = remaining.min(available);
+            if merged > 0 {
+                affected_instance_id.get_or_insert(placed.instance.instance_id);
+                placed.instance.stack_count = placed.instance.stack_count.saturating_add(merged);
+                remaining -= merged;
+            }
+            if remaining == 0 {
+                break;
+            }
+        }
+    }
+
+    for ((row, col, new_stack_count), instance_id) in
+        new_stacks.into_iter().zip(new_instance_ids.into_iter())
+    {
+        affected_instance_id.get_or_insert(instance_id);
+        main_pack.items.push(PlacedItemState {
+            row,
+            col,
+            instance: runtime_instance_from_template(template, instance_id, new_stack_count),
+        });
+    }
+
+    inventory.revision.0 = inventory.revision.0.saturating_add(1);
+
+    Ok(InventoryGrantReceipt {
+        revision: inventory.revision,
+        instance_id: affected_instance_id
+            .expect("validated non-zero grant should affect at least one inventory stack"),
+        template_id: template.id.clone(),
+        stack_count,
+    })
+}
+
+pub fn find_free_slot(container: &ContainerState, grid_w: u8, grid_h: u8) -> Option<(u8, u8)> {
+    if grid_w == 0 || grid_h == 0 || grid_w > container.cols || grid_h > container.rows {
+        return None;
+    }
+
+    for row in 0..=container.rows - grid_h {
+        for col in 0..=container.cols - grid_w {
+            let candidate = footprint_probe(row, col, grid_w, grid_h);
+            if !container
+                .items
+                .iter()
+                .any(|existing| placed_item_footprints_overlap(&candidate, existing))
+            {
+                return Some((row, col));
+            }
+        }
+    }
+
+    None
+}
+
+pub fn find_mergeable_stack<'a>(
+    container: &'a mut ContainerState,
+    template_id: &str,
+    max_stack_count: u32,
+) -> Option<&'a mut PlacedItemState> {
+    if max_stack_count <= 1 {
+        return None;
+    }
+
+    container.items.iter_mut().find(|placed| {
+        placed.instance.template_id == template_id && placed.instance.stack_count < max_stack_count
+    })
+}
+
+fn runtime_instance_from_template(
+    template: &ItemTemplate,
+    instance_id: u64,
+    stack_count: u32,
+) -> ItemInstance {
+    ItemInstance {
         instance_id,
         template_id: template.id.clone(),
         display_name: template.display_name.clone(),
@@ -874,32 +1008,34 @@ pub fn add_item_to_player_inventory(
         forge_color: None,
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
-    };
+    }
+}
 
-    let Some(main_pack) = inventory
-        .containers
-        .iter_mut()
-        .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
-    else {
-        return Err(format!(
-            "player inventory missing required `{MAIN_PACK_CONTAINER_ID}` container"
-        ));
-    };
-
-    main_pack.items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance,
-    });
-
-    inventory.revision.0 = inventory.revision.0.saturating_add(1);
-
-    Ok(InventoryGrantReceipt {
-        revision: inventory.revision,
-        instance_id,
-        template_id: template.id.clone(),
-        stack_count,
-    })
+fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState {
+    PlacedItemState {
+        row,
+        col,
+        instance: ItemInstance {
+            instance_id: 0,
+            template_id: String::new(),
+            display_name: String::new(),
+            grid_w,
+            grid_h,
+            weight: 0.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        },
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -920,6 +1056,8 @@ struct ItemTemplateToml {
     rarity: String,
     spirit_quality_initial: f64,
     description: String,
+    #[serde(default)]
+    max_stack_count: Option<u32>,
     effect: Option<ItemEffectToml>,
     /// 缺省 → DEFAULT_CAST_DURATION_MS。
     #[serde(default)]
@@ -972,6 +1110,15 @@ fn default_qi_cost_mul() -> f32 {
     1.0
 }
 
+fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
+    match category {
+        ItemCategory::Herb => 64,
+        ItemCategory::BoneCoin => u32::MAX,
+        ItemCategory::Pill | ItemCategory::Misc => 16,
+        ItemCategory::Weapon | ItemCategory::Tool | ItemCategory::Treasure => 1,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ItemEffectToml {
@@ -1017,6 +1164,15 @@ impl ItemTemplateToml {
 
         let category = parse_item_category(self.category.as_str(), source_path, id.as_str())?;
         let rarity = parse_item_rarity(self.rarity.as_str(), source_path, id.as_str())?;
+        let max_stack_count = self
+            .max_stack_count
+            .unwrap_or_else(|| default_max_stack_count_for_category(category));
+        if max_stack_count == 0 {
+            return Err(format!(
+                "{} item `{id}` has invalid max_stack_count 0; expected >= 1",
+                source_path.display()
+            ));
+        }
         let effect = self
             .effect
             .map(|raw| parse_item_effect(raw, source_path, id.as_str()))
@@ -1058,6 +1214,7 @@ impl ItemTemplateToml {
             id,
             display_name,
             category,
+            max_stack_count,
             grid_w: self.grid_w,
             grid_h: self.grid_h,
             base_weight: self.base_weight,
@@ -3175,6 +3332,7 @@ mod tests {
                     id: (*template_id).to_string(),
                     display_name: (*display_name).to_string(),
                     category: ItemCategory::Misc,
+                    max_stack_count: 1,
                     grid_w: 1,
                     grid_h: 1,
                     base_weight: 0.1,
@@ -3192,6 +3350,73 @@ mod tests {
             );
         }
         Ok(ItemRegistry { templates })
+    }
+
+    fn test_template(
+        template_id: &str,
+        category: ItemCategory,
+        grid_w: u8,
+        grid_h: u8,
+        max_stack_count: u32,
+    ) -> ItemTemplate {
+        ItemTemplate {
+            id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            category,
+            max_stack_count,
+            grid_w,
+            grid_h,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: "test template".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+        }
+    }
+
+    fn registry_from_templates(templates: Vec<ItemTemplate>) -> ItemRegistry {
+        ItemRegistry {
+            templates: templates
+                .into_iter()
+                .map(|template| (template.id.clone(), template))
+                .collect(),
+        }
+    }
+
+    fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows,
+                cols,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        }
+    }
+
+    fn assert_container_has_no_overlaps(container: &ContainerState) {
+        for (left_index, left) in container.items.iter().enumerate() {
+            for right in container.items.iter().skip(left_index + 1) {
+                assert!(
+                    !placed_item_footprints_overlap(left, right),
+                    "items `{}` and `{}` should not overlap",
+                    left.instance.template_id,
+                    right.instance.template_id
+                );
+            }
+        }
     }
 
     #[test]
@@ -3284,6 +3509,94 @@ mod tests {
                 "tool asset `{required_tool}` must not define combat weapon stats"
             );
         }
+        assert_eq!(
+            registry
+                .get("ci_she_hao")
+                .expect("herb template should load")
+                .max_stack_count,
+            64
+        );
+        assert_eq!(
+            registry
+                .get("guyuan_pill")
+                .expect("pill template should load")
+                .max_stack_count,
+            16
+        );
+        assert_eq!(
+            registry
+                .get("fengling_bone_coin")
+                .expect("bone coin template should load")
+                .max_stack_count,
+            u32::MAX
+        );
+        assert_eq!(
+            registry
+                .get("iron_sword")
+                .expect("weapon template should load")
+                .max_stack_count,
+            1
+        );
+    }
+
+    #[test]
+    fn item_template_toml_allows_explicit_max_stack_override() {
+        let raw: ItemTemplatesToml = toml::from_str(
+            r#"
+[[item]]
+id = "test_powder"
+name = "测试粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "测试"
+max_stack_count = 7
+"#,
+        )
+        .expect("inline item TOML should parse");
+
+        let template = raw
+            .item
+            .into_iter()
+            .next()
+            .expect("fixture should contain one item")
+            .try_into_item_template(Path::new("<inline-items.toml>"))
+            .expect("explicit max_stack_count should be accepted");
+
+        assert_eq!(template.max_stack_count, 7);
+    }
+
+    #[test]
+    fn item_template_toml_rejects_zero_max_stack() {
+        let raw: ItemTemplatesToml = toml::from_str(
+            r#"
+[[item]]
+id = "bad_powder"
+name = "坏粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "测试"
+max_stack_count = 0
+"#,
+        )
+        .expect("inline item TOML should parse");
+
+        let error = raw
+            .item
+            .into_iter()
+            .next()
+            .expect("fixture should contain one item")
+            .try_into_item_template(Path::new("<inline-items.toml>"))
+            .expect_err("zero max_stack_count should be rejected");
+
+        assert!(error.contains("invalid max_stack_count 0"));
     }
 
     #[test]
@@ -3580,6 +3893,7 @@ cols = 4
                 id: "wide_talisman".to_string(),
                 display_name: "阔符".to_string(),
                 category: ItemCategory::Misc,
+                max_stack_count: 1,
                 grid_w: 2,
                 grid_h: 2,
                 base_weight: 0.1,
@@ -3640,6 +3954,7 @@ cols = 4
                 id: "wide_talisman".to_string(),
                 display_name: "阔符".to_string(),
                 category: ItemCategory::Misc,
+                max_stack_count: 1,
                 grid_w: 2,
                 grid_h: 2,
                 base_weight: 0.1,
@@ -3728,6 +4043,59 @@ cols = 4
     }
 
     #[test]
+    fn find_free_slot_returns_top_left_for_empty_container() {
+        let inventory = empty_inventory(5, 7);
+        let main_pack = &inventory.containers[0];
+
+        assert_eq!(find_free_slot(main_pack, 1, 1), Some((0, 0)));
+        assert_eq!(find_free_slot(main_pack, 2, 2), Some((0, 0)));
+    }
+
+    #[test]
+    fn find_free_slot_scans_row_major_and_respects_multicell_bounds() {
+        let registry =
+            registry_from_templates(vec![test_template("wide", ItemCategory::Misc, 2, 2, 1)]);
+        let mut inventory = empty_inventory(3, 3);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "wide", 1)
+            .expect("first wide item should fit at top-left");
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(
+            find_free_slot(main_pack, 1, 1),
+            Some((0, 2)),
+            "row-major scan should skip the occupied 2x2 footprint"
+        );
+        assert_eq!(
+            find_free_slot(main_pack, 2, 2),
+            None,
+            "remaining space cannot hold a second 2x2 footprint"
+        );
+    }
+
+    #[test]
+    fn find_free_slot_finds_fragmented_hole_and_returns_none_when_full() {
+        let registry =
+            registry_from_templates(vec![test_template("one", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(2, 3);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+
+        for _ in 0..5 {
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1)
+                .expect("first five one-cell items should fit");
+        }
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(find_free_slot(main_pack, 1, 1), Some((1, 2)));
+        assert_eq!(find_free_slot(main_pack, 2, 2), None);
+
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1)
+            .expect("last one-cell slot should fit");
+        assert_eq!(find_free_slot(&inventory.containers[0], 1, 1), None);
+    }
+
+    #[test]
     fn runtime_grant_increments_revision_and_creates_instance() {
         let registry = load_item_registry().expect("item registry should load");
         let loadout = load_default_loadout(&registry).expect("default loadout should load");
@@ -3762,6 +4130,120 @@ cols = 4
                 .any(|entry| entry.instance.template_id == "ci_she_hao"),
             "runtime grant should materialize in main pack"
         );
+    }
+
+    #[test]
+    fn runtime_grant_places_multiple_non_stack_items_without_overlap() {
+        let registry =
+            registry_from_templates(vec![test_template("stone", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+
+        let receipt =
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 4)
+                .expect("four non-stack one-cell items should exactly fill a 2x2 pack");
+
+        assert_eq!(receipt.stack_count, 4);
+        let main_pack = &inventory.containers[0];
+        let positions: Vec<_> = main_pack
+            .items
+            .iter()
+            .map(|placed| (placed.row, placed.col, placed.instance.stack_count))
+            .collect();
+        assert_eq!(positions, vec![(0, 0, 1), (0, 1, 1), (1, 0, 1), (1, 1, 1)]);
+        assert_container_has_no_overlaps(main_pack);
+
+        let error =
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 1)
+                .expect_err("full pack should reject another non-stack item");
+        assert!(error.contains("inventory full: stone"));
+    }
+
+    #[test]
+    fn runtime_grant_merges_existing_stack_before_allocating_new_slot() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(10);
+
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 10)
+            .expect("initial herb stack should fit");
+        let first_instance_id = inventory.containers[0].items[0].instance.instance_id;
+
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            5,
+        )
+        .expect("second herb grant should merge into existing stack");
+
+        assert_eq!(receipt.instance_id, first_instance_id);
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 15);
+    }
+
+    #[test]
+    fn runtime_grant_repeated_herb_harvests_merge_into_one_stack() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(5, 7);
+        let mut allocator = InventoryInstanceIdAllocator::new(30);
+
+        for _ in 0..5 {
+            add_item_to_player_inventory(
+                &mut inventory,
+                &registry,
+                &mut allocator,
+                "ci_she_hao",
+                1,
+            )
+            .expect("batch herb harvest grant should merge into existing stack");
+        }
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(main_pack.items.len(), 1);
+        assert_eq!(main_pack.items[0].row, 0);
+        assert_eq!(main_pack.items[0].col, 0);
+        assert_eq!(main_pack.items[0].instance.stack_count, 5);
+        assert_eq!(inventory.revision.0, 5);
+    }
+
+    #[test]
+    fn runtime_grant_caps_stack_and_places_remainder_in_new_slot() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(20);
+
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 63)
+            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 3)
+            .expect("overflow should create a second stack");
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(main_pack.items.len(), 2);
+        assert_eq!(main_pack.items[0].instance.stack_count, 64);
+        assert_eq!(main_pack.items[1].row, 0);
+        assert_eq!(main_pack.items[1].col, 1);
+        assert_eq!(main_pack.items[1].instance.stack_count, 2);
+        assert_container_has_no_overlaps(main_pack);
     }
 
     // ─── apply_inventory_move ───────────────────────────────────────────────
@@ -4910,6 +5392,7 @@ cols = 4
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
                 base_weight: 1.0,
@@ -4976,6 +5459,7 @@ cols = 4
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
                 base_weight: 1.0,
