@@ -96,6 +96,9 @@ public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
                 + " "
                 + formatPercent(safePlayerState.zoneSpiritQiNormalized())
         );
+        if (safePlayerState.localNegPressure() < 0.0) {
+            lines.add("局部灵压: " + formatSigned(safePlayerState.localNegPressure()));
+        }
 
         return new RenderContent(false, lines);
     }

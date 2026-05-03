@@ -60,6 +60,10 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
         "qi_vein_flow",
         "flora_density",
         "flora_variant_id",
+        "neg_pressure",
+        "portal_anchor_sdf",
+        "anomaly_intensity",
+        "anomaly_kind",
     )
     ecology = EcologySpec(
         decorations=CAVE_NETWORK_DECORATIONS,
@@ -82,12 +86,29 @@ def fill_cave_network_tile(
     palette: SurfacePalette,
 ) -> TileFieldBuffer:
     buffer = TileFieldBuffer.create(
-        tile, tile_size,
-        ("height", "surface_id", "subsurface_id", "water_level",
-         "biome_id", "feature_mask", "boundary_weight",
-         "cave_mask", "ceiling_height", "entrance_mask",
-         "qi_density", "mofa_decay", "qi_vein_flow",
-         "flora_density", "flora_variant_id"),
+        tile,
+        tile_size,
+        (
+            "height",
+            "surface_id",
+            "subsurface_id",
+            "water_level",
+            "biome_id",
+            "feature_mask",
+            "boundary_weight",
+            "cave_mask",
+            "ceiling_height",
+            "entrance_mask",
+            "qi_density",
+            "mofa_decay",
+            "qi_vein_flow",
+            "flora_density",
+            "flora_variant_id",
+            "neg_pressure",
+            "portal_anchor_sdf",
+            "anomaly_intensity",
+            "anomaly_kind",
+        ),
     )
     stone_id = palette.ensure("stone")
     coarse_dirt_id = palette.ensure("coarse_dirt")
@@ -167,6 +188,17 @@ def fill_cave_network_tile(
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
 
+    portal_anchor_sdf = _cave_rift_hotspot_sdf(wx, wz, center_x, center_z, half_w, half_d)
+    hotspot_gate = (portal_anchor_sdf <= 30.0) & (cave_mask > 0.55)
+    hotspot_strength = np.clip(1.0 - portal_anchor_sdf / 30.0, 0.0, 1.0)
+    neg_pressure = np.where(hotspot_gate, 0.15 + 0.40 * hotspot_strength, 0.0)
+    anomaly_intensity = np.where(
+        hotspot_gate,
+        np.clip(0.35 + 0.45 * hotspot_strength, 0.0, 1.0),
+        0.0,
+    )
+    anomaly_kind = np.where(hotspot_gate, 1, 0)
+
     # --- Flora: 1 glow_lichen_column / 2 red_vine_curtain / 3 sinkhole_boulder /
     # 4 forbidden_pillar ---
     flora_density = np.zeros_like(height)
@@ -195,6 +227,27 @@ def fill_cave_network_tile(
     flora_density = np.clip(flora_density, 0.0, 1.0)
     buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
     buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
+    buffer.layers["neg_pressure"] = np.round(neg_pressure, 3).ravel()
+    buffer.layers["portal_anchor_sdf"] = np.round(portal_anchor_sdf, 3).ravel()
+    buffer.layers["anomaly_intensity"] = np.round(anomaly_intensity, 3).ravel()
+    buffer.layers["anomaly_kind"] = anomaly_kind.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer
+
+
+def _cave_rift_hotspot_sdf(
+    wx: np.ndarray,
+    wz: np.ndarray,
+    center_x: float,
+    center_z: float,
+    half_w: float,
+    half_d: float,
+) -> np.ndarray:
+    anchors = (
+        (center_x - half_w * 0.22, center_z + half_d * 0.18),
+        (center_x + half_w * 0.28, center_z - half_d * 0.22),
+        (center_x + half_w * 0.05, center_z + half_d * 0.32),
+    )
+    distances = [np.sqrt((wx - ax) ** 2 + (wz - az) ** 2) for ax, az in anchors]
+    return np.minimum.reduce(distances)

@@ -123,6 +123,8 @@ public class VfxRegistryTest {
             "bootstrap should register tribulation_omen_cloud");
         assertTrue(VfxRegistry.instance().contains(RealmCollapseBoundaryPlayer.EVENT_ID),
             "bootstrap should register realm_collapse_boundary");
+        assertTrue(VfxRegistry.instance().contains(FrostBreathPlayer.EVENT_ID),
+            "bootstrap should register frost_breath");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 

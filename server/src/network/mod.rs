@@ -108,7 +108,9 @@ use crate::skill::components::SkillId;
 use crate::social::components::{
     Anonymity, FactionMembership as PlayerFactionMembership, Relationships, Renown,
 };
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
+use crate::world::terrain::TerrainProviders;
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 #[cfg(test)]
@@ -265,7 +267,11 @@ pub fn register(app: &mut App) {
     app.insert_resource(resourcepack::ResourcePackConfig::default());
     app.insert_resource(resourcepack::ResourcePackStatusStore::default());
 
-    app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
+    app.add_systems(
+        Startup,
+        bootstrap_world_model_runtime_mirror_system
+            .after(crate::persistence::PersistenceBootstrapSet),
+    );
 
     app.add_systems(
         Update,
@@ -740,7 +746,13 @@ pub(crate) fn build_player_state_payload(
     cultivation: &Cultivation,
     zone: impl Into<String>,
 ) -> Result<Vec<u8>, PayloadBuildError> {
-    let payload = player_state.server_payload_with_social(cultivation, None, zone.into(), None);
+    let payload = player_state.server_payload_with_social_and_local_pressure(
+        cultivation,
+        None,
+        zone.into(),
+        None,
+        None,
+    );
     serialize_server_data_payload(&payload)
 }
 
@@ -1282,6 +1294,7 @@ type PlayerStateEmitQueryItem<'a> = (
     &'a mut Client,
     &'a Username,
     &'a Position,
+    Option<&'a CurrentDimension>,
     &'a PlayerState,
     &'a Cultivation,
     Option<&'a Anonymity>,
@@ -1311,16 +1324,19 @@ type PlayerStateEmitQueryFilter = (
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
     clock: Option<Res<CombatClock>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
     mut clients: Query<PlayerStateEmitQueryItem<'_>, PlayerStateEmitQueryFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let terrain_providers = terrain_providers.as_deref();
 
     for (
         entity,
         mut client,
         username,
         position,
+        current_dimension,
         player_state,
         cultivation,
         anonymity,
@@ -1337,11 +1353,14 @@ fn emit_player_state_payloads(
             relationships,
             faction_membership,
         );
-        let payload = player_state.server_payload_with_social(
+        let local_neg_pressure =
+            local_neg_pressure_at(terrain_providers, current_dimension, position);
+        let payload = player_state.server_payload_with_social_and_local_pressure(
             cultivation,
             Some(canonical_player_id(username.0.as_str())),
             zone_name,
             social,
+            local_neg_pressure,
         );
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -1360,6 +1379,29 @@ fn emit_player_state_payloads(
             username.0,
         );
     }
+}
+
+fn local_neg_pressure_at(
+    terrain_providers: Option<&TerrainProviders>,
+    current_dimension: Option<&CurrentDimension>,
+    position: &Position,
+) -> Option<f32> {
+    let providers = terrain_providers?;
+    let dimension = current_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or(DimensionKind::Overworld);
+    let provider = providers.for_dimension(dimension)?;
+    let sample = provider.sample(position.0.x.floor() as i32, position.0.z.floor() as i32);
+    local_neg_pressure_from_sample(sample.neg_pressure, sample.portal_anchor_sdf)
+}
+
+fn local_neg_pressure_from_sample(neg_pressure: f32, portal_anchor_sdf: f32) -> Option<f32> {
+    if neg_pressure <= 0.0
+        || portal_anchor_sdf > crate::cultivation::neg_pressure::HOTSPOT_RADIUS_BLOCKS
+    {
+        return None;
+    }
+    Some(-neg_pressure.clamp(0.0, 1.0))
 }
 
 type ZoneInfoClientItem<'a> = (
@@ -2362,6 +2404,13 @@ mod tests {
             (left - right).abs() < 1e-9,
             "expected {left} to be approximately equal to {right}"
         );
+    }
+
+    #[test]
+    fn local_neg_pressure_from_sample_reports_hotspot_as_negative_pressure() {
+        assert_eq!(local_neg_pressure_from_sample(0.8, 0.0), Some(-0.8));
+        assert_eq!(local_neg_pressure_from_sample(0.8, 30.1), None);
+        assert_eq!(local_neg_pressure_from_sample(0.0, 0.0), None);
     }
 
     #[test]
@@ -3519,6 +3568,7 @@ mod tests {
                 mut client,
                 username,
                 position,
+                _current_dimension,
                 player_state,
                 cultivation,
                 anonymity,
@@ -3535,11 +3585,12 @@ mod tests {
                     relationships,
                     faction_membership,
                 );
-                let payload = player_state.server_payload_with_social(
+                let payload = player_state.server_payload_with_social_and_local_pressure(
                     cultivation,
                     Some(canonical_player_id(username.0.as_str())),
                     zone_name,
                     social,
+                    None,
                 );
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {

@@ -1,9 +1,12 @@
 package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.PlayerStateViewModel;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public final class BongHudOrchestrator {
     public static final String BASELINE_LABEL = "Bong Client Connected";
@@ -83,6 +86,16 @@ public final class BongHudOrchestrator {
             nextY,
             screenWidth,
             screenHeight
+        )) {
+            nextY += LINE_HEIGHT;
+        }
+        if (appendLocalNegPressure(
+            commands,
+            PlayerStateStore.snapshot(),
+            widthMeasurer,
+            normalizedWidth,
+            BASELINE_X,
+            nextY
         )) {
             nextY += LINE_HEIGHT;
         }
@@ -219,5 +232,27 @@ public final class BongHudOrchestrator {
 
     private static int normalizeWidth(int requestedWidth) {
         return requestedWidth > 0 ? requestedWidth : DEFAULT_TEXT_WIDTH;
+    }
+
+    static boolean appendLocalNegPressure(
+        List<HudRenderCommand> commands,
+        PlayerStateViewModel playerState,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxWidth,
+        int x,
+        int y
+    ) {
+        PlayerStateViewModel safePlayerState = playerState == null ? PlayerStateViewModel.empty() : playerState;
+        if (safePlayerState.localNegPressure() >= 0.0 || widthMeasurer == null || maxWidth <= 0) {
+            return false;
+        }
+
+        String text = String.format(Locale.ROOT, "灵压 %.2f", safePlayerState.localNegPressure());
+        String clipped = HudTextHelper.clipToWidth(text, maxWidth, widthMeasurer);
+        if (clipped.isEmpty()) {
+            return false;
+        }
+        commands.add(HudRenderCommand.text(HudRenderLayer.ZONE, clipped, x, y, 0x9FD3FF));
+        return true;
     }
 }

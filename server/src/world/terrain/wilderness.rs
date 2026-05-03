@@ -67,6 +67,7 @@ pub fn sample(
         feature_mask: feature_mask as f32,
         boundary_weight: 0.0,
         rift_axis_sdf: 99.0,
+        portal_anchor_sdf: 999.0,
         rim_edge_mask: 0.0,
         cave_mask: 0.0,
         ceiling_height: 0.0,
