@@ -6,7 +6,8 @@ use valence::prelude::{
 use super::components::Realm;
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
-use crate::combat::components::{Lifecycle, LifecycleState};
+use crate::combat::components::{ActiveStatusEffect, Lifecycle, LifecycleState, StatusEffects};
+use crate::combat::events::StatusEffectKind;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::persistence::{persist_lifespan_event, LifespanEventRecord, PersistenceSettings};
@@ -19,6 +20,8 @@ use crate::schema::death_lifecycle::{
     AgingEventKindV1, AgingEventV1, LifespanEventKindV1, LifespanEventV1,
 };
 use crate::world::zone::{Zone, ZoneRegistry};
+
+use super::tick::frailty_qi_recovery_multiplier_for_realm;
 
 pub const KARMA_REBIRTH_THRESHOLD: f64 = 0.5;
 pub const REBIRTH_SAFE_WINDOW_TICKS: u64 = 24 * 60 * 60 * 20;
@@ -75,9 +78,10 @@ pub struct ExtensionCost {
 pub trait ExtensionContract {
     fn source(&self) -> &'static str;
     fn requested_years(&self, lifespan: &LifespanComponent) -> u32;
-    fn cost(&self, years: u32, _accumulated_years: f64, _cap_by_realm: u32) -> ExtensionCost {
+    fn cost(&self, years: u32, accumulated_years: f64, cap_by_realm: u32) -> ExtensionCost {
+        let pressure = lifespan_extension_cost_pressure(accumulated_years, cap_by_realm);
         ExtensionCost {
-            qi_cap_delta: -(years as f64 * self.qi_cap_cost_factor()),
+            qi_cap_delta: -(years as f64 * self.qi_cap_cost_factor() * pressure),
             enlightenment_slot: self.consumes_enlightenment(),
             ..Default::default()
         }
@@ -145,7 +149,7 @@ impl ExtensionContract for CollapseCoreExtensionContract {
     }
 
     fn cost(&self, years: u32, accumulated_years: f64, cap_by_realm: u32) -> ExtensionCost {
-        let pressure = 1.0 + (accumulated_years / cap_by_realm.max(1) as f64).powf(1.5);
+        let pressure = lifespan_extension_cost_pressure(accumulated_years, cap_by_realm);
         ExtensionCost {
             realm_progress_delta: -(years as f64 * 100.0 * pressure).round(),
             ..Default::default()
@@ -549,6 +553,7 @@ pub fn process_lifespan_extension_intents(
         } else {
             intent.requested_years
         };
+        let accumulated_before = ledger.accumulated_years;
         let Some(applied_years) = apply_lifespan_extension(
             &mut lifespan,
             &mut ledger,
@@ -558,9 +563,8 @@ pub fn process_lifespan_extension_intents(
             continue;
         };
 
-        let accumulated_after = ledger.accumulated_years;
         apply_extension_cost(
-            contract.cost(applied_years, accumulated_after, lifespan.cap_by_realm),
+            contract.cost(applied_years, accumulated_before, lifespan.cap_by_realm),
             cultivation,
             player_state,
         );
@@ -623,6 +627,39 @@ pub fn process_lifespan_extension_intents(
     }
 }
 
+pub fn sync_frailty_status_effects(
+    mut actors: Query<(&LifespanComponent, Option<&Cultivation>, &mut StatusEffects)>,
+) {
+    for (lifespan, cultivation, mut status_effects) in &mut actors {
+        if !lifespan.is_wind_candle() {
+            status_effects
+                .active
+                .retain(|effect| effect.kind != StatusEffectKind::Frailty);
+            continue;
+        }
+
+        let multiplier = cultivation
+            .map(|cultivation| frailty_qi_recovery_multiplier_for_realm(cultivation.realm))
+            .unwrap_or_else(|| frailty_qi_recovery_multiplier_for_realm(Realm::Awaken));
+        let magnitude = (1.0 - multiplier).clamp(0.0, 0.95) as f32;
+        if let Some(effect) = status_effects
+            .active
+            .iter_mut()
+            .find(|effect| effect.kind == StatusEffectKind::Frailty)
+        {
+            effect.magnitude = magnitude;
+            effect.remaining_ticks = u64::MAX;
+            continue;
+        }
+
+        status_effects.active.push(ActiveStatusEffect {
+            kind: StatusEffectKind::Frailty,
+            magnitude,
+            remaining_ticks: u64::MAX,
+        });
+    }
+}
+
 fn extension_contract_from_source(
     source: &str,
     requested_years: u32,
@@ -636,6 +673,10 @@ fn extension_contract_from_source(
             years: requested_years,
         }),
     }
+}
+
+fn lifespan_extension_cost_pressure(accumulated_years: f64, cap_by_realm: u32) -> f64 {
+    (1.0 + accumulated_years.max(0.0) / cap_by_realm.max(1) as f64).powf(1.5)
 }
 
 pub fn apply_lifespan_extension(
@@ -1042,6 +1083,52 @@ mod tests {
     }
 
     #[test]
+    fn frailty_status_syncs_with_wind_candle_state() {
+        let mut app = App::new();
+        app.add_systems(Update, sync_frailty_status_effects);
+
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::SOLIDIFY);
+        lifespan.years_lived = 545.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                lifespan,
+                Cultivation {
+                    realm: Realm::Solidify,
+                    ..Default::default()
+                },
+                StatusEffects::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let statuses = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        let frailty = statuses
+            .active
+            .iter()
+            .find(|effect| effect.kind == StatusEffectKind::Frailty)
+            .expect("wind-candle actor should receive Frailty status");
+        assert!((frailty.magnitude - 0.5).abs() < 1e-6);
+
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<LifespanComponent>()
+            .unwrap()
+            .years_lived = 100.0;
+        app.update();
+
+        let statuses = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            !statuses
+                .active
+                .iter()
+                .any(|effect| effect.kind == StatusEffectKind::Frailty),
+            "Frailty should clear after extension moves remaining lifespan above threshold"
+        );
+    }
+
+    #[test]
     fn lifespan_delta_matches_one_year_per_real_hour() {
         assert_eq!(
             lifespan_delta_years_for_ticks(LIFESPAN_TICKS_PER_YEAR, LIFESPAN_ONLINE_MULTIPLIER),
@@ -1171,7 +1258,7 @@ mod tests {
     }
 
     #[test]
-    fn lifespan_extension_pill_reduces_qi_max_linearly() {
+    fn lifespan_extension_pill_reduces_qi_max_by_cost_curve() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1 });
         app.add_event::<LifespanExtensionIntent>();
@@ -1206,6 +1293,55 @@ mod tests {
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
         assert!((cultivation.qi_max - 90.0).abs() < 1e-9);
         assert_eq!(cultivation.qi_current, 80.0);
+    }
+
+    #[test]
+    fn lifespan_extension_pill_cost_increases_with_accumulated_extension() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1 });
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_systems(Update, process_lifespan_extension_intents);
+
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::INDUCE);
+        lifespan.years_lived = 120.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                lifespan,
+                LifespanExtensionLedger {
+                    accumulated_years: 100.0,
+                    enlightenment_used: false,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                PlayerState::default(),
+                LifeRecord::new("offline:Azure"),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<LifespanExtensionIntent>>()
+            .send(LifespanExtensionIntent {
+                entity,
+                requested_years: 10,
+                source: "life_extension_pill".to_string(),
+            });
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        let pressure = lifespan_extension_cost_pressure(100.0, LifespanCapTable::INDUCE);
+        let expected_qi_max =
+            100.0 * (1.0 - 10.0 * LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR * pressure);
+        assert!((cultivation.qi_max - expected_qi_max).abs() < 1e-9);
+        assert!(
+            cultivation.qi_max < 90.0,
+            "prior extension ledger should make the second pill harsher than the first"
+        );
+        assert_eq!(cultivation.qi_current, cultivation.qi_max);
     }
 
     #[test]

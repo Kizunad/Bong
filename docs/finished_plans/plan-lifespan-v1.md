@@ -197,3 +197,42 @@ Client IPC 扩展（inspect 面板）：
 - 2026-05-01：从 plan-death-lifecycle-v1 reminder 整理立项。现有代码：`Lifecycle` component + `apply_revive_penalty` ✅（`server/src/combat/lifecycle.rs`）；`LifespanComponent` / `LifespanCapTable` / `TickRateModifier` / `LifespanEvent` 均未实装。
 - **2026-05-04**：skeleton → active 升级（user 拍板）。前置 plan-death-lifecycle-v1 / plan-cultivation-v1 ✅ finished。P0/P1/P2 可立刻起；P3-P5 待并行 plan（alchemy-v2 / cultivation 顿悟池 / rift-mouth）补齐再做。下一步起 P0 worktree（LifespanComponent + LifespanCapTable + tick 推进）。
 - **2026-05-04**：§6 全部 5 决策闭环（Q-L1/L2/L3/L4/L5 详 §6）。范围扩展：§4 加境界差异化风烛表；§5 老死遗骸复用 TSY `CorpseEmbalmed` / `BodyInstance` 模式；§7 新增 NPC 共用 LifespanComponent 章节。P4 悟道延寿直接接 `server/src/cultivation/insight.rs`（顿悟系统已实装），不依赖新接口。
+
+## Finish Evidence
+
+完成时间：2026-05-04
+
+### 落地清单
+
+- P0 寿元组件 / 境界上限 / tick 推进：`server/src/cultivation/lifespan.rs`、`server/src/cultivation/mod.rs`、`server/src/cultivation/tick.rs`，含 `LifespanComponent`、`LifespanCapTable`、`lifespan_aging_tick`、死亡扣寿 5% 与负灵域 tick rate。
+- P1 风烛状态 / inspect 展示：`server/src/combat/events.rs` 新增 `StatusEffectKind::Frailty`；`server/src/cultivation/lifespan.rs::sync_frailty_status_effects` 负责激活 / 解除；`server/src/cultivation/tick.rs::frailty_qi_recovery_multiplier_for_realm` 按境界表压低真元回复；`server/src/network/cultivation_detail_emit.rs`、`server/src/schema/server_data.rs`、`agent/packages/schema/src/server-data.ts`、`client/src/main/java/com/bong/client/network/CultivationDetailHandler.java`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java` 已串起 lifespan preview。
+- P2 老死结算：`server/src/cultivation/lifespan.rs` 将自然耗尽转为 `CultivationDeathCause::NaturalAging`；`server/src/combat/lifecycle.rs` 将自然老死写成 `natural_end`，并跳过死亡扣寿 / 复活 roll；`server/src/inventory/mod.rs` 对 `natural_end` 生成可交互遗骸容器。
+- P3 续命丹：`server/src/network/client_request_handler.rs` / `server/src/inventory/mod.rs` 将 `lifespan_extension` 物品效果转为 `LifespanExtensionIntent`；`server/src/cultivation/lifespan.rs` 基于 `LifespanExtensionLedger` 执行硬上限、事件流水、真元上限永久代价，并按 `(1 + accumulated/cap)^1.5` 提升后续代价。
+- P4 悟道延寿：`server/src/cultivation/insight_flow.rs` 对风烛触发延寿选项，`server/src/cultivation/lifespan.rs::EnlightenmentExtensionContract` 处理一生一次、补至 30% 余寿与生平卷标记。
+- P5 坍缩渊换寿：`server/src/cultivation/lifespan.rs::CollapseCoreExtensionContract` 与 `server/src/cultivation/possession.rs::process_life_core_requests` 已接入 `collapse_core` / `life_core` 通路；深层数值与 POI 密度留给 rift-mouth / tsy-zone plan。
+- P6 夺舍：`server/src/cultivation/possession.rs`、`server/src/network/client_request_handler.rs`、`server/src/network/cultivation_bridge.rs`、`agent/packages/schema/src/death-lifecycle.ts`、`agent/packages/schema/src/client-request.ts` 已实现请求、资格、双卷交叉引用与 `bong:duo_she_event`。
+- NPC 共用：`server/src/npc/lifecycle.rs` 通过 `shared_lifespan: LifespanComponent` 与 `LifespanExtensionLedger` 共用寿元模型，并把 NPC 自然老化 / 退休接到 `NaturalAging`。
+
+### 关键 commit
+
+- `9336a59e`（2026-05-04）`plan-lifespan-v1: 补齐风烛状态与续命代价曲线`
+
+### 测试结果
+
+- `cd server && cargo test lifespan`：35 passed。
+- `cd server && cargo test wind_candle`：6 passed。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2165 passed。
+- `cd agent && npm ci && npm run build`：通过。
+- `cd agent/packages/schema && npm test`：9 files / 263 tests passed。
+- `export JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn"; export PATH="$JAVA_HOME/bin:$PATH"; cd client && ./gradlew --no-daemon test build`：BUILD SUCCESSFUL。
+
+### 跨仓库核验
+
+- server：`LifespanComponent`、`LifespanExtensionLedger`、`StatusEffectKind::Frailty`、`sync_frailty_status_effects`、`lifespan_aging_tick`、`bong:aging`、`bong:lifespan_event`、`natural_end`、`DuoSheRequestEvent`、`UseLifeCoreEvent`。
+- agent schema：`LifespanEventV1`、`AgingEventV1`、`LifespanPreviewV1`、`DuoSheEventV1`、`UseLifeCoreRequestV1`、`CHANNELS.AGING`、`CHANNELS.LIFESPAN_EVENT`。
+- client：`CultivationDetailHandler`、`InspectScreen`、`DeathScreenHandler`、`ClientRequestProtocol.encodeDuoSheRequest`、`ClientRequestProtocol.encodeUseLifeCore`。
+
+### 遗留 / 后续
+
+- P5 坍缩渊换寿当前只固定 `collapse_core` / `life_core` 合同与请求通路；掉落密度、塌缩渊 POI 和失败惩罚数值继续依赖 `plan-terrain-rift-mouth-v1` / `plan-tsy-zone-v1` 深联动。
+- NPC 大规模寿元 tick 与自然遗骸视觉 polish 可在后续性能 / 美术 plan 中继续收束；本 plan 已保留共用 component 与自然死亡路径。
