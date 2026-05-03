@@ -1,26 +1,151 @@
-# Bong · plan-spirit-eye-v1 · 骨架
+# Bong · plan-spirit-eye-v1
 
-**灵眼系统**。灵眼是末法残土最顶级的情报资产之一——"凝脉→固元突破必需（灵气浓度 > 0.8，灵眼最佳）"；其坐标随天道变化，稀有且位置不固定。当前代码已有占位（botany/registry.rs 注释"灵眼未实装 → MVP 禁用生成"），worldgen 和 server 均无实体。本 plan 补全灵眼坐标注册、worldgen 生成规则、修炼突破条件接入、天道动态迁移机制，以及信息经济（灵眼坐标作为顶级情报的价值链路）。
+**灵眼系统**。灵眼是末法残土**顶级情报资产**——凝脉→固元突破必需（灵气浓度 > 0.8，灵眼最佳）；坐标随天道变化，稀有不固定。当前代码仅占位（`botany/registry.rs:430` 注释"灵眼未实装 → MVP 禁用生成"）。本 plan 补全坐标注册 / worldgen 生成 / 突破条件接入 / 天道动态迁移 / 信息经济（坐标 = 商品 = 死亡遗念）全链路。
 
-**世界观锚点**：`worldview.md §三 修炼体系 / 凝脉→固元突破条件`（"12 正经全通 + 浓度 > 0.8 灵气环境静坐凝核，灵眼最佳"）· `worldview.md §十 资源与匮乏 / 资源表`（"灵眼坐标：探索发现，位置随天道变化，极稀，凝脉→固元突破必需"）· `worldview.md §九 经济与交易 / 顶级资产`（"灵眼坐标、安全闭关点、验证过的死亡遗念——情报换命"）· `worldview.md §八 天道行为准则 / 温和手段`（天道重分配灵气 + 驱散强者聚集——本 plan P3 动态迁移机制是此条延伸，"灵眼主动迁移"是设计推导而非 worldview 直接引文）· `worldview.md §十三 世界地理 / 血谷`（地图条目"灵眼（不固定）"）
+**Primary Axis**（worldview §九/§十 已正典）：**情报稀缺资产的探索-独占-博弈循环**——灵眼形成 → 被发现 → 私有/交易 → 被使用 → 天道压制迁移的循环节奏与稀缺度
+
+## 阶段总览
+
+| 阶段 | 状态 | 验收 |
+|---|---|---|
+| **P0** 数据结构 + worldgen 候选点 + server 启动初始化 + 按 zone 数量决定灵眼数（Q120: D）| ⬜ | — |
+| **P1** 神识感知发现机制（proximity + perception check）+ 私有 narration | ⬜ | — |
+| **P2** 凝脉→固元突破环境检查接入（灵眼内 / >0.8 浓度）+ 失败反馈 | ⬜ | — |
+| **P3** 天道动态迁移（usage_pressure + 72h 周期偏移）（Q126: A）| ⬜ | — |
+| **P4** 信息经济（坐标交易 + 死亡遗念记录 + 声名联动）（Q125: A）| ⬜ | — |
+| P5 v1 收口（饱和 testing + agent narration 对齐） | ⬜ | — |
+
+> **vN+1 (plan-spirit-eye-v2)**：玩家人造灵眼（聚灵阵长期运行 + 天道压制加倍）（Q121: D）/ lingtian plot_qi_cap 影响（Q123: C）/ 灵眼形态多样化 / 灵眼"传承"（玩家挖空一个灵眼后该地永久变贫）
+
+---
+
+**世界观锚点**：`worldview.md §三 修炼体系 / 凝脉→固元突破条件`（"12 正经全通 + 浓度 > 0.8 灵气环境静坐凝核，灵眼最佳"）· `worldview.md §十 资源与匮乏 / 资源表`（"灵眼坐标：探索发现，位置随天道变化，极稀，凝脉→固元突破必需"）· `worldview.md §九 经济与交易 / 顶级资产`（"灵眼坐标、安全闭关点、验证过的死亡遗念——情报换命"）· `worldview.md §八 天道行为准则 / 温和手段`（天道重分配灵气 + 驱散强者聚集——本 plan P3 动态迁移机制是此条延伸）· `worldview.md §十三 世界地理 / 血谷`（地图条目"灵眼（不固定）"）
 
 **library 锚点**：`docs/library/cultivation/cultivation-0002 烬灰子内观笔记.json`（凝核体验 / 高浓度灵气静坐物理描述）· 待写 `geography-XXXX 灵眼踏查记`（探险者灵眼发现体验，anchor worldview §十 + §七 + §九，强调"你发现了灵眼，别人不知道——这就是你的优势"）
 
 **交叉引用**：
-- `plan-cultivation-v1`（凝脉→固元突破条件接入；已有 `breakthrough` fn，需加灵眼邻近检测）
-- `plan-worldgen-v3.1`（灵眼位置由 worldgen blueprint 候选点派生）
-- `plan-botany-v1`（✅；`botany/registry.rs:430` 有"灵眼未实装"占位，本 plan 接替）
-- `plan-perception-v1`（神识感知检测灵眼，感知 >= 阈值才能"发现"灵眼）
-- `plan-narrative-v1`（天道叙事触发：灵眼迁移广播，暗语式提示不是直接 "你发现了灵眼"）
-- `plan-tribulation-v1`（天劫发生时灵眼附近灵气波动是否触发灵眼迁移）
-- `plan-lingtian-v1`（灵眼区 plot_qi_cap 修饰：附近灵田可能吸收灵眼溢散 qi）
+- `plan-cultivation-v1` ✅（已落地）— 凝脉→固元突破条件接入；已有 `breakthrough` fn，需加灵眼邻近检测
+- `plan-worldgen-v3.1` ✅（已落地）— 灵眼位置由 worldgen blueprint 候选点派生；需新增 `spirit_eye_candidates` raster channel
+- `plan-botany-v1` ✅（已落地）— `botany/registry.rs:430` 有"灵眼未实装"占位，本 plan 接替
+- `plan-perception-v1.1` ✅（已落地）— 神识感知检测灵眼，感知力 >= 阈值才能"发现"灵眼（远距离）
+- `plan-narrative-v1` ⏳（部分实装）— 天道叙事触发：灵眼迁移广播 + 私有发现 narration（暗语式，不直接"你发现了灵眼"）
+- `plan-tribulation-v1` ⏳（部分实装）— 天劫发生时灵眼附近灵气波动是否触发灵眼迁移
+- `plan-lingtian-v1` ✅（部分实装）— 灵眼区 plot_qi_cap 修饰留 vN+1（Q123: C stub）
+- `plan-social-v1` ✅（已落地）— 灵眼坐标交易走死信箱（plan-social §交易 ✅）
+- `plan-identity-v1` ⬜（**未立 plan**，DEF 之一）— 信誉度 / 声名联动（"信使/向导"标签）vN+1 接入；v1 stub
+- `plan-zhenfa-v1` 🟡（active P0/P1）— 聚灵阵 vN+1 才做（Q121: D），玩家人造灵眼留 plan-spirit-eye-v2
 
-**阶段总览**：
-- P0 ⬜ 数据结构 + worldgen 候选点 + 服务器启动初始化
-- P1 ⬜ 神识感知发现机制（player 接近 + perception check → "感知到浓密灵眼"）
-- P2 ⬜ 凝脉→固元突破条件接入（需灵眼 20 格内 or 高灵气环境）
-- P3 ⬜ 天道动态迁移（周期性坐标偏移 + narration 暗示）
-- P4 ⬜ 信息经济接入（灵眼坐标可交易、可存入死亡遗念）
+**Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：灵眼系统**无主动技能 cast**——发现走 perception 自动检测 + proximity，突破走 cultivation 已有 breakthrough fn。无 hotbar 绑定需求。
+
+## 接入面 checklist（防孤岛 — 严格按 docs/CLAUDE.md §二）
+
+- **进料**：worldgen `spirit_eye_candidates` raster channel（新）→ server 启动时按 zone 数量初始化 N 个灵眼 → `Cultivation.realm` 校验是否为凝脉期 → `zone.spirit_qi` 读取局部灵气浓度 → `perception::SenseEntryV1` 检查感知力是否达阈值
+- **出料**：`SpiritEyeRegistry` Resource → `BreakthroughResult::EnvInsufficient` 拒绝条件 → `bong:spirit_eye/migrate` Redis channel（agent 订阅）→ `bong:spirit_eye/discovered` (outbound, 私有；仅该玩家可见 HUD 标记)→ `DeathInsight` payload 加"已知灵眼坐标"字段
+- **共享类型 / event**：复用 `Cultivation` / `Realm` / `Zone` / `SenseEntryV1` / `DeathInsight`；新增 `SpiritEye` struct / `SpiritEyeId` / `SpiritEyeRegistry` Resource / `SpiritEyeMigrateV1` schema / `SpiritEyeDiscoveredEvent`
+- **跨仓库契约**：
+  - server: `world::spirit_eye::SpiritEyeRegistry` / `world::spirit_eye::SpiritEye` / `world::spirit_eye::spirit_eye_discovery_tick` / `world::spirit_eye::spirit_eye_migration_tick` / `cultivation::breakthrough::attempt_breakthrough_guyuan` 扩展 / `BreakthroughResult::EnvInsufficient` variant / `world::spirit_eye::xueguai_eye_unstable_init`（血谷灵眼特殊处理 Q124: C）
+  - worldgen: `worldgen/scripts/terrain_gen/fields.py` LAYER_REGISTRY 新增 `spirit_eye_candidates` channel / `worldgen/scripts/terrain_gen/spirit_eye_selector.py`（候选区筛选算法）
+  - schema: `agent/packages/schema/src/spirit_eye.ts` → `SpiritEyeMigrateV1` / `SpiritEyeDiscoveredV1` (private) / `SpiritEyeUsedForBreakthroughV1`
+  - client: HUD 私有标记（仅 discovered_by 名单内的玩家看见）；`bong:spirit_eye/private_marker` outbound payload；perception module 已有 SenseEntry 渲染路径复用
+
+---
+
+## §A 概览（设计导航）
+
+> 灵眼是**顶级情报资产**——稀有 + 私有发现 + 可交易 + 天道动态迁移。v1 实装全 P0-P4（5 个阶段都纳入 v1，Q125+Q126: A）+ P5 收口。**关键设计**：按 zone 数量决定灵眼数（Q120: D，每个非负 zone 至少 1 个候选）+ 不加密存储（Q122: B 简单可调试）+ 血谷高风险高奖励（Q124: C）+ 玩家人造灵眼留 v2（Q121: D）+ lingtian 影响留 vN+1（Q123: C）。
+
+### A.0 v1 实装范围（2026-05-03 拍板）
+
+| 维度 | v1 实装 | 搁置 vN+1 |
+|---|---|---|
+| 灵眼数量公式 | **按 zone 数量决定**（每个非负 zone 至少 1 个候选灵眼，由迁移机制激活子集）（Q120: D）| `max(3, player_count/10)` 等公式 |
+| 候选区筛选 | worldgen `spirit_eye_candidates` raster channel + 地形/灵气浓度规则 | 玩家偏好驱动选址 |
+| 发现机制 | **proximity 自动 + perception 远距离检测**（神识阈值）| 探测器物品 / 仪器辅助 |
+| 信息加密 | **不加密**（Q122: B，明文 `discovered_by` Vec，简单可调试 + 信任 server）| 加密 / client-side 自存 |
+| 突破环境检查 | 灵眼内 / spirit_qi >= 0.8 才允许 | 多档阈值 / 部分通过 |
+| 灵眼内凝核加成 | 失败率 -30% | 成功率分级 / 染色加成 |
+| 天道动态迁移 | **完整实装**（usage_pressure + 72h 周期偏移）（Q126: A）| 复杂迁移规则 / 联动天劫 |
+| 信息经济 | **完整纳入 v1**（坐标交易死信箱 + 死亡遗念记录 + 声名联动 stub）（Q125: A）| plan-identity-v1 完整信誉度 |
+| 血谷灵眼 | **高风险高奖励**（凝核加成 +50% + 凝核时天道注意力加倍 → 异变兽触发率高）（Q124: C）| 多种特殊灵眼 |
+| 玩家人造灵眼 | **不实装**（Q121: D）| plan-spirit-eye-v2 + 聚灵阵 vN+1 |
+| lingtian plot_qi_cap 影响 | **stub**（Q123: C，等 plan-lingtian-process-v1 落地一起调）| 完整 PlotEnvironment 接入 |
+
+### A.1 跨 plan 接入面
+
+| 接入对象 | 关系 | v1 实装 |
+|---|---|---|
+| plan-cultivation-v1 | 突破条件加灵眼检查 | ✅ P2 实装 |
+| plan-worldgen-v3.1 | 候选区 raster channel | ✅ P0 实装 |
+| plan-perception-v1.1 | 神识感知发现 | ✅ P1 实装 |
+| plan-narrative-v1 | 私有 narration + 迁移广播 | ✅ P1/P3 实装（5 句基准对齐 spawn-tutorial 风格库）|
+| plan-social-v1 | 死信箱坐标交易 | ✅ P4 实装 |
+| plan-identity-v1 | 声名联动（信使/向导标签）| ⚠️ P4 stub（vN+1 完整接入）|
+| plan-tribulation-v1 | 天劫附近灵气波动 → 迁移触发 | ❌ vN+1（v1 仅 usage_pressure + 72h）|
+| plan-lingtian-v1 | plot_qi_cap 灵眼影响 | ❌ vN+1 stub（Q123: C）|
+| plan-zhenfa-v1 聚灵阵 | 玩家人造灵眼 | ❌ vN+1（Q121: D）|
+
+### A.2 v1 实施阶梯
+
+```
+P0  数据结构 + worldgen + server init
+       SpiritEyeRegistry Resource + SpiritEye struct
+       worldgen spirit_eye_candidates raster channel
+       spirit_eye_selector.py 候选区筛选
+       server 启动初始化（按 zone 数量 Q120: D）
+       血谷灵眼特殊处理（位置不固定 + 服务器重启换坐标 Q124 part）
+       ↓
+P1  神识感知发现 + 私有 narration
+       proximity 自动发现（无需神识，低境兜底）
+       neural perception check 远距离发现（最远 50 格）
+       SenseEntryV1 私有渲染（仅 discovered_by 见 HUD 标记）
+       agent 私有 narration（暗语式："此间有什么凝聚着，说不清的稠"）
+       ↓
+P2  凝脉→固元突破环境检查接入
+       attempt_breakthrough_guyuan 扩展 env_ok check
+       BreakthroughResult::EnvInsufficient variant
+       灵眼内凝核失败率 -30%
+       血谷灵眼凝核 +50% + 异变兽触发率加倍（Q124: C）
+       失败反馈暗语 narration
+       ↓
+P3  天道动态迁移
+       usage_pressure 累积 + 衰减 tick
+       迁移触发（usage_pressure >= 1.0）→ 新坐标在候选区随机
+       72h real-time 周期兜底偏移（防永久固定化）
+       agent narration 暗语广播（"东方某处天地凝气散了几分"）
+       ↓
+P4  信息经济
+       坐标交易接入 plan-social 死信箱（私有商品）
+       DeathInsight payload 加"已知灵眼坐标"字段
+       声名标签 stub（"信使/向导" tag emit；vN+1 plan-identity-v1 完整反应）
+       ↓ 饱和 testing
+P5  v1 收口
+       数值平衡 + LifeRecord "X 在 N 时刻在灵眼 Y 完成凝脉→固元突破"
+```
+
+### A.3 v1 已知偏离正典（vN+1 必须修复）
+
+- [ ] **plan-identity-v1 信誉度系统未立** — Q125 P4 信誉度联动仅 stub（"信使/向导"标签），vN+1 plan-identity-v1 完整信誉度反应
+- [ ] **plan-zhenfa-v1 聚灵阵 vN+1 才做** — Q121 玩家人造灵眼留 plan-spirit-eye-v2
+- [ ] **plan-lingtian-process-v1 ⏳** — Q123 lingtian plot_qi_cap 影响留 vN+1 stub
+- [ ] **plan-tribulation-v1 部分实装** — 天劫附近灵气波动触发灵眼迁移留 vN+1（v1 仅 usage_pressure + 72h）
+- [ ] **加密存储**（Q122 选 B 不加密）— vN+1 若发现 server admin 滥用偷坐标问题再补加密层
+
+### A.4 v1 关键开放问题
+
+**已闭合**（Q120-Q126，7 个决策 + skeleton §10 全闭合）：
+- Q120 → D 按 zone 数量决定灵眼数（每个非负 zone 至少 1 个候选）
+- Q121 → D 玩家人造灵眼留 plan-spirit-eye-v2
+- Q122 → B 不加密（明文 discovered_by Vec，简单可调试）
+- Q123 → C lingtian plot_qi_cap 影响 vN+1 stub
+- Q124 → C 血谷灵眼高风险高奖励（+50% 凝核加成 + 异变兽触发率加倍）
+- Q125 → A v1 完整纳入 P4 信息经济
+- Q126 → A v1 完整纳入 P3 天道动态迁移
+
+**仍 open**（v1 实施时拍板）：
+- [ ] **Q127. usage_pressure 衰减率 / 触发阈值**：每次玩家凝核 +0.1 / 每天衰减 0.05 / 阈值 1.0 起手；P3 实装时按运营数据调
+- [ ] **Q128. 血谷灵眼"异变兽触发率加倍"具体值**：触发冷却 / 数量 / 等级；P2 实装时按 plan-fauna ✅ 已有数据微调
+- [ ] **Q129. 神识感知阈值具体值**：远距离发现的 perception 力阈值具体数；P1 实装时按 plan-perception 已落地数据调
+- [ ] **Q130. 灵眼内 narration 风格基准**：v1 起手 "此间有什么凝聚着，说不清的稠" / "东方某处天地凝气散了几分"；P1 实装时与 plan-narrative-v1 协调（对齐 spawn-tutorial 5 句基准的"半文言半白话 + 冷漠古意 + 禁现代腔"标尺）
 
 ---
 
@@ -159,14 +284,36 @@ pub struct SpiritEye {
 
 ## §10 开放问题
 
-- [ ] 灵眼全服数量公式：`max(3, player_count / 10)` 是否合理？少量玩家时 3 个已足够，大服会否因玩家太多导致灵眼争夺过于激烈？
-- [ ] 玩家是否可以"人为制造"灵眼（如聚灵阵长期运行 → 局部灵气浓度持续 > 1.0 → 触发灵眼形成）？与 worldview §七 聚灵阵天道阈值悖论的关系？
-- [ ] 灵眼发现信息是否加密存储（防止 server admin 直接查玩家笔记获取坐标优势）？
-- [ ] 灵眼区域是否影响 lingtian 的 `plot_qi_cap`（附近灵田获得环境加成）？与 `PlotEnvironment` 计算的接入点？
-- [ ] 血谷灵眼的特殊属性：高奖励（凝核加成更强？）还是高风险（凝核时天道注意力加倍 → 异变兽触发率更高）？
+### 已闭合（2026-05-03 拍板，7 个决策）
+
+- [x] **Q120** → D 按 zone 数量决定灵眼数（skeleton §10 #1 灵眼数量公式 deprecated）
+- [x] **Q121** → D 玩家人造灵眼留 plan-spirit-eye-v2（skeleton §10 #2 闭合）
+- [x] **Q122** → B 不加密（skeleton §10 #3 闭合）
+- [x] **Q123** → C lingtian 影响 vN+1 stub（skeleton §10 #4 闭合）
+- [x] **Q124** → C 血谷灵眼高风险高奖励（skeleton §10 #5 闭合）
+- [x] **Q125** → A v1 完整纳入 P4 信息经济
+- [x] **Q126** → A v1 完整纳入 P3 天道动态迁移
+
+### 仍 open（v1 实施时拍板）
+
+- [ ] **Q127. usage_pressure 衰减率 / 触发阈值**：每次凝核 +0.1 / 每天衰减 0.05 / 阈值 1.0 起手；P3 实装时按运营数据调
+- [ ] **Q128. 血谷灵眼"异变兽触发率加倍"具体值**：触发冷却 / 数量 / 等级；P2 实装时按 plan-fauna ✅ 已有数据微调
+- [ ] **Q129. 神识感知阈值具体值**：远距离发现的 perception 力阈值具体数；P1 实装时按 plan-perception 已落地数据调
+- [ ] **Q130. 灵眼 narration 风格基准对齐**：v1 起手 "此间有什么凝聚着，说不清的稠" / "东方某处天地凝气散了几分"；P1 实装时与 plan-narrative-v1 协调（对齐 spawn-tutorial 5 句基准的"半文言半白话 + 冷漠古意 + 禁现代腔"标尺）
+
+### vN+1 留待问题（plan-spirit-eye-v2 时拍）
+
+- [ ] **玩家人造灵眼**（聚灵阵长期运行 → 局部灵气持续 > 1.0 → 形成临时灵眼 + 天道压制加倍）—— 接 plan-zhenfa-v1 聚灵阵 vN+1
+- [ ] **lingtian plot_qi_cap 影响**（灵眼 50 格内 plot_qi_cap +0.2）—— 接 plan-lingtian-process-v1
+- [ ] **天劫附近灵气波动 → 灵眼迁移触发**（plan-tribulation-v1 联动）
+- [ ] **完整信誉度反应**（plan-identity-v1 接入"信使/向导"标签触发的 NPC 反应）
+- [ ] **加密存储**（若发现 server admin 滥用问题再补）
+- [ ] **灵眼形态多样化**（不同地形 / 不同 qi_color 的特殊灵眼）
+- [ ] **灵眼"传承"**（玩家挖空一个灵眼后该地永久变贫；接 worldview "天道不偏袒"思路深化）
 
 ---
 
 ## §11 进度日志
 
 - **2026-04-27**：骨架立项。来源：`docs/plans-skeleton/reminder.md` "通用/跨 plan"节（"灵眼结构未实装"）+ worldview §三/§十/§九 灵眼设计锚点。`server/src/botany/registry.rs:430` 有"灵眼未实装 → MVP 禁用生成（EventTriggered 占位，永不 spawn）"注释，是现有唯一代码痕迹。worldgen 无 `spirit_eye_candidates` raster channel。cultivation 突破流程无灵眼环境检测。
+- **2026-05-03**：**plan 文档规范化升级**（去骨架化 + 加 Primary Axis + §A 概览 + 7 决策闭环 Q120-Q126）。primary axis = **情报稀缺资产的探索-独占-博弈循环**（worldview §九/§十 锚定）。**v1 完整范围**（P0-P5 五阶段全做）：数据结构 + 发现 + 突破接入 + 动态迁移 + 信息经济 + 收口。**关键设计**：按 zone 数量决定灵眼数（Q120 D 取代旧公式）+ 不加密（Q122 B）+ 血谷高风险高奖励（Q124 C）+ 玩家人造灵眼留 v2（Q121 D）+ lingtian 影响留 vN+1 stub（Q123 C）。**Hotbar 接入声明**：灵眼无主动技能 cast，无 hotbar 绑定需求。下一个候选：plan-fauna-v1 已 ✅ finished（journey plan 状态待同步）/ plan-style-pick-v1 ⬜ 派生（P2 流派分化必需）/ plan-identity-v1 ⬜ 派生（DEF 之一）。

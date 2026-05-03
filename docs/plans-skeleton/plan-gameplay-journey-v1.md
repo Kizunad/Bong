@@ -121,7 +121,7 @@
 
 凝脉期是**经脉拓扑选择窗口**，玩家必须在 5h 内做 1 次不可逆选择(`cultivation::topology` ✅ 已支持)，决定主流派树：
 
-> **2026-05-03 状态更新**：6 流派 plan 已全部从 skeleton 升 active（zhenfa / anqi / dugu / zhenmai / tuike / woliu）+ baomai-v1 已实装。**P2 流派分化轴主要 plan 缺口已闭合**。剩余 P2 缺口：spirit-eye-v1 / style-pick-ui / fauna-v1。
+> **2026-05-03 状态更新**：6 流派 plan 已全部从 skeleton 升 active（zhenfa / anqi / dugu / zhenmai / tuike / woliu）+ baomai-v1 已实装 + spirit-eye-v1 升 active 规范化 + fauna-v1 ✅ finished (2026-05-02 d2ee8a0b 归档)。**P2 流派分化轴主要 plan 缺口已闭合**。剩余 P2 缺口：style-pick-ui（派生 plan-style-pick-v1）。
 
 | 流派 | 攻击/防御 | 关键依赖 plan | 路径线索 |
 |------|---------|---------------|---------|
@@ -181,9 +181,9 @@
 | zhenmai-v1 | ✅ active (2026-05-03，10 决策；P0 已实装于 plan-combat-no_ui) | P1 实装（commit 530d6d53）|
 | tuike-v1 | ✅ active (2026-05-03，6 决策 + 2 reframe) | P0/P1 实装（commit 5b90b758）|
 | woliu-v1 | ✅ active (2026-05-03，9 决策 + hotbar 正典化) | P0/P1 实装（commit 121dbf70）|
-| **spirit-eye-v1** | ⬜ skeleton placeholder | 升 active(P2 必需，凝脉→固元突破前置)|
+| **spirit-eye-v1** | ✅ active (2026-05-03 规范化升级，7 决策闭环) | P0-P5 全 v1 范围实装中 |
 | **style-pick-ui + schema** | 不存在 | 派生 `plan-style-pick-v1` |
-| **fauna-v1** | ⬜ skeleton（P1 占用 zombie 替代）| 升 active(P2 异变兽核必需)|
+| **fauna-v1** | ✅ finished (2026-05-02，commit d2ee8a0b 归档) | 噬元鼠 / 异变兽核 / 封灵骨币 / forge 正典化全 ✅ |
 
 **worldview 同期更新**（commit fe00532c）：末土后招原则 + 身份与信誉系统 + 毒 vs 毒蛊边界正典化（接 plan-identity-v1 vN+1）。
 
@@ -1328,7 +1328,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
-| 8 | `plan-fauna-v1` | ⬜ | npc-ai ✅ | §L 噬元鼠 + §G P1 |
+| 8 | `plan-fauna-v1` | ✅ finished (2026-05-02，commit d2ee8a0b 归档) | npc-ai ✅ | §L 噬元鼠 + §G P1 |
 | 9 | `plan-spawn-tutorial-v1` | ✅ active (2026-05-03，commit 521e3a81) | worldgen ✅, fauna-v1, narrative-v1 | §L 30min 钩子 |
 | 10 | `plan-spiritwood-v1` | ⬜ | botany-v1 ✅ | §G + 暗器/封灵匣 |
 | 11 | `plan-mineral-v1` | ⏳ | mineral-v2 ✅ | §G P1 |
@@ -1343,14 +1343,14 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
 | 17 | `plan-style-pick-v1` | 🆕 | cultivation-canonical-align-v1, ipc-schema ✅ | §A 流派触发 schema |
-| 18 | `plan-spirit-eye-v1` | ⬜ | cultivation-canonical-align-v1, perception-v1.1 ✅ | §G P2 必需 |
-| 19 | `plan-zhenfa-v1` | ⬜ | cross-system-patch-v1 | §G P2 必需 |
+| 18 | `plan-spirit-eye-v1` | ✅ active (2026-05-03 规范化升级) | cultivation-canonical-align-v1, perception-v1.1 ✅ | §G P2 必需 |
+| 19 | `plan-zhenfa-v1` | ✅ active (2026-05-03，commit 6c00602d + fc7d4854) | cross-system-patch-v1 | §G P2 必需 |
 | 20 | `plan-baomai-v1` | ✅ | (已完成) | §A 体修 |
-| 21 | `plan-anqi-v1` | ⬜ | spiritwood-v1, fauna-v1, forge-leftovers-v1 | §A 暗器 |
-| 22 | `plan-dugu-v1` | ⬜ | fauna-v1, botany-v2 | §A 毒蛊 |
-| 23 | `plan-zhenmai-v1` | ⬜ | cultivation-canonical-align-v1 | §A 截脉 |
-| 24 | `plan-tuike-v1` | ⬜ | spiritwood-v1, fauna-v1 | §A 替尸 |
-| 25 | `plan-woliu-v1` | ⬜ | terrain-ash-deadzone-v1 | §A 涡流(P4 解锁但 plan 早做) |
+| 21 | `plan-anqi-v1` | ✅ active (2026-05-03，commit 20b35224) | spiritwood-v1, fauna-v1, forge-leftovers-v1 | §A 暗器 |
+| 22 | `plan-dugu-v1` | ✅ active (2026-05-03，commit 84d3e320) | fauna-v1, botany-v2 | §A 毒蛊 |
+| 23 | `plan-zhenmai-v1` | ✅ active (2026-05-03，commit 530d6d53) | cultivation-canonical-align-v1 | §A 截脉 |
+| 24 | `plan-tuike-v1` | ✅ active (2026-05-03，commit 5b90b758) | spiritwood-v1, fauna-v1 | §A 替尸 |
+| 25 | `plan-woliu-v1` | ✅ active (2026-05-03，commit 121dbf70) | terrain-ash-deadzone-v1 | §A 涡流(P4 解锁但 plan 早做) |
 | 26 | `plan-multi-style-v1` | 🆕 | style-pick-v1, cultivation-canonical-align-v1 | §A.5 + O.14 |
 
 #### 层 D：P3 中阶（Tier 3）
