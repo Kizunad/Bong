@@ -188,6 +188,7 @@ def select_poi_locations(
     *,
     min_spawn_distance: int = 200,
     min_same_type_distance: int = 1000,
+    min_cross_type_distance: int = 64,
     poi_types: Iterable[PoiType] = tuple(PoiType),
 ) -> dict[PoiType, list[Vec3]]:
     selections = select_poi_location_records(
@@ -197,6 +198,7 @@ def select_poi_locations(
         terrain_field,
         min_spawn_distance=min_spawn_distance,
         min_same_type_distance=min_same_type_distance,
+        min_cross_type_distance=min_cross_type_distance,
         poi_types=poi_types,
     )
     return {poi_type: [selection.pos for selection in rows] for poi_type, rows in selections.items()}
@@ -210,6 +212,7 @@ def select_poi_location_records(
     *,
     min_spawn_distance: int = 200,
     min_same_type_distance: int = 1000,
+    min_cross_type_distance: int = 64,
     poi_types: Iterable[PoiType] = tuple(PoiType),
 ) -> dict[PoiType, list[PoiSelection]]:
     qi = np.asarray(spirit_qi_field, dtype=np.float64)
@@ -217,6 +220,7 @@ def select_poi_location_records(
         raise ValueError("spirit_qi_field shape must match terrain field height")
 
     selected: dict[PoiType, list[PoiSelection]] = {}
+    occupied_positions: list[Vec3] = []
     for poi_type in poi_types:
         record = _select_one(
             poi_type,
@@ -226,8 +230,11 @@ def select_poi_location_records(
             terrain_field,
             min_spawn_distance,
             min_same_type_distance,
+            min_cross_type_distance,
+            occupied_positions,
         )
         selected[poi_type] = [record]
+        occupied_positions.append(record.pos)
     return selected
 
 
@@ -288,6 +295,8 @@ def _select_one(
     terrain: TerrainField,
     min_spawn_distance: int,
     min_same_type_distance: int,
+    min_cross_type_distance: int,
+    occupied_positions: Iterable[Vec3],
 ) -> PoiSelection:
     for step_radius, qi_margin, label in _RELAXATION_STEPS:
         effective_radius = max(radius, step_radius)
@@ -298,6 +307,8 @@ def _select_one(
             qi,
             terrain,
             min_spawn_distance,
+            min_cross_type_distance,
+            occupied_positions,
         )
         if candidates.size == 0:
             continue
@@ -326,6 +337,8 @@ def _candidate_indices(
     qi: np.ndarray,
     terrain: TerrainField,
     min_spawn_distance: int,
+    min_cross_type_distance: int,
+    occupied_positions: Iterable[Vec3],
 ) -> np.ndarray:
     rows, cols = np.indices(qi.shape)
     world_x = terrain.origin_x + cols * terrain.cell_size
@@ -339,6 +352,9 @@ def _candidate_indices(
         & (terrain.slope < 0.3)
         & (~terrain.water_mask)
     )
+    for occupied in occupied_positions:
+        occupied_dist = np.sqrt((world_x - occupied.x) ** 2 + (world_z - occupied.z) ** 2)
+        valid &= occupied_dist >= min_cross_type_distance
     return np.argwhere(valid)
 
 

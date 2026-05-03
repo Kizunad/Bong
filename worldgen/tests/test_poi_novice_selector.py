@@ -43,6 +43,31 @@ def test_selector_picks_valid_qi_and_avoids_spawn_core_water_and_slope() -> None
         assert not (-80 <= record.pos.x <= 0 and -80 <= record.pos.z <= 0)
 
 
+def test_selector_keeps_cross_type_pois_from_collapsing_on_one_cell() -> None:
+    height = np.full((128, 128), 70.0)
+    qi = np.full((128, 128), 0.5)
+    terrain = TerrainField.from_height(
+        height,
+        origin_x=-512,
+        origin_z=-512,
+        cell_size=8,
+    )
+
+    records = select_poi_location_records(
+        Vec3(0.0, 70.0, 0.0),
+        1500,
+        qi,
+        terrain,
+        min_cross_type_distance=64,
+    )
+
+    positions = [records[poi_type][0].pos for poi_type in PoiType]
+    assert len({pos.as_tuple() for pos in positions}) == len(PoiType)
+    for left_index, left in enumerate(positions):
+        for right in positions[left_index + 1 :]:
+            assert math.hypot(left.x - right.x, left.z - right.z) >= 64
+
+
 def test_selector_falls_back_after_radius_and_qi_relaxation_are_exhausted() -> None:
     height = np.full((20, 20), 70.0)
     qi = np.full((20, 20), 0.05)
