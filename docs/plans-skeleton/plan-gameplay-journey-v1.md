@@ -1348,6 +1348,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 16b | `plan-terrain-jiuzong-ruin-v1` | ⏳ active (2026-05-04 升级) | worldgen ✅, library-jiuzong-history（P0 子任务并行） | 九宗废墟 POI；7 宗 origin layer + 阵核激活 + 守墓人 NPC + 残卷 loot |
 | 16c | `plan-terrain-rift-mouth-v1` | ⏳ active (2026-05-04 升级) | worldgen ✅, plan-tsy-dimension-v1 ✅ | 渊口荒丘；portal_anchor_sdf layer + 负灵 hot-spot + TSY portal 入口锚点 |
 | 16d | `plan-lifespan-v1` | ⏳ active (2026-05-04 升级) | cultivation-v1 ✅, death-lifecycle-v1 ✅ | 寿元系统（7 phase：tick 推进 / 风烛 / 老死 / 续命四分支 / 夺舍）；§M.3 多周目相关 |
+| 16e | `plan-library-jiuzong-history-v1` | ⏳ active (2026-05-04 升级) | terrain-jiuzong-ruin-v1（同期 active，Q-J2 派生）| 已亡七宗 lore 写作 plan（peoples-0010~0016 入 library；参考道教龙虎山 / 茅山 / 武当 / 全真写作密度）|
 
 #### 层 C：P2 流派（Tier 2）
 
