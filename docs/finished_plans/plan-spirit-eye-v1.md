@@ -332,13 +332,14 @@ pub struct SpiritEye {
 ### 关键 commit
 
 - `7b7f032b` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
+- `c2f9d8b2` · 2026-05-03 · `fix(plan-spirit-eye-v1): 收窄灵眼突破加成与私有标记`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：2115 passed。
-- `cd server && cargo test spirit_eye --quiet`：9 passed。
-- `cd server && cargo test breakthrough --quiet`：35 passed。
+- `cd server && cargo test`：2117 passed。
+- `cd server && cargo test spirit_eye --quiet`：11 passed。
+- `cd server && cargo test breakthrough --quiet`：36 passed。
 - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：build 通过；tiandao 210 passed；schema 252 passed。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests "com.bong.client.visual.realm_vision.PerceptionEdgeRendererTest"`：通过。
