@@ -382,13 +382,7 @@ fn handle_zhenfa_place_requests(
     mut requests: EventReader<ZhenfaPlaceRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
-    mut players: Query<(
-        &Username,
-        &mut Cultivation,
-        &QiColor,
-        Option<&InsightModifiers>,
-        Option<&PlayerInventory>,
-    )>,
+    mut players: Query<ZhenfaPlacePlayer<'_>>,
 ) {
     for req in requests.read() {
         if registry.find_at(req.pos).is_some() {
@@ -486,7 +480,7 @@ fn handle_zhenfa_place_requests(
 fn handle_zhenfa_trigger_requests(
     mut requests: EventReader<ZhenfaTriggerRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
-    players: Query<(&Position, &Cultivation, &QiColor, Option<&PlayerInventory>)>,
+    players: Query<ZhenfaTriggerPlayer<'_>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut combat_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
@@ -565,6 +559,21 @@ type ZhenfaDamageTarget<'a> = (
     Option<&'a Username>,
     Option<&'a mut Contamination>,
     Option<&'a mut MeridianSystem>,
+);
+
+type ZhenfaPlacePlayer<'a> = (
+    &'a Username,
+    &'a mut Cultivation,
+    &'a QiColor,
+    Option<&'a InsightModifiers>,
+    Option<&'a PlayerInventory>,
+);
+
+type ZhenfaTriggerPlayer<'a> = (
+    &'a Position,
+    &'a Cultivation,
+    &'a QiColor,
+    Option<&'a PlayerInventory>,
 );
 
 type ZhenfaDisarmPlayer<'a> = (
