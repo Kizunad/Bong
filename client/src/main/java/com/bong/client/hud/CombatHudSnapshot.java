@@ -8,6 +8,7 @@ import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SpellVolumeState;
 import com.bong.client.combat.UnifiedEventStream;
 import com.bong.client.combat.UnlockedStyles;
+import com.bong.client.combat.store.CarrierStateStore;
 import com.bong.client.inventory.model.PhysicalBody;
 
 /**
@@ -25,6 +26,7 @@ public final class CombatHudSnapshot {
         CastState.idle(),
         UnifiedEventStream.empty(),
         SpellVolumeState.idle(),
+        CarrierStateStore.State.NONE,
         DefenseWindowState.idle(),
         UnlockedStyles.none()
     );
@@ -37,6 +39,7 @@ public final class CombatHudSnapshot {
     private final CastState castState;
     private final UnifiedEventStream eventStream;
     private final SpellVolumeState spellVolumeState;
+    private final CarrierStateStore.State carrierState;
     private final DefenseWindowState defenseWindowState;
     private final UnlockedStyles unlockedStyles;
 
@@ -49,6 +52,7 @@ public final class CombatHudSnapshot {
         CastState castState,
         UnifiedEventStream eventStream,
         SpellVolumeState spellVolumeState,
+        CarrierStateStore.State carrierState,
         DefenseWindowState defenseWindowState,
         UnlockedStyles unlockedStyles
     ) {
@@ -60,6 +64,7 @@ public final class CombatHudSnapshot {
         this.castState = castState;
         this.eventStream = eventStream;
         this.spellVolumeState = spellVolumeState;
+        this.carrierState = carrierState;
         this.defenseWindowState = defenseWindowState;
         this.unlockedStyles = unlockedStyles;
     }
@@ -77,6 +82,7 @@ public final class CombatHudSnapshot {
         CastState castState,
         UnifiedEventStream eventStream,
         SpellVolumeState spellVolumeState,
+        CarrierStateStore.State carrierState,
         DefenseWindowState defenseWindowState,
         UnlockedStyles unlockedStyles
     ) {
@@ -89,6 +95,7 @@ public final class CombatHudSnapshot {
             castState == null ? CastState.idle() : castState,
             eventStream == null ? UnifiedEventStream.empty() : eventStream,
             spellVolumeState == null ? SpellVolumeState.idle() : spellVolumeState,
+            carrierState == null ? CarrierStateStore.State.NONE : carrierState,
             defenseWindowState == null ? DefenseWindowState.idle() : defenseWindowState,
             unlockedStyles == null ? UnlockedStyles.none() : unlockedStyles
         );
@@ -102,6 +109,7 @@ public final class CombatHudSnapshot {
     public CastState castState() { return castState; }
     public UnifiedEventStream eventStream() { return eventStream; }
     public SpellVolumeState spellVolumeState() { return spellVolumeState; }
+    public CarrierStateStore.State carrierState() { return carrierState; }
     public DefenseWindowState defenseWindowState() { return defenseWindowState; }
     public UnlockedStyles unlockedStyles() { return unlockedStyles; }
 }

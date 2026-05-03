@@ -173,6 +173,11 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(CarrierHudPlanner.buildCommands(
+                combatSnapshot.carrierState(),
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(EdgeFeedbackHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(),
                 combatSnapshot.defenseWindowState(),

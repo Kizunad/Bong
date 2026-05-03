@@ -657,6 +657,39 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeChargeCarrier(String slot, double qiTarget) {
+        if (!Double.isFinite(qiTarget) || qiTarget < 0.0 || qiTarget > 80.0) {
+            throw new IllegalArgumentException("qiTarget must be finite in [0,80], got " + qiTarget);
+        }
+        JsonObject obj = envelope("charge_carrier");
+        if (slot != null && !slot.isBlank()) {
+            obj.addProperty("slot", slot.trim());
+        }
+        obj.addProperty("qi_target", qiTarget);
+        return obj.toString();
+    }
+
+    public static String encodeThrowCarrier(String slot, double x, double y, double z, double power) {
+        if (slot == null || slot.isBlank()) {
+            throw new IllegalArgumentException("slot must not be blank");
+        }
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            throw new IllegalArgumentException("dir vector must be finite");
+        }
+        if (!Double.isFinite(power) || power < 0.0 || power > 1.0) {
+            throw new IllegalArgumentException("power must be finite in [0,1], got " + power);
+        }
+        JsonObject obj = envelope("throw_carrier");
+        obj.addProperty("slot", slot.trim());
+        com.google.gson.JsonArray dir = new com.google.gson.JsonArray();
+        dir.add(x);
+        dir.add(y);
+        dir.add(z);
+        obj.add("dir_unit", dir);
+        obj.addProperty("power", power);
+        return obj.toString();
+    }
+
     public static String encodeJiemai() {
         return envelope("jiemai").toString();
     }
