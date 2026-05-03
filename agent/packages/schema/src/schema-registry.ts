@@ -162,6 +162,10 @@ import {
   PseudoVeinSeasonV1,
   PseudoVeinSnapshotV1,
 } from "./pseudo-vein.js";
+import {
+  ZongCoreActivationV1,
+  ZongmenOriginIdV1,
+} from "./zong-formation.js";
 import { FogShapeV1, RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ServerDataAlchemyContaminationV1,
@@ -314,6 +318,8 @@ export const SCHEMA_REGISTRY = {
   pseudoVeinSeasonV1: PseudoVeinSeasonV1,
   pseudoVeinSnapshotV1: PseudoVeinSnapshotV1,
   pseudoVeinDissipateEventV1: PseudoVeinDissipateEventV1,
+  zongmenOriginIdV1: ZongmenOriginIdV1,
+  zongCoreActivationV1: ZongCoreActivationV1,
   chatMessageV1: ChatMessageV1,
   chatSignal: ChatSignal,
   inventorySnapshotV1: InventorySnapshotV1,
@@ -581,6 +587,8 @@ export const GENERATED_SCHEMA_FILES = {
   "pseudo-vein-snapshot-v1.json": SCHEMA_REGISTRY.pseudoVeinSnapshotV1,
   "pseudo-vein-dissipate-event-v1.json":
     SCHEMA_REGISTRY.pseudoVeinDissipateEventV1,
+  "zongmen-origin-id-v1.json": SCHEMA_REGISTRY.zongmenOriginIdV1,
+  "zong-core-activation-v1.json": SCHEMA_REGISTRY.zongCoreActivationV1,
   "chat-message-v1.json": SCHEMA_REGISTRY.chatMessageV1,
   "chat-signal.json": SCHEMA_REGISTRY.chatSignal,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,

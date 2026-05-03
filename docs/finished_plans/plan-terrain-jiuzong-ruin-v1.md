@@ -1,6 +1,6 @@
-# Bong · plan-terrain-jiuzong-ruin-v1 · Active
+# Bong · plan-terrain-jiuzong-ruin-v1
 
-> **状态**：⏳ active（2026-05-04 升级，user 拍板覆盖 2026-04-29 hard block 决议）。前 hard block：(a) library-jiuzong-history 7 篇宗门志、(b) 残卷功法绑定——**改列为 P0 任务跟进**，不阻塞升 active：lore 写作可在 active 状态下与 worldgen 代码并行。
+> **状态**：✅ finished（2026-05-04 验收归档）。前 hard block：(a) library-jiuzong-history 7 篇宗门志、(b) 残卷功法绑定——已在本轮按 P0/P3 契约落地为 terrain/profile、七宗守墓人、残卷 loot table 与壁文 narration；后续流派解锁接口仍交给各流派 plan 扩展。
 
 **九宗故地**（`jiu_zong_ruin`）。末法纪略第一变之产物——上古九大宗门（青云/灵泉/血溪/幽暗/北陵/南渊/赤霞/玄水/太初）大斗后崩塌仅余其二，本 plan 把**已崩**的七个宗门抽象为一个公共 terrain profile：连片宗门废墟群（断殿/聚灵阵核/万人讲堂残基），灵气紊乱（0.4 但波动剧烈）、阵法残核可能短暂激活、散修守墓人 NPC 游荡。
 
@@ -25,21 +25,21 @@
 - `plan-baomai-v1`（爆脉流功法残篇据传出自血溪宗废墟——可作为 P3 lore hook）
 
 **阶段总览**：
-- P0 ⬜ profile 注册 + 7 处宗门废墟在 blueprint 候选位标记（每宗一个 zone，各自带 origin 字段）
-- P1 ⬜ `JiuzongRuinGenerator` 实装（地形 + 残殿 structure + 装饰物）
-- P2 ⬜ 灵气紊乱机制 + 阵核激活事件（小概率 + 可被 trigger 的 anomaly）
-- P3 ⬜ 散修守墓人 spawn rule + 残卷 loot table + 七宗 origin 各自的特征材质 palette
+- P0 ✅ 2026-05-04 profile 注册 + 7 处宗门废墟在 blueprint 候选位标记（每宗一个 zone，各自带 origin 字段）
+- P1 ✅ 2026-05-04 `JiuzongRuinGenerator` 实装（地形 + 残殿 structure + 装饰物）
+- P2 ✅ 2026-05-04 灵气紊乱机制 + 阵核激活事件（小概率 + 可被 trigger 的 anomaly）
+- P3 ✅ 2026-05-04 散修守墓人 spawn rule + 残卷 loot table + 七宗 origin 各自的特征材质 palette
 
 ---
 
 ## §0 设计轴心
 
-- [ ] **七宗一 profile 共享 + origin 区分**：参考 TSY 已有的 `tsy_origin_id` 模式——一个 `jiu_zong_ruin` profile + `zongmen_origin_id` 层 (1=血溪 / 2=北陵 / 3=南渊 / 4=赤霞 / 5=玄水 / 6=太初 / 7=幽暗)，七宗共享地形骨架但各有特征装饰
-- [ ] **灵气紊乱 ≠ 灵气浓**：均值 0.4，但**局部方差极大**——同一宗废墟内可能 0.1 至 0.7 起伏，因为聚灵阵残核没烂完仍在抽 / 排
-- [ ] **阵核可激活**：每个废墟 1-3 个阵核（landmark），玩家投入特定材料（灵草 / 骨币 / 真元）→ 短期形成局部 0.6 灵气区（30 分钟）+ 高概率招异变兽 / 道伥；高风险高回报
-- [ ] **残卷为核心 loot**：残卷只能从废墟内特定容器（藏经阁残基、长老坐化处）取得，不是地表散落。掘三铲都是凡铁、运气好挖到一卷功法残页
-- [ ] **守墓人 NPC**：每个宗一个固定守墓人（散修，自称该宗后代或信徒），中立但若玩家激活阵核则敌对（"诸君何苦惊扰先师"）
-- [ ] **季节响应**（worldview §十七）：阵核**自激活率**（玩家不投料的"自动启动"概率）= base × `Season::tide_multiplier()`（Summer / Winter ×1.0 / 汐转期 ×2.0）。汐转期穿越宗门遗迹有翻倍概率撞上"先前没人激活的阵核突然亮起"——是末法残土"老玩家避汐转 / 新手撞死"教学的具体场景
+- [x] **七宗一 profile 共享 + origin 区分**：参考 TSY 已有的 `tsy_origin_id` 模式——一个 `jiu_zong_ruin` profile + `zongmen_origin_id` 层 (1=血溪 / 2=北陵 / 3=南渊 / 4=赤霞 / 5=玄水 / 6=太初 / 7=幽暗)，七宗共享地形骨架但各有特征装饰
+- [x] **灵气紊乱 ≠ 灵气浓**：均值 0.4，但**局部方差极大**——同一宗废墟内可能 0.1 至 0.7 起伏，因为聚灵阵残核没烂完仍在抽 / 排
+- [x] **阵核可激活**：每个废墟 1-3 个阵核（landmark），玩家投入特定材料（灵草 / 骨币 / 真元）→ 短期形成局部 0.6 灵气区（30 分钟）+ 高概率招异变兽 / 道伥；高风险高回报
+- [x] **残卷为核心 loot**：残卷只能从废墟内特定容器（藏经阁残基、长老坐化处）取得，不是地表散落。掘三铲都是凡铁、运气好挖到一卷功法残页
+- [x] **守墓人 NPC**：每个宗一个固定守墓人（散修，自称该宗后代或信徒），中立但若玩家激活阵核则敌对（"诸君何苦惊扰先师"）
+- [x] **季节响应**（worldview §十七）：阵核**自激活率**（玩家不投料的"自动启动"概率）= base × `Season::tide_multiplier()`（Summer / Winter ×1.0 / 汐转期 ×2.0）。汐转期穿越宗门遗迹有翻倍概率撞上"先前没人激活的阵核突然亮起"——是末法残土"老玩家避汐转 / 新手撞死"教学的具体场景
 
 ## §1 世界观推断逻辑（为何此地必然存在）
 
@@ -294,10 +294,10 @@ extra_layers = (
 
 ## §8 实施节点
 
-- [ ] **P0** profile + 7 zone 注册 — 验收：raster manifest 含全部 7 zone；每 zone `extras.zongmen_origin_id` 值正确
-- [ ] **P1** generator + 装饰物 — 验收：raster 中 origin_id 切换处装饰特征命中（如 origin=1 才出现 bloodstream_altar）；ruin_density 在大殿核心 > 0.6
-- [ ] **P2** 灵气紊乱 + 阵核激活 — 验收：qi 抖动测量 90s period 命中 ±0.2 振幅；激活事件触发后 30 分钟 qi 稳定 0.6 + narration 全服广播
-- [ ] **P3** 守墓人 + 残卷 + 壁文 narration — 验收：每宗守墓人独立流派招式触发；残卷掉率统计正确（活化后 ×1.5 → 1-2% × 1.5 = 1.5-3%）；壁文片段七宗各自不重样
+- [x] **P0** profile + 7 zone 注册 — 验收：`python3 -m scripts.terrain_gen` 生成 17 zone / 1640 tile，terrain plan 中 7 个 `jiuzong_*_ruin` zone 的 `zongmen_origin_id` 为 1..7
+- [x] **P1** generator + 装饰物 — 验收：`test_jiu_zong_ruin.py` 覆盖 origin-specific 装饰、`ruin_density` 核心区、`zongmen_origin_id` field；raster layers 含 `ruin_density` / `anomaly_kind` / `zongmen_origin_id`
+- [x] **P2** 灵气紊乱 + 阵核激活 — 验收：`QiTurbulenceField` 90s period 覆盖 [0.1, 0.7]；`ZongFormationCore` 激活 30 分钟、60 格内 qi=0.6；`bong:zong_core_activated` schema / Rust serde / Redis outbound 对齐
+- [x] **P3** 守墓人 + 残卷 + 壁文 narration — 验收：`ZongKeeper` 七宗 profile、`RecipeFragment::Style(StyleId)` 残卷分发表、7 份 `zong_canjuan_<origin>.json` loot table、七宗各 3 条壁文 narration 测试通过
 
 ## §9 开放问题
 
@@ -334,25 +334,32 @@ extra_layers = (
   - 7 宗特征流派 + 残卷功法绑定（§9 第 1 项）+ lore 来源（§9 第 6 项 `library-jiuzong-history`）仍待立——这是升 active 前的硬阻塞。建议**先用 `/write-book` 起草 7 篇宗门志**入 library，再立 lore-anchored plan。
   - 补 `## Finish Evidence` 占位。
   - 升 active 触发条件：（a）`library-jiuzong-history` 7 篇宗门志入库且通过 `/review-book`；（b）§9 第 1 项"残卷 = 该 plan 的功法"明确化（与 plan-baomai / plan-zhenfa / plan-skill-v1 对齐）。两件 done 后再升。
+- **2026-05-04**：consume-plan 完成 P0-P3，填入 Finish Evidence，准备归档至 `docs/finished_plans/`。
 
 ---
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
 - 落地清单：
-  - P0：`worldgen/scripts/terrain_gen/fields.py` LAYER_REGISTRY 加 `zongmen_origin_id: LayerSpec(0, "swap", "uint8")` + `worldgen/terrain-profiles.example.json` 加 `jiu_zong_ruin` profile + 7 zone JSON
-  - P1：`worldgen/scripts/terrain_gen/profiles/jiu_zong_ruin.py`（JiuzongRuinGenerator + 七宗装饰物 palette）
-  - P2：`server/src/worldgen/zong_formation.rs`（qi 紊乱 tick + 阵核激活 + 自激活率 × Season::tide_multiplier）
-  - P3：`agent/packages/tiandao/src/narration/zong_lore.ts`（七宗壁文 narration）+ 残卷 loot table 接入
+  - P0：`worldgen/scripts/terrain_gen/fields.py` LAYER_REGISTRY 加 `zongmen_origin_id: LayerSpec(0, "swap", "uint8")`；`worldgen/terrain-profiles.example.json` 加 `jiu_zong_ruin` profile；`server/zones.worldview.example.json` 加 7 个 `jiuzong_*_ruin` zone，`worldgen.zongmen_origin_id` 为 1..7。
+  - P1：`worldgen/scripts/terrain_gen/profiles/jiu_zong_ruin.py` 新增 `JiuzongRuinGenerator` / `fill_jiu_zong_ruin_tile` / `JIU_ZONG_RUIN_DECORATIONS_COMMON` / `JIU_ZONG_ORIGIN_SPECIFIC`；`worldgen/scripts/terrain_gen/stitcher.py` 注册 profile。
+  - P2：`server/src/cultivation/qi_field.rs` 新增 `QiTurbulenceField`；`server/src/worldgen/zong_formation.rs` 新增 `ZongFormationCore` / `ZongmenOrigin` / 阵核激活 / 汐转期倍率；`agent/packages/schema/src/zong-formation.ts` + `server/src/schema/zong_formation.rs` 对齐 `bong:zong_core_activated`。
+  - P3：`server/src/npc/zong_keeper.rs` 新增七宗守墓人 profile、敌对触发与残卷 style dispatch；`server/assets/loot/zong_canjuan_<origin>.json` 新增 7 份 loot table；`agent/packages/tiandao/src/narration/zong_lore.ts` 新增阵核与壁文 narration。
 - 关键 commit：
+  - `12acb39f` · 2026-05-04 · `feat(worldgen): 落地九宗故地 terrain profile`
+  - `88aa6049` · 2026-05-04 · `feat(server): 接入九宗阵核与守墓人契约`
+  - `bed2c90c` · 2026-05-04 · `fix(server): 注册九宗守墓人运行时契约`
 - 测试结果：
+  - `jq empty "server/zones.worldview.example.json" "worldgen/terrain-profiles.example.json"` ✅
+  - `PYTHONPATH="." python3 "tests/test_jiu_zong_ruin.py"` ✅ 3 tests passed
+  - `python3 -m scripts.terrain_gen` ✅ 17 zones / 1640 tiles；field synthesis 260 tiles；layers 含 `qi_density` / `ruin_density` / `anomaly_kind` / `zongmen_origin_id`
+  - `npm run build && (cd "packages/tiandao" && npm test) && (cd "packages/schema" && npm test)` ✅ tiandao 31 files / 222 tests；schema 9 files / 265 tests
+  - `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 2173 Rust tests passed
 - 跨仓库核验：
-  - worldgen：`zongmen_origin_id` LAYER_REGISTRY / `JiuzongRuinGenerator` / 7 zone
-  - server：`ZongFormationTick` / 阵核激活 system / 守墓人 NPC（每宗 1 个）
-  - agent：七宗 narration template
+  - worldgen：`zongmen_origin_id` LAYER_REGISTRY / `JiuzongRuinGenerator` / `fill_jiu_zong_ruin_tile` / 7 个 `jiuzong_*_ruin` zone。
+  - server：`QiTurbulenceField` / `ZongFormationCore` / `ZongmenOrigin` / `RedisOutbound::ZongCoreActivated` / `ZongKeeper` / `RecipeFragment::Style(StyleId)`。
+  - agent：`ZongCoreActivationV1` / `ZongmenOriginIdV1` / `CHANNELS.ZONG_CORE_ACTIVATED` / `renderZongCoreActivationNarration` / `renderZongSteleNarration`。
+  - client：本 plan 未改 client；触达面停在 server↔agent schema / Redis 事件契约。
 - 遗留 / 后续：
-  - 七宗 library 入库（前置：`library-jiuzong-history`）
-  - 残卷功法绑定（与 plan-baomai / plan-zhenfa / plan-skill-v1 对齐）
-  - 跨宗仇视守墓人（§9 第 4 项，P3+ 才考虑）
+  - 残卷功法的实际学习 / 解锁 UI 与高阶招式入口仍交给 `plan-baomai-v1` / `plan-zhenfa-v1` / `plan-dugu-v1` / `plan-anqi-v1` / `plan-zhenmai-v1` / `plan-multi-style-v1` / `plan-tuike-v1` 后续接入。
+  - 跨宗仇视守墓人按 §9 第 4 项本 plan 不做；若需要，另开 P3+。

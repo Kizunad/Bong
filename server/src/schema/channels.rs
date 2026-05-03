@@ -53,6 +53,7 @@ pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
 pub const CH_PSEUDO_VEIN_DISSIPATE: &str = "bong:pseudo_vein:dissipate";
+pub const CH_ZONG_CORE_ACTIVATED: &str = "bong:zong_core_activated";
 
 // botany 观测通道（server-agent 侧），客户端 gameplay 仍走 bong:server_data / bong:client_request
 // 注：每株 spawn / wither 不单推（agent 难处理高频事件）——聚合走 `bong:botany/ecology`，
@@ -136,6 +137,7 @@ mod tests {
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
+        assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
         assert_eq!(CH_LUMBER_PROGRESS, "bong:lumber_progress");

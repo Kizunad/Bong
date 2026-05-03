@@ -32,6 +32,7 @@ export * from "./spawn-tutorial.js";
 export * from "./vfx-event.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
+export * from "./zong-formation.js";
 
 // Validation & registry
 export * from "./schema-registry.js";
