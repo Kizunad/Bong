@@ -25,6 +25,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         Map.entry("chest", EquipSlotType.CHEST),
         Map.entry("legs", EquipSlotType.LEGS),
         Map.entry("feet", EquipSlotType.FEET),
+        Map.entry("false_skin", EquipSlotType.FALSE_SKIN),
         Map.entry("main_hand", EquipSlotType.MAIN_HAND),
         Map.entry("off_hand", EquipSlotType.OFF_HAND),
         Map.entry("two_hand", EquipSlotType.TWO_HAND),
@@ -219,6 +220,9 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         for (Map.Entry<String, EquipSlotType> slotEntry : EQUIP_SLOT_BY_WIRE_NAME.entrySet()) {
             JsonElement itemElement = equippedObject.get(slotEntry.getKey());
             if (itemElement == null) {
+                if (slotEntry.getValue() == EquipSlotType.FALSE_SKIN) {
+                    continue;
+                }
                 return null;
             }
             if (itemElement.isJsonNull()) {

@@ -31,6 +31,21 @@ public final class ClientRequestProtocol {
     /** 服务端 {@code ForgeAxis}（serde 默认 PascalCase）。 */
     public enum ForgeAxis { Rate, Capacity }
 
+    public enum FalseSkinKind {
+        SPIDER_SILK("spider_silk"),
+        ROTTEN_WOOD_ARMOR("rotten_wood_armor");
+
+        private final String wireName;
+
+        FalseSkinKind(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
     /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
     public enum TemperBeat { L, H, F }
 
@@ -383,6 +398,25 @@ public final class ClientRequestProtocol {
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
+        return obj.toString();
+    }
+
+    public static String encodeEquipFalseSkin(long itemInstanceId) {
+        if (itemInstanceId < 0) {
+            throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+        }
+        JsonObject obj = envelope("equip_false_skin");
+        obj.addProperty("slot", "false_skin");
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeForgeFalseSkin(FalseSkinKind kind) {
+        if (kind == null) {
+            throw new IllegalArgumentException("kind must not be null");
+        }
+        JsonObject obj = envelope("forge_false_skin");
+        obj.addProperty("kind", kind.wireName());
         return obj.toString();
     }
 

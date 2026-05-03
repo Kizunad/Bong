@@ -56,6 +56,17 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeFalseSkin() {
+        String json = ClientRequestProtocol.encodeForgeFalseSkin(
+            ClientRequestProtocol.FalseSkinKind.ROTTEN_WOOD_ARMOR
+        );
+        assertEquals(
+            "{\"type\":\"forge_false_skin\",\"v\":1,\"kind\":\"rotten_wood_armor\"}",
+            json
+        );
+    }
+
+    @Test
     void encodesApplyPillSelf() {
         String json = ClientRequestProtocol.encodeApplyPillSelf(1001L);
         assertEquals(
