@@ -1,0 +1,10 @@
+{
+  "id": "mutant_nest",
+  "display_name": "异变兽巢",
+  "gameplay": "combat",
+  "qi_range": [0.5, 0.7],
+  "entity": { "kind": "zombie_mutant_placeholder", "count": 3, "hp": 60 },
+  "loot": ["beast_core_stub"],
+  "refresh": "mutant_24h_server_time",
+  "visual_blocks": ["cobweb", "soul_sand", "bone_block", "mossy_cobblestone", "ash_path"]
+}

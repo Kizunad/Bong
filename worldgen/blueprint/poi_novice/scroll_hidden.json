@@ -1,0 +1,10 @@
+{
+  "id": "scroll_hidden",
+  "display_name": "残卷藏匿点",
+  "gameplay": "knowledge",
+  "qi_range": [0.3, 0.5],
+  "entity": { "kind": "cave_network_entrance" },
+  "loot": ["skill_scroll_cache"],
+  "refresh": "scroll_7d_real_time",
+  "visual_blocks": ["stone", "mossy_cobblestone", "chiseled_stone_bricks", "bone_block", "ash_path"]
+}

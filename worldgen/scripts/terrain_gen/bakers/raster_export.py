@@ -18,6 +18,7 @@ from ..profiles import (
 from ..profiles.base import DecorationSpec, EcologySpec
 from ..structures.corpse_mound import corpse_mounds_for_zone
 from ..structures.whale_fossil import fossil_bboxes_for_zone
+from ...poi_novice_selector import build_novice_poi_manifest_payload
 
 BIOME_PALETTE = (
     "minecraft:plains",
@@ -109,6 +110,7 @@ def export_rasters(
         )
 
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
+    pois_payload.extend(build_novice_poi_manifest_payload(fields))
     ecology_payload = _collect_profile_ecology()
     global_decoration_palette = _collect_global_decoration_palette()
     collapsed_zones_payload = _collect_collapsed_zone_payload(plan)

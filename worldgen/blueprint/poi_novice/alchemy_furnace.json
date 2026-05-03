@@ -1,0 +1,10 @@
+{
+  "id": "alchemy_furnace",
+  "display_name": "凡铁丹炉",
+  "gameplay": "alchemy",
+  "qi_range": [0.3, 0.5],
+  "entity": { "kind": "alchemy_furnace", "fuel": "campfire" },
+  "loot": ["iron_pot"],
+  "refresh": "permanent",
+  "visual_blocks": ["cauldron", "campfire", "coarse_dirt", "cracked_stone_bricks", "bone_block"]
+}

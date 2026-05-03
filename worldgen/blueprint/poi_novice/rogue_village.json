@@ -1,0 +1,10 @@
+{
+  "id": "rogue_village",
+  "display_name": "散修聚居点",
+  "gameplay": "social",
+  "qi_range": [0.4, 0.6],
+  "entity": { "kind": "rogue_npc_cluster", "min_count": 2, "max_count": 3 },
+  "loot": ["dead_letter_mailbox"],
+  "refresh": "npc_24h_server_time",
+  "visual_blocks": ["oak_planks", "stripped_oak_log", "barrel", "mossy_cobblestone", "bone_block"]
+}
