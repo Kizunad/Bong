@@ -1397,7 +1397,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 |---:|---|:---:|---|---|
 | 40 | `plan-void-quota-v1` | 🆕 | cultivation-canonical-align-v1, tribulation-v1 | §N.0 + O.3 |
 | 41 | `plan-void-actions-v1` | 🆕 | tribulation-v1, void-quota-v1 | §N 化虚专属 action |
-| 42 | `plan-multi-life-v1` | 🆕 | death-lifecycle ✅ | §M.3 多周目 + O.4 |
+| 42 | `plan-multi-life-v1` | ⏳ active (2026-05-04 升级，6 决策 + reframe) | death-lifecycle ✅, lifespan-v1 ⏳（寿元数据 source of truth）, tsy-loot ✅, spawn-tutorial ✅ | §M.3 多周目 + O.4；引用 lifespan-v1 §2 不另维护 |
 
 #### 层 G：终极验收
 
