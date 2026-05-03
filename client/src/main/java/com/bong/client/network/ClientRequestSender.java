@@ -265,6 +265,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, itemInstanceId));
     }
 
+    public static void sendCoffinOpen(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeCoffinOpen(pos));
+    }
+
     public static void sendAlchemyTakePill(String pillItemId) {
         dispatch(ClientRequestProtocol.encodeAlchemyTakePill(pillItemId));
     }

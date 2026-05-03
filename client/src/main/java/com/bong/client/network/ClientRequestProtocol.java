@@ -286,6 +286,14 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeCoffinOpen(BlockPos pos) {
+        JsonObject obj = envelope("coffin_open");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        return obj.toString();
+    }
+
     public sealed interface ApplyPillTarget {
         JsonObject toJson();
     }
