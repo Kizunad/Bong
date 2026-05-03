@@ -73,6 +73,9 @@ import {
   TradeOfferResponseRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
+  ZhenfaDisarmRequestV1,
+  ZhenfaPlaceRequestV1,
+  ZhenfaTriggerRequestV1,
 } from "./client-request.js";
 import {
   SkillBarConfigV1,
@@ -348,6 +351,9 @@ export const SCHEMA_REGISTRY = {
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
+  clientRequestZhenfaPlaceV1: ZhenfaPlaceRequestV1,
+  clientRequestZhenfaTriggerV1: ZhenfaTriggerRequestV1,
+  clientRequestZhenfaDisarmV1: ZhenfaDisarmRequestV1,
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
@@ -602,6 +608,12 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
+  "client-request-zhenfa-place-v1.json":
+    SCHEMA_REGISTRY.clientRequestZhenfaPlaceV1,
+  "client-request-zhenfa-trigger-v1.json":
+    SCHEMA_REGISTRY.clientRequestZhenfaTriggerV1,
+  "client-request-zhenfa-disarm-v1.json":
+    SCHEMA_REGISTRY.clientRequestZhenfaDisarmV1,
   "client-request-start-extract-v1.json":
     SCHEMA_REGISTRY.clientRequestStartExtractV1,
   "client-request-cancel-extract-v1.json":

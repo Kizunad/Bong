@@ -131,6 +131,24 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(x, y, z));
     }
 
+    public static void sendZhenfaPlace(
+        BlockPos pos,
+        ClientRequestProtocol.ZhenfaKind kind,
+        ClientRequestProtocol.ZhenfaCarrierKind carrier,
+        double qiInvestRatio,
+        String trigger
+    ) {
+        dispatch(ClientRequestProtocol.encodeZhenfaPlace(pos, kind, carrier, qiInvestRatio, trigger));
+    }
+
+    public static void sendZhenfaTrigger(Long instanceId) {
+        dispatch(ClientRequestProtocol.encodeZhenfaTrigger(instanceId));
+    }
+
+    public static void sendZhenfaDisarm(BlockPos pos, ClientRequestProtocol.ZhenfaDisarmMode mode) {
+        dispatch(ClientRequestProtocol.encodeZhenfaDisarm(pos, mode));
+    }
+
     public static void sendSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
         dispatch(ClientRequestProtocol.encodeSparringInviteResponse(inviteId, accepted, timedOut));
     }

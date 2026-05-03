@@ -1,0 +1,74 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "x",
+    "y",
+    "z",
+    "kind",
+    "qi_invest_ratio"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "zhenfa_place",
+      "type": "string"
+    },
+    "x": {
+      "type": "integer"
+    },
+    "y": {
+      "type": "integer"
+    },
+    "z": {
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "trap",
+          "type": "string"
+        },
+        {
+          "const": "ward",
+          "type": "string"
+        }
+      ]
+    },
+    "carrier": {
+      "anyOf": [
+        {
+          "const": "common_stone",
+          "type": "string"
+        },
+        {
+          "const": "lingqi_block",
+          "type": "string"
+        },
+        {
+          "const": "night_withered_vine",
+          "type": "string"
+        },
+        {
+          "const": "beast_core_inlaid",
+          "type": "string"
+        }
+      ]
+    },
+    "qi_invest_ratio": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "trigger": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    }
+  }
+}

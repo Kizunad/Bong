@@ -9501,6 +9501,14 @@
                   {
                     "const": "CrisisPremonition",
                     "type": "string"
+                  },
+                  {
+                    "const": "ZhenfaArray",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ZhenfaWardAlert",
+                    "type": "string"
                   }
                 ]
               },

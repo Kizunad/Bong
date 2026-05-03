@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "x",
+    "y",
+    "z",
+    "mode"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "zhenfa_disarm",
+      "type": "string"
+    },
+    "x": {
+      "type": "integer"
+    },
+    "y": {
+      "type": "integer"
+    },
+    "z": {
+      "type": "integer"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "const": "disarm",
+          "type": "string"
+        },
+        {
+          "const": "force_break",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

@@ -1,16 +1,17 @@
 package com.bong.client.combat.screen;
 
 import com.bong.client.network.ClientRequestSender;
-import com.google.gson.JsonObject;
+import com.bong.client.network.ClientRequestProtocol;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.BlockPos;
 
 /**
  * 阵法布置 UI (plan §U5 / §1 ZhenfaLayout). Lets the player pick trigger type
- * and how much qi to invest; commits via {@code combat.zhenfa_place}.
+ * and how much qi to invest; commits via {@code zhenfa_place}.
  */
 public final class ZhenfaLayoutScreen extends Screen {
     public static final int BG_COLOR = 0xC0101830;
@@ -18,10 +19,16 @@ public final class ZhenfaLayoutScreen extends Screen {
     public static final int TEXT_COLOR = 0xFFD0D0D0;
 
     private String trigger = "proximity"; // proximity | contact | timed
-    private double qiInvest = 0.5;
+    private double qiInvest = 0.1;
+    private final BlockPos targetPos;
 
     public ZhenfaLayoutScreen() {
+        this(new BlockPos(0, 64, 0));
+    }
+
+    public ZhenfaLayoutScreen(BlockPos targetPos) {
         super(Text.literal("\u9635\u6cd5\u5e03\u7f6e"));
+        this.targetPos = targetPos == null ? new BlockPos(0, 64, 0) : targetPos;
     }
 
     @Override public boolean shouldPause() { return true; }
@@ -40,10 +47,13 @@ public final class ZhenfaLayoutScreen extends Screen {
         this.addDrawableChild(ButtonWidget.builder(
             Text.literal("\u843d\u5b9a"),
             b -> {
-                JsonObject p = new JsonObject();
-                p.addProperty("trigger", trigger);
-                p.addProperty("qi_invest", qiInvest);
-                ClientRequestSender.send("combat.zhenfa_place", p);
+                ClientRequestSender.sendZhenfaPlace(
+                    targetPos,
+                    ClientRequestProtocol.ZhenfaKind.TRAP,
+                    ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+                    qiInvest,
+                    trigger
+                );
                 this.close();
             }
         ).dimensions(cx - 50, y + 80, 100, 20).build());

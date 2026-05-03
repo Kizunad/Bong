@@ -515,6 +515,65 @@ export const TradeOfferResponseRequestV1 = Type.Object(
 );
 export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
 
+export const ZhenfaKindV1 = Type.Union([
+  Type.Literal("trap"),
+  Type.Literal("ward"),
+]);
+export type ZhenfaKindV1 = Static<typeof ZhenfaKindV1>;
+
+export const ZhenfaCarrierKindV1 = Type.Union([
+  Type.Literal("common_stone"),
+  Type.Literal("lingqi_block"),
+  Type.Literal("night_withered_vine"),
+  Type.Literal("beast_core_inlaid"),
+]);
+export type ZhenfaCarrierKindV1 = Static<typeof ZhenfaCarrierKindV1>;
+
+export const ZhenfaDisarmModeV1 = Type.Union([
+  Type.Literal("disarm"),
+  Type.Literal("force_break"),
+]);
+export type ZhenfaDisarmModeV1 = Static<typeof ZhenfaDisarmModeV1>;
+
+export const ZhenfaPlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("zhenfa_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    kind: ZhenfaKindV1,
+    carrier: Type.Optional(ZhenfaCarrierKindV1),
+    qi_invest_ratio: Type.Number({ minimum: 0, maximum: 1 }),
+    trigger: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  },
+  { additionalProperties: false },
+);
+export type ZhenfaPlaceRequestV1 = Static<typeof ZhenfaPlaceRequestV1>;
+
+export const ZhenfaTriggerRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("zhenfa_trigger"),
+    instance_id: Type.Optional(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+  },
+  { additionalProperties: false },
+);
+export type ZhenfaTriggerRequestV1 = Static<typeof ZhenfaTriggerRequestV1>;
+
+export const ZhenfaDisarmRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("zhenfa_disarm"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    mode: ZhenfaDisarmModeV1,
+  },
+  { additionalProperties: false },
+);
+export type ZhenfaDisarmRequestV1 = Static<typeof ZhenfaDisarmRequestV1>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -677,6 +736,9 @@ export const ClientRequestV1 = Type.Union([
   SparringInviteResponseRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
+  ZhenfaPlaceRequestV1,
+  ZhenfaTriggerRequestV1,
+  ZhenfaDisarmRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,

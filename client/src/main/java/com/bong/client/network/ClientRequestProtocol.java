@@ -34,6 +34,53 @@ public final class ClientRequestProtocol {
     /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
     public enum TemperBeat { L, H, F }
 
+    public enum ZhenfaKind {
+        TRAP("trap"),
+        WARD("ward");
+
+        private final String wireName;
+
+        ZhenfaKind(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum ZhenfaCarrierKind {
+        COMMON_STONE("common_stone"),
+        LINGQI_BLOCK("lingqi_block"),
+        NIGHT_WITHERED_VINE("night_withered_vine"),
+        BEAST_CORE_INLAID("beast_core_inlaid");
+
+        private final String wireName;
+
+        ZhenfaCarrierKind(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum ZhenfaDisarmMode {
+        DISARM("disarm"),
+        FORCE_BREAK("force_break");
+
+        private final String wireName;
+
+        ZhenfaDisarmMode(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
     private ClientRequestProtocol() {}
 
     /** 将 UI 侧 {@link MeridianChannel} 枚举映射为服务端 {@link MeridianId}。 */
@@ -393,6 +440,63 @@ public final class ClientRequestProtocol {
         obj.addProperty("x", x);
         obj.addProperty("y", y);
         obj.addProperty("z", z);
+        return obj.toString();
+    }
+
+    public static String encodeZhenfaPlace(
+        BlockPos pos,
+        ZhenfaKind kind,
+        ZhenfaCarrierKind carrier,
+        double qiInvestRatio,
+        String trigger
+    ) {
+        if (pos == null) {
+            throw new IllegalArgumentException("pos must not be null");
+        }
+        if (kind == null) {
+            throw new IllegalArgumentException("kind must not be null");
+        }
+        if (!Double.isFinite(qiInvestRatio) || qiInvestRatio < 0.0 || qiInvestRatio > 1.0) {
+            throw new IllegalArgumentException("qiInvestRatio must be finite within [0, 1], got " + qiInvestRatio);
+        }
+        JsonObject obj = envelope("zhenfa_place");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("kind", kind.wireName());
+        if (carrier != null) {
+            obj.addProperty("carrier", carrier.wireName());
+        }
+        obj.addProperty("qi_invest_ratio", qiInvestRatio);
+        if (trigger != null && !trigger.isBlank()) {
+            obj.addProperty("trigger", trigger.trim());
+        }
+        return obj.toString();
+    }
+
+    public static String encodeZhenfaTrigger(Long instanceId) {
+        JsonObject obj = envelope("zhenfa_trigger");
+        if (instanceId != null) {
+            if (instanceId < 0) {
+                throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+            }
+            obj.addProperty("instance_id", instanceId.longValue());
+        }
+        return obj.toString();
+    }
+
+    public static String encodeZhenfaDisarm(BlockPos pos, ZhenfaDisarmMode mode) {
+        if (pos == null) {
+            throw new IllegalArgumentException("pos must not be null");
+        }
+        if (mode == null) {
+            throw new IllegalArgumentException("mode must not be null");
+        }
+        JsonObject obj = envelope("zhenfa_disarm");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("mode", mode.wireName());
         return obj.toString();
     }
 
