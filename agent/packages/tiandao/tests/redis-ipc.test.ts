@@ -6,6 +6,7 @@ const {
   AGENT_COMMAND,
   AGENT_NARRATE,
   AGENT_WORLD_MODEL,
+  ALCHEMY_INSIGHT,
   ALCHEMY_SESSION_END,
   FACTION_EVENT,
   AGING,
@@ -442,6 +443,46 @@ describe("redis-ipc", () => {
         bucket: "explode",
         caster_id: "offline:Azure",
         damage: 12,
+      }),
+    ]);
+  });
+
+  it("observes alchemy insight events for narration triggers", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onAlchemyRuntimeEvent(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      ALCHEMY_INSIGHT,
+      JSON.stringify({
+        v: 1,
+        player_id: "offline:Azure",
+        source_pill: "hui_yuan_pill",
+        recipe_id: "hui_yuan_pill_v0",
+        accuracy: 0.86,
+        ingredients: ["ling_grass", "qingxin_leaf"],
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.getLatestAlchemyEvents()).toEqual([
+      expect.objectContaining({
+        player_id: "offline:Azure",
+        accuracy: 0.86,
       }),
     ]);
   });

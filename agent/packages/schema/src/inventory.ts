@@ -93,6 +93,69 @@ export const FreshnessDerivedV1 = Type.Object(
 );
 export type FreshnessDerivedV1 = Static<typeof FreshnessDerivedV1>;
 
+export const AlchemySideEffectV1 = Type.Object(
+  {
+    tag: Type.String({ minLength: 1, maxLength: 128 }),
+    duration_s: Type.Optional(Type.Integer({ minimum: 0 })),
+    weight: Type.Optional(Type.Integer({ minimum: 0 })),
+    perm: Type.Optional(Type.Boolean()),
+    color: Type.Optional(ColorKind),
+    amount: Type.Optional(Type.Number()),
+  },
+  { additionalProperties: false },
+);
+export type AlchemySideEffectV1 = Static<typeof AlchemySideEffectV1>;
+
+export const RecipeFragmentV1 = Type.Object(
+  {
+    recipe_id: Type.String({ minLength: 1, maxLength: 128 }),
+    known_stages: Type.Array(Type.Integer({ minimum: 0, maximum: 255 })),
+    max_quality_tier: Type.Integer({ minimum: 1, maximum: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type RecipeFragmentV1 = Static<typeof RecipeFragmentV1>;
+
+export const RecipeHintV1 = Type.Object(
+  {
+    source_pill: Type.String({ minLength: 1, maxLength: 128 }),
+    recipe_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
+    accuracy: Type.Number({ minimum: 0, maximum: 1 }),
+    ingredients: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type RecipeHintV1 = Static<typeof RecipeHintV1>;
+
+export const AlchemyItemDataV1 = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("pill"),
+      recipe_id: Type.String({ minLength: 1, maxLength: 128 }),
+      quality_tier: Type.Integer({ minimum: 1, maximum: 5 }),
+      effect_multiplier: Type.Number({ minimum: 0 }),
+      consecrated: Type.Boolean(),
+      side_effect: Type.Optional(AlchemySideEffectV1),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("recipe_fragment"),
+      fragment: RecipeFragmentV1,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("recipe_hint"),
+      hint: RecipeHintV1,
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type AlchemyItemDataV1 = Static<typeof AlchemyItemDataV1>;
+
 export const InventoryItemViewV1 = Type.Object(
   {
     instance_id: SafeIntegerV1,
@@ -123,6 +186,8 @@ export const InventoryItemViewV1 = Type.Object(
     forge_color: Type.Optional(ColorKind),
     forge_side_effects: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }))),
     forge_achieved_tier: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
+    // plan-alchemy-v2 — 丹药品阶 / 残卷 / 丹心线索运行时元数据。
+    alchemy: Type.Optional(AlchemyItemDataV1),
   },
   { additionalProperties: false },
 );

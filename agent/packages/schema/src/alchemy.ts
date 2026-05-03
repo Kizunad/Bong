@@ -158,6 +158,19 @@ export const AlchemyInterventionResultV1 = Type.Object(
 );
 export type AlchemyInterventionResultV1 = Static<typeof AlchemyInterventionResultV1>;
 
+export const AlchemyInsightV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    player_id: Type.String({ minLength: 1, maxLength: 128 }),
+    source_pill: Type.String({ minLength: 1, maxLength: 128 }),
+    recipe_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
+    accuracy: Type.Number({ minimum: 0, maximum: 1 }),
+    ingredients: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyInsightV1 = Static<typeof AlchemyInsightV1>;
+
 export function validateAlchemySessionStartV1Contract(data: unknown): ValidationResult {
   return validate(AlchemySessionStartV1, data);
 }
@@ -168,4 +181,8 @@ export function validateAlchemySessionEndV1Contract(data: unknown): ValidationRe
 
 export function validateAlchemyInterventionResultV1Contract(data: unknown): ValidationResult {
   return validate(AlchemyInterventionResultV1, data);
+}
+
+export function validateAlchemyInsightV1Contract(data: unknown): ValidationResult {
+  return validate(AlchemyInsightV1, data);
 }

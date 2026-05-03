@@ -3,6 +3,7 @@ const IORedis = Redis.default ?? Redis;
 import {
   CHANNELS,
   type ChannelName,
+  validateAlchemyInsightV1Contract,
   validateAlchemySessionEndV1Contract,
   validateFactionEventV1Contract,
   validateNpcDeathV1Contract,
@@ -17,6 +18,7 @@ import type {
   AgentWorldModelSnapshotV1,
   AgentCommandV1,
   AlchemySessionEndV1,
+  AlchemyInsightV1,
   FactionEventV1,
   NarrationV1,
   NpcDeathV1,
@@ -42,6 +44,7 @@ const {
   NPC_DEATH,
   FACTION_EVENT,
   ALCHEMY_SESSION_END,
+  ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
   AGING,
   LIFESPAN_EVENT,
@@ -99,7 +102,7 @@ export interface PublishAgentWorldModelRequest {
 
 export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
 export type NpcRuntimeEventV1 = NpcSpawnedV1 | NpcDeathV1 | FactionEventV1;
-export type AlchemyRuntimeEventV1 = AlchemySessionEndV1;
+export type AlchemyRuntimeEventV1 = AlchemySessionEndV1 | AlchemyInsightV1;
 export type PoiNoviceRuntimeEventV1 = PoiSpawnedEventV1 | TrespassEventV1;
 export interface CrossSystemRuntimeEventV1 {
   channel: ChannelName;
@@ -213,8 +216,8 @@ export class RedisIpc {
       return;
     }
 
-    if (channel === ALCHEMY_SESSION_END) {
-      this.handleAlchemyRuntimeEventMessage(message);
+    if (channel === ALCHEMY_SESSION_END || channel === ALCHEMY_INSIGHT) {
+      this.handleAlchemyRuntimeEventMessage(channel, message);
       return;
     }
 
@@ -352,17 +355,19 @@ export class RedisIpc {
     }
   }
 
-  private handleAlchemyRuntimeEventMessage(message: string): void {
+  private handleAlchemyRuntimeEventMessage(channel: string, message: string): void {
     try {
       const data = JSON.parse(message) as unknown;
-      const result = validateAlchemySessionEndV1Contract(data);
+      const result = channel === ALCHEMY_INSIGHT
+        ? validateAlchemyInsightV1Contract(data)
+        : validateAlchemySessionEndV1Contract(data);
       if (!result.ok) {
-        console.warn("[redis-ipc] invalid alchemy session_end event:", result.errors.join("; "));
+        console.warn(`[redis-ipc] invalid alchemy event on ${channel}:`, result.errors.join("; "));
         return;
       }
       this.recordAlchemyRuntimeEvent(data as AlchemyRuntimeEventV1);
     } catch (e) {
-      console.warn("[redis-ipc] failed to parse alchemy session_end event:", e);
+      console.warn(`[redis-ipc] failed to parse alchemy event on ${channel}:`, e);
     }
   }
 
@@ -414,6 +419,7 @@ export class RedisIpc {
     await this.sub.subscribe(NPC_DEATH);
     await this.sub.subscribe(FACTION_EVENT);
     await this.sub.subscribe(ALCHEMY_SESSION_END);
+    await this.sub.subscribe(ALCHEMY_INSIGHT);
     await this.sub.subscribe(POI_NOVICE_EVENT);
     for (const channel of CROSS_SYSTEM_EVENT_CHANNELS) {
       await this.sub.subscribe(channel);
@@ -422,7 +428,7 @@ export class RedisIpc {
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(
-      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, POI_NOVICE_EVENT, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
+      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, ALCHEMY_INSIGHT, POI_NOVICE_EVENT, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
     );
   }
 
