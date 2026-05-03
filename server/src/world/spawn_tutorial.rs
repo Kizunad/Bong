@@ -36,6 +36,7 @@ use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
 pub const SPIRIT_NICHE_STONE_TEMPLATE_ID: &str = "spirit_niche_stone";
 pub const TUTORIAL_KAIMAI_LOOT_POOL_ID: &str = "tutorial_kaimai_chest";
+pub const COFFIN_OPEN_INTERACT_RADIUS: f64 = 6.0;
 pub const TUTORIAL_LINGQUAN_REACH_RADIUS: f64 = 8.0;
 pub const RAT_SWARM_SPAWN_DISTANCE: f64 = 20.0;
 pub const RAT_SWARM_TRIGGER_DISTANCE: f64 = 80.0;
@@ -189,10 +190,21 @@ fn attach_tutorial_state_to_joined_clients(
             .flatten()
             .and_then(|bundle| bundle.get("tutorial_state").cloned())
             .and_then(|value| serde_json::from_value::<TutorialState>(value).ok());
-        let state = restored.unwrap_or_else(|| TutorialState::new(now));
-        telemetry.started = telemetry.started.saturating_add(1);
+        let state = tutorial_state_for_join(restored, now, &mut telemetry);
         commands.entity(entity).insert(state);
     }
+}
+
+fn tutorial_state_for_join(
+    restored: Option<TutorialState>,
+    now: u64,
+    telemetry: &mut TutorialTelemetry,
+) -> TutorialState {
+    if let Some(state) = restored {
+        return state;
+    }
+    telemetry.started = telemetry.started.saturating_add(1);
+    TutorialState::new(now)
 }
 
 fn spawn_tutorial_poi_markers(
@@ -303,21 +315,48 @@ fn handle_coffin_open_requests(
     mut hook_events: ResMut<valence::prelude::Events<TutorialHookEvent>>,
     registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
-    mut players: Query<(&mut TutorialState, &mut PlayerInventory)>,
-    coffins: Query<&TutorialCoffin>,
+    mut players: Query<(
+        &mut TutorialState,
+        &mut PlayerInventory,
+        &Position,
+        Option<&EntityLayerId>,
+    )>,
+    coffins: Query<(&TutorialCoffin, &Position, Option<&EntityLayerId>)>,
 ) {
     for request in requests.read() {
-        if !coffins.is_empty() && !coffins.iter().any(|coffin| coffin.pos == request.pos) {
+        let Some((_, coffin_position, coffin_layer)) = coffins
+            .iter()
+            .find(|(coffin, _, _)| coffin.pos == request.pos)
+        else {
             tracing::warn!(
                 "[bong][spawn-tutorial] rejected coffin_open from {:?}: no tutorial coffin at {:?}",
                 request.player,
                 request.pos
             );
             continue;
-        }
-        let Ok((mut state, mut inventory)) = players.get_mut(request.player) else {
+        };
+        let Ok((mut state, mut inventory, player_position, player_layer)) =
+            players.get_mut(request.player)
+        else {
             continue;
         };
+        if let (Some(player_layer), Some(coffin_layer)) = (player_layer, coffin_layer) {
+            if player_layer.0 != coffin_layer.0 {
+                tracing::warn!(
+                    "[bong][spawn-tutorial] rejected coffin_open from {:?}: dimension mismatch",
+                    request.player
+                );
+                continue;
+            }
+        }
+        if !coffin_open_in_range(player_position.get(), coffin_position.get()) {
+            tracing::warn!(
+                "[bong][spawn-tutorial] rejected coffin_open from {:?}: player too far from {:?}",
+                request.player,
+                request.pos
+            );
+            continue;
+        }
         match grant_coffin_reward_once(
             &mut state,
             &mut inventory,
@@ -377,6 +416,11 @@ pub fn grant_coffin_reward_once(
         }
         Err(error) => CoffinGrantOutcome::MissingItemTemplate { error },
     }
+}
+
+fn coffin_open_in_range(player_pos: DVec3, coffin_pos: DVec3) -> bool {
+    let delta = player_pos - coffin_pos;
+    delta.length() <= COFFIN_OPEN_INTERACT_RADIUS
 }
 
 fn tutorial_hook_state_machine(
@@ -754,6 +798,28 @@ mod tests {
 
         assert!(!moved_at_least_200_blocks(&state, [190.0, 70.0, 8.0]));
         assert!(moved_at_least_200_blocks(&state, [210.0, 70.0, 8.0]));
+    }
+
+    #[test]
+    fn restored_tutorial_state_does_not_increment_started_telemetry() {
+        let restored = TutorialState::new(12);
+        let mut telemetry = TutorialTelemetry::default();
+        let state = tutorial_state_for_join(Some(restored.clone()), 200, &mut telemetry);
+
+        assert_eq!(state, restored);
+        assert_eq!(telemetry.started, 0);
+
+        let fresh = tutorial_state_for_join(None, 220, &mut telemetry);
+        assert_eq!(fresh.entered_at_tick, 220);
+        assert_eq!(telemetry.started, 1);
+    }
+
+    #[test]
+    fn coffin_open_requires_player_proximity() {
+        let coffin = DVec3::new(0.0, 69.0, 0.0);
+
+        assert!(coffin_open_in_range(DVec3::new(2.0, 69.0, 2.0), coffin));
+        assert!(!coffin_open_in_range(DVec3::new(12.0, 69.0, 0.0), coffin));
     }
 
     #[test]
