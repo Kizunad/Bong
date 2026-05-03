@@ -328,11 +328,13 @@ pub struct SpiritEye {
 - **P3 天道动态迁移**：`SpiritEyeRegistry::tick_migration` 覆盖 `usage_pressure >= 1.0` 与 72h 周期偏移；`server/src/schema/channels.rs` / `server/src/network/redis_bridge.rs` 发布 `bong:spirit_eye/migrate`；`agent/packages/tiandao/src/redis-ipc.ts` 订阅并缓冲灵眼迁移 / 发现 / 使用事件。
 - **P4 信息经济 / 死亡遗念 / 声名 stub**：`server/src/combat/lifecycle.rs` 把 `known_spirit_eyes` 写入 `DeathInsightRequestV1`；`server/src/world/spirit_eye.rs` 提供 `coordinate_note_for` DTO stub 与 `spirit_eye_coordinate_share_renown_stub`；`agent/packages/tiandao/src/death-insight-runtime.ts` 在遗念 fallback 中保留已知灵眼坐标。
 - **P5 收口 / schema 对齐**：`server/src/schema/spirit_eye.rs` 与 `agent/packages/schema/src/spirit-eye.ts` 对齐 `SpiritEyeMigrateV1` / `SpiritEyeDiscoveredV1` / `SpiritEyeUsedForBreakthroughV1` / `SpiritEyeCoordinateNoteV1` / `DeathInsightSpiritEyeV1`；`agent/packages/schema/generated/*.json` 已重新生成。
+- **P5 CI snapshot 收口**：`worldgen/scripts/terrain_gen/fields.py` / `stitcher.py` 在 tile 完成 blend 后压缩最终 layer dtype，`worldgen/pipeline.sh` 支持可选 tile size；`.github/workflows/worldgen-preview.yml` 的 snapshot 使用 `tile_size=128` 降低全图 snapshot 内存压力。
 
 ### 关键 commit
 
 - `2fc9e15a` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
 - `871403a0` · 2026-05-03 · `fix(plan-spirit-eye-v1): 收窄灵眼突破加成与私有标记`
+- `4257d6ce` · 2026-05-03 · `fix(plan-spirit-eye-v1): 降低 worldgen snapshot 内存压力`
 
 ### 测试结果
 
@@ -343,8 +345,10 @@ pub struct SpiritEye {
 - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：build 通过；tiandao 210 passed；schema 252 passed。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests "com.bong.client.visual.realm_vision.PerceptionEdgeRendererTest"`：通过。
-- `cd worldgen && PYTHONPATH="." python3 -m unittest discover -s "tests"`：9 passed。
+- `cd worldgen && python3 -m pytest`：55 passed。
 - `cd worldgen && python3 -m scripts.terrain_gen`：通过，生成 layer 列表包含 `spirit_eye_candidates`。
+- `cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128`：通过，`spirit_eye_candidates` 在 layer 列表中，`tiles synthesized: 2249`，`chunks_written=2601`。
+- `cd worldgen && python3 scripts/terrain_gen/harness/raster_check.py --out runs/spirit-eye-checks --checks elevation,biome,spirit_eye --formats csv,json`：通过。
 - `git diff --check`：通过。
 
 ### 跨仓库核验
