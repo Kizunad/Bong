@@ -11,7 +11,8 @@ use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::projectile::QiProjectile;
 use crate::combat::status::{has_active_status, remove_status_effect, upsert_status_effect};
 use crate::combat::{CombatClock, CombatSystemSet};
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::color::{record_style_practice, PracticeLog};
+use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::schema::cultivation::meridian_id_to_string;
@@ -442,6 +443,7 @@ pub fn vortex_intercept_tick(
     mut needles: Query<NeedleDrainItem<'_>>,
     mut events: EventWriter<ProjectileQiDrainedEvent>,
     mut life_records: Query<&mut LifeRecord>,
+    mut practice_logs: Query<&mut PracticeLog>,
 ) {
     if fields.is_empty() {
         return;
@@ -458,6 +460,7 @@ pub fn vortex_intercept_tick(
                     drained,
                     clock.tick,
                 );
+                record_vortex_practice(&mut practice_logs, caster);
                 events.send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: projectile_entity,
@@ -482,6 +485,7 @@ pub fn vortex_intercept_tick(
                     drained,
                     clock.tick,
                 );
+                record_vortex_practice(&mut practice_logs, caster);
                 events.send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: needle_entity,
@@ -806,6 +810,12 @@ fn record_projectile_drain(
     });
 }
 
+fn record_vortex_practice(practice_logs: &mut Query<&mut PracticeLog>, caster: Entity) {
+    if let Ok(mut practice_log) = practice_logs.get_mut(caster) {
+        record_style_practice(&mut practice_log, ColorKind::Intricate);
+    }
+}
+
 fn record_vortex_backfire(record: &mut LifeRecord, cause: BackfireCause, tick: u64) {
     record.push(BiographyEntry::VortexBackfired {
         cause: format!("{cause:?}"),
@@ -840,6 +850,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
                 SkillBarBindings::default(),
+                PracticeLog::default(),
             ))
             .id()
     }
@@ -1110,6 +1121,49 @@ mod tests {
         let drained_again = drain_qi_payload(&mut payload, 0.8);
         assert!(drained_again <= 0.1875 + 1e-6);
         assert_eq!(payload, 0.0);
+    }
+
+    #[test]
+    fn intercept_tick_records_intricate_practice_on_successful_drain() {
+        let mut app = app(10);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        app.world_mut().entity_mut(actor).insert(VortexField {
+            center: DVec3::new(8.0, 66.0, 8.0),
+            radius: 3.0,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 100,
+            caster: actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        app.world_mut().spawn((
+            Position::new([8.5, 66.0, 8.0]),
+            QiProjectile {
+                owner: None,
+                qi_payload: 1.0,
+            },
+        ));
+        app.add_systems(Update, vortex_intercept_tick);
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<PracticeLog>(actor)
+                .unwrap()
+                .weights
+                .get(&ColorKind::Intricate)
+                .copied(),
+            Some(crate::cultivation::color::STYLE_PRACTICE_AMOUNT)
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<ProjectileQiDrainedEvent>>()
+                .iter_current_update_events()
+                .count(),
+            1
+        );
     }
 
     #[test]

@@ -13,15 +13,29 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Query};
+use valence::prelude::{bevy_ecs, Component, Query, Res};
 
 use super::components::{ColorKind, QiColor};
+use super::life_record::{BiographyEntry, LifeRecord};
+use super::tick::CultivationClock;
+
+pub const STYLE_PRACTICE_AMOUNT: f64 = 1.0;
+pub const PRACTICE_DECAY_PER_TICK: f64 = 0.001;
 
 /// 玩家修习累积日志 — 权重值可由 gameplay 系统增加，tick 会慢慢衰减。
-#[derive(Debug, Default, Clone, Component, Serialize, Deserialize)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct PracticeLog {
     pub weights: HashMap<ColorKind, f64>,
     pub decay_per_tick: f64,
+}
+
+impl Default for PracticeLog {
+    fn default() -> Self {
+        Self {
+            weights: HashMap::new(),
+            decay_per_tick: PRACTICE_DECAY_PER_TICK,
+        }
+    }
 }
 
 impl PracticeLog {
@@ -42,6 +56,10 @@ impl PracticeLog {
     pub fn total(&self) -> f64 {
         self.weights.values().sum()
     }
+}
+
+pub fn record_style_practice(log: &mut PracticeLog, color: ColorKind) {
+    log.add(color, STYLE_PRACTICE_AMOUNT);
 }
 
 /// 纯函数：基于日志权重演化 QiColor（plan §2 QiColorEvolutionTick 规则）。
@@ -90,10 +108,29 @@ pub fn evolve_qi_color(log: &PracticeLog, out: &mut QiColor) {
     }
 }
 
-pub fn qi_color_evolution_tick(mut players: Query<(&mut PracticeLog, &mut QiColor)>) {
-    for (mut log, mut color) in players.iter_mut() {
+pub fn qi_color_evolution_tick(
+    clock: Res<CultivationClock>,
+    mut players: Query<(&mut PracticeLog, &mut QiColor, Option<&mut LifeRecord>)>,
+) {
+    for (mut log, mut color, life_record) in players.iter_mut() {
+        let before = color.clone();
+        let had_signal = log.total() > 0.0;
         log.decay();
         evolve_qi_color(&log, &mut color);
+        if had_signal
+            && (before.main != color.main
+                || before.secondary != color.secondary
+                || before.is_chaotic != color.is_chaotic
+                || before.is_hunyuan != color.is_hunyuan)
+        {
+            if let Some(mut life_record) = life_record {
+                life_record.push(BiographyEntry::ColorShift {
+                    main: color.main,
+                    secondary: color.secondary,
+                    tick: clock.tick,
+                });
+            }
+        }
     }
 }
 
@@ -157,6 +194,22 @@ mod tests {
     }
 
     #[test]
+    fn default_decay_matches_style_vector_plan() {
+        let log = PracticeLog::default();
+        assert_eq!(log.decay_per_tick, PRACTICE_DECAY_PER_TICK);
+    }
+
+    #[test]
+    fn style_practice_uses_unified_amount() {
+        let mut log = PracticeLog::default();
+        record_style_practice(&mut log, ColorKind::Heavy);
+        assert_eq!(
+            log.weights.get(&ColorKind::Heavy).copied(),
+            Some(STYLE_PRACTICE_AMOUNT)
+        );
+    }
+
+    #[test]
     fn empty_log_leaves_color_untouched() {
         let log = PracticeLog::default();
         let mut c = QiColor {
@@ -165,5 +218,37 @@ mod tests {
         };
         evolve_qi_color(&log, &mut c);
         assert_eq!(c.main, ColorKind::Violent);
+    }
+
+    #[test]
+    fn evolution_tick_records_life_color_shift() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 77 });
+        app.add_systems(Update, qi_color_evolution_tick);
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Sharp, 70.0);
+        log.add(ColorKind::Heavy, 30.0);
+        let entity = app
+            .world_mut()
+            .spawn((
+                log,
+                QiColor::default(),
+                LifeRecord::new("offline:ColorShift".to_string()),
+            ))
+            .id();
+
+        app.update();
+
+        let life = app.world().get::<LifeRecord>(entity).unwrap();
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::ColorShift {
+                main: ColorKind::Sharp,
+                secondary: Some(ColorKind::Heavy),
+                tick: 77,
+            })
+        ));
     }
 }

@@ -27,6 +27,7 @@ use crate::combat::{
     },
     raycast::raycast_humanoid,
 };
+use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem,
 };
@@ -106,6 +107,7 @@ type CombatTargetItem<'a> = (
     Option<&'a mut CombatState>,
     Option<&'a mut Cultivation>,
     Option<&'a DerivedAttrs>,
+    Option<&'a mut PracticeLog>,
 );
 type CombatAttackerItem<'a> = (
     &'a mut Cultivation,
@@ -312,6 +314,7 @@ pub fn resolve_attack_intents(
             combat_state,
             defender_cultivation,
             defender_attrs,
+            defender_practice_log,
         )) = target_query.get_mut(target_entity)
         else {
             continue;
@@ -548,6 +551,9 @@ pub fn resolve_attack_intents(
                         created_at_tick: clock.tick,
                         inflicted_by: Some(attacker_id.clone()),
                     });
+                    if let Some(mut practice_log) = defender_practice_log {
+                        record_style_practice(&mut practice_log, ColorKind::Violent);
+                    }
                     jiemai_success = true;
                 }
             }
@@ -2543,6 +2549,7 @@ mod tests {
                 qi_max: 100.0,
                 ..Cultivation::default()
             },
+            PracticeLog::default(),
         ));
 
         app.world_mut().send_event(AttackIntent {
@@ -2603,6 +2610,15 @@ mod tests {
                 && (*effectiveness - expected_effectiveness).abs() < 1e-6
                 && *tick == 1000
         ));
+        assert_eq!(
+            target_ref
+                .get::<PracticeLog>()
+                .unwrap()
+                .weights
+                .get(&ColorKind::Violent)
+                .copied(),
+            Some(crate::cultivation::color::STYLE_PRACTICE_AMOUNT)
+        );
     }
 
     #[test]
