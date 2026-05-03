@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs,
-    Position, Query, Res, UniqueId, Update, With,
+    Position, Query, Res, UniqueId, Update, With, Without,
 };
 
 use crate::combat::components::{
@@ -604,7 +604,7 @@ fn projectile_tick_system(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut projectiles: Query<ProjectileItem<'_>>,
-    mut targets: Query<TargetItem<'_>, With<Wounds>>,
+    mut targets: Query<TargetItem<'_>, (With<Wounds>, Without<AnqiProjectileFlight>)>,
     unique_ids: Query<&UniqueId>,
     mut combat_events: EventWriter<CombatEvent>,
     mut impacts: EventWriter<CarrierImpactEvent>,
