@@ -16,6 +16,7 @@ from ..profiles import (
     list_profile_generators,
 )
 from ..profiles.base import DecorationSpec, EcologySpec
+from ..profiles.spawn_plain import spawn_tutorial_pois_for_zone
 from ..structures.corpse_mound import corpse_mounds_for_zone
 from ..structures.whale_fossil import fossil_bboxes_for_zone
 from ...poi_novice_selector import build_novice_poi_manifest_payload
@@ -216,8 +217,15 @@ def _poi_dict(zone_name: str, poi: PoiSpec) -> dict[str, object]:
 def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
     payload: list[dict[str, object]] = []
     for zone in zones:
+        seen = {(poi.kind, poi.name) for poi in zone.pois}
         for poi in zone.pois:
             payload.append(_poi_dict(zone.name, poi))
+        if zone.worldgen.terrain_profile == "spawn_plain":
+            for poi in spawn_tutorial_pois_for_zone(zone):
+                if (poi.kind, poi.name) in seen:
+                    continue
+                payload.append(_poi_dict(zone.name, poi))
+                seen.add((poi.kind, poi.name))
     return payload
 
 
