@@ -27,6 +27,7 @@ pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
 pub mod poi_novice_bridge;
+pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod resourcepack;
@@ -364,6 +365,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            qi_color_observed_emit::emit_qi_color_observed_payloads
+                .after(client_request_handler::handle_client_request_payloads),
             audio_event_emit::handle_audio_debug_commands,
             audio_event_emit::emit_audio_play_payloads
                 .after(audio_event_emit::handle_audio_debug_commands)
@@ -545,6 +548,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<audio_trigger::AudioTriggerState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
+    app.add_event::<qi_color_observed_emit::QiColorInspectRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();

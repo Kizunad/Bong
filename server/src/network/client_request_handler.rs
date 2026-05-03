@@ -78,6 +78,7 @@ use crate::network::cast_emit::{
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
@@ -196,6 +197,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub insight_tx: EventWriter<'w, InsightChosen>,
     pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
     pub duo_she_tx: Option<ResMut<'w, Events<DuoSheRequestEvent>>>,
+    pub qi_color_inspect_tx: Option<ResMut<'w, Events<QiColorInspectRequest>>>,
     pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
@@ -324,6 +326,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::DuoSheRequest { v, .. }
+            | ClientRequestV1::QiColorInspect { v, .. }
             | ClientRequestV1::UseLifeCore { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
@@ -962,6 +965,24 @@ pub fn handle_client_request_payloads(
                     duo_she_tx.send(DuoSheRequestEvent {
                         host: ev.client,
                         target_id,
+                    });
+                }
+            }
+            ClientRequestV1::QiColorInspect { observed, .. } => {
+                let Some(observed_entity) =
+                    resolve_qi_color_inspect_target(observed.as_str(), &combat_params)
+                else {
+                    tracing::warn!(
+                        "[bong][network] rejected qi_color_inspect from {:?}: invalid observed `{observed}`",
+                        ev.client
+                    );
+                    continue;
+                };
+                if let Some(qi_color_inspect_tx) = dispatch.qi_color_inspect_tx.as_deref_mut() {
+                    qi_color_inspect_tx.send(QiColorInspectRequest {
+                        observer: ev.client,
+                        observed: observed_entity,
+                        requested_at_tick: combat_clock.tick,
                     });
                 }
             }
@@ -4542,6 +4563,32 @@ fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1)
         crate::schema::client_request::AnqiCarrierSlotV1::MainHand => CarrierSlot::MainHand,
         crate::schema::client_request::AnqiCarrierSlotV1::OffHand => CarrierSlot::OffHand,
     }
+}
+
+fn resolve_qi_color_inspect_target(
+    raw: &str,
+    combat_params: &CombatRequestParams,
+) -> Option<Entity> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(id) = raw.strip_prefix("entity_bits:") {
+        return id.parse::<u64>().ok().map(Entity::from_bits);
+    }
+    if let Some(id) = raw.strip_prefix("entity:") {
+        if let Ok(protocol_id) = id.parse::<i32>() {
+            if let Some(entity) = combat_params
+                .entity_manager
+                .as_deref()
+                .and_then(|manager| manager.get_by_id(protocol_id))
+            {
+                return Some(entity);
+            }
+        }
+        return id.parse::<u64>().ok().map(Entity::from_bits);
+    }
+    None
 }
 
 fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {

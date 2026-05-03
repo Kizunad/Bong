@@ -662,6 +662,235 @@
               }
             }
           }
+        },
+        "qi_color_main": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "qi_color_secondary": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "qi_color_chaotic": {
+          "type": "boolean"
+        },
+        "qi_color_hunyuan": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "observer",
+        "observed",
+        "main",
+        "is_chaotic",
+        "is_hunyuan",
+        "realm_diff"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "qi_color_observed",
+          "type": "string"
+        },
+        "observer": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "observed": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "main": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "secondary": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "is_chaotic": {
+          "type": "boolean"
+        },
+        "is_hunyuan": {
+          "type": "boolean"
+        },
+        "realm_diff": {
+          "type": "number"
         }
       }
     },
