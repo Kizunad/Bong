@@ -415,6 +415,18 @@ pub fn try_breakthrough_with_env_bonus<R: RollSource>(
     }
 }
 
+fn spirit_eye_env_bonus_for(from: Realm, blood_valley: Option<bool>) -> f64 {
+    if next_realm(from) != Some(Realm::Solidify) {
+        return 0.0;
+    }
+
+    match blood_valley {
+        Some(true) => BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS,
+        Some(false) => SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS,
+        None => 0.0,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
 pub fn breakthrough_system(
     clock: Res<CultivationClock>,
@@ -473,16 +485,12 @@ pub fn breakthrough_system(
                     .and_then(|registry| registry.eye_at(dimension, position.get()))
                     .map(|eye| (eye.id.clone(), eye.zone_name.clone(), eye.blood_valley))
             });
-        let env_bonus = spirit_eye_snapshot
-            .as_ref()
-            .map(|(_, _, blood_valley)| {
-                if *blood_valley {
-                    BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS
-                } else {
-                    SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS
-                }
-            })
-            .unwrap_or(0.0);
+        let env_bonus = spirit_eye_env_bonus_for(
+            from,
+            spirit_eye_snapshot
+                .as_ref()
+                .map(|(_, _, blood_valley)| *blood_valley),
+        );
 
         let zone_error = position_context.and_then(|(position, dimension)| {
             breakthrough_environment_error(
@@ -1043,6 +1051,21 @@ mod tests {
         );
 
         assert!(boosted > base);
+    }
+
+    #[test]
+    fn spirit_eye_bonus_is_gated_to_guyuan_breakthrough() {
+        assert_eq!(
+            spirit_eye_env_bonus_for(Realm::Condense, Some(false)),
+            SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS
+        );
+        assert_eq!(
+            spirit_eye_env_bonus_for(Realm::Condense, Some(true)),
+            BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS
+        );
+        assert_eq!(spirit_eye_env_bonus_for(Realm::Solidify, Some(false)), 0.0);
+        assert_eq!(spirit_eye_env_bonus_for(Realm::Induce, Some(false)), 0.0);
+        assert_eq!(spirit_eye_env_bonus_for(Realm::Condense, None), 0.0);
     }
 
     /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。

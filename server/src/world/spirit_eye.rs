@@ -319,10 +319,12 @@ impl SpiritEyeRegistry {
     pub fn private_marker_entries(
         &self,
         character_id: &str,
+        observer_dimension: DimensionKind,
         observer_pos: [f64; 3],
     ) -> Vec<SenseEntryV1> {
         self.eyes
             .iter()
+            .filter(|eye| eye.dimension == observer_dimension)
             .filter(|eye| eye.discovered_by.iter().any(|id| id == character_id))
             .filter_map(|eye| {
                 let d = distance(observer_pos, eye.pos);
@@ -727,5 +729,27 @@ mod tests {
         assert_ne!(registry.eyes[0].pos, old_pos);
         assert!(registry.eyes[0].discovered_by.is_empty());
         assert_eq!(events[0].reason, SpiritEyeMigrateReasonV1::UsagePressure);
+    }
+
+    #[test]
+    fn private_markers_do_not_cross_dimensions() {
+        let zones = ZoneRegistry {
+            zones: vec![zone("spawn", 0.9, 0.0)],
+        };
+        let mut registry = SpiritEyeRegistry::from_zones(&zones, 0);
+        let eye_pos = registry.eyes[0].pos;
+        registry.eyes[0]
+            .discovered_by
+            .push("char:alice".to_string());
+
+        assert_eq!(
+            registry
+                .private_marker_entries("char:alice", DimensionKind::Overworld, eye_pos)
+                .len(),
+            1
+        );
+        assert!(registry
+            .private_marker_entries("char:alice", DimensionKind::Tsy, eye_pos)
+            .is_empty());
     }
 }
