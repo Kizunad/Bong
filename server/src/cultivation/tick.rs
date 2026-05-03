@@ -15,7 +15,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
-use super::components::{Cultivation, MeridianSystem};
+use super::components::{Cultivation, MeridianSystem, Realm};
 use super::lifespan::LifespanComponent;
 
 /// 全局 tick 计数器 — 用于标记 last_qi_zero_at 等时间戳。
@@ -114,8 +114,10 @@ pub fn qi_regen_and_zone_drain_tick(
         let effective_max = cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0);
         let qi_room = (effective_max - cultivation.qi_current).max(0.0);
 
-        let wind_candle_multiplier = if lifespan.is_some_and(LifespanComponent::is_wind_candle) {
-            0.5
+        let wind_candle_multiplier = if lifespan.is_some_and(LifespanComponent::is_wind_candle)
+            || statuses.is_some_and(has_frailty_status)
+        {
+            frailty_qi_recovery_multiplier_for_realm(cultivation.realm)
         } else {
             1.0
         };
@@ -148,6 +150,23 @@ fn humility_qi_recovery_multiplier(status_effects: &StatusEffects) -> f64 {
             acc * (1.0 - f64::from(effect.magnitude).clamp(0.0, 0.95))
         })
         .clamp(0.05, 1.0)
+}
+
+pub fn frailty_qi_recovery_multiplier_for_realm(realm: Realm) -> f64 {
+    match realm {
+        Realm::Awaken | Realm::Induce => 0.7,
+        Realm::Condense => 0.6,
+        Realm::Solidify => 0.5,
+        Realm::Spirit => 0.4,
+        Realm::Void => 0.3,
+    }
+}
+
+fn has_frailty_status(status_effects: &StatusEffects) -> bool {
+    status_effects
+        .active
+        .iter()
+        .any(|effect| effect.kind == StatusEffectKind::Frailty && effect.remaining_ticks > 0)
 }
 
 #[cfg(test)]
@@ -213,53 +232,41 @@ mod tests {
     }
 
     #[test]
-    fn wind_candle_halves_qi_regen() {
-        let mut app = App::new();
-        app.insert_resource(CultivationClock::default());
-        app.insert_resource(ZoneRegistry::fallback());
-        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+    fn wind_candle_applies_realm_specific_qi_regen_penalty() {
+        fn run_once(lifespan: LifespanComponent) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
 
-        let mut meridians = MeridianSystem::default();
-        meridians.get_mut(MeridianId::Lung).opened = true;
-        let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
-        lifespan.years_lived = 73.0;
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    Position::new([8.0, 66.0, 8.0]),
+                    meridians,
+                    Cultivation::default(),
+                    lifespan,
+                ))
+                .id();
 
-        let normal = app
-            .world_mut()
-            .spawn((
-                Position::new([8.0, 66.0, 8.0]),
-                meridians.clone(),
-                Cultivation::default(),
-                LifespanComponent::new(LifespanCapTable::MORTAL),
-            ))
-            .id();
-        let wind_candle = app
-            .world_mut()
-            .spawn((
-                Position::new([8.0, 66.0, 8.0]),
-                meridians,
-                Cultivation::default(),
-                lifespan,
-            ))
-            .id();
+            app.update();
 
-        app.update();
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
 
-        let normal_qi = app
-            .world()
-            .entity(normal)
-            .get::<Cultivation>()
-            .unwrap()
-            .qi_current;
-        let wind_candle_qi = app
-            .world()
-            .entity(wind_candle)
-            .get::<Cultivation>()
-            .unwrap()
-            .qi_current;
+        let normal_qi = run_once(LifespanComponent::new(LifespanCapTable::MORTAL));
+        let mut wind_candle_lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        wind_candle_lifespan.years_lived = 73.0;
+        let wind_candle_qi = run_once(wind_candle_lifespan);
 
         assert!(normal_qi > 0.0);
-        assert!((wind_candle_qi - normal_qi * 0.5).abs() < 1e-6);
+        assert!((wind_candle_qi - normal_qi * 0.7).abs() < 1e-6);
     }
 
     #[test]
