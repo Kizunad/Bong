@@ -25,6 +25,7 @@ pub struct AntiCheatCounter {
     reach_reported_count: u32,
     cooldown_reported_count: u32,
     qi_invest_reported_count: u32,
+    next_report_kind_cursor: usize,
 }
 
 impl AntiCheatCounter {
@@ -45,16 +46,18 @@ impl AntiCheatCounter {
             return None;
         }
 
-        [
+        let kinds = [
             ViolationKindV1::ReachExceeded,
             ViolationKindV1::CooldownBypassed,
             ViolationKindV1::QiInvestExceeded,
-        ]
-        .into_iter()
-        .find(|kind| {
-            self.count_for(*kind) >= config.threshold_for(*kind)
-                && self.count_for(*kind) > self.reported_count_for(*kind)
-        })
+        ];
+        let start = self.next_report_kind_cursor % kinds.len();
+        (0..kinds.len())
+            .map(|offset| kinds[(start + offset) % kinds.len()])
+            .find(|kind| {
+                self.count_for(*kind) >= config.threshold_for(*kind)
+                    && self.count_for(*kind) > self.reported_count_for(*kind)
+            })
     }
 
     fn build_report(
@@ -80,6 +83,7 @@ impl AntiCheatCounter {
 
         self.last_report_tick = at_tick;
         self.set_reported_count(kind, count);
+        self.next_report_kind_cursor = Self::kind_index(kind).saturating_add(1);
         Some(AntiCheatReportV1::new(
             char_id,
             entity.to_bits(),
@@ -144,6 +148,14 @@ impl AntiCheatCounter {
             ViolationKindV1::ReachExceeded => self.last_reach_details.as_str(),
             ViolationKindV1::CooldownBypassed => self.last_cooldown_details.as_str(),
             ViolationKindV1::QiInvestExceeded => self.last_qi_invest_details.as_str(),
+        }
+    }
+
+    fn kind_index(kind: ViolationKindV1) -> usize {
+        match kind {
+            ViolationKindV1::ReachExceeded => 0,
+            ViolationKindV1::CooldownBypassed => 1,
+            ViolationKindV1::QiInvestExceeded => 2,
         }
     }
 }
@@ -386,5 +398,48 @@ mod tests {
             emitted[0].report.details,
             "reach: target_distance=4.0 server_max=1.3"
         );
+    }
+
+    #[test]
+    fn report_selection_rotates_between_ready_violation_kinds() {
+        let config = AntiCheatConfig {
+            reach_threshold: 1,
+            cooldown_threshold: 1,
+            qi_invest_threshold: 1,
+            report_cooldown_ticks: 10,
+        };
+        let entity = Entity::from_raw(42);
+        let mut counter = AntiCheatCounter::default();
+        counter.record_violation(ViolationKindV1::ReachExceeded, "reach: first");
+        counter.record_violation(ViolationKindV1::CooldownBypassed, "cooldown: first");
+
+        let first = counter
+            .build_report(
+                entity,
+                "offline:Azure",
+                10,
+                ViolationKindV1::ReachExceeded,
+                &config,
+            )
+            .expect("reach should report first by default");
+        assert_eq!(first.kind, ViolationKindV1::ReachExceeded);
+
+        counter.record_violation(ViolationKindV1::ReachExceeded, "reach: second");
+        assert_eq!(
+            counter.next_reportable_kind(20, &config),
+            Some(ViolationKindV1::CooldownBypassed),
+            "cooldown should not be starved by continuing reach violations"
+        );
+        let second = counter
+            .build_report(
+                entity,
+                "offline:Azure",
+                20,
+                ViolationKindV1::CooldownBypassed,
+                &config,
+            )
+            .expect("cooldown should report after rotation");
+        assert_eq!(second.kind, ViolationKindV1::CooldownBypassed);
+        assert_eq!(second.details, "cooldown: first");
     }
 }
