@@ -28,6 +28,7 @@ import {
   type DeterministicNpcProducer,
 } from "./npc-producer.js";
 import type { AgentDecision } from "./parse.js";
+import { QiColorNarrationTracker } from "./qi-color-narration.js";
 import { RedisIpc } from "./redis-ipc.js";
 import {
   emptyErrorBreakdown,
@@ -705,6 +706,7 @@ export async function runRuntime(
   const worldModel = deps.worldModel ?? new WorldModel();
   const sleep = deps.sleep ?? defaultSleep;
   const telemetrySink = deps.telemetrySink ?? createDefaultTelemetrySink({ logger });
+  const qiColorNarrationTracker = new QiColorNarrationTracker();
 
   logger.log(
     `[tiandao] models: default=${modelOverrides.default}, annotate=${modelOverrides.annotate}, calamity=${modelOverrides.calamity}, mutation=${modelOverrides.mutation}, era=${modelOverrides.era}, base_url: ${config.baseUrl ?? "(mock/no-remote)"}`,
@@ -852,6 +854,16 @@ export async function runRuntime(
                 });
               },
               publish: async () => {
+                const qiColorNarrations = qiColorNarrationTracker.ingest(state);
+                if (qiColorNarrations.length > 0) {
+                  await redis.publishNarrations({
+                    narrations: qiColorNarrations,
+                    metadata: {
+                      sourceTick: state.tick,
+                      correlationId: `qi-color:${state.tick}`,
+                    },
+                  });
+                }
                 await persistWorldModelAfterFreshTick({
                   worldModel,
                   redis,

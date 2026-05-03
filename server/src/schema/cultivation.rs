@@ -26,6 +26,8 @@ pub struct CultivationSnapshotV1 {
     pub meridians_total: u32,
     pub qi_color_main: String,
     pub qi_color_secondary: Option<String>,
+    pub qi_color_chaotic: bool,
+    pub qi_color_hunyuan: bool,
     pub composure: f64,
 }
 
@@ -41,6 +43,8 @@ impl CultivationSnapshotV1 {
             meridians_total: 20,
             qi_color_main: color_kind_to_string(q.main).to_string(),
             qi_color_secondary: q.secondary.map(|s| color_kind_to_string(s).to_string()),
+            qi_color_chaotic: q.is_chaotic,
+            qi_color_hunyuan: q.is_hunyuan,
             composure: c.composure,
         }
     }
@@ -308,6 +312,8 @@ mod tests {
         assert_eq!(snap.qi_max_frozen, 3.0);
         assert_eq!(snap.qi_color_main, "Mellow");
         assert!(snap.qi_color_secondary.is_none());
+        assert!(!snap.qi_color_chaotic);
+        assert!(!snap.qi_color_hunyuan);
     }
 
     #[test]
@@ -321,6 +327,8 @@ mod tests {
             meridians_total: 20,
             qi_color_main: "Sharp".into(),
             qi_color_secondary: None,
+            qi_color_chaotic: false,
+            qi_color_hunyuan: false,
             composure: 0.85,
         };
         let json = serde_json::to_string(&s).unwrap();
