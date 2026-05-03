@@ -1,6 +1,6 @@
 # Bong · plan-tuike-v1
 
-**替尸·蜕壳流**（防御）。以蛛丝、朽木等制"伪灵皮"穿在真甲下层——**只过滤真元污染，不防物理伤害**。受击 contam 累积达伪皮承受上限自动脱一层，连污染一起带走。**物资派**：不绑染色 / 不绑特性 / 靠 inventory loadout。
+**替尸·蜕壳流**（防御）。以蛛丝、朽木等制"伪灵皮"穿在真甲下层——**只过滤真元污染，不防物理伤害**。受击 contam 累积达伪皮承受上限自动脱一层，连污染一起带走。**物资派**：靠 inventory loadout 决定，但**长期专精涌现凝实色**（与器修同源——伪皮亦载体；worldview §五"流派 ⇄ 染色" 2026-05-03 正典化）。
 
 **Primary Axis**（worldview §五:466 已正典）：**伪皮档位（轻/中/重） + 材料色克 + 单层吸收上限**
 
@@ -49,20 +49,20 @@
   - server: `combat::tuike::FalseSkin` component / `combat::tuike::tuike_filter_contam` system / `combat::tuike::shed_layer` 函数 / `armor::ArmorKind::FalseSkin` variant 扩展 / `crafting::false_skin_recipe` (新)
   - schema: `agent/packages/schema/src/tuike.ts` → `FalseSkinStateV1` / `ShedEventV1`
   - client: `bong:armor/equip_false_skin` (inbound, 新) / `bong:tuike/false_skin_state` (outbound, 新) HUD payload
-- **特性接入面（worldview §五:471 "蜕壳流物资派" 已正典 — v1 不绑特性）**：
-  - **染色加成（凝实色 / 沉重色）** vN+1 接入 — v1 不实装
+- **特性接入面**（worldview §五"流派由组合涌现" 2026-05-03 正典 — tuike 长期专精涌现**凝实色**，与器修同源；worldview §五:471 物资派定位仍成立）：
+  - **凝实色加成** vN+1 接入：长期专精涌现凝实色后，伪皮制作 qi cost -10% / contam_capacity +20%
   - **真元逆逸散效率特性** vN+1 接入（伪皮 absorbed_contam 不漏失）— v1 contam 累积永不漏失，不需要
 
 **Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：
 - **`bong:armor/equip_false_skin`**（装备伪皮）= **装备操作**（armor inventory path）→ **不走 hotbar**，保留装备 packet
-- tuike 整个流派**无 technique cast**（worldview §五:471 "物资派" 正典定位 — 不绑特性 / 不绑染色 / 不需技能）
+- tuike 整个流派**无 technique cast**（worldview §五:471 "物资派" 正典定位 — 不需技能；染色由专精涌现，非门禁）
 - 详见 `plan-woliu-v1.md §8 跨 plan hotbar 同步修正备注`。
 
 ---
 
 ## §A 概览（设计导航）
 
-> 蜕壳流 = **真元污染过滤器**——伪皮**不防 wound**，只防 contam。受击 contam 累积进伪皮，达伪皮 `contam_capacity` 自动脱一层 + 溢出 contam 进玩家。**物资派**：不绑染色 / 不绑特性 / 全靠 inventory loadout。worldview "器修重狙→蜕壳"自然实现（高 contam 撑爆 + 溢出），不需 bypass / 特判。
+> 蜕壳流 = **真元污染过滤器**——伪皮**不防 wound**，只防 contam。受击 contam 累积进伪皮，达伪皮 `contam_capacity` 自动脱一层 + 溢出 contam 进玩家。**物资派**：全靠 inventory loadout 决胜（worldview §五:471）；长期专精涌现**凝实色**（与器修同源；worldview §五"流派 ⇄ 染色"）。worldview "器修重狙→蜕壳"自然实现（高 contam 撑爆 + 溢出），不需 bypass / 特判。
 
 ### A.0 v1 实装范围（2026-05-03 拍板）
 
@@ -78,7 +78,7 @@
 | 爆脉穿透 | **不做特判**（爆脉 wound 直接进玩家，伪皮不防）| — |
 | 与 zhenmai 重量耦合 | **复用 zhenmai-v1 Q63**：蛛丝伪皮 = 轻 / 朽木甲 = 重 | — |
 | 制作 | **玩家自制**（plan-armor crafting 框架扩展）（Q79: A）| NPC 商人售卖 |
-| 染色 / 特性 | **❌ 不绑**（worldview §五:466/471 正典）| — |
+| 染色 / 特性 | v1 不实装；vN+1 凝实色加成（长期专精涌现，worldview §五"流派 ⇄ 染色"）| 完整凝实色×tuike 加成 |
 
 ### A.1 物理模型（关键反转）
 
@@ -232,7 +232,7 @@ shed_capacity = base_layer × (1 + integrity_buff)
 
 ## §3.1 蜕壳·v1 规格（P0 阶段）
 
-> worldview §五.防御.2（line 437-440）+ §五:471（"物资派" 正典）锚定：**伪皮只过滤真元污染**，受击 contam 累积达 capacity 自动脱壳。v1 收敛到**单层蛛丝伪皮**（P0）+ **朽木甲 3 层**（P1，§3.2）+ **不绑染色 / 特性**（worldview §五:471）。
+> worldview §五.防御.2（line 437-440）+ §五:471（"物资派" 正典）+ §五"流派由组合涌现"（2026-05-03 正典）锚定：**伪皮只过滤真元污染**，受击 contam 累积达 capacity 自动脱壳。v1 收敛到**单层蛛丝伪皮**（P0）+ **朽木甲 3 层**（P1，§3.2）。**v1 不绑特性 / 不实装染色加成**，但 tuike 长期专精会涌现凝实色（vN+1 加成接入）。
 
 ### 3.1.A FalseSkin component + ArmorKind 扩展（Q74: B 共存）
 

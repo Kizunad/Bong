@@ -54,16 +54,16 @@
   - server: `combat::woliu::VortexField` component / `combat::woliu::VortexCastIntent` event / `combat::woliu::vortex_intercept_tick` system / `combat::woliu::vortex_maintain_tick` (耗 qi + 反噬检查) / `combat::woliu::cast_vortex` 系统 / 命名修正 `tuike_layers` 拆分 / **新增 `Technique::WoliuVortex`** 学习写入 `cultivation.techniques`（plan-hotbar-modify-v1 已落地的 Technique 系统）
   - schema: `agent/packages/schema/src/woliu.ts` → `VortexFieldStateV1` / `VortexBackfireEventV1` / 扩展 `SenseEntryV1::AmbientLeyline` 支持相对感知
   - client: **走 hotbar 已落地路径** — 玩家学到 WoliuVortex Technique 后在 InspectScreen "战斗·修炼" tab 绑到 **1-9 数字键槽**（战斗·修炼栏，**不是** F1-F9 快捷使用栏——后者是 consumable）→ 战斗按 1-9 数字键 → `UseQuickSlot { slot }` packet → server 解析 slot binding → 触发 `VortexCastIntent`；**不新建 woliu 专属 packet**。outbound `bong:woliu/vortex_state` 仍需要（HUD payload）+ perception module 新 ambient text 渲染
-- **特性接入面（v1 仅留 hook 不实装）**：worldview §五:467 "持久博弈型，非爆发" — woliu 不绑染色 / 不绑特性
+- **特性接入面（v1 仅留 hook 不实装）**：worldview §五"流派由组合涌现" 2026-05-03 正典 — woliu 长期专精涌现**缜密色**（与阵法同源——空间法则操控；worldview §五"流派 ⇄ 染色"表）
   - **真元流速特性**（zhenmai primary axis 泛型化）→ 持涡 qi cost ↓ — vN+1 接入
   - **真元池效率特性** → maintain_max ↑ — vN+1 接入
-  - **缜密色（Solid 阵法师）**（worldview §六）→ 灵气差值感知敏锐，Δ 上限 +0.05 — vN+1 接入
+  - **缜密色**（woliu 长期专精涌现）→ 灵气差值感知敏锐，Δ 上限 +0.05 / 反噬概率 -20% — vN+1 接入
 
 ---
 
 ## §A 概览（设计导航）
 
-> 涡流流 = **算计型防御**：toggle 开持涡 → 减速 80% + 持续耗 qi → 形成相对负灵域吸干飞入的真元投射物 → 维持过久 → 反噬手经脉永久 SEVERED。worldview §五:472 已正典化"持久博弈型，非爆发"——不绑染色 / 不绑特性 / 不靠瞬间反应。
+> 涡流流 = **算计型防御**：toggle 开持涡 → 减速 80% + 持续耗 qi → 形成相对负灵域吸干飞入的真元投射物 → 维持过久 → 反噬手经脉永久 SEVERED。worldview §五:472 已正典化"持久博弈型，非爆发"——不靠瞬间反应；长期专精涌现**缜密色**（worldview §五"流派 ⇄ 染色"），染色反过来加成涡流效率（vN+1 实装）。
 
 ### A.0 v1 实装范围（2026-05-03 拍板）
 

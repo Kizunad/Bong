@@ -44,9 +44,10 @@
   - server: `combat::resolve.rs::apply_defense_intents` 升级（境界分级 + 僵直施加）/ `combat::resolve.rs::resolve_attack_intents` jiemai 分支扩展（距离梯度 + FOV）/ `combat::components.rs::JIEMAI_*` 常量重定义为函数 `jiemai_window_ms_for_realm` / `jiemai_qi_cost_for_realm` / `jiemai_contam_multiplier` / `jiemai_effectiveness_by_distance`
   - schema: `agent/packages/schema/src/combat-event.ts` 已有 `DefenseTriggeredV1`，扩展 `effectiveness: f32` 字段
   - client: `bong:combat/defense_stance` (inbound, plan-combat-no_ui §592 已定义) 复用；新增 prep 1s 视觉反馈 + 僵直 visual cue
-- **特性接入面（v1 仅留 hook）**：worldview §五:466 "防御三流不绑染色"已正典 — jiemai 不与染色挂钩
+- **特性接入面（v1 仅留 hook）**：worldview §五"流派由组合涌现"（2026-05-03 正典化）— jiemai 长期专精涌现**暴烈色**（震爆爆破倾向，§五"流派 ⇄ 染色"表）
   - **真元流速**（woliu primary axis 泛型化）→ jiemai prep window 延长 X% — vN+1 接入
   - **沉重色（Heavy）**（worldview §六）→ 体修近战 jiemai 自伤减半（仅 wound severity，不影响 contam mul）— vN+1 接入
+  - **暴烈色**（jiemai 长期专精涌现）→ 弹反成功时附加击退 + 自伤额外 -0.05 severity — vN+1 接入
 
 **Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：
 - **`bong:combat/defense_stance`**（plan-combat-no_ui §592 已实装现有 packet）= **Technique** → P0 现状保留（已落地），**P1 改写时同步迁移到 hotbar 1-9**（`Technique::ZhenmaiParry` 绑战斗·修炼栏 + UseQuickSlot 触发）
@@ -72,7 +73,7 @@
 | 失败累积（**Q62 reframe 取消**）| ❌ 不做经脉损伤累积（取代为僵直）| — |
 | vs 爆脉特判 | ❌ 不做（Q64 距离梯度自然实现）| — |
 | agent narration（**P1**）| `DefenseTriggered` 推 narration（"X 弹反千钧之矛 / X 反应不及"）| LifeRecord "X 在 N 战中弹反 Y" |
-| 染色加成 | ❌ 不绑染色（worldview §五:466 正典）| — |
+| 染色加成 | v1 不实装；vN+1 暴烈色加成（worldview §五"流派 ⇄ 染色"，jiemai 长期专精涌现暴烈色）| 完整暴烈色×jiemai 加成 |
 
 ### A.1 v1 P0 已实装 vs worldview 数值表 gap
 
