@@ -1,7 +1,7 @@
 ---
 name: gen-image
-description: Bong 项目的图像生成。调 scripts/images/gen.py 按三档画风（item / particle / hud）生成物品图标、粒子 VFX 贴图、HUD overlay。cliproxy 优先，失败 fallback openai。用法：/gen-image <style> <描述>，或直接说"生成一张 xxx 图/贴图/图标"。
-argument-hint: <style=item|particle|hud> <物品或视觉描述>
+description: Bong 项目的图像生成。调 scripts/images/gen.py 按四档画风（item / particle / hud / scene）生成物品图标、粒子 VFX 贴图、HUD overlay、末法残土场景概念图。cliproxy 优先，失败 fallback openai。用法：/gen-image <style> <描述>，或直接说"生成一张 xxx 图/贴图/图标/场景"。
+argument-hint: <style=item|particle|hud|scene> <物品或视觉描述>
 allowed-tools: Read Write Edit Bash Glob Grep
 ---
 
@@ -18,18 +18,20 @@ allowed-tools: Read Write Edit Bash Glob Grep
 - "生成一张 XX 图标" / "画一个 XX 物品图" → **style=item**
 - "生成一张 XX 粒子 / VFX 贴图" / "剑气 / 光柱 / 星屑 贴图" → **style=particle**
 - "生成一张 HUD overlay / 水墨边框 / 结霜角 / 符阵贴图" → **style=hud**
+- "生成一张 XX 场景 / 概念图 / 美学参考 / mood board / 立绘" / "末法残土 XX 的样子" → **style=scene**
 
 不确定归哪档，**先问用户一句**，不要猜。
 
-## 2. 三档画风对照
+## 2. 四档画风对照
 
 | style | 用途 | 背景默认 | 输出去处 | 后处理 |
 |-------|------|---------|---------|--------|
 | `item` | 物品图标（武器 / 药材 / 符牌 / 法宝） | `solid black / white / magenta` | `local_images/` 根 | `remove_bg.py` 抠纯色底 |
 | `particle` | MC 粒子 / VFX 贴图（Line / Ribbon / Sprite / GroundDecal） | 纯黑 `#000000` | `local_images/particles/` | `lum_to_alpha.py` 亮度转 alpha |
 | `hud` | HUD overlay（水墨边框 / 结霜 / 符阵） | `--transparent` 真 RGBA | `local_images/` 或 `client/.../textures/hud/` | 按需清白雾（RGB=0, alpha*=1-lum/255） |
+| `scene` | 末法残土场景 / 概念图 / mood board（**非游戏资产**，美术对齐用） | 不透明完整画面 | `local_images/scenes/` | 无（直接看） |
 
-**关键**：三档的 prefix 由 `--style` 自动拼接，**你不需要手写** `dark xianxia game item icon...`
+**关键**：四档的 prefix 由 `--style` 自动拼接，**你不需要手写** `dark xianxia game item icon...`
 这类 prefix 文案 —— 写描述文本即可，`gen.py` 会从 `style.py` 拼好。
 
 ## 3. 调用命令模板
@@ -82,7 +84,28 @@ python scripts/images/lum_to_alpha.py local_images/particles/rune_char_dao.png -
 - Sprite（单体） 32×32 或 64×64
 - 生成时用 `--size 1536x1024` 或 `1024x1024`，后续用 PIL 缩小
 
-### 3.3 HUD Overlay
+### 3.3 Scene / 概念图 / Mood Board
+
+```bash
+python scripts/images/gen.py \
+  "a lone cultivator silhouette standing at the edge of a vast cracked rift valley at dusk, looking down into the collapsing void below, distant ash plumes rising on the horizon, withered jade-grey grass in the foreground, no celestial light, no flying sword, just emptiness and weight" \
+  --name rift_valley_concept \
+  --style scene \
+  --size 1536x1024 \
+  --out local_images/scenes/ \
+  --save-prompt
+```
+
+**关键约束**：
+- **不要 `--transparent`**：scene 是完整画面，不抠图、不接 alpha
+- **横向构图**：默认 `--size 1536x1024`（电影画幅）；竖构图人物立绘用 `1024x1536`
+- **palette 锁死**：prefix 已写死 `ash-grey and faded-jade`、`desaturated`、`oppressive overcast`、排除 `vibrant fantasy / celestial palace / pristine temple / anime / JRPG glow`。**别在 body 里破这套调子**——比如不要写 "vibrant red robe"、"glowing temple gates"
+- **明确画里有什么**：地形特征（cracked stone / withered grass / bone-white strata / negative-pressure rift）+ 一个**焦点元素**（孤身修士剪影 / 干尸 / 灵龛入口 / 鲸落遗骸）+ 时间天气（dusk overcast / monsoon haze / winter thin snow）
+- **避免常见 AI 套路**：明示 `no katana, no flying sword, no celestial dragon, no glowing palm strike, no anime character`，AI 一听到 "xianxia" 容易加这些
+
+**用途**：美术对齐 / 概念图 / mood board，**不是**游戏内资产。生成完直接看，无后处理。
+
+### 3.4 HUD Overlay
 
 ```bash
 python scripts/images/gen.py \
@@ -116,6 +139,7 @@ Image.fromarray(out).save("xxx.png")
   - 粒子 → `client/src/main/resources/assets/bong-client/textures/particle/<name>.png`（去掉 `_alpha` 后缀）
   - HUD → `client/src/main/resources/assets/bong-client/textures/hud/<name>.png`
   - 物品 → `client/src/main/resources/assets/bong/textures/item/<name>/<variant>.png`
+  - 场景 → 留在 `local_images/scenes/`，**不进客户端**（仅美术参考）
 
 ## 5. Backend
 
