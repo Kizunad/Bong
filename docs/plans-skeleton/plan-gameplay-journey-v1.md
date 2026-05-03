@@ -590,12 +590,35 @@ P5 必需:
 narration / agent 深化:
   - plan-narrative-v1            ⏳ → 完成       (天道叙事节奏/视角/抑制 全规范)
 
-合计：~22 个缺口 plan 必须推进/完成，其中 4 个派生新 plan、18 个升级既有 skeleton/active。
+2026-05-03 新增（6 流派 plan vN+1 hook 涌现 + worldview 正典化驱动）:
+  - plan-identity-v1            (派生)         身份/信誉系统（worldview §十一 commit fe00532c 已正典化：
+                                                "末土后招原则" + 多 identity / NPC 信誉度 / 切换洗白机制）
+                                                —— dugu plan v1 已留 DuguRevealedEvent stub 等 consumer
+                                                —— 6 流派 vN+1 NPC 反应（高境追杀/中境拒交易）等它
+                                                —— 接入 plan-baomai / plan-social / plan-niche-defense 多链路
+  - plan-color-v1               (派生)         染色养成系统（cultivation::QiColor 已实装 10 色 ✅；
+                                                养成 / 杂色惩罚 / 加速 / 阴诡色累积机制 未立 plan）
+                                                —— 6 流派 vN+1 染色加成 hook 等它：
+                                                    dugu 阴诡色 +1 境界差识破容忍 / anqi 凝实色加速封真元
+                                                    tuike 凝实色加速制作伪皮 / zhenmai 沉重色自伤减半
+                                                    woliu 缜密色 Δ +0.05 / dugu 师阴诡色累积污染
+  - plan-baomai-v2              (派生)         越级原则 + 全力一击战后虚脱实装（worldview §四 commit d5e528aa
+                                                已正典化"池子差距矩阵 + 越级×3.6-5.1 / ×13-71 / ×52+
+                                                + 全力一击 charge 窗口 + 战后虚脱"，但 baomai-v1 未实装数值）
+                                                —— 跨流派 trade-off matrix 的对照锚点
+                                                —— P3-P5 越级偷一波 / 渡劫救场必需
+
+合计：~25 个缺口 plan 必须推进/完成（原 22 + DEF 新增 3），其中 7 个派生新 plan、18 个升级既有 skeleton/active。
 ```
 
 **依赖图建议执行序(假设单线开发)**：persistence → cross-system-patch → fauna + spiritwood(并行) → forge-leftovers + alchemy-client(并行) → terrain-ash-deadzone + terrain-pseudo-vein(并行) → spirit-eye → zhenfa → style-pick → 1 攻 1 防流派 → lingtian-process/weather/npc(并行) → niche-defense → narrative-v1 收尾 → tribulation 收尾 → 节律 → 100h E2E。
 
-**22 plan 工时估算**：每 plan 平均 P0+P1 至少 1-2 周 → 顺序铺 11-16 个月，并行 4-6 个月。建议至少 3-4 路并行；任一路卡死(尤其 zhenfa/spirit-eye/persistence)会塌方下游。
+**DEF 三 plan 切入点**（独立于主线）：
+- **plan-color-v1** —— 应在 P2 流派分化后期切入（玩家选完流派开始养染色），可与 spirit-eye-v1 / style-pick-v1 并行
+- **plan-identity-v1** —— P3 社交博弈深化时必需（NPC 信誉度反应是 P3 灵龛战 / 仇人 / 结契机制的元数据层）
+- **plan-baomai-v2** —— P4 通灵→化虚阶段必需（越级 / 全力一击是高境 PVP 的核心算计），可与 tribulation 收尾并行
+
+**25 plan 工时估算**：每 plan 平均 P0+P1 至少 1-2 周 → 顺序铺 12-18 个月，并行 5-7 个月。建议至少 3-4 路并行；任一路卡死(尤其 zhenfa/spirit-eye/persistence)会塌方下游。
 
 ---
 
