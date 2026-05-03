@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "village_id",
+    "player_id",
+    "killed_npc_count",
+    "refusal_until_wall_clock_secs"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "trespass",
+      "type": "string"
+    },
+    "village_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "killed_npc_count": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "refusal_until_wall_clock_secs": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

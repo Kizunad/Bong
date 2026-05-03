@@ -127,6 +127,9 @@ export const CHANNELS = {
    * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
   TSY_EVENT: "bong:tsy_event",
 
+  /** Server → Agent: 新手 POI 生成 / 屠村事件（plan-poi-novice-v1 §P2） */
+  POI_NOVICE_EVENT: "bong:poi_novice/event",
+
   // ─── 炼器（武器）（plan-forge-v1 §4） ───────────────────
   /** Server → Agent: 锻造起炉（玩家起炉时推，供 agent 生成观察叙事） */
   FORGE_START: "bong:forge/start",
@@ -187,6 +190,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
   CHANNELS.TSY_EVENT,
+  CHANNELS.POI_NOVICE_EVENT,
   CHANNELS.FORGE_START,
   CHANNELS.FORGE_OUTCOME,
   CHANNELS.ALCHEMY_SESSION_START,

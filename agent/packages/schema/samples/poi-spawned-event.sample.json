@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "kind": "poi_spawned",
+  "poi_id": "spawn:forge_station",
+  "poi_type": "forge_station",
+  "zone": "spawn",
+  "pos": [304, 71, 208],
+  "selection_strategy": "strict_radius_1500",
+  "qi_affinity": 0.15,
+  "danger_bias": 0
+}

@@ -1,0 +1,82 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "poi_id",
+    "poi_type",
+    "zone",
+    "pos",
+    "selection_strategy",
+    "qi_affinity",
+    "danger_bias"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "poi_spawned",
+      "type": "string"
+    },
+    "poi_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "poi_type": {
+      "anyOf": [
+        {
+          "const": "forge_station",
+          "type": "string"
+        },
+        {
+          "const": "alchemy_furnace",
+          "type": "string"
+        },
+        {
+          "const": "rogue_village",
+          "type": "string"
+        },
+        {
+          "const": "mutant_nest",
+          "type": "string"
+        },
+        {
+          "const": "scroll_hidden",
+          "type": "string"
+        },
+        {
+          "const": "spirit_herb_valley",
+          "type": "string"
+        }
+      ]
+    },
+    "zone": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "pos": {
+      "minItems": 3,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "selection_strategy": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "qi_affinity": {
+      "minimum": -1,
+      "maximum": 1,
+      "type": "number"
+    },
+    "danger_bias": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
