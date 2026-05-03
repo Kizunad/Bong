@@ -127,6 +127,12 @@ pub enum InsightEffect {
         material: String,
         add: f64,
     },
+    ZhenfaConcealment {
+        add: f64,
+    },
+    ZhenfaDisenchant {
+        add: f64,
+    },
     UnlockPractice {
         name: String,
     },
@@ -156,9 +162,11 @@ impl InsightEffect {
             NextBreakthroughBonus { .. }
             | BreakthroughEventConditionDrop { .. }
             | TribulationPredictionWindow => InsightCategory::Breakthrough,
-            DualForgeDiscount { .. } | ColorMaterialAffinity { .. } | UnlockPractice { .. } => {
-                InsightCategory::Style
-            }
+            DualForgeDiscount { .. }
+            | ColorMaterialAffinity { .. }
+            | ZhenfaConcealment { .. }
+            | ZhenfaDisenchant { .. }
+            | UnlockPractice { .. } => InsightCategory::Style,
             UnlockPerception { .. } | LifespanExtensionEnlightenment => InsightCategory::Perception,
         }
     }
@@ -178,7 +186,9 @@ impl InsightEffect {
             | ChaoticTolerance { add }
             | NextBreakthroughBonus { add }
             | ColorCapAdd { add, .. }
-            | ColorMaterialAffinity { add, .. } => *add,
+            | ColorMaterialAffinity { add, .. }
+            | ZhenfaConcealment { add }
+            | ZhenfaDisenchant { add } => *add,
             UnfreezeQiMax { mul } => (1.0 - mul).abs(),
             ComposureShockDiscount { mul, .. } => (1.0 - mul).abs(),
             ComposureImmuneDuringBreakthrough

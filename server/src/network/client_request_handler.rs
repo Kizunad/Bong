@@ -111,6 +111,7 @@ use crate::world::tsy_container_search::{
     CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
 };
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+use crate::zhenfa::{ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest};
 
 const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
 const TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
@@ -206,6 +207,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
+    pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
+    pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
+    pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
 }
 
 #[derive(SystemParam)]
@@ -302,6 +306,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::SparringInviteResponse { v, .. }
             | ClientRequestV1::TradeOfferRequest { v, .. }
             | ClientRequestV1::TradeOfferResponse { v, .. }
+            | ClientRequestV1::ZhenfaPlace { v, .. }
+            | ClientRequestV1::ZhenfaTrigger { v, .. }
+            | ClientRequestV1::ZhenfaDisarm { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
@@ -670,6 +677,59 @@ pub fn handle_client_request_payloads(
                     accepted,
                     requested_instance_id,
                     tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::ZhenfaPlace {
+                x,
+                y,
+                z,
+                kind,
+                carrier,
+                qi_invest_ratio,
+                trigger,
+                ..
+            } => {
+                let Some(place_tx) = dispatch.zhenfa_place_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped zhenfa_place because ZhenfaPlaceRequest event resource is missing"
+                    );
+                    continue;
+                };
+                place_tx.send(ZhenfaPlaceRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    kind,
+                    carrier: carrier.unwrap_or_default(),
+                    qi_invest_ratio,
+                    trigger,
+                    requested_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::ZhenfaTrigger { instance_id, .. } => {
+                let Some(trigger_tx) = dispatch.zhenfa_trigger_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped zhenfa_trigger because ZhenfaTriggerRequest event resource is missing"
+                    );
+                    continue;
+                };
+                trigger_tx.send(ZhenfaTriggerRequest {
+                    player: ev.client,
+                    instance_id,
+                    requested_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::ZhenfaDisarm { x, y, z, mode, .. } => {
+                let Some(disarm_tx) = dispatch.zhenfa_disarm_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped zhenfa_disarm because ZhenfaDisarmRequest event resource is missing"
+                    );
+                    continue;
+                };
+                disarm_tx.send(ZhenfaDisarmRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    mode,
+                    requested_at_tick: combat_clock.tick,
                 });
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {

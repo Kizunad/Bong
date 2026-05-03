@@ -1,0 +1,21 @@
+[[item]]
+id = "array_flag"
+name = "阵旗"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 0.6
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "地师用来牵引阵眼气机的短旗。可用于布雷、警戒与主动引爆。"
+
+[[item]]
+id = "scattered_qi_pearl"
+name = "散逸真元珠"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.6
+description = "破阵时勉强凝住的一小粒散逸真元，稍不留神便会归于天地。"
