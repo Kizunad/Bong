@@ -1,0 +1,84 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "eye_id",
+    "from",
+    "to",
+    "reason",
+    "usage_pressure",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "eye_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "from": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      }
+    },
+    "to": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      }
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "const": "usage_pressure",
+          "type": "string"
+        },
+        {
+          "const": "periodic_drift",
+          "type": "string"
+        }
+      ]
+    },
+    "usage_pressure": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

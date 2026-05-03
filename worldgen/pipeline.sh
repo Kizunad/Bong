@@ -4,6 +4,7 @@
 #   cd worldgen && bash pipeline.sh
 #   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/terrain-gen-smoke raster
 #   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil
+#   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128
 #
 # BACKEND:
 #   raster (默认): 写 raster .bin layers + zone PNG previews
@@ -16,11 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BLUEPRINT_REL="${1:-../server/zones.worldview.example.json}"
 OUTPUT_REL="${2:-generated/terrain-gen-smoke}"
 BACKEND="${3:-raster}"
+TILE_SIZE="${4:-512}"
 
 echo "=== 末法残土 terrain_gen Pipeline ==="
 echo "蓝图: ${BLUEPRINT_REL}"
 echo "输出目录: ${OUTPUT_REL}"
 echo "Bake backend: ${BACKEND}"
+echo "Tile size: ${TILE_SIZE}"
 echo ""
 
 # Anvil backend: 先跑 raster（PR #78 worldgen-preview workflow 仍消费 PNG previews），
@@ -33,6 +36,7 @@ fi
 python3 -m scripts.terrain_gen \
   --blueprint "$BLUEPRINT_REL" \
   --output-dir "$OUTPUT_REL" \
+  --tile-size "$TILE_SIZE" \
   --backend "$TERRAIN_BACKEND"
 
 if [ "$BACKEND" = "anvil" ]; then

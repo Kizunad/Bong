@@ -72,6 +72,7 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
     "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
     "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "spirit_eye_candidates": LayerSpec(safe_default=0.0, blend_mode="maximum", export_type="uint8"),
     # realm_collapse_mask: 1 means the runtime zone overlay marked this area as
     #   ZoneStatus::Collapsed.  Consumers should preserve physical structures
     #   but disable qi-dependent functionality inside the marked columns.
@@ -147,6 +148,18 @@ def layer_storage_dtype(layer_name: str) -> np.dtype:
         return np.dtype(np.float64)
     if spec.export_type == "uint8":
         return np.dtype(np.uint8)
+    return np.dtype(np.float64)
+
+
+def layer_compact_dtype(layer_name: str) -> np.dtype:
+    """Final in-memory dtype after a tile has finished all blend math."""
+    spec = LAYER_REGISTRY.get(layer_name)
+    if spec is None:
+        return np.dtype(np.float64)
+    if spec.export_type == "uint8":
+        return np.dtype(np.uint8)
+    if spec.export_type == "float32":
+        return np.dtype(np.float32)
     return np.dtype(np.float64)
 
 
@@ -345,6 +358,15 @@ class TileFieldBuffer:
         if arr.size == 0:
             return 0, 0
         return arr.min().item(), arr.max().item()
+
+    def compact_layers(self) -> None:
+        """Reduce finalized tile memory without changing exported raster dtypes."""
+        for layer_name, values in list(self.layers.items()):
+            target_dtype = layer_compact_dtype(layer_name)
+            if values.dtype != target_dtype or not values.flags.c_contiguous:
+                self.layers[layer_name] = np.ascontiguousarray(
+                    values, dtype=target_dtype
+                )
 
 
 @dataclass(frozen=True)

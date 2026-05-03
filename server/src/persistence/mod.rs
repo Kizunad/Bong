@@ -3929,6 +3929,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
     match entry {
         BiographyEntry::BreakthroughStarted { .. } => "breakthrough_started",
         BiographyEntry::BreakthroughSucceeded { .. } => "breakthrough_succeeded",
+        BiographyEntry::SpiritEyeBreakthrough { .. } => "spirit_eye_breakthrough",
         BiographyEntry::BreakthroughFailed { .. } => "breakthrough_failed",
         BiographyEntry::MeridianOpened { .. } => "meridian_opened",
         BiographyEntry::MeridianClosed { .. } => "meridian_closed",
@@ -4007,6 +4008,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
     match entry {
         BiographyEntry::BreakthroughStarted { tick, .. }
         | BiographyEntry::BreakthroughSucceeded { tick, .. }
+        | BiographyEntry::SpiritEyeBreakthrough { tick, .. }
         | BiographyEntry::BreakthroughFailed { tick, .. }
         | BiographyEntry::MeridianOpened { tick, .. }
         | BiographyEntry::MeridianClosed { tick, .. }

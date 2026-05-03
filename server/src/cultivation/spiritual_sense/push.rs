@@ -6,6 +6,7 @@ use valence::prelude::{
 };
 
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -13,6 +14,8 @@ use crate::network::agent_bridge::{
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::realm_vision::{SenseEntryV1, SpiritualSenseTargetsV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::spirit_eye::SpiritEyeRegistry;
 
 use super::scanner::{
     scan_targets_inner_ring, scan_targets_mid_ring_void, SpiritualSenseTarget,
@@ -40,7 +43,14 @@ struct PlayerSenseSnapshot {
 
 type SpiritualSensePlayerReadItem<'a> = (Entity, &'a Position, &'a Cultivation);
 type SpiritualSensePlayerReadFilter = With<Client>;
-type SpiritualSenseObserverItem<'a> = (Entity, &'a mut Client, &'a Position, &'a Cultivation);
+type SpiritualSenseObserverItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Position,
+    Option<&'a CurrentDimension>,
+    &'a Cultivation,
+    &'a LifeRecord,
+);
 type SpiritualSenseObserverFilter = With<Client>;
 type SpiritualSenseQueryParams<'w, 's> = (
     Query<'w, 's, SpiritualSensePlayerReadItem<'w>, SpiritualSensePlayerReadFilter>,
@@ -80,6 +90,7 @@ pub fn push_empty_spiritual_sense_targets(mut clients: Query<&mut Client, With<C
 pub fn push_spiritual_sense_targets(
     clock: Res<CultivationClock>,
     mut state: ResMut<SpiritualSensePushState>,
+    spirit_eyes: Option<Res<SpiritEyeRegistry>>,
     mut player_sets: ParamSet<SpiritualSenseQueryParams<'_, '_>>,
 ) {
     let now_tick = clock.tick;
@@ -99,7 +110,9 @@ pub fn push_spiritual_sense_targets(
     }
 
     let mut observers = player_sets.p1();
-    for (entity, mut client, position, cultivation) in &mut observers {
+    for (entity, mut client, position, current_dimension, cultivation, life_record) in
+        &mut observers
+    {
         let should_scan_inner = should_scan(
             now_tick,
             state.last_inner_scan_tick.get(&entity).copied(),
@@ -116,6 +129,9 @@ pub fn push_spiritual_sense_targets(
         }
 
         let observer_pos = position_to_array(position);
+        let observer_dimension = current_dimension
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
         if should_scan_inner {
             let radius = super::scanner::scan_radius_for_realm(cultivation.realm);
             let targets = build_player_sense_targets(entity, observer_pos, &snapshots, 0.0, radius);
@@ -137,6 +153,13 @@ pub fn push_spiritual_sense_targets(
         }
 
         let mut entries = merged_cached_entries(&state, entity);
+        if let Some(registry) = spirit_eyes.as_deref() {
+            entries.extend(registry.private_marker_entries(
+                life_record.character_id.as_str(),
+                observer_dimension,
+                observer_pos,
+            ));
+        }
         trim_entries_by_intensity(&mut entries);
         if entries.is_empty()
             && state

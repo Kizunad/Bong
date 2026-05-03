@@ -294,6 +294,7 @@ mod tests {
                 lifespan_remaining_years: Some(70.0),
                 recent_biography: vec!["t84000:near_death:bleed_out".to_string()],
                 position: None,
+                known_spirit_eyes: Vec::new(),
                 context: serde_json::json!({"will_terminate": false}),
             },
         });

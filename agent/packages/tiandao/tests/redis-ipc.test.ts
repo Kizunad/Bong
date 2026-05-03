@@ -18,6 +18,9 @@ const {
   REBIRTH,
   SKILL_XP_GAIN,
   SOCIAL_FEUD,
+  SPIRIT_EYE_DISCOVERED,
+  SPIRIT_EYE_MIGRATE,
+  SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
   NPC_DEATH,
   NPC_SPAWN,
   PLAYER_CHAT,
@@ -527,6 +530,9 @@ describe("redis-ipc", () => {
         FORGE_OUTCOME,
         REBIRTH,
         SKILL_XP_GAIN,
+        SPIRIT_EYE_MIGRATE,
+        SPIRIT_EYE_DISCOVERED,
+        SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
       ]),
     );
 
@@ -568,8 +574,44 @@ describe("redis-ipc", () => {
         qi_redistribution: { refill_to_hungry_ring: 0.7, collected_by_tiandao: 0.3 },
       }),
     );
+    await sub.publish(
+      SPIRIT_EYE_MIGRATE,
+      JSON.stringify({
+        v: 1,
+        eye_id: "eye_spawn_0",
+        from: { x: 120, y: 80, z: -30 },
+        to: { x: 920, y: 88, z: -640 },
+        reason: "usage_pressure",
+        usage_pressure: 1.1,
+        tick: 90,
+      }),
+    );
+    await sub.publish(
+      SPIRIT_EYE_DISCOVERED,
+      JSON.stringify({
+        v: 1,
+        eye_id: "eye_spawn_0",
+        character_id: "offline:Azure",
+        pos: { x: 920, y: 88, z: -640 },
+        zone: "qingyun_peaks",
+        qi_concentration: 1,
+        discovered_at_tick: 91,
+      }),
+    );
+    await sub.publish(
+      SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+      JSON.stringify({
+        v: 1,
+        eye_id: "eye_spawn_0",
+        character_id: "offline:Azure",
+        realm_from: "Condense",
+        realm_to: "Foundation",
+        usage_pressure: 0.2,
+        tick: 92,
+      }),
+    );
 
-    expect(callback).toHaveBeenCalledTimes(6);
+    expect(callback).toHaveBeenCalledTimes(9);
     expect(ipc.getLatestCrossSystemEvents()).toEqual([
       expect.objectContaining({ channel: BOTANY_ECOLOGY, payload: expect.objectContaining({ tick: 84 }) }),
       expect.objectContaining({ channel: AGING, payload: expect.objectContaining({ character_id: "offline:Azure" }) }),
@@ -579,6 +621,15 @@ describe("redis-ipc", () => {
       expect.objectContaining({
         channel: PSEUDO_VEIN_DISSIPATE,
         payload: expect.objectContaining({ storm_duration_ticks: 9000 }),
+      }),
+      expect.objectContaining({ channel: SPIRIT_EYE_MIGRATE, payload: expect.objectContaining({ eye_id: "eye_spawn_0" }) }),
+      expect.objectContaining({
+        channel: SPIRIT_EYE_DISCOVERED,
+        payload: expect.objectContaining({ character_id: "offline:Azure" }),
+      }),
+      expect.objectContaining({
+        channel: SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+        payload: expect.objectContaining({ realm_to: "Foundation" }),
       }),
     ]);
   });

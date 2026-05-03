@@ -32,6 +32,7 @@ pub enum SenseKindV1 {
     CrisisPremonition,
     ZhenfaArray,
     ZhenfaWardAlert,
+    SpiritEye,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

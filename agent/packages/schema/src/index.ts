@@ -24,6 +24,7 @@ export * from "./pseudo-vein.js";
 export * from "./realm-vision.js";
 export * from "./server-data.js";
 export * from "./social.js";
+export * from "./spirit-eye.js";
 export * from "./spiritual-sense.js";
 export * from "./spawn-tutorial.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)

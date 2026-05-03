@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "eye_id",
+    "character_id",
+    "pos",
+    "qi_concentration",
+    "discovered_at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "eye_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "character_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "pos": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      }
+    },
+    "zone": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "qi_concentration": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "discovered_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

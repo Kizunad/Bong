@@ -21,7 +21,7 @@ import { normalizeLlmChatResult } from "./llm.js";
 
 const { AGENT_NARRATE, DEATH_INSIGHT } = CHANNELS;
 
-const DEATH_INSIGHT_SYSTEM_PROMPT = `你是 Bong 的天道遗念记录者。根据 DeathInsightRequestV1 生成一条死亡瞬间遗念。只输出 JSON：{"text":"...","style":"perception"}。信息必须真实、冷漠、具体；不要编造请求中没有的坐标、敌人或掉落。醒灵/引气短句，凝脉/固元 1-2 句，通灵/化虚可含天道评语。劫数期必须写明此次运数概率；老死必须回顾 recent_biography。`;
+const DEATH_INSIGHT_SYSTEM_PROMPT = `你是 Bong 的天道遗念记录者。根据 DeathInsightRequestV1 生成一条死亡瞬间遗念。只输出 JSON：{"text":"...","style":"perception"}。信息必须真实、冷漠、具体；不要编造请求中没有的坐标、敌人或掉落。若 known_spirit_eyes 非空，把已知灵眼坐标当作临死遗念中的情报残页，不要广播给其他玩家。醒灵/引气短句，凝脉/固元 1-2 句，通灵/化虚可含天道评语。劫数期必须写明此次运数概率；老死必须回顾 recent_biography。`;
 
 export interface DeathInsightRuntimeLogger {
   info: (...args: unknown[]) => void;
@@ -248,14 +248,15 @@ function buildFallbackDeathInsightText(request: DeathInsightRequestV1): string {
 
   const location = formatLocation(request);
   const cause = formatCause(request.cause);
+  const spiritEyeTrace = formatKnownSpiritEyeTrace(request);
   if (request.realm === "Spirit" || request.realm === "Void") {
     const bio = formatBiographyTail(request, 2);
     return clampNarrationText(
-      `你死于${location}，死因：${cause}。${bio}天道只记因果，不记哀荣。`,
+      `你死于${location}，死因：${cause}。${bio}${spiritEyeTrace}天道只记因果，不记哀荣。`,
     );
   }
 
-  return clampNarrationText(`你死于${location}，死因：${cause}。临灭前，周遭灵机已偏向${zoneKindLabel(request.zone_kind)}。`);
+  return clampNarrationText(`你死于${location}，死因：${cause}。${spiritEyeTrace}临灭前，周遭灵机已偏向${zoneKindLabel(request.zone_kind)}。`);
 }
 
 function buildNaturalDeathInsight(request: DeathInsightRequestV1): string {
@@ -265,16 +266,18 @@ function buildNaturalDeathInsight(request: DeathInsightRequestV1): string {
       ? `余寿 ${request.lifespan_remaining_years.toFixed(1)} 年。`
       : "寿数已尽。";
   const bio = formatBiographyTail(request, 4);
-  return clampNarrationText(`寿火已尽，${realm}一生至此合卷。${remaining}${bio}天道不添悲喜，只留此页。`);
+  const spiritEyeTrace = formatKnownSpiritEyeTrace(request);
+  return clampNarrationText(`寿火已尽，${realm}一生至此合卷。${remaining}${bio}${spiritEyeTrace}天道不添悲喜，只留此页。`);
 }
 
 function buildTribulationDeathInsight(request: DeathInsightRequestV1): string {
   const chance = formatChance(request.rebirth_chance);
+  const spiritEyeTrace = formatKnownSpiritEyeTrace(request);
   const finalWords = isWillTerminate(request)
     ? "终焉之言：命薄至此，非天所夺，是因果自尽。"
     : "你以为这是天道的怜悯？下次只会更薄。";
   return clampNarrationText(
-    `劫数临身，死因：${formatCause(request.cause)}。此次运数：${chance}。${finalWords}`,
+    `劫数临身，死因：${formatCause(request.cause)}。此次运数：${chance}。${spiritEyeTrace}${finalWords}`,
   );
 }
 
@@ -305,6 +308,15 @@ function formatChance(chance: number | undefined): string {
     return "未知";
   }
   return `${Math.round(chance * 100)}%`;
+}
+
+function formatKnownSpiritEyeTrace(request: DeathInsightRequestV1): string {
+  const eye = request.known_spirit_eyes?.[0];
+  if (!eye) {
+    return "";
+  }
+  const zone = eye.zone ? `${eye.zone}` : "未知地";
+  return `遗念残页：灵眼 ${eye.eye_id} 在${zone}(${formatCoord(eye.pos.x)}, ${formatCoord(eye.pos.y)}, ${formatCoord(eye.pos.z)})。`;
 }
 
 function formatCoord(value: number): string {

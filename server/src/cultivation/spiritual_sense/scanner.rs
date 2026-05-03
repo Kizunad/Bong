@@ -8,6 +8,7 @@ pub enum SpiritualSenseTargetKind {
     Cultivator(Realm),
     HeavenlyGaze,
     Crisis,
+    SpiritEye,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -110,6 +111,7 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
                 return None;
             }
         }
+        SpiritualSenseTargetKind::SpiritEye => SenseKindV1::SpiritEye,
     };
     Some(SenseEntryV1 {
         kind,
@@ -187,27 +189,32 @@ mod tests {
                 kind: SpiritualSenseTargetKind::Crisis,
                 intensity: 1.0,
             },
+            SpiritualSenseTarget {
+                position: [20.0, 64.0, 10.0],
+                kind: SpiritualSenseTargetKind::SpiritEye,
+                intensity: 1.0,
+            },
         ];
         assert!(scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Awaken, &targets).is_empty());
         assert_eq!(
             scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Induce, &targets).len(),
-            1
-        );
-        assert_eq!(
-            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets).len(),
             2
         );
         assert_eq!(
-            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets).len(),
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets).len(),
             3
         );
         assert_eq!(
-            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Spirit, &targets).len(),
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets).len(),
             4
         );
         assert_eq!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Spirit, &targets).len(),
+            5
+        );
+        assert_eq!(
             scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Void, &targets).len(),
-            3
+            4
         );
     }
 

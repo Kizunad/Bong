@@ -80,7 +80,7 @@ jobs:
         #
         # focus-{layout,surface,height}-preview.png + zone-*-preview.png 仍正常产出。
         working-directory: worldgen
-        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil
+        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128
 
       - name: Cache Rust target
         uses: actions/cache@v4

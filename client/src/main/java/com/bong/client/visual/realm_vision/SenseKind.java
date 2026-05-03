@@ -7,7 +7,8 @@ public enum SenseKind {
     HEAVENLY_GAZE,
     CRISIS_PREMONITION,
     ZHENFA_ARRAY,
-    ZHENFA_WARD_ALERT;
+    ZHENFA_WARD_ALERT,
+    SPIRIT_EYE;
 
     public static SenseKind fromWire(String wireName) {
         if (wireName == null) {
@@ -20,6 +21,7 @@ public enum SenseKind {
             case "CrisisPremonition" -> CRISIS_PREMONITION;
             case "ZhenfaArray" -> ZHENFA_ARRAY;
             case "ZhenfaWardAlert" -> ZHENFA_WARD_ALERT;
+            case "SpiritEye" -> SPIRIT_EYE;
             default -> LIVING_QI;
         };
     }

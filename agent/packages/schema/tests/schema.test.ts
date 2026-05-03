@@ -73,6 +73,11 @@ import {
   SocialPactEventV1,
   SocialRenownDeltaV1,
 } from "../src/social.js";
+import {
+  SpiritEyeDiscoveredV1,
+  SpiritEyeMigrateV1,
+  SpiritEyeUsedForBreakthroughV1,
+} from "../src/spirit-eye.js";
 import { SpiritualSenseTargetsV1 } from "../src/spiritual-sense.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
@@ -135,6 +140,19 @@ describe("sample files pass schema validation", () => {
     expect(CHANNELS.PSEUDO_VEIN_DISSIPATE).toBe("bong:pseudo_vein:dissipate");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_ACTIVE);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_DISSIPATE);
+  });
+
+  it("declares spirit eye Redis channels", () => {
+    expect(CHANNELS.SPIRIT_EYE_MIGRATE).toBe("bong:spirit_eye/migrate");
+    expect(CHANNELS.SPIRIT_EYE_DISCOVERED).toBe("bong:spirit_eye/discovered");
+    expect(CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH).toBe(
+      "bong:spirit_eye/used_for_breakthrough",
+    );
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SPIRIT_EYE_MIGRATE);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SPIRIT_EYE_DISCOVERED);
+    expect(REDIS_V1_CHANNELS).toContain(
+      CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+    );
   });
 
   it("world-state.sample.json", () => {
@@ -697,6 +715,41 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("death-insight-request.sample.json");
     const result = validate(DeathInsightRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts spirit eye event contracts", () => {
+    const migrate = validate(SpiritEyeMigrateV1, {
+      v: 1,
+      eye_id: "spirit_eye:spawn:0",
+      from: { x: 0, y: 66, z: 0 },
+      to: { x: 640, y: 66, z: 0 },
+      reason: "usage_pressure",
+      usage_pressure: 0,
+      tick: 120,
+    });
+    expect(migrate.ok, migrate.errors.join("; ")).toBe(true);
+
+    const discovered = validate(SpiritEyeDiscoveredV1, {
+      v: 1,
+      eye_id: "spirit_eye:spawn:0",
+      character_id: "char:alice",
+      pos: { x: 14, y: 66, z: 14 },
+      zone: "spawn",
+      qi_concentration: 1.0,
+      discovered_at_tick: 77,
+    });
+    expect(discovered.ok, discovered.errors.join("; ")).toBe(true);
+
+    const used = validate(SpiritEyeUsedForBreakthroughV1, {
+      v: 1,
+      eye_id: "spirit_eye:spawn:0",
+      character_id: "char:alice",
+      realm_from: "Condense",
+      realm_to: "Solidify",
+      usage_pressure: 0.1,
+      tick: 88,
+    });
+    expect(used.ok, used.errors.join("; ")).toBe(true);
   });
 
   it("deceased-index-entry.sample.json", () => {

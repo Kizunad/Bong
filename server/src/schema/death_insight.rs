@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::spirit_eye::DeathInsightSpiritEyeV1;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeathInsightCategoryV1 {
@@ -47,6 +49,8 @@ pub struct DeathInsightRequestV1 {
     pub recent_biography: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<DeathInsightPositionV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_spirit_eyes: Vec<DeathInsightSpiritEyeV1>,
     pub context: serde_json::Value,
 }
 
@@ -75,6 +79,16 @@ mod tests {
                 y: 150.0,
                 z: 8.0,
             }),
+            known_spirit_eyes: vec![DeathInsightSpiritEyeV1 {
+                eye_id: "spirit_eye:spawn:0".to_string(),
+                zone: Some("spawn".to_string()),
+                pos: DeathInsightPositionV1 {
+                    x: 14.0,
+                    y: 66.0,
+                    z: 14.0,
+                },
+                qi_concentration: 1.0,
+            }],
             context: serde_json::json!({"will_terminate": true}),
         };
 
@@ -82,11 +96,13 @@ mod tests {
         assert_eq!(json["category"], "natural");
         assert_eq!(json["zone_kind"], "ordinary");
         assert_eq!(json["lifespan_remaining_years"], 0.0);
+        assert_eq!(json["known_spirit_eyes"][0]["eye_id"], "spirit_eye:spawn:0");
         assert!(json.get("rebirth_chance").is_none());
 
         let roundtrip: DeathInsightRequestV1 =
             serde_json::from_value(json).expect("payload should deserialize");
         assert_eq!(roundtrip.death_count, 3);
         assert_eq!(roundtrip.category, DeathInsightCategoryV1::Natural);
+        assert_eq!(roundtrip.known_spirit_eyes.len(), 1);
     }
 }

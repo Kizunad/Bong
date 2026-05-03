@@ -2,6 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { Realm } from "./cultivation.js";
 import { ZoneDeathKind } from "./death-lifecycle.js";
+import { DeathInsightSpiritEyeV1 } from "./spirit-eye.js";
 import { validate, type ValidationResult } from "./validate.js";
 
 export const DeathInsightCategoryV1 = Type.Union(
@@ -42,6 +43,7 @@ export const DeathInsightRequestV1 = Type.Object(
     lifespan_remaining_years: Type.Optional(Type.Number({ minimum: 0 })),
     recent_biography: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 64 }),
     position: Type.Optional(DeathInsightPositionV1),
+    known_spirit_eyes: Type.Optional(Type.Array(DeathInsightSpiritEyeV1, { maxItems: 32 })),
     context: Type.Record(Type.String(), Type.Any()),
   },
   { additionalProperties: false },

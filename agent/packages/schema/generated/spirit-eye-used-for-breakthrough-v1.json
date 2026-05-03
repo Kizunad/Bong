@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "eye_id",
+    "character_id",
+    "realm_from",
+    "realm_to",
+    "usage_pressure",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "eye_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "character_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "realm_from": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "realm_to": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "usage_pressure": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
