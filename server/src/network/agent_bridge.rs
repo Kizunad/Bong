@@ -79,6 +79,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::WeaponBroken => "weapon_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::VortexState => "vortex_state",
+        ServerDataType::CarrierState => "carrier_state",
         ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::DeathScreen => "death_screen",
         ServerDataType::TerminateScreen => "terminate_screen",

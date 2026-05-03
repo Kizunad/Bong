@@ -1,13 +1,16 @@
 pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
+pub mod carrier;
 pub mod components;
 #[cfg(test)]
 mod death_event_attacker_chain_test;
 pub mod debug;
+pub mod decay;
 pub mod events;
 pub mod jiemai;
 pub mod lifecycle;
+pub mod projectile;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
@@ -88,6 +91,7 @@ fn attach_combat_bundle_to_joined_clients(
             StatusEffects::default(),
             DerivedAttrs::default(),
             AntiCheatCounter::default(),
+            carrier::CarrierStore::default(),
             Lifecycle {
                 character_id,
                 spawn_anchor,
@@ -111,6 +115,7 @@ fn attach_combat_bundle_to_joined_npcs(
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            carrier::CarrierStore::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
                 ..Default::default()
@@ -153,6 +158,7 @@ pub fn register(app: &mut App) {
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
+    carrier::register(app);
 
     app.configure_sets(
         Update,

@@ -49,6 +49,9 @@ pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 pub const CH_WOLIU_BACKFIRE: &str = "bong:woliu/backfire";
 pub const CH_WOLIU_PROJECTILE_DRAINED: &str = "bong:woliu/projectile_drained";
 pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
+pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
+pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
+pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
@@ -135,6 +138,12 @@ mod tests {
         assert_eq!(CH_WOLIU_BACKFIRE, "bong:woliu/backfire");
         assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
+        assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
+        assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");
+        assert_eq!(
+            CH_ANQI_PROJECTILE_DESPAWNED,
+            "bong:combat/projectile_despawned"
+        );
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
         assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");

@@ -187,6 +187,14 @@ pub enum BiographyEntry {
         cause: String,
         tick: u64,
     },
+    /// plan-anqi-v1 P2：暗器载体命中后的生平锚点。
+    AnqiSniped {
+        attacker_id: String,
+        distance_blocks: f32,
+        sealed_qi: f32,
+        hit_qi: f32,
+        tick: u64,
+    },
     /// plan-spawn-tutorial-v1 P2 — 出生沉默教学完成：醒灵突破至引气。
     SpawnTutorialCompleted {
         minutes_since_spawn: u32,
@@ -469,6 +477,15 @@ fn format_entry(entry: &BiographyEntry) -> String {
         BiographyEntry::VortexBackfired { cause, tick } => {
             format!("t{tick}:woliu:backfire:{cause}")
         }
+        BiographyEntry::AnqiSniped {
+            attacker_id,
+            distance_blocks,
+            sealed_qi,
+            hit_qi,
+            tick,
+        } => format!(
+            "t{tick}:anqi_sniped:{attacker_id}:{distance_blocks:.1}:{sealed_qi:.1}:{hit_qi:.1}"
+        ),
         BiographyEntry::SpawnTutorialCompleted {
             minutes_since_spawn,
             tick,

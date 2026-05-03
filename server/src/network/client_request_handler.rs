@@ -21,6 +21,7 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
+use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
 };
@@ -212,6 +213,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
+    pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
+    pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
 }
 
 #[derive(SystemParam)]
@@ -347,7 +350,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeStepAdvance { v, .. }
             | ClientRequestV1::ForgeBlueprintTurnPage { v, .. }
             | ClientRequestV1::ForgeLearnBlueprint { v, .. }
-            | ClientRequestV1::ForgeStationPlace { v, .. } => *v,
+            | ClientRequestV1::ForgeStationPlace { v, .. }
+            | ClientRequestV1::ChargeCarrier { v, .. }
+            | ClientRequestV1::ThrowCarrier { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -977,6 +982,34 @@ pub fn handle_client_request_payloads(
                 if let Some(defense_tx) = dispatch.defense_tx.as_deref_mut() {
                     defense_tx.send(DefenseIntent {
                         defender: ev.client,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::ChargeCarrier {
+                slot, qi_target, ..
+            } => {
+                if let Some(charge_carrier_tx) = dispatch.charge_carrier_tx.as_deref_mut() {
+                    charge_carrier_tx.send(ChargeCarrierIntent {
+                        carrier: ev.client,
+                        slot: slot.map(map_anqi_carrier_slot),
+                        qi_target: Some(qi_target),
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::ThrowCarrier {
+                slot,
+                dir_unit,
+                power,
+                ..
+            } => {
+                if let Some(throw_carrier_tx) = dispatch.throw_carrier_tx.as_deref_mut() {
+                    throw_carrier_tx.send(ThrowCarrierIntent {
+                        thrower: ev.client,
+                        slot: map_anqi_carrier_slot(slot),
+                        dir_unit,
+                        power,
                         issued_at_tick: combat_clock.tick,
                     });
                 }
@@ -4502,6 +4535,13 @@ fn resolve_skill_cast_target(
     }
     let id = raw.strip_prefix("entity_bits:")?;
     id.parse::<u64>().ok().map(Entity::from_bits)
+}
+
+fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1) -> CarrierSlot {
+    match slot {
+        crate::schema::client_request::AnqiCarrierSlotV1::MainHand => CarrierSlot::MainHand,
+        crate::schema::client_request::AnqiCarrierSlotV1::OffHand => CarrierSlot::OffHand,
+    }
 }
 
 fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
