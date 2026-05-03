@@ -339,13 +339,13 @@ pub struct SpiritEye {
 ### 测试结果
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：2117 passed。
+- `cd server && cargo test`：2163 passed。
 - `cd server && cargo test spirit_eye --quiet`：11 passed。
 - `cd server && cargo test breakthrough --quiet`：36 passed。
-- `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：build 通过；tiandao 210 passed；schema 252 passed。
+- `cd agent && npm run build && (cd packages/schema && npm test) && (cd packages/tiandao && npm test)`：build 通过；schema 263 passed；tiandao 219 passed。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests "com.bong.client.visual.realm_vision.PerceptionEdgeRendererTest"`：通过。
-- `cd worldgen && python3 -m pytest`：55 passed。
+- `cd worldgen && python3 -m pytest`：58 passed。
 - `cd worldgen && python3 -m scripts.terrain_gen`：通过，生成 layer 列表包含 `spirit_eye_candidates`。
 - `cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128`：通过，`spirit_eye_candidates` 在 layer 列表中，`tiles synthesized: 2249`，`chunks_written=2601`。
 - `cd worldgen && python3 scripts/terrain_gen/harness/raster_check.py --out runs/spirit-eye-checks --checks elevation,biome,spirit_eye --formats csv,json`：通过。
