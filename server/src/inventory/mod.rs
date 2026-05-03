@@ -299,9 +299,12 @@ pub struct OverloadedMarker {
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryGrantReceipt {
     pub revision: InventoryRevision,
+    /// 兼容旧调用方：指向本次 grant 创建的第一个新实例；纯 merge 时为 0。
     pub instance_id: u64,
     pub template_id: String,
     pub stack_count: u32,
+    pub created_instance_ids: Vec<u64>,
+    pub merged_instance_ids: Vec<u64>,
 }
 
 pub fn register(app: &mut App) {
@@ -847,6 +850,45 @@ pub fn add_item_to_player_inventory(
     template_id: &str,
     stack_count: u32,
 ) -> Result<InventoryGrantReceipt, String> {
+    add_item_to_player_inventory_inner(
+        inventory,
+        registry,
+        allocator,
+        template_id,
+        stack_count,
+        true,
+        None,
+    )
+}
+
+pub fn add_customized_item_to_player_inventory(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    template_id: &str,
+    stack_count: u32,
+    customize_instance: impl Fn(&mut ItemInstance),
+) -> Result<InventoryGrantReceipt, String> {
+    add_item_to_player_inventory_inner(
+        inventory,
+        registry,
+        allocator,
+        template_id,
+        stack_count,
+        true,
+        Some(&customize_instance),
+    )
+}
+
+fn add_item_to_player_inventory_inner(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    template_id: &str,
+    stack_count: u32,
+    merge_existing_stacks: bool,
+    customize_instance: Option<&dyn Fn(&mut ItemInstance)>,
+) -> Result<InventoryGrantReceipt, String> {
     if stack_count == 0 {
         return Err("add_item_to_player_inventory requires stack_count >= 1".to_string());
     }
@@ -866,15 +908,18 @@ pub fn add_item_to_player_inventory(
     };
 
     let max_stack_count = template.max_stack_count.max(1);
+    let mut merge_probe = runtime_instance_from_template(template, 0, 1);
+    if let Some(customize_instance) = customize_instance {
+        customize_instance(&mut merge_probe);
+    }
     let mut remaining = stack_count;
     let mut staged = inventory.containers[main_pack_index].clone();
 
-    if max_stack_count > 1 {
-        for placed in staged
-            .items
-            .iter_mut()
-            .filter(|placed| placed.instance.template_id == template.id)
-        {
+    if merge_existing_stacks && max_stack_count > 1 {
+        for placed in staged.items.iter_mut().filter(|placed| {
+            placed.instance.template_id == template.id
+                && stack_identity_matches(&placed.instance, &merge_probe)
+        }) {
             let available = max_stack_count.saturating_sub(placed.instance.stack_count);
             let merged = remaining.min(available);
             placed.instance.stack_count = placed.instance.stack_count.saturating_add(merged);
@@ -891,10 +936,14 @@ pub fn add_item_to_player_inventory(
         let Some((row, col)) = find_free_slot(&staged, template.grid_w, template.grid_h) else {
             return Err(format!("inventory full: {template_id}"));
         };
+        let mut staged_instance = runtime_instance_from_template(template, 0, new_stack_count);
+        if let Some(customize_instance) = customize_instance {
+            customize_instance(&mut staged_instance);
+        }
         staged.items.push(PlacedItemState {
             row,
             col,
-            instance: runtime_instance_from_template(template, 0, new_stack_count),
+            instance: staged_instance,
         });
         new_stacks.push((row, col, new_stack_count));
         remaining -= new_stack_count;
@@ -906,18 +955,19 @@ pub fn add_item_to_player_inventory(
     }
 
     let main_pack = &mut inventory.containers[main_pack_index];
-    let mut affected_instance_id = None;
+    let mut merged_instance_ids = Vec::new();
     let mut remaining = stack_count;
-    if max_stack_count > 1 {
-        for placed in main_pack
-            .items
-            .iter_mut()
-            .filter(|placed| placed.instance.template_id == template.id)
-        {
+    if merge_existing_stacks && max_stack_count > 1 {
+        for placed in main_pack.items.iter_mut().filter(|placed| {
+            placed.instance.template_id == template.id
+                && stack_identity_matches(&placed.instance, &merge_probe)
+        }) {
             let available = max_stack_count.saturating_sub(placed.instance.stack_count);
             let merged = remaining.min(available);
             if merged > 0 {
-                affected_instance_id.get_or_insert(placed.instance.instance_id);
+                if !merged_instance_ids.contains(&placed.instance.instance_id) {
+                    merged_instance_ids.push(placed.instance.instance_id);
+                }
                 placed.instance.stack_count = placed.instance.stack_count.saturating_add(merged);
                 remaining -= merged;
             }
@@ -927,25 +977,27 @@ pub fn add_item_to_player_inventory(
         }
     }
 
+    let mut created_instance_ids = Vec::new();
     for ((row, col, new_stack_count), instance_id) in
         new_stacks.into_iter().zip(new_instance_ids.into_iter())
     {
-        affected_instance_id.get_or_insert(instance_id);
-        main_pack.items.push(PlacedItemState {
-            row,
-            col,
-            instance: runtime_instance_from_template(template, instance_id, new_stack_count),
-        });
+        created_instance_ids.push(instance_id);
+        let mut instance = runtime_instance_from_template(template, instance_id, new_stack_count);
+        if let Some(customize_instance) = customize_instance {
+            customize_instance(&mut instance);
+        }
+        main_pack.items.push(PlacedItemState { row, col, instance });
     }
 
     inventory.revision.0 = inventory.revision.0.saturating_add(1);
 
     Ok(InventoryGrantReceipt {
         revision: inventory.revision,
-        instance_id: affected_instance_id
-            .expect("validated non-zero grant should affect at least one inventory stack"),
+        instance_id: created_instance_ids.first().copied().unwrap_or(0),
         template_id: template.id.clone(),
         stack_count,
+        created_instance_ids,
+        merged_instance_ids,
     })
 }
 
@@ -1009,6 +1061,29 @@ fn runtime_instance_from_template(
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
     }
+}
+
+fn stack_identity_matches(left: &ItemInstance, right: &ItemInstance) -> bool {
+    left.template_id == right.template_id
+        && left.display_name == right.display_name
+        && left.grid_w == right.grid_w
+        && left.grid_h == right.grid_h
+        && f64_values_match(left.weight, right.weight)
+        && left.rarity == right.rarity
+        && left.description == right.description
+        && f64_values_match(left.spirit_quality, right.spirit_quality)
+        && f64_values_match(left.durability, right.durability)
+        && left.freshness == right.freshness
+        && left.mineral_id == right.mineral_id
+        && left.charges == right.charges
+        && left.forge_quality == right.forge_quality
+        && left.forge_color == right.forge_color
+        && left.forge_side_effects == right.forge_side_effects
+        && left.forge_achieved_tier == right.forge_achieved_tier
+}
+
+fn f64_values_match(left: f64, right: f64) -> bool {
+    (left - right).abs() <= f64::EPSILON
 }
 
 fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState {
@@ -4116,6 +4191,8 @@ cols = 4
         assert_eq!(receipt.template_id, "ci_she_hao");
         assert_eq!(receipt.stack_count, 2);
         assert!(receipt.instance_id >= 1);
+        assert_eq!(receipt.created_instance_ids, vec![receipt.instance_id]);
+        assert!(receipt.merged_instance_ids.is_empty());
         assert_eq!(inventory.revision.0, baseline_revision.0.saturating_add(1));
 
         let main_pack = inventory
@@ -4184,7 +4261,9 @@ cols = 4
         )
         .expect("second herb grant should merge into existing stack");
 
-        assert_eq!(receipt.instance_id, first_instance_id);
+        assert_eq!(receipt.instance_id, 0);
+        assert!(receipt.created_instance_ids.is_empty());
+        assert_eq!(receipt.merged_instance_ids, vec![first_instance_id]);
         assert_eq!(inventory.containers[0].items.len(), 1);
         assert_eq!(inventory.containers[0].items[0].instance.stack_count, 15);
     }
@@ -4202,7 +4281,7 @@ cols = 4
         let mut allocator = InventoryInstanceIdAllocator::new(30);
 
         for _ in 0..5 {
-            add_item_to_player_inventory(
+            let receipt = add_item_to_player_inventory(
                 &mut inventory,
                 &registry,
                 &mut allocator,
@@ -4210,6 +4289,12 @@ cols = 4
                 1,
             )
             .expect("batch herb harvest grant should merge into existing stack");
+            if receipt.merged_instance_ids.is_empty() {
+                assert_eq!(receipt.created_instance_ids.len(), 1);
+            } else {
+                assert_eq!(receipt.instance_id, 0);
+                assert!(receipt.created_instance_ids.is_empty());
+            }
         }
 
         let main_pack = &inventory.containers[0];
@@ -4234,8 +4319,14 @@ cols = 4
 
         add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 63)
             .expect("initial herb stack should fit");
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 3)
-            .expect("overflow should create a second stack");
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            3,
+        )
+        .expect("overflow should create a second stack");
 
         let main_pack = &inventory.containers[0];
         assert_eq!(main_pack.items.len(), 2);
@@ -4243,7 +4334,85 @@ cols = 4
         assert_eq!(main_pack.items[1].row, 0);
         assert_eq!(main_pack.items[1].col, 1);
         assert_eq!(main_pack.items[1].instance.stack_count, 2);
+        assert_eq!(receipt.instance_id, main_pack.items[1].instance.instance_id);
+        assert_eq!(receipt.created_instance_ids, vec![receipt.instance_id]);
+        assert_eq!(
+            receipt.merged_instance_ids,
+            vec![main_pack.items[0].instance.instance_id]
+        );
         assert_container_has_no_overlaps(main_pack);
+    }
+
+    #[test]
+    fn find_mergeable_stack_respects_capacity_boundaries() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(40);
+
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 1)
+            .expect("initial herb stack should fit");
+
+        assert!(
+            find_mergeable_stack(&mut inventory.containers[0], "ci_she_hao", 1).is_none(),
+            "max_stack_count=1 must disable stack merging"
+        );
+
+        inventory.containers[0].items[0].instance.stack_count = 64;
+        assert!(
+            find_mergeable_stack(&mut inventory.containers[0], "ci_she_hao", 64).is_none(),
+            "full stack must not be mergeable"
+        );
+    }
+
+    #[test]
+    fn runtime_grant_does_not_merge_customized_stack_with_default_grant() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(50);
+
+        add_customized_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            1,
+            |instance| {
+                instance.display_name = format!("雷 · {}", instance.display_name);
+                instance.spirit_quality = (instance.spirit_quality + 0.1).clamp(0.0, 1.0);
+            },
+        )
+        .expect("customized herb stack should fit");
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            1,
+        )
+        .expect("default herb should fit beside customized stack");
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(main_pack.items.len(), 2);
+        assert!(receipt.merged_instance_ids.is_empty());
+        assert_eq!(receipt.created_instance_ids, vec![receipt.instance_id]);
+        assert_eq!(main_pack.items[0].instance.stack_count, 1);
+        assert_eq!(main_pack.items[1].instance.stack_count, 1);
+        assert_ne!(
+            main_pack.items[0].instance.display_name,
+            main_pack.items[1].instance.display_name
+        );
     }
 
     // ─── apply_inventory_move ───────────────────────────────────────────────
