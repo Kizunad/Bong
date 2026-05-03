@@ -8,6 +8,8 @@
 
 **交叉引用**：`plan-combat-no_ui` · `plan-client`（DynamicXmlScreen 已实装）· `plan-worldgen-v3.1` · `plan-tsy-dimension-v1`（位面阵法）· `plan-tsy-zone-v1`
 
+**Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：**zhenfa 整个流派基本无 technique cast，全是实体物品 + 交互**。`bong:combat/place_trap`（持阵旗 + 方块右键埋雷）/ `bong:combat/trigger_trap`（持阵旗按"使用"键引爆）保留**物品交互 packet**，不走 hotbar 1-9。详见 `plan-woliu-v1.md §8 跨 plan hotbar 同步修正备注`。
+
 ---
 
 ## §0 设计轴心

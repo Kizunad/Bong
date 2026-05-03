@@ -53,6 +53,11 @@
   - **染色加成（凝实色 / 沉重色）** vN+1 接入 — v1 不实装
   - **真元逆逸散效率特性** vN+1 接入（伪皮 absorbed_contam 不漏失）— v1 contam 累积永不漏失，不需要
 
+**Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：
+- **`bong:armor/equip_false_skin`**（装备伪皮）= **装备操作**（armor inventory path）→ **不走 hotbar**，保留装备 packet
+- tuike 整个流派**无 technique cast**（worldview §五:471 "物资派" 正典定位 — 不绑特性 / 不绑染色 / 不需技能）
+- 详见 `plan-woliu-v1.md §8 跨 plan hotbar 同步修正备注`。
+
 ---
 
 ## §A 概览（设计导航）

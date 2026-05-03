@@ -64,6 +64,12 @@
   - **阴诡色**（worldview §六:546 dugu × 阴诡色原生匹配）→ 灌毒蛊真元成本 -X% / 主动遮蔽境界差容忍 +1（vN+1 实装）
 - **plan-perception hook 接入**：`obfuscate_sense_kind` 由 dugu 师替换为 `DuguObfuscation`（plan-perception-v1.1 line 6 已留接口）
 
+**Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：
+- **`bong:combat/shoot_needle`**（即时凝针 1 qi）= **Technique** → P0 实装时改走 hotbar 1-9（`Technique::DuguShootNeedle` 绑战斗·修炼栏 + UseQuickSlot 触发）
+- **`bong:combat/infuse_dugu_poison`**（灌毒蛊真元）= **Technique** → P0 实装时改走 hotbar 1-9（`Technique::DuguInfusePoison`）
+- **`bong:cultivation/self_antidote`**（服解蛊蕊 + 20 真元）= **Consumable**（含 cast time）→ 走 **F1-F9 快捷使用栏**（跟丹药同槽位机制），不是 1-9
+- 详见 `plan-woliu-v1.md §8 跨 plan hotbar 同步修正备注`。
+
 ---
 
 ## §A 概览（设计导航）

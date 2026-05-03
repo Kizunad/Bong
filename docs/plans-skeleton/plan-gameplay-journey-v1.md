@@ -121,15 +121,17 @@
 
 凝脉期是**经脉拓扑选择窗口**，玩家必须在 5h 内做 1 次不可逆选择(`cultivation::topology` ✅ 已支持)，决定主流派树：
 
+> **2026-05-03 状态更新**：6 流派 plan 已全部从 skeleton 升 active（zhenfa / anqi / dugu / zhenmai / tuike / woliu）+ baomai-v1 已实装。**P2 流派分化轴主要 plan 缺口已闭合**。剩余 P2 缺口：spirit-eye-v1 / style-pick-ui / fauna-v1。
+
 | 流派 | 攻击/防御 | 关键依赖 plan | 路径线索 |
 |------|---------|---------------|---------|
 | 体修(爆脉) | 攻 | plan-baomai-v1 ✅ | broken_peaks 找一具断臂修士尸体，悟"血肉之躯亦是法器" |
-| 器修(暗器) | 攻 | plan-anqi-v1 ⬜ skeleton | 幽暗地穴(cave_network)拾"含毒铜针残卷" |
-| 地师(阵法) | 攻 | plan-zhenfa-v1 ⬜ skeleton | 灵泉湿地(spring_marsh)目睹一座废弃欺天阵 |
-| 毒蛊 | 攻 | plan-dugu-v1 ⬜ skeleton | 血谷(rift_valley)从蛛巢取出第一只蛊母 |
-| 截脉(震爆) | 防 | plan-zhenmai-v1 ⬜ skeleton | 凝脉突破后 narration 自然解锁试用 |
-| 替尸/蜕壳 | 防 | plan-tuike-v1 ⬜ skeleton | cave_network 找到上一任替尸者残蜕 |
-| 涡流(绝灵) | 防 | plan-woliu-v1 ⬜ skeleton | 北荒(waste_plateau)边缘负压区静修触发 |
+| 器修(暗器) | 攻 | plan-anqi-v1 ✅ active (2026-05-03) | 幽暗地穴(cave_network)拾"含毒铜针残卷" |
+| 地师(阵法) | 攻 | plan-zhenfa-v1 ✅ active (2026-05-03) | 灵泉湿地(spring_marsh)目睹一座废弃欺天阵 |
+| 毒蛊 | 攻 | plan-dugu-v1 ✅ active (2026-05-03) | 血谷(rift_valley)从蛛巢取出第一只蛊母 |
+| 截脉(震爆) | 防 | plan-zhenmai-v1 ✅ active (2026-05-03，P0 已实装于 plan-combat-no_ui) | 凝脉突破后 narration 自然解锁试用 |
+| 替尸/蜕壳 | 防 | plan-tuike-v1 ✅ active (2026-05-03) | cave_network 找到上一任替尸者残蜕 |
+| 涡流(绝灵) | 防 | plan-woliu-v1 ✅ active (2026-05-03) | 北荒(waste_plateau)边缘负压区静修触发 |
 
 **选择动作**：每条流派的解锁通过对应的"染色丹/染色事件"触发 → `cultivation::QiColor` 主色登记 ✅(已实装 10 染色)+ `UnlockedStyles` ✅ → 客户端 `combat::UnlockedStylesStore` 解锁对应 SkillBar 槽位。
 
@@ -169,12 +171,21 @@
 
 ### P2 缺口（最大缺口阶段）
 
+> **2026-05-03 大幅闭合**：6 流派 plan 全部升 active。
+
 | 缺口 | 当前状态 | 行动 |
 |------|---------|------|
-| zhenfa-v1 | skeleton placeholder | 升 active(P2 必需) |
-| spirit-eye-v1 | skeleton placeholder | 升 active(P2 必需) |
-| anqi/dugu/tuike/woliu/zhenmai 5 流派 | 全 skeleton | **至少升 1 攻 + 1 防 active**，其他可滞后到 P3 |
-| style-pick-ui + schema | 不存在 | 派生 `plan-style-pick-v1` |
+| zhenfa-v1 | ✅ active (2026-05-03，13+5 决策闭环) | P0 实装（commit 6c00602d / fc7d4854）|
+| anqi-v1 | ✅ active (2026-05-03，11 决策闭环) | P0 实装（commit 20b35224）|
+| dugu-v1 | ✅ active (2026-05-03，11 决策闭环) | P0 实装（commit 84d3e320）|
+| zhenmai-v1 | ✅ active (2026-05-03，10 决策；P0 已实装于 plan-combat-no_ui) | P1 实装（commit 530d6d53）|
+| tuike-v1 | ✅ active (2026-05-03，6 决策 + 2 reframe) | P0/P1 实装（commit 5b90b758）|
+| woliu-v1 | ✅ active (2026-05-03，9 决策 + hotbar 正典化) | P0/P1 实装（commit 121dbf70）|
+| **spirit-eye-v1** | ⬜ skeleton placeholder | 升 active(P2 必需，凝脉→固元突破前置)|
+| **style-pick-ui + schema** | 不存在 | 派生 `plan-style-pick-v1` |
+| **fauna-v1** | ⬜ skeleton（P1 占用 zombie 替代）| 升 active(P2 异变兽核必需)|
+
+**worldview 同期更新**（commit fe00532c）：末土后招原则 + 身份与信誉系统 + 毒 vs 毒蛊边界正典化（接 plan-identity-v1 vN+1）。
 
 ---
 

@@ -54,6 +54,11 @@
   - **毒性真元**（dugu primary axis 泛型化）→ 命中注射时 contam 附毒 tag — 凝实色 + 毒性 = 远射毒针组合
   - **凝实色 (Solid)**（worldview §六:542）→ 飞行衰减系数 -0.03/格（已在 plan-combat-no_ui §3.2 公式内）
 
+**Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：
+- **`bong:combat/charge_carrier`**（静坐 20s 充能封真元）= **Technique** → P0 实装时改走 hotbar 1-9（`Technique::AnqiChargeCarrier` 绑战斗·修炼栏 + UseQuickSlot 触发）
+- **`bong:combat/throw_carrier`**（持骨抛掷）= **物品 use action**（attack 键复用）→ **不走 hotbar**，保留物品 packet
+- 详见 `plan-woliu-v1.md §8 跨 plan hotbar 同步修正备注`。
+
 ---
 
 ## §A 概览（设计导航）

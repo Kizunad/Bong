@@ -48,6 +48,10 @@
   - **真元流速**（woliu primary axis 泛型化）→ jiemai prep window 延长 X% — vN+1 接入
   - **沉重色（Heavy）**（worldview §六）→ 体修近战 jiemai 自伤减半（仅 wound severity，不影响 contam mul）— vN+1 接入
 
+**Hotbar 接入声明**（2026-05-03 user 正典化"所有技能走 hotbar"）：
+- **`bong:combat/defense_stance`**（plan-combat-no_ui §592 已实装现有 packet）= **Technique** → P0 现状保留（已落地），**P1 改写时同步迁移到 hotbar 1-9**（`Technique::ZhenmaiParry` 绑战斗·修炼栏 + UseQuickSlot 触发）
+- 详见 `plan-woliu-v1.md §8 跨 plan hotbar 同步修正备注`。
+
 ---
 
 ## §A 概览（设计导航）

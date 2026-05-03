@@ -798,19 +798,33 @@ fn check_backfire_resistance(status: &StatusEffects, rng: &mut Rng) -> bool {
 
 ### 跨 plan hotbar 同步修正备注（重要）
 
-**user 已确认设计原则**："所有技能走 hotbar，不另建专属按键"。
+**user 已确认设计原则（2026-05-03）**："所有**技能**走 hotbar，不另建专属按键"。
 
-前 5 个流派 plan（zhenfa / anqi / dugu / zhenmai / tuike）的"专属 packet" 都应该改走 hotbar `UseQuickSlot` 路径。具体涉及：
+**关键澄清**：仅"主动技能 cast"走 hotbar；**物品交互 / 物品 use action / 装备操作 / consumable 服用** **不走 hotbar 1-9 战斗·修炼栏**（详见下表分类）。
 
-| Plan | 原专属 packet（待修正） | 改走 hotbar |
-|---|---|---|
-| zhenfa-v1 | `bong:combat/place_trap` / `bong:combat/trigger_trap` | `Technique::ZhenfaPlaceTrap` / `Technique::ZhenfaTrigger` 绑 1-9 |
-| anqi-v1 | `bong:combat/charge_carrier` / `bong:combat/throw_carrier` | `Technique::AnqiChargeCarrier` / `Technique::AnqiThrowCarrier` 绑 1-9 |
-| dugu-v1 | `bong:combat/shoot_needle` / `bong:combat/infuse_dugu_poison` / `bong:cultivation/self_antidote` | 三个 Technique 分别绑 1-9（self_antidote 可考虑 F1-F9，因为是消耗性服药动作）|
-| zhenmai-v1 | `bong:combat/defense_stance`（已实装） | 保留现状 — 已是直接 packet，但建议 P1 改为 Technique::ZhenmaiParry 绑 1-9 |
-| tuike-v1 | `bong:armor/equip_false_skin` | 装备类操作可保留（不是技能 cast） |
+#### 各 plan 同步分类
 
-**建议**：在每个 plan v1 实施时**统一**走 hotbar 路径，不新建专属 packet。本 plan §11 进度日志记录此原则。
+| Plan | 操作 | 性质 | v1 路径 |
+|---|---|---|---|
+| **zhenfa-v1** | place_trap (持阵旗 + 方块右键埋雷) | 物品交互 | **不动**（保留物品交互 packet）|
+| zhenfa-v1 | trigger_trap (持阵旗按"使用"键引爆) | 物品 use action | **不动**（保留）|
+| **zhenfa-v1 整体** | — | **基本无 technique，全是实体物品 + 交互**（user 2026-05-03 澄清）| **不需 hotbar 化** |
+| **anqi-v1** | charge_carrier (静坐 20s 充能封真元) | **Technique** | ✅ hotbar 1-9（`Technique::AnqiChargeCarrier`） |
+| anqi-v1 | throw_carrier (持骨抛掷) | 物品 use action（attack 键复用）| **不动** |
+| **dugu-v1** | shoot_needle (即时凝针 1 qi) | **Technique** | ✅ hotbar 1-9（`Technique::DuguShootNeedle`） |
+| dugu-v1 | infuse_dugu_poison (灌毒蛊真元) | **Technique** | ✅ hotbar 1-9（`Technique::DuguInfusePoison`） |
+| dugu-v1 | self_antidote (服解蛊蕊) | **Consumable**（含 cast time）| ✅ **F1-F9**（快捷使用栏，跟丹药同槽位）|
+| **zhenmai-v1** | defense_stance（已实装）| **Technique** | ⚠️ v1 P1 改（`Technique::ZhenmaiParry`） |
+| **tuike-v1** | equip_false_skin (装备伪皮) | 装备操作（armor inventory path）| **不动** |
+| **woliu-v1**（本 plan）| vortex toggle | **Technique** | ✅ hotbar 1-9（`Technique::WoliuVortex`） |
+
+#### 设计正典
+
+- **hotbar 1-9（战斗·修炼栏）**：主动技能 cast — 充能 / 凝针 / 灌毒蛊 / 弹反姿态 / 涡流持涡
+- **hotbar F1-F9（快捷使用栏）**：consumable — 丹药 / 绷带 / 解蛊蕊（含 cast time）
+- **物品交互 / use action / 装备**：保留各自 packet — zhenfa 阵旗右键 / anqi attack 键抛 / tuike 装备伪皮
+
+**建议**：在 v1 实施时按上表落地，在每个 plan 头部接入面 checklist 加"hotbar 接入声明"做 explicit 备注。
 
 ## §9 实施节点
 
