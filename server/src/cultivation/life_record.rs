@@ -29,6 +29,12 @@ pub enum BiographyEntry {
         realm: Realm,
         tick: u64,
     },
+    SpiritEyeBreakthrough {
+        eye_id: String,
+        #[serde(default)]
+        zone: Option<String>,
+        tick: u64,
+    },
     BreakthroughFailed {
         realm_target: Realm,
         severity: f64,
@@ -324,6 +330,10 @@ fn format_entry(entry: &BiographyEntry) -> String {
             format!("t{tick}:start→{realm_target:?}")
         }
         BiographyEntry::BreakthroughSucceeded { realm, tick } => format!("t{tick}:reach:{realm:?}"),
+        BiographyEntry::SpiritEyeBreakthrough { eye_id, zone, tick } => {
+            let zone = zone.as_deref().unwrap_or("-");
+            format!("t{tick}:spirit_eye_breakthrough:{eye_id}:{zone}")
+        }
         BiographyEntry::BreakthroughFailed {
             realm_target,
             severity,

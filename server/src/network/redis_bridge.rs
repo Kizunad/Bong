@@ -19,10 +19,11 @@ use crate::schema::channels::{
     CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
     CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
     CH_REBIRTH, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
-    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TRIBULATION,
-    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
-    CH_WORLD_STATE,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA,
+    CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+    CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
+    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WOLIU_BACKFIRE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -46,6 +47,9 @@ use crate::schema::skill::{
 };
 use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
+};
+use crate::schema::spirit_eye::{
+    SpiritEyeDiscoveredV1, SpiritEyeMigrateV1, SpiritEyeUsedForBreakthroughV1,
 };
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
@@ -115,6 +119,9 @@ pub enum RedisOutbound {
     SocialPact(SocialPactEventV1),
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
+    SpiritEyeMigrate(SpiritEyeMigrateV1),
+    SpiritEyeDiscovered(SpiritEyeDiscoveredV1),
+    SpiritEyeUsedForBreakthrough(SpiritEyeUsedForBreakthroughV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
 }
@@ -716,6 +723,37 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_SOCIAL_RENOWN_DELTA,
+                payload,
+            })
+        }
+        RedisOutbound::SpiritEyeMigrate(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SpiritEyeMigrateV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SPIRIT_EYE_MIGRATE,
+                payload,
+            })
+        }
+        RedisOutbound::SpiritEyeDiscovered(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SpiritEyeDiscoveredV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SPIRIT_EYE_DISCOVERED,
+                payload,
+            })
+        }
+        RedisOutbound::SpiritEyeUsedForBreakthrough(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SpiritEyeUsedForBreakthroughV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
                 payload,
             })
         }
@@ -1458,6 +1496,9 @@ mod redis_bridge_tests {
     use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
     use crate::schema::forge::ForgeOutcomeBucketV1;
     use crate::schema::social::{ExposureKindV1, RenownTagV1};
+    use crate::schema::spirit_eye::{
+        SpiritEyeMigrateReasonV1, SpiritEyeMigrateV1, SpiritEyePositionV1,
+    };
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -1955,6 +1996,7 @@ mod redis_bridge_tests {
                 lifespan_remaining_years: Some(0.0),
                 recent_biography: vec!["t83980:near_death:cultivation:NaturalAging".to_string()],
                 position: None,
+                known_spirit_eyes: Vec::new(),
                 context: serde_json::json!({"will_terminate": true}),
             }))
             .expect("death insight payload should serialize");
@@ -1967,6 +2009,39 @@ mod redis_bridge_tests {
                 assert_eq!(v["character_id"], "offline:Azure");
                 assert_eq!(v["category"], "natural");
                 assert_eq!(v["zone_kind"], "ordinary");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_spirit_eye_migrate_on_correct_channel() {
+        let command =
+            prepare_outbound_command(RedisOutbound::SpiritEyeMigrate(SpiritEyeMigrateV1 {
+                v: 1,
+                eye_id: "spirit_eye:spawn:0".to_string(),
+                from: SpiritEyePositionV1 {
+                    x: 0.0,
+                    y: 66.0,
+                    z: 0.0,
+                },
+                to: SpiritEyePositionV1 {
+                    x: 640.0,
+                    y: 66.0,
+                    z: 0.0,
+                },
+                reason: SpiritEyeMigrateReasonV1::UsagePressure,
+                usage_pressure: 0.0,
+                tick: 120,
+            }))
+            .expect("spirit eye migrate should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SPIRIT_EYE_MIGRATE);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["eye_id"], "spirit_eye:spawn:0");
+                assert_eq!(v["reason"], "usage_pressure");
             }
             other => panic!("expected publish, got {other:?}"),
         }

@@ -72,6 +72,7 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
     "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
     "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "spirit_eye_candidates": LayerSpec(safe_default=0.0, blend_mode="maximum", export_type="uint8"),
     # realm_collapse_mask: 1 means the runtime zone overlay marked this area as
     #   ZoneStatus::Collapsed.  Consumers should preserve physical structures
     #   but disable qi-dependent functionality inside the marked columns.

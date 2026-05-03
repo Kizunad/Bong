@@ -7,6 +7,7 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..spirit_eye_selector import select_spirit_eye_candidates
 from .base import (
     DecorationSpec,
     EcologySpec,
@@ -60,6 +61,7 @@ class RiftValleyGenerator(TerrainProfileGenerator):
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+        "spirit_eye_candidates",
         "flora_density",
         "flora_variant_id",
     )
@@ -97,6 +99,7 @@ def fill_rift_valley_tile(
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+        "spirit_eye_candidates",
         "flora_density",
         "flora_variant_id",
     )
@@ -228,6 +231,15 @@ def fill_rift_valley_tile(
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+    buffer.layers["spirit_eye_candidates"] = select_spirit_eye_candidates(
+        height,
+        qi_density,
+        feature_mask,
+        wx,
+        wz,
+        density_bias=1.75,
+        blood_valley=True,
+    ).ravel()
 
     # --- Flora: 1 scarlet_bone_tree / 2 fire_vein_cactus / 3 blood_stele /
     # 4 nether_nylium_patch ---

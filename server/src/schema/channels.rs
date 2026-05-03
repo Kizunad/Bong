@@ -67,6 +67,11 @@ pub const CH_SKILL_LV_UP: &str = "bong:skill/lv_up";
 pub const CH_SKILL_CAP_CHANGED: &str = "bong:skill/cap_changed";
 pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
 
+// 灵眼（plan-spirit-eye-v1 §8）：server → agent 观测频道。
+pub const CH_SPIRIT_EYE_MIGRATE: &str = "bong:spirit_eye/migrate";
+pub const CH_SPIRIT_EYE_DISCOVERED: &str = "bong:spirit_eye/discovered";
+pub const CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH: &str = "bong:spirit_eye/used_for_breakthrough";
+
 // 活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
 // 玩家踏进 / 走出 TSY 秘境时由 server publish；entry / exit 共享同一频道，consumer 按 `kind` 字段 dispatch。
 pub const CH_TSY_EVENT: &str = "bong:tsy_event";
@@ -136,6 +141,12 @@ mod tests {
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
         assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");
         assert_eq!(CH_SKILL_SCROLL_USED, "bong:skill/scroll_used");
+        assert_eq!(CH_SPIRIT_EYE_MIGRATE, "bong:spirit_eye/migrate");
+        assert_eq!(CH_SPIRIT_EYE_DISCOVERED, "bong:spirit_eye/discovered");
+        assert_eq!(
+            CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+            "bong:spirit_eye/used_for_breakthrough"
+        );
         assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
         assert_eq!(CH_POI_NOVICE_EVENT, "bong:poi_novice/event");
         assert_eq!(CH_FORGE_START, "bong:forge/start");

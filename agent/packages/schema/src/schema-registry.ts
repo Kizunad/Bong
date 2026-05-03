@@ -259,6 +259,15 @@ import {
   TutorialHookV1,
 } from "./spawn-tutorial.js";
 import {
+  DeathInsightSpiritEyeV1,
+  SpiritEyeCoordinateNoteV1,
+  SpiritEyeDiscoveredV1,
+  SpiritEyeMigrateReasonV1,
+  SpiritEyeMigrateV1,
+  SpiritEyePositionV1,
+  SpiritEyeUsedForBreakthroughV1,
+} from "./spirit-eye.js";
+import {
   DaoxiangSpawnedV1,
   TsyCollapseCompletedV1,
   TsyCollapseStartedV1,
@@ -448,6 +457,13 @@ export const SCHEMA_REGISTRY = {
   senseKindV1: SenseKindV1,
   senseEntryV1: SenseEntryV1,
   spiritualSenseTargetsV1: SpiritualSenseTargetsV1,
+  spiritEyePositionV1: SpiritEyePositionV1,
+  spiritEyeMigrateReasonV1: SpiritEyeMigrateReasonV1,
+  spiritEyeMigrateV1: SpiritEyeMigrateV1,
+  spiritEyeDiscoveredV1: SpiritEyeDiscoveredV1,
+  spiritEyeUsedForBreakthroughV1: SpiritEyeUsedForBreakthroughV1,
+  spiritEyeCoordinateNoteV1: SpiritEyeCoordinateNoteV1,
+  deathInsightSpiritEyeV1: DeathInsightSpiritEyeV1,
   serverDataSpiritualSenseTargetsV1: ServerDataSpiritualSenseTargetsV1,
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
@@ -585,6 +601,12 @@ export const GENERATED_SCHEMA_FILES = {
   "heart-demon-outcome-v1.json": SCHEMA_REGISTRY.heartDemonOutcomeV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
   "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
+  "spirit-eye-migrate-v1.json": SCHEMA_REGISTRY.spiritEyeMigrateV1,
+  "spirit-eye-discovered-v1.json": SCHEMA_REGISTRY.spiritEyeDiscoveredV1,
+  "spirit-eye-used-for-breakthrough-v1.json":
+    SCHEMA_REGISTRY.spiritEyeUsedForBreakthroughV1,
+  "spirit-eye-coordinate-note-v1.json":
+    SCHEMA_REGISTRY.spiritEyeCoordinateNoteV1,
   "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
   "deceased-index-entry-v1.json": SCHEMA_REGISTRY.deceasedIndexEntryV1,
   "deceased-snapshot-v1.json": SCHEMA_REGISTRY.deceasedSnapshotV1,

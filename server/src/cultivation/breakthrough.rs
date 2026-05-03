@@ -16,11 +16,14 @@ use valence::prelude::{
 use crate::combat::components::StatusEffects;
 use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::player::gameplay::PendingGameplayNarrations;
+use crate::schema::common::NarrationStyle;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{KarmaWeightStore, KARMA_WEIGHT_MAX};
+use crate::world::spirit_eye::{SpiritEyeId, SpiritEyeRegistry, SpiritEyeUsedForBreakthroughEvent};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, Realm};
@@ -32,6 +35,9 @@ use super::tick::CultivationClock;
 pub const RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
 pub const RAPID_BREAKTHROUGH_KARMA_WEIGHT_DELTA: f32 = KARMA_WEIGHT_MAX;
 pub const MIN_ZONE_QI_TO_BREAKTHROUGH: f64 = MIN_ZONE_QI_TO_OPEN;
+pub const MIN_ZONE_QI_TO_GUYUAN: f64 = 0.80;
+pub const SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS: f64 = 0.30;
+pub const BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS: f64 = 0.50;
 
 /// 每境界的基础成功率（未叠心境/完整度/材料）。
 pub fn base_success_rate(next: Realm) -> f64 {
@@ -121,12 +127,34 @@ pub struct BreakthroughSuccess {
 pub enum BreakthroughError {
     AtMaxRealm,
     RequiresTribulation, // Spirit→Void 必须走 tribulation 流程
-    NotEnoughMeridians { need: usize, have: usize },
-    NotEnoughRegularMeridians { need: usize, have: usize },
-    NotEnoughExtraordinaryMeridians { need: usize, have: usize },
-    NotEnoughQi { need: f64, have: f64 },
-    ZoneTooWeak { need: f64, have: f64 },
-    RolledFailure { severity: f64 }, // 骰子输了
+    NotEnoughMeridians {
+        need: usize,
+        have: usize,
+    },
+    NotEnoughRegularMeridians {
+        need: usize,
+        have: usize,
+    },
+    NotEnoughExtraordinaryMeridians {
+        need: usize,
+        have: usize,
+    },
+    NotEnoughQi {
+        need: f64,
+        have: f64,
+    },
+    ZoneTooWeak {
+        need: f64,
+        have: f64,
+    },
+    EnvInsufficient {
+        need: f64,
+        have: f64,
+        in_spirit_eye: bool,
+    },
+    RolledFailure {
+        severity: f64,
+    }, // 骰子输了
 }
 
 /// 计算修正后的成功率 — plan §3.1 公式。
@@ -140,6 +168,25 @@ pub fn compute_success_rate(
     let base = base_success_rate(next);
     let bonus = material_bonus.clamp(0.0, 0.30);
     let raw = base * meridian_integrity_avg * composure * completeness * (1.0 + bonus);
+    raw.clamp(0.0, 1.0)
+}
+
+pub fn compute_success_rate_with_env_bonus(
+    next: Realm,
+    meridian_integrity_avg: f64,
+    composure: f64,
+    completeness: f64,
+    material_bonus: f64,
+    env_bonus: f64,
+) -> f64 {
+    let material = material_bonus.clamp(0.0, 0.30);
+    let env_bonus = env_bonus.clamp(0.0, 0.50);
+    let raw = base_success_rate(next)
+        * meridian_integrity_avg
+        * composure
+        * completeness
+        * (1.0 + material)
+        * (1.0 + env_bonus);
     raw.clamp(0.0, 1.0)
 }
 
@@ -214,15 +261,32 @@ fn breakthrough_precondition_error(
     None
 }
 
-fn breakthrough_zone_qi_error(
+fn breakthrough_environment_error(
     position: &Position,
+    dimension: DimensionKind,
     zones: Option<&ZoneRegistry>,
+    spirit_eyes: Option<&SpiritEyeRegistry>,
+    from: Realm,
 ) -> Option<BreakthroughError> {
     let zone_qi = zones
-        .and_then(|zones| zones.find_zone(DimensionKind::Overworld, position.get()))
+        .and_then(|zones| zones.find_zone(dimension, position.get()))
         .map(|zone| zone.spirit_qi)
         .unwrap_or(0.0);
-    if zone_qi < MIN_ZONE_QI_TO_BREAKTHROUGH {
+    let in_spirit_eye = spirit_eyes
+        .and_then(|registry| registry.spirit_eye_qi_at(dimension, position.get()))
+        .is_some();
+
+    if next_realm(from) == Some(Realm::Solidify) {
+        if zone_qi >= MIN_ZONE_QI_TO_GUYUAN || in_spirit_eye {
+            None
+        } else {
+            Some(BreakthroughError::EnvInsufficient {
+                need: MIN_ZONE_QI_TO_GUYUAN,
+                have: zone_qi,
+                in_spirit_eye,
+            })
+        }
+    } else if zone_qi < MIN_ZONE_QI_TO_BREAKTHROUGH {
         Some(BreakthroughError::ZoneTooWeak {
             need: MIN_ZONE_QI_TO_BREAKTHROUGH,
             have: zone_qi,
@@ -257,6 +321,32 @@ pub fn try_breakthrough<R: RollSource>(
     material_bonus: f64,
     roll: &mut R,
 ) -> Result<BreakthroughSuccess, BreakthroughError> {
+    try_breakthrough_with_env_bonus(cultivation, meridians, material_bonus, 0.0, roll)
+}
+
+pub fn attempt_breakthrough_guyuan<R: RollSource>(
+    cultivation: &mut Cultivation,
+    meridians: &mut MeridianSystem,
+    material_bonus: f64,
+    spirit_eye_bonus: f64,
+    roll: &mut R,
+) -> Result<BreakthroughSuccess, BreakthroughError> {
+    try_breakthrough_with_env_bonus(
+        cultivation,
+        meridians,
+        material_bonus,
+        spirit_eye_bonus,
+        roll,
+    )
+}
+
+pub fn try_breakthrough_with_env_bonus<R: RollSource>(
+    cultivation: &mut Cultivation,
+    meridians: &mut MeridianSystem,
+    material_bonus: f64,
+    env_bonus: f64,
+    roll: &mut R,
+) -> Result<BreakthroughSuccess, BreakthroughError> {
     let from = cultivation.realm;
     if let Some(error) = breakthrough_precondition_error(cultivation, meridians) {
         return Err(error);
@@ -279,12 +369,13 @@ pub fn try_breakthrough<R: RollSource>(
     let effective_material_bonus =
         (material_bonus + cultivation.pending_material_bonus).clamp(0.0, 0.30);
 
-    let success_rate = compute_success_rate(
+    let success_rate = compute_success_rate_with_env_bonus(
         next,
         integrity_avg,
         cultivation.composure,
         completeness,
         effective_material_bonus,
+        env_bonus,
     );
 
     // 扣费（不论成败）
@@ -333,9 +424,14 @@ pub fn breakthrough_system(
     mut players: Query<(&mut Cultivation, &mut MeridianSystem, &mut LifeRecord)>,
     mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
+    usernames: Query<&Username>,
+    current_dimensions: Query<&CurrentDimension>,
     zones: Option<Res<ZoneRegistry>>,
+    mut spirit_eyes: Option<ResMut<SpiritEyeRegistry>>,
+    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
+    mut spirit_eye_used_events: Option<ResMut<Events<SpiritEyeUsedForBreakthroughEvent>>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
 ) {
     let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
@@ -351,6 +447,8 @@ pub fn breakthrough_system(
                 tick: now,
             });
         }
+        let character_id = life.character_id.clone();
+        let username = usernames.get(req.entity).ok().map(|name| name.0.clone());
 
         // plan §3.1：material_bonus = req.material_bonus（手动传入，默认 0）
         //   ⊕ 服用突破辅助丹药挂在 StatusEffects 的 BreakthroughBoost buff 聚合值。
@@ -361,15 +459,53 @@ pub fn breakthrough_system(
             .unwrap_or(0.0);
         let material_bonus = req.material_bonus + buff_bonus;
 
-        let zone_error = positions
-            .get(req.entity)
-            .ok()
-            .and_then(|position| breakthrough_zone_qi_error(position, zones.as_deref()));
+        let position_context = positions.get(req.entity).ok().map(|position| {
+            let dimension = current_dimensions
+                .get(req.entity)
+                .map(|current| current.0)
+                .unwrap_or_default();
+            (position, dimension)
+        });
+        let spirit_eye_snapshot: Option<(SpiritEyeId, Option<String>, bool)> = position_context
+            .and_then(|(position, dimension)| {
+                spirit_eyes
+                    .as_deref()
+                    .and_then(|registry| registry.eye_at(dimension, position.get()))
+                    .map(|eye| (eye.id.clone(), eye.zone_name.clone(), eye.blood_valley))
+            });
+        let env_bonus = spirit_eye_snapshot
+            .as_ref()
+            .map(|(_, _, blood_valley)| {
+                if *blood_valley {
+                    BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS
+                } else {
+                    SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS
+                }
+            })
+            .unwrap_or(0.0);
+
+        let zone_error = position_context.and_then(|(position, dimension)| {
+            breakthrough_environment_error(
+                position,
+                dimension,
+                zones.as_deref(),
+                spirit_eyes.as_deref(),
+                from,
+            )
+        });
 
         let res = zone_error
             .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
             .map_or_else(
-                || try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll),
+                || {
+                    try_breakthrough_with_env_bonus(
+                        &mut cultivation,
+                        &mut meridians,
+                        material_bonus,
+                        env_bonus,
+                        &mut roll,
+                    )
+                },
                 Err,
             );
 
@@ -400,6 +536,37 @@ pub fn breakthrough_system(
                         },
                     });
                 }
+                if from == Realm::Condense && success.to == Realm::Solidify {
+                    if let Some((eye_id, zone_name, _blood_valley)) = spirit_eye_snapshot.as_ref() {
+                        if let Some(payload) = spirit_eyes.as_deref_mut().and_then(|registry| {
+                            registry.record_breakthrough_use_by_id(
+                                eye_id,
+                                character_id.as_str(),
+                                from,
+                                success.to,
+                                now,
+                            )
+                        }) {
+                            life.push(BiographyEntry::SpiritEyeBreakthrough {
+                                eye_id: payload.eye_id.clone(),
+                                zone: zone_name.clone(),
+                                tick: now,
+                            });
+                            if let Some(spirit_eye_used_events) =
+                                spirit_eye_used_events.as_deref_mut()
+                            {
+                                spirit_eye_used_events
+                                    .send(SpiritEyeUsedForBreakthroughEvent { payload });
+                            }
+                            if let Some(narrations) = pending_narrations.as_deref_mut() {
+                                narrations.push_broadcast(
+                                    "某处灵机结作一线，旋又归于沉寂。",
+                                    NarrationStyle::Narration,
+                                );
+                            }
+                        }
+                    }
+                }
                 // plan-particle-system-v1 §4.4：突破成功发 breakthrough_pillar 光柱。
                 if let Ok(pos) = positions.get(req.entity) {
                     let p = pos.get();
@@ -424,6 +591,17 @@ pub fn breakthrough_system(
                         severity: *severity,
                         tick: now,
                     });
+                }
+            }
+            Err(BreakthroughError::EnvInsufficient { .. }) => {
+                if let (Some(narrations), Some(username)) =
+                    (pending_narrations.as_deref_mut(), username.as_deref())
+                {
+                    narrations.push_player(
+                        username,
+                        "此地灵气稀薄，你的内力涣散如沙。",
+                        NarrationStyle::Perception,
+                    );
                 }
             }
             Err(_) => {}
@@ -795,6 +973,7 @@ mod tests {
         app.add_event::<VfxEventRequest>();
         app.add_event::<SkillCapChanged>();
         app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
         app.add_systems(Update, breakthrough_system);
 
         let (mut cultivation, meridians) = setup_for_induce();
@@ -824,6 +1003,46 @@ mod tests {
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
         assert_eq!(cultivation.qi_current, 100.0);
         assert!((cultivation.pending_material_bonus - 0.12).abs() < 1e-9);
+    }
+
+    #[test]
+    fn guyuan_requires_high_qi_or_spirit_eye() {
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.6;
+        let position = Position::new([8.0, 66.0, 8.0]);
+
+        let err = breakthrough_environment_error(
+            &position,
+            DimensionKind::Overworld,
+            Some(&zones),
+            None,
+            Realm::Condense,
+        )
+        .expect("low qi outside spirit eye should reject guyuan");
+
+        assert_eq!(
+            err,
+            BreakthroughError::EnvInsufficient {
+                need: MIN_ZONE_QI_TO_GUYUAN,
+                have: 0.6,
+                in_spirit_eye: false,
+            }
+        );
+    }
+
+    #[test]
+    fn spirit_eye_bonus_raises_guyuan_success_rate() {
+        let base = compute_success_rate_with_env_bonus(Realm::Solidify, 1.0, 1.0, 1.0, 0.0, 0.0);
+        let boosted = compute_success_rate_with_env_bonus(
+            Realm::Solidify,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS,
+        );
+
+        assert!(boosted > base);
     }
 
     /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。

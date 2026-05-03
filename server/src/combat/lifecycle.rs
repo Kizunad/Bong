@@ -48,9 +48,11 @@ use crate::schema::death_insight::{
 };
 use crate::schema::server_data::{DeathScreenStageV1, DeathScreenZoneKindV1, LifespanPreviewV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::spirit_eye::DeathInsightSpiritEyeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
 use crate::world::dimension::DimensionKind;
+use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{
@@ -260,6 +262,7 @@ pub fn death_arbiter_tick(
     clock: Res<CombatClock>,
     persistence: Res<PersistenceSettings>,
     zones: Option<Res<ZoneRegistry>>,
+    spirit_eyes: Option<Res<SpiritEyeRegistry>>,
     mut commands: valence::prelude::Commands,
     mut death_events: EventReader<DeathEvent>,
     mut cultivation_deaths: EventReader<CultivationDeathTrigger>,
@@ -336,6 +339,11 @@ pub fn death_arbiter_tick(
             zone_kind: death_zone,
             rebirth_chance,
             will_terminate: lifespan_exhausted,
+            known_spirit_eyes: known_spirit_eyes_for_death_insight(
+                life_record.as_deref(),
+                &lifecycle,
+                spirit_eyes.as_deref(),
+            ),
         });
 
         if lifespan_exhausted {
@@ -490,6 +498,11 @@ pub fn death_arbiter_tick(
             zone_kind: death_zone,
             rebirth_chance,
             will_terminate: lifespan_exhausted,
+            known_spirit_eyes: known_spirit_eyes_for_death_insight(
+                life_record.as_deref(),
+                &lifecycle,
+                spirit_eyes.as_deref(),
+            ),
         });
 
         if lifespan_exhausted {
@@ -923,6 +936,7 @@ struct DeathInsightBuildInput<'a> {
     zone_kind: ZoneDeathKind,
     rebirth_chance: Option<f64>,
     will_terminate: bool,
+    known_spirit_eyes: Vec<DeathInsightSpiritEyeV1>,
 }
 
 fn build_death_insight_request(input: DeathInsightBuildInput<'_>) -> DeathInsightRequestV1 {
@@ -972,12 +986,27 @@ fn build_death_insight_request(input: DeathInsightBuildInput<'_>) -> DeathInsigh
         lifespan_remaining_years: input.lifespan.map(LifespanComponent::remaining_years),
         recent_biography,
         position,
+        known_spirit_eyes: input.known_spirit_eyes,
         context: serde_json::json!({
             "will_terminate": input.will_terminate,
             "fortune_remaining": input.lifecycle.fortune_remaining,
             "lifecycle_state": format!("{:?}", input.lifecycle.state),
         }),
     }
+}
+
+fn known_spirit_eyes_for_death_insight(
+    life_record: Option<&LifeRecord>,
+    lifecycle: &Lifecycle,
+    registry: Option<&SpiritEyeRegistry>,
+) -> Vec<DeathInsightSpiritEyeV1> {
+    let Some(registry) = registry else {
+        return Vec::new();
+    };
+    let character_id = life_record
+        .map(|record| record.character_id.as_str())
+        .unwrap_or(lifecycle.character_id.as_str());
+    registry.known_spirit_eyes_for(character_id)
 }
 
 fn death_insight_category_from_cultivation_cause(

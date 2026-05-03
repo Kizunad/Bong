@@ -9585,6 +9585,10 @@
                   {
                     "const": "ZhenfaWardAlert",
                     "type": "string"
+                  },
+                  {
+                    "const": "SpiritEye",
+                    "type": "string"
                   }
                 ]
               },

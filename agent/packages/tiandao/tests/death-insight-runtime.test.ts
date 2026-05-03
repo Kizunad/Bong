@@ -183,6 +183,40 @@ describe("DeathInsightRuntime", () => {
     expect(payload.narrations[0]?.style).toBe("era_decree");
   });
 
+  it("keeps known spirit eye coordinates in fallback death insight", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const rt = new DeathInsightRuntime({
+      llm: makeLlm(""),
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await rt.handleRequestPayload(
+      JSON.stringify(
+        sampleRequest({
+          realm: "Solidify",
+          known_spirit_eyes: [
+            {
+              eye_id: "eye_spawn_0",
+              zone: "qingyun_peaks",
+              pos: { x: 920, y: 88, z: -640 },
+              qi_concentration: 1,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const payload = JSON.parse(pub.published[0]?.message ?? "{}");
+    const text = String(payload.narrations[0]?.text ?? "");
+    expect(text).toContain("灵眼 eye_spawn_0");
+    expect(text).toContain("(920, 88, -640)");
+  });
+
   it("keeps low-realm combat fallback short", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();

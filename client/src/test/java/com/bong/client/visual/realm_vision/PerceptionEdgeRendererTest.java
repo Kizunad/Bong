@@ -31,6 +31,13 @@ class PerceptionEdgeRendererTest {
     }
 
     @Test
+    void spiritEyeWireKindMapsToPrivateHudMarker() {
+        assertEquals(SenseKind.SPIRIT_EYE, SenseKind.fromWire("SpiritEye"));
+        int color = PerceptionEdgeRenderer.colorFor(SenseKind.SPIRIT_EYE, 1.0);
+        assertEquals(0x70FFD6, color & 0x00FFFFFF);
+    }
+
+    @Test
     void skipsInFovIndicatorsByContract() {
         List<HudRenderCommand> out = new ArrayList<>();
         PerceptionEdgeRenderer.append(out, List.of(

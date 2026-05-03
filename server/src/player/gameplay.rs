@@ -106,6 +106,16 @@ impl PendingGameplayNarrations {
             kind: None,
         });
     }
+
+    pub fn push_broadcast(&mut self, text: impl Into<String>, style: NarrationStyle) {
+        self.pending.push(Narration {
+            scope: NarrationScope::Broadcast,
+            target: None,
+            text: text.into(),
+            style,
+            kind: None,
+        });
+    }
 }
 
 #[derive(Default)]

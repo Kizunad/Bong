@@ -131,6 +131,15 @@ export const CHANNELS = {
   /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
   SKILL_SCROLL_USED: "bong:skill/scroll_used",
 
+  /** Server → Agent: 灵眼迁移观测（plan-spirit-eye-v1 §6） */
+  SPIRIT_EYE_MIGRATE: "bong:spirit_eye/migrate",
+
+  /** Server → Agent: 私有灵眼发现观测（plan-spirit-eye-v1 §4） */
+  SPIRIT_EYE_DISCOVERED: "bong:spirit_eye/discovered",
+
+  /** Server → Agent: 灵眼内固元突破观测（plan-spirit-eye-v1 §5） */
+  SPIRIT_EYE_USED_FOR_BREAKTHROUGH: "bong:spirit_eye/used_for_breakthrough",
+
   /** Server → Agent: 玩家踏进 / 走出活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
    *
    * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
@@ -201,6 +210,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SKILL_LV_UP,
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
+  CHANNELS.SPIRIT_EYE_MIGRATE,
+  CHANNELS.SPIRIT_EYE_DISCOVERED,
+  CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
   CHANNELS.TSY_EVENT,
   CHANNELS.POI_NOVICE_EVENT,
   CHANNELS.FORGE_START,

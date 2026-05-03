@@ -150,6 +150,55 @@
         }
       }
     },
+    "known_spirit_eyes": {
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "eye_id",
+          "pos",
+          "qi_concentration"
+        ],
+        "properties": {
+          "eye_id": {
+            "minLength": 1,
+            "maxLength": 160,
+            "type": "string"
+          },
+          "zone": {
+            "minLength": 1,
+            "maxLength": 160,
+            "type": "string"
+          },
+          "pos": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            }
+          },
+          "qi_concentration": {
+            "minimum": 0,
+            "type": "number"
+          }
+        }
+      }
+    },
     "context": {
       "type": "object",
       "patternProperties": {

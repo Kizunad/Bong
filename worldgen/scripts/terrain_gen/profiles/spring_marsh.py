@@ -5,6 +5,7 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..spirit_eye_selector import select_spirit_eye_candidates
 from .base import (
     DecorationSpec,
     EcologySpec,
@@ -63,6 +64,7 @@ class SpringMarshGenerator(TerrainProfileGenerator):
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+        "spirit_eye_candidates",
         "flora_density",
         "flora_variant_id",
     )
@@ -100,6 +102,7 @@ def fill_spring_marsh_tile(
             "qi_density",
             "mofa_decay",
             "qi_vein_flow",
+            "spirit_eye_candidates",
             "flora_density",
             "flora_variant_id",
         ),
@@ -223,6 +226,14 @@ def fill_spring_marsh_tile(
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+    buffer.layers["spirit_eye_candidates"] = select_spirit_eye_candidates(
+        height,
+        qi_density,
+        feature_mask,
+        wx,
+        wz,
+        density_bias=1.55,
+    ).ravel()
 
     # --- Flora: 1 ling_yun_mangrove / 2 spirit_willow / 3 lotus_cluster /
     # 4 reed_thicket / 5 jade_moss_rock ---
