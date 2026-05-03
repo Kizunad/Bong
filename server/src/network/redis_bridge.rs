@@ -13,7 +13,8 @@ use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
-    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START, CH_ANTICHEAT,
+    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
+    CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
@@ -27,6 +28,9 @@ use crate::schema::channels::{
     CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
+use crate::schema::combat_carrier::{
+    CarrierChargedEventV1, CarrierImpactEventV1, ProjectileDespawnedEventV1,
+};
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
@@ -129,6 +133,9 @@ pub enum RedisOutbound {
     SpiritEyeUsedForBreakthrough(SpiritEyeUsedForBreakthroughV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
+    CarrierCharged(CarrierChargedEventV1),
+    CarrierImpact(CarrierImpactEventV1),
+    ProjectileDespawned(ProjectileDespawnedEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -799,6 +806,37 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WOLIU_PROJECTILE_DRAINED,
+                payload,
+            })
+        }
+        RedisOutbound::CarrierCharged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize CarrierChargedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_CHARGED,
+                payload,
+            })
+        }
+        RedisOutbound::CarrierImpact(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize CarrierImpactEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_IMPACT,
+                payload,
+            })
+        }
+        RedisOutbound::ProjectileDespawned(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ProjectileDespawnedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_PROJECTILE_DESPAWNED,
                 payload,
             })
         }

@@ -201,6 +201,7 @@ import {
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
   ServerDataVortexStateV1,
+  ServerDataCarrierStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataWeaponBrokenV1,
@@ -227,6 +228,12 @@ import {
   WeaponEquippedV1,
   WeaponViewV1,
 } from "./server-data.js";
+import {
+  CarrierChargedEventV1,
+  CarrierImpactEventV1,
+  CarrierStateV1,
+  ProjectileDespawnedEventV1,
+} from "./combat-carrier.js";
 import {
   ProjectileQiDrainedEventV1,
   VortexBackfireEventV1,
@@ -431,6 +438,11 @@ export const SCHEMA_REGISTRY = {
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  carrierStateV1: CarrierStateV1,
+  carrierChargedEventV1: CarrierChargedEventV1,
+  carrierImpactEventV1: CarrierImpactEventV1,
+  projectileDespawnedEventV1: ProjectileDespawnedEventV1,
+  serverDataCarrierStateV1: ServerDataCarrierStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7

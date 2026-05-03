@@ -6,6 +6,7 @@ use super::alchemy::{
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
 use super::botany::BotanyPlantV2RenderProfileV1;
+use super::combat_carrier::CarrierStateV1;
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, DerivedAttrsSyncV1, EventStreamPushV1,
     QuickSlotConfigV1, SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1,
@@ -103,6 +104,7 @@ pub enum ServerDataType {
     WeaponBroken,
     TreasureEquipped,
     VortexState,
+    CarrierState,
     LingtianSession,
     DeathScreen,
     TerminateScreen,
@@ -265,6 +267,7 @@ pub enum ServerDataPayloadV1 {
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     VortexState(VortexFieldStateV1),
+    CarrierState(CarrierStateV1),
     LingtianSession(Box<LingtianSessionDataV1>),
     DeathScreen {
         visible: bool,
@@ -682,6 +685,10 @@ enum ServerDataPayloadWireV1 {
     VortexState {
         #[serde(flatten)]
         state: VortexFieldStateV1,
+    },
+    CarrierState {
+        #[serde(flatten)]
+        state: CarrierStateV1,
     },
     LingtianSession {
         #[serde(flatten)]
@@ -1392,6 +1399,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::TreasureEquipped(treasure_equipped))
             }
             ServerDataPayloadWireV1::VortexState { state } => Ok(Self::VortexState(state)),
+            ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
@@ -1797,6 +1805,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::VortexState(state) => Self::VortexState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::CarrierState(state) => Self::CarrierState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
             },
@@ -2099,6 +2110,7 @@ impl ServerDataPayloadV1 {
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::VortexState(..) => ServerDataType::VortexState,
+            Self::CarrierState(..) => ServerDataType::CarrierState,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,

@@ -28,13 +28,14 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 6] = [
+const TECHNIQUE_IDS: [&str; 7] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
     "zhenmai.parry",
     "woliu.vortex",
+    "anqi.charge_carrier",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,7 +59,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 6] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 7] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -164,6 +165,22 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 6] = [
         cooldown_ticks: 20,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/woliu_vortex.png",
+    },
+    TechniqueDefinition {
+        id: "anqi.charge_carrier",
+        display_name: "封骨",
+        grade: "yellow",
+        description: "静坐二十息，将真元封入手中异变兽骨，备作远射暗器。",
+        required_realm: "Induce",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.01,
+        }],
+        qi_cost: 0.0,
+        cast_ticks: 400,
+        cooldown_ticks: 400,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/anqi_charge_carrier.png",
     },
 ];
 

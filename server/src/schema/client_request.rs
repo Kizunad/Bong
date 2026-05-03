@@ -242,6 +242,20 @@ pub enum ClientRequestV1 {
     Jiemai {
         v: u8,
     },
+    /// plan-anqi-v1 P0：直接封骨请求。正式 UI 可通过 skillbar 触发默认投入；
+    /// 该请求保留给滑块 UI 指定 `qi_target`。
+    ChargeCarrier {
+        v: u8,
+        slot: Option<AnqiCarrierSlotV1>,
+        qi_target: f32,
+    },
+    /// plan-anqi-v1 P0：手中 charged 兽骨抛射。`dir_unit` 由 client crosshair 给出。
+    ThrowCarrier {
+        v: u8,
+        slot: AnqiCarrierSlotV1,
+        dir_unit: [f32; 3],
+        power: f32,
+    },
     /// plan-HUD-v1 §4 / §11.3 触发 F1-F9 快捷使用槽。
     /// server 校验后插入 `Casting` Component，回推 `cast_sync(Casting)`；
     /// `tick_casts` 系统在 duration 到期时移除 Component 并推 `cast_sync(Complete)`。
@@ -399,6 +413,13 @@ pub enum ClientRequestV1 {
         item_instance_id: u64,
         station_tier: u8,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnqiCarrierSlotV1 {
+    MainHand,
+    OffHand,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -231,6 +231,7 @@ public class BongHud {
             CastStateStore.snapshot(),
             UnifiedEventStore.stream(),
             SpellVolumeStore.snapshot(),
+            com.bong.client.combat.store.CarrierStateStore.snapshot(),
             DefenseWindowStore.snapshot(),
             UnlockedStylesStore.snapshot()
         );

@@ -13,6 +13,7 @@ pub mod channels;
 pub mod chat_message;
 pub mod client_payload;
 pub mod client_request;
+pub mod combat_carrier;
 pub mod combat_event;
 pub mod combat_hud;
 pub mod common;

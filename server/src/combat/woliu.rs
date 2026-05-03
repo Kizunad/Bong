@@ -8,6 +8,7 @@ use crate::combat::components::{
     ActiveStatusEffect, DerivedAttrs, SkillBarBindings, StatusEffects, TICKS_PER_SECOND,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
+use crate::combat::projectile::QiProjectile;
 use crate::combat::status::{has_active_status, remove_status_effect, upsert_status_effect};
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
@@ -88,12 +89,6 @@ pub struct VortexField {
     pub caster: Entity,
     pub env_qi_at_cast: f32,
     pub last_maintain_tick: u64,
-}
-
-#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
-pub struct QiProjectile {
-    pub owner: Option<Entity>,
-    pub qi_payload: f32,
 }
 
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]

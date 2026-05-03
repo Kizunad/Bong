@@ -1,11 +1,13 @@
 pub mod agent_bridge;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod anqi_event_bridge;
 pub mod anticheat_bridge;
 pub mod ascension_quota_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
 pub mod burst_event_emit;
+pub mod carrier_state_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -351,6 +353,9 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
             burst_event_emit::emit_burst_meridian_events,
+            anqi_event_bridge::publish_carrier_charged_events,
+            anqi_event_bridge::publish_carrier_impact_events,
+            anqi_event_bridge::publish_projectile_despawned_events,
             woliu_event_bridge::publish_woliu_backfire_events,
             woliu_event_bridge::publish_projectile_qi_drained_events,
         ),
@@ -490,6 +495,7 @@ pub fn register(app: &mut App) {
         ),
     );
     app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);
+    app.add_systems(Update, carrier_state_emit::emit_carrier_state_payloads);
     app.add_systems(
         Update,
         (

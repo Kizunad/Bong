@@ -527,6 +527,35 @@ export const TradeOfferResponseRequestV1 = Type.Object(
 );
 export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
 
+export const AnqiCarrierSlotV1 = Type.Union([
+  Type.Literal("main_hand"),
+  Type.Literal("off_hand"),
+]);
+export type AnqiCarrierSlotV1 = Static<typeof AnqiCarrierSlotV1>;
+
+export const ChargeCarrierRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("charge_carrier"),
+    slot: Type.Optional(AnqiCarrierSlotV1),
+    qi_target: Type.Number({ minimum: 0, maximum: 80 }),
+  },
+  { additionalProperties: false },
+);
+export type ChargeCarrierRequestV1 = Static<typeof ChargeCarrierRequestV1>;
+
+export const ThrowCarrierRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("throw_carrier"),
+    slot: AnqiCarrierSlotV1,
+    dir_unit: Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+    power: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ThrowCarrierRequestV1 = Static<typeof ThrowCarrierRequestV1>;
+
 export const ZhenfaKindV1 = Type.Union([
   Type.Literal("trap"),
   Type.Literal("ward"),
@@ -749,6 +778,8 @@ export const ClientRequestV1 = Type.Union([
   SparringInviteResponseRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
+  ChargeCarrierRequestV1,
+  ThrowCarrierRequestV1,
   ZhenfaPlaceRequestV1,
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,

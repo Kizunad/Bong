@@ -3964,6 +3964,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::TradeCompleted { .. } => "trade_completed",
         BiographyEntry::VortexProjectileDrained { .. } => "vortex_projectile_drained",
         BiographyEntry::VortexBackfired { .. } => "vortex_backfired",
+        BiographyEntry::AnqiSniped { .. } => "anqi_sniped",
         BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
     }
 }
@@ -4044,6 +4045,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::TradeCompleted { tick, .. }
         | BiographyEntry::VortexProjectileDrained { tick, .. }
         | BiographyEntry::VortexBackfired { tick, .. }
+        | BiographyEntry::AnqiSniped { tick, .. }
         | BiographyEntry::SpawnTutorialCompleted { tick, .. } => *tick,
     }
 }

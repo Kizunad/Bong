@@ -12,6 +12,7 @@ import {
   SkillBarConfigV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
+import { CarrierStateV1 } from "./combat-carrier.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
@@ -814,6 +815,16 @@ export const ServerDataVortexStateV1 = Type.Object(
 );
 export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
 
+export const ServerDataCarrierStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("carrier_state"),
+    ...CarrierStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataCarrierStateV1 = Static<typeof ServerDataCarrierStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1224,6 +1235,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataVortexStateV1,
+  ServerDataCarrierStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,
