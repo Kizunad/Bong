@@ -45,6 +45,8 @@ pub struct RemainsItemRecord {
 pub mod ancient_relics;
 // plan-tsy-loot-v1 §4 — 干尸 component。
 pub mod corpse;
+// plan-poi-novice-v1 §P1 — 新手 POI loot 表。
+pub mod poi_loot;
 // plan-tsy-loot-v1 §3 — 秘境内死亡分流。
 pub mod tsy_death_drop;
 // plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
@@ -318,6 +320,7 @@ pub fn register(app: &mut App) {
     // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
     app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
     app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
+    poi_loot::log_novice_poi_loot_tables();
     app.add_event::<DroppedItemEvent>();
     app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_systems(

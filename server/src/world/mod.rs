@@ -5,6 +5,9 @@ pub mod extract_system;
 pub mod karma;
 pub mod loot_pool;
 pub mod mob_spawn;
+pub mod poi_mutant_nest;
+pub mod poi_novice;
+pub mod poi_respawn_tick;
 pub mod rift_portal;
 pub mod terrain;
 pub mod tsy;
@@ -113,6 +116,10 @@ pub fn register(app: &mut App) {
     tsy_dev_command::register(app);
     // plan-tsy-worldgen-v1 §1 — startup 期消费 TerrainProviders.pois() 把 POI 转 marker
     tsy_poi_consumer::register(app);
+    // plan-poi-novice-v1 — startup 期消费 TerrainProviders.pois() 生成新手 POI registry。
+    poi_novice::register(app);
+    poi_respawn_tick::register(app);
+    poi_mutant_nest::log_mutant_nest_contract();
     app.insert_resource(rift_portal::load_tsy_portals());
     // plan-tsy-lifecycle-v1 §1 — TSY 生命周期状态机 + 塌缩清理 + 道伥转化
     tsy_lifecycle::register(app);
