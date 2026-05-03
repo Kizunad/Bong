@@ -92,6 +92,9 @@ export const CHANNELS = {
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
 
+  /** Server → Agent: 反作弊阈值上报（plan-anticheat-v1） */
+  ANTICHEAT: "bong:anticheat",
+
   /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
   ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
 
@@ -197,6 +200,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.ANTICHEAT,
   CHANNELS.ARMOR_DURABILITY_CHANGED,
   CHANNELS.WOLIU_BACKFIRE,
   CHANNELS.WOLIU_PROJECTILE_DRAINED,

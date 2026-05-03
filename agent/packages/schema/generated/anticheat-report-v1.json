@@ -1,0 +1,60 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "char_id",
+    "entity_id",
+    "at_tick",
+    "kind",
+    "count",
+    "details"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "anticheat_report",
+      "type": "string"
+    },
+    "char_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "reach_exceeded",
+          "type": "string"
+        },
+        {
+          "const": "cooldown_bypassed",
+          "type": "string"
+        },
+        {
+          "const": "qi_invest_exceeded",
+          "type": "string"
+        }
+      ]
+    },
+    "count": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "details": {
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

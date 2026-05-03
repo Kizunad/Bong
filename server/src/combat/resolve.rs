@@ -4,6 +4,7 @@ use valence::prelude::{
     Res, ResMut, Username, With,
 };
 
+use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::status::has_active_status;
 use crate::combat::weapon::{Weapon, WeaponBroken};
@@ -34,6 +35,7 @@ use crate::inventory::{
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
+use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
@@ -105,6 +107,8 @@ type CombatAttackerItem<'a> = (
     &'a mut Cultivation,
     &'a mut MeridianSystem,
     Option<&'a DerivedAttrs>,
+    Option<&'a mut AntiCheatCounter>,
+    Option<&'a CombatState>,
 );
 
 pub fn apply_defense_intents(
@@ -187,13 +191,44 @@ pub fn resolve_attack_intents(
 
         {
             let mut attacker_query = combatants.p0();
-            let Ok((attacker_cultivation, _, _)) = attacker_query.get_mut(intent.attacker) else {
+            let Ok((attacker_cultivation, _, _, mut anticheat_counter, attacker_combat_state)) =
+                attacker_query.get_mut(intent.attacker)
+            else {
                 continue;
             };
+
+            if intent.source == AttackSource::Melee
+                && intent.debug_command.is_none()
+                && attacker_combat_state
+                    .and_then(|state| state.last_attack_at_tick)
+                    .is_some_and(|last_attack_at_tick| intent.issued_at_tick <= last_attack_at_tick)
+            {
+                record_anticheat_violation(
+                    anticheat_counter.as_deref_mut(),
+                    ViolationKindV1::CooldownBypassed,
+                    format!(
+                        "cooldown: issued_at_tick={} last_attack_at_tick={}",
+                        intent.issued_at_tick,
+                        attacker_combat_state
+                            .and_then(|state| state.last_attack_at_tick)
+                            .unwrap_or_default()
+                    ),
+                );
+            }
 
             if intent.source != AttackSource::BurstMeridian
                 && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
             {
+                if intent.debug_command.is_none() {
+                    record_anticheat_violation(
+                        anticheat_counter.as_deref_mut(),
+                        ViolationKindV1::QiInvestExceeded,
+                        format!(
+                            "qi_invest: requested={:.3} available={:.3}",
+                            qi_invest, attacker_cultivation.qi_current
+                        ),
+                    );
+                }
                 continue;
             }
         }
@@ -203,13 +238,29 @@ pub fn resolve_attack_intents(
             target_position,
             f64::from(intent.reach.max),
         ) else {
+            if intent.debug_command.is_none() {
+                let mut attacker_query = combatants.p0();
+                if let Ok((_, _, _, mut anticheat_counter, _)) =
+                    attacker_query.get_mut(intent.attacker)
+                {
+                    record_anticheat_violation(
+                        anticheat_counter.as_deref_mut(),
+                        ViolationKindV1::ReachExceeded,
+                        format!(
+                            "reach: target_distance={:.3} server_max={:.3}",
+                            target_position.distance(attacker_position),
+                            intent.reach.max
+                        ),
+                    );
+                }
+            }
             continue;
         };
         let distance = hit_probe.distance as f32;
 
         let attacker_damage_multiplier = {
             let mut attacker_query = combatants.p0();
-            let Ok((mut attacker_cultivation, mut attacker_meridians, attacker_attrs)) =
+            let Ok((mut attacker_cultivation, mut attacker_meridians, attacker_attrs, _, _)) =
                 attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -721,6 +772,17 @@ pub fn resolve_attack_intents(
     }
 }
 
+fn record_anticheat_violation(
+    counter: Option<&mut AntiCheatCounter>,
+    kind: ViolationKindV1,
+    details: String,
+) {
+    let Some(counter) = counter else {
+        return;
+    };
+    counter.record_violation(kind, details);
+}
+
 fn body_part_multipliers(body_part: BodyPart) -> (f32, f32, f32) {
     match body_part {
         BodyPart::Head => (2.0, 1.5, 1.5),
@@ -904,6 +966,7 @@ fn first_open_or_fallback_meridian(
 mod tests {
     use super::*;
 
+    use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
     use crate::combat::components::{
         BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle, StatusEffects, WoundKind,
@@ -2083,6 +2146,190 @@ mod tests {
         assert!(target_contamination.entries.is_empty());
         assert!(combat_events.is_empty());
         assert!(death_events.is_empty());
+    }
+
+    #[test]
+    fn anticheat_qi_invest_violation_counts_without_changing_rejection() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 903 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_npc(
+            &mut app,
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert((
+            Cultivation {
+                qi_current: 5.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
+            AntiCheatCounter::default(),
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 902,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let counter = app
+            .world()
+            .entity(attacker)
+            .get::<AntiCheatCounter>()
+            .unwrap();
+        assert_eq!(counter.qi_invest_violations, 1);
+        let target_ref = app.world().entity(target);
+        assert!(
+            target_ref.get::<Wounds>().unwrap().entries.is_empty(),
+            "insufficient qi behavior should remain rejection"
+        );
+        assert!(
+            app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "qi violation counting must not emit combat side effects"
+        );
+    }
+
+    #[test]
+    fn anticheat_reach_violation_counts_without_changing_miss() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 904 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_npc(
+            &mut app,
+            [2.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(AntiCheatCounter::default());
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 903,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let counter = app
+            .world()
+            .entity(attacker)
+            .get::<AntiCheatCounter>()
+            .unwrap();
+        assert_eq!(counter.reach_violations, 1);
+        let target_ref = app.world().entity(target);
+        assert_eq!(
+            target_ref.get::<Wounds>().unwrap().health_current,
+            target_ref.get::<Wounds>().unwrap().health_max
+        );
+        assert!(target_ref.get::<Wounds>().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn anticheat_cooldown_violation_counts_without_blocking_hit() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 905 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_npc(
+            &mut app,
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert((
+            AntiCheatCounter::default(),
+            CombatState {
+                last_attack_at_tick: Some(904),
+                ..CombatState::default()
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 904,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let counter = app
+            .world()
+            .entity(attacker)
+            .get::<AntiCheatCounter>()
+            .unwrap();
+        assert_eq!(counter.cooldown_violations, 1);
+        assert!(
+            !app.world()
+                .entity(target)
+                .get::<Wounds>()
+                .unwrap()
+                .entries
+                .is_empty(),
+            "cooldown violation reporting must not change current hit resolution"
+        );
+        assert!(
+            !app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "hit should still emit CombatEvent"
+        );
     }
 
     #[test]
