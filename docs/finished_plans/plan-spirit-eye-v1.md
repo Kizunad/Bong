@@ -331,8 +331,8 @@ pub struct SpiritEye {
 
 ### 关键 commit
 
-- `7b7f032b` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
-- `c2f9d8b2` · 2026-05-03 · `fix(plan-spirit-eye-v1): 收窄灵眼突破加成与私有标记`
+- `2fc9e15a` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
+- `871403a0` · 2026-05-03 · `fix(plan-spirit-eye-v1): 收窄灵眼突破加成与私有标记`
 
 ### 测试结果
 
