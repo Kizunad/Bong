@@ -488,6 +488,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             _blend_tile_layers(base_tile, overlay_tile, zone)
             if zone.name in collapsed_zones:
                 _apply_realm_collapse_mask(base_tile, zone)
+        base_tile.compact_layers()
         generated_tiles.append(base_tile)
 
     return GeneratedFieldSet(

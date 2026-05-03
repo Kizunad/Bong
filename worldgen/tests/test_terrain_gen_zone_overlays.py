@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from scripts.terrain_gen.blueprint import (
     BoundarySpec,
     BlueprintZone,
@@ -93,6 +95,11 @@ class TerrainGenZoneOverlayTest(unittest.TestCase):
             artifacts = export_rasters(plan, fields)
 
             self.assertIn("realm_collapse_mask", fields.layers)
+            self.assertEqual(fields.tiles[0].layers["height"].dtype, np.float32)
+            self.assertEqual(
+                fields.tiles[0].layers["realm_collapse_mask"].dtype,
+                np.uint8,
+            )
             self.assertGreater(
                 int(fields.tiles[0].layers["realm_collapse_mask"].max()), 0
             )
