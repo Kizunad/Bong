@@ -274,17 +274,17 @@ P2  v1 收口
 
 ### 关键 commit
 
-- `3d2fbc72` · 2026-05-04 · `feat(style-vector): 接入真元色实践链`
-- `4f253df2` · 2026-05-04 · `feat(style-vector): 增加真元色神识通道`
-- `f50c1811` · 2026-05-04 · `feat(client): 渲染检视真元色`
-- `8753391d` · 2026-05-04 · `feat(style-vector): 接入真元色叙事`
-- `5f3e4e02` · 2026-05-04 · `fix(style-vector): 限制真元色检视目标范围`
+- `00dd785a` · 2026-05-04 · `feat(style-vector): 接入真元色实践链`
+- `8b53f27a` · 2026-05-04 · `feat(style-vector): 增加真元色神识通道`
+- `7be80764` · 2026-05-04 · `feat(client): 渲染检视真元色`
+- `97a9b40c` · 2026-05-04 · `feat(style-vector): 接入真元色叙事`
+- `071704a3` · 2026-05-04 · `fix(style-vector): 限制真元色检视目标范围`
 
 ### 测试结果
 
-- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ `2225 passed`
+- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ `2235 passed`
 - `agent/`：`npm run build` ✅
-- `agent/packages/tiandao`：`npm test` ✅ `33 passed / 229 tests`
+- `agent/packages/tiandao`：`npm test` ✅ `34 passed / 232 tests`
 - `agent/packages/schema`：`npm test` ✅ `9 passed / 267 tests`
 - `client/`：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ `BUILD SUCCESSFUL`
 
