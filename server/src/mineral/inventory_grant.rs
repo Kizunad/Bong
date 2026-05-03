@@ -19,8 +19,8 @@ use super::registry::{MineralEntry, MineralRegistry};
 use super::types::MineralRarity;
 use crate::cultivation::components::Cultivation;
 use crate::inventory::{
-    InventoryInstanceIdAllocator, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
-    MAIN_PACK_CONTAINER_ID,
+    find_free_slot, find_mergeable_stack, InventoryInstanceIdAllocator, ItemInstance, ItemRarity,
+    PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::PlayerState;
@@ -31,6 +31,7 @@ use crate::skill::events::{SkillXpGain, XpGainSource};
 
 /// Mineral ore drop 的默认堆数 —— 一次挖方块产一枚（与 vanilla 一致）。
 const DEFAULT_DROP_STACK_COUNT: u32 = 1;
+const MINERAL_MAX_STACK_COUNT: u32 = 32;
 
 /// plan-mineral-v1 §2.2 consumer —— 把 MineralDropEvent 写成 PlayerInventory 的 ItemInstance。
 #[allow(clippy::too_many_arguments)] // Bevy system signature; drop, inventory, snapshot, and skill concerns stay explicit.
@@ -63,26 +64,6 @@ pub fn consume_mineral_drops_into_inventory(
             continue;
         };
 
-        let instance_id = match allocator.next_id() {
-            Ok(id) => id,
-            Err(err) => {
-                tracing::warn!(
-                    target: "bong::mineral",
-                    "inventory allocator exhausted on mineral drop: {err}"
-                );
-                continue;
-            }
-        };
-
-        let instance = build_mineral_item_instance(
-            instance_id,
-            entry,
-            DEFAULT_DROP_STACK_COUNT,
-            clock.tick,
-            event.position,
-            profile_registry.as_deref(),
-        );
-
         let Some(main_pack) = inventory
             .containers
             .iter_mut()
@@ -96,11 +77,44 @@ pub fn consume_mineral_drops_into_inventory(
             continue;
         };
 
-        main_pack.items.push(PlacedItemState {
-            row: 0,
-            col: 0,
-            instance,
-        });
+        let template_id = format!("mineral_{}", entry.canonical_name);
+        if let Some(placed) =
+            find_mergeable_stack(main_pack, template_id.as_str(), MINERAL_MAX_STACK_COUNT)
+        {
+            placed.instance.stack_count = placed
+                .instance
+                .stack_count
+                .saturating_add(DEFAULT_DROP_STACK_COUNT);
+        } else {
+            let Some((row, col)) = find_free_slot(main_pack, 1, 1) else {
+                tracing::warn!(
+                    target: "bong::mineral",
+                    "player {:?} main_pack is full — mineral drop {} lost",
+                    event.player,
+                    entry.canonical_name
+                );
+                continue;
+            };
+            let instance_id = match allocator.next_id() {
+                Ok(id) => id,
+                Err(err) => {
+                    tracing::warn!(
+                        target: "bong::mineral",
+                        "inventory allocator exhausted on mineral drop: {err}"
+                    );
+                    continue;
+                }
+            };
+            let instance = build_mineral_item_instance(
+                instance_id,
+                entry,
+                DEFAULT_DROP_STACK_COUNT,
+                clock.tick,
+                event.position,
+                profile_registry.as_deref(),
+            );
+            main_pack.items.push(PlacedItemState { row, col, instance });
+        }
 
         inventory.revision.0 = inventory.revision.0.saturating_add(1);
         if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
@@ -350,6 +364,95 @@ mod tests {
         assert_eq!(xp.char_entity, player);
         assert_eq!(xp.skill, SkillId::Mineral);
         assert_eq!(xp.amount, 1);
+    }
+
+    #[test]
+    fn repeated_drop_events_merge_same_mineral_stack() {
+        let mut app = App::new();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
+        app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(MineralTickClock::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        let player = app.world_mut().spawn(empty_inventory()).id();
+        app.add_systems(Update, consume_mineral_drops_into_inventory);
+
+        {
+            let mut events = app.world_mut().resource_mut::<Events<MineralDropEvent>>();
+            events.send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(1, 64, 2),
+            });
+            events.send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(2, 64, 2),
+            });
+        }
+
+        app.update();
+
+        let inv = app.world().get::<Inv>(player).expect("player inventory");
+        let main = inv
+            .containers
+            .iter()
+            .find(|c| c.id == MAIN)
+            .expect("main_pack present");
+        assert_eq!(main.items.len(), 1);
+        assert_eq!(main.items[0].row, 0);
+        assert_eq!(main.items[0].col, 0);
+        assert_eq!(main.items[0].instance.template_id, "mineral_fan_tie");
+        assert_eq!(main.items[0].instance.stack_count, 2);
+        assert_eq!(inv.revision.0, 2);
+    }
+
+    #[test]
+    fn different_mineral_drops_allocate_non_overlapping_slots() {
+        let mut app = App::new();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
+        app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(MineralTickClock::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        let player = app.world_mut().spawn(empty_inventory()).id();
+        app.add_systems(Update, consume_mineral_drops_into_inventory);
+
+        {
+            let mut events = app.world_mut().resource_mut::<Events<MineralDropEvent>>();
+            events.send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(1, 64, 2),
+            });
+            events.send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::LingTie,
+                position: BlockPos::new(2, 64, 2),
+            });
+        }
+
+        app.update();
+
+        let inv = app.world().get::<Inv>(player).expect("player inventory");
+        let main = inv
+            .containers
+            .iter()
+            .find(|c| c.id == MAIN)
+            .expect("main_pack present");
+        let positions: Vec<_> = main
+            .items
+            .iter()
+            .map(|item| (item.instance.template_id.as_str(), item.row, item.col))
+            .collect();
+        assert_eq!(
+            positions,
+            vec![("mineral_fan_tie", 0, 0), ("mineral_ling_tie", 0, 1)]
+        );
     }
 
     #[test]

@@ -173,6 +173,7 @@ mod tests {
             id: "iron_sword".to_string(),
             display_name: "铁剑".to_string(),
             category: ItemCategory::Weapon,
+            max_stack_count: 1,
             grid_w: 1,
             grid_h: 3,
             base_weight: 2.6,
