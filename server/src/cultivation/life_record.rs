@@ -238,7 +238,7 @@ impl LifeRecord {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
-        },
+        }
     }
 
     pub fn new_unassigned() -> Self {
