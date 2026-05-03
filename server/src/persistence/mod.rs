@@ -3946,6 +3946,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::InsightTaken { .. } => "insight_taken",
         BiographyEntry::Rebirth { .. } => "rebirth",
         BiographyEntry::CombatHit { .. } => "combat_hit",
+        BiographyEntry::JiemaiParry { .. } => "jiemai_parry",
         BiographyEntry::NearDeath { .. } => "near_death",
         BiographyEntry::Terminated { .. } => "terminated",
         BiographyEntry::LifespanExtended { .. } => "lifespan_extended",
@@ -4025,6 +4026,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::InsightTaken { tick, .. }
         | BiographyEntry::Rebirth { tick, .. }
         | BiographyEntry::CombatHit { tick, .. }
+        | BiographyEntry::JiemaiParry { tick, .. }
         | BiographyEntry::NearDeath { tick, .. }
         | BiographyEntry::Terminated { tick, .. }
         | BiographyEntry::LifespanExtended { tick, .. }

@@ -8,6 +8,11 @@ export const CombatRealtimeKindV1 = Type.Union([
 ]);
 export type CombatRealtimeKindV1 = Static<typeof CombatRealtimeKindV1>;
 
+export const CombatDefenseKindV1 = Type.Union([
+  Type.Literal("jie_mai"),
+]);
+export type CombatDefenseKindV1 = Static<typeof CombatDefenseKindV1>;
+
 export const CombatBodyPartV1 = Type.Union([
   Type.Literal("head"),
   Type.Literal("chest"),
@@ -41,6 +46,10 @@ export const CombatRealtimeEventV1 = Type.Object(
     contam_delta: Type.Optional(Type.Number({ minimum: 0 })),
     description: Type.Optional(Type.String({ minLength: 1 })),
     cause: Type.Optional(Type.String({ minLength: 1 })),
+    defense_kind: Type.Optional(CombatDefenseKindV1),
+    defense_effectiveness: Type.Optional(Type.Number({ minimum: 0.3, maximum: 1 })),
+    defense_contam_reduced: Type.Optional(Type.Number({ minimum: 0 })),
+    defense_wound_severity: Type.Optional(Type.Number({ minimum: 0 })),
   },
   { additionalProperties: false },
 );

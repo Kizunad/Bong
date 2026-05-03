@@ -1782,9 +1782,13 @@ mod tests {
 
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::components::{
-        BodyPart, DefenseWindow, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS, JIEMAI_DEFENSE_WINDOW_MS,
+        BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS,
+        JIEMAI_PREP_WINDOW_MS,
     };
-    use crate::combat::events::{DefenseIntent, RevivalActionIntent, RevivalActionKind};
+    use crate::combat::events::{
+        ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
+    };
+    use crate::cultivation::components::Cultivation;
     use crate::cultivation::death_hooks::CultivationDeathCause;
     use crate::cultivation::life_record::LifeRecord;
     use crate::cultivation::tick::CultivationClock;
@@ -2004,6 +2008,10 @@ mod tests {
             damage: 3.0,
             contam_delta: 0.75,
             description: "hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.update();
 
@@ -2073,6 +2081,7 @@ mod tests {
     fn defense_intent_opens_incoming_window() {
         let mut app = App::new();
         app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
         app.add_systems(Update, crate::combat::resolve::apply_defense_intents);
 
         let entity = spawn_actor(
@@ -2081,6 +2090,15 @@ mod tests {
             Stamina::default(),
             Lifecycle::default(),
         );
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 10.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            },
+            StatusEffects::default(),
+        ));
 
         app.world_mut().send_event(DefenseIntent {
             defender: entity,
@@ -2091,7 +2109,7 @@ mod tests {
         let state = app.world().entity(entity).get::<CombatState>().unwrap();
         let window = state.incoming_window.as_ref().expect("window should open");
         assert_eq!(window.opened_at_tick, 42);
-        assert_eq!(window.duration_ms, JIEMAI_DEFENSE_WINDOW_MS);
+        assert_eq!(window.duration_ms, JIEMAI_PREP_WINDOW_MS);
     }
 
     #[test]

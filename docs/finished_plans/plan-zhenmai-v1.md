@@ -635,3 +635,37 @@ export const DefenseTriggeredV1 = Type.Object({
 - 2026-04-26：骨架创建。依赖 plan-combat-no_ui 受击窗口接口 + plan-armor-v1 重量耦合。无对应详写功法书，从 worldview + 战斗流派源流 推演。
 - 2026-04（plan-combat-no_ui v1 验收同期）：**P0 已落地** —— `JIEMAI_DEFENSE_WINDOW_MS=200` / `JIEMAI_DEFENSE_QI_COST=5` / `JIEMAI_CONTAM_MULTIPLIER=0.2` / `JIEMAI_CONCUSSION_SEVERITY=0.3` 与 `apply_defense_intents` + `resolve.rs` jiemai 分支随 plan-combat-no_ui 1539 单测一同验收。
 - 2026-05-03：从 skeleton 升 active。§A 概览 + §3.1 P1 截脉·v1 规格落地（10 个决策点闭环 Q60-Q69，4 个 v1 实装时拍板 Q70-Q73）。primary axis = 弹反窗口 + 污染真元中和效率（worldview §五:465）。**v1 模式特殊**：P0 已实装，本 plan 工作集中在 P1 扩展（境界分级 + prep 1s + 触发僵直 + 距离梯度 + 装备耦合 + FOV）。**Q64 距离梯度优雅实现** worldview "防御三流皆克制不了爆脉" — 爆脉常态 reach 0.9 格自然落入 0.3 残效区，不需 `AttackSource::BurstMeridian` 特判。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 基础弹反**：沿用 `plan-combat-no_ui-v1` 已落地的 `DefenseIntent` / `DefenseWindow` / `CombatState.incoming_window` / 旧 jiemai 分支，作为本 plan 的历史基线。
+- **P1 境界分级 + prep + 僵直 + 距离梯度 + 装备耦合 + FOV**：`server/src/combat/jiemai.rs` 新增 `JIEMAI_PREP_WINDOW_MS = 1000`、`jiemai_qi_cost_for_realm`、`jiemai_effectiveness`、`jiemai_fov_check`、装备重量窗口缩放与 `zhenmai.parry` skill 入口；`server/src/combat/resolve.rs` 接入 prep 开窗、qi 扣减、FOV 校验、距离梯度污染/自伤结算与 `DefenseKind::JieMai` 事件字段；`server/src/combat/status.rs` 接入 `ParryRecovery` 0.5s 僵直和移动速度 x0.7。
+- **P1 hotbar / client / agent 契约**：`server/src/cultivation/known_techniques.rs` 注册 `zhenmai.parry`；`client/src/main/java/com/bong/client/combat/CombatHudBootstrap.java` 将截脉按键改为 1s prep 并继续发送现有 jiemai 请求；`agent/packages/schema/src/combat-event.ts` 与 `agent/packages/schema/generated/combat-realtime-event-v1.json` 扩展 defense 字段；`agent/packages/tiandao/src/zhenmai-narration.ts` 按 effectiveness 分档发布 narration。
+- **P2 v1 收口**：`server/src/cultivation/life_record.rs` 新增 `BiographyEntry::JiemaiParry`，`server/src/persistence/mod.rs` 持久化 `jiemai_parry` event type，`server/src/combat/resolve.rs` 在成功截脉后写入防御者 LifeRecord；数值平衡以 server 饱和测试覆盖 0.3/1.0/中距、qi、FOV、装备、僵直叠加等 v1 关键边界，未另建可选 `jiemai_balance.rs`。
+
+### 关键 commit
+
+- `316d76b7`（2026-05-04）`实现截脉震爆境界分级与结算`：server 截脉规则、状态、CombatEvent、LifeRecord、持久化与回归测试。
+- `fe8d6638`（2026-05-04）`接入截脉震爆契约与播报`：agent schema/generated schema、天道 narration runtime、client prep HUD/按键测试。
+
+### 测试结果
+
+- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` -> `2214 passed; 0 failed`。
+- `agent/`: `npm run build` -> passed。
+- `agent/packages/schema`: `npm test` -> `267 passed`。
+- `agent/packages/tiandao`: `npm test` -> `225 passed`。
+- `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` -> `BUILD SUCCESSFUL`; JUnit XML 汇总 `798 tests, 0 failures, 0 errors, 0 skipped`。
+
+### 跨仓库核验
+
+- **server**：`combat::jiemai::{jiemai_effectiveness, jiemai_qi_cost_for_realm, jiemai_fov_check, resolve_zhenmai_parry_skill}`、`StatusEffectKind::ParryRecovery`、`CombatEvent { defense_kind, defense_effectiveness, defense_contam_reduced, defense_wound_severity }`、`BiographyEntry::JiemaiParry`。
+- **agent/schema**：`CombatDefenseKindV1`、`CombatRealtimeEventV1.defense_effectiveness`、`combat-realtime-event-v1.json` 生成物。
+- **agent/tiandao**：`ZhenmaiNarrationRuntime` 监听 `bong:combat_realtime` 并发布 `bong:agent_narrate`。
+- **client**：`CombatHudBootstrap.ZHENMAI_PREP_WINDOW_MS = 1000`、`DefenseWindowState` prep 注释、`JiemaiRingHudPlannerTest` 覆盖 1s prep ring。
+
+### 遗留 / 后续
+
+- v1 未做极限 timing（±0.10s 奖励）、连环/预判震爆、化虚弹反一切、染色亲和与完整 trade-off matrix，继续留给 `plan-zhenmai-v2`。
+- v1 未引入 client timestamp 协议；当前采用 server receipt tick + 1s prep 窗口，精细网络延迟容忍与 anti-cheat timestamp 对齐留后续协议 plan。

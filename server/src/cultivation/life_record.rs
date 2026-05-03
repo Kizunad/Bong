@@ -82,6 +82,12 @@ pub enum BiographyEntry {
         damage: f32,
         tick: u64,
     },
+    /// plan-zhenmai-v1 P2：截脉震爆成功弹反，记录防御者对攻击者的战绩。
+    JiemaiParry {
+        attacker_id: String,
+        effectiveness: f32,
+        tick: u64,
+    },
     NearDeath {
         cause: String,
         tick: u64,
@@ -367,6 +373,11 @@ fn format_entry(entry: &BiographyEntry) -> String {
             damage,
             tick,
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
+        BiographyEntry::JiemaiParry {
+            attacker_id,
+            effectiveness,
+            tick,
+        } => format!("t{tick}:jiemai_parry:{attacker_id}:{effectiveness:.2}"),
         BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
         BiographyEntry::LifespanExtended {

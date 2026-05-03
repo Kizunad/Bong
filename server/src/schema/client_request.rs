@@ -237,7 +237,7 @@ pub enum ClientRequestV1 {
         instance_id: u64,
     },
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
-    /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
+    /// server 翻译为 `DefenseIntent` Bevy event，立即开 1s `incoming_window`，
     /// 并回推 `defense_window` payload 让 client 渲染红环。
     Jiemai {
         v: u8,

@@ -57,6 +57,11 @@ pub struct DefenseIntent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DefenseKind {
+    JieMai,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatusEffectKind {
     Bleeding,
     Slowed,
@@ -76,6 +81,8 @@ pub enum StatusEffectKind {
     AntiSpiritPressurePill,
     /// plan-lifespan-v1 §4：风烛状态。`magnitude` 记录真元回复削减比例。
     Frailty,
+    /// plan-zhenmai-v1 §3.1.C：截脉震爆触发后的半息僵直。
+    ParryRecovery,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
@@ -99,6 +106,10 @@ pub struct CombatEvent {
     pub damage: f32,
     pub contam_delta: f64,
     pub description: String,
+    pub defense_kind: Option<DefenseKind>,
+    pub defense_effectiveness: Option<f32>,
+    pub defense_contam_reduced: Option<f64>,
+    pub defense_wound_severity: Option<f32>,
 }
 
 /// plan-tsy-loot-v1 §6 — 死亡事件，附带攻击者链路（Option，因为环境死亡 / 修炼自爆没有"凶手"）。

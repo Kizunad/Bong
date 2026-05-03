@@ -11,6 +11,8 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
  * rendering.
  */
 public final class CombatHudBootstrap {
+    static final int ZHENMAI_PREP_WINDOW_MS = 1000;
+
     private CombatHudBootstrap() {
     }
 
@@ -45,12 +47,8 @@ public final class CombatHudBootstrap {
     }
 
     private static void onJiemaiPressed() {
-        DefenseWindowState window = DefenseWindowStore.snapshot();
         long now = System.currentTimeMillis();
-        if (!window.active() || window.isExpired(now)) {
-            return; // §7.2: V only fires during an active DefenseWindow.
-        }
-        DefenseWindowStore.close();
+        DefenseWindowStore.open(ZHENMAI_PREP_WINDOW_MS, now);
         com.bong.client.network.ClientRequestSender.sendJiemai();
     }
 
