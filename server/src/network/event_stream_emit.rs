@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{Client, Entity, EventReader, Query, Username};
 
+use crate::combat::events::DefenseKind;
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -28,10 +29,18 @@ pub fn emit_combat_events_to_event_stream(
     for ev in combat_reader.read() {
         let body = format!("{:?}", ev.body_part);
         let kind = format!("{:?}", ev.wound_kind);
-        let source_tag = format!("hit-{body}-{kind}");
+        let source_tag = if ev.defense_kind == Some(DefenseKind::JieMai) {
+            "zhenmai-parry".to_string()
+        } else {
+            format!("hit-{body}-{kind}")
+        };
 
         // 攻击方视角
-        let attacker_text = format!("命中 {body} {kind} -{:.0}", ev.damage);
+        let attacker_text = if ev.defense_kind == Some(DefenseKind::JieMai) {
+            format!("截脉震爆抵消，仍命中 {body} -{:.0}", ev.damage)
+        } else {
+            format!("命中 {body} {kind} -{:.0}", ev.damage)
+        };
         push_to_client(
             &mut clients,
             ev.attacker,
@@ -42,7 +51,12 @@ pub fn emit_combat_events_to_event_stream(
 
         // 受击方视角（自打自不重复推）
         if ev.attacker != ev.target {
-            let target_text = format!("受 {body} {kind} 伤 -{:.0}", ev.damage);
+            let target_text = if ev.defense_kind == Some(DefenseKind::JieMai) {
+                let effectiveness = ev.defense_effectiveness.unwrap_or(0.0);
+                format!("截脉震爆 {:.0}%：僵直半息", effectiveness * 100.0)
+            } else {
+                format!("受 {body} {kind} 伤 -{:.0}", ev.damage)
+            };
             push_to_client(&mut clients, ev.target, &source_tag, &target_text, now_ms);
         }
     }

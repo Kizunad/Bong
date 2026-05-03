@@ -891,6 +891,10 @@ fn apply_trigger_snapshots(
                     "zhenfa_trap {} -> {:?} ratio {:.3}",
                     snapshot.id, target, snapshot.qi_invest_ratio
                 ),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             });
 
             if was_alive

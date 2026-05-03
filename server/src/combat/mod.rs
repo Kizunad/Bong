@@ -6,6 +6,7 @@ pub mod components;
 mod death_event_attacker_chain_test;
 pub mod debug;
 pub mod events;
+pub mod jiemai;
 pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
@@ -174,7 +175,9 @@ pub fn register(app: &mut App) {
             attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
             debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
             resolve::apply_defense_intents.in_set(CombatSystemSet::Intent),
-            status::status_effect_apply_tick.in_set(CombatSystemSet::Intent),
+            status::status_effect_apply_tick
+                .in_set(CombatSystemSet::Intent)
+                .after(resolve::apply_defense_intents),
             lifecycle::wound_bleed_tick.in_set(CombatSystemSet::Physics),
             lifecycle::stamina_tick.in_set(CombatSystemSet::Physics),
             lifecycle::combat_state_tick.in_set(CombatSystemSet::Physics),

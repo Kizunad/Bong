@@ -2233,6 +2233,10 @@ mod redis_bridge_tests {
                         .to_string(),
                 ),
                 cause: None,
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             }))
             .expect("combat realtime payload should serialize");
         match realtime {

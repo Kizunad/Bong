@@ -4294,6 +4294,10 @@ mod tests {
                 damage: 12.0,
                 contam_delta: 0.0,
                 description: "test interception hit".to_string(),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             });
         }
         app.update();
@@ -4357,6 +4361,10 @@ mod tests {
             damage: 12.0,
             contam_delta: 0.0,
             description: "test heart demon interception hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.update();
 
@@ -4421,6 +4429,10 @@ mod tests {
             damage: 12.0,
             contam_delta: 0.0,
             description: "test cross-dimension interception hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.update();
 
@@ -4468,6 +4480,10 @@ mod tests {
             damage: 12.0,
             contam_delta: 0.0,
             description: "test restored interception hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.update();
 

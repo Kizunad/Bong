@@ -28,11 +28,12 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 5] = [
+const TECHNIQUE_IDS: [&str; 6] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
+    "zhenmai.parry",
     "woliu.vortex",
 ];
 
@@ -57,7 +58,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 5] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 6] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -131,6 +132,22 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 5] = [
         cooldown_ticks: 120,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/ni_mai_hu_ti.png",
+    },
+    TechniqueDefinition {
+        id: "zhenmai.parry",
+        display_name: "截脉震爆",
+        grade: "yellow",
+        description: "受击前短时预备，皮下震爆异种真元，以半息僵直换污染减免。",
+        required_realm: "Induce",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.01,
+        }],
+        qi_cost: 5.0,
+        cast_ticks: 1,
+        cooldown_ticks: 10,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/zhenmai_parry.png",
     },
     TechniqueDefinition {
         id: "woliu.vortex",
