@@ -7,6 +7,8 @@ import {
   validateFactionEventV1Contract,
   validateNpcDeathV1Contract,
   validateNpcSpawnedV1Contract,
+  validatePoiSpawnedEventV1Contract,
+  validateTrespassEventV1Contract,
   validateTsyNpcSpawnedV1Contract,
   validateTsySentinelPhaseChangedV1Contract,
 } from "@bong/schema";
@@ -19,7 +21,9 @@ import type {
   NarrationV1,
   NpcDeathV1,
   NpcSpawnedV1,
+  PoiSpawnedEventV1,
   ChatMessageV1,
+  TrespassEventV1,
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
   WorldStateV1,
@@ -61,12 +65,14 @@ const {
   SKILL_LV_UP,
   SKILL_CAP_CHANGED,
   SKILL_SCROLL_USED,
+  POI_NOVICE_EVENT,
 } = CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const TSY_HOSTILE_EVENT_BUFFER_LIMIT = 128;
 const NPC_EVENT_BUFFER_LIMIT = 128;
 const ALCHEMY_EVENT_BUFFER_LIMIT = 128;
+const POI_NOVICE_EVENT_BUFFER_LIMIT = 128;
 const CROSS_SYSTEM_EVENT_BUFFER_LIMIT = 256;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
@@ -91,6 +97,7 @@ export interface PublishAgentWorldModelRequest {
 export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
 export type NpcRuntimeEventV1 = NpcSpawnedV1 | NpcDeathV1 | FactionEventV1;
 export type AlchemyRuntimeEventV1 = AlchemySessionEndV1;
+export type PoiNoviceRuntimeEventV1 = PoiSpawnedEventV1 | TrespassEventV1;
 export interface CrossSystemRuntimeEventV1 {
   channel: ChannelName;
   payload: unknown;
@@ -174,11 +181,13 @@ export class RedisIpc {
   private latestTsyHostileEvents: TsyHostileEventV1[] = [];
   private latestNpcEvents: NpcRuntimeEventV1[] = [];
   private latestAlchemyEvents: AlchemyRuntimeEventV1[] = [];
+  private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
   private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
   private alchemyEventCallbacks: Array<(event: AlchemyRuntimeEventV1) => void> = [];
+  private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
@@ -200,6 +209,11 @@ export class RedisIpc {
 
     if (channel === ALCHEMY_SESSION_END) {
       this.handleAlchemyRuntimeEventMessage(message);
+      return;
+    }
+
+    if (channel === POI_NOVICE_EVENT) {
+      this.handlePoiNoviceEventMessage(message);
       return;
     }
 
@@ -259,6 +273,46 @@ export class RedisIpc {
       this.latestTsyHostileEvents = this.latestTsyHostileEvents.slice(-TSY_HOSTILE_EVENT_BUFFER_LIMIT);
     }
     for (const cb of this.tsyHostileCallbacks) {
+      cb(event);
+    }
+  }
+
+  private handlePoiNoviceEventMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      if (!isObjectRecord(data) || typeof data.kind !== "string") {
+        return;
+      }
+
+      if (data.kind === "poi_spawned") {
+        const result = validatePoiSpawnedEventV1Contract(data);
+        if (!result.ok) {
+          console.warn("[redis-ipc] invalid poi_spawned event:", result.errors.join("; "));
+          return;
+        }
+        this.recordPoiNoviceEvent(data as PoiSpawnedEventV1);
+        return;
+      }
+
+      if (data.kind === "trespass") {
+        const result = validateTrespassEventV1Contract(data);
+        if (!result.ok) {
+          console.warn("[redis-ipc] invalid trespass event:", result.errors.join("; "));
+          return;
+        }
+        this.recordPoiNoviceEvent(data as TrespassEventV1);
+      }
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse poi novice event:", e);
+    }
+  }
+
+  private recordPoiNoviceEvent(event: PoiNoviceRuntimeEventV1): void {
+    this.latestPoiNoviceEvents.push(event);
+    if (this.latestPoiNoviceEvents.length > POI_NOVICE_EVENT_BUFFER_LIMIT) {
+      this.latestPoiNoviceEvents = this.latestPoiNoviceEvents.slice(-POI_NOVICE_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.poiNoviceEventCallbacks) {
       cb(event);
     }
   }
@@ -354,6 +408,7 @@ export class RedisIpc {
     await this.sub.subscribe(NPC_DEATH);
     await this.sub.subscribe(FACTION_EVENT);
     await this.sub.subscribe(ALCHEMY_SESSION_END);
+    await this.sub.subscribe(POI_NOVICE_EVENT);
     for (const channel of CROSS_SYSTEM_EVENT_CHANNELS) {
       await this.sub.subscribe(channel);
     }
@@ -361,7 +416,7 @@ export class RedisIpc {
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(
-      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
+      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, POI_NOVICE_EVENT, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
     );
   }
 
@@ -395,6 +450,14 @@ export class RedisIpc {
 
   onAlchemyRuntimeEvent(cb: (event: AlchemyRuntimeEventV1) => void): void {
     this.alchemyEventCallbacks.push(cb);
+  }
+
+  getLatestPoiNoviceEvents(): PoiNoviceRuntimeEventV1[] {
+    return [...this.latestPoiNoviceEvents];
+  }
+
+  onPoiNoviceEvent(cb: (event: PoiNoviceRuntimeEventV1) => void): void {
+    this.poiNoviceEventCallbacks.push(cb);
   }
 
   getLatestCrossSystemEvents(): CrossSystemRuntimeEventV1[] {

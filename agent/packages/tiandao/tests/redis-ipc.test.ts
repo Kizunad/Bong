@@ -21,6 +21,7 @@ const {
   NPC_DEATH,
   NPC_SPAWN,
   PLAYER_CHAT,
+  POI_NOVICE_EVENT,
   TSY_EVENT,
   WORLD_STATE,
 } = CHANNELS;
@@ -439,6 +440,58 @@ describe("redis-ipc", () => {
         caster_id: "offline:Azure",
         damage: 12,
       }),
+    ]);
+  });
+
+  it("observes novice POI events for narration triggers", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onPoiNoviceEvent(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      POI_NOVICE_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "poi_spawned",
+        poi_id: "spawn:forge_station",
+        poi_type: "forge_station",
+        zone: "spawn",
+        pos: [304, 71, 208],
+        selection_strategy: "strict_radius_1500",
+        qi_affinity: 0.15,
+        danger_bias: 0,
+      }),
+    );
+    await sub.publish(
+      POI_NOVICE_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "trespass",
+        village_id: "spawn:rogue_village",
+        player_id: "offline:Azure",
+        killed_npc_count: 3,
+        refusal_until_wall_clock_secs: 1770000000,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(ipc.getLatestPoiNoviceEvents()).toEqual([
+      expect.objectContaining({ kind: "poi_spawned", poi_type: "forge_station" }),
+      expect.objectContaining({ kind: "trespass", village_id: "spawn:rogue_village" }),
     ]);
   });
 

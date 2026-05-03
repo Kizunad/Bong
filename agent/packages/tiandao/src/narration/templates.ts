@@ -1,4 +1,10 @@
-import type { Narration, PseudoVeinDissipateEventV1, PseudoVeinSnapshotV1 } from "@bong/schema";
+import type {
+  Narration,
+  PoiSpawnedEventV1,
+  PseudoVeinDissipateEventV1,
+  PseudoVeinSnapshotV1,
+  TrespassEventV1,
+} from "@bong/schema";
 
 export type PseudoVeinNarrationKey =
   | "pseudo_vein.lure"
@@ -42,5 +48,39 @@ export function renderPseudoVeinDissipateNarration(event: PseudoVeinDissipateEve
     target: event.id,
     text: PSEUDO_VEIN_NARRATION_TEMPLATES["pseudo_vein.dissipate"],
     style: "narration",
+  };
+}
+
+export type PoiNoviceNarrationKey =
+  | "poi_novice.spawned"
+  | "poi_novice.scroll_found"
+  | "poi_novice.trespass";
+
+export const POI_NOVICE_NARRATION_TEMPLATES: Record<PoiNoviceNarrationKey, string> = {
+  "poi_novice.spawned":
+    "初醒原近处多了几处旧迹，灰墙半倒，骨白未净。它们不向人招手，只把炼器、炼丹、采药、交游与搏杀的第一步埋在草色里。",
+  "poi_novice.scroll_found":
+    "石缝里有残页被潮气粘住，字迹缺得厉害，却还留着一线可学之法。拾得者若肯慢读，便算从荒土中偷回一点旧知。",
+  "poi_novice.trespass":
+    "散修聚点的灯火次第熄了，余下的人把门闩压低。此后一周，来者若带血气叩门，只会听见屋内无人应声。",
+};
+
+export function renderPoiSpawnedNarration(event: PoiSpawnedEventV1): Narration {
+  const key =
+    event.poi_type === "scroll_hidden" ? "poi_novice.scroll_found" : "poi_novice.spawned";
+  return {
+    scope: "zone",
+    target: event.zone,
+    text: POI_NOVICE_NARRATION_TEMPLATES[key],
+    style: "perception",
+  };
+}
+
+export function renderTrespassNarration(event: TrespassEventV1): Narration {
+  return {
+    scope: "zone",
+    target: event.village_id,
+    text: POI_NOVICE_NARRATION_TEMPLATES["poi_novice.trespass"],
+    style: "system_warning",
   };
 }
