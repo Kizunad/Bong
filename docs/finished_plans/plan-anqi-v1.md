@@ -687,3 +687,17 @@ if qi_color == QiColor::Mixed_FailedSolid {
 
 - 2026-04-26：骨架创建。库藏锚点 peoples-0005（异变图谱）+ ecology-0004（磨损笔记）已就位。依赖 plan-cultivation-v1 染色系统 + plan-weapon-v1 投射物框架。
 - 2026-05-03：从 skeleton 升 active。§A 概览 + §3.1 P0 暗器·v1 规格落地（11 个决策点闭环 Q30-Q40，4 个 v1 实装时拍板 Q41-Q44）。primary axis = 载体封存比例 + 命中距离（worldview §五:462）。v1 收敛到异变兽骨单档 + 单发狙射 + 半衰期 120 min。**首次实装** plan-combat-no_ui §3.2 飞行衰减公式 + §457 ThrowCarrierIntent。与 plan-zhenfa-v1 共用底层 `CarrierImprint` component。
+
+## Finish Evidence
+
+- 2026-05-04：server 暗器闭环落地：异变兽骨素材/充能态、`CarrierImprint`、20s 封元、hand-slot 投掷、飞行衰减、命中 wound+contam 注射、射空蒸发/残留、半衰期漏失、LifeRecord、生平持久化、Redis 事件桥、`carrier_state` server-data。
+- 2026-05-04：agent/schema 落地：`CarrierStateV1`、`CarrierChargedEventV1`、`CarrierImpactEventV1`、`ProjectileDespawnedEventV1`、client request 契约、生成 schema artifact、anqi narration runtime 与回归测试。
+- 2026-05-04：client 落地：`ChargeCarrier` / `ThrowCarrier` request sender、`carrier_state` router/store/handler、HUD `CarrierHudPlanner` 与 `HudRenderLayer.CARRIER` 接入。
+- 2026-05-04 验证：
+  - `cd server && cargo fmt --check`
+  - `cd server && cargo clippy --all-targets -- -D warnings`
+  - `cd server && cargo test`（2209 passed）
+  - `cd agent && npm run build`
+  - `cd agent/packages/schema && npm test`（267 passed）
+  - `cd agent/packages/tiandao && npm test`（225 passed）
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`
