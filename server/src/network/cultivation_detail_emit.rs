@@ -8,7 +8,9 @@
 
 use valence::prelude::{bevy_ecs, Client, Entity, Position, Query, Res, ResMut, Resource, With};
 
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+use crate::cultivation::components::{
+    ColorKind, Contamination, Cultivation, MeridianSystem, QiColor,
+};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{
     lifespan_tick_rate_multiplier, LifespanCapTable, LifespanComponent,
@@ -37,6 +39,7 @@ type CultivationDetailEmitQueryItem<'a> = (
     Option<&'a LifespanComponent>,
     Option<&'a Position>,
     Option<&'a LifeRecord>,
+    Option<&'a QiColor>,
 );
 
 pub fn emit_cultivation_detail_payloads(
@@ -61,6 +64,7 @@ pub fn emit_cultivation_detail_payloads(
         lifespan,
         position,
         life_record,
+        qi_color,
     ) in &mut clients
     {
         let mut opened = Vec::with_capacity(20);
@@ -121,6 +125,12 @@ pub fn emit_cultivation_detail_payloads(
             lifespan,
             recent_skill_milestones_summary,
             skill_milestones,
+            qi_color_main: qi_color
+                .map(|color| color.main)
+                .unwrap_or(ColorKind::Mellow),
+            qi_color_secondary: qi_color.and_then(|color| color.secondary),
+            qi_color_chaotic: qi_color.is_some_and(|color| color.is_chaotic),
+            qi_color_hunyuan: qi_color.is_some_and(|color| color.is_hunyuan),
         });
         let label = payload_type_label(payload.payload_type());
         let bytes = match serialize_server_data_payload(&payload) {

@@ -232,6 +232,10 @@ pub enum ClientRequestV1 {
         v: u8,
         target_id: String,
     },
+    QiColorInspect {
+        v: u8,
+        observed: String,
+    },
     UseLifeCore {
         v: u8,
         instance_id: u64,
@@ -712,6 +716,19 @@ mod tests {
                 assert_eq!(target_id, "npc_12v0");
             }
             other => panic!("expected DuoSheRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn qi_color_inspect_roundtrip() {
+        let json = r#"{"type":"qi_color_inspect","v":1,"observed":"entity_bits:42"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::QiColorInspect { v, observed } => {
+                assert_eq!(v, 1);
+                assert_eq!(observed, "entity_bits:42");
+            }
+            other => panic!("expected QiColorInspect, got {other:?}"),
         }
     }
 

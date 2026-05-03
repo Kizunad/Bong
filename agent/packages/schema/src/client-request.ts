@@ -171,6 +171,16 @@ export const DuoSheRequestV1 = Type.Object(
 );
 export type DuoSheRequestV1 = Static<typeof DuoSheRequestV1>;
 
+export const QiColorInspectRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("qi_color_inspect"),
+    observed: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type QiColorInspectRequestV1 = Static<typeof QiColorInspectRequestV1>;
+
 export const UseLifeCoreRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -748,6 +758,7 @@ export const ClientRequestV1 = Type.Union([
   InventoryMoveIntentRequestV1,
   ApplyPillRequestV1,
   DuoSheRequestV1,
+  QiColorInspectRequestV1,
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
   MineralProbeRequestV1,

@@ -105,6 +105,8 @@ export const CultivationSnapshotV1 = Type.Object(
     meridians_total: Type.Integer({ minimum: 20, maximum: 20 }),
     qi_color_main: ColorKind,
     qi_color_secondary: Type.Optional(ColorKind),
+    qi_color_chaotic: Type.Boolean(),
+    qi_color_hunyuan: Type.Boolean(),
     composure: Type.Number({ minimum: 0, maximum: 1 }),
   },
   { additionalProperties: false },

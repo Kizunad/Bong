@@ -52,6 +52,7 @@ import {
   CombatTerminateRequestV1,
   ClientRequestV1,
   DuoSheRequestV1,
+  QiColorInspectRequestV1,
   ForgeRequestV1,
   HeartDemonDecisionRequestV1,
   ForgeStartSessionRequestV1,
@@ -222,6 +223,7 @@ import {
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   BurstMeridianEventV1,
+  QiColorObservedV1,
   TreasureEquippedV1,
   TreasureViewV1,
   WeaponBrokenV1,
@@ -383,6 +385,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
+  clientRequestQiColorInspectV1: QiColorInspectRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
@@ -421,6 +424,7 @@ export const SCHEMA_REGISTRY = {
   serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
   serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
   burstMeridianEventV1: BurstMeridianEventV1,
+  qiColorObservedV1: QiColorObservedV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
@@ -664,6 +668,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
   "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
+  "client-request-qi-color-inspect-v1.json":
+    SCHEMA_REGISTRY.clientRequestQiColorInspectV1,
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
@@ -728,6 +734,7 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-skill-scroll-used-v1.json":
     SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
   "burst-meridian-event-v1.json": SCHEMA_REGISTRY.burstMeridianEventV1,
+  "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,

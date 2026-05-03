@@ -152,6 +152,8 @@
               "meridians_opened",
               "meridians_total",
               "qi_color_main",
+              "qi_color_chaotic",
+              "qi_color_hunyuan",
               "composure"
             ],
             "properties": {
@@ -295,6 +297,12 @@
                     "type": "string"
                   }
                 ]
+              },
+              "qi_color_chaotic": {
+                "type": "boolean"
+              },
+              "qi_color_hunyuan": {
+                "type": "boolean"
               },
               "composure": {
                 "minimum": 0,

@@ -51,6 +51,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PlayerState => "player_state",
         ServerDataType::UiOpen => "ui_open",
         ServerDataType::CultivationDetail => "cultivation_detail",
+        ServerDataType::QiColorObserved => "qi_color_observed",
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",

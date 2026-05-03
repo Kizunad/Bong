@@ -20,6 +20,7 @@ public final class ServerDataRouter {
         PlayerStateHandler playerStateHandler = new PlayerStateHandler();
         UiOpenHandler uiOpenHandler = new UiOpenHandler();
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
+        QiColorObservedHandler qiColorObservedHandler = new QiColorObservedHandler();
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
@@ -90,6 +91,7 @@ public final class ServerDataRouter {
         handlers.put("player_state", playerStateHandler);
         handlers.put("ui_open", uiOpenHandler);
         handlers.put("cultivation_detail", cultivationDetailHandler);
+        handlers.put("qi_color_observed", qiColorObservedHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);

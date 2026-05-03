@@ -219,6 +219,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }
 
+    public static void sendQiColorInspect(String observed) {
+        dispatch(ClientRequestProtocol.encodeQiColorInspect(observed));
+    }
+
     public static void sendStartExtract(long portalEntityId) {
         dispatch(ClientRequestProtocol.encodeStartExtractRequest(portalEntityId));
     }
