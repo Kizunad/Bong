@@ -129,6 +129,7 @@ struct TriggerSnapshot {
     effect_radius: u8,
     color_main: ColorKind,
     color_secondary: Option<ColorKind>,
+    anchor_entity: Entity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,11 +283,15 @@ impl ZhenfaRegistry {
                 effect_radius: instance.effect_radius,
                 color_main: instance.color_main,
                 color_secondary: instance.color_secondary,
+                anchor_entity: instance.anchor_entity,
             });
         }
 
         for snapshot in &snapshots {
             self.schedule_neighbors(snapshot.id, snapshot.pos, tick);
+        }
+        for snapshot in &snapshots {
+            self.remove(snapshot.id);
         }
 
         snapshots
@@ -480,6 +485,7 @@ fn handle_zhenfa_place_requests(
 fn handle_zhenfa_trigger_requests(
     mut requests: EventReader<ZhenfaTriggerRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
+    mut commands: Commands,
     players: Query<ZhenfaTriggerPlayer<'_>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut combat_events: EventWriter<CombatEvent>,
@@ -539,6 +545,7 @@ fn handle_zhenfa_trigger_requests(
         };
 
         let snapshots = registry.trigger_now([id], req.requested_at_tick);
+        despawn_triggered_anchors(&mut commands, &snapshots);
         apply_trigger_snapshots(
             snapshots,
             req.requested_at_tick,
@@ -589,6 +596,7 @@ type ZhenfaDisarmPlayer<'a> = (
 fn tick_zhenfa_registry(
     clock: Res<CombatClock>,
     mut registry: ResMut<ZhenfaRegistry>,
+    mut commands: Commands,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
     mut combat_events: EventWriter<CombatEvent>,
@@ -601,6 +609,9 @@ fn tick_zhenfa_registry(
     let expired = registry.expire_at_or_before(now);
     if !expired.is_empty() {
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
+    }
+    for instance in &expired {
+        commands.entity(instance.anchor_entity).despawn();
     }
 
     let mut passive_triggers = Vec::new();
@@ -677,6 +688,7 @@ fn tick_zhenfa_registry(
 
     let mut snapshots = registry.trigger_now(passive_triggers, now);
     snapshots.extend(registry.drain_due_chain_triggers(now));
+    despawn_triggered_anchors(&mut commands, &snapshots);
     apply_trigger_snapshots(
         snapshots,
         now,
@@ -692,6 +704,7 @@ fn tick_zhenfa_registry(
 fn handle_zhenfa_disarm_requests(
     mut requests: EventReader<ZhenfaDisarmRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
+    mut commands: Commands,
     mut players: Query<ZhenfaDisarmPlayer<'_>>,
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
@@ -725,6 +738,7 @@ fn handle_zhenfa_disarm_requests(
         let Some(instance) = registry.remove(instance_id) else {
             continue;
         };
+        commands.entity(instance.anchor_entity).despawn();
 
         match req.mode {
             ZhenfaDisarmMode::ForceBreak => {
@@ -901,6 +915,12 @@ fn apply_trigger_snapshots(
                 });
             }
         }
+    }
+}
+
+fn despawn_triggered_anchors(commands: &mut Commands, snapshots: &[TriggerSnapshot]) {
+    for snapshot in snapshots {
+        commands.entity(snapshot.anchor_entity).despawn();
     }
 }
 
@@ -1334,6 +1354,12 @@ mod tests {
         });
         app.update();
 
+        let anchor_entity = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([3, 64, 3])
+            .unwrap()
+            .anchor_entity;
         app.world_mut().resource_mut::<CombatClock>().tick =
             carrier_spec(ZhenfaCarrierKind::CommonStone).duration_ticks + 1;
         app.update();
@@ -1343,10 +1369,11 @@ mod tests {
             .resource::<ZhenfaRegistry>()
             .find_at([3, 64, 3])
             .is_none());
+        assert!(app.world().get_entity(anchor_entity).is_none());
     }
 
     #[test]
-    fn passive_trap_trigger_damages_legs_and_marks_triggered() {
+    fn passive_trap_trigger_damages_legs_and_frees_array_eye() {
         let mut app = app_with_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let intruder = spawn_player(&mut app, "Bob", [5.5, 64.0, 5.5]);
@@ -1367,11 +1394,19 @@ mod tests {
             .find_at([5, 64, 5])
             .unwrap()
             .id;
+        let anchor_entity = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([5, 64, 5])
+            .unwrap()
+            .anchor_entity;
         app.world_mut().resource_mut::<CombatClock>().tick = 11;
         app.update();
 
         let registry = app.world().resource::<ZhenfaRegistry>();
-        assert_eq!(registry.get(id).unwrap().triggered_at, Some(11));
+        assert!(registry.get(id).is_none());
+        assert!(registry.find_at([5, 64, 5]).is_none());
+        assert!(app.world().get_entity(anchor_entity).is_none());
         let wounds = app.world().get::<Wounds>(intruder).unwrap();
         assert_eq!(
             wounds
@@ -1405,36 +1440,15 @@ mod tests {
 
         app.world_mut().resource_mut::<CombatClock>().tick = 10;
         app.update();
-        let triggered = app
-            .world()
-            .resource::<ZhenfaRegistry>()
-            .instances
-            .values()
-            .filter(|i| i.triggered_at.is_some())
-            .count();
-        assert_eq!(triggered, 1);
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 2);
 
         app.world_mut().resource_mut::<CombatClock>().tick = 16;
         app.update();
-        let triggered = app
-            .world()
-            .resource::<ZhenfaRegistry>()
-            .instances
-            .values()
-            .filter(|i| i.triggered_at.is_some())
-            .count();
-        assert_eq!(triggered, 2);
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 1);
 
         app.world_mut().resource_mut::<CombatClock>().tick = 22;
         app.update();
-        let triggered = app
-            .world()
-            .resource::<ZhenfaRegistry>()
-            .instances
-            .values()
-            .filter(|i| i.triggered_at.is_some())
-            .count();
-        assert_eq!(triggered, 3);
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
     }
 
     #[test]
@@ -1461,12 +1475,8 @@ mod tests {
         app.update();
 
         let registry = app.world().resource::<ZhenfaRegistry>();
-        assert!(registry.find_at([3, 64, 0]).unwrap().triggered_at.is_some());
-        assert!(registry
-            .find_at([10, 64, 0])
-            .unwrap()
-            .triggered_at
-            .is_none());
+        assert!(registry.find_at([3, 64, 0]).is_none());
+        assert!(registry.find_at([10, 64, 0]).is_some());
     }
 
     #[test]
@@ -1548,6 +1558,12 @@ mod tests {
         });
         app.update();
 
+        let anchor_entity = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .unwrap()
+            .anchor_entity;
         app.world_mut().send_event(ZhenfaDisarmRequest {
             player: breaker,
             pos: [1, 64, 1],
@@ -1561,6 +1577,7 @@ mod tests {
             .resource::<ZhenfaRegistry>()
             .find_at([1, 64, 1])
             .is_none());
+        assert!(app.world().get_entity(anchor_entity).is_none());
         assert!(!app
             .world()
             .get::<Wounds>(breaker)
@@ -1604,6 +1621,12 @@ mod tests {
         });
         app.update();
 
+        let anchor_entity = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .unwrap()
+            .anchor_entity;
         app.world_mut().send_event(ZhenfaDisarmRequest {
             player: breaker,
             pos: [1, 64, 1],
@@ -1623,6 +1646,7 @@ mod tests {
             main_pack.items[0].instance.template_id,
             ZHENFA_PEARL_ITEM_ID
         );
+        assert!(app.world().get_entity(anchor_entity).is_none());
     }
 
     #[test]
