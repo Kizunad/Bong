@@ -1,4 +1,6 @@
-# Bong · plan-alchemy-v2 · 骨架
+# Bong · plan-alchemy-v2 · Active
+
+> **状态**：⏳ active（2026-05-04 升级，user 拍板）。前置 plan-alchemy-v1 / plan-alchemy-client-v1 / plan-combat-no_ui 全 ✅ finished，无依赖阻塞。
 
 炼丹系统扩展：side_effect_pool → StatusEffect 映射 / 丹方残卷（残缺学习）/ 品阶-铭文-开光系统 / AutoProfile 自动炼丹 / 丹心识别（玩家逆向配方）。`plan-alchemy-v1`（finished）的后续扩展，不重复已落地的核心炼丹链路。
 
@@ -170,3 +172,4 @@ accuracy = min(1.0, (realm_tier / pill_tier) × random(0.5, 1.0))
 ## §8 进度日志
 
 - 2026-05-01：从 plan-alchemy-v1 reminder 整理立项。现有代码：`SideEffect { tag, duration_s, weight, perm, color, amount }` 结构已落（`server/src/alchemy/recipe.rs:134`）；`StatusEffectKind` enum 已有 7 个 variant（`server/src/combat/events.rs:60`）；side_effect → StatusEffect 映射、丹方残卷、品阶/铭文/开光、AutoProfile、丹心识别全部未实装。
+- **2026-05-04**：skeleton → active 升级（user 拍板）。前置 plan-alchemy-v1 / plan-alchemy-client-v1 / plan-combat-no_ui 全 ✅ finished，依赖闭合。下一步起 P0 worktree（StatusEffectKind 扩展 + side_effect_apply.rs）。

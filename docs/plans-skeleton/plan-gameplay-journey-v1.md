@@ -1341,13 +1341,13 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 11b | `plan-mineral-v2` | ✅ finished (2026-04-30，commit 00df063f 归档) | mineral-v1 | 矿物体系扩展 |
 | 12 | `plan-forge-leftovers-v1` | ✅ finished (2026-05-02，commit 97829df0 归档) | forge-v1 ✅, input-binding-v1 | §G + O.6 硬依赖 |
 | 13 | `plan-alchemy-client-v1` | ✅ finished (2026-05-01，commit 25ea3816 归档) | alchemy-v1 ✅, input-binding-v1 | §G + O.6 硬依赖 |
-| 13b | `plan-alchemy-v2` | ⬜ skeleton | alchemy-client-v1 ✅ | 炼丹后续扩展（漏列补入） |
+| 13b | `plan-alchemy-v2` | ⏳ active (2026-05-04 升级) | alchemy-client-v1 ✅ | 炼丹后续扩展（5 phase：side_effect 映射 / 丹方残卷 / 品阶铭文开光 / AutoProfile / 丹心识别） |
 | 14 | `plan-poi-novice-v1` | ✅ finished (2026-05-03，commit 2f4a09fa 归档) | spawn-tutorial-v1, forge-leftovers-v1, alchemy-client-v1 | §L + 新手 POI |
 | 15 | `plan-terrain-ash-deadzone-v1` | ✅ finished (2026-05-01，commit 542770ca 归档) | worldgen ✅ | §M.2 避劫 |
 | 16 | `plan-terrain-pseudo-vein-v1` | ✅ finished (2026-05-02，commit c7a1d558 归档) | worldgen ✅, narrative-v1 | §G 教学诱饵 |
-| 16b | `plan-terrain-jiuzong-ruin-v1` | ⬜ skeleton | worldgen ✅ | 九宗废墟 POI（漏列补入） |
-| 16c | `plan-terrain-rift-mouth-v1` | ⬜ skeleton | worldgen ✅ | 裂口地形 POI（漏列补入） |
-| 16d | `plan-lifespan-v1` | ⬜ skeleton | cultivation-v1 ✅ | 寿元系统骨架（漏列补入；§M.3 多周目相关） |
+| 16b | `plan-terrain-jiuzong-ruin-v1` | ⏳ active (2026-05-04 升级) | worldgen ✅, library-jiuzong-history（P0 子任务并行） | 九宗废墟 POI；7 宗 origin layer + 阵核激活 + 守墓人 NPC + 残卷 loot |
+| 16c | `plan-terrain-rift-mouth-v1` | ⏳ active (2026-05-04 升级) | worldgen ✅, plan-tsy-dimension-v1 ✅ | 渊口荒丘；portal_anchor_sdf layer + 负灵 hot-spot + TSY portal 入口锚点 |
+| 16d | `plan-lifespan-v1` | ⏳ active (2026-05-04 升级) | cultivation-v1 ✅, death-lifecycle-v1 ✅ | 寿元系统（7 phase：tick 推进 / 风烛 / 老死 / 续命四分支 / 夺舍）；§M.3 多周目相关 |
 
 #### 层 C：P2 流派（Tier 2）
 

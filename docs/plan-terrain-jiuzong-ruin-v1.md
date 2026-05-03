@@ -1,4 +1,6 @@
-# Bong · plan-terrain-jiuzong-ruin-v1 · 骨架
+# Bong · plan-terrain-jiuzong-ruin-v1 · Active
+
+> **状态**：⏳ active（2026-05-04 升级，user 拍板覆盖 2026-04-29 hard block 决议）。前 hard block：(a) library-jiuzong-history 7 篇宗门志、(b) 残卷功法绑定——**改列为 P0 任务跟进**，不阻塞升 active：lore 写作可在 active 状态下与 worldgen 代码并行。
 
 **九宗故地**（`jiu_zong_ruin`）。末法纪略第一变之产物——上古九大宗门（青云/灵泉/血溪/幽暗/北陵/南渊/赤霞/玄水/太初）大斗后崩塌仅余其二，本 plan 把**已崩**的七个宗门抽象为一个公共 terrain profile：连片宗门废墟群（断殿/聚灵阵核/万人讲堂残基），灵气紊乱（0.4 但波动剧烈）、阵法残核可能短暂激活、散修守墓人 NPC 游荡。
 
@@ -314,6 +316,10 @@ extra_layers = (
   - **mid-11** 修：阵核激活的 narration "全服广播" 改为"区域广播 (1000 格半径) + 凝脉+ inspect 可读"——全服仅留化虚渡劫级。
   - **weak-14** 修：§3 七宗特征流派表加注"以下流派为推演"提示 + 建议先立 `library-jiuzong-history` 锚 lore。
 - **2026-04-29**：实地核验 + 决策标注（**保留骨架**，不升 active——schema 决策已锁但 7 宗 lore 仍缺 library 背书；前置 plan-tsy-zongmen-ruin-v1 状态自报有误，实际仅有 worldgen 侧 `tsy_zongmen_ruin.py` 生成器存在，无独立 plan 文档）。
+- **2026-05-04**：skeleton → active 升级（user 拍板覆盖 04-29 决议）。原 hard block 改列为 P0 任务跟进，不阻塞升 active：
+  - **P0 新增子任务 a**：起 `library-jiuzong-history`（7 篇宗门志，可与 P0 worldgen 代码并行；lore 入库 + `/review-book` 通过后 unblock 壁文 narration / 残卷功法绑定）
+  - **P0 新增子任务 b**：与 plan-baomai-v1 / plan-zhenfa-v1 / plan-skill-v1 协调"残卷 = 该 plan 的功法"对齐（§9 第 1 项）
+  - 下一步：起 P0 worktree（`zongmen_origin_id` LAYER_REGISTRY 层 + `jiu_zong_ruin` profile + 7 zone JSON，与 lore 写作并行）
   - **季节联动**（用户决策 2026-04-29）：汐转期阵核激活率 ×2（worldview §十七 锚定）。已写入头部锚点 + §0 设计轴心。
   - **schema 决策**（用户决策）：`zongmen_origin_id` 新增独立 LAYER_REGISTRY 层（不复用 tsy_origin_id 高位段）。§9 第 2 项已标决议。
   - 7 宗特征流派 + 残卷功法绑定（§9 第 1 项）+ lore 来源（§9 第 6 项 `library-jiuzong-history`）仍待立——这是升 active 前的硬阻塞。建议**先用 `/write-book` 起草 7 篇宗门志**入 library，再立 lore-anchored plan。

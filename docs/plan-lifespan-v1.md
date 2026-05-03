@@ -1,4 +1,6 @@
-# Bong · plan-lifespan-v1 · 骨架
+# Bong · plan-lifespan-v1 · Active
+
+> **状态**：⏳ active（2026-05-04 升级，user 拍板）。前置 plan-death-lifecycle-v1 / plan-cultivation-v1 全 ✅ finished；P3 续命丹依赖 plan-alchemy-v2（同期升 active）StatusEffect 映射；P4 悟道延寿等 plan-cultivation-v1 顿悟池深度定义；P5 坍缩渊换寿等 plan-terrain-rift-mouth-v1（同期升 active）+ plan-tsy-zone-v1。
 
 寿元系统精细实装 + 风烛状态 + 老死分类 + 续命路径四分支。对应 `plan-death-lifecycle-v1`（finished）§4a/§4b/§4c/§4e/§4f 中标记未实装的 Phase 3/6/7 功能块。
 
@@ -160,3 +162,4 @@ Client IPC 扩展（inspect 面板）：
 ## §7 进度日志
 
 - 2026-05-01：从 plan-death-lifecycle-v1 reminder 整理立项。现有代码：`Lifecycle` component + `apply_revive_penalty` ✅（`server/src/combat/lifecycle.rs`）；`LifespanComponent` / `LifespanCapTable` / `TickRateModifier` / `LifespanEvent` 均未实装。
+- **2026-05-04**：skeleton → active 升级（user 拍板）。前置 plan-death-lifecycle-v1 / plan-cultivation-v1 ✅ finished。P0/P1/P2 可立刻起；P3-P5 待并行 plan（alchemy-v2 / cultivation 顿悟池 / rift-mouth）补齐再做。下一步起 P0 worktree（LifespanComponent + LifespanCapTable + tick 推进）。
