@@ -53,6 +53,7 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "boundary_weight":  LayerSpec(safe_default=0.0,  blend_mode="special",  export_type="float32"),
     # --- zone-specific layers (blended by extra-layer loop) ---
     "rift_axis_sdf":    LayerSpec(safe_default=99.0, blend_mode="minimum",  export_type="float32"),
+    "portal_anchor_sdf": LayerSpec(safe_default=999.0, blend_mode="minimum", export_type="float32"),
     "rim_edge_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "fracture_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "cave_mask":        LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
