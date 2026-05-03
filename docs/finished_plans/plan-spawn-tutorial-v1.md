@@ -309,10 +309,11 @@ P2  v1 收口
 - `d0a0d229` 2026-05-03 `plan-spawn-tutorial-v1: 接入客户端开棺请求`
 - `80086b50` 2026-05-03 `plan-spawn-tutorial-v1: 对齐教学 schema 与旁白基准`
 - `0719b001` 2026-05-03 `plan-spawn-tutorial-v1: 补齐散修与开脉丹宝箱落点`
+- `d54bdbd7` 2026-05-03 `plan-spawn-tutorial-v1: 修正开棺校验与教学 telemetry`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2112 passed。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2114 passed。
 - `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn ./gradlew test build`：BUILD SUCCESSFUL（Java 17）。
 - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：tiandao 211 passed；schema 253 passed。
 - `cd worldgen && python3 -m unittest discover -s tests`：9 passed。
