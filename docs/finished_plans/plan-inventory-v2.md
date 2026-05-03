@@ -161,18 +161,23 @@ fn default_max_stack() -> u32 { 1 }
 - **P0 格子分配**：`server/src/inventory/mod.rs` 新增 `find_free_slot(container, grid_w, grid_h)`，`add_item_to_player_inventory` 改为先模拟剩余空间、再按行优先分配 `PlacedItemState.row/col`；满包返回 `Err("inventory full: {template_id}")`，不再静默写入 `(0,0)`。
 - **P1 堆叠合并**：`ItemTemplate` / `ItemTemplateToml` 新增 `max_stack_count`，TOML 支持显式覆写；默认策略为 Herb=64、BoneCoin=`u32::MAX`、Pill/Misc=16、Weapon/Tool/Treasure=1。`find_mergeable_stack` 与 `add_item_to_player_inventory` 先合并同 template 栈，溢出后再开新格子。
 - **P2 批量入包**：`server/src/botany/harvest.rs` 继续走 `add_item_to_player_inventory`，重复采草药通过通用逻辑合并；`server/src/mineral/inventory_grant.rs` 复用 `find_free_slot` / `find_mergeable_stack`，矿物同种堆叠上限 32，不同矿物分配不重叠格子。
+- **Review fix 采药修饰**：`InventoryGrantReceipt` 拆分 `created_instance_ids` / `merged_instance_ids`，纯 merge 不再把旧栈 ID 当成本次新实例；采药变种 / herbalism 品质修饰改为 `add_customized_item_to_player_inventory`，只合并属性完全一致的 stack，避免 `"雷 · 雷 · ..."` 与品质重复叠加，也避免雷变种、黑变种、普通草药混栈。
 - **测试覆盖**：`server/src/inventory/mod.rs` 覆盖空容器、行优先、碎片化、满包、不可堆叠多实例、同种堆叠、溢出开新格、5 次草药 grant 合并、TOML 默认/覆写/0 值拒绝；`server/src/mineral/inventory_grant.rs` 覆盖同矿物合并与不同矿物不重叠。
 
 ### 关键 commit
 
 - `61aec764` · 2026-05-04 · `plan-inventory-v2: 落地背包格子分配与堆叠`
 - `d532c6dd` · 2026-05-04 · `plan-inventory-v2: 修复矿物掉落入包位置`
+- `6ecb87bb` · 2026-05-04 · `plan-inventory-v2: 修复采药堆叠修饰回归`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ `2174 passed; 0 failed`
+- `cd server && cargo test` ✅ `2177 passed; 0 failed`
+- `cd server && cargo test inventory::tests` ✅ `86 passed; 0 failed`
+- `cd server && cargo test botany::harvest::tests` ✅ `14 passed; 0 failed`
+- `cd server && cargo test mineral::inventory_grant::tests` ✅ `9 passed; 0 failed`
 
 ### 跨仓库核验
 
