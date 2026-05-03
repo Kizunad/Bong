@@ -7,6 +7,7 @@ export * from "./channels.js";
 // Message schemas
 export * from "./agent-command.js";
 export * from "./agent-world-model.js";
+export * from "./anticheat.js";
 export * from "./armor-event.js";
 export * from "./audio-event.js";
 export * from "./botany.js";

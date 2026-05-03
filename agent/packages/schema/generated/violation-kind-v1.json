@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "reach_exceeded",
+      "type": "string"
+    },
+    {
+      "const": "cooldown_bypassed",
+      "type": "string"
+    },
+    {
+      "const": "qi_invest_exceeded",
+      "type": "string"
+    }
+  ]
+}

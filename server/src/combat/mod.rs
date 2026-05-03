@@ -1,3 +1,4 @@
+pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
 pub mod components;
@@ -28,6 +29,10 @@ use crate::player::state::{
     player_character_id, PlayerStatePersistence,
 };
 
+use self::anticheat::{
+    load_anticheat_config, AntiCheatConfig, AntiCheatCounter, AntiCheatViolationEvent,
+    DEFAULT_ANTICHEAT_CONFIG_PATH,
+};
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
 use self::events::{
     ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DeathInsightRequested,
@@ -81,6 +86,7 @@ fn attach_combat_bundle_to_joined_clients(
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            AntiCheatCounter::default(),
             Lifecycle {
                 character_id,
                 spawn_anchor,
@@ -128,6 +134,14 @@ pub fn register(app: &mut App) {
     );
     app.insert_resource(armor_registry);
 
+    let anticheat_config_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ANTICHEAT_CONFIG_PATH);
+    let anticheat_config = load_anticheat_config(anticheat_config_path).unwrap_or_else(|error| {
+        tracing::error!("[bong][anticheat] config load failed, using defaults: {error}");
+        AntiCheatConfig::default()
+    });
+    app.insert_resource(anticheat_config);
+
     app.insert_resource(CombatClock::default());
     app.add_event::<AttackIntent>();
     app.add_event::<DefenseIntent>();
@@ -137,6 +151,7 @@ pub fn register(app: &mut App) {
     app.add_event::<DeathInsightRequested>();
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
+    app.add_event::<AntiCheatViolationEvent>();
 
     app.configure_sets(
         Update,
@@ -193,5 +208,11 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    app.add_systems(
+        Update,
+        anticheat::emit_anticheat_threshold_reports
+            .in_set(CombatSystemSet::Resolve)
+            .after(resolve::resolve_attack_intents),
     );
 }

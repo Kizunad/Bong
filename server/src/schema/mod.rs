@@ -5,6 +5,7 @@
 pub mod agent_command;
 pub mod agent_world_model;
 pub mod alchemy;
+pub mod anticheat;
 pub mod armor_event;
 pub mod audio;
 pub mod botany;

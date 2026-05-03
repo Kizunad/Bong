@@ -7,6 +7,7 @@ import {
   AgentCommandV1,
   validateAgentCommandV1Contract,
 } from "../src/agent-command.js";
+import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
@@ -133,6 +134,11 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_SESSION_START);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_SESSION_END);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_INTERVENTION_RESULT);
+  });
+
+  it("declares anticheat Redis channel", () => {
+    expect(CHANNELS.ANTICHEAT).toBe("bong:anticheat");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ANTICHEAT);
   });
 
   it("declares pseudo vein Redis channels", () => {
@@ -708,6 +714,12 @@ describe("sample files pass schema validation", () => {
   it("combat-event.summary.sample.json", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("anticheat-report.sample.json", () => {
+    const data = loadSample("anticheat-report.sample.json");
+    const result = validate(AntiCheatReportV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
