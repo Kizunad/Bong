@@ -14,6 +14,7 @@ use crate::cultivation::components::ColorKind;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 
 use super::outcome::{build_flawed_result, classify_precise, OutcomeBucket};
+use super::quality::{profile_for_pill_quality, PillQualityProfile};
 use super::recipe::{Recipe, RecipeRegistry, SideEffect};
 use super::session::AlchemySession;
 use super::skill_hook::{side_effect_weight_scale, xp_for_bucket};
@@ -28,6 +29,9 @@ pub enum ResolvedOutcome {
         toxin_amount: f64,
         toxin_color: ColorKind,
         qi_gain: Option<f64>,
+        quality_tier: u8,
+        effect_multiplier: f64,
+        consecrated: bool,
         /// 残缺路径抽中的副作用（精确路径为 None）。
         side_effect: Option<SideEffect>,
         /// 路径标记：true = 残缺匹配路径。
@@ -203,6 +207,11 @@ fn resolve_raw(
             session_seed(session),
             side_effect_weight_scale(alchemy_effective_lv),
         ) {
+            let PillQualityProfile {
+                quality_tier,
+                effect_multiplier,
+                consecrated,
+            } = profile_for_pill_quality(result.quality, true);
             return (
                 OutcomeBucket::Flawed,
                 ResolvedOutcome::Pill {
@@ -212,6 +221,9 @@ fn resolve_raw(
                     toxin_amount: result.toxin_amount,
                     toxin_color: result.toxin_color,
                     qi_gain: None,
+                    quality_tier,
+                    effect_multiplier,
+                    consecrated,
                     side_effect: result.side_effect,
                     flawed_path: true,
                 },
@@ -257,6 +269,9 @@ fn apply_quality_factor(outcome: ResolvedOutcome, factor: f32) -> ResolvedOutcom
             toxin_amount,
             toxin_color,
             qi_gain,
+            quality_tier,
+            effect_multiplier,
+            consecrated,
             side_effect,
             flawed_path,
         } => ResolvedOutcome::Pill {
@@ -266,6 +281,9 @@ fn apply_quality_factor(outcome: ResolvedOutcome, factor: f32) -> ResolvedOutcom
             toxin_amount,
             toxin_color,
             qi_gain: qi_gain.map(|q| q * factor as f64),
+            quality_tier,
+            effect_multiplier,
+            consecrated,
             side_effect,
             flawed_path,
         },
@@ -283,16 +301,26 @@ fn map_exact_bucket(recipe: &Recipe, bucket: OutcomeBucket) -> ResolvedOutcome {
                 _ => None,
             };
             match outcome {
-                Some(o) => ResolvedOutcome::Pill {
-                    recipe_id: recipe.id.clone(),
-                    pill: o.pill.clone(),
-                    quality: o.quality,
-                    toxin_amount: o.toxin_amount,
-                    toxin_color: o.toxin_color,
-                    qi_gain: o.qi_gain,
-                    side_effect: None,
-                    flawed_path: false,
-                },
+                Some(o) => {
+                    let PillQualityProfile {
+                        quality_tier,
+                        effect_multiplier,
+                        consecrated,
+                    } = profile_for_pill_quality(o.quality, false);
+                    ResolvedOutcome::Pill {
+                        recipe_id: recipe.id.clone(),
+                        pill: o.pill.clone(),
+                        quality: o.quality,
+                        toxin_amount: o.toxin_amount,
+                        toxin_color: o.toxin_color,
+                        qi_gain: o.qi_gain,
+                        quality_tier,
+                        effect_multiplier,
+                        consecrated,
+                        side_effect: None,
+                        flawed_path: false,
+                    }
+                }
                 None => ResolvedOutcome::Waste {
                     recipe_id: Some(recipe.id.clone()),
                 },
@@ -662,6 +690,9 @@ mod tests {
             toxin_amount: 0.2,
             toxin_color: ColorKind::Mellow,
             qi_gain: Some(24.0),
+            quality_tier: 5,
+            effect_multiplier: 1.5,
+            consecrated: false,
             side_effect: None,
             flawed_path: false,
         };

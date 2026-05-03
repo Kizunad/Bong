@@ -513,6 +513,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
         PlayerInventory {
             revision: InventoryRevision(5),
@@ -646,6 +647,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         });
         assert!(consume_one_stack(&mut inv, 7));
         assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);

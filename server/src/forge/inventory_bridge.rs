@@ -120,6 +120,7 @@ pub fn forge_outcome_to_inventory(
             forge_color: event.color,
             forge_side_effects: event.side_effects.clone(),
             forge_achieved_tier: Some(achieved_tier),
+            alchemy: None,
         };
 
         inventory.containers[main_pack_index]

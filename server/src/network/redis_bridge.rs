@@ -6,12 +6,12 @@ use std::time::Duration;
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::alchemy::{
-    AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
+    AlchemyInsightV1, AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
 };
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
@@ -92,6 +92,7 @@ pub enum RedisOutbound {
     AlchemySessionStart(AlchemySessionStartV1),
     AlchemySessionEnd(AlchemySessionEndV1),
     AlchemyInterventionResult(AlchemyInterventionResultV1),
+    AlchemyInsight(AlchemyInsightV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     HeartDemonRequest(HeartDemonPregenRequestV1),
@@ -466,6 +467,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_ALCHEMY_INTERVENTION_RESULT,
+                payload,
+            })
+        }
+        RedisOutbound::AlchemyInsight(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize AlchemyInsightV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_INSIGHT,
                 payload,
             })
         }

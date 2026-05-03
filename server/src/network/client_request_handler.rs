@@ -32,7 +32,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::{recover_current_qi, Cultivation};
 use crate::cultivation::forging::ForgeRequest;
-use crate::cultivation::insight::InsightChosen;
+use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
@@ -47,14 +47,15 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
-    add_item_to_player_inventory, apply_inventory_move, apply_item_spiritual_wear,
+    add_item_to_player_inventory_with_alchemy, apply_inventory_move, apply_item_spiritual_wear,
     consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
     InventoryMoveOutcome, ItemInstance, PlayerInventory,
 };
 use crate::inventory::{
-    ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
+    AlchemyItemData, ItemEffect, ItemRegistry,
+    DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
 use crate::lingtian::environment::read_environment_at;
@@ -139,6 +140,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub item_registry: Res<'w, ItemRegistry>,
     pub decay_profiles: Option<Res<'w, DecayProfileRegistry>>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
+    pub insight_request_tx: Option<ResMut<'w, Events<InsightRequest>>>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
     pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
     pub start_search_tx: Option<ResMut<'w, Events<StartSearchRequestEvent>>>,
@@ -2019,6 +2021,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -2126,6 +2129,7 @@ mod tests {
                         forge_color: None,
                         forge_side_effects: Vec::new(),
                         forge_achieved_tier: None,
+                        alchemy: None,
                     },
                 }],
             }],
@@ -2695,6 +2699,7 @@ mod tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 }),
                 Cultivation::default(),
                 PlayerState::default(),
@@ -2777,6 +2782,7 @@ mod tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 }),
                 Cultivation {
                     realm: Realm::Spirit,
@@ -4876,14 +4882,14 @@ fn send_moved_event(
     to: InventoryLocationV1,
     revision: u64,
 ) {
-    let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+    let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(Box::new(
         InventoryEventV1::Moved {
             revision,
             instance_id,
             from,
             to,
         },
-    ));
+    )));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
         Ok(bytes) => bytes,
@@ -5263,6 +5269,9 @@ fn handle_alchemy_learn(
             ),
             LearnResult::AlreadyKnown => tracing::debug!(
                 "[bong][network][alchemy] `{player_id}` already knows `{recipe_id}`"
+            ),
+            LearnResult::FragmentMerged => tracing::debug!(
+                "[bong][network][alchemy] `{player_id}` merged fragment while learning `{recipe_id}`"
             ),
         }
         alchemy_snapshot_emit::send_recipe_book_from_learned(&mut client, &player_id, &learned);
@@ -5677,16 +5686,37 @@ fn grant_alchemy_outcome_item(
     item_registry: &ItemRegistry,
     instance_allocator: &mut InventoryInstanceIdAllocator,
 ) {
-    let crate::alchemy::ResolvedOutcome::Pill { pill, .. } = outcome else {
+    let crate::alchemy::ResolvedOutcome::Pill {
+        pill,
+        recipe_id,
+        quality_tier,
+        effect_multiplier,
+        consecrated,
+        side_effect,
+        ..
+    } = outcome
+    else {
         return;
     };
     let Ok(mut inventory) = inventories.get_mut(entity) else {
         send_alchemy_error(client, player_id, "未找到背包，成丹无法入袋".to_string());
         return;
     };
-    if let Err(error) =
-        add_item_to_player_inventory(&mut inventory, item_registry, instance_allocator, pill, 1)
-    {
+    let alchemy = Some(AlchemyItemData::Pill {
+        recipe_id: recipe_id.clone(),
+        quality_tier: *quality_tier,
+        effect_multiplier: *effect_multiplier,
+        consecrated: *consecrated,
+        side_effect: side_effect.clone(),
+    });
+    if let Err(error) = add_item_to_player_inventory_with_alchemy(
+        &mut inventory,
+        item_registry,
+        instance_allocator,
+        pill,
+        1,
+        alchemy,
+    ) {
         send_alchemy_error(client, player_id, format!("成丹入袋失败：{error}"));
         return;
     }
@@ -5915,6 +5945,17 @@ fn handle_alchemy_take_pill(
         );
         return;
     };
+    let (alchemy_multiplier, alchemy_consecrated, alchemy_side_effect) =
+        match consumed_item.alchemy.as_ref() {
+            Some(AlchemyItemData::Pill {
+                effect_multiplier,
+                consecrated,
+                side_effect,
+                ..
+            }) => (*effect_multiplier, *consecrated, side_effect.clone()),
+            _ => (1.0, false, None),
+        };
+    let duration_multiplier = if alchemy_consecrated { 2 } else { 1 };
 
     let (spoil, age) = shelflife_checks_for_item(
         &consumed_item,
@@ -5956,22 +5997,24 @@ fn handle_alchemy_take_pill(
     let mut cultivation_snapshot_override = None;
     match effect {
         ItemEffect::BreakthroughBonus { magnitude } => {
+            let scaled_magnitude = magnitude * alchemy_multiplier;
             combat_params.buff_tx.send(ApplyStatusEffectIntent {
                 target: entity,
                 kind: StatusEffectKind::BreakthroughBoost,
-                magnitude: magnitude as f32,
-                duration_ticks: BREAKTHROUGH_BOOST_DURATION_TICKS,
+                magnitude: scaled_magnitude as f32,
+                duration_ticks: BREAKTHROUGH_BOOST_DURATION_TICKS * duration_multiplier,
                 issued_at_tick: clock.tick,
             });
             tracing::info!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{scaled_magnitude:.3} for {} ticks",
+                BREAKTHROUGH_BOOST_DURATION_TICKS * duration_multiplier
             );
         }
         ItemEffect::QiRecovery { amount } => {
             if let Ok(current) = cultivations.get(entity) {
                 let mut cultivation = current.clone();
                 let qi_max_before = cultivation.qi_max;
-                let recovered = recover_current_qi(&mut cultivation, amount);
+                let recovered = recover_current_qi(&mut cultivation, amount * alchemy_multiplier);
                 cultivation_snapshot_override = Some(cultivation.clone());
                 commands.entity(entity).insert(cultivation);
                 tracing::info!(
@@ -6000,11 +6043,12 @@ fn handle_alchemy_take_pill(
                 target: entity,
                 kind: StatusEffectKind::AntiSpiritPressurePill,
                 magnitude: 1.0,
-                duration_ticks,
+                duration_ticks: duration_ticks.saturating_mul(duration_multiplier),
                 issued_at_tick: clock.tick,
             });
             tracing::info!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → AntiSpiritPressurePill for {duration_ticks} ticks"
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → AntiSpiritPressurePill for {} ticks",
+                duration_ticks.saturating_mul(duration_multiplier)
             );
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
@@ -6018,6 +6062,26 @@ fn handle_alchemy_take_pill(
                 pill_item_id,
                 entity,
             );
+        }
+    }
+
+    if let Some(side_effect) = alchemy_side_effect.as_ref() {
+        let realm = cultivations
+            .get(entity)
+            .map(|cultivation| cultivation.realm)
+            .unwrap_or(crate::cultivation::components::Realm::Awaken);
+        let application = crate::alchemy::side_effect_apply::build_side_effect_application(
+            entity,
+            side_effect,
+            clock.tick,
+            realm,
+        );
+        combat_params.buff_tx.send(application.status_intent);
+        if let (Some(insight_request), Some(insight_request_tx)) = (
+            application.insight_request,
+            combat_params.insight_request_tx.as_mut(),
+        ) {
+            insight_request_tx.send(insight_request);
         }
     }
 
@@ -6245,6 +6309,7 @@ mod take_pill_tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 

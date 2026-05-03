@@ -288,6 +288,7 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         forge_color: item.forge_color,
         forge_side_effects: item.forge_side_effects.clone(),
         forge_achieved_tier: item.forge_achieved_tier,
+        alchemy: item.alchemy.clone(),
     }
 }
 
@@ -562,6 +563,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -822,37 +824,40 @@ mod tests {
         let payloads = collect_inventory_event_payloads(&mut helper);
         assert_eq!(payloads.len(), 1);
         match &payloads[0].payload {
-            ServerDataPayloadV1::InventoryEvent(InventoryEventV1::Dropped {
-                revision,
-                instance_id,
-                from,
-                world_pos,
-                item,
-            }) => {
-                assert_eq!(*revision, 21);
-                assert_eq!(*instance_id, 1004);
-                assert!(world_pos[0] > 8.0);
-                assert_eq!(world_pos[1], 66.0);
-                assert!(world_pos[2] > 8.0);
-                assert_eq!(item.item_id, "starter_talisman");
-                assert_eq!(item.display_name, "启程护符");
-                assert_eq!(item.stack_count, 1);
-                match from {
-                    crate::schema::inventory::InventoryLocationV1::Container {
-                        container_id,
-                        row,
-                        col,
-                    } => {
-                        assert_eq!(
-                            *container_id,
-                            crate::schema::inventory::ContainerIdV1::MainPack
-                        );
-                        assert_eq!(*row, 0);
-                        assert_eq!(*col, 0);
+            ServerDataPayloadV1::InventoryEvent(event) => match event.as_ref() {
+                InventoryEventV1::Dropped {
+                    revision,
+                    instance_id,
+                    from,
+                    world_pos,
+                    item,
+                } => {
+                    assert_eq!(*revision, 21);
+                    assert_eq!(*instance_id, 1004);
+                    assert!(world_pos[0] > 8.0);
+                    assert_eq!(world_pos[1], 66.0);
+                    assert!(world_pos[2] > 8.0);
+                    assert_eq!(item.item_id, "starter_talisman");
+                    assert_eq!(item.display_name, "启程护符");
+                    assert_eq!(item.stack_count, 1);
+                    match from {
+                        crate::schema::inventory::InventoryLocationV1::Container {
+                            container_id,
+                            row,
+                            col,
+                        } => {
+                            assert_eq!(
+                                *container_id,
+                                crate::schema::inventory::ContainerIdV1::MainPack
+                            );
+                            assert_eq!(*row, 0);
+                            assert_eq!(*col, 0);
+                        }
+                        other => panic!("expected container from location, got {other:?}"),
                     }
-                    other => panic!("expected container from location, got {other:?}"),
                 }
-            }
+                other => panic!("expected dropped inventory event, got {other:?}"),
+            },
             other => panic!("expected dropped inventory_event payload, got {other:?}"),
         }
     }
@@ -998,15 +1003,18 @@ mod tests {
         let payloads = collect_inventory_event_payloads(&mut helper);
         assert_eq!(payloads.len(), 1);
         match &payloads[0].payload {
-            ServerDataPayloadV1::InventoryEvent(InventoryEventV1::DurabilityChanged {
-                revision,
-                instance_id,
-                durability,
-            }) => {
-                assert_eq!(*revision, 34);
-                assert_eq!(*instance_id, 2004);
-                approx_eq(*durability, 0.25);
-            }
+            ServerDataPayloadV1::InventoryEvent(event) => match event.as_ref() {
+                InventoryEventV1::DurabilityChanged {
+                    revision,
+                    instance_id,
+                    durability,
+                } => {
+                    assert_eq!(*revision, 34);
+                    assert_eq!(*instance_id, 2004);
+                    approx_eq(*durability, 0.25);
+                }
+                other => panic!("expected durability_changed inventory event, got {other:?}"),
+            },
             other => panic!("expected durability_changed inventory_event payload, got {other:?}"),
         }
     }
@@ -1141,6 +1149,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -1166,6 +1175,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
         let mut view = item_view_from_instance(&item);
         assert!(view.freshness_current.is_none());

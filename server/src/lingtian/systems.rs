@@ -976,6 +976,7 @@ fn award_item_to_inventory(
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 };
                 main_pack.items.push(crate::inventory::PlacedItemState {
                     row: r,
@@ -1426,6 +1427,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -1605,6 +1607,7 @@ mod tests {
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
         let inv = PlayerInventory {
@@ -2017,6 +2020,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -2478,6 +2482,7 @@ mod tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 },
             });
         let player = app.world_mut().spawn(inv).id();
@@ -2640,6 +2645,7 @@ mod tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 },
             });
         inv

@@ -715,6 +715,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
         let err = validate_stage_mineral_items([&ing], [&item]).unwrap_err();
         assert!(matches!(
