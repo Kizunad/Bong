@@ -119,17 +119,18 @@ type CombatAttackerItem<'a> = (
     Option<&'a mut AntiCheatCounter>,
     Option<&'a CombatState>,
 );
+type DefenseResponderItem<'a> = (
+    &'a mut CombatState,
+    &'a Cultivation,
+    Option<&'a PlayerInventory>,
+    Option<&'a StatusEffects>,
+    Option<&'a FalseSkin>,
+);
 type PositionLookItem<'a> = (&'a Position, Option<&'a Look>);
 
 pub fn apply_defense_intents(
     mut defenses: EventReader<DefenseIntent>,
-    mut defenders: Query<(
-        &mut CombatState,
-        &Cultivation,
-        Option<&PlayerInventory>,
-        Option<&StatusEffects>,
-        Option<&FalseSkin>,
-    )>,
+    mut defenders: Query<DefenseResponderItem<'_>>,
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
 ) {
     for defense in defenses.read() {
