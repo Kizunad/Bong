@@ -317,3 +317,43 @@ pub struct SpiritEye {
 
 - **2026-04-27**：骨架立项。来源：`docs/plans-skeleton/reminder.md` "通用/跨 plan"节（"灵眼结构未实装"）+ worldview §三/§十/§九 灵眼设计锚点。`server/src/botany/registry.rs:430` 有"灵眼未实装 → MVP 禁用生成（EventTriggered 占位，永不 spawn）"注释，是现有唯一代码痕迹。worldgen 无 `spirit_eye_candidates` raster channel。cultivation 突破流程无灵眼环境检测。
 - **2026-05-03**：**plan 文档规范化升级**（去骨架化 + 加 Primary Axis + §A 概览 + 7 决策闭环 Q120-Q126）。primary axis = **情报稀缺资产的探索-独占-博弈循环**（worldview §九/§十 锚定）。**v1 完整范围**（P0-P5 五阶段全做）：数据结构 + 发现 + 突破接入 + 动态迁移 + 信息经济 + 收口。**关键设计**：按 zone 数量决定灵眼数（Q120 D 取代旧公式）+ 不加密（Q122 B）+ 血谷高风险高奖励（Q124 C）+ 玩家人造灵眼留 v2（Q121 D）+ lingtian 影响留 vN+1 stub（Q123 C）。**Hotbar 接入声明**：灵眼无主动技能 cast，无 hotbar 绑定需求。下一个候选：plan-fauna-v1 已 ✅ finished（journey plan 状态待同步）/ plan-style-pick-v1 ⬜ 派生（P2 流派分化必需）/ plan-identity-v1 ⬜ 派生（DEF 之一）。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 数据结构 / worldgen / server init**：`server/src/world/spirit_eye.rs` 新增 `SpiritEyeRegistry`、`SpiritEye`、`SpiritEyeId`、候选初始化和血谷高风险候选；`worldgen/scripts/terrain_gen/fields.py` 新增 `spirit_eye_candidates` layer；`worldgen/scripts/terrain_gen/spirit_eye_selector.py` + `broken_peaks.py` / `spring_marsh.py` / `rift_valley.py` 写入候选 mask。
+- **P1 神识感知发现 / 私有标记**：`SpiritEyeRegistry::discover_for` 实装 proximity + realm perception 检测；`server/src/cultivation/spiritual_sense/scanner.rs` / `push.rs` 输出私有 `SenseKindV1::SpiritEye`；client `SenseKind.SPIRIT_EYE` + `PerceptionEdgeRenderer` 颜色接入。
+- **P2 凝脉→固元环境检查**：`server/src/cultivation/breakthrough.rs` 新增 `MIN_ZONE_QI_TO_GUYUAN`、`BreakthroughError::EnvInsufficient`、灵眼内成功率 bonus、使用后 `usage_pressure` 记录、失败私有 narration；`server/src/cultivation/life_record.rs` 记录 `SpiritEyeBreakthrough`。
+- **P3 天道动态迁移**：`SpiritEyeRegistry::tick_migration` 覆盖 `usage_pressure >= 1.0` 与 72h 周期偏移；`server/src/schema/channels.rs` / `server/src/network/redis_bridge.rs` 发布 `bong:spirit_eye/migrate`；`agent/packages/tiandao/src/redis-ipc.ts` 订阅并缓冲灵眼迁移 / 发现 / 使用事件。
+- **P4 信息经济 / 死亡遗念 / 声名 stub**：`server/src/combat/lifecycle.rs` 把 `known_spirit_eyes` 写入 `DeathInsightRequestV1`；`server/src/world/spirit_eye.rs` 提供 `coordinate_note_for` DTO stub 与 `spirit_eye_coordinate_share_renown_stub`；`agent/packages/tiandao/src/death-insight-runtime.ts` 在遗念 fallback 中保留已知灵眼坐标。
+- **P5 收口 / schema 对齐**：`server/src/schema/spirit_eye.rs` 与 `agent/packages/schema/src/spirit-eye.ts` 对齐 `SpiritEyeMigrateV1` / `SpiritEyeDiscoveredV1` / `SpiritEyeUsedForBreakthroughV1` / `SpiritEyeCoordinateNoteV1` / `DeathInsightSpiritEyeV1`；`agent/packages/schema/generated/*.json` 已重新生成。
+
+### 关键 commit
+
+- `7b7f032b` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && cargo test`：2115 passed。
+- `cd server && cargo test spirit_eye --quiet`：9 passed。
+- `cd server && cargo test breakthrough --quiet`：35 passed。
+- `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：build 通过；tiandao 210 passed；schema 252 passed。
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过。
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests "com.bong.client.visual.realm_vision.PerceptionEdgeRendererTest"`：通过。
+- `cd worldgen && PYTHONPATH="." python3 -m unittest discover -s "tests"`：9 passed。
+- `cd worldgen && python3 -m scripts.terrain_gen`：通过，生成 layer 列表包含 `spirit_eye_candidates`。
+- `git diff --check`：通过。
+
+### 跨仓库核验
+
+- **server**：`world::spirit_eye::SpiritEyeRegistry`、`spirit_eye_discovery_tick`、`spirit_eye_migration_tick`、`BreakthroughError::EnvInsufficient`、`CH_SPIRIT_EYE_MIGRATE`、`DeathInsightRequestV1.known_spirit_eyes`。
+- **agent schema / tiandao**：`SpiritEyeMigrateV1`、`SpiritEyeDiscoveredV1`、`SpiritEyeUsedForBreakthroughV1`、`DeathInsightSpiritEyeV1`、`CHANNELS.SPIRIT_EYE_MIGRATE`、`RedisIpc.onCrossSystemEvent`。
+- **client**：`SenseKind.SPIRIT_EYE`、wire mapping `"SpiritEye"`、灵眼 HUD marker 颜色 `0x70FFD6`。
+- **worldgen**：`LAYER_REGISTRY["spirit_eye_candidates"]`、`select_spirit_eye_candidates`、三类 terrain profile 输出 `spirit_eye_candidates` layer。
+
+### 遗留 / 后续
+
+- `plan-identity-v1` 尚未立项，P4 声名 / 信誉度只保留事件 stub，不扩展 NPC 完整反应。
+- 玩家人造灵眼、灵田 `plot_qi_cap`、天劫触发迁移、加密坐标存储、灵眼形态多样化均按本 plan 约定留给 `plan-spirit-eye-v2` 或对应后续 plan。
