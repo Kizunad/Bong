@@ -20,8 +20,8 @@ import com.google.gson.JsonPrimitive;
  *   "phasing": false,
  *   "tribulation_locked": false, "tribulation_stage": "warn",
  *   "throughput_peak_norm": 0.85,
- *   "vortex_fake_skin_layers": 1,
- *   "vortex_ready": true
+ *   "tuike_layers": 1,
+ *   "vortex_active": true
  * }
  * }</pre>
  */
@@ -38,8 +38,8 @@ public final class DerivedAttrsHandler implements ServerDataHandler {
             readBoolean(payload, "tribulation_locked", false),
             readString(payload, "tribulation_stage"),
             (float) readDouble(payload, "throughput_peak_norm", 0d),
-            (int) Math.max(0L, Math.round(readDouble(payload, "vortex_fake_skin_layers", 0d))),
-            readBoolean(payload, "vortex_ready", false)
+            (int) Math.max(0L, Math.round(readDouble(payload, "tuike_layers", 0d))),
+            readBoolean(payload, "vortex_active", false)
         );
         DerivedAttrsStore.replace(next);
 

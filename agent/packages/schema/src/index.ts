@@ -26,6 +26,7 @@ export * from "./social.js";
 export * from "./spiritual-sense.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)
 export * from "./vfx-event.js";
+export * from "./woliu.js";
 export * from "./world-state.js";
 
 // Validation & registry

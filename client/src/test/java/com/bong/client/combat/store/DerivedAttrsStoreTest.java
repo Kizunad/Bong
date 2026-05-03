@@ -23,7 +23,8 @@ class DerivedAttrsStoreTest {
         assertTrue(s.flying());
         assertEquals(0.42f, s.flyingQiRemaining(), 1e-5);
         assertTrue(s.tribulationLocked());
-        assertEquals(2, s.vortexFakeSkinLayers());
+        assertEquals(2, s.tuikeLayers());
+        assertTrue(s.vortexActive());
     }
 
     @Test void nullReplacedByNone() {

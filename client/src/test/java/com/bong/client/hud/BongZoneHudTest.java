@@ -90,4 +90,22 @@ public class BongZoneHudTest {
         assertTrue(commands.get(commands.size() - 1).text().contains("节律无节律"));
         assertEquals(" 节律无节律", BongZoneHud.cadenceText(zoneState));
     }
+
+    @Test
+    void overlayIncludesPerceptionTextWhenPresent() {
+        ZoneState zoneState = ZoneState.create(
+            "blood_valley",
+            "血谷",
+            0.42,
+            3,
+            "normal",
+            Set.of(),
+            "灵气稀薄，引气如吸沙",
+            1_000L
+        );
+
+        assertEquals(" 灵气稀薄，引气如吸沙", BongZoneHud.perceptionText(zoneState));
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 3_000L, FIXED_WIDTH, 400, 10, 22, 320, 180);
+        assertTrue(commands.get(commands.size() - 1).text().contains("灵气稀薄"));
+    }
 }

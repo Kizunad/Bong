@@ -42,9 +42,9 @@ class StyleBadgeHudPlannerTest {
         assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && "涡".equals(cmd.text())));
     }
 
-    private static DerivedAttrsStore.State state(int fakeSkinLayers, boolean vortexReady) {
+    private static DerivedAttrsStore.State state(int tuikeLayers, boolean vortexActive) {
         return new DerivedAttrsStore.State(
-            false, 0f, 0L, false, 0L, false, "", 0f, fakeSkinLayers, vortexReady
+            false, 0f, 0L, false, 0L, false, "", 0f, tuikeLayers, vortexActive
         );
     }
 }

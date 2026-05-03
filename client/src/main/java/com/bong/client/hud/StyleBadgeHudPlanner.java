@@ -31,8 +31,8 @@ public final class StyleBadgeHudPlanner {
 
         UnlockedStyles unlocked = unlockedStyles == null ? UnlockedStyles.none() : unlockedStyles;
         DerivedAttrsStore.State state = DerivedAttrsStore.snapshot();
-        boolean showFakeSkin = unlocked.tishi() && state.vortexFakeSkinLayers() > 0;
-        boolean showVortex = unlocked.jueling() && state.vortexReady();
+        boolean showFakeSkin = unlocked.tishi() && state.tuikeLayers() > 0;
+        boolean showVortex = unlocked.jueling() && state.vortexActive();
         if (!showFakeSkin && !showVortex) return out;
 
         int x = MiniBodyHudPlanner.MARGIN_X;
@@ -40,7 +40,7 @@ public final class StyleBadgeHudPlanner {
         if (y < 2) y = 2;
 
         if (showFakeSkin) {
-            int layers = Math.min(9, state.vortexFakeSkinLayers());
+            int layers = Math.min(9, state.tuikeLayers());
             appendBadge(out, x, y, FAKE_SKIN_W, "伪×" + layers, FAKE_SKIN_COLOR);
             x += FAKE_SKIN_W + GAP;
         }

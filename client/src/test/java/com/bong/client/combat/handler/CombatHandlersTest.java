@@ -8,6 +8,7 @@ import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.TerminateStateStore;
 import com.bong.client.combat.store.TribulationBroadcastStore;
 import com.bong.client.combat.store.TribulationStateStore;
+import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.combat.store.WoundsStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
@@ -32,6 +33,7 @@ class CombatHandlersTest {
         TribulationStateStore.resetForTests();
         TribulationBroadcastStore.resetForTests();
         AscensionQuotaStore.resetForTests();
+        VortexStateStore.resetForTests();
     }
 
     @Test
@@ -78,6 +80,22 @@ class CombatHandlersTest {
         assertTrue(s.flying());
         assertTrue(s.tribulationLocked());
         assertEquals(0.4f, s.flyingQiRemaining(), 1e-5);
+    }
+
+    @Test
+    void vortexStatePopulatesStore() {
+        String json = """
+            {"v":1,"type":"vortex_state","caster":"player:test","active":true,
+             "center":[1,64,2],"radius":1.5,"delta":0.25,"env_qi_at_cast":0.9,
+             "maintain_remaining_ticks":80,"intercepted_count":3}""";
+        ServerDataDispatch dispatch = new VortexStateHandler().handle(parse(json));
+        assertTrue(dispatch.handled());
+        VortexStateStore.State state = VortexStateStore.snapshot();
+        assertTrue(state.active());
+        assertEquals(1.5f, state.radius(), 1e-5);
+        assertEquals(0.25f, state.delta(), 1e-5);
+        assertEquals(80L, state.maintainRemainingTicks());
+        assertEquals(3, state.interceptedCount());
     }
 
     @Test

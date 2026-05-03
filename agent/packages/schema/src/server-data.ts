@@ -34,6 +34,7 @@ import {
   RiftPortalStateV1,
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
+import { VortexFieldStateV1 } from "./woliu.js";
 import {
   ContainerStateV1,
   SearchAbortedV1,
@@ -233,6 +234,7 @@ export const ServerDataZoneInfoV1 = Type.Object(
     danger_level: Type.Integer({ minimum: 0, maximum: 5 }),
     status: Type.Optional(ZoneStatusV1),
     active_events: Type.Optional(Type.Array(Type.String())),
+    perception_text: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );
@@ -802,6 +804,16 @@ export const ServerDataTechniquesSnapshotV1 = Type.Object(
 );
 export type ServerDataTechniquesSnapshotV1 = Static<typeof ServerDataTechniquesSnapshotV1>;
 
+export const ServerDataVortexStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("vortex_state"),
+    ...VortexFieldStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1211,6 +1223,7 @@ export const ServerDataV1 = Type.Union([
   BurstMeridianEventV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataVortexStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

@@ -45,6 +45,7 @@ public final class ZoneInfoHandler implements ServerDataHandler {
             dangerLevel,
             readOptionalString(payload, "status"),
             readOptionalStringSet(payload, "active_events"),
+            readOptionalString(payload, "perception_text"),
             nowMillisSupplier.getAsLong()
         );
         if (zoneState.isEmpty()) {
