@@ -10,7 +10,7 @@
 | P0 | 七宗 lore 框架表 | 内化于 P1 七篇 JSON，含祖师姓名/根本经典/标志技法/传承代际/灭宗时间/灭宗经过/现代遗存 |
 | P1 | 七篇 JSON 全文写作 | `docs/library/peoples/{血溪,北陵,南渊,赤霞,玄水,太初,幽暗}志.json` |
 | P2 | 交叉引用 + index.md | `docs/library/peoples/index.md`（补入7条新记录）；各篇 crossRefs 互引完整 |
-| P3 | 壁文 narration episode | 每宗 3-5 段 fragments[]，总计 30 段壁文 |
+| P3 | 壁文 narration episode | 每宗 3-5 段 fragments[]，总计 29 段壁文（血溪4+北陵4+南渊3+赤霞4+玄水4+太初5+幽暗5） |
 
 ### 关键 commit
 
