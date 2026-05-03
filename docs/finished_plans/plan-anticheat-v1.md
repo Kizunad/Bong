@@ -138,13 +138,15 @@ P0 改动：在每道 clamp 判定后插入一行 `anticheat_counter.{kind}_viol
 ### 关键 commit
 
 - `77af1859` · 2026-05-04T02:26:29+12:00 · `实现反作弊计数与上报`
+- `0774b9a1` · 2026-05-04T02:53:53+12:00 · `修复反作弊上报 review 反馈`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test anticheat` ✅ 9 passed
-- `cd server && cargo test` ✅ 2172 passed
+- `cd server && cargo test anticheat` ✅ 10 passed
+- `cd server && cargo test create_new_character_rehydrates_default_character_state_and_persists_slices` ✅ 1 passed
+- `cd server && cargo test` ✅ 2173 passed
 - `cd agent && npm run build` ✅
 - `cd agent/packages/schema && npm test` ✅ 9 files / 265 tests passed
 
