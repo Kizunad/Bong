@@ -45,6 +45,9 @@ pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
 pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
+pub const CH_WOLIU_BACKFIRE: &str = "bong:woliu/backfire";
+pub const CH_WOLIU_PROJECTILE_DRAINED: &str = "bong:woliu/projectile_drained";
+pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
@@ -118,6 +121,9 @@ mod tests {
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
+        assert_eq!(CH_WOLIU_BACKFIRE, "bong:woliu/backfire");
+        assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
+        assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");

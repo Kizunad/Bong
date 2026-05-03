@@ -85,8 +85,8 @@ fn send_derived_attrs_sync_payload(
         tribulation_locked: tribulation.is_some(),
         tribulation_stage: String::new(),
         throughput_peak_norm: 0.0,
-        vortex_fake_skin_layers: attrs.vortex_fake_skin_layers,
-        vortex_ready: attrs.vortex_ready,
+        tuike_layers: attrs.tuike_layers,
+        vortex_active: attrs.vortex_active,
     }));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -99,12 +99,12 @@ fn send_derived_attrs_sync_payload(
 
     send_server_data_payload(client, payload_bytes.as_slice());
     tracing::debug!(
-        "[bong][network] sent {} {} payload to entity {entity:?} for `{}` (fake_skin_layers={} vortex_ready={})",
+        "[bong][network] sent {} {} payload to entity {entity:?} for `{}` (tuike_layers={} vortex_active={})",
         SERVER_DATA_CHANNEL,
         payload_type,
         username.0,
-        attrs.vortex_fake_skin_layers,
-        attrs.vortex_ready
+        attrs.tuike_layers,
+        attrs.vortex_active
     );
 }
 
@@ -155,8 +155,8 @@ mod tests {
             .spawn((
                 client_bundle,
                 DerivedAttrs {
-                    vortex_fake_skin_layers: 2,
-                    vortex_ready: true,
+                    tuike_layers: 2,
+                    vortex_active: true,
                     ..DerivedAttrs::default()
                 },
             ))
@@ -177,8 +177,8 @@ mod tests {
         let changed = collect_derived_attrs_payloads(&mut helper);
         assert_eq!(changed.len(), 1);
         assert!(changed[0].tribulation_locked);
-        assert_eq!(changed[0].vortex_fake_skin_layers, 2);
-        assert!(changed[0].vortex_ready);
+        assert_eq!(changed[0].tuike_layers, 2);
+        assert!(changed[0].vortex_active);
     }
 
     #[test]

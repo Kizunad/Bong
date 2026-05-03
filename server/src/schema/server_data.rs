@@ -28,6 +28,7 @@ use super::social::{
     PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
     SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
+use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
@@ -101,6 +102,7 @@ pub enum ServerDataType {
     WeaponEquipped,
     WeaponBroken,
     TreasureEquipped,
+    VortexState,
     LingtianSession,
     DeathScreen,
     TerminateScreen,
@@ -159,6 +161,7 @@ pub enum ServerDataPayloadV1 {
         danger_level: u8,
         status: ZoneStatusV1,
         active_events: Option<Vec<String>>,
+        perception_text: Option<String>,
     },
     EventAlert {
         event: EventKind,
@@ -260,6 +263,7 @@ pub enum ServerDataPayloadV1 {
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
+    VortexState(VortexFieldStateV1),
     LingtianSession(Box<LingtianSessionDataV1>),
     DeathScreen {
         visible: bool,
@@ -496,6 +500,8 @@ enum ServerDataPayloadWireV1 {
         status: ZoneStatusV1,
         #[serde(skip_serializing_if = "Option::is_none")]
         active_events: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        perception_text: Option<String>,
     },
     EventAlert {
         event: EventKind,
@@ -669,6 +675,10 @@ enum ServerDataPayloadWireV1 {
     TreasureEquipped {
         #[serde(flatten)]
         treasure_equipped: TreasureEquippedV1,
+    },
+    VortexState {
+        #[serde(flatten)]
+        state: VortexFieldStateV1,
     },
     LingtianSession {
         #[serde(flatten)]
@@ -1192,12 +1202,14 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 danger_level,
                 status,
                 active_events,
+                perception_text,
             } => Ok(Self::ZoneInfo {
                 zone,
                 spirit_qi,
                 danger_level,
                 status,
                 active_events,
+                perception_text,
             }),
             ServerDataPayloadWireV1::EventAlert {
                 event,
@@ -1374,6 +1386,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TreasureEquipped { treasure_equipped } => {
                 Ok(Self::TreasureEquipped(treasure_equipped))
             }
+            ServerDataPayloadWireV1::VortexState { state } => Ok(Self::VortexState(state)),
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
@@ -1575,12 +1588,14 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 danger_level,
                 status,
                 active_events,
+                perception_text,
             } => Self::ZoneInfo {
                 zone: zone.clone(),
                 spirit_qi: *spirit_qi,
                 danger_level: *danger_level,
                 status: *status,
                 active_events: active_events.clone(),
+                perception_text: perception_text.clone(),
             },
             ServerDataPayloadV1::EventAlert {
                 event,
@@ -1771,6 +1786,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::TreasureEquipped(t) => Self::TreasureEquipped {
                 treasure_equipped: t.clone(),
+            },
+            ServerDataPayloadV1::VortexState(state) => Self::VortexState {
+                state: state.clone(),
             },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
@@ -2073,6 +2091,7 @@ impl ServerDataPayloadV1 {
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
+            Self::VortexState(..) => ServerDataType::VortexState,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
@@ -2165,8 +2184,8 @@ mod tests {
                 tribulation_locked: false,
                 tribulation_stage: String::new(),
                 throughput_peak_norm: 0.0,
-                vortex_fake_skin_layers: 0,
-                vortex_ready: false,
+                tuike_layers: 0,
+                vortex_active: false,
             }),
             ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
                 channel: EventChannelV1::Combat,
@@ -2175,6 +2194,16 @@ mod tests {
                 text: "x".to_string(),
                 color: 0,
                 created_at_ms: 0,
+            }),
+            ServerDataPayloadV1::VortexState(VortexFieldStateV1 {
+                caster: "entity:1".to_string(),
+                active: true,
+                center: [0.0, 64.0, 0.0],
+                radius: 1.5,
+                delta: 0.25,
+                env_qi_at_cast: 0.9,
+                maintain_remaining_ticks: 80,
+                intercepted_count: 1,
             }),
             ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
                 entity_id: 1,
@@ -2662,6 +2691,7 @@ mod tests {
             danger_level: 3,
             status: ZoneStatusV1::Collapsed,
             active_events: Some(vec!["realm_collapse".to_string()]),
+            perception_text: Some("灵气几近断绝，此地有不祥预感".to_string()),
         });
 
         let value: serde_json::Value = serde_json::from_slice(
@@ -2672,6 +2702,7 @@ mod tests {
         .expect("zone_info JSON should decode");
 
         assert_eq!(value["status"], "collapsed");
+        assert_eq!(value["perception_text"], "灵气几近断绝，此地有不祥预感");
     }
 
     #[test]

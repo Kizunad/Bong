@@ -70,6 +70,10 @@ pub enum StatusEffectKind {
     Humility,
     /// plan-fauna-v1 §4 / §7 P4：变异核心震荡感知系统，短暂制造幻觉。
     InsightHallucination,
+    /// plan-woliu-v1 §3.1.C：绝灵涡流持涡态，立即降速并阻断主动攻防。
+    VortexCasting,
+    /// plan-woliu-v1 §3.2.C：抗灵压丹，降低涡流反噬触发概率。
+    AntiSpiritPressurePill,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;

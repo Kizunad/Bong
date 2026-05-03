@@ -10,6 +10,7 @@ pub mod raycast;
 pub mod resolve;
 pub mod status;
 pub mod weapon;
+pub mod woliu;
 
 use std::path::Path;
 use valence::prelude::{
@@ -147,6 +148,7 @@ pub fn register(app: &mut App) {
         )
             .chain(),
     );
+    woliu::register(app);
 
     app.add_systems(
         Update,

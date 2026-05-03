@@ -33,4 +33,5 @@ pub mod tribulation;
 pub mod tsy;
 pub mod tsy_hostile;
 pub mod vfx_event;
+pub mod woliu;
 pub mod world_state;

@@ -277,12 +277,12 @@ pub struct DerivedAttrs {
     /// 查询 miss 表示该部位/伤害类型无护甲减免。
     #[serde(default)]
     pub defense_profile: HashMap<(BodyPart, WoundKind), f32>,
-    /// plan-HUD-v1 §3.4：替尸伪皮剩余层数，client HUD 只在替尸已解锁且 >0 时显示。
+    /// plan-HUD-v1 §3.4 / plan-woliu-v1 §3.1.G：替尸伪皮剩余层数。
     #[serde(default)]
-    pub vortex_fake_skin_layers: u8,
-    /// plan-HUD-v1 §3.4：绝灵涡流可触发/激活态，client HUD 只在绝灵已解锁且 true 时显示。
+    pub tuike_layers: u8,
+    /// plan-HUD-v1 §3.4 / plan-woliu-v1 §3.1.G：绝灵涡流当前激活态。
     #[serde(default)]
-    pub vortex_ready: bool,
+    pub vortex_active: bool,
 }
 
 impl Default for DerivedAttrs {
@@ -292,8 +292,8 @@ impl Default for DerivedAttrs {
             defense_power: 1.0,
             move_speed_multiplier: 1.0,
             defense_profile: HashMap::new(),
-            vortex_fake_skin_layers: 0,
-            vortex_ready: false,
+            tuike_layers: 0,
+            vortex_active: false,
         }
     }
 }

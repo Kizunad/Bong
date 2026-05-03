@@ -42,6 +42,8 @@ pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
+pub mod woliu_event_bridge;
+pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -67,6 +69,7 @@ use valence::prelude::{
 use crate::combat::components::Lifecycle;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
+use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
@@ -335,6 +338,8 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
             burst_event_emit::emit_burst_meridian_events,
+            woliu_event_bridge::publish_woliu_backfire_events,
+            woliu_event_bridge::publish_projectile_qi_drained_events,
         ),
     );
     app.add_systems(
@@ -469,6 +474,7 @@ pub fn register(app: &mut App) {
             treasure_equipped_emit::emit_treasure_equipped_payloads,
         ),
     );
+    app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);
     app.add_systems(
         Update,
         (
@@ -1347,20 +1353,30 @@ fn emit_player_state_payloads(
     }
 }
 
+type ZoneInfoClientItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Position,
+    Option<&'a Cultivation>,
+    Option<&'a UnlockedPerceptions>,
+);
+type ZoneInfoClientFilter = With<Client>;
+
 fn emit_zone_info_on_zone_transition(
     zone_registry: Option<Res<ZoneRegistry>>,
     mut tracker: valence::prelude::ResMut<ZoneTransitionTracker>,
-    mut clients: Query<(Entity, &mut Client, &Position), With<Client>>,
+    mut clients: Query<ZoneInfoClientItem<'_>, ZoneInfoClientFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
     let mut live_entities = HashSet::new();
 
-    for (entity, mut client, position) in &mut clients {
+    for (entity, mut client, position, cultivation, perceptions) in &mut clients {
         live_entities.insert(entity);
 
         let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let previous_zone = tracker.last_zone_by_entity.get(&entity);
+        let previous_zone = tracker.last_zone_by_entity.get(&entity).cloned();
         let transitioned = previous_zone
+            .as_deref()
             .map(|last_zone| !last_zone.eq_ignore_ascii_case(zone_name.as_str()))
             .unwrap_or(true);
 
@@ -1376,6 +1392,16 @@ fn emit_zone_info_on_zone_transition(
             tracker.last_zone_by_entity.insert(entity, zone_name);
             continue;
         };
+        let previous_qi = previous_zone
+            .as_deref()
+            .and_then(|name| zone_registry.find_zone_by_name(name))
+            .map(|zone| zone.spirit_qi as f32)
+            .unwrap_or(zone.spirit_qi as f32);
+        let perception_text = crate::combat::woliu::ambient_qi_perception(
+            previous_qi,
+            zone.spirit_qi as f32,
+            has_zone_qi_inspect(cultivation, perceptions),
+        );
 
         let payload = ServerDataV1::new(ServerDataPayloadV1::ZoneInfo {
             zone: zone.name.clone(),
@@ -1383,6 +1409,7 @@ fn emit_zone_info_on_zone_transition(
             danger_level: zone.danger_level,
             status: zone_status(zone),
             active_events: (!zone.active_events.is_empty()).then(|| zone.active_events.clone()),
+            perception_text,
         });
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -1400,6 +1427,16 @@ fn emit_zone_info_on_zone_transition(
     tracker
         .last_zone_by_entity
         .retain(|entity, _| live_entities.contains(entity));
+}
+
+fn has_zone_qi_inspect(
+    cultivation: Option<&Cultivation>,
+    perceptions: Option<&UnlockedPerceptions>,
+) -> bool {
+    perceptions.is_some_and(|perceptions| perceptions.set.contains("zone_qi_density"))
+        || cultivation.is_some_and(|cultivation| {
+            crate::cultivation::realm_vision::planner::realm_rank(cultivation.realm) >= 2
+        })
 }
 
 fn emit_event_alerts_on_major_event_creation(
@@ -3345,12 +3382,14 @@ mod tests {
                     danger_level,
                     status,
                     active_events,
+                    perception_text,
                 } => {
                     assert_eq!(zone, "spawn");
                     assert_eq!(*spirit_qi, 0.9);
                     assert_eq!(*danger_level, 0);
                     assert_eq!(*status, ZoneStatusV1::Normal);
                     assert_eq!(active_events, &None);
+                    assert_eq!(perception_text, &None);
                 }
                 other => panic!("expected zone_info payload, got {other:?}"),
             }
@@ -3380,12 +3419,17 @@ mod tests {
                     danger_level,
                     status,
                     active_events,
+                    perception_text,
                 } => {
                     assert_eq!(zone, "blood_valley");
                     assert_eq!(*spirit_qi, 0.42);
                     assert_eq!(*danger_level, 4);
                     assert_eq!(*status, ZoneStatusV1::Normal);
                     assert_eq!(active_events, &Some(vec!["beast_tide".to_string()]));
+                    assert_eq!(
+                        perception_text.as_deref(),
+                        Some("灵气几近断绝，此地有不祥预感")
+                    );
                 }
                 other => panic!("expected zone_info payload, got {other:?}"),
             }

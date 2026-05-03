@@ -164,6 +164,17 @@ pub enum BiographyEntry {
         received_item: String,
         tick: u64,
     },
+    /// plan-woliu-v1 §3.1.D / P2：涡流抽干飞入真元投射物。
+    VortexProjectileDrained {
+        projectile_id: String,
+        drained_amount: f32,
+        tick: u64,
+    },
+    /// plan-woliu-v1 §3.1.E / P2：涡流维持或环境失败导致反噬。
+    VortexBackfired {
+        cause: String,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -424,6 +435,14 @@ fn format_entry(entry: &BiographyEntry) -> String {
             received_item,
             tick,
         } => format!("t{tick}:trade:{counterparty_id}:{offered_item}->{received_item}"),
+        BiographyEntry::VortexProjectileDrained {
+            projectile_id,
+            drained_amount,
+            tick,
+        } => format!("t{tick}:woliu:drain:{projectile_id}:{drained_amount:.2}"),
+        BiographyEntry::VortexBackfired { cause, tick } => {
+            format!("t{tick}:woliu:backfire:{cause}")
+        }
     }
 }
 

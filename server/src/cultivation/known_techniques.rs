@@ -28,11 +28,12 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 4] = [
+const TECHNIQUE_IDS: [&str; 5] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
+    "woliu.vortex",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,7 +57,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 4] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 5] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -130,6 +131,22 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 4] = [
         cooldown_ticks: 120,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/ni_mai_hu_ti.png",
+    },
+    TechniqueDefinition {
+        id: "woliu.vortex",
+        display_name: "绝灵涡流",
+        grade: "profound",
+        description: "掌心强造相对负灵域，持涡抽干飞入真元，久持则反噬手经。",
+        required_realm: "Condense",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.01,
+        }],
+        qi_cost: 0.0,
+        cast_ticks: 1,
+        cooldown_ticks: 20,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/woliu_vortex.png",
     },
 ];
 

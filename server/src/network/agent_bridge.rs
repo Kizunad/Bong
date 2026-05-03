@@ -78,6 +78,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::WeaponEquipped => "weapon_equipped",
         ServerDataType::WeaponBroken => "weapon_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
+        ServerDataType::VortexState => "vortex_state",
         ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::DeathScreen => "death_screen",
         ServerDataType::TerminateScreen => "terminate_screen",
@@ -455,6 +456,7 @@ mod server_data_tests {
                     danger_level: 3,
                     status: ZoneStatusV1::Normal,
                     active_events: Some(vec!["beast_tide".to_string()]),
+                    perception_text: Some("灵气稀薄，引气如吸沙".to_string()),
                 }),
                 json!({
                     "v": SERVER_DATA_VERSION,
@@ -464,6 +466,7 @@ mod server_data_tests {
                     "danger_level": 3,
                     "status": "normal",
                     "active_events": ["beast_tide"],
+                    "perception_text": "灵气稀薄，引气如吸沙",
                 }),
             ),
             (
