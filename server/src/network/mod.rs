@@ -267,7 +267,11 @@ pub fn register(app: &mut App) {
     app.insert_resource(resourcepack::ResourcePackConfig::default());
     app.insert_resource(resourcepack::ResourcePackStatusStore::default());
 
-    app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
+    app.add_systems(
+        Startup,
+        bootstrap_world_model_runtime_mirror_system
+            .after(crate::persistence::PersistenceBootstrapSet),
+    );
 
     app.add_systems(
         Update,
