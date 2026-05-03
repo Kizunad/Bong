@@ -55,13 +55,6 @@ cols = 7
   template_id = "ash_spider_silk"
   stack_count = 1
 
-  # 龛石 ×1 — 出生自带一次，放下后成为私有灵龛。
-  [[containers.items]]
-  row = 1
-  col = 3
-  template_id = "spirit_niche_stone"
-  stack_count = 1
-
   # 铁剑 1×2 — 备用正经武器（plan-weapon-v1 §13 验收）
   [[containers.items]]
   row = 0

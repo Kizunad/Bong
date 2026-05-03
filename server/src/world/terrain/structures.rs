@@ -243,6 +243,8 @@ pub(super) fn decorate_chunk(
             place_spawn_portal_in_chunk(chunk, min_y, &bounds, &instance);
         }
     }
+
+    place_spawn_tutorial_coffins_from_pois(chunk, min_y, world_height, terrain, &bounds);
 }
 
 #[derive(Clone, Copy)]
@@ -1524,6 +1526,125 @@ fn place_spawn_portal_in_chunk(
             instance.origin_z + cz,
             BlockState::END_ROD,
             5,
+        );
+    }
+
+    for ((world_x, world_y, world_z), placement) in placements {
+        if !chunk_bounds.contains(world_x, world_z) {
+            continue;
+        }
+        let local_y = world_y - min_y;
+        if local_y < 0 || local_y >= chunk.height() as i32 {
+            continue;
+        }
+        let local_x = (world_x - chunk_bounds.min_x) as u32;
+        let local_z = (world_z - chunk_bounds.min_z) as u32;
+        let existing = chunk.block_state(local_x, local_y as u32, local_z);
+        if !can_replace(existing, placement.block, placement.priority) {
+            continue;
+        }
+        chunk.set_block_state(local_x, local_y as u32, local_z, placement.block);
+    }
+}
+
+fn place_spawn_tutorial_coffins_from_pois(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    chunk_bounds: &ChunkBounds,
+) {
+    for poi in terrain
+        .pois()
+        .iter()
+        .filter(|poi| poi.kind == "spawn_tutorial_coffin")
+    {
+        let origin_x = poi.pos_xyz[0].round() as i32;
+        let origin_z = poi.pos_xyz[2].round() as i32;
+        let bounds = StructureBounds {
+            min_x: origin_x - 5,
+            max_x: origin_x + 5,
+            min_z: origin_z - 5,
+            max_z: origin_z + 5,
+        };
+        if !bounds.intersects_chunk(chunk_bounds) {
+            continue;
+        }
+        let sample = terrain.sample(origin_x, origin_z);
+        let surface_y = column::surface_y_for_sample(&sample, min_y, world_height);
+        place_spawn_tutorial_coffin_in_chunk(
+            chunk,
+            min_y,
+            chunk_bounds,
+            origin_x,
+            surface_y,
+            origin_z,
+        );
+    }
+}
+
+fn place_spawn_tutorial_coffin_in_chunk(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    chunk_bounds: &ChunkBounds,
+    origin_x: i32,
+    surface_y: i32,
+    origin_z: i32,
+) {
+    let mut placements = HashMap::new();
+    for dz in -4_i32..=4 {
+        for dx in -4_i32..=4 {
+            let dist2 = dx * dx + dz * dz;
+            if dist2 > 18 {
+                continue;
+            }
+            let ash = if (dx * 31 + dz * 17).rem_euclid(3) == 0 {
+                BlockState::COARSE_DIRT
+            } else {
+                BlockState::GRAVEL
+            };
+            upsert_block(
+                &mut placements,
+                chunk_bounds,
+                origin_x + dx,
+                surface_y,
+                origin_z + dz,
+                ash,
+                4,
+            );
+        }
+    }
+
+    for dz in -2_i32..=2 {
+        for dx in -1_i32..=1 {
+            let block = if dx == 0 && dz == 0 {
+                BlockState::CHISELED_STONE_BRICKS
+            } else if dz.abs() == 2 {
+                BlockState::CRACKED_STONE_BRICKS
+            } else {
+                BlockState::MOSSY_STONE_BRICKS
+            };
+            upsert_block(
+                &mut placements,
+                chunk_bounds,
+                origin_x + dx,
+                surface_y + 1,
+                origin_z + dz,
+                block,
+                6,
+            );
+        }
+    }
+
+    for dz in -1_i32..=1 {
+        upsert_block(
+            &mut placements,
+            chunk_bounds,
+            origin_x,
+            surface_y + 2,
+            origin_z + dz,
+            BlockState::STONE_BRICK_SLAB.set(PropName::Type, PropValue::Bottom),
+            7,
         );
     }
 

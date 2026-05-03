@@ -9,6 +9,7 @@ pub mod poi_mutant_nest;
 pub mod poi_novice;
 pub mod poi_respawn_tick;
 pub mod rift_portal;
+pub mod spawn_tutorial;
 pub mod terrain;
 pub mod tsy;
 pub mod tsy_container;
@@ -99,6 +100,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(karma::KarmaWeightStore::default());
     app.insert_resource(karma::QiDensityHeatmap::default());
     events::register(app);
+    spawn_tutorial::register(app);
     terrain::register(app);
     // plan-tsy-zone-v1 §2.3 — drain tick 接到 combat::Physics set 内：
     // 同 tick 顺序为 wound_bleed_tick → tsy_drain_tick → death_arbiter_tick

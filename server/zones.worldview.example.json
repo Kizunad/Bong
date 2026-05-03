@@ -65,6 +65,48 @@
           "tags": ["shelter", "hidden"],
           "unlock": "日落后可见微光",
           "qi_affinity": 0.05
+        },
+        {
+          "kind": "spawn_tutorial_coffin",
+          "name": "半埋石棺",
+          "pos_xyz": [0.0, 69.0, 0.0],
+          "tags": ["spawn_tutorial", "coffin", "loot:spirit_niche_stone"],
+          "qi_affinity": 0.05
+        },
+        {
+          "kind": "tutorial_lingquan",
+          "name": "教学灵泉 #1",
+          "pos_xyz": [50.0, 65.0, 100.0],
+          "tags": ["spawn_tutorial", "index:1", "qi:0.5"],
+          "qi_affinity": 0.35
+        },
+        {
+          "kind": "tutorial_lingquan",
+          "name": "教学灵泉 #2",
+          "pos_xyz": [-30.0, 65.0, -80.0],
+          "tags": ["spawn_tutorial", "index:2", "qi:0.5"],
+          "qi_affinity": 0.35
+        },
+        {
+          "kind": "tutorial_chest",
+          "name": "灵泉边小匣",
+          "pos_xyz": [55.0, 65.0, 100.0],
+          "tags": ["spawn_tutorial", "loot:kaimai_dan", "near_lingquan:1"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "tutorial_rogue_anchor",
+          "name": "踽行散修",
+          "pos_xyz": [35.0, 70.0, -45.0],
+          "tags": ["spawn_tutorial", "rogue", "killable"],
+          "qi_affinity": 0.02
+        },
+        {
+          "kind": "tutorial_rat_path",
+          "name": "鼠群擦痕",
+          "pos_xyz": [25.0, 65.0, 50.0],
+          "tags": ["spawn_tutorial", "rat_swarm", "placeholder:zombie"],
+          "danger_bias": 1
         }
       ]
     },

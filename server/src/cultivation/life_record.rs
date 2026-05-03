@@ -175,6 +175,11 @@ pub enum BiographyEntry {
         cause: String,
         tick: u64,
     },
+    /// plan-spawn-tutorial-v1 P2 — 出生沉默教学完成：醒灵突破至引气。
+    SpawnTutorialCompleted {
+        minutes_since_spawn: u32,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,6 +448,10 @@ fn format_entry(entry: &BiographyEntry) -> String {
         BiographyEntry::VortexBackfired { cause, tick } => {
             format!("t{tick}:woliu:backfire:{cause}")
         }
+        BiographyEntry::SpawnTutorialCompleted {
+            minutes_since_spawn,
+            tick,
+        } => format!("t{tick}:spawn_tutorial_completed:{minutes_since_spawn}m"),
     }
 }
 

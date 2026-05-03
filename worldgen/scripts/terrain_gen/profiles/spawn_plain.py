@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..blueprint import BlueprintZone
+from ..blueprint import BlueprintZone, PoiSpec
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
 from .base import (
@@ -11,6 +11,11 @@ from .base import (
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+TUTORIAL_LINGQUAN_QI_THRESHOLD = 0.5
+TUTORIAL_LINGQUAN_SCAN_RADIUS = 200.0
+TUTORIAL_LINGQUAN_MIN_SEPARATION = 40.0
+TUTORIAL_LINGQUAN_FALLBACK_OFFSETS = ((50.0, 100.0), (-30.0, -80.0))
 
 
 SPAWN_PLAIN_DECORATIONS = (
@@ -47,6 +52,131 @@ SPAWN_PLAIN_DECORATIONS = (
         notes="行者石：长满苔藓的路边巨石，曾被旅人坐过。",
     ),
 )
+
+
+def _distance_xz(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    dx = a[0] - b[0]
+    dz = a[2] - b[2]
+    return float((dx * dx + dz * dz) ** 0.5)
+
+
+def _fallback_lingquan_positions(
+    spawn_center: tuple[float, float],
+    limit: int,
+) -> list[tuple[float, float, float]]:
+    center_x, center_z = spawn_center
+    return [
+        (center_x + offset_x, 65.0, center_z + offset_z)
+        for offset_x, offset_z in TUTORIAL_LINGQUAN_FALLBACK_OFFSETS[:limit]
+    ]
+
+
+def dynamic_lingquan_selector(
+    spawn_center: tuple[float, float],
+    qi_density: np.ndarray | None = None,
+    height: np.ndarray | None = None,
+    wx: np.ndarray | None = None,
+    wz: np.ndarray | None = None,
+    radius: float = TUTORIAL_LINGQUAN_SCAN_RADIUS,
+    threshold: float = TUTORIAL_LINGQUAN_QI_THRESHOLD,
+    limit: int = 2,
+) -> tuple[tuple[float, float, float], ...]:
+    """Pick tutorial lingquan points near spawn from high-qi cells.
+
+    The function is pure and deterministic. Raster generation passes field
+    arrays to scan real qi values; manifest export can call it without arrays and
+    receives the stable fallback anchors that this profile also bumps to qi>=0.5.
+    """
+
+    selected: list[tuple[float, float, float]] = []
+    center_x, center_z = spawn_center
+    if (
+        qi_density is not None
+        and height is not None
+        and wx is not None
+        and wz is not None
+    ):
+        dist2 = (wx - center_x) ** 2 + (wz - center_z) ** 2
+        mask = (dist2 <= radius * radius) & (qi_density >= threshold)
+        candidates = np.argwhere(mask)
+        ranked = sorted(
+            candidates,
+            key=lambda idx: (
+                -float(qi_density[int(idx[0]), int(idx[1])]),
+                float(dist2[int(idx[0]), int(idx[1])]),
+            ),
+        )
+        for row, col in ranked:
+            pos = (
+                float(wx[int(row), int(col)]),
+                float(height[int(row), int(col)] + 1.0),
+                float(wz[int(row), int(col)]),
+            )
+            if all(_distance_xz(pos, existing) >= TUTORIAL_LINGQUAN_MIN_SEPARATION for existing in selected):
+                selected.append(pos)
+            if len(selected) >= limit:
+                break
+
+    for fallback in _fallback_lingquan_positions(spawn_center, limit):
+        if len(selected) >= limit:
+            break
+        if all(_distance_xz(fallback, existing) >= TUTORIAL_LINGQUAN_MIN_SEPARATION for existing in selected):
+            selected.append(fallback)
+
+    return tuple(selected[:limit])
+
+
+def spawn_tutorial_pois_for_zone(zone: BlueprintZone) -> tuple[PoiSpec, ...]:
+    center_x, center_z = zone.center_xz
+    lingquans = dynamic_lingquan_selector((float(center_x), float(center_z)))
+    first_lingquan = lingquans[0]
+    rat_anchor = (
+        (center_x + first_lingquan[0]) * 0.5,
+        first_lingquan[1],
+        (center_z + first_lingquan[2]) * 0.5,
+    )
+
+    pois = [
+        PoiSpec(
+            kind="spawn_tutorial_coffin",
+            name="半埋石棺",
+            pos_xyz=(float(center_x), 69.0, float(center_z)),
+            tags=("spawn_tutorial", "coffin", "loot:spirit_niche_stone"),
+            qi_affinity=0.05,
+        ),
+        PoiSpec(
+            kind="tutorial_chest",
+            name="灵泉边小匣",
+            pos_xyz=(first_lingquan[0] + 5.0, first_lingquan[1], first_lingquan[2]),
+            tags=("spawn_tutorial", "loot:kaimai_dan", "near_lingquan:1"),
+            qi_affinity=0.10,
+        ),
+        PoiSpec(
+            kind="tutorial_rogue_anchor",
+            name="踽行散修",
+            pos_xyz=(float(center_x + 35), 70.0, float(center_z - 45)),
+            tags=("spawn_tutorial", "rogue", "killable"),
+            qi_affinity=0.02,
+        ),
+        PoiSpec(
+            kind="tutorial_rat_path",
+            name="鼠群擦痕",
+            pos_xyz=rat_anchor,
+            tags=("spawn_tutorial", "rat_swarm", "placeholder:zombie"),
+            danger_bias=1,
+        ),
+    ]
+    for idx, pos in enumerate(lingquans, start=1):
+        pois.append(
+            PoiSpec(
+                kind="tutorial_lingquan",
+                name=f"教学灵泉 #{idx}",
+                pos_xyz=pos,
+                tags=("spawn_tutorial", f"index:{idx}", "qi:0.5"),
+                qi_affinity=0.35,
+            )
+        )
+    return tuple(pois)
 
 
 class SpawnPlainGenerator(TerrainProfileGenerator):
@@ -150,6 +280,18 @@ def fill_spawn_plain_tile(
     qi_density = np.clip(qi_density * (0.5 + qi_base), 0.0, 1.0)
     mofa_decay = np.clip(0.28 - heartland * 0.10 + np.abs(rolling) * 0.03, 0.05, 0.55)
 
+    lingquan_bump = np.zeros_like(height, dtype=np.float64)
+    for lingquan_x, _, lingquan_z in dynamic_lingquan_selector((float(center_x), float(center_z))):
+        dist = np.sqrt((wx - lingquan_x) ** 2 + (wz - lingquan_z) ** 2)
+        lingquan_bump = np.maximum(lingquan_bump, np.clip(1.0 - dist / 8.0, 0.0, 1.0))
+    qi_density = np.where(
+        lingquan_bump > 0.0,
+        np.maximum(qi_density, TUTORIAL_LINGQUAN_QI_THRESHOLD + lingquan_bump * 0.12),
+        qi_density,
+    )
+    surface_id = np.where(lingquan_bump > 0.08, grass_id, surface_id)
+    biome_id = np.where(lingquan_bump > 0.08, flower_forest_biome_id, biome_id)
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
@@ -163,6 +305,7 @@ def fill_spawn_plain_tile(
 
     # Flora: meadow-wide shrubs with scattered trees on heartland, boulders on edges
     flora_density = np.clip(heartland * 0.55 + inner_meadow * 0.15, 0.0, 1.0)
+    flora_density = np.where(lingquan_bump > 0.0, np.maximum(flora_density, 0.35), flora_density)
     flora_variant = np.zeros_like(height, dtype=np.int32)
     # Default shrub
     flora_variant = np.where(flora_density > 0.20, 3, flora_variant)

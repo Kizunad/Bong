@@ -32,6 +32,16 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
     ) {
         if (hand != Hand.MAIN_HAND || player == null || hit == null) return;
 
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world != null) {
+            BlockPos pos = hit.getBlockPos();
+            if (bong$isSpawnTutorialCoffin(client, pos)) {
+                ClientRequestSender.sendCoffinOpen(pos);
+                cir.setReturnValue(ActionResult.SUCCESS);
+                return;
+            }
+        }
+
         InventoryItem mainHand = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
         if (mainHand != null
             && AlchemyFurnaceItems.isFurnaceItem(mainHand.itemId())
@@ -42,7 +52,6 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return;
         }
 
-        MinecraftClient client = MinecraftClient.getInstance();
         if (client.world == null) return;
         BlockPos pos = hit.getBlockPos();
         if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
@@ -51,5 +60,12 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             client.execute(() -> client.setScreen(new AlchemyScreen(pos)));
             cir.setReturnValue(ActionResult.SUCCESS);
         }
+    }
+
+    private static boolean bong$isSpawnTutorialCoffin(MinecraftClient client, BlockPos pos) {
+        if (!client.world.getBlockState(pos).isOf(Blocks.CHISELED_STONE_BRICKS)) {
+            return false;
+        }
+        return Math.abs(pos.getX()) <= 8 && pos.getY() >= 60 && pos.getY() <= 90 && Math.abs(pos.getZ()) <= 8;
     }
 }

@@ -19,6 +19,7 @@ use crate::persistence::persist_player_cultivation_bundle;
 use crate::persistence::PersistenceSettings;
 use crate::skill::components::SkillSet;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::spawn_tutorial::TutorialState;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
@@ -69,6 +70,7 @@ type CultivationBundleQueryItem<'a> = (
     &'a InsightQuota,
     &'a UnlockedPerceptions,
     &'a InsightModifiers,
+    Option<&'a TutorialState>,
 );
 
 pub fn register(app: &mut App) {
@@ -268,6 +270,7 @@ pub(crate) fn despawn_disconnected_clients(
         &InsightQuota,
         &UnlockedPerceptions,
         &InsightModifiers,
+        Option<&TutorialState>,
     )>,
 ) {
     for entity in disconnected_clients.read() {
@@ -296,6 +299,7 @@ pub(crate) fn despawn_disconnected_clients(
                 insight_quota,
                 unlocked_perceptions,
                 insight_modifiers,
+                tutorial_state,
             )) = cultivation_bundle.get(entity)
             {
                 if let Err(error) = persist_player_cultivation_bundle(
@@ -311,6 +315,7 @@ pub(crate) fn despawn_disconnected_clients(
                     insight_quota,
                     unlocked_perceptions,
                     insight_modifiers,
+                    tutorial_state,
                 ) {
                     tracing::warn!(
                         "[bong][player] failed to persist cultivation bundle for disconnected client `{}`: {error}",
@@ -380,6 +385,7 @@ fn flush_connected_players_on_shutdown(
         &InsightQuota,
         &UnlockedPerceptions,
         &InsightModifiers,
+        Option<&TutorialState>,
     )>,
 ) {
     if app_exit.read().next().is_none() {
@@ -412,6 +418,7 @@ fn flush_connected_players_on_shutdown(
             insight_quota,
             unlocked_perceptions,
             insight_modifiers,
+            tutorial_state,
         )) = cultivation_bundle.get(entity)
         {
             if let Err(error) = persist_player_cultivation_bundle(
@@ -427,6 +434,7 @@ fn flush_connected_players_on_shutdown(
                 insight_quota,
                 unlocked_perceptions,
                 insight_modifiers,
+                tutorial_state,
             ) {
                 tracing::warn!(
                     "[bong][player] failed to persist cultivation bundle during shutdown flush for `{}`: {error}",
@@ -543,6 +551,7 @@ fn autosave_player_cultivation_bundles(
         insight_quota,
         unlocked_perceptions,
         insight_modifiers,
+        tutorial_state,
     ) in &players
     {
         match persist_player_cultivation_bundle(
@@ -558,6 +567,7 @@ fn autosave_player_cultivation_bundles(
             insight_quota,
             unlocked_perceptions,
             insight_modifiers,
+            tutorial_state,
         ) {
             Ok(()) => saved_count += 1,
             Err(error) => tracing::warn!(

@@ -1,0 +1,70 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "player_id",
+    "hook",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "tutorial_hook_event",
+      "type": "string"
+    },
+    "player_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "hook": {
+      "anyOf": [
+        {
+          "const": "spawn_entered",
+          "type": "string"
+        },
+        {
+          "const": "coffin_opened",
+          "type": "string"
+        },
+        {
+          "const": "moved200_blocks",
+          "type": "string"
+        },
+        {
+          "const": "first_sit_meditate",
+          "type": "string"
+        },
+        {
+          "const": "first_meridian_opened",
+          "type": "string"
+        },
+        {
+          "const": "rat_swarm_encounter",
+          "type": "string"
+        },
+        {
+          "const": "lingquan_reached",
+          "type": "string"
+        },
+        {
+          "const": "breakthrough_window",
+          "type": "string"
+        },
+        {
+          "const": "realm_advanced_to_induce",
+          "type": "string"
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

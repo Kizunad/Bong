@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "player_id",
+    "coffin_pos",
+    "granted_item_id",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "coffin_opened",
+      "type": "string"
+    },
+    "player_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "coffin_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "granted_item_id": {
+      "const": "spirit_niche_stone",
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

@@ -181,6 +181,12 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesCoffinOpen() {
+        String json = ClientRequestProtocol.encodeCoffinOpen(new BlockPos(0, 69, 0));
+        assertEquals("{\"type\":\"coffin_open\",\"v\":1,\"x\":0,\"y\":69,\"z\":0}", json);
+    }
+
+    @Test
     void encodesSpiritNicheRevealRequests() {
         assertEquals(
             "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",

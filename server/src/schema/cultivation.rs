@@ -199,6 +199,10 @@ pub enum BiographyEntryV1 {
         new_realm: String,
         tick: u64,
     },
+    SpawnTutorialCompleted {
+        minutes_since_spawn: u32,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

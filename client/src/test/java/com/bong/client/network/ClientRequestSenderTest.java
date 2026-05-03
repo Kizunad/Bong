@@ -194,6 +194,15 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendCoffinOpenUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendCoffinOpen(new BlockPos(0, 69, 0));
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals("{\"type\":\"coffin_open\",\"v\":1,\"x\":0,\"y\":69,\"z\":0}", sent.get(0).body());
+    }
+
+    @Test
     void sendAlchemyFurnaceRequestsUseCorrectChannelAndBlockPosJson() {
         install();
         BlockPos pos = new BlockPos(-12, 64, 38);
