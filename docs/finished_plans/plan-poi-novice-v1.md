@@ -293,3 +293,42 @@ P2  朽坏视觉 + v1 收口
 
 - 2026-05-01：骨架创建。plan-gameplay-journey-v1 §P1 派生。
 - 2026-05-03：从 skeleton 升 active。§A 概览 + §3 v1 P0/P1/P2 数据契约落地（7 个决策点闭环 Q108-Q114，5 个 v1 实装时拍板 Q115-Q119）。primary axis = **5 大玩法首次触发的步行可达性**（玩家从 spawn 出发 5 分钟步行内可见任一 POI 的概率）。**完全动态选址**（Q108: C）取代 skeleton 给的固定坐标 — worldgen 按地形 + 灵气浓度 + 最小间距 1000 格算出 6 处。**沉默引导原则沿用**（plan-spawn-tutorial-v1 一致）：v1 严格无 UI 标记 / 无任务面板，POI 自然存在地图上。下一个候选：plan-fauna-v1（真实异变兽）/ plan-identity-v1（信誉度系统）/ plan-forge-leftovers-v1（炼器 client UI）。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 worldgen：`worldgen/scripts/poi_novice_selector.py`、`worldgen/scripts/terrain_gen/bakers/raster_export.py`、`worldgen/blueprint/poi_novice/*.json` 接入 6 类新手 POI 动态选址；实际仓库目录为 `worldgen/blueprint/`，未新建平行 `blueprints/`。
+- P1 server runtime：`server/src/world/poi_novice.rs`、`server/src/world/poi_respawn_tick.rs`、`server/src/world/poi_mutant_nest.rs`、`server/src/npc/poi_rogue_village.rs`、`server/src/inventory/poi_loot.rs` 接入 POI registry、屠村拒交易 stub、刷新周期、散修聚居点与兽巢参数。
+- P1/P2 event bridge：`server/src/network/poi_novice_bridge.rs`、`server/src/network/redis_bridge.rs`、`server/src/schema/poi_novice.rs`、`agent/packages/schema/src/poi-novice.ts`、`agent/packages/schema/generated/*.json` 接入 `bong:poi_novice/event` 契约。
+- P2 narration/LifeRecord：`server/src/world/poi_novice.rs` 接入 `PoiFirstActionEvent` → `LifeRecord` 记录；`agent/packages/tiandao/src/redis-ipc.ts` 和 `agent/packages/tiandao/src/narration/templates.ts` 接入 POI spawned / trespass narration。
+
+### 关键 commit
+
+- `8e4a8fa1` 2026-05-03 `feat(worldgen): 接入新手 POI 动态选址`
+- `4e57b096` 2026-05-03 `feat(schema): 定义新手 POI 事件契约`
+- `316195b9` 2026-05-03 `feat(server): 接入新手 POI runtime 与刷新 stub`
+- `df8ee3c8` 2026-05-03 `feat(agent): 增加新手 POI 事件叙事`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → `2121 passed`
+- `cd agent && npm run build` → schema / tiandao TypeScript build 通过
+- `cd agent/packages/schema && npm test` → `258 passed`
+- `cd agent/packages/tiandao && npm test` → `213 passed`
+- `cd worldgen && python3 -m pytest "tests/test_poi_novice_selector.py"` → `3 passed`
+- `cd worldgen && python3 -m scripts.terrain_gen --tile-size 512` → raster export 通过，`tiles synthesized: 208`
+
+### 跨仓库核验
+
+- worldgen：`select_poi_locations`、`SelectionStrategy.STRICT_RADIUS_1500`、`inject_dynamic_novice_pois`、`novice_pois` manifest payload。
+- server：`PoiNoviceLoader`、`PoiNoviceRegistry`、`TrespassEvent`、`PoiRespawnStore`、`CH_POI_NOVICE_EVENT`、`RedisOutbound::PoiSpawned` / `PoiTrespass`。
+- agent/schema：`PoiSpawnedEventV1`、`TrespassEventV1`、`PoiNoviceKindV1`、generated schema freshness gate。
+- agent/tiandao：`RedisIpc.onPoiNoviceEvent`、`renderPoiSpawnedNarration`、`renderTrespassNarration`。
+
+### 遗留 / 后续
+
+- 真实异变兽仍依赖 `plan-fauna-v1`；本 plan 保留 zombie 高难度占位参数。
+- 完整信誉度系统仍依赖 `plan-identity-v1`；本 plan 仅落地 1 周拒交易 stub 和 trespass event。
+- 破败炼器台 / 凡铁丹炉 UI 仍依赖 `plan-forge-leftovers-v1` / `plan-alchemy-client-v1`。
+- POI 联动事件、散修个性化对话、更多朽坏纹饰留给 `plan-poi-novice-v2`。
