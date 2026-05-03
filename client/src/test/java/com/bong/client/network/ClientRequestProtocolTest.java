@@ -193,6 +193,33 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesZhenfaRequests() {
+        BlockPos pos = new BlockPos(11, 64, -3);
+        assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"trap\",\"carrier\":\"night_withered_vine\",\"qi_invest_ratio\":0.3,\"trigger\":\"proximity\"}",
+            ClientRequestProtocol.encodeZhenfaPlace(
+                pos,
+                ClientRequestProtocol.ZhenfaKind.TRAP,
+                ClientRequestProtocol.ZhenfaCarrierKind.NIGHT_WITHERED_VINE,
+                0.3,
+                "proximity"
+            )
+        );
+        assertEquals(
+            "{\"type\":\"zhenfa_trigger\",\"v\":1}",
+            ClientRequestProtocol.encodeZhenfaTrigger(null)
+        );
+        assertEquals(
+            "{\"type\":\"zhenfa_trigger\",\"v\":1,\"instance_id\":42}",
+            ClientRequestProtocol.encodeZhenfaTrigger(42L)
+        );
+        assertEquals(
+            "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
+            ClientRequestProtocol.encodeZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK)
+        );
+    }
+
+    @Test
     void encodesSparringInviteResponse() {
         String json = ClientRequestProtocol.encodeSparringInviteResponse("sparring:1:a:b", true, false);
         assertEquals(

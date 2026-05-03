@@ -10,6 +10,7 @@ use super::alchemy::AlchemyInterventionV1;
 use super::inventory::InventoryLocationV1;
 use crate::cultivation::components::MeridianId;
 use crate::cultivation::forging::ForgeAxis;
+use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -149,6 +150,33 @@ pub enum ClientRequestV1 {
         offer_id: String,
         accepted: bool,
         requested_instance_id: Option<u64>,
+    },
+    /// plan-zhenfa-v1 §3.1 / §3.2 — 持阵旗右键方块布置诡雷或警戒场。
+    ZhenfaPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        kind: ZhenfaKind,
+        #[serde(default)]
+        carrier: Option<ZhenfaCarrierKind>,
+        qi_invest_ratio: f64,
+        #[serde(default)]
+        trigger: Option<String>,
+    },
+    /// plan-zhenfa-v1 §3.1.G — 主动引爆最近或指定的自有诡雷。
+    ZhenfaTrigger {
+        v: u8,
+        #[serde(default)]
+        instance_id: Option<u64>,
+    },
+    /// plan-zhenfa-v1 §3.1.E — 识色法发现阵眼后的拆除 / 强破流程。
+    ZhenfaDisarm {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        mode: ZhenfaDisarmMode,
     },
     LearnSkillScroll {
         v: u8,
@@ -1015,6 +1043,61 @@ mod tests {
                 ..
             } => assert_eq!(requested_instance_id, None),
             other => panic!("expected TradeOfferResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zhenfa_requests_roundtrip() {
+        let place = r#"{"type":"zhenfa_place","v":1,"x":1,"y":64,"z":-2,"kind":"trap","carrier":"night_withered_vine","qi_invest_ratio":0.3,"trigger":"proximity"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(place).unwrap();
+        match req {
+            ClientRequestV1::ZhenfaPlace {
+                v,
+                x,
+                y,
+                z,
+                kind,
+                carrier,
+                qi_invest_ratio,
+                trigger,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (1, 64, -2));
+                assert_eq!(kind, ZhenfaKind::Trap);
+                assert_eq!(carrier, Some(ZhenfaCarrierKind::NightWitheredVine));
+                assert_eq!(qi_invest_ratio, 0.3);
+                assert_eq!(trigger.as_deref(), Some("proximity"));
+            }
+            other => panic!("expected ZhenfaPlace, got {other:?}"),
+        }
+
+        let trigger = r#"{"type":"zhenfa_trigger","v":1,"instance_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(trigger).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::ZhenfaTrigger {
+                v: 1,
+                instance_id: Some(42)
+            }
+        ));
+
+        let nearest = r#"{"type":"zhenfa_trigger","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(nearest).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::ZhenfaTrigger {
+                v: 1,
+                instance_id: None
+            }
+        ));
+
+        let disarm = r#"{"type":"zhenfa_disarm","v":1,"x":1,"y":64,"z":-2,"mode":"force_break"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(disarm).unwrap();
+        match req {
+            ClientRequestV1::ZhenfaDisarm { mode, .. } => {
+                assert_eq!(mode, ZhenfaDisarmMode::ForceBreak);
+            }
+            other => panic!("expected ZhenfaDisarm, got {other:?}"),
         }
     }
 

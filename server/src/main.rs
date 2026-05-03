@@ -42,6 +42,7 @@ mod tools;
 mod world;
 #[allow(dead_code)]
 mod worldgen;
+mod zhenfa;
 #[allow(dead_code)]
 mod zhenfa_hooks;
 
@@ -110,6 +111,7 @@ fn run_server() {
     mineral::register(&mut app);
     shelflife::register(&mut app);
     npc::register(&mut app);
+    zhenfa::register(&mut app);
     network::register(&mut app);
     persistence::register(&mut app);
     preview::register(&mut app);

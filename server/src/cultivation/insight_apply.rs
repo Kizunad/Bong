@@ -26,6 +26,9 @@ pub struct InsightModifiers {
     pub next_breakthrough_bonus: f64,
     pub hunyuan_threshold_mul: f64,
     pub chaotic_tolerance_add: f64,
+    /// 地师·阵法流：藏阵 / 破阵对立路径的累计等级。
+    pub zhenfa_concealment: f64,
+    pub zhenfa_disenchant: f64,
     /// 解锁的实践/流派
     pub practices: HashSet<String>,
 }
@@ -38,6 +41,8 @@ impl InsightModifiers {
             next_breakthrough_bonus: 0.0,
             hunyuan_threshold_mul: 1.0,
             chaotic_tolerance_add: 0.0,
+            zhenfa_concealment: 0.0,
+            zhenfa_disenchant: 0.0,
             practices: HashSet::new(),
         }
     }
@@ -108,6 +113,16 @@ pub fn apply_choice(
         }
         DualForgeDiscount { .. } | ColorMaterialAffinity { .. } => {
             modifiers.practices.insert("forge_specialization".into());
+        }
+        ZhenfaConcealment { add } => {
+            modifiers.zhenfa_concealment = (modifiers.zhenfa_concealment + add).max(0.0);
+            modifiers.zhenfa_disenchant = (modifiers.zhenfa_disenchant - add * 0.5).max(0.0);
+            modifiers.practices.insert("zhenfa:concealment".into());
+        }
+        ZhenfaDisenchant { add } => {
+            modifiers.zhenfa_disenchant = (modifiers.zhenfa_disenchant + add).max(0.0);
+            modifiers.zhenfa_concealment = (modifiers.zhenfa_concealment - add * 0.5).max(0.0);
+            modifiers.practices.insert("zhenfa:disenchant".into());
         }
         UnlockPractice { name } => {
             modifiers.practices.insert(name.clone());

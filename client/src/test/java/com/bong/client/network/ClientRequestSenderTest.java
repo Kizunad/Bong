@@ -237,6 +237,33 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendZhenfaRequestsUseCorrectChannelAndJson() {
+        install();
+        BlockPos pos = new BlockPos(11, 64, -3);
+        ClientRequestSender.sendZhenfaPlace(
+            pos,
+            ClientRequestProtocol.ZhenfaKind.TRAP,
+            ClientRequestProtocol.ZhenfaCarrierKind.NIGHT_WITHERED_VINE,
+            0.3,
+            "proximity"
+        );
+        ClientRequestSender.sendZhenfaTrigger(null);
+        ClientRequestSender.sendZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK);
+
+        assertEquals(3, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"trap\",\"carrier\":\"night_withered_vine\",\"qi_invest_ratio\":0.3,\"trigger\":\"proximity\"}",
+            sent.get(0).body()
+        );
+        assertEquals("{\"type\":\"zhenfa_trigger\",\"v\":1}", sent.get(1).body());
+        assertEquals(
+            "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
+            sent.get(2).body()
+        );
+    }
+
+    @Test
     void sendTradeOfferRequestsUseCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendTradeOfferRequest("entity:42", 1001L);

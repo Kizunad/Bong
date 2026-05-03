@@ -8,6 +8,8 @@ export const SenseKindV1 = Type.Union([
   Type.Literal("CultivatorRealm"),
   Type.Literal("HeavenlyGaze"),
   Type.Literal("CrisisPremonition"),
+  Type.Literal("ZhenfaArray"),
+  Type.Literal("ZhenfaWardAlert"),
 ]);
 export type SenseKindV1 = Static<typeof SenseKindV1>;
 
