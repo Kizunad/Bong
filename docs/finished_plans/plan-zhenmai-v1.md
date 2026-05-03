@@ -647,12 +647,12 @@ export const DefenseTriggeredV1 = Type.Object({
 
 ### 关键 commit
 
-- `85dc2d93`（2026-05-04）`实现截脉震爆境界分级与结算`：server 截脉规则、状态、CombatEvent、LifeRecord、持久化与回归测试。
-- `e96d2d1e`（2026-05-04）`接入截脉震爆契约与播报`：agent schema/generated schema、天道 narration runtime、client prep HUD/按键测试。
+- `316d76b7`（2026-05-04）`实现截脉震爆境界分级与结算`：server 截脉规则、状态、CombatEvent、LifeRecord、持久化与回归测试。
+- `fe8d6638`（2026-05-04）`接入截脉震爆契约与播报`：agent schema/generated schema、天道 narration runtime、client prep HUD/按键测试。
 
 ### 测试结果
 
-- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` -> `2206 passed; 0 failed`。
+- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` -> `2214 passed; 0 failed`。
 - `agent/`: `npm run build` -> passed。
 - `agent/packages/schema`: `npm test` -> `267 passed`。
 - `agent/packages/tiandao`: `npm test` -> `225 passed`。
