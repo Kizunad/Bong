@@ -69,6 +69,16 @@ public class ZoneInfoHandlerTest {
         assertTrue(dispatch.zoneState().orElseThrow().noCadence());
     }
 
+    @Test
+    void optionalPerceptionTextIsStoredOnZoneState() {
+        ServerDataDispatch dispatch = new ZoneInfoHandler(() -> 1L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"zone_info\",\"zone\":\"blood_valley\",\"spirit_qi\":0.42,\"danger_level\":3,\"perception_text\":\"灵气稀薄，引气如吸沙\"}"
+        ));
+
+        assertTrue(dispatch.handled());
+        assertEquals("灵气稀薄，引气如吸沙", dispatch.zoneState().orElseThrow().perceptionText());
+    }
+
     private static ServerDataEnvelope parseEnvelope(String json) {
         ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
         assertTrue(parseResult.isSuccess(), () -> "Expected payload to parse successfully but got: " + parseResult.errorMessage());

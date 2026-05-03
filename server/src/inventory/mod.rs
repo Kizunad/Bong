@@ -166,6 +166,7 @@ pub enum ItemEffect {
     MeridianHeal { magnitude: f64, target: String },
     ContaminationCleanse { magnitude: f64 },
     LifespanExtension { years: u32, source: String },
+    AntiSpiritPressure { duration_ticks: u64 },
 }
 
 #[derive(Debug, Default)]
@@ -1249,6 +1250,9 @@ fn parse_item_effect(
                 source,
             })
         }
+        "anti_spirit_pressure" => Ok(ItemEffect::AntiSpiritPressure {
+            duration_ticks: effect.magnitude.floor() as u64,
+        }),
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
             source_path.display()
@@ -3213,6 +3217,12 @@ mod tests {
                 years: 25,
                 source,
             }) if source == "collapse_core"
+        ));
+        assert!(matches!(
+            registry
+                .get("anti_spirit_pressure_pill")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::AntiSpiritPressure { duration_ticks }) if *duration_ticks == 36_000
         ));
         assert!(matches!(
             registry

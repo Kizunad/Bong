@@ -194,6 +194,7 @@ import {
   ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
+  ServerDataVortexStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataWeaponBrokenV1,
@@ -220,6 +221,11 @@ import {
   WeaponEquippedV1,
   WeaponViewV1,
 } from "./server-data.js";
+import {
+  ProjectileQiDrainedEventV1,
+  VortexBackfireEventV1,
+  VortexFieldStateV1,
+} from "./woliu.js";
 import {
   DeceasedExposureSnapshotV1,
   DeceasedRenownSnapshotV1,
@@ -396,6 +402,10 @@ export const SCHEMA_REGISTRY = {
   serverDataWeaponEquippedV1: ServerDataWeaponEquippedV1,
   serverDataWeaponBrokenV1: ServerDataWeaponBrokenV1,
   serverDataTreasureEquippedV1: ServerDataTreasureEquippedV1,
+  vortexFieldStateV1: VortexFieldStateV1,
+  vortexBackfireEventV1: VortexBackfireEventV1,
+  projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
+  serverDataVortexStateV1: ServerDataVortexStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7

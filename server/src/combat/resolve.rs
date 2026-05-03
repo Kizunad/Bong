@@ -116,7 +116,10 @@ pub fn apply_defense_intents(
             continue;
         };
 
-        if status_effects.is_some_and(|se| has_active_status(se, StatusEffectKind::Stunned)) {
+        if status_effects.is_some_and(|se| {
+            has_active_status(se, StatusEffectKind::Stunned)
+                || has_active_status(se, StatusEffectKind::VortexCasting)
+        }) {
             continue;
         }
 
@@ -163,10 +166,10 @@ pub fn resolve_attack_intents(
     ) = weapon_break;
 
     for intent in intents.read() {
-        if statuses
-            .get(intent.attacker)
-            .is_ok_and(|se| has_active_status(se, StatusEffectKind::Stunned))
-        {
+        if statuses.get(intent.attacker).is_ok_and(|se| {
+            has_active_status(se, StatusEffectKind::Stunned)
+                || has_active_status(se, StatusEffectKind::VortexCasting)
+        }) {
             continue;
         }
 

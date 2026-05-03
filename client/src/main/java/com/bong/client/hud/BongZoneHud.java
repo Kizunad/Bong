@@ -89,7 +89,8 @@ public final class BongZoneHud {
             + qiBar(safeZoneState.spiritQiNormalized())
             + " 危"
             + dangerText(safeZoneState.dangerLevel())
-            + cadenceText(safeZoneState);
+            + cadenceText(safeZoneState)
+            + perceptionText(safeZoneState);
     }
 
     static String cadenceText(ZoneState zoneState) {
@@ -100,6 +101,12 @@ public final class BongZoneHud {
     static String statusText(ZoneState zoneState) {
         ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
         return safeZoneState.collapsed() ? " 死域" : "";
+    }
+
+    static String perceptionText(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        String text = safeZoneState.perceptionText();
+        return text.isEmpty() ? "" : " " + text;
     }
 
     static String qiBar(double spiritQiNormalized) {

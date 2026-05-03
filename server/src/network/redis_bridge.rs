@@ -21,7 +21,8 @@ use crate::schema::channels::{
     CH_REBIRTH, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
     CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
+    CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -49,6 +50,7 @@ use crate::schema::social::{
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
+use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
@@ -113,6 +115,8 @@ pub enum RedisOutbound {
     SocialPact(SocialPactEventV1),
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
+    VortexBackfire(VortexBackfireEventV1),
+    ProjectileQiDrained(ProjectileQiDrainedEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -712,6 +716,28 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_SOCIAL_RENOWN_DELTA,
+                payload,
+            })
+        }
+        RedisOutbound::VortexBackfire(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize VortexBackfireEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_WOLIU_BACKFIRE,
+                payload,
+            })
+        }
+        RedisOutbound::ProjectileQiDrained(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ProjectileQiDrainedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_WOLIU_PROJECTILE_DRAINED,
                 payload,
             })
         }

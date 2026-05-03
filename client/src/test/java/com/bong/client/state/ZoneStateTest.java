@@ -20,6 +20,7 @@ public class ZoneStateTest {
         assertEquals(0, state.dangerLevel());
         assertEquals("normal", state.status());
         assertFalse(state.noCadence());
+        assertEquals("", state.perceptionText());
         assertEquals(0L, state.changedAtMillis());
     }
 
@@ -66,5 +67,21 @@ public class ZoneStateTest {
         );
 
         assertTrue(state.noCadence());
+    }
+
+    @Test
+    void createNormalizesPerceptionText() {
+        ZoneState state = ZoneState.create(
+            "blood_valley",
+            "血谷",
+            0.42,
+            3,
+            "normal",
+            Set.of(),
+            " 灵气稀薄，引气如吸沙 ",
+            12L
+        );
+
+        assertEquals("灵气稀薄，引气如吸沙", state.perceptionText());
     }
 }

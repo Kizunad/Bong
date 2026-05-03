@@ -19,8 +19,8 @@ public final class DerivedAttrsStore {
         boolean tribulationLocked,
         String tribulationStage,    // "warn" / "striking" / "pending"
         float throughputPeakNorm,  // 0..1 peak qi throughput overlay on qi bar
-        int vortexFakeSkinLayers,  // 0..3 for伪皮层
-        boolean vortexReady
+        int tuikeLayers,  // 0..3 for 伪皮层
+        boolean vortexActive
     ) {
         public static final State NONE = new State(
             false, 0f, 0L, false, 0L, false, "", 0f, 0, false

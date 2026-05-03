@@ -182,8 +182,8 @@ pub struct DerivedAttrsSyncV1 {
     pub tribulation_locked: bool,
     pub tribulation_stage: String,
     pub throughput_peak_norm: f32,
-    pub vortex_fake_skin_layers: u8,
-    pub vortex_ready: bool,
+    pub tuike_layers: u8,
+    pub vortex_active: bool,
 }
 
 /// plan-HUD-v1 §2.3 / §11.4 右侧统一事件流单条推送。

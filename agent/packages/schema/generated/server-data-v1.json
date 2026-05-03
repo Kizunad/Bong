@@ -176,6 +176,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "perception_text": {
+          "minLength": 1,
+          "type": "string"
         }
       }
     },
@@ -7381,6 +7385,78 @@
               }
             }
           }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "caster",
+        "active",
+        "center",
+        "radius",
+        "delta",
+        "env_qi_at_cast",
+        "maintain_remaining_ticks",
+        "intercepted_count"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "vortex_state",
+          "type": "string"
+        },
+        "caster": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "center": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "delta": {
+          "minimum": 0,
+          "maximum": 0.8,
+          "type": "number"
+        },
+        "env_qi_at_cast": {
+          "minimum": -1,
+          "maximum": 1,
+          "type": "number"
+        },
+        "maintain_remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "intercepted_count": {
+          "minimum": 0,
+          "type": "integer"
         }
       }
     },

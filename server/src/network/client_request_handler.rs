@@ -5926,6 +5926,18 @@ fn handle_alchemy_take_pill(
                 "[bong][network][alchemy] take_pill entity={entity:?} lifespan extension {years} years source={source}"
             );
         }
+        ItemEffect::AntiSpiritPressure { duration_ticks } => {
+            combat_params.buff_tx.send(ApplyStatusEffectIntent {
+                target: entity,
+                kind: StatusEffectKind::AntiSpiritPressurePill,
+                magnitude: 1.0,
+                duration_ticks,
+                issued_at_tick: clock.tick,
+            });
+            tracing::info!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → AntiSpiritPressurePill for {duration_ticks} ticks"
+            );
+        }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             let meridians = combat_params.meridians.get_mut(entity).ok();
             let contamination = combat_params.contaminations.get_mut(entity).ok();

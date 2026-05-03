@@ -1,7 +1,8 @@
 use valence::prelude::{EventReader, Query, Res};
 
 use crate::combat::components::{
-    BodyRefiningMarker, DerivedAttrs, StatusEffects, STATUS_EFFECT_TICK_INTERVAL_TICKS,
+    ActiveStatusEffect, BodyRefiningMarker, DerivedAttrs, StatusEffects,
+    STATUS_EFFECT_TICK_INTERVAL_TICKS,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::CombatClock;
@@ -15,28 +16,42 @@ pub fn status_effect_apply_tick(
             continue;
         };
 
-        if intent.magnitude <= 0.0 || intent.duration_ticks == 0 {
+        if intent.duration_ticks == 0 {
+            remove_status_effect(&mut status_effects, intent.kind);
             continue;
         }
 
-        if let Some(existing) = status_effects
-            .active
-            .iter_mut()
-            .find(|effect| effect.kind == intent.kind)
-        {
-            existing.magnitude = existing.magnitude.max(intent.magnitude);
-            existing.remaining_ticks = existing.remaining_ticks.max(intent.duration_ticks);
+        if intent.magnitude <= 0.0 {
             continue;
         }
 
-        status_effects
-            .active
-            .push(crate::combat::components::ActiveStatusEffect {
+        upsert_status_effect(
+            &mut status_effects,
+            ActiveStatusEffect {
                 kind: intent.kind,
                 magnitude: intent.magnitude,
                 remaining_ticks: intent.duration_ticks,
-            });
+            },
+        );
     }
+}
+
+pub fn upsert_status_effect(status_effects: &mut StatusEffects, effect: ActiveStatusEffect) {
+    if let Some(existing) = status_effects
+        .active
+        .iter_mut()
+        .find(|active| active.kind == effect.kind)
+    {
+        existing.magnitude = existing.magnitude.max(effect.magnitude);
+        existing.remaining_ticks = existing.remaining_ticks.max(effect.remaining_ticks);
+        return;
+    }
+
+    status_effects.active.push(effect);
+}
+
+pub fn remove_status_effect(status_effects: &mut StatusEffects, kind: StatusEffectKind) {
+    status_effects.active.retain(|effect| effect.kind != kind);
 }
 
 pub fn has_active_status(status_effects: &StatusEffects, kind: StatusEffectKind) -> bool {
@@ -102,6 +117,12 @@ pub fn attribute_aggregate_tick(
             .fold(1.0, |acc, effect| {
                 acc * (1.0 - effect.magnitude.clamp(0.0, 0.95))
             });
+        let vortex_multiplier =
+            if has_active_status(status_effects, StatusEffectKind::VortexCasting) {
+                0.2
+            } else {
+                1.0
+            };
 
         let damage_amp_multiplier = status_effects
             .active
@@ -117,7 +138,7 @@ pub fn attribute_aggregate_tick(
                 acc * (1.0 - effect.magnitude.clamp(0.0, 0.95))
             });
 
-        attrs.move_speed_multiplier = slow_multiplier.clamp(0.05, 1.0);
+        attrs.move_speed_multiplier = (slow_multiplier * vortex_multiplier).clamp(0.05, 1.0);
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
 
@@ -179,6 +200,41 @@ mod tests {
     }
 
     #[test]
+    fn zero_duration_status_intent_dispels_existing_effect() {
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_systems(Update, status_effect_apply_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn(StatusEffects {
+                active: vec![crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::VortexCasting,
+                    magnitude: 1.0,
+                    remaining_ticks: u64::MAX,
+                }],
+            })
+            .id();
+        app.world_mut().send_event(ApplyStatusEffectIntent {
+            target: entity,
+            kind: StatusEffectKind::VortexCasting,
+            magnitude: 0.0,
+            duration_ticks: 0,
+            issued_at_tick: 10,
+        });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .entity(entity)
+            .get::<StatusEffects>()
+            .unwrap()
+            .active
+            .is_empty());
+    }
+
+    #[test]
     fn status_effect_tick_expires_effect_after_duration() {
         let mut app = App::new();
         app.insert_resource(CombatClock {
@@ -226,6 +282,31 @@ mod tests {
 
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         assert_eq!(attrs.move_speed_multiplier, 0.6);
+    }
+
+    #[test]
+    fn vortex_casting_clamps_move_speed_to_twenty_percent() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::VortexCasting,
+                        magnitude: 1.0,
+                        remaining_ticks: 20,
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert_eq!(attrs.move_speed_multiplier, 0.2);
     }
 
     #[test]

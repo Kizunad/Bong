@@ -95,6 +95,15 @@ export const CHANNELS = {
   /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
   ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
 
+  /** Server → Agent: 涡流反噬事件（plan-woliu-v1 §3.2.D） */
+  WOLIU_BACKFIRE: "bong:woliu/backfire",
+
+  /** Server → Agent: 涡流抽干投射物真元（plan-woliu-v1 §3.2.D） */
+  WOLIU_PROJECTILE_DRAINED: "bong:woliu/projectile_drained",
+
+  /** Server → Client/Agent: 涡流持涡 HUD 状态（plan-woliu-v1 §8） */
+  WOLIU_VORTEX_STATE: "bong:woliu/vortex_state",
+
   /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
 
@@ -180,6 +189,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,
+  CHANNELS.WOLIU_BACKFIRE,
+  CHANNELS.WOLIU_PROJECTILE_DRAINED,
+  CHANNELS.WOLIU_VORTEX_STATE,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,
   CHANNELS.BOTANY_HARVEST_PROGRESS,

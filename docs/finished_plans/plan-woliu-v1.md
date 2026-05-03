@@ -875,3 +875,43 @@ fn check_backfire_resistance(status: &StatusEffects, rng: &mut Rng) -> bool {
 
 - 2026-04-26：骨架创建。**关键校准**：原 worldview "-0.8" 改为相对值 + 境界梯度（化虚级理论上限保留 0.8）。依赖 plan-cultivation-v1 染色 + plan-tsy-dimension 负灵域 + worldview §二/§五.防御.3。无对应详写功法书。
 - 2026-05-03：从 skeleton 升 active。§A 概览 + §3.1 P0 + §3.2 P1 涡流·v1 规格落地（9 个决策点闭环 Q84-Q89 + 3 个细化问 1/2/3，6 个 v1 实装时拍板 Q90-Q95）。primary axis = 真元流速 + 池效率（worldview §五:467，**算计型 / 持久博弈型，非爆发**）。**v1 关键设计**：持涡 toggle 模式 + 立即减速 80% + 维持过久反噬手经脉永久 SEVERED + 信息分层（神识 inspection vs 相对体感）+ 命名错位修复（vortex_fake_skin_layers 拆为 tuike_layers + vortex_active）。**Hotbar 接入正典化**（user 设计原则）：所有技能走 1-9 数字键 "战斗·修炼" 栏（不是 F1-F9 consumable 栏），通过 plan-hotbar-modify-v1 已落地 UseQuickSlot 路径触发；本 plan 不新建专属 packet。**6 个流派 plan 同步原则**：前 5 个流派 plan（zhenfa / anqi / dugu / zhenmai / tuike）的"专属 packet"建议在 v1 实施时统一改走 hotbar 路径（详见 §8 跨 plan hotbar 同步修正备注）。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 持涡闭环**：`server/src/combat/woliu.rs` 新增 `VortexField` / `VortexCastIntent` / `vortex_intercept_tick` / `vortex_maintain_tick` / `resolve_woliu_vortex_skill`；`server/src/combat/mod.rs` 注册系统；`server/src/cultivation/skill_registry.rs` 和 `server/src/cultivation/known_techniques.rs` 注册 `woliu.vortex`。
+- **P0 状态与反噬**：`server/src/combat/status.rs` 新增 `VortexCasting` 减速 80% 与 dispel 语义；`server/src/combat/resolve.rs` 阻断持涡期间攻击/防御；`server/src/cultivation/life_record.rs` 和 `server/src/persistence/mod.rs` 记录涡流抽干与反噬。
+- **P0 信息分层与命名修正**：`server/src/network/mod.rs` 在 `zone_info.perception_text` 输出神识/相对体感文本；`server/src/combat/components.rs` / `server/src/schema/combat_hud.rs` / `server/src/network/derived_attrs_emit.rs` 将旧 `vortex_fake_skin_layers` / `vortex_ready` 拆为 `tuike_layers` / `vortex_active`，client 同步到 `DerivedAttrsStore` 与 HUD planner。
+- **P1 境界分级与 max 叠加**：`server/src/combat/woliu.rs` 锁定 Δ、半径、维持时间、耗 qi 表，并在 `vortex_aggregate_at` 对重叠涡流取最大 Δ。
+- **P1 跨端契约与叙事**：`server/src/schema/woliu.rs`、`server/src/schema/server_data.rs`、`agent/packages/schema/src/woliu.ts`、`agent/packages/schema/src/server-data.ts`、`agent/packages/schema/generated/server-data-v1.json` 对齐 `vortex_state` / backfire / drained payload；`server/src/network/woliu_event_bridge.rs`、`server/src/network/woliu_state_emit.rs`、`agent/packages/tiandao/src/woliu-narration.ts`、`client/src/main/java/com/bong/client/combat/handler/VortexStateHandler.java` 接入 Redis、天道叙事和 client store。
+- **P1 抗灵压丹**：`server/assets/items/pills.toml`、`server/assets/alchemy/recipes/anti_spirit_pressure_pill_v1.json`、`server/src/inventory/mod.rs`、`server/src/alchemy/recipe.rs`、`server/src/network/client_request_handler.rs` 接入 `anti_spirit_pressure_pill` 与 `AntiSpiritPressurePill` status，`server/src/combat/woliu.rs` 在维持超时反噬时读取该抵抗 hook。
+- **P2 收口测试**：新增/扩展 server woliu、alchemy/inventory/schema、agent woliu narration、client vortex state / zone perception / HUD tests，覆盖抽干比例、境界表、反噬、抗灵压丹、schema freshness、client handler 与 router 注册。
+
+### 关键 commit
+
+- `2b4ffeee` · 2026-05-03 · `feat(woliu): 接入绝灵涡流服务端闭环`
+- `52401e8b` · 2026-05-03 · `feat(woliu): 同步涡流跨端契约与叙事`
+- `e31fd34a` · 2026-05-03 · `feat(alchemy): 增加抗灵压丹抵抗涡流反噬`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && cargo test`：2117 passed。
+- `cd agent && npm run build`：通过。
+- `cd agent/packages/schema && npm test`：250 passed。
+- `cd agent/packages/tiandao && npm test`：212 passed。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：BUILD SUCCESSFUL，791 tests passed。
+
+### 跨仓库核验
+
+- server：`WOLIU_VORTEX_SKILL_ID` / `VortexField` / `VortexCasting` / `ProjectileQiDrainedEvent` / `VortexBackfireEvent` / `CH_WOLIU_BACKFIRE` / `CH_WOLIU_VORTEX_STATE`。
+- agent/schema：`VortexFieldStateV1` / `VortexBackfireEventV1` / `ProjectileQiDrainedEventV1` / `CHANNELS.WOLIU_BACKFIRE` / `ServerDataVortexStateV1`。
+- agent/tiandao：`WoliuNarrationRuntime` / `woliu.md` / `woliu-narration.test.ts`。
+- client：`VortexStateHandler` / `VortexStateStore` / `DerivedAttrsStore.tuikeLayers` / `DerivedAttrsStore.vortexActive` / `ZoneState.perceptionText`。
+
+### 遗留 / 后续
+
+- 短时瞬涡、顺逆旋转抵消、完整流体算法、化虚 0.9 抽干/远程引导/太极反击仍留给 `plan-woliu-v2` 或 vN+2。
+- hand-slot 视觉差异仅保留数值同构，掌心涡/盾面涡/双手涡的 client 视觉资源未在本 plan 范围内实现。
+- `woliu.vortex` 的学习/掉落路径沿用现有 Technique/debug 分发能力，本 plan 不新增功法书或自然获取链。
