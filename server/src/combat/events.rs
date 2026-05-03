@@ -74,6 +74,8 @@ pub enum StatusEffectKind {
     VortexCasting,
     /// plan-woliu-v1 §3.2.C：抗灵压丹，降低涡流反噬触发概率。
     AntiSpiritPressurePill,
+    /// plan-lifespan-v1 §4：风烛状态。`magnitude` 记录真元回复削减比例。
+    Frailty,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;

@@ -92,6 +92,9 @@ export const CHANNELS = {
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
 
+  /** Server → Agent: 反作弊阈值上报（plan-anticheat-v1） */
+  ANTICHEAT: "bong:anticheat",
+
   /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
   ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
 
@@ -109,6 +112,9 @@ export const CHANNELS = {
 
   /** Server → Agent: 伪灵脉消散事件（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_DISSIPATE: "bong:pseudo_vein:dissipate",
+
+  /** Server → Agent: 九宗故地阵核激活事件（plan-terrain-jiuzong-ruin-v1 §7） */
+  ZONG_CORE_ACTIVATED: "bong:zong_core_activated",
 
   /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
   BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
@@ -197,12 +203,14 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.ANTICHEAT,
   CHANNELS.ARMOR_DURABILITY_CHANGED,
   CHANNELS.WOLIU_BACKFIRE,
   CHANNELS.WOLIU_PROJECTILE_DRAINED,
   CHANNELS.WOLIU_VORTEX_STATE,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,
+  CHANNELS.ZONG_CORE_ACTIVATED,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
   CHANNELS.LUMBER_PROGRESS,

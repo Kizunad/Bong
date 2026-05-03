@@ -221,6 +221,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
+            max_stack_count: 1,
             grid_w: 2,
             grid_h: 2,
             base_weight: 10.0,

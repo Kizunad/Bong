@@ -154,6 +154,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Weapon,
+            max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
             base_weight: 1.5,
@@ -180,6 +181,7 @@ mod tests {
         ItemTemplate {
             weapon_spec: None,
             category: ItemCategory::Misc,
+            max_stack_count: 1,
             ..weapon_template(id)
         }
     }
@@ -188,6 +190,7 @@ mod tests {
         ItemTemplate {
             weapon_spec: None,
             category: ItemCategory::Tool,
+            max_stack_count: 1,
             grid_h: 1,
             ..weapon_template(id)
         }

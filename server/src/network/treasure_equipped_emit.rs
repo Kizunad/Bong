@@ -107,6 +107,7 @@ mod tests {
             id: "starter_talisman".to_string(),
             display_name: "启程护符".to_string(),
             category: ItemCategory::Treasure,
+            max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.2,

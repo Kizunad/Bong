@@ -48,6 +48,7 @@ pub mod meridian_open;
 pub mod negative_zone;
 pub mod overload;
 pub mod possession;
+pub mod qi_field;
 pub mod qi_zero_decay;
 pub mod realm_vision;
 pub mod skill_registry;
@@ -87,9 +88,9 @@ use self::insight_flow::{
 use self::karma::karma_decay_tick;
 use self::life_record::LifeRecord;
 use self::lifespan::{
-    lifespan_aging_tick, process_lifespan_extension_intents, AgingEventEmitted, DeathRegistry,
-    LifespanCapTable, LifespanComponent, LifespanEventEmitted, LifespanExtensionIntent,
-    LifespanExtensionLedger,
+    lifespan_aging_tick, process_lifespan_extension_intents, sync_frailty_status_effects,
+    AgingEventEmitted, DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted,
+    LifespanExtensionIntent, LifespanExtensionLedger,
 };
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
@@ -265,6 +266,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             process_lifespan_extension_intents.after(lifespan_aging_tick),
+            sync_frailty_status_effects.after(process_lifespan_extension_intents),
             process_duo_she_requests
                 .after(lifespan_aging_tick)
                 .after(DuoSheIntentForwardSet),

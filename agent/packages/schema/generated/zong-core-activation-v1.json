@@ -1,0 +1,107 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "zone_id",
+    "core_id",
+    "origin_id",
+    "center_xz",
+    "activated_until_tick",
+    "base_qi",
+    "active_qi",
+    "charge_required",
+    "narration_radius_blocks",
+    "anomaly_kind"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "zone_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "core_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "origin_id": {
+      "anyOf": [
+        {
+          "const": 1,
+          "type": "number"
+        },
+        {
+          "const": 2,
+          "type": "number"
+        },
+        {
+          "const": 3,
+          "type": "number"
+        },
+        {
+          "const": 4,
+          "type": "number"
+        },
+        {
+          "const": 5,
+          "type": "number"
+        },
+        {
+          "const": 6,
+          "type": "number"
+        },
+        {
+          "const": 7,
+          "type": "number"
+        }
+      ]
+    },
+    "center_xz": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "activated_until_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "base_qi": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "active_qi": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "charge_required": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "narration_radius_blocks": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "anomaly_kind": {
+      "const": 5,
+      "type": "number"
+    }
+  }
+}

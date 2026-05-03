@@ -233,6 +233,11 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category,
+            max_stack_count: if matches!(category, ItemCategory::BoneCoin) {
+                u32::MAX
+            } else {
+                16
+            },
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,

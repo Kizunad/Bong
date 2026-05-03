@@ -1,0 +1,10 @@
+{
+  "origin": "nanyuan",
+  "origin_id": 3,
+  "pool": "zong_canjuan_nanyuan",
+  "fragment": { "type": "style", "style_id": "dugu", "plan": "plan-dugu-v1" },
+  "drops": {
+    "low_tier_active_core": { "min": 0.01, "max": 0.02 },
+    "high_tier_active_affinity": { "min": 0.001, "max": 0.003 }
+  }
+}

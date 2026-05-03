@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "zone_id": "jiuzong_bloodstream_ruin",
+  "core_id": "jiuzong_bloodstream_ruin:core:0",
+  "origin_id": 1,
+  "center_xz": [5500.0, -1000.0],
+  "activated_until_tick": 36000,
+  "base_qi": 0.4,
+  "active_qi": 0.6,
+  "charge_required": ["spirit_herb", "bone_coin", "true_qi"],
+  "narration_radius_blocks": 1000,
+  "anomaly_kind": 5
+}

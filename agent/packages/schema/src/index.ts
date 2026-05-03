@@ -7,6 +7,7 @@ export * from "./channels.js";
 // Message schemas
 export * from "./agent-command.js";
 export * from "./agent-world-model.js";
+export * from "./anticheat.js";
 export * from "./armor-event.js";
 export * from "./audio-event.js";
 export * from "./botany.js";
@@ -31,6 +32,7 @@ export * from "./spawn-tutorial.js";
 export * from "./vfx-event.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
+export * from "./zong-formation.js";
 
 // Validation & registry
 export * from "./schema-registry.js";

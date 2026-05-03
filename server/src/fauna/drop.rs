@@ -337,6 +337,11 @@ mod tests {
             } else {
                 ItemCategory::Misc
             },
+            max_stack_count: if id.starts_with("bone_coin") {
+                u32::MAX
+            } else {
+                16
+            },
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,

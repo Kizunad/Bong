@@ -1,6 +1,7 @@
 pub mod agent_bridge;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod anticheat_bridge;
 pub mod ascension_quota_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
@@ -298,6 +299,11 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
         ),
+    );
+    app.add_systems(
+        Update,
+        anticheat_bridge::publish_anticheat_violation_events
+            .after(crate::combat::anticheat::emit_anticheat_threshold_reports),
     );
     app.add_systems(
         Update,

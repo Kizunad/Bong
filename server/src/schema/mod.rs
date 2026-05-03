@@ -5,6 +5,7 @@
 pub mod agent_command;
 pub mod agent_world_model;
 pub mod alchemy;
+pub mod anticheat;
 pub mod armor_event;
 pub mod audio;
 pub mod botany;
@@ -37,3 +38,4 @@ pub mod tsy_hostile;
 pub mod vfx_event;
 pub mod woliu;
 pub mod world_state;
+pub mod zong_formation;

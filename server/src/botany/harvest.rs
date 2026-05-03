@@ -7,8 +7,9 @@ use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Contamination, Cultivation};
 use crate::inventory::{
-    add_item_to_player_inventory, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
-    ItemRegistry, PlayerInventory,
+    add_customized_item_to_player_inventory, add_item_to_player_inventory,
+    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
+    PlayerInventory,
 };
 use crate::player::state::canonical_player_id;
 use crate::skill::components::{SkillId, SkillSet};
@@ -131,9 +132,29 @@ pub fn complete_harvest_for_player(
             )
         })?;
 
-    let receipt =
-        add_item_to_player_inventory(&mut inventory, item_registry, allocator, kind.item_id, 1)?;
     let actual_tool = crate::tools::main_hand_tool_in_inventory(&inventory);
+    let mut herbalism_quality_bonus = 0.0;
+    if let Ok((cultivation, skill_set, _, _)) = harvest_hazards.get_mut(session.client_entity) {
+        herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
+            cultivation.as_deref(),
+            skill_set,
+        ));
+    }
+
+    let has_instance_modifier = variant != PlantVariant::None || herbalism_quality_bonus > 0.0;
+    let _receipt = if has_instance_modifier {
+        add_customized_item_to_player_inventory(
+            &mut inventory,
+            item_registry,
+            allocator,
+            kind.item_id,
+            1,
+            |instance| apply_harvest_modifiers_to_item(instance, variant, herbalism_quality_bonus),
+        )?
+    } else {
+        add_item_to_player_inventory(&mut inventory, item_registry, allocator, kind.item_id, 1)?
+    };
+
     if let Some(required_tool) = required_tool_for(session.target_plant, kind_registry) {
         if actual_tool == Some(required_tool) {
             crate::tools::damage_main_hand_tool(
@@ -145,17 +166,12 @@ pub fn complete_harvest_for_player(
         }
     }
 
-    let mut herbalism_quality_bonus = 0.0;
-    if let Ok((cultivation, skill_set, contamination, wounds)) =
+    if let Ok((cultivation, _skill_set, contamination, wounds)) =
         harvest_hazards.get_mut(session.client_entity)
     {
         let mut cultivation = cultivation;
         let mut contamination = contamination;
         let mut wounds = wounds;
-        herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
-            cultivation.as_deref(),
-            skill_set,
-        ));
         super::hazard::apply_completion_hazards(
             session.target_plant,
             kind_registry,
@@ -164,16 +180,6 @@ pub fn complete_harvest_for_player(
             wounds.as_deref_mut(),
             actual_tool,
             now_tick,
-        );
-    }
-
-    // plan-skill-v1 §6.1 品质偏移先投影到连续 spirit_quality，再叠加 botany 变种修饰。
-    if variant != PlantVariant::None || herbalism_quality_bonus > 0.0 {
-        apply_harvest_modifiers_to_instance(
-            &mut inventory,
-            receipt.instance_id,
-            variant,
-            herbalism_quality_bonus,
         );
     }
 
@@ -225,28 +231,16 @@ pub fn complete_harvest_for_player(
     Ok(())
 }
 
-/// 对刚 push 进 main pack 的 ItemInstance 应用 herb skill / variant 品质修饰与显示名前缀。
-fn apply_harvest_modifiers_to_instance(
-    inventory: &mut PlayerInventory,
-    instance_id: u64,
+/// 对本次采集产物应用 herb skill / variant 品质修饰与显示名前缀。
+fn apply_harvest_modifiers_to_item(
+    instance: &mut ItemInstance,
     variant: PlantVariant,
     herbalism_quality_bonus: f64,
 ) {
-    for container in inventory.containers.iter_mut() {
-        for placed in container.items.iter_mut() {
-            if placed.instance.instance_id != instance_id {
-                continue;
-            }
-            let q = placed.instance.spirit_quality
-                + herbalism_quality_bonus
-                + variant.quality_modifier();
-            placed.instance.spirit_quality = q.clamp(0.0, 1.0);
-            if let Some(prefix) = variant.display_prefix() {
-                placed.instance.display_name =
-                    format!("{} · {}", prefix, placed.instance.display_name);
-            }
-            return;
-        }
+    let q = instance.spirit_quality + herbalism_quality_bonus + variant.quality_modifier();
+    instance.spirit_quality = q.clamp(0.0, 1.0);
+    if let Some(prefix) = variant.display_prefix() {
+        instance.display_name = format!("{} · {}", prefix, instance.display_name);
     }
 }
 
@@ -575,6 +569,10 @@ mod tests {
     }
 
     fn plant_entity(app: &mut App, zone_name: &str) -> Entity {
+        plant_entity_with_variant(app, zone_name, PlantVariant::None)
+    }
+
+    fn plant_entity_with_variant(app: &mut App, zone_name: &str, variant: PlantVariant) -> Entity {
         app.world_mut()
             .spawn(Plant {
                 id: BotanyPlantId::CiSheHao,
@@ -585,7 +583,7 @@ mod tests {
                 source_point: None,
                 harvested: false,
                 trampled: false,
-                variant: crate::botany::registry::PlantVariant::None,
+                variant,
             })
             .id()
     }
@@ -665,6 +663,23 @@ mod tests {
         app.add_event::<BotanySkillChangedEvent>();
         app.add_event::<SkillXpGain>();
         app
+    }
+
+    fn queue_completed_ci_she_harvest(app: &mut App, client_entity: Entity, target: Entity) {
+        app.world_mut()
+            .resource_mut::<HarvestSessionStore>()
+            .upsert_session(HarvestSession {
+                player_id: "offline:Azure".to_string(),
+                client_entity,
+                target_entity: Some(target),
+                target_plant: BotanyPlantId::CiSheHao,
+                mode: BotanyHarvestMode::Manual,
+                started_at_tick: 0,
+                duration_ticks: 0,
+                phase: BotanyPhase::InProgress,
+                last_progress: 0.0,
+                origin_position: [10.0, 64.0, 10.0],
+            });
     }
 
     #[test]
@@ -762,6 +777,79 @@ mod tests {
             "harvested spirit_quality should use effective herbalism Lv.3, got {} expected {}",
             harvested.instance.spirit_quality,
             expected
+        );
+    }
+
+    #[test]
+    fn variant_harvest_merges_only_matching_modified_stacks() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+
+        for variant in [
+            PlantVariant::Thunder,
+            PlantVariant::Thunder,
+            PlantVariant::Tainted,
+        ] {
+            let target = plant_entity_with_variant(&mut app, "spawn", variant);
+            queue_completed_ci_she_harvest(&mut app, client_entity, target);
+            app.update();
+        }
+
+        let base_quality = app
+            .world()
+            .resource::<ItemRegistry>()
+            .get("ci_she_hao")
+            .expect("ci_she_hao template should exist")
+            .spirit_quality_initial;
+        let inventory = app
+            .world()
+            .entity(client_entity)
+            .get::<PlayerInventory>()
+            .expect("client should have inventory");
+        let main_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main pack should exist");
+        let herbs: Vec<_> = main_pack
+            .items
+            .iter()
+            .filter(|placed| placed.instance.template_id == "ci_she_hao")
+            .collect();
+
+        assert_eq!(herbs.len(), 2);
+        let thunder = herbs
+            .iter()
+            .find(|placed| placed.instance.display_name.starts_with("雷 · "))
+            .expect("thunder herbs should share one modified stack");
+        assert_eq!(thunder.instance.stack_count, 2);
+        assert_eq!(thunder.instance.display_name.matches("雷 ·").count(), 1);
+        assert!(
+            (thunder.instance.spirit_quality - (base_quality + 0.10).clamp(0.0, 1.0)).abs() < 1e-6,
+            "thunder stack quality should apply its modifier once"
+        );
+
+        let tainted = herbs
+            .iter()
+            .find(|placed| placed.instance.display_name.starts_with("黑 · "))
+            .expect("tainted herb should stay isolated from thunder stack");
+        assert_eq!(tainted.instance.stack_count, 1);
+        assert_eq!(tainted.instance.display_name.matches("黑 ·").count(), 1);
+        assert!(
+            (tainted.instance.spirit_quality - (base_quality - 0.15).clamp(0.0, 1.0)).abs() < 1e-6,
+            "tainted stack quality should apply its modifier once"
         );
     }
 
