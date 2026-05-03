@@ -733,6 +733,10 @@ fn projectile_tick_system(
                     hit_distance,
                     hit_qi
                 ),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             });
             impacts.send(CarrierImpactEvent {
                 attacker,
