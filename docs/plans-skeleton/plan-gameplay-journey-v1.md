@@ -343,8 +343,12 @@
 ### P5 缺口
 
 - plan-tribulation-v1 余 ⏳ 升级为完整闭环
-- plan-terrain-tribulation-scorch-v1 升 active
+- plan-terrain-tribulation-scorch-v1 升 active（仍 skeleton）
 - 渡劫第一视角 UI(派生 `plan-tribulation-pov-ui-v1`)
+- plan-multi-life-v1 ✅ active (2026-05-04 升级，6 决策 + reframe 对齐 lifespan-v1)
+- plan-tsy-raceout-v1 ✅ active (2026-05-04 升级，5 决策闭环 — 3s 撤离 / 单裂口 1 人 / 允许 PVP)
+- plan-lifespan-v1 ✅ active (2026-05-04 升级，5 决策 — NaturalDeathCorpse 复用 TSY BodyInstance)
+- plan-void-quota-v1 / plan-void-actions-v1 仍 ⬜（等 tribulation finished）
 
 ---
 
@@ -383,7 +387,7 @@ worldview §六 把流派定为"路径倾向"——玩家**可以**精通全部 
 - 突破要求加成意味着 P2/P3/P4 各境界停留更久——同样的真元上限要求，多流派玩家要打更多经脉/积更多真元
 
 **接入面**：
-- server：`cultivation::QiColor` ✅ 已支持混元色检测；**缺**：`UnlockedStyles` 多解锁状态(派生 `plan-multi-style-v1`)
+- server：`cultivation::QiColor` ✅ 已支持混元色检测；plan-multi-style-v1 ✅ active (2026-05-04 升级，6 决策 + reframe — 废弃 UnlockedStyles 多激活路径，改用 PracticeLog vector 自然演化)
 - 突破要求加成需调整 `cultivation::breakthrough::required_qi_pool` 公式
 - client：流派切换 UI 必须支持多激活态(SkillBar/QuickBar 槽位)
 
@@ -567,7 +571,7 @@ P4 必需:
 P5 必需:
   - plan-tribulation-pov-ui-v1  (派生)         (渡劫第一视角)
   - plan-void-quota-v1          (派生)         (O.3 化虚名额按世界灵气总量)
-  - plan-multi-style-v1         (派生)         (O.14 全流派精通 / UnlockedStyles 多激活)
+  - plan-multi-style-v1         ✅ active (2026-05-04 升级，6 决策 + reframe)：废弃 UnlockedStyles 多激活，改用 PracticeLog vector 自然演化（is_hunyuan 判定 + 修炼 session 接入 + style-balance telemetry 对接）
 
 横向必需:
   - plan-economy-v1             (派生)         (骨币半衰 + 价格)
@@ -1611,7 +1615,9 @@ graph TD
 
 **Wave 2 退出条件**：E2E `p2-condense.sh` 全绿；7 流派(含已完成 baomai-v1)互克方向符合 §P 矩阵。
 
-> **2026-05-03 实际进度**：6 流派 plan 全部升 active+P0/P1 实装；baomai-v1 / zhenfa-v1 / woliu-v1 / spirit-eye-v1 已 ✅ finished 归档；anqi/dugu/zhenmai/tuike 仍 active；style-vector-integration-v1 active（取代撤销的 style-pick-v1）。剩 multi-style-v1 + style-balance-v1 未起 + E2E p2 脚本未跑。
+> **2026-05-03 实际进度**：6 流派 plan 全部升 active+P0/P1 实装；baomai-v1 / zhenfa-v1 / woliu-v1 / spirit-eye-v1 已 ✅ finished 归档；anqi/dugu/zhenmai/tuike 仍 active；style-vector-integration-v1 active（取代撤销的 style-pick-v1）。
+>
+> **2026-05-04 实际进度**：multi-style-v1 ✅ active（6 决策 + reframe，废弃 UnlockedStyles 改 PracticeLog vector）。剩 style-balance-v1 未起 + E2E p2 脚本未跑。
 
 #### 🟧 Wave 3 — P3 中阶生态（Month 8-10）
 
@@ -1668,22 +1674,22 @@ graph TD
 
 ### Q.5 关键路径（Critical Path）
 
-> 不能并行优化的最长依赖链：
+> 不能并行优化的最长依赖链。**2026-05-04 实际进度**：前 6 个节点已全部 ✅ finished（cultivation-canonical-align / fauna / spawn-tutorial / poi-novice / spirit-eye / zhenfa）；剩临界路径塌缩到 niche-defense → tribulation → void-quota → void-actions → acceptance（约 15 周）。
 
 ```
-cultivation-canonical-align-v1 (2w)
-    → fauna-v1 (3w)
-    → spawn-tutorial-v1 (2w)
-    → poi-novice-v1 (2w)
-    → spirit-eye-v1 (3w)
-    → zhenfa-v1 (4w)
-    → niche-defense-v1 (3w)
-    → tribulation-v1 (4w)
-    → void-quota-v1 (2w)
-    → void-actions-v1 (2w)
-    → gameplay-acceptance-v1 (4w 含 100h 实测)
+✅ cultivation-canonical-align-v1 (2w) — 已 finished (2026-05-02)
+    ✅ → fauna-v1 (3w) — 已 finished (2026-05-02)
+        ✅ → spawn-tutorial-v1 (2w) — 已 finished (2026-05-03)
+            ✅ → poi-novice-v1 (2w) — 已 finished (2026-05-03)
+                ✅ → spirit-eye-v1 (3w) — 已 finished (2026-05-03)
+                    ✅ → zhenfa-v1 (4w) — 已 finished (2026-05-03)
+                        ⬜ → niche-defense-v1 (3w) — skeleton 待启
+                            ⏳ → tribulation-v1 (4w) — active 收尾
+                                ⬜ → void-quota-v1 (2w) — skeleton（等 tribulation）
+                                    ⬜ → void-actions-v1 (2w)
+                                        🆕 → gameplay-acceptance-v1 (4w 含 100h 实测)
     ───────────────────────────────────────
-    临界路径 31 周 ≈ 7 个月（理想）
+    剩临界路径 ≈ 15 周（约 4 个月，前 16 周已实际跑完）
 ```
 
 **优化建议**：
@@ -1694,16 +1700,18 @@ cultivation-canonical-align-v1 (2w)
 
 ### Q.6 风险与依赖塌方点
 
-| 风险 plan | 塌方半径 |
-|---|---|
-| `plan-cultivation-canonical-align-v1` 卡死 | 全部下游(经脉数对齐影响所有 plan)→ 整个项目暂停 |
-| `plan-persistence-v1` 卡死 | 100h 玩家断电就丢，acceptance-v1 无法跑 |
-| `plan-zhenfa-v1` 卡死 | niche-defense + 地师流派 → 影响 P3-P5 |
-| `plan-spirit-eye-v1` 卡死 | 凝脉→固元突破不可达 → P3 走不通 |
-| `plan-fauna-v1` 卡死 | 经济(骨币) + 兽核(突破) + 教学噬元鼠 → 全局塌方 |
-| `plan-tribulation-v1` 卡死 | P4-P5 链路全断 |
+| 风险 plan | 塌方半径 | 2026-05-04 状态 |
+|---|---|---|
+| `plan-cultivation-canonical-align-v1` 卡死 | 全部下游(经脉数对齐影响所有 plan)→ 整个项目暂停 | ✅ finished，风险消除 |
+| `plan-persistence-v1` 卡死 | 100h 玩家断电就丢，acceptance-v1 无法跑 | ✅ finished，风险消除 |
+| `plan-zhenfa-v1` 卡死 | niche-defense + 地师流派 → 影响 P3-P5 | ✅ finished，风险消除 |
+| `plan-spirit-eye-v1` 卡死 | 凝脉→固元突破不可达 → P3 走不通 | ✅ finished，风险消除 |
+| `plan-fauna-v1` 卡死 | 经济(骨币) + 兽核(突破) + 教学噬元鼠 → 全局塌方 | ✅ finished，风险消除 |
+| `plan-tribulation-v1` 卡死 | P4-P5 链路全断（void-quota / void-actions / multi-life / acceptance 全卡）| ⏳ active，**当前最高风险**（剩唯一塌方点）|
 
 **对策**：Wave 0 + Wave 1 关键 plan 必须**双人结对**或**同时起 2 路并行实验**——卡 1 周以上立即换路。
+
+> **2026-05-04 状态**：原 6 个塌方点 5 个已 ✅ finished 风险消除，仅剩 tribulation-v1 ⏳ active 收尾。一旦 tribulation finished → P4/P5 链路全部 unblock（void-quota / void-actions / acceptance）。
 
 ### Q.7 升 active 操作清单
 
@@ -1711,7 +1719,7 @@ cultivation-canonical-align-v1 (2w)
 
 - [ ] `git mv docs/plans-skeleton/plan-gameplay-journey-v1.md docs/plan-gameplay-journey-v1.md`
 - [ ] 同步起新派生 plan 的 skeleton（Q.1 标 🆕 的）：
-  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / multi-style-v1 ⬜ / style-balance-v1 ⬜ / economy-v1 ⬜ / tsy-raceout-v1 ⬜ / void-quota-v1 ⬜ / void-actions-v1 ⬜ / multi-life-v1 ⬜ / gameplay-acceptance-v1 ⬜
+  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ active** (05-04) / style-balance-v1 ⬜ / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / void-quota-v1 ⬜ / void-actions-v1 ⬜ / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
 - [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"
