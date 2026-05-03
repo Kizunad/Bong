@@ -1366,7 +1366,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 23 | `plan-zhenmai-v1` | ✅ active (2026-05-03，commit 530d6d53) | cultivation-canonical-align-v1 | §A 截脉 |
 | 24 | `plan-tuike-v1` | ✅ active (2026-05-03，commit 5b90b758) | spiritwood-v1, fauna-v1 | §A 替尸 |
 | 25 | `plan-woliu-v1` | ✅ finished (2026-05-03，commit 94c32a04 归档；P0/P1 commit 121dbf70) | terrain-ash-deadzone-v1 | §A 涡流(P4 解锁但 plan 早做) |
-| 26 | `plan-multi-style-v1` | 🆕 | cultivation-canonical-align-v1, style-vector-integration-v1（涌现取代显式选择） | §A.5 + O.14 |
+| 26 | `plan-multi-style-v1` | ⏳ active (2026-05-04 升级，6 决策 + reframe) | cultivation-canonical-align-v1 ✅, style-vector-integration-v1 ⏳（PracticeLog 修炼 session 扩展依赖）| §A.5 + O.14；范围简化为 is_hunyuan 判定 + UI（无机制惩罚）|
 
 #### 层 D：P3 中阶（Tier 3）
 
