@@ -1,0 +1,34 @@
+# plan-tuike-v1 — 替尸 / 蜕壳流材料与伪皮装备。
+
+[[item]]
+id = "tuike_rotten_wood"
+name = "死域朽木"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.6
+rarity = "uncommon"
+spirit_quality_initial = 0.55
+description = "死域边缘捡来的黑朽木，纹理里卡着不肯散的浊真元。"
+
+[[item]]
+id = "tuike_false_skin_silk"
+name = "蛛丝伪皮"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 0.4
+rarity = "uncommon"
+spirit_quality_initial = 0.9
+description = "以拟态灰烬蛛丝缝成的单层伪灵皮，只替修士截住一层真元污染。"
+
+[[item]]
+id = "tuike_rotten_wood_armor"
+name = "朽木甲"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 3.6
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "朽木夹蛛丝编成的重伪皮，可连脱三层，压身也压截脉手感。"

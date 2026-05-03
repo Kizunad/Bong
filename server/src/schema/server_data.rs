@@ -29,6 +29,7 @@ use super::social::{
     PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
     SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
+use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
 use crate::cultivation::components::ColorKind;
@@ -107,6 +108,7 @@ pub enum ServerDataType {
     TreasureEquipped,
     VortexState,
     CarrierState,
+    FalseSkinState,
     LingtianSession,
     DeathScreen,
     TerminateScreen,
@@ -275,6 +277,7 @@ pub enum ServerDataPayloadV1 {
     TreasureEquipped(TreasureEquippedV1),
     VortexState(VortexFieldStateV1),
     CarrierState(CarrierStateV1),
+    FalseSkinState(FalseSkinStateV1),
     LingtianSession(Box<LingtianSessionDataV1>),
     DeathScreen {
         visible: bool,
@@ -725,6 +728,10 @@ enum ServerDataPayloadWireV1 {
     CarrierState {
         #[serde(flatten)]
         state: CarrierStateV1,
+    },
+    FalseSkinState {
+        #[serde(flatten)]
+        state: FalseSkinStateV1,
     },
     LingtianSession {
         #[serde(flatten)]
@@ -1447,6 +1454,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::VortexState { state } => Ok(Self::VortexState(state)),
             ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
+            ServerDataPayloadWireV1::FalseSkinState { state } => Ok(Self::FalseSkinState(state)),
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
@@ -1866,6 +1874,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::CarrierState(state) => Self::CarrierState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::FalseSkinState(state) => Self::FalseSkinState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
             },
@@ -2170,6 +2181,7 @@ impl ServerDataPayloadV1 {
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::VortexState(..) => ServerDataType::VortexState,
             Self::CarrierState(..) => ServerDataType::CarrierState,
+            Self::FalseSkinState(..) => ServerDataType::FalseSkinState,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
@@ -2282,6 +2294,14 @@ mod tests {
                 env_qi_at_cast: 0.9,
                 maintain_remaining_ticks: 80,
                 intercepted_count: 1,
+            }),
+            ServerDataPayloadV1::FalseSkinState(FalseSkinStateV1 {
+                target_id: "offline:Azure".to_string(),
+                kind: Some(crate::schema::tuike::FalseSkinKindV1::SpiderSilk),
+                layers_remaining: 1,
+                contam_capacity_per_layer: 10.0,
+                absorbed_contam: 3.0,
+                equipped_at_tick: 7,
             }),
             ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
                 entity_id: 1,

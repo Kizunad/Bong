@@ -52,6 +52,8 @@ pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
 pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
 pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
 pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
+pub const CH_TUIKE_SHED: &str = "bong:tuike/shed";
+pub const CH_TUIKE_FALSE_SKIN_STATE: &str = "bong:tuike/false_skin_state";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
@@ -145,6 +147,8 @@ mod tests {
             CH_ANQI_PROJECTILE_DESPAWNED,
             "bong:combat/projectile_despawned"
         );
+        assert_eq!(CH_TUIKE_SHED, "bong:tuike/shed");
+        assert_eq!(CH_TUIKE_FALSE_SKIN_STATE, "bong:tuike/false_skin_state");
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
         assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");

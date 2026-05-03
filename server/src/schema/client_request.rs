@@ -7,7 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::alchemy::AlchemyInterventionV1;
-use super::inventory::InventoryLocationV1;
+use super::inventory::{EquipSlotV1, InventoryLocationV1};
+use super::tuike::FalseSkinKindV1;
 use crate::cultivation::components::MeridianId;
 use crate::cultivation::forging::ForgeAxis;
 use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind};
@@ -196,6 +197,17 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         from: InventoryLocationV1,
         to: InventoryLocationV1,
+    },
+    /// plan-tuike-v1 — 装备伪皮的专用 C2S 包；服务端落到 false_skin 装备槽。
+    EquipFalseSkin {
+        v: u8,
+        slot: EquipSlotV1,
+        item_instance_id: u64,
+    },
+    /// plan-tuike-v1 — 即时制作伪皮，扣材料与真元后产出对应 inventory item。
+    ForgeFalseSkin {
+        v: u8,
+        kind: FalseSkinKindV1,
     },
     InventoryDiscardItem {
         v: u8,

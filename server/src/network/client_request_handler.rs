@@ -29,6 +29,7 @@ use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
     StatusEffectKind,
 };
+use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::{recover_current_qi, Cultivation};
@@ -52,7 +53,8 @@ use crate::inventory::{
     consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
-    InventoryMoveOutcome, ItemInstance, PlayerInventory,
+    InventoryMoveOutcome, ItemInstance, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID,
+    MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
 };
 use crate::inventory::{
     AlchemyItemData, ItemEffect, ItemRegistry,
@@ -90,7 +92,7 @@ use crate::player::state::{
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
-use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
+use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::shelflife::{
     age_peak_check, container_storage_multiplier, spoil_check, AgeBonusRoll, AgePeakCheck,
@@ -143,6 +145,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub decay_profiles: Option<Res<'w, DecayProfileRegistry>>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
     pub insight_request_tx: Option<ResMut<'w, Events<InsightRequest>>>,
+    pub false_skin_forge_tx: Option<ResMut<'w, Events<FalseSkinForgeRequest>>>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
     pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
     pub start_search_tx: Option<ResMut<'w, Events<StartSearchRequestEvent>>>,
@@ -322,6 +325,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ZhenfaDisarm { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
+            | ClientRequestV1::EquipFalseSkin { v, .. }
+            | ClientRequestV1::ForgeFalseSkin { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
@@ -850,6 +855,55 @@ pub fn handle_client_request_payloads(
                     karma_weights.as_deref(),
                     durability_changed_tx.as_deref_mut(),
                 );
+            }
+            ClientRequestV1::EquipFalseSkin {
+                slot,
+                item_instance_id,
+                ..
+            } => {
+                if slot != EquipSlotV1::FalseSkin {
+                    tracing::warn!(
+                        "[bong][network][tuike] equip_false_skin rejected: slot={slot:?} item_instance_id={item_instance_id}"
+                    );
+                    continue;
+                }
+                let from = inventories.get(ev.client).ok().and_then(|inventory| {
+                    find_inventory_instance_location(inventory, item_instance_id)
+                });
+                let Some(from) = from else {
+                    tracing::warn!(
+                        "[bong][network][tuike] equip_false_skin rejected: instance {item_instance_id} not found for entity {:?}",
+                        ev.client
+                    );
+                    continue;
+                };
+                handle_inventory_move(
+                    ev.client,
+                    item_instance_id,
+                    from,
+                    InventoryLocationV1::Equip {
+                        slot: EquipSlotV1::FalseSkin,
+                    },
+                    &combat_params.item_registry,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                    karma_weights.as_deref(),
+                    durability_changed_tx.as_deref_mut(),
+                );
+            }
+            ClientRequestV1::ForgeFalseSkin { kind, .. } => {
+                if let Some(events) = combat_params.false_skin_forge_tx.as_deref_mut() {
+                    events.send(FalseSkinForgeRequest {
+                        crafter: ev.client,
+                        kind: kind.into(),
+                    });
+                } else {
+                    tracing::warn!(
+                        "[bong][network][tuike] forge_false_skin ignored: FalseSkinForgeRequest event resource missing"
+                    );
+                }
             }
             ClientRequestV1::InventoryDiscardItem {
                 instance_id, from, ..
@@ -2340,6 +2394,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<FalseSkinForgeRequest>();
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
@@ -4922,6 +4977,69 @@ fn first_instance_for_template(inventory: &PlayerInventory, template_id: &str) -
         .map(|item| item.instance_id)
 }
 
+fn find_inventory_instance_location(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<InventoryLocationV1> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            let container_id = container_id_v1_for_runtime(container.id.as_str())?;
+            return Some(InventoryLocationV1::Container {
+                container_id,
+                row: u64::from(placed.row),
+                col: u64::from(placed.col),
+            });
+        }
+    }
+
+    for (slot, item) in &inventory.equipped {
+        if item.instance_id == instance_id {
+            return equip_slot_v1_for_runtime(slot).map(|slot| InventoryLocationV1::Equip { slot });
+        }
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .enumerate()
+        .find_map(|(index, item)| {
+            item.as_ref()
+                .filter(|item| item.instance_id == instance_id)
+                .map(|_| InventoryLocationV1::Hotbar { index: index as u8 })
+        })
+}
+
+fn container_id_v1_for_runtime(id: &str) -> Option<ContainerIdV1> {
+    match id {
+        MAIN_PACK_CONTAINER_ID => Some(ContainerIdV1::MainPack),
+        SMALL_POUCH_CONTAINER_ID => Some(ContainerIdV1::SmallPouch),
+        FRONT_SATCHEL_CONTAINER_ID => Some(ContainerIdV1::FrontSatchel),
+        _ => None,
+    }
+}
+
+fn equip_slot_v1_for_runtime(slot: &str) -> Option<EquipSlotV1> {
+    match slot {
+        crate::inventory::EQUIP_SLOT_HEAD => Some(EquipSlotV1::Head),
+        crate::inventory::EQUIP_SLOT_CHEST => Some(EquipSlotV1::Chest),
+        crate::inventory::EQUIP_SLOT_LEGS => Some(EquipSlotV1::Legs),
+        crate::inventory::EQUIP_SLOT_FEET => Some(EquipSlotV1::Feet),
+        crate::inventory::EQUIP_SLOT_FALSE_SKIN => Some(EquipSlotV1::FalseSkin),
+        crate::inventory::EQUIP_SLOT_MAIN_HAND => Some(EquipSlotV1::MainHand),
+        crate::inventory::EQUIP_SLOT_OFF_HAND => Some(EquipSlotV1::OffHand),
+        crate::inventory::EQUIP_SLOT_TWO_HAND => Some(EquipSlotV1::TwoHand),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_0 => Some(EquipSlotV1::TreasureBelt0),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_1 => Some(EquipSlotV1::TreasureBelt1),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_2 => Some(EquipSlotV1::TreasureBelt2),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_3 => Some(EquipSlotV1::TreasureBelt3),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_inventory_move(
     entity: valence::prelude::Entity,
@@ -4954,6 +5072,36 @@ fn handle_inventory_move(
             return;
         }
     };
+
+    if let InventoryLocationV1::Equip {
+        slot: EquipSlotV1::FalseSkin,
+    } = &to
+    {
+        if let Some(kind) = item_before_move
+            .as_ref()
+            .and_then(|item| false_skin_kind_for_item(&item.template_id))
+        {
+            let realm_allowed = cultivations
+                .get(entity)
+                .map(|cultivation| can_equip_false_skin(cultivation.realm, kind))
+                .unwrap_or(false);
+            if !realm_allowed {
+                tracing::warn!(
+                    "[bong][network][tuike] rejected false_skin equip entity={entity:?} instance={instance_id}: realm too low for {:?}",
+                    kind
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "false_skin_realm_rejection",
+                );
+                return;
+            }
+        }
+    }
 
     match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {

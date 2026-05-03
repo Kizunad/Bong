@@ -81,6 +81,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::VortexState => "vortex_state",
         ServerDataType::CarrierState => "carrier_state",
+        ServerDataType::FalseSkinState => "false_skin_state",
         ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::DeathScreen => "death_screen",
         ServerDataType::TerminateScreen => "terminate_screen",
@@ -367,6 +368,7 @@ mod server_data_tests {
                 chest: None,
                 legs: None,
                 feet: None,
+                false_skin: None,
                 main_hand: Some(sample_inventory_item(
                     1003,
                     "training_blade",

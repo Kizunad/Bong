@@ -14,6 +14,7 @@ pub mod projectile;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
+pub mod tuike;
 pub mod weapon;
 pub mod woliu;
 
@@ -159,6 +160,8 @@ pub fn register(app: &mut App) {
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
     carrier::register(app);
+    app.add_event::<tuike::ShedEvent>();
+    app.add_event::<tuike::FalseSkinForgeRequest>();
 
     app.configure_sets(
         Update,
@@ -217,6 +220,16 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    // Separate add_systems call to stay below Bevy 0.14 tuple-arity limits.
+    app.add_systems(
+        Update,
+        (
+            tuike::handle_false_skin_forge_requests,
+            tuike::sync_false_skin_from_inventory,
+        )
+            .chain()
+            .in_set(CombatSystemSet::Intent),
     );
     app.add_systems(
         Update,
