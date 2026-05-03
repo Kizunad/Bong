@@ -282,6 +282,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         String forgeColor = readOptionalString(itemObject, "forge_color");
         List<String> forgeSideEffects = readOptionalStringArray(itemObject, "forge_side_effects");
         Integer forgeAchievedTier = readOptionalInt(itemObject, "forge_achieved_tier");
+        List<String> alchemyLines = readAlchemyLines(itemObject);
 
         if (instanceId == null || itemId == null || displayName == null
             || gridWidth == null || gridHeight == null || weight == null
@@ -291,12 +292,13 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             || spiritQuality < 0.0 || spiritQuality > 1.0
             || durability < 0.0 || durability > 1.0
             || forgeSideEffects == null
+            || alchemyLines == null
             || (forgeQuality != null && (forgeQuality < 0.0 || forgeQuality > 1.0))
             || (forgeAchievedTier != null && (forgeAchievedTier < 1 || forgeAchievedTier > 4))) {
             return null;
         }
 
-        return InventoryItem.createFullWithForgeMeta(
+        return InventoryItem.createFullWithAlchemyMeta(
             instanceId,
             itemId,
             displayName,
@@ -314,8 +316,90 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             forgeQuality,
             forgeColor,
             forgeSideEffects,
-            forgeAchievedTier
+            forgeAchievedTier,
+            alchemyLines
         );
+    }
+
+    private static List<String> readAlchemyLines(JsonObject itemObject) {
+        JsonElement element = itemObject.get("alchemy");
+        if (element == null || element.isJsonNull()) {
+            return List.of();
+        }
+        if (!element.isJsonObject()) {
+            return null;
+        }
+
+        JsonObject alchemy = element.getAsJsonObject();
+        String kind = readRequiredString(alchemy, "kind");
+        if (kind == null) {
+            return null;
+        }
+
+        return switch (kind) {
+            case "pill" -> pillAlchemyLines(alchemy);
+            case "recipe_fragment" -> fragmentAlchemyLines(alchemy);
+            case "recipe_hint" -> hintAlchemyLines(alchemy);
+            default -> null;
+        };
+    }
+
+    private static List<String> pillAlchemyLines(JsonObject alchemy) {
+        String recipeId = readRequiredString(alchemy, "recipe_id");
+        Integer tier = readOptionalInt(alchemy, "quality_tier");
+        Double multiplier = readOptionalDouble(alchemy, "effect_multiplier");
+        Boolean consecrated = readOptionalBoolean(alchemy, "consecrated");
+        if (recipeId == null || tier == null || multiplier == null || consecrated == null
+            || tier < 1 || tier > 5 || multiplier < 0.0) {
+            return null;
+        }
+
+        List<String> lines = new ArrayList<>();
+        lines.add("丹药 " + tier + "阶 · 效力 " + Math.round(multiplier * 100.0) + "%");
+        if (consecrated) {
+            lines.add("开光 · 持续翻倍");
+        }
+        JsonElement sideEffect = alchemy.get("side_effect");
+        if (sideEffect != null && sideEffect.isJsonObject()) {
+            String tag = readRequiredString(sideEffect.getAsJsonObject(), "tag");
+            if (tag != null) {
+                lines.add("副作用 " + tag);
+            }
+        }
+        return lines;
+    }
+
+    private static List<String> fragmentAlchemyLines(JsonObject alchemy) {
+        JsonObject fragment = readRequiredObject(alchemy, "fragment");
+        if (fragment == null) {
+            return null;
+        }
+        String recipeId = readRequiredString(fragment, "recipe_id");
+        Integer maxTier = readOptionalInt(fragment, "max_quality_tier");
+        JsonArray stages = readRequiredArray(fragment, "known_stages");
+        if (recipeId == null || maxTier == null || stages == null || maxTier < 1 || maxTier > 3) {
+            return null;
+        }
+        return List.of("丹方残卷 " + recipeId, "已知 " + stages.size() + "段 · 上限" + maxTier + "阶");
+    }
+
+    private static List<String> hintAlchemyLines(JsonObject alchemy) {
+        JsonObject hint = readRequiredObject(alchemy, "hint");
+        if (hint == null) {
+            return null;
+        }
+        String sourcePill = readRequiredString(hint, "source_pill");
+        Double accuracy = readOptionalDouble(hint, "accuracy");
+        List<String> ingredients = readOptionalStringArray(hint, "ingredients");
+        if (sourcePill == null || accuracy == null || ingredients == null || accuracy < 0.0 || accuracy > 1.0) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        lines.add("丹心线索 · 准度 " + Math.round(accuracy * 100.0) + "%");
+        if (!ingredients.isEmpty()) {
+            lines.add("药痕 " + String.join("/", ingredients));
+        }
+        return lines;
     }
 
     private static Double readOptionalDouble(JsonObject object, String fieldName) {
@@ -369,6 +453,15 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         }
         String value = primitive.getAsString();
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static Boolean readOptionalBoolean(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        return primitive.isBoolean() ? primitive.getAsBoolean() : null;
     }
 
     private static Integer readOptionalInt(JsonObject object, String fieldName) {
