@@ -263,6 +263,7 @@ P2  v1 收口
   - `server/src/cultivation/death_hooks.rs`：`on_player_terminated` 同步移除 `PracticeLog` 与 `QiColor`。
   - `agent/packages/schema/src/client-request.ts` / `server/src/schema/client_request.rs`：新增 `qi_color_inspect` C2S request。
   - `agent/packages/schema/src/server-data.ts` / `server/src/schema/server_data.rs`：新增 `QiColorObservedV1` S2C payload。
+  - `server/src/network/client_request_handler.rs`：`qi_color_inspect` 仅接受服务端 `EntityManager` 可解析的协议实体 id，并限制同维度、非自身、6 格内目标，拒绝客户端伪造 `entity_bits` 探测。
   - `server/src/network/qi_color_observed_emit.rs`：按境界差 `>=2 / =1 / <=0` 生成完整、模糊或屏蔽的对方真元色观察。
   - `client/src/main/java/com/bong/client/network/QiColorObservedHandler.java`、`client/src/main/java/com/bong/client/cultivation/QiColorObservedStore.java`：客户端镜像观察结果。
   - `client/src/main/java/com/bong/client/inventory/InspectScreenBootstrap.java`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java`、`client/src/main/java/com/bong/client/inventory/model/MeridianBody.java`：打开检视时向准星目标发起 inspect，并在检视界面渲染自己/对方 QiColor。
@@ -277,10 +278,11 @@ P2  v1 收口
 - `4f253df2` · 2026-05-04 · `feat(style-vector): 增加真元色神识通道`
 - `f50c1811` · 2026-05-04 · `feat(client): 渲染检视真元色`
 - `8753391d` · 2026-05-04 · `feat(style-vector): 接入真元色叙事`
+- `5f3e4e02` · 2026-05-04 · `fix(style-vector): 限制真元色检视目标范围`
 
 ### 测试结果
 
-- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ `2223 passed`
+- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ `2225 passed`
 - `agent/`：`npm run build` ✅
 - `agent/packages/tiandao`：`npm test` ✅ `33 passed / 229 tests`
 - `agent/packages/schema`：`npm test` ✅ `9 passed / 267 tests`
@@ -288,7 +290,7 @@ P2  v1 收口
 
 ### 跨仓库核验
 
-- **server**：`PracticeLog` / `record_style_practice` / `STYLE_PRACTICE_AMOUNT` / `PRACTICE_DECAY_PER_TICK` / `QiColorInspectRequest` / `emit_qi_color_observed_payloads` / `BiographyEntry::ColorShift` / `CultivationSnapshotV1.qi_color_chaotic`
+- **server**：`PracticeLog` / `record_style_practice` / `STYLE_PRACTICE_AMOUNT` / `PRACTICE_DECAY_PER_TICK` / `QiColorInspectRequest` / `resolve_qi_color_inspect_target` / `emit_qi_color_observed_payloads` / `BiographyEntry::ColorShift` / `CultivationSnapshotV1.qi_color_chaotic`
 - **agent/schema**：`ClientRequestQiColorInspectV1` / `QiColorObservedV1` / `CultivationSnapshotV1.qi_color_chaotic` / `CultivationSnapshotV1.qi_color_hunyuan`
 - **agent/tiandao**：`QiColorNarrationTracker` / `renderQiColorNarration`
 - **client**：`QiColorObservedHandler` / `QiColorObservedStore` / `InspectScreenBootstrap.requestQiColorInspectForCrosshairTarget` / `MeridianBody.qiColorMain`
