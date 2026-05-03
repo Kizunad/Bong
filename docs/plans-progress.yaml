@@ -1,12 +1,10 @@
 # Bong 项目 plan 进度索引
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
-# 上一次刷新：2026-05-02 由 5 个 explorer subagent 并发实地核对（grep + git log + 文档对照）全审 5 组。
-#   主要发现：HUD、alchemy-client、tribulation、ash-deadzone 已大幅超前旧 dashboard；
-#   narrative-v1、server-cmd-system-v1 已达到 merged/100，botany-agent-v1 仅早期接入；
-#   botany-v2、fauna-v1、tools-v1、perception-v1 继续以代码为准纠偏；
-#   layer-query-v1 保持 partial 实施（active-implementing / 55%）；
-#   lingtian-process-v1、lingtian-weather-v1 仍纯设计，worldgen 多个扩展仍为 skeleton/design。
+# 上一次刷新：2026-05-03 由 5 个 explorer subagent 并发实地核对（grep + git log + 文档对照）全审 active 组。
+#   主要发现：zhenfa、fauna、forge-leftovers、mineral、spiritwood、pseudo-vein 已升至 merged；
+#   Iris、炼丹废料、灵田二级加工、灵田天气、散修种田、防守仍处设计；
+#   botany-agent 和 terrain-layer-query 保持部分实施，skeleton/finished 分组保持不动。
 #
 # state 取值：
 #   - merged              代码已合并（PR 在主线），plan 主体已落地
@@ -15,7 +13,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/）
 #   - finished            已归档（在 finished_plans/）
 
-generated_at: "2026-05-02"
+generated_at: "2026-05-03"
 project: Bong
 
 groups:
@@ -46,218 +44,218 @@ groups:
 
 plans:
   # ============================================================
-  # Group: tsy（坍缩渊）— 全部归档至 finished，仅留分组占位以兼容历史 dashboard。
-  # tsy 系列 10 份请见下方 finished 分组条目。
+  # Group: 坍缩渊
   # ============================================================
+  # tsy 系列 10 份请见下方 finished 分组条目。
 
   # ============================================================
   # Group: combat-vfx
   # ============================================================
   - file: plan-HUD-v1.md
     group: combat-vfx
-    title: "客户端全局 HUD 闭环"
+    title: "HUD 设计专项"
     state: merged
-    percent: 90
-    last_updated: "2026-04-30"
-    pr_refs: [18, 43, 65]
+    percent: 95
+    last_updated: "2026-05-02"
+    pr_refs: [98]
     blocking_on: []
-    summary: "BongHud/Orchestrator、Store/Handler、quickslot/cast/event/Inspect 拖拽均命中；文档低估 C6，仅伪皮/涡流角标与事件流 toggle 未闭。"
+    summary: "docs/finished_plans 已归档；grep 命中 Orchestrator、QuickBar、CastState、EventStream、InspectScreen，C1-C8 主体闭环。"
 
   - file: plan-iris-integration-v1.md
     group: combat-vfx
-    title: "Iris 修仙光影集成"
+    title: "Iris 光影集成"
     state: active-design
-    percent: 5
+    percent: 10
     last_updated: "2026-04-25"
     pr_refs: []
-    blocking_on: []
-    summary: "grep 未见 IrisApi/CommonUniforms/BongClientState/bong_xianxia；fabric.mod.json 无 recommends，前置 plan 已归档但本 plan 仍停在调研。"
+    blocking_on: ["plan-vfx-v1", "plan-particle-system-v1", "plan-player-animation-v1"]
+    summary: "文档自述仍处调研；grep 未命中 IrisApi、CommonUniforms、BongClientState、bong_xianxia 或 recommends.iris，代码未启动。"
 
   - file: plan-zhenfa-v1.md
     group: combat-vfx
-    title: "地师阵法流与欺天阵"
-    state: active-design
-    percent: 8
-    last_updated: "2026-04-30"
-    pr_refs: [17, 20, 26, 83]
-    blocking_on: ["阵石归属未决", "天道假劫气接口未定"]
-    summary: "命中 ZhenfaLayoutScreen、FormationActivatePlayer、zhenfa_jvling 与 zhenfa_hooks；未见 server handler/ZhenfaInstance/阵旗持久化，文档骨架判断属实。"
+    title: "地师阵法流"
+    state: merged
+    percent: 90
+    last_updated: "2026-05-03"
+    pr_refs: [110]
+    blocking_on: []
+    summary: "origin/main 已归档并含 #110；git grep 命中 ZhenfaInstance、ZhenfaRegistry、Trap/Ward、zhenfa_* 契约与神识告警，本地 active 文档滞后。"
 
   # ============================================================
   # Group: cultivation-economy
   # ============================================================
   - file: plan-alchemy-client-v1.md
     group: cultivation-economy
-    title: "炼丹系统 Fabric 客户端全接入"
+    title: "炼丹客户端闭环"
     state: merged
     percent: 100
-    last_updated: "2026-05-01"
+    last_updated: "2026-05-03"
     pr_refs: []
     blocking_on: []
-    summary: "docs 已在 finished_plans；grep 见 furnace_pos 三栈契约、右键开炉/投料/炸炉结算与图标均在，dashboard 20%已滞后。"
+    summary: "文档在 finished_plans；grep 命中 furnace_pos、AlchemyScreen/Store、开炉/投料/炸炉经脉裂痕与 schema，主链已闭环。"
 
   - file: plan-alchemy-recycle-v1.md
     group: cultivation-economy
     title: "炼丹废料反哺灵田"
     state: active-design
     percent: 5
-    last_updated: "2026-04-30"
+    last_updated: "2026-05-03"
     pr_refs: []
     blocking_on: []
-    summary: "grep 未见 PillResidue、ReplenishSource::PillResidue 或 dye_contamination；仅 NPC loot 有 pill_residue 字符串，仍是设计稿。"
+    summary: "未见 PillResidue、ReplenishSource::PillResidue 或 plot 杂染字段；仅 NPC loot 有 pill_residue 字符串。"
 
   - file: plan-botany-v2.md
     group: cultivation-economy
-    title: "末法残土植物生态扩展"
+    title: "植物生态扩展"
     state: merged
-    percent: 92
-    last_updated: "2026-05-01"
-    pr_refs: [83, 84, 86]
-    blocking_on: ["plan-fauna-v1", "plan-lingtian-weather-v1"]
-    summary: "PR #83 主体已落，另经 #84/#86 接工具真伤/耐久；17种、EnvLock/Hazard、渲染和配方在，fauna/weather 仍为 stub。"
+    percent: 95
+    last_updated: "2026-05-03"
+    pr_refs: [83, 84, 86, 105]
+    blocking_on: ["plan-lingtian-weather-v1"]
+    summary: "17 种 v2、SurvivalMode/EnvLock/Hazard、工具真伤、配方和图标均在；天气相位仍是 SeasonRequired stub。"
 
   - file: plan-fauna-v1.md
     group: cultivation-economy
     title: "妖兽骨系材料"
-    state: active-implementing
-    percent: 15
-    last_updated: "2026-05-01"
-    pr_refs: [84, 86]
+    state: merged
+    percent: 100
+    last_updated: "2026-05-03"
+    pr_refs: [105]
     blocking_on: []
-    summary: "仅 tools PR 落了 ButcherRequest/ButcherDropKind 与凡器耐久；FaunaTag、DropTable、骨币制作和正典替换均缺。"
+    summary: "文档在 finished_plans；FaunaTag/DropTable、六类材料、封灵骨币、shelflife、forge 正典与屠宰工具链均已落地。"
 
   - file: plan-forge-leftovers-v1.md
     group: cultivation-economy
-    title: "炼器全链路收口"
+    title: "炼器剩余收口"
     state: merged
-    percent: 88
-    last_updated: "2026-04-28"
-    pr_refs: [62, 66]
-    blocking_on: ["plan-persistence-v1"]
-    summary: "P0-P4 schema/Redis/砧放置、forge→inventory、三块客户端 UI 已落；只剩 plan-persistence-v1 持久化锚点。"
+    percent: 100
+    last_updated: "2026-05-03"
+    pr_refs: [62, 66, 103]
+    blocking_on: []
+    summary: "文档在 finished_plans；forge Redis bridge、station place、产物入库、三块客户端 UI 与持久化锚点均已收口。"
 
   - file: plan-lingtian-process-v1.md
     group: cultivation-economy
     title: "作物二级加工"
     state: active-design
     percent: 0
-    last_updated: "2026-04-29"
+    last_updated: "2026-05-03"
     pr_refs: []
     blocking_on: ["plan-lingtian-weather-v1"]
-    summary: "grep 未见 ProcessingKind/ProcessingSession/FreshnessTracker/ProcessingActionScreen；只有 shelflife drying_rack 旁支，代码近零。"
+    summary: "未见 ProcessingKind/ProcessingSession/FreshnessTracker/ProcessingActionScreen；只有 shelflife drying_rack 旁支。"
 
   - file: plan-lingtian-v1.md
     group: cultivation-economy
     title: "灵田人工种植"
     state: merged
-    percent: 93
-    last_updated: "2026-04-26"
+    percent: 95
+    last_updated: "2026-05-03"
     pr_refs: [26]
-    blocking_on: ["plan-persistence-v1", "plan-skill-v1", "plan-zhenfa-v1"]
-    summary: "P0-P6、补灵/偷灵、密度阈值、道伥、HUD 与 LingtianActionScreen 均在；持久化/skill/zhenfa 等跨 plan 钩子未接。"
+    blocking_on: ["plan-skill-v1", "plan-zhenfa-v1"]
+    summary: "Till/Plant/Harvest/Replenish/Drain、密度阈值、道伥、LingtianActionScreen/HUD 均在；skill/zhenfa 钩子仍未全接。"
 
   - file: plan-lingtian-weather-v1.md
     group: cultivation-economy
-    title: "天气季节影响灵田"
+    title: "灵田天气季节"
     state: active-design
     percent: 0
-    last_updated: "2026-04-29"
+    last_updated: "2026-05-03"
     pr_refs: []
     blocking_on: []
-    summary: "未见 Season/WeatherEvent/ZoneSeasonState/freshness_multiplier；仅 botany WaterPulse/SeasonRequired stub，仍停设计。"
+    summary: "未见 ZoneSeasonState、season_tick、WeatherEvent 或 SeasonStateV1；仅 pseudo-vein 与 botany 有相位名/stub。"
 
   - file: plan-mineral-v1.md
     group: cultivation-economy
     title: "矿物材料正典"
     state: merged
-    percent: 95
-    last_updated: "2026-04-27"
-    pr_refs: [31, 44, 57]
+    percent: 100
+    last_updated: "2026-05-03"
+    pr_refs: [31, 44, 104]
     blocking_on: []
-    summary: "18矿物、锚点物化、探矿、NBT、forge/alchemy 校验、衰变/resourcepack/鲸落均在；随机矿脉密度仍后续。"
+    summary: "文档在 finished_plans；18 矿物、锚点物化、探矿、NBT、forge/alchemy 校验、衰变、资源包与鲸落收口均在。"
 
   - file: plan-spirit-eye-v1.md
     group: cultivation-economy
     title: "灵眼系统"
     state: active-design
-    percent: 5
-    last_updated: "2026-04-30"
+    percent: 8
+    last_updated: "2026-05-03"
     pr_refs: []
-    blocking_on: ["plan-perception-v1"]
-    summary: "未见 SpiritEyeRegistry、spirit_eye_candidates 或突破环境检测；仅 core item 灵眼石芝与 botany 禁用生成注释。"
+    blocking_on: []
+    summary: "当前树未见 SpiritEyeRegistry、spirit_eye_candidates、突破环境检查或私有标记；仅有灵眼石芝 item/图标占位。"
 
   - file: plan-spiritwood-v1.md
     group: cultivation-economy
     title: "灵木材料体系"
-    state: active-design
-    percent: 15
-    last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["plan-fauna-v1"]
-    summary: "已有世界生成 SpiritWood 巨树、ling_wood/ling_mu_miao 占位；无 WoodSession、灵木 item 正典化、封灵匣或 lumber channel。"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-03"
+    pr_refs: [106]
+    blocking_on: []
+    summary: "文档在 finished_plans；WoodSession、ling_mu 材料、lumber_progress、ling_xia、forge 配方和 zhenfa hook 均已落地。"
 
   - file: plan-tools-v1.md
     group: cultivation-economy
-    title: "采集加工凡器工具体系"
+    title: "凡器工具体系"
     state: merged
     percent: 100
-    last_updated: "2026-05-01"
+    last_updated: "2026-05-03"
     pr_refs: [84, 86]
     blocking_on: []
-    summary: "docs 已归档；grep 见 7 件工具、ItemCategory::Tool、主手识别、forge blueprint、botany/fauna/战斗耐久均落主线。"
+    summary: "文档在 finished_plans；7 件工具、ToolKind/ToolTag、forge blueprint、主手识别、botany/fauna/耐久接入均在。"
 
   - file: plan-tribulation-v1.md
     group: cultivation-economy
-    title: "天劫：渡虚劫/域崩/天罚"
+    title: "天劫系统"
     state: merged
-    percent: 90
-    last_updated: "2026-05-01"
+    percent: 92
+    last_updated: "2026-05-03"
     pr_refs: [96]
     blocking_on: []
-    summary: "PR #96 已合渡虚劫主链、HUD/agent、心魔 MVP、域崩、定向天罚；剩多情境心魔、确认 UX、zhenfa/恢复后续。"
+    summary: "渡虚劫、HUD/agent、心魔、域崩、定向天罚与多轮修复已落；阵法/传送硬禁、quota 事务化等仍后续。"
 
   # ============================================================
   # Group: gameplay-npc
   # ============================================================
   - file: plan-inventory-v1.md
     group: gameplay-npc
-    title: "背包与死亡掉落拾取闭环"
+    title: "背包与掉落闭环"
     state: merged
-    percent: 95
-    last_updated: "2026-05-01"
-    pr_refs: [27]
+    percent: 92
+    last_updated: "2026-05-02"
+    pr_refs: [12, 27]
     blocking_on: []
-    summary: "grep 命中 InventorySnapshot/DroppedLoot/G 键拾取三端主链；文档仍列实机 QA，代码仅剩验证收口。"
+    summary: "rg 命中 InventorySnapshot/Event、DroppedLootRegistry、DroppedItemWorldRenderer、OverweightHudPlanner；P1-P5 主链一致，剩 QA/文档收口。"
 
   - file: plan-lingtian-npc-v1.md
     group: gameplay-npc
-    title: "散修种田生态指示器"
+    title: "散修自主种田生态"
     state: active-design
-    percent: 5
+    percent: 12
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["plan-lingtian-v1 prep（by_actor 重构）"]
-    summary: "ScatteredCultivator/farming_brain 未命中；ActiveLingtianSessions 仍是 by_player，实际停在设计和前置阻塞。"
+    blocking_on: ["plan-lingtian-v1"]
+    summary: "rg 未命中 ScatteredCultivator/FarmingTemperament/farming_brain；ActiveLingtianSessions 仍 by_player，文档 active 但主体未起。"
 
   - file: plan-niche-defense-v1.md
     group: gameplay-npc
-    title: "灵龛抄家防守体系"
+    title: "灵龛抄家防守"
     state: active-design
-    percent: 5
+    percent: 15
     last_updated: "2026-04-30"
-    pr_refs: []
-    blocking_on: ["plan-fauna-v1", "plan-zhenfa-v1", "worldview 道伥绑定/异种染色扩展"]
-    summary: "仅命中 social.defense_mode 和灵龛半径 hook；HouseGuardian/NicheIntrusion/残留真元等核心代码未落。"
+    pr_refs: [77]
+    blocking_on: []
+    summary: "rg 仅命中 social-v1 预留 defense_mode/SPIRIT_NICHE_RADIUS/niche_breach；HouseGuardian/NicheIntrusion 等未见。"
 
   - file: plan-perception-v1.md
     group: gameplay-npc
-    title: "视觉与神识感知系统"
+    title: "视觉与神识感知"
     state: merged
-    percent: 100
+    percent: 95
     last_updated: "2026-05-01"
     pr_refs: [85]
     blocking_on: []
-    summary: "v1 文档自述模板且被 v1.1 取代；grep 命中 RealmVision/SpiritualSense/server_data/客户端边缘指示器，已合并。"
+    summary: "v1 文档自述模板态且被 v1.1 取代；rg 命中 RealmVisionParams/SpiritualSenseTargets、server push、client edge HUD，代码已合并。"
 
   # ============================================================
   # Group: infrastructure
@@ -270,7 +268,7 @@ plans:
     last_updated: "2026-05-02"
     pr_refs: [23, 92]
     blocking_on: ["plan-lingtian-v1"]
-    summary: "server/schema和tiandao通用订阅已在；但未进WorldModel/异常窗口/重分配，文档仍写未订阅已过期。"
+    summary: "grep 命中 server/schema 与 tiandao 通用 BOTANY_ECOLOGY 订阅；但无 WorldModel 字段、analyzer、异常窗口和重分配决策，文档未订阅说法已过期。"
 
   - file: plan-narrative-v1.md
     group: infrastructure
@@ -280,17 +278,17 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [89]
     blocking_on: []
-    summary: "已归档；agent感知边界/去重/黑名单、server去重、client分流均命中，文档待办已落地。"
+    summary: "grep 命中感知边界、广播收窄、匿名、现代腔黑名单、近轮去重、server dedupe 与 client 分流；归档证据与代码一致。"
 
   - file: plan-persistence-v1.md
     group: infrastructure
     title: "SQLite/WAL 存档持久化"
-    state: active-implementing
-    percent: 90
-    last_updated: "2026-05-01"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-02"
     pr_refs: [24]
     blocking_on: ["plan-quest-v1"]
-    summary: "SQLite/WAL v15、主要表/拒载/并发回归已在；quest_log仍缺，性能峰值未到文档1000NPC+50玩家。"
+    summary: "grep 命中 user_version 15、未来版本拒载、overlay payload 迁移、1000NPC+50玩家写入回归和10人终结一致性；Quest 转后续 plan。"
 
   - file: plan-server-cmd-system-v1.md
     group: infrastructure
@@ -300,7 +298,70 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [72]
     blocking_on: []
-    summary: "已归档；/ping、11个dev与/bong命令、CommandTree fixture和legacy !丢弃均命中。"
+    summary: "grep 命中 valence_command、/ping、11个 dev 命令、/bong gameplay、命令树 fixture、CommandTreeS2c 测试和 legacy ! 提示；已归档一致。"
+
+  # ============================================================
+  # Group: worldgen
+  # ============================================================
+  - file: plan-terrain-ash-deadzone-v1.md
+    group: worldgen
+    title: "余烬死域首版"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-01"
+    pr_refs: [94]
+    blocking_on: []
+    summary: "grep 命中 ash_dead_zone profile、Generator、dead_zone tick、禁刷、corpse_mound 与灰蛛规则；文档归档状态吻合。"
+
+  - file: plan-terrain-jiuzong-ruin-v1.md
+    group: worldgen
+    title: "九宗故地废墟群"
+    state: skeleton
+    percent: 7
+    last_updated: "2026-04-29"
+    pr_refs: []
+    blocking_on: []
+    summary: "文档仍骨架；grep 未见 jiu_zong_ruin、zongmen_origin_id、Generator 或 server/agent 契约，仅有 TSY 相邻实现。"
+
+  - file: plan-terrain-layer-query-v1.md
+    group: worldgen
+    title: "TerrainProvider 按层查询"
+    state: active-implementing
+    percent: 55
+    last_updated: "2026-04-30"
+    pr_refs: [83]
+    blocking_on: []
+    summary: "文档要求 f32/u8 分轨与 layer_names；代码仅有 sample_layer(f32) 且 botany 已消费，LayerSchema 等未落。"
+
+  - file: plan-terrain-pseudo-vein-v1.md
+    group: worldgen
+    title: "伪灵脉绿洲"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-02"
+    pr_refs: [107]
+    blocking_on: []
+    summary: "文档已归档但 dashboard 仍旧；grep 命中 profile/generator、生命周期、IPC、agent narration，#107 已落地主线。"
+
+  - file: plan-terrain-rift-mouth-v1.md
+    group: worldgen
+    title: "渊口荒丘地表"
+    state: skeleton
+    percent: 8
+    last_updated: "2026-04-29"
+    pr_refs: []
+    blocking_on: []
+    summary: "文档仍骨架；grep 未见 rift_mouth_barrens、portal_anchor_sdf 或 generator，只命中既有 TSY rift_portal。"
+
+  - file: plan-terrain-tribulation-scorch-v1.md
+    group: worldgen
+    title: "烬焰焦土地形"
+    state: skeleton
+    percent: 10
+    last_updated: "2026-04-29"
+    pr_refs: []
+    blocking_on: ["plan-tribulation-v1", "plan-cultivation-v1"]
+    summary: "文档仍骨架且自述强阻塞；grep 未见 tribulation_scorch、ScorchWeatherHook、ascension_pit 或 profile。"
 
   # ============================================================
   # Group: skeleton
@@ -355,72 +416,8 @@ plans:
     blocking_on: []
     summary: "骨架，等四论挂点"
 
-
   # ============================================================
-  # Group: worldgen（地形 / 世界生成）
-  # ============================================================
-  - file: plan-terrain-ash-deadzone-v1.md
-    group: worldgen
-    title: "余烬死域首版"
-    state: merged
-    percent: 100
-    last_updated: "2026-05-01"
-    pr_refs: [94]
-    blocking_on: []
-    summary: "Finish Evidence 与 grep 一致：profile、server tick、禁刷、shelflife、corpse_mound、client 无节律均已落地主线。"
-
-  - file: plan-terrain-jiuzong-ruin-v1.md
-    group: worldgen
-    title: "九宗故地废墟群"
-    state: skeleton
-    percent: 7
-    last_updated: "2026-04-29"
-    pr_refs: []
-    blocking_on: ["library-jiuzong-history"]
-    summary: "grep 未见 jiu_zong_ruin、zongmen_origin_id、JiuzongRuinGenerator 或 zong_lore；仅有 TSY 宗门遗迹底座。"
-
-  - file: plan-terrain-layer-query-v1.md
-    group: worldgen
-    title: "TerrainProvider 按层查询"
-    state: active-implementing
-    percent: 55
-    last_updated: "2026-04-30"
-    pr_refs: [83]
-    blocking_on: []
-    summary: "grep 命中 sample_layer 与 botany/env_lock 消费；但 f32/u8 分轨、layer_names/LayerSchema 与饱和单测未落。"
-
-  - file: plan-terrain-pseudo-vein-v1.md
-    group: worldgen
-    title: "伪灵脉绿洲"
-    state: active-design
-    percent: 10
-    last_updated: "2026-04-29"
-    pr_refs: []
-    blocking_on: []
-    summary: "grep 未见 pseudo_vein_oasis、PseudoVeinLifecycle、transient_zone 或 IPC schema；只有 botany 注释提到 FakeVeinBurn。"
-
-  - file: plan-terrain-rift-mouth-v1.md
-    group: worldgen
-    title: "渊口荒丘地表"
-    state: skeleton
-    percent: 8
-    last_updated: "2026-04-29"
-    pr_refs: []
-    blocking_on: ["portal_anchor_sdf", "rift_mouth_barrens profile"]
-    summary: "grep 只命中既有 TSY rift_portal/neg_pressure；未见 rift_mouth_barrens、portal_anchor_sdf 或 generator。"
-
-  - file: plan-terrain-tribulation-scorch-v1.md
-    group: worldgen
-    title: "烬焰焦土地形"
-    state: skeleton
-    percent: 10
-    last_updated: "2026-04-29"
-    pr_refs: []
-    blocking_on: ["tribulation_scorch profile", "ScorchWeatherHook"]
-    summary: "天劫核心已另行落地，但 grep 未见 tribulation_scorch、ScorchWeatherHook、ascension_pit 或地形 profile。"
-
-  # ============================================================
-  # Group: finished（M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan）
+  # Group: finished
   # ============================================================
   - file: mvp01-plan.md
     group: finished
