@@ -1,4 +1,6 @@
-# Bong · plan-inventory-v2 · 骨架
+# Bong · plan-inventory-v2 · Active
+
+> **状态**：⏳ active（2026-05-04 升级，user 拍板）。前置 plan-inventory-v1 ⏳ active，本 plan 是其已知缺口直接补丁，可独立推进；开放问题全为 P2 UX 协商级，不是 P0 block。
 
 Inventory 两项核心修复：Tarkov 式格子空间分配（替换全部 `row:0,col:0` 硬编码）+ 同种物品堆叠合并（stack merge）。对应 `plan-inventory-v1`（active）已知缺口条目。
 
@@ -150,3 +152,4 @@ fn default_max_stack() -> u32 { 1 }
 ## §5 进度日志
 
 - 2026-05-01：从 plan-inventory-v1 reminder 整理立项。现有代码：`add_item_to_player_inventory` 一律 `row:0, col:0`（`server/src/inventory/mod.rs:869`）；`placed_item_footprints_overlap` 已存在（`mod.rs:2942`）；`ItemTemplate` 无 `max_stack_count` 字段；堆叠合并逻辑未实装。
+- **2026-05-04**：skeleton → active 升级（user 拍板，技术 plan 无 worldview 阻塞）。下一步起 P0 worktree（find_free_slot + add_item_to_player_inventory 行优先扫描接入）。

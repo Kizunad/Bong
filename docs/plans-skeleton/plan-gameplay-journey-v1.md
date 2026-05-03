@@ -1327,6 +1327,8 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 5 | `plan-input-binding-v1` | ✅ finished (2026-05-02，commit 1d51df42 归档) | client ✅ | §G + O.5 |
 | 6 | `plan-HUD-v1` | ✅ finished (2026-05-02，commit a45370c5 归档) | client ✅ | 横向 |
 | 7 | `plan-server-cmd-system-v1` | ✅ finished (2026-05-01，commit 660d5b0a 归档) | server ✅ | §G 工具(可早) |
+| 7b | `plan-anticheat-v1` | ⏳ active (2026-05-04 升级) | combat-no_ui ✅, agent-v2 ✅ | 反作弊上报基建（plan-combat-no_ui §1.5.6 缺口）|
+| 7c | `plan-inventory-v2` | ⏳ active (2026-05-04 升级) | inventory-v1 ⏳ | Tarkov 格子分配 + stack merge（plan-inventory-v1 缺口）|
 
 #### 层 B：P0/P1 资源（Tier 1）
 

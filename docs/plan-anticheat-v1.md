@@ -1,4 +1,6 @@
-# Bong · plan-anticheat-v1 · 骨架
+# Bong · plan-anticheat-v1 · Active
+
+> **状态**：⏳ active（2026-05-04 升级，user 拍板）。前置 plan-combat-no_ui ✅ finished + plan-agent-v2 ✅ finished，无依赖阻塞。开放问题全为上线后阈值调整级，不是 P0 block。
 
 反作弊上报系统：`AntiCheatCounter` component + `CHANNEL_ANTICHEAT` Redis 推送。对应 `plan-combat-no_ui.md §1.5.6`（finished）中设计但未实装的模块。
 
@@ -123,3 +125,4 @@ P0 改动：在每道 clamp 判定后插入一行 `anticheat_counter.{kind}_viol
 ## §5 进度日志
 
 - 2026-05-01：从 plan-combat-no_ui reminder 整理立项。现有代码：三道 clamp 分散在 `server/src/combat/resolve.rs` ✅（已有行为）；`AntiCheatCounter` component / `bong:anticheat` channel / `anticheat.ts` 均未实装。
+- **2026-05-04**：skeleton → active 升级（user 拍板，技术 plan 无 worldview 阻塞）。下一步起 P0 worktree（AntiCheatCounter ECS + 三道 clamp 计数接入 + bong:anticheat channel）。
