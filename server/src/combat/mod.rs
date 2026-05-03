@@ -233,6 +233,12 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        tuike::record_shed_events_in_life_record
+            .in_set(CombatSystemSet::Emit)
+            .after(resolve::resolve_attack_intents),
+    );
+    app.add_systems(
+        Update,
         anticheat::emit_anticheat_threshold_reports
             .in_set(CombatSystemSet::Resolve)
             .after(resolve::resolve_attack_intents),

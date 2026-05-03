@@ -9,6 +9,7 @@ use valence::prelude::{
 
 use crate::combat::components::DerivedAttrs;
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, InventoryInstanceIdAllocator,
     ItemRegistry, PlayerInventory, EQUIP_SLOT_FALSE_SKIN,
@@ -453,6 +454,25 @@ pub fn handle_false_skin_forge_requests(
     }
 }
 
+pub fn record_shed_events_in_life_record(
+    mut events: EventReader<ShedEvent>,
+    mut life_records: Query<&mut LifeRecord>,
+) {
+    for event in events.read() {
+        let Ok(mut life_record) = life_records.get_mut(event.target) else {
+            continue;
+        };
+        life_record.push(BiographyEntry::FalseSkinShed {
+            kind: format!("{:?}", event.kind),
+            layers_shed: event.layers_shed,
+            contam_absorbed: event.contam_absorbed,
+            contam_overflow: event.contam_overflow,
+            attacker_id: event.attacker_id.clone(),
+            tick: event.tick,
+        });
+    }
+}
+
 pub fn sync_false_skin_from_inventory(
     mut commands: Commands,
     mut query: Query<
@@ -796,6 +816,46 @@ mod tests {
         assert_eq!(count_template(inventory, SPIDER_SILK_FALSE_SKIN_ITEM_ID), 1);
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
         assert_eq!(cultivation.qi_current, 15.0);
+    }
+
+    #[test]
+    fn shed_event_records_life_record_entry() {
+        let mut app = App::new();
+        app.add_event::<ShedEvent>();
+        app.add_systems(Update, record_shed_events_in_life_record);
+        let target = app.world_mut().spawn(LifeRecord::new("offline:Azure")).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<ShedEvent>>()
+            .send(ShedEvent {
+                target,
+                attacker: None,
+                target_id: "offline:Azure".to_string(),
+                attacker_id: Some("npc:ash_spider".to_string()),
+                kind: FalseSkinKind::RottenWoodArmor,
+                layers_shed: 2,
+                layers_remaining: 1,
+                contam_absorbed: 60.0,
+                contam_overflow: 5.0,
+                tick: 42,
+            });
+
+        app.update();
+
+        let life_record = app.world().entity(target).get::<LifeRecord>().unwrap();
+        assert!(matches!(
+            life_record.biography.as_slice(),
+            [BiographyEntry::FalseSkinShed {
+                kind,
+                layers_shed: 2,
+                contam_absorbed,
+                contam_overflow,
+                attacker_id: Some(attacker),
+                tick: 42,
+            }] if kind == "RottenWoodArmor"
+                && (*contam_absorbed - 60.0).abs() < f64::EPSILON
+                && (*contam_overflow - 5.0).abs() < f64::EPSILON
+                && attacker == "npc:ash_spider"
+        ));
     }
 
     #[test]
