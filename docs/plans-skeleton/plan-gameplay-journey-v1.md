@@ -121,7 +121,7 @@
 
 凝脉期是**经脉拓扑选择窗口**，玩家必须在 5h 内做 1 次不可逆选择(`cultivation::topology` ✅ 已支持)，决定主流派树：
 
-> **2026-05-03 状态更新**：6 流派 plan 已全部从 skeleton 升 active（zhenfa / anqi / dugu / zhenmai / tuike / woliu）+ baomai-v1 已实装 + spirit-eye-v1 升 active 规范化 + fauna-v1 ✅ finished (2026-05-02 d2ee8a0b 归档)。**P2 流派分化轴主要 plan 缺口已闭合**。**剩余 P2 缺口：仅 plan-styles-emergent-refactor-v1（派生）—— UnlockedStyles 字段从"门禁"重定位为"已用过标记"**（user 2026-05-03 反馈"流派应自由涌现"，worldview §五"流派由组合涌现"已正典化）。原 style-pick-ui 缺口已撤销。
+> **2026-05-03 状态更新**：6 流派 plan 已全部从 skeleton 升 active（zhenfa / anqi / dugu / zhenmai / tuike / woliu）+ baomai-v1 已实装 + spirit-eye-v1 升 active 规范化 + fauna-v1 ✅ finished (2026-05-02 d2ee8a0b 归档)。**P2 流派分化轴主要 plan 缺口已闭合**。**剩余 P2 缺口：仅 plan-style-vector-integration-v1（已 active）—— PracticeLog.add() 接入 6 流派 P0 + 完整死亡清空修复 + inspect 神识看对方 QiColor 通道**（user 2026-05-03 反馈"流派身份 = 真元色向量"，worldview §五"流派由组合涌现"已正典化）。原 style-pick-ui / styles-emergent-refactor 缺口已撤销。
 
 | 流派 | 攻击/防御 | 关键依赖 plan | 路径线索 |
 |------|---------|---------------|---------|
@@ -133,7 +133,7 @@
 | 替尸/蜕壳 | 防 | plan-tuike-v1 ✅ active (2026-05-03) | cave_network 找到上一任替尸者残蜕 |
 | 涡流(绝灵) | 防 | plan-woliu-v1 ✅ active (2026-05-03) | 北荒(waste_plateau)边缘负压区静修触发 |
 
-**选择动作**（2026-05-03 reframe，worldview §五"流派由组合涌现"已正典）：**无显式选择**——任何玩家任何时候都可以试任何招式。`UnlockedStyles` 字段从"门禁"重定位为"已用过标记"（plan-styles-emergent-refactor-v1 P0 改造）；触发权限永远在玩家手里，效率取决于真元色 + 经脉路径 + 天赋顿悟 + 装备 + 招式熟练度的组合适配度。原"染色丹强制锁主色"路径撤销。
+**选择动作**（2026-05-03 reframe，worldview §五"流派由组合涌现"已正典）：**无显式选择**——任何玩家任何时候都可以试任何招式。**流派身份 = 真元色向量**（QiColor 已实装 PracticeLog 累积 + evolve_qi_color 阈值演化）；玩家用什么流派打架 → PracticeLog 对应色 +N → QiColor.main/secondary/is_chaotic/is_hunyuan 演化 → 染色组合呈现。触发权限永远在玩家手里，效率取决于真元色 + 经脉路径 + 天赋顿悟 + 装备 + 招式熟练度的组合适配度。具体接入由 plan-style-vector-integration-v1 P0 实施。原"染色丹强制锁主色"路径撤销。
 
 > **不锁流派**：玩家**可以选择全流派精通**——但代价是阶段停留时间显著拉长 + 突破要求叠加。worldview §六 个性三层把流派定为"路径倾向"而非"职业锁"，本 plan 据此设计四档专精路线(详见 §A 全流派精通路径)。
 >
@@ -159,9 +159,9 @@
 
 - **server**：cultivation/topology ✅ / QiColor ✅ / extract_system ✅ / tsy ✅；**缺** zhenfa/spirit_eye/anqi/dugu/tuike/woliu/zhenmai 模块
 - **agent**：tiandao narration 已支持流派切换叙事(skills/insight.md)；**缺**：染色锁定时的"道路确认" narration
-- **client**：UnlockedStylesStore ✅ / ExtractInteractionBootstrap ✅；**缺**：~~流派选择 UI~~（撤销，worldview §五"流派由组合涌现"无门禁）/ 灵眼标记 UI(并入 plan-spirit-eye-v1) / `UnlockedStyles` 客户端 mirror 重定位为"已用过标记"（plan-styles-emergent-refactor-v1）
+- **client**：UnlockedStylesStore ✅ / ExtractInteractionBootstrap ✅；**缺**：~~流派选择 UI~~（撤销，worldview §五"流派由组合涌现"无门禁）/ 灵眼标记 UI(并入 plan-spirit-eye-v1) / inspect 神识看对方 QiColor HUD（plan-style-vector-integration-v1 P1）
 - **worldgen**：broken_peaks/spring_marsh/cave_network/rift_valley/waste_plateau/tsy_zongmen_ruin 全 ✅；需要在 spring_marsh + rift_valley **注入灵眼 POI**(并入 plan-spirit-eye-v1)
-- **schema**：流派切换无专属 payload — ~~原派生 plan-style-pick-schema-v1~~ 撤销（2026-05-03 worldview §五"流派由组合涌现"正典化）；改为 plan-styles-emergent-refactor-v1 中扩展 `UnlockedStyles` 序列化字段（7 流派 bool）
+- **schema**：流派切换无专属 payload — ~~原派生 plan-style-pick-schema-v1~~ 撤销（2026-05-03 worldview §五"流派由组合涌现"正典化）；改为 plan-style-vector-integration-v1 P1 新增 `QiColorObservedV1` schema（inspect 神识看对方 QiColor）
 
 ### 验收抓手
 
@@ -183,7 +183,7 @@
 | woliu-v1 | ✅ active (2026-05-03，9 决策 + hotbar 正典化) | P0/P1 实装（commit 121dbf70）|
 | **spirit-eye-v1** | ✅ active (2026-05-03 规范化升级，7 决策闭环) | P0-P5 全 v1 范围实装中 |
 | ~~**style-pick-ui + schema**~~ | ❌ **撤销** (2026-05-03 worldview §五"流派由组合涌现" 正典化取代) | — |
-| **plan-styles-emergent-refactor-v1** | ⬜ skeleton 派生 | UnlockedStyles 字段重定位（门禁 → 已用过标记）+ 7 流派字段扩展 |
+| **plan-style-vector-integration-v1** | ✅ active (2026-05-03) | PracticeLog.add() 接入 6 流派 P0 + 完整死亡清空修复 + inspect 神识看对方 QiColor |
 | **fauna-v1** | ✅ finished (2026-05-02，commit d2ee8a0b 归档) | 噬元鼠 / 异变兽核 / 封灵骨币 / forge 正典化全 ✅ |
 
 **worldview 同期更新**（commit fe00532c）：末土后招原则 + 身份与信誉系统 + 毒 vs 毒蛊边界正典化（接 plan-identity-v1 vN+1）。
@@ -552,7 +552,7 @@ P2 必需:
   - plan-zhenfa-v1               ⬜ → active     (阵法系统)
   - plan-spirit-eye-v1           ⬜ → active     (灵眼坐标)
   - ~~plan-style-pick-v1~~      (派生)         ❌ **撤销** (2026-05-03 worldview §五"流派由组合涌现" 正典化取代)
-  - plan-styles-emergent-refactor-v1 (派生)    UnlockedStyles 字段重定位（门禁 → 已用过标记）+ 7 流派字段扩展
+  - plan-style-vector-integration-v1 (派生)    ✅ active (2026-05-03)：PracticeLog.add() 6 流派 P0 接入 + 完整死亡清空修复 + inspect 神识看对方 QiColor schema/client
   - 5 流派 plan 至少升 1 攻 + 1 防 active(推荐 baomai 已 ✅ + tuike)
 
 P3 必需:
