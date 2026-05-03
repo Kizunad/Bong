@@ -1,0 +1,54 @@
+{
+  "id": "anti_spirit_pressure_pill_v1",
+  "name": "抗灵压丹·空兽痕引",
+  "furnace_tier_min": 2,
+  "stages": [
+    {
+      "at_tick": 0,
+      "required": [
+        { "material": "kong_shou_hen", "count": 1 },
+        { "material": "fu_ya_hesui", "count": 2 }
+      ],
+      "window": 0
+    }
+  ],
+  "fire_profile": {
+    "target_temp": 0.62,
+    "target_duration_ticks": 150,
+    "qi_cost": 18.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 18 }
+  },
+  "outcomes": {
+    "perfect": {
+      "pill": "anti_spirit_pressure_pill",
+      "quality": 1.0,
+      "toxin_amount": 0.45,
+      "toxin_color": "Sharp",
+      "qi_gain": 8.0
+    },
+    "good": {
+      "pill": "anti_spirit_pressure_pill",
+      "quality": 0.7,
+      "toxin_amount": 0.65,
+      "toxin_color": "Sharp",
+      "qi_gain": 5.0
+    },
+    "flawed": {
+      "pill": "anti_spirit_pressure_pill",
+      "quality": 0.35,
+      "toxin_amount": 1.10,
+      "toxin_color": "Turbid",
+      "qi_gain": 2.0
+    },
+    "waste": null,
+    "explode": { "damage": 12.0, "meridian_crack": 0.06 }
+  },
+  "flawed_fallback": {
+    "pill": "anti_spirit_pressure_pill",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.4,
+    "side_effect_pool": [
+      { "tag": "negative_pressure_tinnitus", "duration_s": 12, "weight": 1 }
+    ]
+  }
+}

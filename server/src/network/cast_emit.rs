@@ -411,6 +411,11 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] LifespanExtension years={years} source={source} for `{username}` ({entity:?}) — handled by take_pill path"
             );
         }
+        ItemEffect::AntiSpiritPressure { duration_ticks } => {
+            tracing::info!(
+                "[bong][network][cast] AntiSpiritPressure duration_ticks={duration_ticks} for `{username}` ({entity:?}) — handled by take_pill path"
+            );
+        }
     }
 }
 

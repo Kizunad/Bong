@@ -522,6 +522,7 @@ mod tests {
         assert!(registry.get("kai_mai_pill_v0").is_some());
         assert!(registry.get("hui_yuan_pill_v0").is_some());
         assert!(registry.get("du_ming_san_v0").is_some());
+        assert!(registry.get("anti_spirit_pressure_pill_v1").is_some());
     }
 
     #[test]
@@ -650,6 +651,8 @@ mod tests {
             ("du_ming_san_v0", "chi_sui_cao"),
             ("du_ming_san_v0", "hui_yuan_zhi"),
             ("du_ming_san_v0", "shao_hou_man"),
+            ("anti_spirit_pressure_pill_v1", "kong_shou_hen"),
+            ("anti_spirit_pressure_pill_v1", "fu_ya_hesui"),
         ];
         for (recipe_id, material_id) in expected {
             let recipe = registry
