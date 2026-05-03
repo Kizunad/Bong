@@ -1389,7 +1389,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 |---:|---|:---:|---|---|
 | 37 | `plan-tribulation-v1` | ⏳(扩展) | narrative-v1, terrain-ash-deadzone-v1, terrain-tribulation-scorch-v1 | 既有 active 扩展(含 §M.2 避劫 + 渡虚劫 POV UI) |
 | 38 | `plan-terrain-tribulation-scorch-v1` | ⬜ | worldgen ✅ | §G P5 渡劫场 |
-| 39 | `plan-tsy-raceout-v1` | 🆕 | tsy-lifecycle-v1 ✅ | §M.1 race-out 3 秒撤离 |
+| 39 | `plan-tsy-raceout-v1` | ⏳ active (2026-05-04 升级，5 决策闭环) | tsy-lifecycle-v1 ✅, tsy-extract-v1 ✅, tsy-hostile-v1 ✅, death-lifecycle-v1 ✅ | §M.1 race-out 3 秒撤离 |
 
 #### 层 F：P5 化虚（Tier 5）
 
