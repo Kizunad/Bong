@@ -610,13 +610,13 @@ narration / agent 深化:
                                                 —— 跨流派 trade-off matrix 的对照锚点
                                                 —— P3-P5 越级偷一波 / 渡劫救场必需
 
-合计：~25 个缺口 plan 必须推进/完成（原 22 + DEF 新增 3），其中 7 个派生新 plan、18 个升级既有 skeleton/active。
+合计：~25 个缺口 plan 必须推进/完成（原 22 + DEF 新增 3 - style-pick 撤销 + style-vector-integration 替换），其中 7 个派生新 plan、18 个升级既有 skeleton/active。
 ```
 
-**依赖图建议执行序(假设单线开发)**：persistence → cross-system-patch → fauna + spiritwood(并行) → forge-leftovers + alchemy-client(并行) → terrain-ash-deadzone + terrain-pseudo-vein(并行) → spirit-eye → zhenfa → style-pick → 1 攻 1 防流派 → lingtian-process/weather/npc(并行) → niche-defense → narrative-v1 收尾 → tribulation 收尾 → 节律 → 100h E2E。
+**依赖图建议执行序(假设单线开发)**：persistence → cross-system-patch → fauna + spiritwood(并行) → forge-leftovers + alchemy-client(并行) → terrain-ash-deadzone + terrain-pseudo-vein(并行) → spirit-eye → zhenfa → 1 攻 1 防流派 → **style-vector-integration**（PracticeLog 接入 6 流派 P0） → lingtian-process/weather/npc(并行) → niche-defense → narrative-v1 收尾 → tribulation 收尾 → 节律 → 100h E2E。
 
 **DEF 三 plan 切入点**（独立于主线）：
-- **plan-color-v1** —— 应在 P2 流派分化后期切入（玩家选完流派开始养染色），可与 spirit-eye-v1 / style-pick-v1 并行
+- **plan-color-v1** —— 应在 P2 流派分化后期切入（PracticeLog 已接入后，染色养成系统加在 QiColor 之上），可与 spirit-eye-v1 / style-vector-integration-v1 并行；plan-style-vector-integration-v1 P0 仅做"事件 → PracticeLog.add()"流水，**养成 / 杂色惩罚 / 加速规则**留给 plan-color-v1
 - **plan-identity-v1** —— P3 社交博弈深化时必需（NPC 信誉度反应是 P3 灵龛战 / 仇人 / 结契机制的元数据层）
 - **plan-baomai-v2** —— P4 通灵→化虚阶段必需（越级 / 全力一击是高境 PVP 的核心算计），可与 tribulation 收尾并行
 
@@ -1344,7 +1344,8 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
-| 17 | `plan-style-pick-v1` | ❌ **撤销立项** (2026-05-03，user 反馈"流派应自由涌现，无系统门禁") | — | 由 worldview §五"流派由组合涌现" 2026-05-03 正典化取代 |
+| 17 | ~~`plan-style-pick-v1`~~ | ❌ **撤销立项** (2026-05-03，user 反馈"流派应自由涌现，无系统门禁") | — | 由 worldview §五"流派由组合涌现" 2026-05-03 正典化取代 |
+| 17b | `plan-style-vector-integration-v1` | ✅ active (2026-05-03，commit 97de8ccd) | cultivation-canonical-align-v1, 6 流派 plan(19/21/22/23/24/25), spirit-eye-v1 | 取代 #17：PracticeLog.add() 接入 6 流派 P0 + 完整死亡清空修复 + inspect 神识看对方 QiColor schema/client |
 | 18 | `plan-spirit-eye-v1` | ✅ active (2026-05-03 规范化升级) | cultivation-canonical-align-v1, perception-v1.1 ✅ | §G P2 必需 |
 | 19 | `plan-zhenfa-v1` | ✅ active (2026-05-03，commit 6c00602d + fc7d4854) | cross-system-patch-v1 | §G P2 必需 |
 | 20 | `plan-baomai-v1` | ✅ | (已完成) | §A 体修 |
@@ -1353,7 +1354,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 23 | `plan-zhenmai-v1` | ✅ active (2026-05-03，commit 530d6d53) | cultivation-canonical-align-v1 | §A 截脉 |
 | 24 | `plan-tuike-v1` | ✅ active (2026-05-03，commit 5b90b758) | spiritwood-v1, fauna-v1 | §A 替尸 |
 | 25 | `plan-woliu-v1` | ✅ active (2026-05-03，commit 121dbf70) | terrain-ash-deadzone-v1 | §A 涡流(P4 解锁但 plan 早做) |
-| 26 | `plan-multi-style-v1` | 🆕 | style-pick-v1, cultivation-canonical-align-v1 | §A.5 + O.14 |
+| 26 | `plan-multi-style-v1` | 🆕 | cultivation-canonical-align-v1, style-vector-integration-v1（涌现取代显式选择） | §A.5 + O.14 |
 
 #### 层 D：P3 中阶（Tier 3）
 
@@ -1425,7 +1426,7 @@ graph TD
     pseudoV[16.terrain-pseudo-vein-v1 ⏳]
 
     %% Wave 2: P2 流派
-    stylePick[17.style-pick-v1 🆕]:::derived
+    styleVecInt[17b.style-vector-integration-v1 🆕]:::derived
     spiritEye[18.spirit-eye-v1]
     zhenfa[19.zhenfa-v1]
     anqi[21.anqi-v1]
@@ -1461,7 +1462,7 @@ graph TD
     accept[43.gameplay-acceptance-v1 🆕]:::accept
 
     %% 依赖边
-    canonalign --> stylePick
+    canonalign --> styleVecInt
     canonalign --> spiritEye
     canonalign --> zhenmai
     canonalign --> multiStyle
@@ -1503,7 +1504,14 @@ graph TD
     botanyV2 --> dugu
     botanyV2 --> botanyAg
 
-    stylePick --> multiStyle
+    anqi --> styleVecInt
+    dugu --> styleVecInt
+    zhenmai --> styleVecInt
+    tuike --> styleVecInt
+    woliu --> styleVecInt
+    zhenfa --> styleVecInt
+    spiritEye --> styleVecInt
+    styleVecInt --> multiStyle
     zhenfa --> nicheDef
     multiStyle --> styleBal
     anqi --> styleBal
@@ -1511,6 +1519,7 @@ graph TD
     zhenmai --> styleBal
     tuike --> styleBal
     woliu --> styleBal
+    styleVecInt --> styleBal
 
     lingtian --> ltProc
     lingtian --> ltNpc
@@ -1576,10 +1585,11 @@ graph TD
 
 | 并行组 | Plan |
 |---|---|
-| 组 2-A(基础设施) | plan-style-pick-v1 🆕 + plan-spirit-eye-v1 + plan-zhenfa-v1 |
+| 组 2-A(基础设施) | plan-spirit-eye-v1 + plan-zhenfa-v1 |
 | 组 2-B(攻 3 plan 并行) | plan-anqi-v1 + plan-dugu-v1 + plan-zhenmai-v1 |
 | 组 2-C(攻防 2 plan 并行) | plan-tuike-v1 + plan-woliu-v1 |
-| 组 2-D(等 A 完成) | plan-multi-style-v1 🆕 |
+| 组 2-D(等 6 流派 P0 落地) | **plan-style-vector-integration-v1** 🆕（PracticeLog.add() 接入 6 流派 + inspect 神识看 QiColor + 完整死亡清空修复） |
+| 组 2-E(等 D 完成) | plan-multi-style-v1 🆕 |
 
 **Wave 2 退出条件**：E2E `p2-condense.sh` 全绿；7 流派(含已完成 baomai-v1)互克方向符合 §P 矩阵。
 
@@ -1680,9 +1690,9 @@ cultivation-canonical-align-v1 (2w)
 执行本 plan 前**必须**完成的人工动作：
 
 - [ ] `git mv docs/plans-skeleton/plan-gameplay-journey-v1.md docs/plan-gameplay-journey-v1.md`
-- [ ] 同步起 13 个新派生 plan 的 skeleton（Q.1 标 🆕 的）：
-  - cultivation-canonical-align-v1 / input-binding-v1 / spawn-tutorial-v1 / poi-novice-v1 / style-pick-v1 / multi-style-v1 / style-balance-v1 / economy-v1 / tsy-raceout-v1 / void-quota-v1 / void-actions-v1 / multi-life-v1 / gameplay-acceptance-v1
-- [ ] 在 `docs/plans-skeleton/reminder.md` 登记 13 个新派生 plan 的待办
+- [ ] 同步起新派生 plan 的 skeleton（Q.1 标 🆕 的）：
+  - cultivation-canonical-align-v1 / input-binding-v1 / spawn-tutorial-v1 ✅ / poi-novice-v1 ✅ / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅** / multi-style-v1 / style-balance-v1 / economy-v1 / tsy-raceout-v1 / void-quota-v1 / void-actions-v1 / multi-life-v1 / gameplay-acceptance-v1
+- [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"
 - [ ] 在 GitHub 起 43 个 plan 对应的 issue / project tracker（推荐用 milestone 按 Wave 分组）
