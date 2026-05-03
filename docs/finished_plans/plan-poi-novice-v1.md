@@ -309,6 +309,7 @@ P2  朽坏视觉 + v1 收口
 - `4e57b096` 2026-05-03 `feat(schema): 定义新手 POI 事件契约`
 - `316195b9` 2026-05-03 `feat(server): 接入新手 POI runtime 与刷新 stub`
 - `df8ee3c8` 2026-05-03 `feat(agent): 增加新手 POI 事件叙事`
+- `c0160fc3` 2026-05-03 `fix(worldgen): 避免新手 POI 跨类型同格`
 
 ### 测试结果
 
@@ -316,7 +317,7 @@ P2  朽坏视觉 + v1 收口
 - `cd agent && npm run build` → schema / tiandao TypeScript build 通过
 - `cd agent/packages/schema && npm test` → `258 passed`
 - `cd agent/packages/tiandao && npm test` → `213 passed`
-- `cd worldgen && python3 -m pytest "tests/test_poi_novice_selector.py"` → `3 passed`
+- `cd worldgen && python3 -m pytest "tests/test_poi_novice_selector.py"` → `4 passed`
 - `cd worldgen && python3 -m scripts.terrain_gen --tile-size 512` → raster export 通过，`tiles synthesized: 208`
 
 ### 跨仓库核验
