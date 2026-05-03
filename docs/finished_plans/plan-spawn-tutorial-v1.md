@@ -282,3 +282,55 @@ P2  v1 收口
 
 - 2026-05-01：骨架创建。plan-gameplay-journey-v1 §L 钩子表 + P0 决策派生。
 - 2026-05-03：从 skeleton 升 active。§A 概览 + §4 v1 P0/P1/P2 数据契约落地（7 个决策点闭环 Q96-Q102，5 个 v1 实装时拍板 Q103-Q107）。primary axis = **沉默引导通过率**（30min 内玩家无 UI 提示完成醒灵→引气突破的概率，可量化 telemetry 验收）。**关键设计**：状态机钩子触发（Q102 B）取代时间硬触发，灵泉完全动态选址（Q100 C）取代固定坐标，噬元鼠动态刷出（Q101 B）取代静态 path。**沉默引导原则严格遵守**（journey O.13）：v1 严格无 UI / 无弹窗 / 无任务面板 / 无 progress bar / 无 quest log。多人联机 D 选项（共享 POI）— 后来玩家共享同 spawn_plain instance 但无独立 30min 钩子。下一个升 active 候选：plan-poi-novice-v1（P1 引气期 spawn ± 1500 格新手 POI）。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 出生点 POI / 开棺链路：
+  - `worldgen/scripts/terrain_gen/profiles/spawn_plain.py` 注入 `spawn_tutorial_coffin` / `tutorial_rogue_anchor` / `tutorial_chest` / `tutorial_rat_path` / `tutorial_lingquan` POI。
+  - `server/src/world/terrain/structures.rs` 按 POI 生成半埋石棺视觉（残灰、石砖、中心 `CHISELED_STONE_BRICKS`）。
+  - `client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java` 右键出生点石棺发送 `coffin_open`。
+  - `server/src/world/spawn_tutorial.rs` 处理 `CoffinOpenRequest`，每玩家一次授予 `spirit_niche_stone`，并从 POI 生成可杀 Rogue 与开脉丹宝箱。
+  - `server/assets/inventory/loadouts/default.toml` 移除起手龛石，`server/loot_pools.json` 新增 `tutorial_kaimai_chest`。
+- P1 动态灵泉 / 鼠群 / 状态机：
+  - `dynamic_lingquan_selector` 在 spawn 半径 200 内选择 2 个高灵气点，`raster_export.py` 合并动态 POI。
+  - `server/src/world/spawn_tutorial.rs` 落地 `TutorialState`、`TutorialHook`、`tutorial_hook_state_machine`、`dynamic_rat_swarm_spawner`、`tutorial_rat_qi_drain_tick`。
+  - `server/assets/items/pills.toml` 新增 `kaimai_dan`。
+- P2 收口：
+  - `server/src/cultivation/life_record.rs` / `server/src/schema/cultivation.rs` / `server/src/persistence/mod.rs` 写入 `SpawnTutorialCompleted` 与 `tutorial_state` 持久化。
+  - `agent/packages/schema/src/spawn-tutorial.ts`、`agent/packages/schema/src/client-request.ts`、generated schema 对齐 `CoffinOpenRequestV1` / `TutorialHookEventV1`。
+  - `agent/packages/tiandao/src/narration/spawn-tutorial-narration.ts` 写入 5 句沉默引导旁白基准。
+
+### 关键 commit
+
+- `2a518283` 2026-05-03 `plan-spawn-tutorial-v1: 接入出生教学状态机与开棺奖励`
+- `b4385791` 2026-05-03 `plan-spawn-tutorial-v1: 注入动态灵泉与教学 POI`
+- `d0a0d229` 2026-05-03 `plan-spawn-tutorial-v1: 接入客户端开棺请求`
+- `80086b50` 2026-05-03 `plan-spawn-tutorial-v1: 对齐教学 schema 与旁白基准`
+- `0719b001` 2026-05-03 `plan-spawn-tutorial-v1: 补齐散修与开脉丹宝箱落点`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2112 passed。
+- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn ./gradlew test build`：BUILD SUCCESSFUL（Java 17）。
+- `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：tiandao 211 passed；schema 253 passed。
+- `cd worldgen && python3 -m unittest discover -s tests`：9 passed。
+- `cd worldgen/scripts/terrain_gen && python3 -m unittest test_anvil_export test_anvil_region_writer test_ash_dead_zone`：42 passed。
+- `cd worldgen && python3 -m scripts.terrain_gen`：生成 1600 tiles 计划，208 synthesized tiles，输出 raster manifest。
+- `validate_rasters("worldgen/generated/terrain-gen/rasters")`：All 208 tiles passed validation。
+
+### 跨仓库核验
+
+- server：`TutorialState`、`TutorialHookEvent`、`CoffinOpenRequest`、`dynamic_rat_swarm_spawner`、`TUTORIAL_KAIMAI_LOOT_POOL_ID`、`BiographyEntry::SpawnTutorialCompleted`。
+- worldgen：`dynamic_lingquan_selector`、`spawn_tutorial_pois_for_zone`、`tutorial_lingquan` / `tutorial_chest` / `tutorial_rogue_anchor` / `tutorial_rat_path` POI。
+- client：`ClientRequestProtocol.encodeCoffinOpen`、`ClientRequestSender.sendCoffinOpen`、出生点石棺右键 mixin。
+- agent/schema：`CoffinOpenRequestV1`、`TutorialHookV1`、`TutorialHookEventV1`、`CoffinOpenedV1`。
+- agent/tiandao：`SPAWN_TUTORIAL_HOOK_KEYS`、`SPAWN_TUTORIAL_NARRATION_BASELINES`。
+
+### 遗留 / 后续
+
+- 噬元鼠 v1 仍按 plan 约定用 zombie 占位，只扣真元不扣 HP；真实噬元鼠等待 `plan-fauna-v1`。
+- v1 采用右键开棺后直接入包的无 UI 授予，未生成可掉落实体；物理拾取可在 v2 扩展。
+- 教学 POI v1 永久保留，不做完成后 despawn / instance reset。
+- `plan-narrative-v1` 完整动态 narration 节奏仍留给后续；本 plan 只落 5 句基准。
