@@ -68,6 +68,9 @@ pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
 // 玩家踏进 / 走出 TSY 秘境时由 server publish；entry / exit 共享同一频道，consumer 按 `kind` 字段 dispatch。
 pub const CH_TSY_EVENT: &str = "bong:tsy_event";
 
+// 新手 POI（plan-poi-novice-v1 §P2）：spawned / trespass 共享频道，agent 按 kind dispatch。
+pub const CH_POI_NOVICE_EVENT: &str = "bong:poi_novice/event";
+
 // 炼器（武器）（plan-forge-v1 §4）—— gameplay 仍走 bong:client_request / bong:server_data。
 // 以下为 server→agent 观测频道（锻造事件推送给天道 Agent 生成 narration）。
 pub const CH_FORGE_START: &str = "bong:forge/start";
@@ -128,6 +131,7 @@ mod tests {
         assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");
         assert_eq!(CH_SKILL_SCROLL_USED, "bong:skill/scroll_used");
         assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
+        assert_eq!(CH_POI_NOVICE_EVENT, "bong:poi_novice/event");
         assert_eq!(CH_FORGE_START, "bong:forge/start");
         assert_eq!(CH_FORGE_OUTCOME, "bong:forge/outcome");
         assert_eq!(CH_ALCHEMY_SESSION_START, "bong:alchemy/session_start");

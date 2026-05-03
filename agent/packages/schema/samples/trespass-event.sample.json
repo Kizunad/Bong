@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "kind": "trespass",
+  "village_id": "spawn:rogue_village",
+  "player_id": "offline:Azure",
+  "killed_npc_count": 3,
+  "refusal_until_wall_clock_secs": 1770000000
+}

@@ -1,0 +1,10 @@
+{
+  "id": "forge_station",
+  "display_name": "破败炼器台",
+  "gameplay": "forge",
+  "qi_range": [0.4, 0.6],
+  "entity": { "kind": "forge_station", "efficiency_multiplier": 0.5 },
+  "loot": [],
+  "refresh": "permanent",
+  "visual_blocks": ["campfire", "anvil", "mossy_cobblestone", "bone_block", "ash_path"]
+}

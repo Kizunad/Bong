@@ -23,6 +23,7 @@ pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
+pub mod poi_novice_bridge;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod resourcepack;
@@ -363,6 +364,8 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_npc_spawned_events
                 .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
+            poi_novice_bridge::publish_poi_spawned_events,
+            poi_novice_bridge::publish_trespass_events,
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),

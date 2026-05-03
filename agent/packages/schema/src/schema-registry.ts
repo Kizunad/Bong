@@ -151,6 +151,11 @@ import {
   NpcSpawnSourceV1,
 } from "./npc.js";
 import {
+  PoiNoviceKindV1,
+  PoiSpawnedEventV1,
+  TrespassEventV1,
+} from "./poi-novice.js";
+import {
   PseudoVeinDissipateEventV1,
   PseudoVeinSeasonV1,
   PseudoVeinSnapshotV1,
@@ -280,6 +285,9 @@ export const SCHEMA_REGISTRY = {
   factionEventKindV1: FactionEventKindV1,
   npcSpawnedV1: NpcSpawnedV1,
   npcDeathV1: NpcDeathV1,
+  poiNoviceKindV1: PoiNoviceKindV1,
+  poiSpawnedEventV1: PoiSpawnedEventV1,
+  trespassEventV1: TrespassEventV1,
   factionEventV1: FactionEventV1,
   pseudoVeinSeasonV1: PseudoVeinSeasonV1,
   pseudoVeinSnapshotV1: PseudoVeinSnapshotV1,
@@ -526,6 +534,9 @@ export const GENERATED_SCHEMA_FILES = {
   "faction-event-kind-v1.json": SCHEMA_REGISTRY.factionEventKindV1,
   "npc-spawned-v1.json": SCHEMA_REGISTRY.npcSpawnedV1,
   "npc-death-v1.json": SCHEMA_REGISTRY.npcDeathV1,
+  "poi-novice-kind-v1.json": SCHEMA_REGISTRY.poiNoviceKindV1,
+  "poi-spawned-event-v1.json": SCHEMA_REGISTRY.poiSpawnedEventV1,
+  "trespass-event-v1.json": SCHEMA_REGISTRY.trespassEventV1,
   "faction-event-v1.json": SCHEMA_REGISTRY.factionEventV1,
   "pseudo-vein-season-v1.json": SCHEMA_REGISTRY.pseudoVeinSeasonV1,
   "pseudo-vein-snapshot-v1.json": SCHEMA_REGISTRY.pseudoVeinSnapshotV1,

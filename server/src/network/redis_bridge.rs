@@ -17,8 +17,8 @@ use crate::schema::channels::{
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
     CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
-    CH_PLAYER_CHAT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH,
-    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
+    CH_REBIRTH, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
     CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WORLD_STATE,
@@ -37,6 +37,7 @@ use crate::schema::death_lifecycle::{
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::pseudo_vein::{PseudoVeinDissipateEventV1, PseudoVeinSnapshotV1};
 use crate::schema::server_data::HeartDemonOfferV1;
 use crate::schema::skill::{
@@ -106,6 +107,8 @@ pub enum RedisOutbound {
     TsyExit(TsyExitEventV1),
     TsyNpcSpawned(TsyNpcSpawnedV1),
     TsySentinelPhaseChanged(TsySentinelPhaseChangedV1),
+    PoiSpawned(PoiSpawnedEventV1),
+    PoiTrespass(TrespassEventV1),
     SocialExposure(SocialExposureEventV1),
     SocialPact(SocialPactEventV1),
     SocialFeud(SocialFeudEventV1),
@@ -653,6 +656,24 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::PoiSpawned(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize PoiSpawnedEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_POI_NOVICE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::PoiTrespass(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TrespassEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_POI_NOVICE_EVENT,
                 payload,
             })
         }

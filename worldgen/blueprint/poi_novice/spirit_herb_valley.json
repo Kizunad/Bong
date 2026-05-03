@@ -1,0 +1,10 @@
+{
+  "id": "spirit_herb_valley",
+  "display_name": "灵草谷",
+  "gameplay": "gather",
+  "qi_range": [0.4, 0.7],
+  "entity": { "kind": "botany_static_points" },
+  "loot": ["凝脉草", "引气草", "解蛊蕊", "安神果", "清浊草"],
+  "refresh": "botany_natural_growth",
+  "visual_blocks": ["grass_block", "moss_block", "fern", "dead_bush", "bone_block"]
+}

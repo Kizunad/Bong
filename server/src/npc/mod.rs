@@ -8,6 +8,7 @@ pub mod loot;
 pub mod movement;
 pub mod navigator;
 pub mod patrol;
+pub mod poi_rogue_village;
 pub mod possession;
 pub mod relic;
 pub mod scenario;
@@ -42,4 +43,5 @@ pub fn register(app: &mut App) {
     social::register(app);
     relic::register(app);
     lod::register(app);
+    poi_rogue_village::log_rogue_village_contract();
 }

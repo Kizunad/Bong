@@ -1,0 +1,28 @@
+{
+  "anyOf": [
+    {
+      "const": "forge_station",
+      "type": "string"
+    },
+    {
+      "const": "alchemy_furnace",
+      "type": "string"
+    },
+    {
+      "const": "rogue_village",
+      "type": "string"
+    },
+    {
+      "const": "mutant_nest",
+      "type": "string"
+    },
+    {
+      "const": "scroll_hidden",
+      "type": "string"
+    },
+    {
+      "const": "spirit_herb_valley",
+      "type": "string"
+    }
+  ]
+}
