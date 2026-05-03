@@ -26,5 +26,6 @@ public final class VfxBootstrap {
         registry.register(FlyingSwordDemoPlayer.EVENT_ID,        new FlyingSwordDemoPlayer());
         registry.register(FormationCoreDemoPlayer.EVENT_ID,      new FormationCoreDemoPlayer());
         registry.register(BurstMeridianBengQuanPlayer.EVENT_ID,  new BurstMeridianBengQuanPlayer());
+        registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
     }
 }
