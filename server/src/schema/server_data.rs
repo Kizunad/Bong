@@ -177,6 +177,7 @@ pub enum ServerDataPayloadV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        local_neg_pressure: Option<f32>,
         social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
@@ -520,6 +521,8 @@ enum ServerDataPayloadWireV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_neg_pressure: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         social: Option<PlayerSocialSnapshotV1>,
     },
@@ -1230,6 +1233,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                local_neg_pressure,
                 social,
             } => Ok(Self::PlayerState {
                 player,
@@ -1239,6 +1243,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                local_neg_pressure,
                 social,
             }),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
@@ -1616,6 +1621,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power,
                 breakdown,
                 zone,
+                local_neg_pressure,
                 social,
             } => Self::PlayerState {
                 player: player.clone(),
@@ -1625,6 +1631,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power: *composite_power,
                 breakdown: breakdown.clone(),
                 zone: zone.clone(),
+                local_neg_pressure: *local_neg_pressure,
                 social: social.clone(),
             },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {

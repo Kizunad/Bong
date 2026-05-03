@@ -64,7 +64,8 @@ public final class PlayerStateHandler implements ServerDataHandler {
             readOptionalSocialSnapshot(payload),
             zoneId,
             readOptionalString(payload, "zone_label"),
-            zoneSpiritQi
+            zoneSpiritQi,
+            readOptionalDouble(payload, "local_neg_pressure", 0.0)
         );
 
         if (playerStateViewModel.isEmpty()) {

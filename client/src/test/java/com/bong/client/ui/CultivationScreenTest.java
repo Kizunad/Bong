@@ -64,6 +64,26 @@ public class CultivationScreenTest {
     }
 
     @Test
+    void syncedModeShowsLocalNegativePressureWhenPresent() {
+        CultivationScreen.RenderContent content = CultivationScreen.describe(PlayerStateViewModel.create(
+            "Solidify",
+            "offline:Azure",
+            50.0,
+            100.0,
+            0.0,
+            0.5,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "rift_mouth_north_001",
+            "渊口荒丘",
+            0.05,
+            -0.8
+        ));
+
+        assertTrue(content.lines().contains("局部灵压: -0.80"));
+    }
+
+    @Test
     void bootstrapCreatesRealScreenFromCurrentSnapshot() {
         CultivationScreen unsyncedScreen = CultivationScreenBootstrap.createScreenForCurrentState();
         assertTrue(unsyncedScreen.playerState().isEmpty());

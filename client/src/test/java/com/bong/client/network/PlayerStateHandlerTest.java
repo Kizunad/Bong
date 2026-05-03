@@ -41,6 +41,7 @@ public class PlayerStateHandlerTest {
         assertEquals("green_cloud_peak", playerState.zoneId());
         assertEquals("青云峰", playerState.zoneLabel());
         assertEquals(0.78, playerState.zoneSpiritQiNormalized(), 0.0001);
+        assertEquals(0.0, playerState.localNegPressure(), 0.0001);
     }
 
     @Test
@@ -67,6 +68,22 @@ public class PlayerStateHandlerTest {
         assertEquals(1.0, playerState.breakdown().territory(), 0.0001);
         assertEquals("azure_peak", playerState.zoneLabel());
         assertEquals(1.0, playerState.zoneSpiritQiNormalized(), 0.0001);
+    }
+
+    @Test
+    void mapsLocalNegativePressureForRiftMouthHud() {
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
+            {"v":1,"type":"player_state","realm":"Solidify","spirit_qi":42.0,
+             "karma":0.0,"composite_power":0.5,
+              "breakdown":{"combat":0.5,"wealth":0.2,"social":0.2,"territory":0.2},
+              "zone":"rift_mouth_north_001","zone_label":"渊口荒丘","zone_spirit_qi":0.05,
+              "local_neg_pressure":-0.8}
+            """));
+
+        PlayerStateViewModel playerState = dispatch.playerStateViewModel().orElseThrow();
+
+        assertTrue(dispatch.handled());
+        assertEquals(-0.8, playerState.localNegPressure(), 0.0001);
     }
 
     @Test

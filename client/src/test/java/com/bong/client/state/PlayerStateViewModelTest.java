@@ -23,6 +23,7 @@ public class PlayerStateViewModelTest {
         assertEquals(0.0, state.compositePower());
         assertEquals(0.0, state.breakdown().combat());
         assertEquals(0.0, state.zoneSpiritQiNormalized());
+        assertEquals(0.0, state.localNegPressure());
     }
 
     @Test
@@ -59,6 +60,27 @@ public class PlayerStateViewModelTest {
         assertEquals("azure_peak", state.zoneId());
         assertEquals("azure_peak", state.zoneLabel());
         assertEquals(1.0, state.zoneSpiritQiNormalized(), 0.0001);
+        assertEquals(0.0, state.localNegPressure(), 0.0001);
+    }
+
+    @Test
+    void localNegPressureClampsToNegativeHudRange() {
+        PlayerStateViewModel state = PlayerStateViewModel.create(
+            "Solidify",
+            "offline:Azure",
+            50.0,
+            100.0,
+            0.0,
+            0.5,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "rift_mouth_north_001",
+            "渊口荒丘",
+            0.05,
+            -2.0
+        );
+
+        assertEquals(-1.0, state.localNegPressure(), 0.0001);
     }
 
     @Test
