@@ -332,9 +332,9 @@ pub struct SpiritEye {
 
 ### 关键 commit
 
-- `2fc9e15a` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
-- `871403a0` · 2026-05-03 · `fix(plan-spirit-eye-v1): 收窄灵眼突破加成与私有标记`
-- `4257d6ce` · 2026-05-03 · `fix(plan-spirit-eye-v1): 降低 worldgen snapshot 内存压力`
+- `e8b1878c` · 2026-05-03 · `feat(plan-spirit-eye-v1): 落地灵眼系统链路`
+- `6c4973f3` · 2026-05-03 · `fix(plan-spirit-eye-v1): 收窄灵眼突破加成与私有标记`
+- `0ed21d66` · 2026-05-03 · `fix(plan-spirit-eye-v1): 降低 worldgen snapshot 内存压力`
 
 ### 测试结果
 
