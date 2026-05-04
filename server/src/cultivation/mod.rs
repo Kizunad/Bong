@@ -68,7 +68,10 @@ use self::breakthrough::{
     breakthrough_system, rapid_breakthrough_karma_mark_system, BreakthroughOutcome,
     BreakthroughRequest,
 };
-use self::color::{qi_color_evolution_tick, PracticeLog};
+use self::color::{
+    qi_color_evolution_tick, record_cultivation_session_practice_events,
+    CultivationSessionPracticeEvent, PracticeLog,
+};
 use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use self::composure::composure_tick;
 use self::contamination::contamination_tick;
@@ -190,6 +193,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianOverloadEvent>();
     app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
+    app.add_event::<CultivationSessionPracticeEvent>();
     app.add_event::<InfuseDuguPoisonIntent>();
     app.add_event::<DuguObfuscationDisruptedEvent>();
     app.add_event::<DuguPoisonProgressEvent>();
@@ -227,6 +231,12 @@ pub fn register(app: &mut App) {
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
         ),
+    );
+    app.add_systems(
+        Update,
+        record_cultivation_session_practice_events
+            .after(qi_regen_and_zone_drain_tick)
+            .before(qi_color_evolution_tick),
     );
     app.add_systems(
         Update,

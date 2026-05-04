@@ -15,6 +15,7 @@ pub mod projectile;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
+pub mod style_telemetry;
 pub mod tuike;
 pub mod weapon;
 pub mod woliu;
@@ -157,6 +158,7 @@ pub fn register(app: &mut App) {
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
     app.add_event::<DeathInsightRequested>();
+    app.add_event::<style_telemetry::StyleBalanceTelemetryEvent>();
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
@@ -252,5 +254,11 @@ pub fn register(app: &mut App) {
         anticheat::emit_anticheat_threshold_reports
             .in_set(CombatSystemSet::Resolve)
             .after(resolve::resolve_attack_intents),
+    );
+    app.add_systems(
+        Update,
+        style_telemetry::collect_hunyuan_pvp_telemetry
+            .in_set(CombatSystemSet::Emit)
+            .after(lifecycle::death_arbiter_tick),
     );
 }

@@ -7,7 +7,7 @@
 //! P1 简化：无「静坐/行动」区分，全部按被动小系数回；静坐/打坐在 P1 末
 //! 加客户端指令时再接入。
 
-use valence::prelude::{bevy_ecs, Position, Query, ResMut, Resource};
+use valence::prelude::{bevy_ecs, Entity, Events, Position, Query, ResMut, Resource};
 
 use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
@@ -15,7 +15,10 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
-use super::components::{Cultivation, MeridianSystem, Realm};
+use super::color::{
+    CultivationSessionPracticeEvent, CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE,
+};
+use super::components::{ColorKind, Cultivation, MeridianSystem, QiColor, Realm};
 use super::lifespan::LifespanComponent;
 
 /// 全局 tick 计数器 — 用于标记 last_qi_zero_at 等时间戳。
@@ -56,11 +59,14 @@ pub fn compute_regen(zone_qi: f64, rate: f64, avg_integrity: f64, qi_room: f64) 
 pub fn qi_regen_and_zone_drain_tick(
     mut clock: ResMut<CultivationClock>,
     zone_registry: Option<ResMut<ZoneRegistry>>,
+    mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut players: Query<(
+        Entity,
         &Position,
         Option<&CurrentDimension>,
         &MeridianSystem,
         &mut Cultivation,
+        Option<&QiColor>,
         Option<&LifespanComponent>,
         Option<&StatusEffects>,
     )>,
@@ -71,7 +77,9 @@ pub fn qi_regen_and_zone_drain_tick(
         return;
     };
 
-    for (pos, current_dim, meridians, mut cultivation, lifespan, statuses) in players.iter_mut() {
+    for (entity, pos, current_dim, meridians, mut cultivation, qi_color, lifespan, statuses) in
+        players.iter_mut()
+    {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
         // 时按 Overworld 处理（NPC 暂未跨位面）。Player 在 spawn 时一定带
         // CurrentDimension（apply_spawn_defaults / restore_player_dimension）。
@@ -138,6 +146,21 @@ pub fn qi_regen_and_zone_drain_tick(
         if cultivation.qi_current > 0.0 {
             cultivation.last_qi_zero_at = None;
         }
+
+        if clock
+            .tick
+            .is_multiple_of(CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE)
+        {
+            if let Some(events) = practice_events.as_deref_mut() {
+                events.send(CultivationSessionPracticeEvent {
+                    entity,
+                    active_color: qi_color
+                        .map(|color| color.main)
+                        .unwrap_or(ColorKind::Mellow),
+                    elapsed_ticks: CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE,
+                });
+            }
+        }
     }
 }
 
@@ -172,10 +195,14 @@ fn has_frailty_status(status_effects: &StatusEffects) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::color::{
+        record_cultivation_session_practice_events, CultivationSessionPracticeEvent, PracticeLog,
+        STYLE_PRACTICE_AMOUNT,
+    };
     use crate::cultivation::components::MeridianId;
     use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
     use crate::world::zone::ZoneRegistry;
-    use valence::prelude::{App, Update};
+    use valence::prelude::{App, IntoSystemConfigs, Update};
 
     #[test]
     fn no_gain_in_dead_zone() {
@@ -267,6 +294,45 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert!((wind_candle_qi - normal_qi * 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn qi_regen_emits_minute_session_practice_for_current_qi_color() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE - 1,
+        });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<CultivationSessionPracticeEvent>();
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+        app.add_systems(
+            Update,
+            record_cultivation_session_practice_events.after(qi_regen_and_zone_drain_tick),
+        );
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+                QiColor {
+                    main: ColorKind::Heavy,
+                    ..Default::default()
+                },
+                PracticeLog::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        assert_eq!(
+            log.weights.get(&ColorKind::Heavy).copied(),
+            Some(STYLE_PRACTICE_AMOUNT)
+        );
     }
 
     #[test]
