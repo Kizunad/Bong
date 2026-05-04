@@ -82,6 +82,12 @@ pub enum BiographyEntry {
         damage: f32,
         tick: u64,
     },
+    DuguPoisonInflicted {
+        attacker_id: String,
+        target_id: String,
+        meridian_id: MeridianId,
+        tick: u64,
+    },
     /// plan-zhenmai-v1 P2：截脉震爆成功弹反，记录防御者对攻击者的战绩。
     JiemaiParry {
         attacker_id: String,
@@ -391,6 +397,12 @@ fn format_entry(entry: &BiographyEntry) -> String {
             damage,
             tick,
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
+        BiographyEntry::DuguPoisonInflicted {
+            attacker_id,
+            target_id,
+            meridian_id,
+            tick,
+        } => format!("t{tick}:dugu_poison:{attacker_id}->{target_id}:{meridian_id:?}"),
         BiographyEntry::JiemaiParry {
             attacker_id,
             effectiveness,

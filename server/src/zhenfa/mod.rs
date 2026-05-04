@@ -893,6 +893,7 @@ fn apply_trigger_snapshots(
                 resolved_at_tick: tick,
                 body_part: BodyPart::LegL,
                 wound_kind: WoundKind::Pierce,
+                source: crate::combat::events::AttackSource::Melee,
                 damage: damage_profile.damage,
                 contam_delta,
                 description: format!(

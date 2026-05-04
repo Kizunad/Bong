@@ -77,6 +77,7 @@ import {
   StartExtractRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
+  SelfAntidoteRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
   ZhenfaDisarmRequestV1,
@@ -89,6 +90,14 @@ import {
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
+import {
+  AntidoteResultEventV1,
+  AntidoteResultV1,
+  DuguObfuscationStateV1,
+  DuguPoisonProgressEventV1,
+  DuguPoisonStateV1,
+  DuguRevealedEventV1,
+} from "./dugu.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { DeathInsightRequestV1 } from "./death-insight.js";
 import {
@@ -207,6 +216,7 @@ import {
   ServerDataFalseSkinStateV1,
   ServerDataVortexStateV1,
   ServerDataCarrierStateV1,
+  ServerDataDuguPoisonStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataWeaponBrokenV1,
@@ -411,6 +421,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
+  clientRequestSelfAntidoteV1: SelfAntidoteRequestV1,
   clientRequestZhenfaPlaceV1: ZhenfaPlaceRequestV1,
   clientRequestZhenfaTriggerV1: ZhenfaTriggerRequestV1,
   clientRequestZhenfaDisarmV1: ZhenfaDisarmRequestV1,
@@ -453,6 +464,13 @@ export const SCHEMA_REGISTRY = {
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  duguPoisonStateV1: DuguPoisonStateV1,
+  duguPoisonProgressEventV1: DuguPoisonProgressEventV1,
+  duguObfuscationStateV1: DuguObfuscationStateV1,
+  antidoteResultV1: AntidoteResultV1,
+  antidoteResultEventV1: AntidoteResultEventV1,
+  duguRevealedEventV1: DuguRevealedEventV1,
+  serverDataDuguPoisonStateV1: ServerDataDuguPoisonStateV1,
   carrierStateV1: CarrierStateV1,
   carrierChargedEventV1: CarrierChargedEventV1,
   carrierImpactEventV1: CarrierImpactEventV1,
@@ -713,6 +731,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
+  "client-request-self-antidote-v1.json":
+    SCHEMA_REGISTRY.clientRequestSelfAntidoteV1,
   "client-request-zhenfa-place-v1.json":
     SCHEMA_REGISTRY.clientRequestZhenfaPlaceV1,
   "client-request-zhenfa-trigger-v1.json":
@@ -773,6 +793,16 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataWeaponBrokenV1,
   "server-data-treasure-equipped-v1.json":
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
+  "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,
+  "dugu-poison-progress-event-v1.json":
+    SCHEMA_REGISTRY.duguPoisonProgressEventV1,
+  "dugu-obfuscation-state-v1.json": SCHEMA_REGISTRY.duguObfuscationStateV1,
+  "dugu-antidote-result-v1.json": SCHEMA_REGISTRY.antidoteResultV1,
+  "dugu-antidote-result-event-v1.json":
+    SCHEMA_REGISTRY.antidoteResultEventV1,
+  "dugu-revealed-event-v1.json": SCHEMA_REGISTRY.duguRevealedEventV1,
+  "server-data-dugu-poison-state-v1.json":
+    SCHEMA_REGISTRY.serverDataDuguPoisonStateV1,
   "false-skin-kind-v1.json": SCHEMA_REGISTRY.falseSkinKindV1,
   "false-skin-state-v1.json": SCHEMA_REGISTRY.falseSkinStateV1,
   "shed-event-v1.json": SCHEMA_REGISTRY.shedEventV1,

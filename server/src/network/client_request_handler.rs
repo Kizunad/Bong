@@ -29,10 +29,12 @@ use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
     StatusEffectKind,
 };
+use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::{recover_current_qi, Cultivation};
+use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
@@ -204,6 +206,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub duo_she_tx: Option<ResMut<'w, Events<DuoSheRequestEvent>>>,
     pub qi_color_inspect_tx: Option<ResMut<'w, Events<QiColorInspectRequest>>>,
     pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
+    pub self_antidote_tx: Option<ResMut<'w, Events<SelfAntidoteIntent>>>,
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
     pub place_forge_station_tx: Option<ResMut<'w, Events<PlaceForgeStationRequest>>>,
@@ -333,6 +336,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::PickupDroppedItem { v, .. }
             | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
+            | ClientRequestV1::SelfAntidote { v, .. }
             | ClientRequestV1::DuoSheRequest { v, .. }
             | ClientRequestV1::QiColorInspect { v, .. }
             | ClientRequestV1::UseLifeCore { v, .. }
@@ -1016,6 +1020,17 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                     &mut dispatch.lifespan_extension_tx,
                 );
+            }
+            ClientRequestV1::SelfAntidote { instance_id, .. } => {
+                if let Some(self_antidote_tx) = dispatch.self_antidote_tx.as_deref_mut() {
+                    self_antidote_tx.send(SelfAntidoteIntent {
+                        healer: ev.client,
+                        target: ev.client,
+                        antidote_instance_id: instance_id,
+                        source: IntentSource::Client,
+                        roll_override: None,
+                    });
+                }
             }
             ClientRequestV1::DuoSheRequest { target_id, .. } => {
                 if let Some(duo_she_tx) = dispatch.duo_she_tx.as_deref_mut() {

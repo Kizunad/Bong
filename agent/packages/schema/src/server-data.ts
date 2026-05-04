@@ -13,6 +13,7 @@ import {
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
 import { CarrierStateV1 } from "./combat-carrier.js";
+import { DuguPoisonStateV1 } from "./dugu.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
@@ -165,6 +166,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("weapon_equipped"),
   Type.Literal("weapon_broken"),
   Type.Literal("treasure_equipped"),
+  Type.Literal("dugu_poison_state"),
+  Type.Literal("carrier_state"),
   Type.Literal("rift_portal_state"),
   Type.Literal("rift_portal_removed"),
   Type.Literal("extract_started"),
@@ -838,6 +841,16 @@ export const ServerDataVortexStateV1 = Type.Object(
 );
 export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
 
+export const ServerDataDuguPoisonStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("dugu_poison_state"),
+    ...DuguPoisonStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDuguPoisonStateV1 = Static<typeof ServerDataDuguPoisonStateV1>;
+
 export const ServerDataCarrierStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1269,6 +1282,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataVortexStateV1,
+  ServerDataDuguPoisonStateV1,
   ServerDataCarrierStateV1,
   ServerDataFalseSkinStateV1,
   ServerDataWeaponEquippedV1,

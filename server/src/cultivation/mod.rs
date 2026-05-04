@@ -34,6 +34,7 @@ pub mod composure;
 pub mod contamination;
 pub mod dead_zone;
 pub mod death_hooks;
+pub mod dugu;
 pub mod forging;
 pub mod heal;
 pub mod insight;
@@ -75,6 +76,12 @@ use self::dead_zone::{dead_zone_silent_qi_loss_tick, DeadZoneTickHandler};
 use self::death_hooks::{
     on_player_revived, on_player_terminated, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
+};
+use self::dugu::{
+    dugu_poison_tick, expire_dugu_state, on_attack_resolved_dugu_handler,
+    resolve_infuse_dugu_poison_intents, resolve_self_antidote_intent, AntidoteResultEvent,
+    DuguObfuscationDisruptedEvent, DuguPoisonProgressEvent, DuguPractice, InfuseDuguPoisonIntent,
+    SelfAntidoteIntent,
 };
 use self::forging::{forging_system, ForgeOutcome, ForgeRequest};
 use self::heal::meridian_heal_tick;
@@ -183,6 +190,11 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianOverloadEvent>();
     app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
+    app.add_event::<InfuseDuguPoisonIntent>();
+    app.add_event::<DuguObfuscationDisruptedEvent>();
+    app.add_event::<DuguPoisonProgressEvent>();
+    app.add_event::<SelfAntidoteIntent>();
+    app.add_event::<AntidoteResultEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
     app.add_systems(
@@ -257,6 +269,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            resolve_infuse_dugu_poison_intents,
+            expire_dugu_state,
+            on_attack_resolved_dugu_handler.after(crate::combat::resolve::resolve_attack_intents),
+            dugu_poison_tick,
+            resolve_self_antidote_intent,
             // plan-perception-v1.1 §4.1 server authoritative realm vision.
             push_initial_realm_vision.after(attach_cultivation_to_joined_clients),
             push_realm_vision_on_breakthrough.after(breakthrough_system),
@@ -476,6 +493,7 @@ fn attach_cultivation_to_joined_clients(
             insight_quota,
             unlocked_perceptions,
             insight_modifiers,
+            DuguPractice::default(),
         ));
         if restored_lifespan.is_none() {
             entity_commands.insert(default_lifespan);

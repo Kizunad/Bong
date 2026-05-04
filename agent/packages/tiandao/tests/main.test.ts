@@ -156,6 +156,7 @@ describe("main mock execution", () => {
 
   it("forwards redisUrl to runtime in non-mock mode", async () => {
     const runRuntimeSpy = vi.spyOn(runtime, "runRuntime").mockResolvedValue(undefined);
+    const auxiliaryRuntimeStarter = vi.fn().mockResolvedValue([]);
 
     try {
       await main({
@@ -164,9 +165,17 @@ describe("main mock execution", () => {
         baseUrl: "https://llm.example.test/v1",
         apiKey: "k_test",
         model: "mock-model",
+        auxiliaryRuntimeStarter,
       });
 
       expect(runRuntimeSpy).toHaveBeenCalledWith({
+        mockMode: false,
+        redisUrl: "redis://unit-test:6380",
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+        model: "mock-model",
+      });
+      expect(auxiliaryRuntimeStarter).toHaveBeenCalledWith({
         mockMode: false,
         redisUrl: "redis://unit-test:6380",
         baseUrl: "https://llm.example.test/v1",

@@ -49,6 +49,7 @@ pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 pub const CH_WOLIU_BACKFIRE: &str = "bong:woliu/backfire";
 pub const CH_WOLIU_PROJECTILE_DRAINED: &str = "bong:woliu/projectile_drained";
 pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
+pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
 pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
 pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
@@ -141,6 +142,7 @@ mod tests {
         assert_eq!(CH_WOLIU_BACKFIRE, "bong:woliu/backfire");
         assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
+        assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
         assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
         assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");
         assert_eq!(

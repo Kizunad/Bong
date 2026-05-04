@@ -14,6 +14,7 @@ use super::combat_hud::{
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::cultivation::SkillMilestoneSnapshotV1;
+use super::dugu::DuguPoisonStateV1;
 use super::forge::{
     ForgeBlueprintBookDataV1, ForgeOutcomeDataV1, ForgeSessionDataV1, WeaponForgeStationDataV1,
 };
@@ -107,6 +108,7 @@ pub enum ServerDataType {
     WeaponBroken,
     TreasureEquipped,
     VortexState,
+    DuguPoisonState,
     CarrierState,
     FalseSkinState,
     LingtianSession,
@@ -276,6 +278,7 @@ pub enum ServerDataPayloadV1 {
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     VortexState(VortexFieldStateV1),
+    DuguPoisonState(DuguPoisonStateV1),
     CarrierState(CarrierStateV1),
     FalseSkinState(FalseSkinStateV1),
     LingtianSession(Box<LingtianSessionDataV1>),
@@ -724,6 +727,10 @@ enum ServerDataPayloadWireV1 {
     VortexState {
         #[serde(flatten)]
         state: VortexFieldStateV1,
+    },
+    DuguPoisonState {
+        #[serde(flatten)]
+        state: DuguPoisonStateV1,
     },
     CarrierState {
         #[serde(flatten)]
@@ -1453,6 +1460,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::TreasureEquipped(treasure_equipped))
             }
             ServerDataPayloadWireV1::VortexState { state } => Ok(Self::VortexState(state)),
+            ServerDataPayloadWireV1::DuguPoisonState { state } => Ok(Self::DuguPoisonState(state)),
             ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
             ServerDataPayloadWireV1::FalseSkinState { state } => Ok(Self::FalseSkinState(state)),
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
@@ -1871,6 +1879,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::VortexState(state) => Self::VortexState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::DuguPoisonState(state) => Self::DuguPoisonState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::CarrierState(state) => Self::CarrierState {
                 state: state.clone(),
             },
@@ -2180,6 +2191,7 @@ impl ServerDataPayloadV1 {
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::VortexState(..) => ServerDataType::VortexState,
+            Self::DuguPoisonState(..) => ServerDataType::DuguPoisonState,
             Self::CarrierState(..) => ServerDataType::CarrierState,
             Self::FalseSkinState(..) => ServerDataType::FalseSkinState,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,

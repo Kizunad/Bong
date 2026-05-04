@@ -770,7 +770,7 @@ pub fn resolve_attack_intents(
         let action_label = if intent.debug_command.is_some() {
             "debug_attack_intent"
         } else {
-            "attack_intent"
+            attack_source_label(intent.source)
         };
         let description = format!(
             "{} {} -> {} hit {:?} with {:?} for {:.1} damage (hit_qi {:.1}, jiemai={} eff={:.2}) at {:.2} reach decay",
@@ -792,6 +792,7 @@ pub fn resolve_attack_intents(
             resolved_at_tick: clock.tick,
             body_part: hit_probe.body_part,
             wound_kind: intent.wound_kind,
+            source: intent.source,
             damage: wound_severity,
             contam_delta: emitted_contam_delta,
             description,
@@ -896,6 +897,14 @@ pub fn resolve_attack_intents(
                 });
             }
         }
+    }
+}
+
+fn attack_source_label(source: AttackSource) -> &'static str {
+    match source {
+        AttackSource::Melee => "attack_intent",
+        AttackSource::BurstMeridian => "burst_meridian_attack",
+        AttackSource::QiNeedle => "qi_needle",
     }
 }
 

@@ -371,6 +371,14 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSelfAntidote() {
+        assertEquals(
+            "{\"type\":\"self_antidote\",\"v\":1,\"instance_id\":3003}",
+            ClientRequestProtocol.encodeSelfAntidote(3003L)
+        );
+    }
+
+    @Test
     void encodesSkillBarRequests() {
         assertEquals(
             "{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}",

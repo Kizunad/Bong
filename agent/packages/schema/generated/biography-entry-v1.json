@@ -832,6 +832,125 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "DuguPoisonInflicted"
+      ],
+      "properties": {
+        "DuguPoisonInflicted": {
+          "type": "object",
+          "required": [
+            "attacker_id",
+            "target_id",
+            "meridian_id",
+            "tick"
+          ],
+          "properties": {
+            "attacker_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "target_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "meridian_id": {
+              "description": "20 条经脉（12 正经 + 8 奇经）",
+              "anyOf": [
+                {
+                  "const": "Lung",
+                  "type": "string"
+                },
+                {
+                  "const": "LargeIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Stomach",
+                  "type": "string"
+                },
+                {
+                  "const": "Spleen",
+                  "type": "string"
+                },
+                {
+                  "const": "Heart",
+                  "type": "string"
+                },
+                {
+                  "const": "SmallIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Bladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Kidney",
+                  "type": "string"
+                },
+                {
+                  "const": "Pericardium",
+                  "type": "string"
+                },
+                {
+                  "const": "TripleEnergizer",
+                  "type": "string"
+                },
+                {
+                  "const": "Gallbladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Liver",
+                  "type": "string"
+                },
+                {
+                  "const": "Ren",
+                  "type": "string"
+                },
+                {
+                  "const": "Du",
+                  "type": "string"
+                },
+                {
+                  "const": "Chong",
+                  "type": "string"
+                },
+                {
+                  "const": "Dai",
+                  "type": "string"
+                },
+                {
+                  "const": "YinQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YangQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YinWei",
+                  "type": "string"
+                },
+                {
+                  "const": "YangWei",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "NearDeath"
       ],
       "properties": {

@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "entity",
+    "active",
+    "server_tick"
+  ],
+  "properties": {
+    "entity": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "disrupted_until_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "server_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

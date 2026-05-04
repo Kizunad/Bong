@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "revealed_player",
+    "witness",
+    "witness_realm",
+    "at_position",
+    "at_tick"
+  ],
+  "properties": {
+    "revealed_player": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "witness": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "witness_realm": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "at_position": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

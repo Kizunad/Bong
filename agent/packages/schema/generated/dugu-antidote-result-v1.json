@@ -1,0 +1,12 @@
+{
+  "anyOf": [
+    {
+      "const": "success",
+      "type": "string"
+    },
+    {
+      "const": "failed",
+      "type": "string"
+    }
+  ]
+}

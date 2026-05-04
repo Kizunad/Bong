@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "healer",
+    "target",
+    "result",
+    "meridian_id",
+    "qi_max_after",
+    "tick"
+  ],
+  "properties": {
+    "healer": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "const": "success",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "type": "string"
+        }
+      ]
+    },
+    "meridian_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "qi_max_after": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

@@ -725,6 +725,7 @@ fn projectile_tick_system(
                 resolved_at_tick: clock.tick,
                 body_part: BodyPart::Chest,
                 wound_kind: WoundKind::Pierce,
+                source: crate::combat::events::AttackSource::Melee,
                 damage: wound_damage,
                 contam_delta: f64::from(contam_amount),
                 description: format!(

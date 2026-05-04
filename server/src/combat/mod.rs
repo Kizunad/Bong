@@ -10,6 +10,7 @@ pub mod decay;
 pub mod events;
 pub mod jiemai;
 pub mod lifecycle;
+pub mod needle;
 pub mod projectile;
 pub mod raycast;
 pub mod resolve;
@@ -159,6 +160,8 @@ pub fn register(app: &mut App) {
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
+    app.add_event::<needle::ShootNeedleIntent>();
+    app.add_event::<needle::QiNeedleChargedEvent>();
     carrier::register(app);
     app.add_event::<tuike::ShedEvent>();
     app.add_event::<tuike::FalseSkinForgeRequest>();
@@ -236,6 +239,13 @@ pub fn register(app: &mut App) {
         tuike::record_shed_events_in_life_record
             .in_set(CombatSystemSet::Emit)
             .after(resolve::resolve_attack_intents),
+    );
+    app.add_systems(
+        Update,
+        (
+            needle::resolve_shoot_needle_intents.in_set(CombatSystemSet::Intent),
+            needle::despawn_expired_qi_needles.in_set(CombatSystemSet::Physics),
+        ),
     );
     app.add_systems(
         Update,

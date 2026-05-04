@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import Redis from "ioredis";
 import type { Command, Narration } from "@bong/schema";
 import { DeathInsightRuntime } from "./death-insight-runtime.js";
+import { DuguNarrationRuntime } from "./dugu-narration.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
@@ -18,6 +19,7 @@ import {
   resolveRuntimeConfig,
   runRuntime,
   runTick,
+  type RuntimeConfig,
   type TickPublishMetadata,
 } from "./runtime.js";
 import { WorldModel } from "./world-model.js";
@@ -35,7 +37,11 @@ export interface MainOptions {
   baseUrl?: string;
   apiKey?: string;
   model: string;
+  auxiliaryRuntimeStarter?: AuxiliaryRuntimeStarter;
 }
+
+export type RuntimeCleanup = () => Promise<void>;
+export type AuxiliaryRuntimeStarter = (config: RuntimeConfig) => Promise<RuntimeCleanup[]>;
 
 export interface MockTickOptions {
   llmClient: LlmClient;
@@ -108,73 +114,70 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey ?? null,
   };
 
+  const cleanupFns = await (options.auxiliaryRuntimeStarter ?? startAuxiliaryRuntimes)(config);
+
+  try {
+    await runRuntime(config);
+  } finally {
+    for (const cleanup of cleanupFns) {
+      await cleanup();
+    }
+  }
+}
+
+async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCleanup[]> {
+  const runtimeOpts = {
+    redisUrl: config.redisUrl,
+    baseUrl: config.baseUrl ?? undefined,
+    apiKey: config.apiKey ?? undefined,
+    model: config.model,
+  };
+
   // 顿悟 runtime（事件驱动，独立于 tick loop，与 runRuntime 并行）。
   const insightCleanup = await startInsightRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const deathInsightCleanup = await startDeathInsightRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const skillLvUpCleanup = await startSkillLvUpRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const tribulationCleanup = await startTribulationRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const woliuCleanup = await startWoliuRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const zhenmaiCleanup = await startZhenmaiRuntime({
     redisUrl: config.redisUrl,
   });
   const anqiCleanup = await startAnqiRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const tuikeCleanup = await startTuikeRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
+  });
+  const duguCleanup = await startDuguRuntime({
+    ...runtimeOpts,
   });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
 
-  try {
-    await runRuntime(config);
-  } finally {
-    await heartDemonCleanup();
-    await anqiCleanup();
-    await zhenmaiCleanup();
-    await tuikeCleanup();
-    await woliuCleanup();
-    await tribulationCleanup();
-    await skillLvUpCleanup();
-    await deathInsightCleanup();
-    await insightCleanup();
-  }
+  return [
+    heartDemonCleanup,
+    anqiCleanup,
+    zhenmaiCleanup,
+    tuikeCleanup,
+    duguCleanup,
+    woliuCleanup,
+    tribulationCleanup,
+    skillLvUpCleanup,
+    deathInsightCleanup,
+    insightCleanup,
+  ];
 }
 
 async function startAnqiRuntime(opts: {
@@ -249,6 +252,44 @@ async function startTuikeRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] tuike runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startDuguRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DuguNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DuguNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new DuguNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] dugu runtime online"))
+    .catch((error) => console.warn("[tiandao] dugu runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] dugu runtime disconnect error:", error);
     }
   };
 }

@@ -33,6 +33,13 @@ export const CombatWoundKindV1 = Type.Union([
 ]);
 export type CombatWoundKindV1 = Static<typeof CombatWoundKindV1>;
 
+export const CombatAttackSourceV1 = Type.Union([
+  Type.Literal("melee"),
+  Type.Literal("burst_meridian"),
+  Type.Literal("qi_needle"),
+]);
+export type CombatAttackSourceV1 = Static<typeof CombatAttackSourceV1>;
+
 export const CombatRealtimeEventV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -42,6 +49,7 @@ export const CombatRealtimeEventV1 = Type.Object(
     attacker_id: Type.Optional(Type.String({ minLength: 1 })),
     body_part: Type.Optional(CombatBodyPartV1),
     wound_kind: Type.Optional(CombatWoundKindV1),
+    source: Type.Optional(CombatAttackSourceV1),
     damage: Type.Optional(Type.Number({ minimum: 0 })),
     contam_delta: Type.Optional(Type.Number({ minimum: 0 })),
     description: Type.Optional(Type.String({ minLength: 1 })),

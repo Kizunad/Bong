@@ -16,16 +16,17 @@ use crate::schema::channels::{
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
     CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
-    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
-    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
-    CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
-    CH_REBIRTH, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
-    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA,
-    CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
-    CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
-    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
-    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
+    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
+    CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
+    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
+    CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH, CH_SKILL_CAP_CHANGED,
+    CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
+    CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE,
+    CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE,
+    CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
+    CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -41,6 +42,7 @@ use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{
     AgingEventV1, DuoSheEventV1, LifespanEventV1, RebirthEventV1,
 };
+use crate::schema::dugu::DuguPoisonProgressEventV1;
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
@@ -133,6 +135,7 @@ pub enum RedisOutbound {
     SpiritEyeMigrate(SpiritEyeMigrateV1),
     SpiritEyeDiscovered(SpiritEyeDiscoveredV1),
     SpiritEyeUsedForBreakthrough(SpiritEyeUsedForBreakthroughV1),
+    DuguPoisonProgress(DuguPoisonProgressEventV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
     CarrierCharged(CarrierChargedEventV1),
@@ -818,6 +821,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WOLIU_PROJECTILE_DRAINED,
+                payload,
+            })
+        }
+        RedisOutbound::DuguPoisonProgress(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize DuguPoisonProgressEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_DUGU_POISON_PROGRESS,
                 payload,
             })
         }
@@ -1571,7 +1585,7 @@ mod redis_bridge_tests {
     use super::*;
     use crate::schema::anticheat::{AntiCheatReportV1, ViolationKindV1};
     use crate::schema::combat_event::{
-        CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
+        CombatAttackSourceV1, CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
     };
     use crate::schema::death_insight::{
         DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
@@ -2285,6 +2299,7 @@ mod redis_bridge_tests {
                 attacker_id: Some("offline:Azure".to_string()),
                 body_part: Some(crate::schema::combat_event::CombatBodyPartV1::Chest),
                 wound_kind: Some(crate::schema::combat_event::CombatWoundKindV1::Blunt),
+                source: Some(CombatAttackSourceV1::Melee),
                 damage: Some(20.0),
                 contam_delta: None,
                 description: Some(

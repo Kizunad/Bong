@@ -240,6 +240,11 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         target: ApplyPillTargetV1,
     },
+    /// plan-dugu-v1 §3.1.E — 自解毒蛊，消耗指定解蛊蕊实例 + 20 真元。
+    SelfAntidote {
+        v: u8,
+        instance_id: u64,
+    },
     DuoSheRequest {
         v: u8,
         target_id: String,
@@ -596,6 +601,19 @@ mod tests {
                 );
             }
             other => panic!("expected ApplyPill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn self_antidote_roundtrip() {
+        let json = r#"{"type":"self_antidote","v":1,"instance_id":3003}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SelfAntidote { v, instance_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 3003);
+            }
+            other => panic!("expected SelfAntidote, got {other:?}"),
         }
     }
 

@@ -107,6 +107,9 @@ export const CHANNELS = {
   /** Server → Client/Agent: 涡流持涡 HUD 状态（plan-woliu-v1 §8） */
   WOLIU_VORTEX_STATE: "bong:woliu/vortex_state",
 
+  /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
+  DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
+
   /** Server → Agent: 暗器载体封元完成（plan-anqi-v1 P2 narration） */
   ANQI_CARRIER_CHARGED: "bong:combat/carrier_charged",
 

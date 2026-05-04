@@ -191,6 +191,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeUseQuickSlot(slot));
     }
 
+    public static void sendSelfAntidote(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeSelfAntidote(instanceId));
+    }
+
     public static void sendQuickSlotBind(int slot, String itemId) {
         dispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
     }
