@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, Despawned, Entity, Events, Position, Query, ResMut, Resource, Without,
+    bevy_ecs, Despawned, Entity, Events, Position, Query, ResMut, Resource, With, Without,
 };
 
 use crate::combat::components::StatusEffects;
@@ -200,11 +200,11 @@ pub fn accumulate_cultivation_session_practice_tick(
 
 pub fn prune_cultivation_session_practice_accumulator(
     mut accumulator: ResMut<CultivationSessionPracticeAccumulator>,
-    live_entities: Query<(), Without<Despawned>>,
+    live_cultivators: Query<(), (With<Cultivation>, Without<Despawned>)>,
 ) {
     accumulator
         .ticks_by_entity
-        .retain(|entity, _| live_entities.get(*entity).is_ok());
+        .retain(|entity, _| live_cultivators.get(*entity).is_ok());
 }
 
 fn humility_qi_recovery_multiplier(status_effects: &StatusEffects) -> f64 {
@@ -391,8 +391,9 @@ mod tests {
         app.insert_resource(CultivationSessionPracticeAccumulator::default());
         app.add_systems(Update, prune_cultivation_session_practice_accumulator);
 
-        let live_entity = app.world_mut().spawn_empty().id();
+        let live_entity = app.world_mut().spawn(Cultivation::default()).id();
         let despawned_entity = app.world_mut().spawn(Despawned).id();
+        let uncultivated_entity = app.world_mut().spawn_empty().id();
         let missing_entity = Entity::from_raw(99_999);
 
         {
@@ -401,6 +402,7 @@ mod tests {
                 .resource_mut::<CultivationSessionPracticeAccumulator>();
             accumulator.ticks_by_entity.insert(live_entity, 12);
             accumulator.ticks_by_entity.insert(despawned_entity, 24);
+            accumulator.ticks_by_entity.insert(uncultivated_entity, 30);
             accumulator.ticks_by_entity.insert(missing_entity, 36);
         }
 
@@ -411,6 +413,9 @@ mod tests {
             .resource::<CultivationSessionPracticeAccumulator>();
         assert_eq!(accumulator.ticks_by_entity.get(&live_entity), Some(&12));
         assert!(!accumulator.ticks_by_entity.contains_key(&despawned_entity));
+        assert!(!accumulator
+            .ticks_by_entity
+            .contains_key(&uncultivated_entity));
         assert!(!accumulator.ticks_by_entity.contains_key(&missing_entity));
     }
 

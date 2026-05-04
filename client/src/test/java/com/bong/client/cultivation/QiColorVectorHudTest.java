@@ -50,4 +50,13 @@ class QiColorVectorHudTest {
 
         assertEquals("色种已齐", QiColorVectorHud.hunyuanDistanceText(body));
     }
+
+    @Test
+    void hunyuanDistanceTextPrefersServerHunyuanStateWithoutWeights() {
+        MeridianBody body = MeridianBody.builder()
+            .qiColor(ColorKind.Sharp, null, false, true)
+            .build();
+
+        assertEquals("色种已齐", QiColorVectorHud.hunyuanDistanceText(body));
+    }
 }

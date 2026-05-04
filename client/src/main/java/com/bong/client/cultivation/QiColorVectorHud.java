@@ -37,7 +37,12 @@ public final class QiColorVectorHud extends BaseComponent {
         var tr = MinecraftClient.getInstance().textRenderer;
         context.drawTextWithShadow(tr, Text.literal("真元向量"), x + 6, y + 5, TEXT);
 
-        if (body == null || body.qiColorPracticeWeights().isEmpty()) {
+        if (body == null) {
+            context.drawTextWithShadow(tr, Text.literal("未记录"), x + 112, y + 5, MUTED);
+            drawEmptyBars(context);
+            return;
+        }
+        if (body.qiColorPracticeWeights().isEmpty() && !body.qiColorHunyuan()) {
             context.drawTextWithShadow(tr, Text.literal("未记录"), x + 112, y + 5, MUTED);
             drawEmptyBars(context);
             return;
@@ -61,11 +66,14 @@ public final class QiColorVectorHud extends BaseComponent {
     }
 
     public static String hunyuanDistanceText(MeridianBody body) {
-        if (body == null || body.qiColorPracticeWeights().isEmpty()) {
+        if (body == null) {
             return "缺 全部";
         }
         if (body.qiColorHunyuan()) {
             return "色种已齐";
+        }
+        if (body.qiColorPracticeWeights().isEmpty()) {
+            return "缺 全部";
         }
         List<ColorKind> missing = missingColors(body.qiColorPracticeWeights());
         if (missing.isEmpty()) {
