@@ -2833,6 +2833,216 @@
                   "minimum": 1,
                   "maximum": 4,
                   "type": "integer"
+                },
+                "alchemy": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "recipe_id",
+                        "quality_tier",
+                        "effect_multiplier",
+                        "consecrated"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "pill",
+                          "type": "string"
+                        },
+                        "recipe_id": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "quality_tier": {
+                          "minimum": 1,
+                          "maximum": 5,
+                          "type": "integer"
+                        },
+                        "effect_multiplier": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "consecrated": {
+                          "type": "boolean"
+                        },
+                        "side_effect": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "tag"
+                          ],
+                          "properties": {
+                            "tag": {
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "type": "string"
+                            },
+                            "duration_s": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "weight": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "perm": {
+                              "type": "boolean"
+                            },
+                            "color": {
+                              "description": "十种真元染色",
+                              "anyOf": [
+                                {
+                                  "const": "Sharp",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Heavy",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Mellow",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Solid",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Light",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Intricate",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Gentle",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Insidious",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Violent",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "Turbid",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "amount": {
+                              "type": "number"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "fragment"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "recipe_fragment",
+                          "type": "string"
+                        },
+                        "fragment": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "recipe_id",
+                            "known_stages",
+                            "max_quality_tier"
+                          ],
+                          "properties": {
+                            "recipe_id": {
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "type": "string"
+                            },
+                            "known_stages": {
+                              "type": "array",
+                              "items": {
+                                "minimum": 0,
+                                "maximum": 255,
+                                "type": "integer"
+                              }
+                            },
+                            "max_quality_tier": {
+                              "minimum": 1,
+                              "maximum": 3,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "hint"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "recipe_hint",
+                          "type": "string"
+                        },
+                        "hint": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "source_pill",
+                            "accuracy",
+                            "ingredients"
+                          ],
+                          "properties": {
+                            "source_pill": {
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "type": "string"
+                            },
+                            "recipe_id": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 128,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "accuracy": {
+                              "minimum": 0,
+                              "maximum": 1,
+                              "type": "number"
+                            },
+                            "ingredients": {
+                              "maxItems": 3,
+                              "type": "array",
+                              "items": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             },
