@@ -110,6 +110,9 @@ public class ServerDataRouterTest {
             "social_pact",
             "social_feud",
             "social_renown_delta",
+            "niche_intrusion",
+            "niche_guardian_fatigue",
+            "niche_guardian_broken",
             "sparring_invite"
         ), router.registeredTypes());
     }

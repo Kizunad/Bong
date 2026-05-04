@@ -210,6 +210,20 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSpiritNicheActivateGuardianRequest() {
+        assertEquals(
+            "{\"type\":\"spirit_niche_activate_guardian\",\"v\":1,\"niche_pos\":[11,64,10],\"guardian_kind\":\"puppet\",\"materials\":[\"yi_shou_gu\",\"zhen_shi_zhong\"]}",
+            ClientRequestProtocol.encodeSpiritNicheActivateGuardian(
+                11,
+                64,
+                10,
+                "puppet",
+                java.util.List.of("yi_shou_gu", "zhen_shi_zhong")
+            )
+        );
+    }
+
+    @Test
     void encodesZhenfaRequests() {
         BlockPos pos = new BlockPos(11, 64, -3);
         assertEquals(

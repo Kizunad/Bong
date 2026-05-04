@@ -2,6 +2,7 @@ package com.bong.client.network;
 
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStore;
+import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.social.SocialStateStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ public class SocialServerDataHandlerTest {
     @AfterEach
     void tearDown() {
         SocialStateStore.resetForTests();
+        NicheGuardianStore.resetForTests();
         UnifiedEventStore.resetForTests();
     }
 
@@ -130,6 +132,27 @@ public class SocialServerDataHandlerTest {
         assertEquals("Spirit Grass", SocialStateStore.tradeOffer().offeredItem().displayName());
         assertEquals(2002L, SocialStateStore.tradeOffer().requestedItems().get(0).instanceId());
         assertEquals(1, UnifiedEventStore.stream().size());
+    }
+
+    @Test
+    void nicheIntrusionAndGuardianEventsUpdateDefenseStore() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        assertTrue(router.route("""
+            {"v":1,"type":"niche_intrusion","niche_pos":[1,64,2],"intruder_id":"char:raider",
+             "items_taken":[42,43],"taint_delta":0.2}
+            """, 0).isHandled());
+        assertTrue(router.route("""
+            {"v":1,"type":"niche_guardian_fatigue","guardian_kind":"puppet","charges_remaining":4}
+            """, 0).isHandled());
+        assertTrue(router.route("""
+            {"v":1,"type":"niche_guardian_broken","guardian_kind":"puppet","intruder_id":"char:raider"}
+            """, 0).isHandled());
+
+        assertEquals(2, NicheGuardianStore.intrusionAlerts().size());
+        assertEquals("char:raider", NicheGuardianStore.intrusionAlerts().get(0).intruderId());
+        assertTrue(NicheGuardianStore.guardianStatuses().get("puppet").broken());
+        assertEquals(3, UnifiedEventStore.stream().size());
     }
 
     @Test

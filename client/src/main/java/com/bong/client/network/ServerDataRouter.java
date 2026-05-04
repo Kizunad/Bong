@@ -170,6 +170,9 @@ public final class ServerDataRouter {
         handlers.put("social_pact", socialServerDataHandler);
         handlers.put("social_feud", socialServerDataHandler);
         handlers.put("social_renown_delta", socialServerDataHandler);
+        handlers.put("niche_intrusion", socialServerDataHandler);
+        handlers.put("niche_guardian_fatigue", socialServerDataHandler);
+        handlers.put("niche_guardian_broken", socialServerDataHandler);
         handlers.put("sparring_invite", socialServerDataHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
