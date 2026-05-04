@@ -124,15 +124,15 @@ plans:
     blocking_on: []
     summary: "PR #123 合并归档 finished_plans/；server qi_color_observed_emit + client QiColorObservedHandler/Store + agent qi-color-narration + InspectScreen 接入全部落地。"
 
-  - file: plan-tuike-v1.md
+  - file: finished_plans/plan-tuike-v1.md
     group: combat-vfx
     title: "替尸·蜕壳流：伪灵皮 contam 过滤"
     state: merged
-    percent: 95
+    percent: 100
     last_updated: "2026-05-04"
-    pr_refs: []
+    pr_refs: [124]
     blocking_on: []
-    summary: "分支 auto/plan-tuike-v1 含 7 个 feat/fix commit：tuike.rs（819 行）+ FalseSkinStateHandler + schema + agent narration + LifeRecord，13 tests passed，仅未 merge 进 main。"
+    summary: "PR #124 合并 + 归档 finished_plans/。tuike.rs 880 行 + FalseSkin component + schema/tuike.rs + tuike-narration.ts + FalseSkinStateHandler + LifeRecord 蜕壳事件 + tuike.toml 物品全部落地（59 文件 / 3682 行；cargo check + 2268 测试通过）。"
 
   - file: plan-woliu-v1.md
     group: combat-vfx
@@ -187,15 +187,15 @@ plans:
     blocking_on: []
     summary: "纯设计文档；grep 未见 PillResidue / ReplenishSource::PillResidue / dye_contamination 字段或 contamination.rs，lingtian session.rs 仍只有 4 来源。"
 
-  - file: plan-alchemy-v2.md
+  - file: finished_plans/plan-alchemy-v2.md
     group: cultivation-economy
     title: "丹药副作用 / 残卷 / 品阶 / AutoProfile / 丹心识别"
-    state: active-design
-    percent: 8
+    state: merged
+    percent: 100
     last_updated: "2026-05-04"
-    pr_refs: []
+    pr_refs: [125]
     blocking_on: []
-    summary: "2026-05-04 从 skeleton 升 active；StatusEffectKind 仍只 3 variant，side_effect_apply / RecipeFragment / AlchemyAutoProfile / FurnaceQiReserve 未创建，alchemy/ 无 v2 新文件。"
+    summary: "P0–P4 全部代码落地并归档（commit 22ab67b2）。alchemy/ 13 文件 / 5456 行 / 122 单测：side_effect_apply.rs (P0) + recipe_fragment.rs+learned.rs (P1) + quality.rs+outcome.rs (P2) + auto_profile.rs (P3) + danxin.rs (P4)。StatusEffectKind 新增 5 variant（QiRegenBoost / InsightFlash / QiCapPermMinus / ContaminationBoost / AlchemyBuff(String)）。"
 
   - file: plan-botany-v2.md
     group: cultivation-economy
@@ -383,12 +383,12 @@ plans:
   - file: plan-multi-style-v1.md
     group: gameplay-npc
     title: "7 色均衡 PracticeLog 自然演化混元色"
-    state: active-design
-    percent: 15
+    state: active-implementing
+    percent: 30
     last_updated: "2026-05-04"
     pr_refs: []
-    blocking_on: ["plan-style-vector-integration-v1"]
-    summary: "is_hunyuan 逻辑已 grep 到 server/src/cultivation/color.rs（evolve_qi_color），PracticeLog struct 存在；但 P1 session 事件接入、P2 client QiColorVectorHud bar chart 均未落地。"
+    blocking_on: []
+    summary: "is_hunyuan 计算已落 server/src/cultivation/color.rs；6 流派 PracticeLog hook 已被 plan-style-vector-integration-v1 P2 顺手接好；client 接收路径完整（QiColorObservedHandler / CultivationDetailHandler / MeridianBody.qiColorHunyuan），InspectScreen.java:375 显示 \"§b混\" 标记。仍缺 multi-style 自身核心：QiColorVectorHud 7 色 bar chart + 自然演化代价机制（plan §0 6 个 [ ] 全空）。"
 
   - file: plan-niche-defense-v1.md
     group: gameplay-npc
