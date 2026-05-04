@@ -486,7 +486,7 @@ fn format_entry(entry: &BiographyEntry) -> String {
         } => format!("t{tick}:woliu:drain:{projectile_id}:{drained_amount:.2}"),
         BiographyEntry::VortexBackfired { cause, tick } => {
             format!("t{tick}:woliu:backfire:{cause}")
-        },
+        }
         BiographyEntry::AnqiSniped {
             attacker_id,
             distance_blocks,
@@ -508,7 +508,7 @@ fn format_entry(entry: &BiographyEntry) -> String {
             format!(
                 "t{tick}:tuike:shed:{kind}:layers{layers_shed}:absorb{contam_absorbed:.1}:overflow{contam_overflow:.1}:attacker{attacker}"
             )
-        },
+        }
         BiographyEntry::SpawnTutorialCompleted {
             minutes_since_spawn,
             tick,
