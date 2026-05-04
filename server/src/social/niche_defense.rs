@@ -1,14 +1,18 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{App, Entity, EventReader, EventWriter, IntoSystemConfigs, Query, Update};
 
-use super::components::{GuardianKind, HouseGuardian, IntrusionRecord, SpiritNiche, Tick};
+use super::components::{
+    GuardianKind, HouseGuardian, IntrusionRecord, SpiritNiche, Tick, ZhenfaTrapTier,
+};
 use super::events::{
     NicheGuardianBroken, NicheGuardianFatigue, NicheIntrusionAttempt, NicheIntrusionEvent,
     SpiritNicheActivateGuardianRequest,
 };
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::cultivation::realm_taint::{ApplyRealmTaint, RealmTaintedKind};
-use crate::inventory::{attach_lingering_owner_qi_by_instance, PlayerInventory};
+use crate::inventory::{
+    attach_lingering_owner_qi_by_instance, consume_item_instance_once, PlayerInventory,
+};
 
 pub const NICHE_INTRUSION_TAINT_DELTA: f32 = 0.20;
 pub const LINGERING_OWNER_QI_TICKS: u64 = 8 * 60 * 60 * TICKS_PER_SECOND;
@@ -25,6 +29,7 @@ pub enum GuardianActivationError {
     NichePositionMismatch,
     InstanceLimitReached,
     MissingMaterial(&'static str),
+    MaterialConsumeFailed(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,6 +55,7 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[cfg(test)]
 pub fn activate_guardian(
     niche: &mut SpiritNiche,
     owner: &str,
@@ -58,6 +64,42 @@ pub fn activate_guardian(
     materials: &[String],
     now_tick: Tick,
 ) -> Result<HouseGuardian, GuardianActivationError> {
+    let recipe = activation_recipe(guardian_kind, materials)?;
+    validate_guardian_activation(niche, owner, niche_pos, guardian_kind)?;
+    Ok(push_guardian(
+        niche,
+        guardian_kind,
+        recipe.trap_tier,
+        now_tick,
+    ))
+}
+
+pub fn activate_guardian_from_inventory(
+    niche: &mut SpiritNiche,
+    inventory: &mut PlayerInventory,
+    owner: &str,
+    niche_pos: [i32; 3],
+    guardian_kind: GuardianKind,
+    materials: &[String],
+    now_tick: Tick,
+) -> Result<HouseGuardian, GuardianActivationError> {
+    let recipe = activation_recipe(guardian_kind, materials)?;
+    validate_guardian_activation(niche, owner, niche_pos, guardian_kind)?;
+    consume_required_materials(inventory, &recipe.requirements)?;
+    Ok(push_guardian(
+        niche,
+        guardian_kind,
+        recipe.trap_tier,
+        now_tick,
+    ))
+}
+
+fn validate_guardian_activation(
+    niche: &SpiritNiche,
+    owner: &str,
+    niche_pos: [i32; 3],
+    guardian_kind: GuardianKind,
+) -> Result<(), GuardianActivationError> {
     if niche.owner != owner {
         return Err(GuardianActivationError::OwnerMismatch);
     }
@@ -73,18 +115,26 @@ pub fn activate_guardian(
     {
         return Err(GuardianActivationError::InstanceLimitReached);
     }
+    Ok(())
+}
 
-    require_materials(guardian_kind, materials)?;
+fn push_guardian(
+    niche: &mut SpiritNiche,
+    guardian_kind: GuardianKind,
+    trap_tier: ZhenfaTrapTier,
+    now_tick: Tick,
+) -> HouseGuardian {
     let guardian_id = next_guardian_id(niche, now_tick);
-    let guardian = HouseGuardian::new(
+    let mut guardian = HouseGuardian::new(
         guardian_id,
         guardian_kind,
         niche.owner.clone(),
         niche.pos,
         now_tick,
     );
+    guardian.trap_tier = trap_tier;
     niche.guardians.push(guardian.clone());
-    Ok(guardian)
+    guardian
 }
 
 pub fn resolve_intrusion(
@@ -150,14 +200,26 @@ pub fn resolve_intrusion(
 
 fn handle_spirit_niche_activate_guardian_requests(
     mut events: EventReader<SpiritNicheActivateGuardianRequest>,
-    mut niches: Query<(&mut SpiritNiche, &crate::combat::components::Lifecycle)>,
+    mut niches: Query<(
+        &mut SpiritNiche,
+        &crate::combat::components::Lifecycle,
+        Option<&mut PlayerInventory>,
+    )>,
 ) {
     for event in events.read() {
-        let Ok((mut niche, lifecycle)) = niches.get_mut(event.player) else {
+        let Ok((mut niche, lifecycle, inventory)) = niches.get_mut(event.player) else {
             continue;
         };
-        if let Err(error) = activate_guardian(
+        let Some(mut inventory) = inventory else {
+            tracing::warn!(
+                "[bong][social][niche-defense] guardian activation rejected for `{}`: missing inventory",
+                lifecycle.character_id
+            );
+            continue;
+        };
+        if let Err(error) = activate_guardian_from_inventory(
             &mut niche,
+            &mut inventory,
             lifecycle.character_id.as_str(),
             event.niche_pos,
             event.guardian_kind,
@@ -251,50 +313,170 @@ fn handle_niche_intrusion_attempts(
     }
 }
 
-fn require_materials(
+#[derive(Debug, Clone, Copy)]
+struct GuardianMaterialRequirement {
+    item_id: &'static str,
+    count: u32,
+}
+
+#[derive(Debug, Clone)]
+struct GuardianActivationRecipe {
+    requirements: Vec<GuardianMaterialRequirement>,
+    trap_tier: ZhenfaTrapTier,
+}
+
+fn activation_recipe(
     guardian_kind: GuardianKind,
     materials: &[String],
-) -> Result<(), GuardianActivationError> {
-    match guardian_kind {
-        GuardianKind::Puppet => {
-            require_count(materials, PUPPET_BEAST_BONE_ITEM_ID, 3)?;
-            require_count(materials, PUPPET_ARRAY_STONE_ITEM_ID, 1)?;
-        }
+) -> Result<GuardianActivationRecipe, GuardianActivationError> {
+    let recipe = match guardian_kind {
+        GuardianKind::Puppet => GuardianActivationRecipe {
+            requirements: vec![
+                GuardianMaterialRequirement {
+                    item_id: PUPPET_BEAST_BONE_ITEM_ID,
+                    count: 3,
+                },
+                GuardianMaterialRequirement {
+                    item_id: PUPPET_ARRAY_STONE_ITEM_ID,
+                    count: 1,
+                },
+            ],
+            trap_tier: ZhenfaTrapTier::default(),
+        },
         GuardianKind::ZhenfaTrap => {
-            if !materials.iter().any(|material| {
-                matches!(
-                    material.as_str(),
-                    BASIC_TRAP_STONE_ITEM_ID
-                        | MIDDLE_TRAP_STONE_ITEM_ID
-                        | ADVANCED_TRAP_STONE_ITEM_ID
-                )
-            }) {
+            let Some((trap_stone, trap_tier)) = requested_trap_stone(materials) else {
                 return Err(GuardianActivationError::MissingMaterial(
                     BASIC_TRAP_STONE_ITEM_ID,
                 ));
+            };
+            GuardianActivationRecipe {
+                requirements: vec![GuardianMaterialRequirement {
+                    item_id: trap_stone,
+                    count: 1,
+                }],
+                trap_tier,
             }
         }
-        GuardianKind::BondedDaoxiang => {
-            require_count(materials, BONDED_DAOXIANG_REMAINS_ITEM_ID, 1)?;
-            require_count(materials, ADVANCED_TRAP_STONE_ITEM_ID, 1)?;
+        GuardianKind::BondedDaoxiang => GuardianActivationRecipe {
+            requirements: vec![
+                GuardianMaterialRequirement {
+                    item_id: BONDED_DAOXIANG_REMAINS_ITEM_ID,
+                    count: 1,
+                },
+                GuardianMaterialRequirement {
+                    item_id: ADVANCED_TRAP_STONE_ITEM_ID,
+                    count: 1,
+                },
+            ],
+            trap_tier: ZhenfaTrapTier::default(),
+        },
+    };
+    for requirement in &recipe.requirements {
+        if material_count(materials, requirement.item_id) < requirement.count {
+            return Err(GuardianActivationError::MissingMaterial(
+                requirement.item_id,
+            ));
+        }
+    }
+    Ok(recipe)
+}
+
+fn requested_trap_stone(materials: &[String]) -> Option<(&'static str, ZhenfaTrapTier)> {
+    materials
+        .iter()
+        .find_map(|material| match material.as_str() {
+            BASIC_TRAP_STONE_ITEM_ID => Some((BASIC_TRAP_STONE_ITEM_ID, ZhenfaTrapTier::Basic)),
+            MIDDLE_TRAP_STONE_ITEM_ID => Some((MIDDLE_TRAP_STONE_ITEM_ID, ZhenfaTrapTier::Middle)),
+            ADVANCED_TRAP_STONE_ITEM_ID => {
+                Some((ADVANCED_TRAP_STONE_ITEM_ID, ZhenfaTrapTier::Advanced))
+            }
+            _ => None,
+        })
+}
+
+fn material_count(materials: &[String], required: &str) -> u32 {
+    materials
+        .iter()
+        .filter(|material| material.as_str() == required)
+        .count() as u32
+}
+
+fn consume_required_materials(
+    inventory: &mut PlayerInventory,
+    requirements: &[GuardianMaterialRequirement],
+) -> Result<(), GuardianActivationError> {
+    for requirement in requirements {
+        if inventory_template_count(inventory, requirement.item_id) < requirement.count {
+            return Err(GuardianActivationError::MissingMaterial(
+                requirement.item_id,
+            ));
+        }
+    }
+    for requirement in requirements {
+        for _ in 0..requirement.count {
+            let Some(instance_id) = find_material_instance_id(inventory, requirement.item_id)
+            else {
+                return Err(GuardianActivationError::MissingMaterial(
+                    requirement.item_id,
+                ));
+            };
+            consume_item_instance_once(inventory, instance_id)
+                .map_err(|_| GuardianActivationError::MaterialConsumeFailed(requirement.item_id))?;
         }
     }
     Ok(())
 }
 
-fn require_count(
-    materials: &[String],
-    required: &'static str,
-    count: usize,
-) -> Result<(), GuardianActivationError> {
-    let actual = materials
+fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u32 {
+    let container_count: u32 = inventory
+        .containers
         .iter()
-        .filter(|material| material.as_str() == required)
-        .count();
-    if actual < count {
-        return Err(GuardianActivationError::MissingMaterial(required));
-    }
-    Ok(())
+        .flat_map(|container| container.items.iter())
+        .filter(|placed| placed.instance.template_id == template_id)
+        .map(|placed| placed.instance.stack_count)
+        .sum();
+    let equipped_count: u32 = inventory
+        .equipped
+        .values()
+        .filter(|item| item.template_id == template_id)
+        .map(|item| item.stack_count)
+        .sum();
+    let hotbar_count: u32 = inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .filter(|item| item.template_id == template_id)
+        .map(|item| item.stack_count)
+        .sum();
+    container_count
+        .saturating_add(equipped_count)
+        .saturating_add(hotbar_count)
+}
+
+fn find_material_instance_id(inventory: &PlayerInventory, template_id: &str) -> Option<u64> {
+    inventory
+        .containers
+        .iter()
+        .flat_map(|container| container.items.iter())
+        .find(|placed| {
+            placed.instance.template_id == template_id && placed.instance.stack_count > 0
+        })
+        .map(|placed| placed.instance.instance_id)
+        .or_else(|| {
+            inventory
+                .hotbar
+                .iter()
+                .flatten()
+                .find(|item| item.template_id == template_id && item.stack_count > 0)
+                .map(|item| item.instance_id)
+        })
+        .or_else(|| {
+            inventory
+                .equipped
+                .values()
+                .find(|item| item.template_id == template_id && item.stack_count > 0)
+                .map(|item| item.instance_id)
+        })
 }
 
 fn next_guardian_id(niche: &SpiritNiche, now_tick: Tick) -> u64 {
@@ -310,6 +492,12 @@ fn next_guardian_id(niche: &SpiritNiche, now_tick: Tick) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        MAIN_PACK_CONTAINER_ID,
+    };
 
     fn niche() -> SpiritNiche {
         SpiritNiche {
@@ -319,6 +507,56 @@ mod tests {
             revealed: false,
             revealed_by: None,
             guardians: Vec::new(),
+        }
+    }
+
+    fn item(template_id: &str, instance_id: u64, stack_count: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn inventory_with(items: Vec<ItemInstance>) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "Main Pack".to_string(),
+                rows: 4,
+                cols: 9,
+                items: items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, instance)| PlacedItemState {
+                        row: 0,
+                        col: idx as u8,
+                        instance,
+                    })
+                    .collect(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
         }
     }
 
@@ -372,6 +610,81 @@ mod tests {
         )
         .expect_err("second puppet should hit same-kind limit");
         assert_eq!(err, GuardianActivationError::InstanceLimitReached);
+    }
+
+    #[test]
+    fn inventory_activation_rejects_forged_materials_without_server_items() {
+        let mut niche = niche();
+        let mut inventory = inventory_with(Vec::new());
+        let materials = vec![
+            PUPPET_BEAST_BONE_ITEM_ID.to_string(),
+            PUPPET_BEAST_BONE_ITEM_ID.to_string(),
+            PUPPET_BEAST_BONE_ITEM_ID.to_string(),
+            PUPPET_ARRAY_STONE_ITEM_ID.to_string(),
+        ];
+        let err = activate_guardian_from_inventory(
+            &mut niche,
+            &mut inventory,
+            "char:owner",
+            [10, 64, 10],
+            GuardianKind::Puppet,
+            &materials,
+            100,
+        )
+        .expect_err("client-provided material ids must not bypass server inventory");
+        assert_eq!(
+            err,
+            GuardianActivationError::MissingMaterial(PUPPET_BEAST_BONE_ITEM_ID)
+        );
+        assert!(niche.guardians.is_empty());
+        assert_eq!(inventory.revision, InventoryRevision(1));
+    }
+
+    #[test]
+    fn inventory_activation_consumes_authoritative_material_stacks() {
+        let mut niche = niche();
+        let mut inventory = inventory_with(vec![
+            item(PUPPET_BEAST_BONE_ITEM_ID, 1, 3),
+            item(PUPPET_ARRAY_STONE_ITEM_ID, 2, 1),
+        ]);
+        let materials = vec![
+            PUPPET_BEAST_BONE_ITEM_ID.to_string(),
+            PUPPET_BEAST_BONE_ITEM_ID.to_string(),
+            PUPPET_BEAST_BONE_ITEM_ID.to_string(),
+            PUPPET_ARRAY_STONE_ITEM_ID.to_string(),
+        ];
+        let guardian = activate_guardian_from_inventory(
+            &mut niche,
+            &mut inventory,
+            "char:owner",
+            [10, 64, 10],
+            GuardianKind::Puppet,
+            &materials,
+            100,
+        )
+        .expect("server inventory should satisfy and consume puppet materials");
+        assert_eq!(guardian.kind, GuardianKind::Puppet);
+        assert!(inventory.containers[0].items.is_empty());
+        assert!(inventory.revision.0 > 1);
+    }
+
+    #[test]
+    fn zhenfa_trap_activation_preserves_requested_tier() {
+        let mut niche = niche();
+        let mut inventory = inventory_with(vec![item(ADVANCED_TRAP_STONE_ITEM_ID, 3, 1)]);
+        let guardian = activate_guardian_from_inventory(
+            &mut niche,
+            &mut inventory,
+            "char:owner",
+            [10, 64, 10],
+            GuardianKind::ZhenfaTrap,
+            &[ADVANCED_TRAP_STONE_ITEM_ID.to_string()],
+            100,
+        )
+        .expect("advanced trap stone should activate advanced trap");
+        assert_eq!(guardian.kind, GuardianKind::ZhenfaTrap);
+        assert_eq!(guardian.trap_tier, ZhenfaTrapTier::Advanced);
+        assert!(inventory.containers[0].items.is_empty());
     }
 
     #[test]

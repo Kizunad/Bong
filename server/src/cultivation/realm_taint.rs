@@ -1,5 +1,9 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, App, Component, Event, EventReader, Query, Update};
+use valence::prelude::{
+    bevy_ecs, App, Commands, Component, Entity, Event, EventReader, Query, Update,
+};
 
 use crate::combat::components::TICKS_PER_SECOND;
 
@@ -69,15 +73,28 @@ pub fn register(app: &mut App) {
 
 pub fn apply_realm_taint_events(
     mut events: EventReader<ApplyRealmTaint>,
-    mut targets: Query<&mut RealmTaintState>,
+    mut commands: Commands,
+    mut targets: Query<Option<&mut RealmTaintState>>,
 ) {
+    let mut pending_inserts: HashMap<Entity, RealmTaintState> = HashMap::new();
     for event in events.read() {
-        let Ok(mut state) = targets.get_mut(event.target) else {
-            continue;
-        };
-        if event.kind == RealmTaintedKind::NicheIntrusion {
-            state.add_niche_intrusion(event.delta, event.tick);
+        match targets.get_mut(event.target) {
+            Ok(Some(mut state)) => apply_taint(&mut state, event),
+            Ok(None) => {
+                let state = pending_inserts.entry(event.target).or_default();
+                apply_taint(state, event);
+            }
+            Err(_) => continue,
         }
+    }
+    for (target, state) in pending_inserts {
+        commands.entity(target).insert(state);
+    }
+}
+
+fn apply_taint(state: &mut RealmTaintState, event: &ApplyRealmTaint) {
+    if event.kind == RealmTaintedKind::NicheIntrusion {
+        state.add_niche_intrusion(event.delta, event.tick);
     }
 }
 
@@ -102,5 +119,53 @@ mod tests {
         assert!(!state.wash_if_ready(10 + NICHE_INTRUSION_WASH_TICKS - 1));
         assert!(state.wash_if_ready(10 + NICHE_INTRUSION_WASH_TICKS));
         assert_eq!(state.qi_taint_severity, 0.0);
+    }
+
+    #[test]
+    fn apply_realm_taint_events_initializes_missing_state() {
+        let mut app = App::new();
+        app.add_event::<ApplyRealmTaint>();
+        app.add_systems(Update, apply_realm_taint_events);
+        let target = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(ApplyRealmTaint {
+            target,
+            kind: RealmTaintedKind::NicheIntrusion,
+            delta: NICHE_INTRUSION_SINGLE_DELTA,
+            tick: 10,
+        });
+        app.update();
+
+        let state = app
+            .world()
+            .get::<RealmTaintState>(target)
+            .expect("taint event should attach missing state");
+        assert_eq!(state.qi_taint_severity, NICHE_INTRUSION_SINGLE_DELTA);
+        assert_eq!(state.last_tainted_at, 10);
+    }
+
+    #[test]
+    fn apply_realm_taint_events_accumulates_same_frame_missing_state() {
+        let mut app = App::new();
+        app.add_event::<ApplyRealmTaint>();
+        app.add_systems(Update, apply_realm_taint_events);
+        let target = app.world_mut().spawn_empty().id();
+
+        for tick in [10, 11] {
+            app.world_mut().send_event(ApplyRealmTaint {
+                target,
+                kind: RealmTaintedKind::NicheIntrusion,
+                delta: NICHE_INTRUSION_SINGLE_DELTA,
+                tick,
+            });
+        }
+        app.update();
+
+        let state = app
+            .world()
+            .get::<RealmTaintState>(target)
+            .expect("queued taints should attach one accumulated state");
+        assert_eq!(state.qi_taint_severity, NICHE_INTRUSION_SINGLE_DELTA * 2.0);
+        assert_eq!(state.last_tainted_at, 11);
     }
 }
