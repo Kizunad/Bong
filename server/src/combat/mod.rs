@@ -7,6 +7,7 @@ mod death_event_attacker_chain_test;
 pub mod debug;
 pub mod events;
 pub mod lifecycle;
+pub mod needle;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
@@ -152,6 +153,8 @@ pub fn register(app: &mut App) {
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
+    app.add_event::<needle::ShootNeedleIntent>();
+    app.add_event::<needle::QiNeedleChargedEvent>();
 
     app.configure_sets(
         Update,
@@ -207,6 +210,13 @@ pub fn register(app: &mut App) {
             weapon::sync_weapon_component_from_equipped.in_set(CombatSystemSet::Intent),
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            needle::resolve_shoot_needle_intents.in_set(CombatSystemSet::Intent),
+            needle::despawn_expired_qi_needles.in_set(CombatSystemSet::Physics),
         ),
     );
     app.add_systems(

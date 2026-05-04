@@ -17,6 +17,8 @@ pub mod cultivation_detail_emit;
 pub mod defense_window_emit;
 pub mod derived_attrs_emit;
 pub mod dropped_loot_sync_emit;
+pub mod dugu_event_bridge;
+pub mod dugu_state_emit;
 pub mod event_stream_emit;
 pub mod extract_emit;
 pub mod forge_bridge;
@@ -347,6 +349,8 @@ pub fn register(app: &mut App) {
             burst_event_emit::emit_burst_meridian_events,
             woliu_event_bridge::publish_woliu_backfire_events,
             woliu_event_bridge::publish_projectile_qi_drained_events,
+            dugu_event_bridge::publish_dugu_poison_progress_events
+                .after(crate::cultivation::dugu::dugu_poison_tick),
         ),
     );
     app.add_systems(
@@ -484,6 +488,7 @@ pub fn register(app: &mut App) {
         ),
     );
     app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);
+    app.add_systems(Update, dugu_state_emit::emit_dugu_poison_state_payloads);
     app.add_systems(
         Update,
         (

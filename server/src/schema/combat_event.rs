@@ -24,6 +24,14 @@ pub enum CombatWoundKindV1 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum CombatAttackSourceV1 {
+    Melee,
+    BurstMeridian,
+    QiNeedle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum CombatRealtimeKindV1 {
     CombatEvent,
     DeathEvent,
@@ -42,6 +50,8 @@ pub struct CombatRealtimeEventV1 {
     pub body_part: Option<CombatBodyPartV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wound_kind: Option<CombatWoundKindV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<CombatAttackSourceV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub damage: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +88,7 @@ mod tests {
             attacker_id: Some("offline:Azure".to_string()),
             body_part: Some(CombatBodyPartV1::Chest),
             wound_kind: Some(CombatWoundKindV1::Blunt),
+            source: Some(CombatAttackSourceV1::Melee),
             damage: Some(20.0),
             contam_delta: Some(5.0),
             description: Some("debug_attack_intent offline:Azure -> offline:Crimson".to_string()),
@@ -90,6 +101,7 @@ mod tests {
         assert_eq!(realtime_back.tick, 42);
         assert_eq!(realtime_back.body_part, Some(CombatBodyPartV1::Chest));
         assert_eq!(realtime_back.wound_kind, Some(CombatWoundKindV1::Blunt));
+        assert_eq!(realtime_back.source, Some(CombatAttackSourceV1::Melee));
         assert_eq!(realtime_back.damage, Some(20.0));
 
         let summary = CombatSummaryV1 {

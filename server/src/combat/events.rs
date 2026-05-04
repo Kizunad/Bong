@@ -48,6 +48,7 @@ pub enum AttackSource {
     #[default]
     Melee,
     BurstMeridian,
+    QiNeedle,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
@@ -96,6 +97,8 @@ pub struct CombatEvent {
     pub resolved_at_tick: u64,
     pub body_part: BodyPart,
     pub wound_kind: WoundKind,
+    #[serde(default)]
+    pub source: AttackSource,
     pub damage: f32,
     pub contam_delta: f64,
     pub description: String,

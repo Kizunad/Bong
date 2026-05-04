@@ -28,12 +28,14 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 5] = [
+const TECHNIQUE_IDS: [&str; 7] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
     "woliu.vortex",
+    "dugu.shoot_needle",
+    "dugu.infuse_poison",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,7 +59,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 5] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 7] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -147,6 +149,32 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 5] = [
         cooldown_ticks: 20,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/woliu_vortex.png",
+    },
+    TechniqueDefinition {
+        id: "dugu.shoot_needle",
+        display_name: "凝针",
+        grade: "yellow",
+        description: "以一点真元凝作细针，远距直刺，不带毒蛊即只是普通真元投射。",
+        required_realm: "Induce",
+        required_meridians: &[],
+        qi_cost: 1.0,
+        cast_ticks: 1,
+        cooldown_ticks: 12,
+        range: 50.0,
+        icon_texture: "bong:textures/gui/skill/dugu_shoot_needle.png",
+    },
+    TechniqueDefinition {
+        id: "dugu.infuse_poison",
+        display_name: "灌毒蛊",
+        grade: "profound",
+        description: "将失谐真元覆入下一次飞针，命中后慢性蚀损对方经脉。",
+        required_realm: "Induce",
+        required_meridians: &[],
+        qi_cost: 5.0,
+        cast_ticks: 1,
+        cooldown_ticks: 40,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/dugu_infuse_poison.png",
     },
 ];
 

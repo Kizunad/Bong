@@ -16,6 +16,7 @@ pub struct SpiritualSenseTarget {
     pub position: [f64; 3],
     pub kind: SpiritualSenseTargetKind,
     pub intensity: f64,
+    pub stealth: Option<StealthState>,
 }
 
 pub fn scan_radius_for_realm(realm: Realm) -> f64 {
@@ -89,7 +90,7 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
                     SenseKindV1::CultivatorRealm,
                     observer_realm,
                     target_realm,
-                    None,
+                    target.stealth.as_ref(),
                 )?
             } else if realm_rank(observer_realm) >= 1 {
                 SenseKindV1::LivingQi
@@ -130,7 +131,10 @@ fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StealthState;
+pub struct StealthState {
+    pub active: bool,
+    pub disrupted: bool,
+}
 
 fn realm_rank(realm: Realm) -> u8 {
     crate::cultivation::realm_vision::planner::realm_rank(realm)
@@ -138,15 +142,22 @@ fn realm_rank(realm: Realm) -> u8 {
 
 pub fn obfuscate_sense_kind(
     original_kind: SenseKindV1,
-    _observer_realm: Realm,
-    _target_realm: Realm,
+    observer_realm: Realm,
+    target_realm: Realm,
     target_stealth: Option<&StealthState>,
 ) -> Option<SenseKindV1> {
-    if target_stealth.is_none() {
+    let Some(stealth) = target_stealth else {
+        return Some(original_kind);
+    };
+    if !stealth.active || stealth.disrupted || original_kind != SenseKindV1::CultivatorRealm {
         return Some(original_kind);
     }
 
-    Some(original_kind)
+    if realm_rank(observer_realm).saturating_sub(realm_rank(target_realm)) >= 2 {
+        Some(original_kind)
+    } else {
+        Some(SenseKindV1::AmbientLeyline)
+    }
 }
 
 #[cfg(test)]
@@ -167,32 +178,81 @@ mod tests {
     }
 
     #[test]
+    fn dugu_stealth_masks_same_band_cultivator_as_leyline() {
+        assert_eq!(
+            obfuscate_sense_kind(
+                SenseKindV1::CultivatorRealm,
+                Realm::Solidify,
+                Realm::Condense,
+                Some(&StealthState {
+                    active: true,
+                    disrupted: false,
+                }),
+            ),
+            Some(SenseKindV1::AmbientLeyline)
+        );
+    }
+
+    #[test]
+    fn dugu_exposure_or_two_realm_gap_reveals_cultivator() {
+        assert_eq!(
+            obfuscate_sense_kind(
+                SenseKindV1::CultivatorRealm,
+                Realm::Spirit,
+                Realm::Induce,
+                Some(&StealthState {
+                    active: true,
+                    disrupted: false,
+                }),
+            ),
+            Some(SenseKindV1::CultivatorRealm)
+        );
+        assert_eq!(
+            obfuscate_sense_kind(
+                SenseKindV1::CultivatorRealm,
+                Realm::Solidify,
+                Realm::Condense,
+                Some(&StealthState {
+                    active: true,
+                    disrupted: true,
+                }),
+            ),
+            Some(SenseKindV1::CultivatorRealm)
+        );
+    }
+
+    #[test]
     fn scan_targets_per_realm() {
         let targets = vec![
             SpiritualSenseTarget {
                 position: [30.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Living,
                 intensity: 0.7,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [100.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Leyline,
                 intensity: 0.6,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [300.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Cultivator(Realm::Induce),
                 intensity: 0.8,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [800.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Crisis,
                 intensity: 1.0,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [20.0, 64.0, 10.0],
                 kind: SpiritualSenseTargetKind::SpiritEye,
                 intensity: 1.0,
+                stealth: None,
             },
         ];
         assert!(scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Awaken, &targets).is_empty());
@@ -225,21 +285,25 @@ mod tests {
                 position: [600.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Living,
                 intensity: 0.2,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [700.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Cultivator(Realm::Spirit),
                 intensity: 0.8,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [1500.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Leyline,
                 intensity: 0.4,
+                stealth: None,
             },
             SpiritualSenseTarget {
                 position: [2100.0, 64.0, 0.0],
                 kind: SpiritualSenseTargetKind::Crisis,
                 intensity: 1.0,
+                stealth: None,
             },
         ];
         let entries = scan_targets_mid_ring_void([0.0, 64.0, 0.0], &targets);

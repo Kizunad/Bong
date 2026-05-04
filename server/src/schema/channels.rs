@@ -49,6 +49,7 @@ pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 pub const CH_WOLIU_BACKFIRE: &str = "bong:woliu/backfire";
 pub const CH_WOLIU_PROJECTILE_DRAINED: &str = "bong:woliu/projectile_drained";
 pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
+pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
@@ -135,6 +136,7 @@ mod tests {
         assert_eq!(CH_WOLIU_BACKFIRE, "bong:woliu/backfire");
         assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
+        assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
         assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");

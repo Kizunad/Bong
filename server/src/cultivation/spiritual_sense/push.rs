@@ -6,6 +6,7 @@ use valence::prelude::{
 };
 
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::dugu::{DuguObfuscationDisrupted, DuguPractice};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
@@ -19,7 +20,7 @@ use crate::world::spirit_eye::SpiritEyeRegistry;
 
 use super::scanner::{
     scan_targets_inner_ring, scan_targets_mid_ring_void, SpiritualSenseTarget,
-    SpiritualSenseTargetKind,
+    SpiritualSenseTargetKind, StealthState,
 };
 use super::throttle::{should_scan, SpiritualSenseRing};
 
@@ -39,9 +40,16 @@ struct PlayerSenseSnapshot {
     entity: Entity,
     position: [f64; 3],
     realm: Realm,
+    stealth: Option<StealthState>,
 }
 
-type SpiritualSensePlayerReadItem<'a> = (Entity, &'a Position, &'a Cultivation);
+type SpiritualSensePlayerReadItem<'a> = (
+    Entity,
+    &'a Position,
+    &'a Cultivation,
+    Option<&'a DuguPractice>,
+    Option<&'a DuguObfuscationDisrupted>,
+);
 type SpiritualSensePlayerReadFilter = With<Client>;
 type SpiritualSenseObserverItem<'a> = (
     Entity,
@@ -98,11 +106,21 @@ pub fn push_spiritual_sense_targets(
         let players = player_sets.p0();
         players
             .iter()
-            .map(|(entity, position, cultivation)| PlayerSenseSnapshot {
-                entity,
-                position: position_to_array(position),
-                realm: cultivation.realm,
-            })
+            .map(
+                |(entity, position, cultivation, dugu_practice, dugu_disrupted)| {
+                    PlayerSenseSnapshot {
+                        entity,
+                        position: position_to_array(position),
+                        realm: cultivation.realm,
+                        stealth: dugu_practice
+                            .is_some_and(|practice| practice.dugu_practice_level >= 1)
+                            .then_some(StealthState {
+                                active: true,
+                                disrupted: dugu_disrupted.is_some(),
+                            }),
+                    }
+                },
+            )
             .collect()
     };
     if snapshots.is_empty() {
@@ -211,6 +229,7 @@ fn build_player_sense_targets(
                 min_distance,
                 max_distance,
             ),
+            stealth: target.stealth,
         })
         .collect()
 }
@@ -304,11 +323,16 @@ mod tests {
                 entity: observer,
                 position: [0.0, 64.0, 0.0],
                 realm: Realm::Induce,
+                stealth: None,
             },
             PlayerSenseSnapshot {
                 entity: other,
                 position: [10.0, 64.0, 0.0],
                 realm: Realm::Condense,
+                stealth: Some(StealthState {
+                    active: true,
+                    disrupted: false,
+                }),
             },
         ];
         let targets = build_player_sense_targets(observer, [0.0, 64.0, 0.0], &players, 0.0, 500.0);
@@ -317,6 +341,13 @@ mod tests {
         assert_eq!(
             targets[0].kind,
             SpiritualSenseTargetKind::Cultivator(Realm::Condense)
+        );
+        assert_eq!(
+            targets[0].stealth,
+            Some(StealthState {
+                active: true,
+                disrupted: false,
+            })
         );
 
         let position = Position(DVec3::new(1.0, 2.0, 3.0));

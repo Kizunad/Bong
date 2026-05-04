@@ -52,5 +52,6 @@ pub fn init_registry() -> SkillRegistry {
     let mut registry = SkillRegistry::default();
     crate::cultivation::burst_meridian::register_skills(&mut registry);
     crate::combat::woliu::register_skills(&mut registry);
+    crate::cultivation::dugu::register_skills(&mut registry);
     registry
 }

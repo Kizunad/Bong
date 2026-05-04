@@ -295,6 +295,7 @@ pub(crate) fn apply_alchemy_explode_outcomes(
                 resolved_at_tick: clock.tick,
                 body_part: BodyPart::Chest,
                 wound_kind: WoundKind::Burn,
+                source: crate::combat::events::AttackSource::Melee,
                 damage,
                 contam_delta: 0.0,
                 description: format!(

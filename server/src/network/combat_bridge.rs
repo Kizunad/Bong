@@ -11,8 +11,8 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::schema::combat_event::{
-    CombatBodyPartV1, CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
-    CombatWoundKindV1,
+    CombatAttackSourceV1, CombatBodyPartV1, CombatRealtimeEventV1, CombatRealtimeKindV1,
+    CombatSummaryV1, CombatWoundKindV1,
 };
 
 #[derive(Debug, Default)]
@@ -68,6 +68,7 @@ pub fn publish_combat_realtime_events(
             attacker_id,
             body_part: Some(map_body_part(ev.body_part)),
             wound_kind: Some(map_wound_kind(ev.wound_kind)),
+            source: Some(map_attack_source(ev.source)),
             damage: Some(ev.damage),
             contam_delta: Some(ev.contam_delta),
             description: Some(ev.description.clone()),
@@ -101,6 +102,7 @@ pub fn publish_combat_realtime_events(
             attacker_id: attacker_id_from_cause(ev.cause.as_str()),
             body_part: None,
             wound_kind: None,
+            source: None,
             damage: None,
             contam_delta: None,
             description: None,
@@ -248,6 +250,14 @@ fn map_wound_kind(wound_kind: crate::combat::components::WoundKind) -> CombatWou
     }
 }
 
+fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttackSourceV1 {
+    match source {
+        crate::combat::events::AttackSource::Melee => CombatAttackSourceV1::Melee,
+        crate::combat::events::AttackSource::BurstMeridian => CombatAttackSourceV1::BurstMeridian,
+        crate::combat::events::AttackSource::QiNeedle => CombatAttackSourceV1::QiNeedle,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +350,7 @@ mod tests {
             resolved_at_tick: 33,
             body_part: crate::combat::components::BodyPart::Chest,
             wound_kind: crate::combat::components::WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
             damage: 20.0,
             contam_delta: 5.0,
             description: "attack_intent offline:AttackerCanonical -> offline:TargetCanonical hit Chest with Blunt for 20.0 damage at 0.90 reach decay".to_string(),
@@ -453,6 +464,7 @@ mod tests {
             resolved_at_tick: 190,
             body_part: crate::combat::components::BodyPart::Chest,
             wound_kind: crate::combat::components::WoundKind::Pierce,
+            source: crate::combat::events::AttackSource::Melee,
             damage: 12.0,
             contam_delta: 3.0,
             description: "hit".to_string(),
@@ -555,6 +567,7 @@ mod tests {
             resolved_at_tick: 1,
             body_part: crate::combat::components::BodyPart::Chest,
             wound_kind: crate::combat::components::WoundKind::Cut,
+            source: crate::combat::events::AttackSource::Melee,
             damage: 0.1 + 0.2,
             contam_delta: 0.1 + 0.2,
             description: "rounded hit".to_string(),
