@@ -696,3 +696,41 @@ vN+1 plan-identity-v1 / plan-baomai 落地后：
 
 - 2026-04-26：骨架创建。依赖 plan-cultivation-v1 污染机制 + plan-alchemy-v1 反向炼丹路径 + plan-social-v1 暴露追杀社交事件。无对应详写功法书。
 - 2026-05-03：从 skeleton 升 active。worldview 同步正典化"末土后招原则"+ "身份与信誉"+ "毒 vs 毒蛊边界"（commit fe00532c）。§A 概览 + §3.1 P0 毒蛊·v1 规格落地（11 个决策点闭环 Q45-Q55，4 个 v1 实装时拍板 Q56-Q59）。primary axis = 毒素真元累积速率 + 解毒难度（worldview §五:464）。**v1 关键设计**：凝针是普适能力（任何流派可用），灌毒蛊真元才是 dugu 专属（触发 5s 暴露窗口）。直接接 cultivation::Meridian.flow_capacity 字段实现"永久 qi_max 下降"。直接复用 plan-perception-v1.1 已留的 `obfuscate_sense_kind` hook 实装主动遮蔽。与 plan-anqi-v1 / plan-zhenfa-v1 共享凝针/暗器载具，但 dugu 灌毒蛊路径独立（"毒 vs 毒蛊"边界）。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 凝针 / 灌毒蛊 / 经脉损伤 / 自解闭环：`server/src/combat/needle.rs`、`server/src/cultivation/dugu.rs`、`server/src/cultivation/mod.rs`，新增 `ShootNeedleIntent`、`QiNeedle`、`InfuseDuguPoisonIntent`、`PendingDuguInfusion`、`DuguPoisonState`、`dugu_poison_tick`、`SelfAntidoteIntent`，并接入 `SkillRegistry` / `known_techniques` hotbar 技能。
+- P0/P1 命中与遮蔽接入：`server/src/combat/events.rs` 增加 `AttackSource`；`server/src/combat/resolve.rs` 透传攻击来源；`server/src/cultivation/spiritual_sense/scanner.rs`、`server/src/cultivation/spiritual_sense/push.rs` 接入 `DuguPractice` + `DuguObfuscationDisrupted`，同境/近境遮蔽为 `AmbientLeyline`，高两境界差或暴露窗口透传识破。
+- P1 agent narration：`server/src/network/dugu_event_bridge.rs`、`server/src/network/redis_bridge.rs`、`agent/packages/tiandao/src/dugu-narration.ts`、`agent/packages/tiandao/src/skills/dugu.md` 将 `DuguPoisonProgressEventV1` 发布到 `bong:dugu/poison_progress` 并生成玩家叙事。
+- P0/P1 client HUD contract：`server/src/network/dugu_state_emit.rs`、`agent/packages/schema/src/dugu.ts`、`agent/packages/schema/src/server-data.ts`、`client/src/main/java/com/bong/client/combat/handler/DuguPoisonStateHandler.java`、`client/src/main/java/com/bong/client/combat/store/DuguPoisonStateStore.java` 接通 `dugu_poison_state` 自身可见状态；`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java`、`ClientRequestSender.java` 接通 `self_antidote`。
+- P2 LifeRecord / biography / persistence hook：`server/src/cultivation/life_record.rs` 新增 `BiographyEntry::DuguPoisonInflicted`；`server/src/persistence/mod.rs`、`server/src/schema/server_data.rs`、`agent/packages/schema/src/biography.ts`、generated schema 同步 Dugu biography 事件。
+
+### 关键 commit
+
+- `edc6d428`（2026-05-04）`plan-dugu-v1: 落地毒蛊 server 闭环`
+- `cf4ed1ac`（2026-05-04）`plan-dugu-v1: 接通毒蛊 schema 与天道叙事`
+- `5378aed0`（2026-05-04）`plan-dugu-v1: 接通毒蛊客户端状态与自解请求`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`
+- `cd server && cargo test`：2214 passed
+- `cd server && cargo test cultivation::dugu`：7 passed
+- `cd server && cargo test network::dugu_event_bridge`：1 passed
+- `cd agent && npm run build`
+- `cd agent/packages/tiandao && npm test`：225 passed
+- `cd agent/packages/schema && npm test`：267 passed（含 generated artifacts freshness）
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL
+- `git diff --check`
+
+### 跨仓库核验
+
+- server：`QiNeedle`、`ShootNeedleIntent`、`InfuseDuguPoisonIntent`、`DuguPoisonState`、`DuguPoisonProgressEvent`、`SelfAntidoteIntent`、`AttackSource::QiNeedle`、`CH_DUGU_POISON_PROGRESS`
+- schema/agent：`DuguPoisonStateV1`、`DuguPoisonProgressEventV1`、`DuguObfuscationStateV1`、`AntidoteResultEventV1`、`CHANNELS.DUGU_POISON_PROGRESS`、`DuguNarrationRuntime`
+- client：`encodeSelfAntidote`、`sendSelfAntidote`、`DuguPoisonStateHandler`、`DuguPoisonStateStore`、`ServerDataRouter` 注册 `dugu_poison_state`
+
+### 遗留 / 后续
+
+- NPC 信誉度、求医解、越级解、多毒源叠加、毒针材料变种、毒蛊师自身阴诡色 / 经脉慢性污染仍按本 plan 的 vN+1 范围留给 `plan-dugu-v2` / `plan-identity-v1` / `plan-color-v1`。
