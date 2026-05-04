@@ -7,7 +7,7 @@
 #     - **plan-alchemy-client-v1**：subagent 实测 P3-P7（owo-lib UI / Redis 对齐 / 配方正典 / 炸炉 / 图标）grep 0 命中，percent 100→40。文档已归档但代码不完整，建议人工核查 plan 范围或回退 active。
 #     - 多份归档 plan grep 验证后微调 percent：HUD 95→97 / style-vector 100→90 / tuike 100→95 / woliu 100→95 / zhenmai 100→95 / zhenfa 90→92 / narrative 100→95 / persistence 100→90 / botany-v2 90→85 / library-jiuzong-history 95→100。
 #     - **plan-inventory-v1**：state merged → active-implementing 95%（subagent 注：未归入 finished_plans/，仍 active，§7.5 Manual QA 未记录 pass）。
-#     - **plan-multi-style-v1**：state active-implementing → active-design 30%（is_hunyuan 仅骨架，PracticeLog 修炼 session 扩展未实装）。
+#     - **plan-multi-style-v1**：state active-implementing → active-design 15%（实地核对：is_hunyuan 嵌在 evolve_qi_color 且缺 len>=5 守卫，约 P0 60%；P1/P2/P3 全 0；client 事件链是 vector-integration 顺手接的不算）。
 #     - **plan-botany-agent-v1**：active-implementing 15% → active-design 10%（仅 schema/subscribe 就绪，WorldModel.botany_ecology / onBotanyEcology / ZoneStressFlag 全部缺失）。
 #     - **plan-niche-defense-v1**：5% → 0%（grep 未见 HouseGuardian/GuardianKind/NicheIntrusion 任何 symbol）。
 #     - **plan-cross-system-patch-v1**：补充 pr_refs [92]（subagent 实测确认）。
@@ -380,11 +380,11 @@ plans:
     group: gameplay-npc
     title: "7 色均衡 PracticeLog 自然演化混元色"
     state: active-design
-    percent: 30
+    percent: 15
     last_updated: "2026-05-04"
     pr_refs: []
     blocking_on: ["plan-style-vector-integration-v1"]
-    summary: "is_hunyuan / PracticeLog 已存在 server/src/cultivation/color.rs（cultivation-v1 遗留），但 QiColorVectorHud 7 色 bar chart + 自然演化代价 + PracticeLog 修炼 session 扩展均不存在，is_hunyuan 仅算骨架，P1/P2/P3 待起。"
+    summary: "P0 is_hunyuan 判定逻辑嵌在 evolve_qi_color (color.rs:79)，未独立成函数且缺 plan §2 要求的 len()>=5 守卫（约 60% 完成）；P1 practice_log.rs / P2 QiColorVectorHud.java / P3 style-balance telemetry 全 0。client qi_color_hunyuan 事件链是 plan-style-vector-integration-v1 P2 顺手接的，不计本 plan 工作量。"
 
   - file: plan-niche-defense-v1.md
     group: gameplay-npc
