@@ -2,6 +2,7 @@ import type { TSchema } from "@sinclair/typebox";
 
 import { AgentCommandV1 } from "./agent-command.js";
 import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
+import { AntiCheatReportV1, ViolationKindV1 } from "./anticheat.js";
 import { ArmorDurabilityChangedV1 } from "./armor-event.js";
 import {
   AudioEventV1,
@@ -52,6 +53,7 @@ import {
   CombatTerminateRequestV1,
   ClientRequestV1,
   DuoSheRequestV1,
+  QiColorInspectRequestV1,
   ForgeRequestV1,
   HeartDemonDecisionRequestV1,
   ForgeStartSessionRequestV1,
@@ -162,6 +164,10 @@ import {
   PseudoVeinSeasonV1,
   PseudoVeinSnapshotV1,
 } from "./pseudo-vein.js";
+import {
+  ZongCoreActivationV1,
+  ZongmenOriginIdV1,
+} from "./zong-formation.js";
 import { FogShapeV1, RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ServerDataAlchemyContaminationV1,
@@ -197,6 +203,7 @@ import {
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
   ServerDataVortexStateV1,
+  ServerDataCarrierStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataWeaponBrokenV1,
@@ -217,12 +224,19 @@ import {
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   BurstMeridianEventV1,
+  QiColorObservedV1,
   TreasureEquippedV1,
   TreasureViewV1,
   WeaponBrokenV1,
   WeaponEquippedV1,
   WeaponViewV1,
 } from "./server-data.js";
+import {
+  CarrierChargedEventV1,
+  CarrierImpactEventV1,
+  CarrierStateV1,
+  ProjectileDespawnedEventV1,
+} from "./combat-carrier.js";
 import {
   ProjectileQiDrainedEventV1,
   VortexBackfireEventV1,
@@ -314,6 +328,8 @@ export const SCHEMA_REGISTRY = {
   pseudoVeinSeasonV1: PseudoVeinSeasonV1,
   pseudoVeinSnapshotV1: PseudoVeinSnapshotV1,
   pseudoVeinDissipateEventV1: PseudoVeinDissipateEventV1,
+  zongmenOriginIdV1: ZongmenOriginIdV1,
+  zongCoreActivationV1: ZongCoreActivationV1,
   chatMessageV1: ChatMessageV1,
   chatSignal: ChatSignal,
   inventorySnapshotV1: InventorySnapshotV1,
@@ -349,6 +365,8 @@ export const SCHEMA_REGISTRY = {
   rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
+  violationKindV1: ViolationKindV1,
+  antiCheatReportV1: AntiCheatReportV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
   tribulationKindV1: TribulationKindV1,
   tribulationPhaseV1: TribulationPhaseV1,
@@ -368,6 +386,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
+  clientRequestQiColorInspectV1: QiColorInspectRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
@@ -406,6 +425,7 @@ export const SCHEMA_REGISTRY = {
   serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
   serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
   burstMeridianEventV1: BurstMeridianEventV1,
+  qiColorObservedV1: QiColorObservedV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
@@ -423,6 +443,11 @@ export const SCHEMA_REGISTRY = {
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  carrierStateV1: CarrierStateV1,
+  carrierChargedEventV1: CarrierChargedEventV1,
+  carrierImpactEventV1: CarrierImpactEventV1,
+  projectileDespawnedEventV1: ProjectileDespawnedEventV1,
+  serverDataCarrierStateV1: ServerDataCarrierStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -580,6 +605,8 @@ export const GENERATED_SCHEMA_FILES = {
   "pseudo-vein-snapshot-v1.json": SCHEMA_REGISTRY.pseudoVeinSnapshotV1,
   "pseudo-vein-dissipate-event-v1.json":
     SCHEMA_REGISTRY.pseudoVeinDissipateEventV1,
+  "zongmen-origin-id-v1.json": SCHEMA_REGISTRY.zongmenOriginIdV1,
+  "zong-core-activation-v1.json": SCHEMA_REGISTRY.zongCoreActivationV1,
   "chat-message-v1.json": SCHEMA_REGISTRY.chatMessageV1,
   "chat-signal.json": SCHEMA_REGISTRY.chatSignal,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,
@@ -622,6 +649,8 @@ export const GENERATED_SCHEMA_FILES = {
   "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
+  "violation-kind-v1.json": SCHEMA_REGISTRY.violationKindV1,
+  "anticheat-report-v1.json": SCHEMA_REGISTRY.antiCheatReportV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
   "tribulation-kind-v1.json": SCHEMA_REGISTRY.tribulationKindV1,
   "tribulation-phase-v1.json": SCHEMA_REGISTRY.tribulationPhaseV1,
@@ -641,6 +670,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
   "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
+  "client-request-qi-color-inspect-v1.json":
+    SCHEMA_REGISTRY.clientRequestQiColorInspectV1,
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
@@ -705,6 +736,7 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-skill-scroll-used-v1.json":
     SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
   "burst-meridian-event-v1.json": SCHEMA_REGISTRY.burstMeridianEventV1,
+  "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,

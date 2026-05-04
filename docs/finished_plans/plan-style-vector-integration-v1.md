@@ -248,3 +248,55 @@ P2  v1 收口
 ## §3 进度日志
 
 - 2026-05-03：plan 立项。**起源**：plan-styles-emergent-refactor-v1 撤销（user 反馈"流派身份 = 向量，不是 bool 字段"）；本 plan 取代。**核心方向**：把已实装的 PracticeLog + QiColor evolution 系统接入 6 流派 P0；修 on_player_terminated 漏清 bug；新加 inspect 神识看对方 QiColor 通道。**关键正典**：worldview §五"流派由组合涌现"（2026-05-03 commit 94c32a04）+ library 真元十一色考"染色非唯时日所致，更关乎心之所向"+ 杂色 trade-off。**v1 不实装 dugu 染色遮蔽**（user 决议留 vN+1 天赋点系统）。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 PracticeLog hook / decay**：
+  - `server/src/cultivation/color.rs`：新增 `STYLE_PRACTICE_AMOUNT = 1.0`、`PRACTICE_DECAY_PER_TICK = 0.001`、`record_style_practice()`；`PracticeLog::default()` 直接带默认衰减。
+  - `server/src/cultivation/burst_meridian.rs`：爆脉命中后记录 `ColorKind::Heavy`。
+  - `server/src/zhenfa/mod.rs`：诡雷/阵法触发成功后记录 `ColorKind::Intricate`（缜密色）。
+  - `server/src/combat/resolve.rs`：截脉震爆成功防御后记录 `ColorKind::Violent`。
+  - `server/src/combat/woliu.rs`：涡流成功抽干投射真元后记录 `ColorKind::Intricate`。
+- **P1 死亡清空 + inspect 通道**：
+  - `server/src/cultivation/death_hooks.rs`：`on_player_terminated` 同步移除 `PracticeLog` 与 `QiColor`。
+  - `agent/packages/schema/src/client-request.ts` / `server/src/schema/client_request.rs`：新增 `qi_color_inspect` C2S request。
+  - `agent/packages/schema/src/server-data.ts` / `server/src/schema/server_data.rs`：新增 `QiColorObservedV1` S2C payload。
+  - `server/src/network/client_request_handler.rs`：`qi_color_inspect` 仅接受服务端 `EntityManager` 可解析的协议实体 id，并限制同维度、非自身、6 格内目标，拒绝客户端伪造 `entity_bits` 探测。
+  - `server/src/network/qi_color_observed_emit.rs`：按境界差 `>=2 / =1 / <=0` 生成完整、模糊或屏蔽的对方真元色观察。
+  - `client/src/main/java/com/bong/client/network/QiColorObservedHandler.java`、`client/src/main/java/com/bong/client/cultivation/QiColorObservedStore.java`：客户端镜像观察结果。
+  - `client/src/main/java/com/bong/client/inventory/InspectScreenBootstrap.java`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java`、`client/src/main/java/com/bong/client/inventory/model/MeridianBody.java`：打开检视时向准星目标发起 inspect，并在检视界面渲染自己/对方 QiColor。
+- **P2 收口 / narration**：
+  - `server/src/cultivation/color.rs`：`qi_color_evolution_tick` 在 main/secondary/chaotic/hunyuan 变化时写入 `BiographyEntry::ColorShift`。
+  - `server/src/schema/cultivation.rs`、`agent/packages/schema/src/cultivation.ts`、`agent/packages/schema/generated/world-state-v1.json`：WorldState cultivation snapshot 携带 `qi_color_chaotic` / `qi_color_hunyuan`，供 agent 判定重大变化。
+  - `agent/packages/tiandao/src/qi-color-narration.ts`、`agent/packages/tiandao/src/runtime.ts`：`QiColorNarrationTracker` 订阅 fresh world state 的玩家真元色变化，发布 `bong:agent_narrate` narration。
+
+### 关键 commit
+
+- `00dd785a` · 2026-05-04 · `feat(style-vector): 接入真元色实践链`
+- `8b53f27a` · 2026-05-04 · `feat(style-vector): 增加真元色神识通道`
+- `7be80764` · 2026-05-04 · `feat(client): 渲染检视真元色`
+- `97a9b40c` · 2026-05-04 · `feat(style-vector): 接入真元色叙事`
+- `071704a3` · 2026-05-04 · `fix(style-vector): 限制真元色检视目标范围`
+
+### 测试结果
+
+- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ `2235 passed`
+- `agent/`：`npm run build` ✅
+- `agent/packages/tiandao`：`npm test` ✅ `34 passed / 232 tests`
+- `agent/packages/schema`：`npm test` ✅ `9 passed / 267 tests`
+- `client/`：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ `BUILD SUCCESSFUL`
+
+### 跨仓库核验
+
+- **server**：`PracticeLog` / `record_style_practice` / `STYLE_PRACTICE_AMOUNT` / `PRACTICE_DECAY_PER_TICK` / `QiColorInspectRequest` / `resolve_qi_color_inspect_target` / `emit_qi_color_observed_payloads` / `BiographyEntry::ColorShift` / `CultivationSnapshotV1.qi_color_chaotic`
+- **agent/schema**：`ClientRequestQiColorInspectV1` / `QiColorObservedV1` / `CultivationSnapshotV1.qi_color_chaotic` / `CultivationSnapshotV1.qi_color_hunyuan`
+- **agent/tiandao**：`QiColorNarrationTracker` / `renderQiColorNarration`
+- **client**：`QiColorObservedHandler` / `QiColorObservedStore` / `InspectScreenBootstrap.requestQiColorInspectForCrosshairTarget` / `MeridianBody.qiColorMain`
+
+### 遗留 / 后续
+
+- `dugu` 染色遮蔽仍按本 plan 决议留给 vN+1 天赋点系统。
+- `anqi`、`dugu`、`tuike` 运行时模块在本次消费基线 `origin/main` 尚未全部落入主线；本 plan 已提供统一 `record_style_practice()` 接口和当前主线可落地点，后续对应流派 PR 合入后按同一接口补各自成功事件 hook。
+- 染色亲和度对招式效率的精确加成、丹药/凝核/遗念等非流派 PracticeLog 来源仍留给 vN+1。

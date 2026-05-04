@@ -786,6 +786,30 @@
       "required": [
         "v",
         "type",
+        "observed"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "qi_color_inspect",
+          "type": "string"
+        },
+        "observed": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "instance_id"
       ],
       "properties": {
@@ -2029,6 +2053,97 @@
           "minimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "qi_target"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "charge_carrier",
+          "type": "string"
+        },
+        "slot": {
+          "anyOf": [
+            {
+              "const": "main_hand",
+              "type": "string"
+            },
+            {
+              "const": "off_hand",
+              "type": "string"
+            }
+          ]
+        },
+        "qi_target": {
+          "minimum": 0,
+          "maximum": 80,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slot",
+        "dir_unit",
+        "power"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "throw_carrier",
+          "type": "string"
+        },
+        "slot": {
+          "anyOf": [
+            {
+              "const": "main_hand",
+              "type": "string"
+            },
+            {
+              "const": "off_hand",
+              "type": "string"
+            }
+          ]
+        },
+        "dir_unit": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "power": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
         }
       }
     },

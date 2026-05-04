@@ -4,7 +4,7 @@
     "name": "mofa_worldview_example",
     "spawn_zone": "spawn",
     "bounds_xz": {
-      "min": [-10000.0, -10000.0],
+      "min": [-10000.0, -10400.0],
       "max": [10000.0, 10000.0]
     },
     "notes": [
@@ -227,6 +227,210 @@
           "unlock": "夜间月光强时显现",
           "qi_affinity": 0.2,
           "danger_bias": 1
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_north_001",
+      "display_name": "渊口荒丘·枯木崖",
+      "aabb": {
+        "min": [-650.0, 50.0, -8650.0],
+        "max": [-350.0, 100.0, -8350.0]
+      },
+      "center_xz": [-500.0, -8500.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [-500.0, 74.0, -8500.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["spacetime_scar"],
+        "portal_anchor_xz": [-500.0, -8500.0],
+        "tsy_zone_link": "tsy_daneng_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "地表暴露态坍缩渊口；入口坐标由 portal_anchor_xz 驱动，不放显眼 marker。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·枯木崖",
+          "pos_xyz": [-500.0, 74.0, -8500.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:daneng_01",
+            "target_family_pos_xyz:550,100,550",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:north"
+          ],
+          "unlock": "凝脉以上灵识扫过时，焦黑裂纹下传来极远的坠响",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_north_002",
+      "display_name": "渊口荒丘·北荒东陲",
+      "aabb": {
+        "min": [1850.0, 50.0, -7950.0],
+        "max": [2150.0, 100.0, -7650.0]
+      },
+      "center_xz": [2000.0, -7800.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [2000.0, 74.0, -7800.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["fresh_collapse_rubble", "cracked_floor_seam"],
+        "portal_anchor_xz": [2000.0, -7800.0],
+        "tsy_zone_link": "tsy_zongmen_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "近代高手战死后形成的小尺度渊口，地表只留普通裂缝与寒气。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·北荒东陲",
+          "pos_xyz": [2000.0, 74.0, -7800.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:zongmen_01",
+            "target_family_pos_xyz:250,100,250",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:east"
+          ],
+          "unlock": "裂缝周围寒气凝白，靠近才察觉真元正被向下抽走",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_blood_001",
+      "display_name": "渊口荒丘·血谷露头",
+      "aabb": {
+        "min": [3050.0, 50.0, -2950.0],
+        "max": [3350.0, 100.0, -2650.0]
+      },
+      "center_xz": [3200.0, -2800.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [3200.0, 74.0, -2800.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["spacetime_scar", "ganshi_drift"],
+        "portal_anchor_xz": [3200.0, -2800.0],
+        "tsy_zone_link": "tsy_daneng_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "血谷东侧地下露头，保留 spacetime_rift 语义但不复用 rift_axis_sdf。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·血谷露头",
+          "pos_xyz": [3200.0, 74.0, -2800.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:daneng_01",
+            "target_family_pos_xyz:550,100,550",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:south"
+          ],
+          "unlock": "血谷裂纹在灵识中呈现断续的寒白回声",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_west_001",
+      "display_name": "渊口荒丘·西南遗宗",
+      "aabb": {
+        "min": [-3650.0, 50.0, 5350.0],
+        "max": [-3350.0, 100.0, 5650.0]
+      },
+      "center_xz": [-3500.0, 5500.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [-3500.0, 74.0, 5500.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["charred_obelisk_shard", "cracked_floor_seam"],
+        "portal_anchor_xz": [-3500.0, 5500.0],
+        "tsy_zone_link": "tsy_zongmen_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "西南远端上古宗门遗迹浮现，渊口只表现为焦黑荒丘与裂缝。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·西南遗宗",
+          "pos_xyz": [-3500.0, 74.0, 5500.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:zongmen_01",
+            "target_family_pos_xyz:250,100,250",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:west"
+          ],
+          "unlock": "焦碑碎片之间似有宗门钟声倒灌，裂缝本身仍像普通地裂",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
         }
       ]
     },
@@ -719,6 +923,398 @@
           "unlock": "一跃直达 tier 3（损伤极高）",
           "qi_affinity": 0.3,
           "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_bloodstream_ruin",
+      "display_name": "血溪故地",
+      "aabb": {
+        "min": [5100.0, 60.0, -1400.0],
+        "max": [5900.0, 110.0, -600.0]
+      },
+      "center_xz": [5500.0, -1000.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [5300.0, 82.0, -1240.0],
+        [5500.0, 86.0, -1000.0],
+        [5740.0, 80.0, -760.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["red_terracotta", "blackstone", "netherrack", "mossy_cobblestone", "cracked_stone_bricks"],
+        "biome_mix": ["mofa:si_yu", "mofa:kui_zeng"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "bloodstream_altar"],
+        "zongmen_origin_id": 1,
+        "origin": "bloodstream",
+        "notes": "血谷东北外缘的血溪宗体修废墟，阵核激活后引异变兽与道伥。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "血溪阵核残柱",
+          "pos_xyz": [5500.0, 84.0, -1000.0],
+          "tags": ["wild_formation", "zong_core", "origin:bloodstream"],
+          "unlock": "投入灵草 / 骨币 / 真元可短时活化",
+          "qi_affinity": 0.4,
+          "danger_bias": 2
+        },
+        {
+          "kind": "stele",
+          "name": "万血斗台残碑",
+          "pos_xyz": [5360.0, 82.0, -1160.0],
+          "tags": ["lore", "zong_stele", "style:baomai"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "血溪守墓人",
+          "pos_xyz": [5680.0, 80.0, -820.0],
+          "tags": ["zong_keeper", "origin:bloodstream", "neutral_until_core_activated"],
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_beiling_ruin",
+      "display_name": "北陵故地",
+      "aabb": {
+        "min": [-1400.0, 60.0, -8900.0],
+        "max": [-600.0, 110.0, -8100.0]
+      },
+      "center_xz": [-1000.0, -8500.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [-1220.0, 86.0, -8720.0],
+        [-1000.0, 84.0, -8500.0],
+        [-760.0, 82.0, -8260.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["deepslate_bricks", "lodestone", "chiseled_stone_bricks", "mossy_cobblestone", "gravel"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "formation_anchor_pillar"],
+        "zongmen_origin_id": 2,
+        "origin": "beiling",
+        "notes": "北荒北部的北陵阵法废墟，残柱密集且阵核自激活率受汐转期翻倍。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "北陵阵眼锚柱",
+          "pos_xyz": [-1000.0, 84.0, -8500.0],
+          "tags": ["wild_formation", "zong_core", "origin:beiling", "style:zhenfa"],
+          "unlock": "破解残阵可临时稳住局部灵气",
+          "qi_affinity": 0.45,
+          "danger_bias": 2
+        },
+        {
+          "kind": "stele",
+          "name": "北陵量天碑",
+          "pos_xyz": [-1210.0, 84.0, -8660.0],
+          "tags": ["lore", "zong_stele", "style:zhenfa"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "北陵守墓人",
+          "pos_xyz": [-760.0, 82.0, -8260.0],
+          "tags": ["zong_keeper", "origin:beiling", "neutral_until_core_activated"],
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_nanyuan_ruin",
+      "display_name": "南渊故地",
+      "aabb": {
+        "min": [-400.0, 60.0, 5600.0],
+        "max": [400.0, 110.0, 6400.0]
+      },
+      "center_xz": [0.0, 6000.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [-260.0, 78.0, 5740.0],
+        [0.0, 82.0, 6000.0],
+        [260.0, 78.0, 6260.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["warped_planks", "sculk", "verdant_froglight", "mossy_cobblestone", "coarse_dirt"],
+        "biome_mix": ["mofa:kui_zeng", "mofa:fu_ling"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "poison_pool_basin"],
+        "zongmen_origin_id": 3,
+        "origin": "nanyuan",
+        "notes": "南荒中部的南渊毒蛊 / 医道废墟，蛊池残皿作为 origin 特征。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "南渊蛊池阵核",
+          "pos_xyz": [0.0, 82.0, 6000.0],
+          "tags": ["wild_formation", "zong_core", "origin:nanyuan", "style:dugu"],
+          "unlock": "阵核活化后才可能从藏经残基取得蛊术残卷",
+          "qi_affinity": 0.42,
+          "danger_bias": 2
+        },
+        {
+          "kind": "stele",
+          "name": "南渊蛊皿铭",
+          "pos_xyz": [-240.0, 78.0, 5740.0],
+          "tags": ["lore", "zong_stele", "style:dugu"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "南渊守墓人",
+          "pos_xyz": [260.0, 78.0, 6260.0],
+          "tags": ["zong_keeper", "origin:nanyuan", "neutral_until_core_activated"],
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_chixia_ruin",
+      "display_name": "赤霞故地",
+      "aabb": {
+        "min": [5600.0, 60.0, 3600.0],
+        "max": [6400.0, 110.0, 4400.0]
+      },
+      "center_xz": [6000.0, 4000.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [5740.0, 82.0, 3740.0],
+        [6000.0, 88.0, 4000.0],
+        [6260.0, 82.0, 4260.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["copper_block", "weathered_copper", "gold_block", "mossy_cobblestone", "gravel"],
+        "biome_mix": ["mofa:kui_zeng", "mofa:si_yu"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "lightning_pylon_stub"],
+        "zongmen_origin_id": 4,
+        "origin": "chixia",
+        "notes": "东南远端的赤霞雷法废墟，引雷塔残基在雷雨中作为危险 landmark。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "赤霞引雷阵核",
+          "pos_xyz": [6000.0, 88.0, 4000.0],
+          "tags": ["wild_formation", "zong_core", "origin:chixia", "style:anqi"],
+          "unlock": "雷雨或投料可短时激活",
+          "qi_affinity": 0.4,
+          "danger_bias": 3
+        },
+        {
+          "kind": "stele",
+          "name": "赤霞雷纹碑",
+          "pos_xyz": [5740.0, 82.0, 3740.0],
+          "tags": ["lore", "zong_stele", "style:anqi"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "赤霞守墓人",
+          "pos_xyz": [6260.0, 82.0, 4260.0],
+          "tags": ["zong_keeper", "origin:chixia", "neutral_until_core_activated"],
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_xuanshui_ruin",
+      "display_name": "玄水故地",
+      "aabb": {
+        "min": [-6900.0, 60.0, 1100.0],
+        "max": [-6100.0, 110.0, 1900.0]
+      },
+      "center_xz": [-6500.0, 1500.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [-6740.0, 84.0, 1260.0],
+        [-6500.0, 86.0, 1500.0],
+        [-6260.0, 84.0, 1740.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["snow_block", "packed_ice", "iron_block", "mossy_cobblestone", "stone_bricks"],
+        "biome_mix": ["mofa:kui_zeng", "mofa:si_yu"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "trial_blade_stele"],
+        "zongmen_origin_id": 5,
+        "origin": "xuanshui",
+        "notes": "西部远端的玄水御剑废墟，试剑碑林作为 origin 特征。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "玄水试剑阵核",
+          "pos_xyz": [-6500.0, 86.0, 1500.0],
+          "tags": ["wild_formation", "zong_core", "origin:xuanshui", "style:zhenmai"],
+          "unlock": "剑痕石碑共鸣后可短时稳住局部灵气",
+          "qi_affinity": 0.4,
+          "danger_bias": 2
+        },
+        {
+          "kind": "stele",
+          "name": "玄水剑痕碑",
+          "pos_xyz": [-6740.0, 84.0, 1260.0],
+          "tags": ["lore", "zong_stele", "style:zhenmai"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "玄水守墓人",
+          "pos_xyz": [-6260.0, 84.0, 1740.0],
+          "tags": ["zong_keeper", "origin:xuanshui", "neutral_until_core_activated"],
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_taichu_ruin",
+      "display_name": "太初故地",
+      "aabb": {
+        "min": [-400.0, 60.0, -10400.0],
+        "max": [400.0, 110.0, -9600.0]
+      },
+      "center_xz": [0.0, -10000.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [-260.0, 84.0, -10260.0],
+        [0.0, 88.0, -10000.0],
+        [260.0, 84.0, -9740.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["smooth_quartz", "chiseled_quartz", "amethyst_block", "mossy_cobblestone", "cracked_stone_bricks"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "taiji_formation_disc"],
+        "zongmen_origin_id": 6,
+        "origin": "taichu",
+        "notes": "极北边界附近的太初废墟，太极阵盘残存任督全能流派痕迹。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "太初太极阵核",
+          "pos_xyz": [0.0, 88.0, -10000.0],
+          "tags": ["wild_formation", "zong_core", "origin:taichu", "style:multi_style"],
+          "unlock": "黑白阵盘短时合拢时可投料活化",
+          "qi_affinity": 0.45,
+          "danger_bias": 2
+        },
+        {
+          "kind": "stele",
+          "name": "太初任督图",
+          "pos_xyz": [-260.0, 84.0, -10260.0],
+          "tags": ["lore", "zong_stele", "style:multi_style"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "太初守墓人",
+          "pos_xyz": [260.0, 84.0, -9740.0],
+          "tags": ["zong_keeper", "origin:taichu", "neutral_until_core_activated"],
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "jiuzong_youan_ruin",
+      "display_name": "幽暗故地",
+      "aabb": {
+        "min": [2400.0, 60.0, 4100.0],
+        "max": [3200.0, 110.0, 4900.0]
+      },
+      "center_xz": [2800.0, 4500.0],
+      "size_xz": [800.0, 800.0],
+      "spirit_qi": 0.4,
+      "danger_level": 6,
+      "active_events": [],
+      "patrol_anchors": [
+        [2540.0, 80.0, 4240.0],
+        [2800.0, 84.0, 4500.0],
+        [3060.0, 80.0, 4760.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "jiu_zong_ruin",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "semi_hard", "width": 96 },
+        "height_model": { "base": [72, 90], "peak": 100 },
+        "surface_palette": ["cobbled_deepslate", "soul_soil", "soul_lantern", "mossy_cobblestone", "gravel"],
+        "biome_mix": ["mofa:fu_ling", "mofa:kui_zeng"],
+        "landmarks": ["formation_core_stub", "forgotten_stele_garden", "shadow_screen_wall"],
+        "zongmen_origin_id": 7,
+        "origin": "youan",
+        "notes": "与现代幽暗地穴邻接的幽暗宗废墟，地表遗迹与洞网 profile 保持半硬边界。"
+      },
+      "pois": [
+        {
+          "kind": "formation",
+          "name": "幽暗影壁阵核",
+          "pos_xyz": [2800.0, 84.0, 4500.0],
+          "tags": ["wild_formation", "zong_core", "origin:youan", "style:tuike"],
+          "unlock": "影壁灯火自亮时可感知替尸残法",
+          "qi_affinity": 0.4,
+          "danger_bias": 2
+        },
+        {
+          "kind": "stele",
+          "name": "幽暗影壁残铭",
+          "pos_xyz": [2540.0, 80.0, 4240.0],
+          "tags": ["lore", "zong_stele", "style:tuike"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "npc_anchor",
+          "name": "幽暗守墓人",
+          "pos_xyz": [3060.0, 80.0, 4760.0],
+          "tags": ["zong_keeper", "origin:youan", "neutral_until_core_activated"],
+          "danger_bias": 2
         }
       ]
     }

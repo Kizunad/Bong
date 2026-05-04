@@ -56,6 +56,11 @@ pub struct DefenseIntent {
     pub issued_at_tick: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DefenseKind {
+    JieMai,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatusEffectKind {
     Bleeding,
@@ -86,6 +91,8 @@ pub enum StatusEffectKind {
     ContaminationBoost,
     /// plan-alchemy-v2 P0：未知 side_effect tag 的兼容兜底，保留原始 tag 便于观测。
     AlchemyBuff(String),
+    /// plan-zhenmai-v1 §3.1.C：截脉震爆触发后的半息僵直。
+    ParryRecovery,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
@@ -109,6 +116,10 @@ pub struct CombatEvent {
     pub damage: f32,
     pub contam_delta: f64,
     pub description: String,
+    pub defense_kind: Option<DefenseKind>,
+    pub defense_effectiveness: Option<f32>,
+    pub defense_contam_reduced: Option<f64>,
+    pub defense_wound_severity: Option<f32>,
 }
 
 /// plan-tsy-loot-v1 §6 — 死亡事件，附带攻击者链路（Option，因为环境死亡 / 修炼自爆没有"凶手"）。

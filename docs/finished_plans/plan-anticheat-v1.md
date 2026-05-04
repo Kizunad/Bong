@@ -126,3 +126,36 @@ P0 改动：在每道 clamp 判定后插入一行 `anticheat_counter.{kind}_viol
 
 - 2026-05-01：从 plan-combat-no_ui reminder 整理立项。现有代码：三道 clamp 分散在 `server/src/combat/resolve.rs` ✅（已有行为）；`AntiCheatCounter` component / `bong:anticheat` channel / `anticheat.ts` 均未实装。
 - **2026-05-04**：skeleton → active 升级（user 拍板，技术 plan 无 worldview 阻塞）。下一步起 P0 worktree（AntiCheatCounter ECS + 三道 clamp 计数接入 + bong:anticheat channel）。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`server/src/combat/anticheat.rs` 新增 `AntiCheatCounter` component、阈值配置加载、阈值上报系统；`server/src/combat/resolve.rs` 接入 reach / cooldown / qi_invest 三类违规计数，不改变原战斗结算结果。
+- P1：`server/src/network/anticheat_bridge.rs` 桥接 `AntiCheatViolationEvent` 到 Redis outbound；`server/src/network/redis_bridge.rs` 发布 `AntiCheatReportV1` 到 `bong:anticheat`；`server/assets/config/anticheat.toml` 提供 10 / 5 / 20 / 1200 初始阈值。
+- P2：`agent/packages/schema/src/anticheat.ts`、`agent/packages/schema/generated/*.json`、`server/src/schema/anticheat.rs` 对齐 TypeBox / JSON Schema / Rust serde 契约；`agent/packages/schema/src/channels.ts` 与 `server/src/schema/channels.rs` 对齐 `bong:anticheat`。
+
+### 关键 commit
+
+- `77af1859` · 2026-05-04T02:26:29+12:00 · `实现反作弊计数与上报`
+- `0774b9a1` · 2026-05-04T02:53:53+12:00 · `修复反作弊上报 review 反馈`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test anticheat` ✅ 10 passed
+- `cd server && cargo test create_new_character_rehydrates_default_character_state_and_persists_slices` ✅ 1 passed
+- `cd server && cargo test` ✅ 2173 passed
+- `cd agent && npm run build` ✅
+- `cd agent/packages/schema && npm test` ✅ 9 files / 265 tests passed
+
+### 跨仓库核验
+
+- server：`AntiCheatCounter`、`AntiCheatViolationEvent`、`emit_anticheat_threshold_reports`、`RedisOutbound::AntiCheatReport`、`CH_ANTICHEAT`。
+- agent/schema：`AntiCheatReportV1`、`ViolationKindV1`、`CHANNELS.ANTICHEAT`、`anticheat-report-v1.json`。
+- client：无改动，符合本 plan “纯 server-side，玩家不可见”范围。
+
+### 遗留 / 后续
+
+- 阈值合理性、1200 tick 去重窗口、运维消费端记录/面板均为上线后观测项，不在本 plan 范围内。

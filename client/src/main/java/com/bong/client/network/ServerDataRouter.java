@@ -20,6 +20,7 @@ public final class ServerDataRouter {
         PlayerStateHandler playerStateHandler = new PlayerStateHandler();
         UiOpenHandler uiOpenHandler = new UiOpenHandler();
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
+        QiColorObservedHandler qiColorObservedHandler = new QiColorObservedHandler();
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
@@ -47,6 +48,8 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.DerivedAttrsHandler();
         com.bong.client.combat.handler.VortexStateHandler vortexStateHandler =
             new com.bong.client.combat.handler.VortexStateHandler();
+        com.bong.client.combat.handler.CarrierStateHandler carrierStateHandler =
+            new com.bong.client.combat.handler.CarrierStateHandler();
         com.bong.client.combat.handler.DeathScreenHandler deathScreenHandler =
             new com.bong.client.combat.handler.DeathScreenHandler();
         com.bong.client.combat.handler.TerminateScreenHandler terminateScreenHandler =
@@ -88,6 +91,7 @@ public final class ServerDataRouter {
         handlers.put("player_state", playerStateHandler);
         handlers.put("ui_open", uiOpenHandler);
         handlers.put("cultivation_detail", cultivationDetailHandler);
+        handlers.put("qi_color_observed", qiColorObservedHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);
@@ -104,6 +108,7 @@ public final class ServerDataRouter {
         handlers.put("status_snapshot", statusSnapshotHandler);
         handlers.put("derived_attrs_sync", derivedAttrsHandler);
         handlers.put("vortex_state", vortexStateHandler);
+        handlers.put("carrier_state", carrierStateHandler);
         handlers.put("death_screen", deathScreenHandler);
         handlers.put("terminate_screen", terminateScreenHandler);
         handlers.put("wounds_snapshot", woundsSnapshotHandler);

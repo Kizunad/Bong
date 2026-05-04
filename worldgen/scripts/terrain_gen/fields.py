@@ -53,6 +53,7 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "boundary_weight":  LayerSpec(safe_default=0.0,  blend_mode="special",  export_type="float32"),
     # --- zone-specific layers (blended by extra-layer loop) ---
     "rift_axis_sdf":    LayerSpec(safe_default=99.0, blend_mode="minimum",  export_type="float32"),
+    "portal_anchor_sdf": LayerSpec(safe_default=999.0, blend_mode="minimum", export_type="float32"),
     "rim_edge_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "fracture_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "cave_mask":        LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
@@ -98,6 +99,9 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   tuple (or into a merged palette — manifest declares both). 0 = none.
     "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # zongmen_origin_id: overworld 九宗故地 origin discriminator.
+    #   1=血溪 / 2=北陵 / 3=南渊 / 4=赤霞 / 5=玄水 / 6=太初 / 7=幽暗 / 0=none.
+    "zongmen_origin_id":    LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
     # --- mineral layers (plan-mineral-v1 §2.1) ---
     # mineral_density: [0,1] likelihood a mineral ore-block occupies this column.
     #   Rust consumer samples per-chunk and rolls against per-tier rarity (品阶反比 —

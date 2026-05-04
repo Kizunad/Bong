@@ -199,12 +199,13 @@ impl PlayerState {
         )
     }
 
-    pub fn server_payload_with_social(
+    pub fn server_payload_with_social_and_local_pressure(
         &self,
         cultivation: &Cultivation,
         player: Option<String>,
         zone: impl Into<String>,
         social: Option<PlayerSocialSnapshotV1>,
+        local_neg_pressure: Option<f32>,
     ) -> ServerDataV1 {
         let normalized = self.normalized();
         let breakdown = normalized.power_breakdown(cultivation);
@@ -224,6 +225,7 @@ impl PlayerState {
             composite_power,
             breakdown,
             zone: zone.into(),
+            local_neg_pressure,
             social,
         })
     }
@@ -2525,10 +2527,11 @@ mod player_state_tests {
             ..Cultivation::default()
         };
 
-        let payload = state.server_payload_with_social(
+        let payload = state.server_payload_with_social_and_local_pressure(
             &cultivation,
             Some(canonical_player_id("Steve")),
             "blood_valley",
+            None,
             None,
         );
         let bytes =

@@ -96,6 +96,10 @@ class AbyssalMazeGenerator(TerrainProfileGenerator):
         "qi_vein_flow",
         "flora_density",
         "flora_variant_id",
+        "neg_pressure",
+        "portal_anchor_sdf",
+        "anomaly_intensity",
+        "anomaly_kind",
     )
     ecology = EcologySpec(
         decorations=ABYSSAL_DECORATIONS,
@@ -147,6 +151,10 @@ def fill_abyssal_maze_tile(
             "qi_vein_flow",
             "flora_density",
             "flora_variant_id",
+            "neg_pressure",
+            "portal_anchor_sdf",
+            "anomaly_intensity",
+            "anomaly_kind",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -191,7 +199,8 @@ def fill_abyssal_maze_tile(
     # support, keeping the deep abyss rare and meaningful.
     tier1_active = (tier1 * cluster) > 0.08
     tier2_active = (tier2 * cluster) > 0.12
-    tier3_active = (tier3 * cluster) > 0.18
+    abyssal_rift_sdf = np.sqrt((wx - center_x) ** 2 + (wz - center_z) ** 2)
+    tier3_active = ((tier3 * cluster) > 0.18) | (abyssal_rift_sdf <= 30.0)
 
     # underground_tier: highest active tier number (deeper wins).
     tier = np.zeros_like(height, dtype=np.int32)
@@ -257,6 +266,19 @@ def fill_abyssal_maze_tile(
         0.70,
     )
 
+    # 渊底入口：worldview §十六的“幽暗地穴深处新鲜崩石”形态。
+    # 只在 tier 3 生效，不开独立 zone，避免把深层入口误暴露到地表。
+    portal_anchor_sdf = abyssal_rift_sdf
+    hotspot_strength = np.clip(1.0 - portal_anchor_sdf / 30.0, 0.0, 1.0)
+    hotspot_gate = (tier == 3) & (portal_anchor_sdf <= 30.0)
+    neg_pressure = np.where(hotspot_gate, 0.18 + 0.47 * hotspot_strength, 0.0)
+    anomaly_intensity = np.where(
+        hotspot_gate,
+        np.clip(0.35 + 0.50 * hotspot_strength, 0.0, 1.0),
+        0.0,
+    )
+    anomaly_kind = np.where(hotspot_gate, 1, 0)
+
     # --- Flora placement per tier (variant 1..6 match ABYSSAL_DECORATIONS) ---
     # Defaults to 0 (no flora). Carve tier-specific variants where tier active.
     flora_density = np.zeros_like(height)
@@ -316,6 +338,10 @@ def fill_abyssal_maze_tile(
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
     buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
     buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
+    buffer.layers["neg_pressure"] = np.round(neg_pressure, 3).ravel()
+    buffer.layers["portal_anchor_sdf"] = np.round(portal_anchor_sdf, 3).ravel()
+    buffer.layers["anomaly_intensity"] = np.round(anomaly_intensity, 3).ravel()
+    buffer.layers["anomaly_kind"] = anomaly_kind.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

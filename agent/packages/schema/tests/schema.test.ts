@@ -7,6 +7,7 @@ import {
   AgentCommandV1,
   validateAgentCommandV1Contract,
 } from "../src/agent-command.js";
+import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
@@ -44,6 +45,7 @@ import {
   PseudoVeinDissipateEventV1,
   PseudoVeinSnapshotV1,
 } from "../src/pseudo-vein.js";
+import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
@@ -138,11 +140,21 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_INSIGHT);
   });
 
+  it("declares anticheat Redis channel", () => {
+    expect(CHANNELS.ANTICHEAT).toBe("bong:anticheat");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ANTICHEAT);
+  });
+
   it("declares pseudo vein Redis channels", () => {
     expect(CHANNELS.PSEUDO_VEIN_ACTIVE).toBe("bong:pseudo_vein:active");
     expect(CHANNELS.PSEUDO_VEIN_DISSIPATE).toBe("bong:pseudo_vein:dissipate");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_ACTIVE);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_DISSIPATE);
+  });
+
+  it("declares zong formation Redis channel", () => {
+    expect(CHANNELS.ZONG_CORE_ACTIVATED).toBe("bong:zong_core_activated");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONG_CORE_ACTIVATED);
   });
 
   it("declares spirit eye Redis channels", () => {
@@ -191,6 +203,12 @@ describe("sample files pass schema validation", () => {
   it("pseudo-vein-dissipate-event.sample.json", () => {
     const data = loadSample("pseudo-vein-dissipate-event.sample.json");
     const result = validate(PseudoVeinDissipateEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("zong-core-activation.sample.json", () => {
+    const data = loadSample("zong-core-activation.sample.json");
+    const result = validate(ZongCoreActivationV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
@@ -711,6 +729,12 @@ describe("sample files pass schema validation", () => {
   it("combat-event.summary.sample.json", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("anticheat-report.sample.json", () => {
+    const data = loadSample("anticheat-report.sample.json");
+    const result = validate(AntiCheatReportV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

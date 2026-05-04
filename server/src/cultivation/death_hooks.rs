@@ -8,7 +8,8 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Query};
 
-use super::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use super::color::PracticeLog;
+use super::components::{Contamination, Cultivation, MeridianSystem, QiColor, Realm};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
@@ -172,6 +173,8 @@ pub fn on_player_terminated(
             e.remove::<Cultivation>();
             e.remove::<MeridianSystem>();
             e.remove::<Contamination>();
+            e.remove::<PracticeLog>();
+            e.remove::<QiColor>();
             tracing::info!(
                 "[bong][cultivation] terminated entity {:?} — removed cultivation components",
                 ev.entity
@@ -393,5 +396,34 @@ mod tests {
         assert!(app.world().get::<Cultivation>(entity).is_none());
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn terminated_player_removes_practice_log_and_qi_color() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation::default(),
+                MeridianSystem::default(),
+                Contamination::default(),
+                PracticeLog::default(),
+                QiColor::default(),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+
+        app.update();
+
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+        assert!(app.world().get::<MeridianSystem>(entity).is_none());
+        assert!(app.world().get::<Contamination>(entity).is_none());
+        assert!(app.world().get::<PracticeLog>(entity).is_none());
+        assert!(app.world().get::<QiColor>(entity).is_none());
     }
 }

@@ -51,6 +51,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PlayerState => "player_state",
         ServerDataType::UiOpen => "ui_open",
         ServerDataType::CultivationDetail => "cultivation_detail",
+        ServerDataType::QiColorObserved => "qi_color_observed",
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
@@ -79,6 +80,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::WeaponBroken => "weapon_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::VortexState => "vortex_state",
+        ServerDataType::CarrierState => "carrier_state",
         ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::DeathScreen => "death_screen",
         ServerDataType::TerminateScreen => "terminate_screen",
@@ -495,6 +497,7 @@ mod server_data_tests {
                     composite_power: 0.35,
                     breakdown: sample_player_breakdown(),
                     zone: "blood_valley".to_string(),
+                    local_neg_pressure: None,
                     social: None,
                 }),
                 json!({

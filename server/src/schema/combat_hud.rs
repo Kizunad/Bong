@@ -35,7 +35,7 @@ pub struct WoundsSnapshotV1 {
 }
 
 /// plan-HUD-v1 §3.2 截脉弹反窗口推送（屏幕中心红环收缩）。
-/// 当前 Bong server 走「反应模式」(C) ——玩家按 V → 立即开 200ms 窗口 →
+/// 当前 Bong server 走「短期 prep」(C) ——玩家按 V/技能栏 → 立即开 1s prep 窗口 →
 /// server push 这个 payload，client 渲染红环 + 期间内被打中算弹反成功。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

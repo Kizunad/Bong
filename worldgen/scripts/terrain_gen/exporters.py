@@ -140,7 +140,7 @@ def _point_in_zone_core(zone: BlueprintZone, world_x: int, world_z: int) -> bool
     edge_noise = coherent_noise_2d(world_x, world_z, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
+    if shape in {"ellipse", "circular", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (world_x - center_x) / (half_width * edge_warp)
         dz = (world_z - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         return dx * dx + dz * dz <= 1.0
@@ -190,7 +190,7 @@ def _zone_preview_weight(zone: BlueprintZone, world_x: int, world_z: int) -> flo
     edge_noise = coherent_noise_2d(world_x, world_z, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
+    if shape in {"ellipse", "circular", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (world_x - center_x) / (half_width * edge_warp)
         dz = (world_z - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         core_ratio = math.sqrt(dx * dx + dz * dz)

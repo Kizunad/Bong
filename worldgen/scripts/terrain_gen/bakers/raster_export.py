@@ -139,6 +139,8 @@ def export_rasters(
                 "qi_density",
                 "mofa_decay",
                 "qi_vein_flow",
+                "neg_pressure",
+                "portal_anchor_sdf",
                 "realm_collapse_mask",
             )
             if name in written_layer_names
@@ -181,6 +183,8 @@ def export_rasters(
             "  profiles_ecology[zone_profile].decorations; 0 = no flora / wilderness fallback).",
             "Anomaly: anomaly_intensity (0..1) + anomaly_kind (uint8 from anomaly_kinds map).",
             "  Event systems trigger themed spawns / FX when intensity > 0.3.",
+            "Rift mouth: portal_anchor_sdf stores meter-distance to the nearest entry anchor;",
+            "  it is independent from rift_axis_sdf and gates portal/negative-pressure runtime logic.",
             "Structure: fossil_bbox (0 none, 1 outer, 2 core) marks whalefall fossils;",
             "  manifest.fossil_bboxes carries AABB metadata for mineral anchor materialization.",
             "Ash dead zone corpse_mounds carry dried surface loot: fan tie, rotten bone coin, dried herb.",

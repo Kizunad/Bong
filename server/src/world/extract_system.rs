@@ -262,6 +262,7 @@ pub fn tick_extract_progress(
     mut abort_events: EventWriter<ExtractAborted>,
     mut fail_events: EventWriter<ExtractFailed>,
     mut pulse_events: EventWriter<ExtractProgressPulse>,
+    zones: Option<Res<ZoneRegistry>>,
 ) {
     for (player, pos, combat, wounds, cultivation, presence, mut progress) in &mut players {
         if cultivation.qi_current <= 0.0 {
@@ -331,24 +332,64 @@ pub fn tick_extract_progress(
             let Ok(portal) = portals.get(progress.portal) else {
                 continue;
             };
+            let exit_world_pos =
+                extract_exit_world_pos(portal, presence, pos, zones.as_deref(), player, clock.tick);
             complete_events.send(ExtractCompleted {
                 player,
                 portal: progress.portal,
                 family_id: portal.family_id.clone(),
                 portal_kind: portal.kind,
-                exit_world_pos: presence
-                    .map(|presence| {
-                        [
-                            presence.return_to.pos.x,
-                            presence.return_to.pos.y,
-                            presence.return_to.pos.z,
-                        ]
-                    })
-                    .unwrap_or([pos.0.x, pos.0.y, pos.0.z]),
+                exit_world_pos,
             });
             commands.entity(player).remove::<ExtractProgress>();
         }
     }
+}
+
+fn extract_exit_world_pos(
+    portal: &RiftPortal,
+    presence: Option<&TsyPresence>,
+    player_pos: &Position,
+    zones: Option<&ZoneRegistry>,
+    player: Entity,
+    now_tick: u64,
+) -> [f64; 3] {
+    if portal.kind == RiftKind::CollapseTear {
+        if let Some(pos) = collapse_rift_world_exit_pos(zones, &portal.family_id, player, now_tick)
+        {
+            return dvec3_to_array(pos);
+        }
+    }
+
+    presence
+        .map(|presence| dvec3_to_array(presence.return_to.pos))
+        .unwrap_or_else(|| dvec3_to_array(player_pos.0))
+}
+
+fn collapse_rift_world_exit_pos(
+    zones: Option<&ZoneRegistry>,
+    family_id: &str,
+    player: Entity,
+    now_tick: u64,
+) -> Option<valence::prelude::DVec3> {
+    let zones = zones?;
+    let candidates: Vec<_> = zones
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+        .filter(|zone| zone.name.starts_with("rift_mouth_"))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let seed = deterministic_seed(family_id, now_tick ^ player.to_bits());
+    let zone = candidates[seed as usize % candidates.len()];
+    Some(zone.patrol_target(0))
+}
+
+fn dvec3_to_array(pos: valence::prelude::DVec3) -> [f64; 3] {
+    [pos.x, pos.y, pos.z]
 }
 
 pub fn handle_extract_completed(
@@ -361,10 +402,21 @@ pub fn handle_extract_completed(
         let Ok(presence) = presences.get(event.player) else {
             continue;
         };
+        let (target, target_pos) = match event.portal_kind {
+            RiftKind::CollapseTear => (
+                DimensionKind::Overworld,
+                valence::prelude::DVec3::new(
+                    event.exit_world_pos[0],
+                    event.exit_world_pos[1],
+                    event.exit_world_pos[2],
+                ),
+            ),
+            _ => (presence.return_to.dimension, presence.return_to.pos),
+        };
         dim_transfer.send(DimensionTransferRequest {
             entity: event.player,
-            target: presence.return_to.dimension,
-            target_pos: presence.return_to.pos,
+            target,
+            target_pos,
         });
         commands.entity(event.player).remove::<TsyPresence>();
     }
@@ -796,6 +848,74 @@ mod tests {
         let collected: Vec<_> = dim_events.get_reader().read(dim_events).cloned().collect();
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].target, DimensionKind::Overworld);
+        assert_eq!(collected[0].target_pos, DVec3::new(8.0, 65.0, 9.0));
+    }
+
+    #[test]
+    fn collapse_extract_completed_uses_event_exit_world_pos() {
+        let mut app = app_with_extract_system(handle_extract_completed);
+        let player = app
+            .world_mut()
+            .spawn((Position::new([0.0, 0.0, 0.0]), presence("tsy_lingxu_01")))
+            .id();
+        let portal = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<ExtractCompleted>>()
+            .send(ExtractCompleted {
+                player,
+                portal,
+                family_id: "tsy_lingxu_01".to_string(),
+                portal_kind: RiftKind::CollapseTear,
+                exit_world_pos: [111.0, 74.0, -222.0],
+            });
+        app.update();
+
+        let dim_events = app.world().resource::<Events<DimensionTransferRequest>>();
+        let collected: Vec<_> = dim_events.get_reader().read(dim_events).cloned().collect();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].target, DimensionKind::Overworld);
+        assert_eq!(collected[0].target_pos, DVec3::new(111.0, 74.0, -222.0));
+    }
+
+    #[test]
+    fn collapse_extract_progress_targets_rift_mouth_zone() {
+        let mut app = app_with_extract_system(tick_extract_progress);
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "rift_mouth_north_001".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (
+                    DVec3::new(-650.0, 50.0, -8650.0),
+                    DVec3::new(-350.0, 100.0, -8350.0),
+                ),
+                spirit_qi: 0.05,
+                danger_level: 5,
+                active_events: vec!["rift_mouth_entry".to_string()],
+                patrol_anchors: vec![DVec3::new(-500.0, 74.0, -8500.0)],
+                blocked_tiles: vec![],
+            }],
+        });
+        let portal = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let player = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        app.world_mut().entity_mut(player).insert(ExtractProgress {
+            portal,
+            required_ticks: 1,
+            elapsed_ticks: 0,
+            started_at_tick: 0,
+            started_pos: [0.0, 0.0, 0.0],
+            wound_count_at_start: 0,
+        });
+
+        app.update();
+
+        let events = app.world().resource::<Events<ExtractCompleted>>();
+        let collected: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].portal_kind, RiftKind::CollapseTear);
+        assert_eq!(collected[0].exit_world_pos, [-500.0, 74.0, -8500.0]);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+[anticheat]
+reach_threshold = 10
+cooldown_threshold = 5
+qi_invest_threshold = 20
+report_cooldown_ticks = 1200

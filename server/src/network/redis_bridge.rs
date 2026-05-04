@@ -8,11 +8,13 @@ use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::alchemy::{
     AlchemyInsightV1, AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
 };
+use crate::schema::anticheat::AntiCheatReportV1;
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
+    CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
@@ -23,9 +25,12 @@ use crate::schema::channels::{
     CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
     CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
     CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WOLIU_BACKFIRE,
-    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
+use crate::schema::combat_carrier::{
+    CarrierChargedEventV1, CarrierImpactEventV1, ProjectileDespawnedEventV1,
+};
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
@@ -56,6 +61,7 @@ use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
+use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
@@ -80,11 +86,14 @@ pub enum RedisOutbound {
     PlayerChat(ChatMessageV1),
     CombatRealtime(CombatRealtimeEventV1),
     CombatSummary(CombatSummaryV1),
+    AntiCheatReport(AntiCheatReportV1),
     ArmorDurabilityChanged(ArmorDurabilityChangedV1),
     #[allow(dead_code)]
     PseudoVeinSnapshot(PseudoVeinSnapshotV1),
     #[allow(dead_code)]
     PseudoVeinDissipate(PseudoVeinDissipateEventV1),
+    #[allow(dead_code)]
+    ZongCoreActivated(ZongCoreActivationV1),
     BreakthroughEvent(BreakthroughEventV1),
     ForgeEvent(ForgeEventV1),
     ForgeStart(ForgeStartPayloadV1),
@@ -125,6 +134,9 @@ pub enum RedisOutbound {
     SpiritEyeUsedForBreakthrough(SpiritEyeUsedForBreakthroughV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
+    CarrierCharged(CarrierChargedEventV1),
+    CarrierImpact(CarrierImpactEventV1),
+    ProjectileDespawned(ProjectileDespawnedEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -370,6 +382,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::AntiCheatReport(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize AntiCheatReportV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANTICHEAT,
+                payload,
+            })
+        }
         RedisOutbound::ArmorDurabilityChanged(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
@@ -398,6 +419,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_PSEUDO_VEIN_DISSIPATE,
+                payload,
+            })
+        }
+        RedisOutbound::ZongCoreActivated(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ZongCoreActivationV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ZONG_CORE_ACTIVATED,
                 payload,
             })
         }
@@ -786,6 +816,37 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WOLIU_PROJECTILE_DRAINED,
+                payload,
+            })
+        }
+        RedisOutbound::CarrierCharged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize CarrierChargedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_CHARGED,
+                payload,
+            })
+        }
+        RedisOutbound::CarrierImpact(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize CarrierImpactEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_IMPACT,
+                payload,
+            })
+        }
+        RedisOutbound::ProjectileDespawned(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ProjectileDespawnedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_PROJECTILE_DESPAWNED,
                 payload,
             })
         }
@@ -1497,6 +1558,7 @@ fn expect_array_field<'a>(
 #[cfg(test)]
 mod redis_bridge_tests {
     use super::*;
+    use crate::schema::anticheat::{AntiCheatReportV1, ViolationKindV1};
     use crate::schema::combat_event::{
         CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
     };
@@ -2219,6 +2281,10 @@ mod redis_bridge_tests {
                         .to_string(),
                 ),
                 cause: None,
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             }))
             .expect("combat realtime payload should serialize");
         match realtime {
@@ -2262,6 +2328,35 @@ mod redis_bridge_tests {
                 assert_eq!(v["death_event_count"], 2);
                 assert_eq!(v["damage_total"], 88.0);
                 assert_eq!(v["contam_delta_total"], 16.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_anticheat_report_on_correct_channel() {
+        let command =
+            prepare_outbound_command(RedisOutbound::AntiCheatReport(AntiCheatReportV1::new(
+                "offline:Azure",
+                42,
+                1200,
+                ViolationKindV1::ReachExceeded,
+                10,
+                "reach: target_distance=6.200 server_max=4.000",
+            )))
+            .expect("anticheat payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ANTICHEAT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["type"], "anticheat_report");
+                assert_eq!(v["char_id"], "offline:Azure");
+                assert_eq!(v["entity_id"], 42);
+                assert_eq!(v["at_tick"], 1200);
+                assert_eq!(v["kind"], "reach_exceeded");
+                assert_eq!(v["count"], 10);
             }
             other => panic!("expected publish, got {other:?}"),
         }

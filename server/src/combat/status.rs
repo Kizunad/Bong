@@ -5,6 +5,7 @@ use crate::combat::components::{
     STATUS_EFFECT_TICK_INTERVAL_TICKS,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
+use crate::combat::jiemai::JIEMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER;
 use crate::combat::CombatClock;
 
 pub fn status_effect_apply_tick(
@@ -123,6 +124,12 @@ pub fn attribute_aggregate_tick(
             } else {
                 1.0
             };
+        let parry_recovery_multiplier =
+            if has_active_status(status_effects, StatusEffectKind::ParryRecovery) {
+                JIEMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER
+            } else {
+                1.0
+            };
 
         let damage_amp_multiplier = status_effects
             .active
@@ -138,7 +145,8 @@ pub fn attribute_aggregate_tick(
                 acc * (1.0 - effect.magnitude.clamp(0.0, 0.95))
             });
 
-        attrs.move_speed_multiplier = (slow_multiplier * vortex_multiplier).clamp(0.05, 1.0);
+        attrs.move_speed_multiplier =
+            (slow_multiplier * vortex_multiplier * parry_recovery_multiplier).clamp(0.05, 1.0);
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
 
@@ -307,6 +315,38 @@ mod tests {
 
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         assert_eq!(attrs.move_speed_multiplier, 0.2);
+    }
+
+    #[test]
+    fn parry_recovery_stacks_with_slowed_move_speed_multiplier() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::Slowed,
+                            magnitude: 0.4,
+                            remaining_ticks: 20,
+                        },
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::ParryRecovery,
+                            magnitude: 1.0,
+                            remaining_ticks: 10,
+                        },
+                    ],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!((attrs.move_speed_multiplier - 0.42).abs() < 1e-6);
     }
 
     #[test]

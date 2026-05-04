@@ -18,6 +18,7 @@ public final class PlayerStateViewModel {
     private final String zoneId;
     private final String zoneLabel;
     private final double zoneSpiritQiNormalized;
+    private final double localNegPressure;
 
     private PlayerStateViewModel(
         String realm,
@@ -31,7 +32,8 @@ public final class PlayerStateViewModel {
         SocialSnapshot social,
         String zoneId,
         String zoneLabel,
-        double zoneSpiritQiNormalized
+        double zoneSpiritQiNormalized,
+        double localNegPressure
     ) {
         this.realm = Objects.requireNonNull(realm, "realm");
         this.playerId = Objects.requireNonNull(playerId, "playerId");
@@ -45,6 +47,7 @@ public final class PlayerStateViewModel {
         this.zoneId = Objects.requireNonNull(zoneId, "zoneId");
         this.zoneLabel = Objects.requireNonNull(zoneLabel, "zoneLabel");
         this.zoneSpiritQiNormalized = zoneSpiritQiNormalized;
+        this.localNegPressure = localNegPressure;
     }
 
     public static PlayerStateViewModel empty() {
@@ -60,6 +63,7 @@ public final class PlayerStateViewModel {
             SocialSnapshot.empty(),
             "",
             "",
+            0.0,
             0.0
         );
     }
@@ -76,6 +80,36 @@ public final class PlayerStateViewModel {
         String zoneId,
         String zoneLabel,
         double zoneSpiritQiNormalized
+    ) {
+        return create(
+            realm,
+            playerId,
+            spiritQiCurrent,
+            spiritQiMax,
+            karma,
+            compositePower,
+            breakdown,
+            social,
+            zoneId,
+            zoneLabel,
+            zoneSpiritQiNormalized,
+            0.0
+        );
+    }
+
+    public static PlayerStateViewModel create(
+        String realm,
+        String playerId,
+        double spiritQiCurrent,
+        double spiritQiMax,
+        double karma,
+        double compositePower,
+        PowerBreakdown breakdown,
+        SocialSnapshot social,
+        String zoneId,
+        String zoneLabel,
+        double zoneSpiritQiNormalized,
+        double localNegPressure
     ) {
         String normalizedRealm = normalizeText(realm);
         if (normalizedRealm.isEmpty()) {
@@ -107,7 +141,8 @@ public final class PlayerStateViewModel {
             social == null ? SocialSnapshot.empty() : social,
             normalizedZoneId,
             normalizedZoneLabel,
-            clamp(zoneSpiritQiNormalized, 0.0, 1.0)
+            clamp(zoneSpiritQiNormalized, 0.0, 1.0),
+            clamp(localNegPressure, -1.0, 0.0)
         );
     }
 
@@ -182,6 +217,10 @@ public final class PlayerStateViewModel {
 
     public double zoneSpiritQiNormalized() {
         return zoneSpiritQiNormalized;
+    }
+
+    public double localNegPressure() {
+        return localNegPressure;
     }
 
     public boolean isEmpty() {

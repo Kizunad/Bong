@@ -232,15 +232,33 @@ pub enum ClientRequestV1 {
         v: u8,
         target_id: String,
     },
+    QiColorInspect {
+        v: u8,
+        observed: String,
+    },
     UseLifeCore {
         v: u8,
         instance_id: u64,
     },
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
-    /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
+    /// server 翻译为 `DefenseIntent` Bevy event，立即开 1s `incoming_window`，
     /// 并回推 `defense_window` payload 让 client 渲染红环。
     Jiemai {
         v: u8,
+    },
+    /// plan-anqi-v1 P0：直接封骨请求。正式 UI 可通过 skillbar 触发默认投入；
+    /// 该请求保留给滑块 UI 指定 `qi_target`。
+    ChargeCarrier {
+        v: u8,
+        slot: Option<AnqiCarrierSlotV1>,
+        qi_target: f32,
+    },
+    /// plan-anqi-v1 P0：手中 charged 兽骨抛射。`dir_unit` 由 client crosshair 给出。
+    ThrowCarrier {
+        v: u8,
+        slot: AnqiCarrierSlotV1,
+        dir_unit: [f32; 3],
+        power: f32,
     },
     /// plan-HUD-v1 §4 / §11.3 触发 F1-F9 快捷使用槽。
     /// server 校验后插入 `Casting` Component，回推 `cast_sync(Casting)`；
@@ -399,6 +417,13 @@ pub enum ClientRequestV1 {
         item_instance_id: u64,
         station_tier: u8,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnqiCarrierSlotV1 {
+    MainHand,
+    OffHand,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -691,6 +716,19 @@ mod tests {
                 assert_eq!(target_id, "npc_12v0");
             }
             other => panic!("expected DuoSheRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn qi_color_inspect_roundtrip() {
+        let json = r#"{"type":"qi_color_inspect","v":1,"observed":"entity_bits:42"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::QiColorInspect { v, observed } => {
+                assert_eq!(v, 1);
+                assert_eq!(observed, "entity_bits:42");
+            }
+            other => panic!("expected QiColorInspect, got {other:?}"),
         }
     }
 

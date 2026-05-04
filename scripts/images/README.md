@@ -23,13 +23,14 @@ python scripts/images/gen.py "four-corner sumi-e ink splashes, center transparen
     --name ink_wash_vignette --style hud --transparent --size 1536x1024   # HUD overlay
 ```
 
-## 三档画风（`--style`）
+## 四档画风（`--style`）
 
 | 档 | 用途 | 背景默认 | 后处理 |
 |----|------|---------|--------|
 | `item`（默认） | 物品图标（武器、药材、符牌…） | `--transparent` 真 alpha | 直接接入；旧纯色图可用 `remove_bg.py` 抠图 |
 | `particle` | MC 粒子 / VFX 贴图 | 纯黑 `#000000` | `lum_to_alpha.py` 亮度转 alpha |
 | `hud` | HUD overlay（水墨边框等） | `--transparent` 真 alpha | 走 `scripts/images/*.py` 清边缘白雾 |
+| `scene` | 末法残土场景 / 概念图 / mood board（**非游戏资产**） | 不透明完整画面 | 无（直接看） |
 
 `prefix` 直接嵌入 `style.py` 的常量，不再依赖 `prefix.md` 文件。
 

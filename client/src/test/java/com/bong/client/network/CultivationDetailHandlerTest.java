@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.cultivation.ColorKind;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
@@ -178,6 +179,24 @@ public class CultivationDetailHandlerTest {
         assertEquals(5, SkillSetStore.snapshot().get(SkillId.COMBAT).cap());
         assertEquals(5, SkillSetStore.snapshot().get(SkillId.MINERAL).cap());
         assertEquals(5, SkillSetStore.snapshot().get(SkillId.CULTIVATION).cap());
+    }
+
+    @Test
+    void appliesQiColorSnapshotWhenProvided() {
+        var payload = fullPayload(twenty(true), twenty(1.0), twenty(5.0), twenty(1.0));
+        payload.addProperty("qi_color_main", "Intricate");
+        payload.addProperty("qi_color_secondary", "Heavy");
+        payload.addProperty("qi_color_chaotic", true);
+        payload.addProperty("qi_color_hunyuan", false);
+
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+
+        MeridianBody body = MeridianStateStore.snapshot();
+        assertEquals(ColorKind.Intricate, body.qiColorMain());
+        assertEquals(ColorKind.Heavy, body.qiColorSecondary());
+        assertTrue(body.qiColorChaotic());
+        assertFalse(body.qiColorHunyuan());
     }
 
     @Test

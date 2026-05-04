@@ -10,9 +10,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
+use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
-    App, Client, Commands, Component, DVec3, Entity, EntityKind, Position, Query, Res, ResMut,
-    Resource, Startup, Update, Username, With,
+    App, Client, Commands, Component, DVec3, Entity, EntityKind, IntoSystemConfigs, Position,
+    Query, Res, ResMut, Resource, Startup, Update, Username, With,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -93,6 +94,9 @@ struct ZoneRuntimeSnapshotState {
 }
 
 impl Resource for ZoneRuntimeSnapshotState {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) struct PersistenceBootstrapSet;
 
 #[derive(Debug, Default, Component)]
 struct NpcArchivedPersistence;
@@ -511,7 +515,10 @@ pub fn register(app: &mut App) {
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DailyBackupState>()
         .init_resource::<ZoneRuntimeSnapshotState>()
-        .add_systems(Startup, bootstrap_persistence_system)
+        .add_systems(
+            Startup,
+            bootstrap_persistence_system.in_set(PersistenceBootstrapSet),
+        )
         .add_systems(
             Update,
             (
@@ -3939,6 +3946,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::InsightTaken { .. } => "insight_taken",
         BiographyEntry::Rebirth { .. } => "rebirth",
         BiographyEntry::CombatHit { .. } => "combat_hit",
+        BiographyEntry::JiemaiParry { .. } => "jiemai_parry",
         BiographyEntry::NearDeath { .. } => "near_death",
         BiographyEntry::Terminated { .. } => "terminated",
         BiographyEntry::LifespanExtended { .. } => "lifespan_extended",
@@ -3956,6 +3964,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::TradeCompleted { .. } => "trade_completed",
         BiographyEntry::VortexProjectileDrained { .. } => "vortex_projectile_drained",
         BiographyEntry::VortexBackfired { .. } => "vortex_backfired",
+        BiographyEntry::AnqiSniped { .. } => "anqi_sniped",
         BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
     }
 }
@@ -4018,6 +4027,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::InsightTaken { tick, .. }
         | BiographyEntry::Rebirth { tick, .. }
         | BiographyEntry::CombatHit { tick, .. }
+        | BiographyEntry::JiemaiParry { tick, .. }
         | BiographyEntry::NearDeath { tick, .. }
         | BiographyEntry::Terminated { tick, .. }
         | BiographyEntry::LifespanExtended { tick, .. }
@@ -4035,6 +4045,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::TradeCompleted { tick, .. }
         | BiographyEntry::VortexProjectileDrained { tick, .. }
         | BiographyEntry::VortexBackfired { tick, .. }
+        | BiographyEntry::AnqiSniped { tick, .. }
         | BiographyEntry::SpawnTutorialCompleted { tick, .. } => *tick,
     }
 }

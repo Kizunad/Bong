@@ -207,8 +207,20 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSkillBarBindItem(slot, templateId));
     }
 
+    public static void sendChargeCarrier(String slot, double qiTarget) {
+        dispatch(ClientRequestProtocol.encodeChargeCarrier(slot, qiTarget));
+    }
+
+    public static void sendThrowCarrier(String slot, double x, double y, double z, double power) {
+        dispatch(ClientRequestProtocol.encodeThrowCarrier(slot, x, y, z, power));
+    }
+
     public static void sendJiemai() {
         dispatch(ClientRequestProtocol.encodeJiemai());
+    }
+
+    public static void sendQiColorInspect(String observed) {
+        dispatch(ClientRequestProtocol.encodeQiColorInspect(observed));
     }
 
     public static void sendStartExtract(long portalEntityId) {

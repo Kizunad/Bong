@@ -6,6 +6,7 @@ use super::alchemy::{
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
 use super::botany::BotanyPlantV2RenderProfileV1;
+use super::combat_carrier::CarrierStateV1;
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, DerivedAttrsSyncV1, EventStreamPushV1,
     QuickSlotConfigV1, SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1,
@@ -30,6 +31,7 @@ use super::social::{
 };
 use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
+use crate::cultivation::components::ColorKind;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
@@ -75,6 +77,7 @@ pub enum ServerDataType {
     PlayerState,
     UiOpen,
     CultivationDetail,
+    QiColorObserved,
     InventorySnapshot,
     InventoryEvent,
     DroppedLootSync,
@@ -103,6 +106,7 @@ pub enum ServerDataType {
     WeaponBroken,
     TreasureEquipped,
     VortexState,
+    CarrierState,
     LingtianSession,
     DeathScreen,
     TerminateScreen,
@@ -177,6 +181,7 @@ pub enum ServerDataPayloadV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        local_neg_pressure: Option<f32>,
         social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
@@ -203,7 +208,12 @@ pub enum ServerDataPayloadV1 {
         recent_skill_milestones_summary: String,
         /// 结构化 skill milestone 列表，通常只传最近若干条。
         skill_milestones: Vec<SkillMilestoneSnapshotV1>,
+        qi_color_main: ColorKind,
+        qi_color_secondary: Option<ColorKind>,
+        qi_color_chaotic: bool,
+        qi_color_hunyuan: bool,
     },
+    QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(Box<InventoryEventV1>),
     DroppedLootSync(Vec<DroppedLootEntryV1>),
@@ -264,6 +274,7 @@ pub enum ServerDataPayloadV1 {
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     VortexState(VortexFieldStateV1),
+    CarrierState(CarrierStateV1),
     LingtianSession(Box<LingtianSessionDataV1>),
     DeathScreen {
         visible: bool,
@@ -480,6 +491,23 @@ pub struct BurstMeridianEventV1 {
     pub integrity_snapshot: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct QiColorObservedV1 {
+    pub observer: String,
+    pub observed: String,
+    pub main: ColorKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary: Option<ColorKind>,
+    pub is_chaotic: bool,
+    pub is_hunyuan: bool,
+    pub realm_diff: i32,
+}
+
+fn default_qi_color_main() -> ColorKind {
+    ColorKind::Mellow
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 enum ServerDataPayloadWireV1 {
@@ -521,6 +549,8 @@ enum ServerDataPayloadWireV1 {
         breakdown: PlayerPowerBreakdown,
         zone: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_neg_pressure: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
@@ -543,6 +573,18 @@ enum ServerDataPayloadWireV1 {
         recent_skill_milestones_summary: String,
         #[serde(default)]
         skill_milestones: Vec<SkillMilestoneSnapshotV1>,
+        #[serde(default = "default_qi_color_main")]
+        qi_color_main: ColorKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        qi_color_secondary: Option<ColorKind>,
+        #[serde(default)]
+        qi_color_chaotic: bool,
+        #[serde(default)]
+        qi_color_hunyuan: bool,
+    },
+    QiColorObserved {
+        #[serde(flatten)]
+        observed: QiColorObservedV1,
     },
     InventorySnapshot {
         #[serde(flatten)]
@@ -679,6 +721,10 @@ enum ServerDataPayloadWireV1 {
     VortexState {
         #[serde(flatten)]
         state: VortexFieldStateV1,
+    },
+    CarrierState {
+        #[serde(flatten)]
+        state: CarrierStateV1,
     },
     LingtianSession {
         #[serde(flatten)]
@@ -1230,6 +1276,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                local_neg_pressure,
                 social,
             } => Ok(Self::PlayerState {
                 player,
@@ -1239,6 +1286,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                local_neg_pressure,
                 social,
             }),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
@@ -1254,6 +1302,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
+                qi_color_main,
+                qi_color_secondary,
+                qi_color_chaotic,
+                qi_color_hunyuan,
             } => Ok(Self::CultivationDetail {
                 realm,
                 opened,
@@ -1266,7 +1318,14 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
+                qi_color_main,
+                qi_color_secondary,
+                qi_color_chaotic,
+                qi_color_hunyuan,
             }),
+            ServerDataPayloadWireV1::QiColorObserved { observed } => {
+                Ok(Self::QiColorObserved(observed))
+            }
             ServerDataPayloadWireV1::InventorySnapshot { snapshot } => {
                 Ok(Self::InventorySnapshot(snapshot))
             }
@@ -1387,6 +1446,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::TreasureEquipped(treasure_equipped))
             }
             ServerDataPayloadWireV1::VortexState { state } => Ok(Self::VortexState(state)),
+            ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
@@ -1616,6 +1676,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power,
                 breakdown,
                 zone,
+                local_neg_pressure,
                 social,
             } => Self::PlayerState {
                 player: player.clone(),
@@ -1625,6 +1686,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power: *composite_power,
                 breakdown: breakdown.clone(),
                 zone: zone.clone(),
+                local_neg_pressure: *local_neg_pressure,
                 social: social.clone(),
             },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
@@ -1643,6 +1705,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
+                qi_color_main,
+                qi_color_secondary,
+                qi_color_chaotic,
+                qi_color_hunyuan,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 opened: opened.clone(),
@@ -1655,6 +1721,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 lifespan: lifespan.clone(),
                 recent_skill_milestones_summary: recent_skill_milestones_summary.clone(),
                 skill_milestones: skill_milestones.clone(),
+                qi_color_main: *qi_color_main,
+                qi_color_secondary: *qi_color_secondary,
+                qi_color_chaotic: *qi_color_chaotic,
+                qi_color_hunyuan: *qi_color_hunyuan,
+            },
+            ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
+                observed: observed.clone(),
             },
             ServerDataPayloadV1::InventorySnapshot(snapshot) => Self::InventorySnapshot {
                 snapshot: snapshot.clone(),
@@ -1788,6 +1861,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 treasure_equipped: t.clone(),
             },
             ServerDataPayloadV1::VortexState(state) => Self::VortexState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::CarrierState(state) => Self::CarrierState {
                 state: state.clone(),
             },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
@@ -2064,6 +2140,7 @@ impl ServerDataPayloadV1 {
             Self::PlayerState { .. } => ServerDataType::PlayerState,
             Self::UiOpen { .. } => ServerDataType::UiOpen,
             Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
+            Self::QiColorObserved(..) => ServerDataType::QiColorObserved,
             Self::InventorySnapshot(..) => ServerDataType::InventorySnapshot,
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
@@ -2092,6 +2169,7 @@ impl ServerDataPayloadV1 {
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::VortexState(..) => ServerDataType::VortexState,
+            Self::CarrierState(..) => ServerDataType::CarrierState,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
@@ -2336,6 +2414,15 @@ mod tests {
                 overload_ratio: 1.5,
                 integrity_snapshot: 0.9,
             }),
+            ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
+                observer: "offline:Kiz".to_string(),
+                observed: "offline:Azure".to_string(),
+                main: ColorKind::Intricate,
+                secondary: Some(ColorKind::Heavy),
+                is_chaotic: false,
+                is_hunyuan: false,
+                realm_diff: 2,
+            }),
             ServerDataPayloadV1::BotanyPlantV2RenderProfiles(vec![BotanyPlantV2RenderProfileV1 {
                 plant_id: "ying_yuan_gu".to_string(),
                 base_mesh_ref: "red_mushroom".to_string(),
@@ -2448,6 +2535,10 @@ mod tests {
                 narration: "你摘得百草渐熟，今已识八分。".to_string(),
                 total_xp_at: 550,
             }],
+            qi_color_main: ColorKind::Intricate,
+            qi_color_secondary: Some(ColorKind::Heavy),
+            qi_color_chaotic: false,
+            qi_color_hunyuan: false,
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -2465,6 +2556,8 @@ mod tests {
                 lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
+                qi_color_main,
+                qi_color_secondary,
                 ..
             } => {
                 assert_eq!(opened.len(), 20);
@@ -2477,6 +2570,8 @@ mod tests {
                 );
                 assert_eq!(skill_milestones.len(), 1);
                 assert_eq!(skill_milestones[0].skill, "herbalism");
+                assert_eq!(qi_color_main, ColorKind::Intricate);
+                assert_eq!(qi_color_secondary, Some(ColorKind::Heavy));
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }

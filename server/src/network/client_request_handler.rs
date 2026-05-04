@@ -21,6 +21,7 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
+use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
 };
@@ -78,6 +79,7 @@ use crate::network::cast_emit::{
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
@@ -197,6 +199,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub insight_tx: EventWriter<'w, InsightChosen>,
     pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
     pub duo_she_tx: Option<ResMut<'w, Events<DuoSheRequestEvent>>>,
+    pub qi_color_inspect_tx: Option<ResMut<'w, Events<QiColorInspectRequest>>>,
     pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
@@ -214,6 +217,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
+    pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
+    pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
 }
 
 #[derive(SystemParam)]
@@ -232,6 +237,7 @@ pub struct SkillScrollRequestParams<'w, 's> {
 
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
+const QI_COLOR_INSPECT_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
@@ -323,6 +329,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::DuoSheRequest { v, .. }
+            | ClientRequestV1::QiColorInspect { v, .. }
             | ClientRequestV1::UseLifeCore { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
@@ -349,7 +356,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeStepAdvance { v, .. }
             | ClientRequestV1::ForgeBlueprintTurnPage { v, .. }
             | ClientRequestV1::ForgeLearnBlueprint { v, .. }
-            | ClientRequestV1::ForgeStationPlace { v, .. } => *v,
+            | ClientRequestV1::ForgeStationPlace { v, .. }
+            | ClientRequestV1::ChargeCarrier { v, .. }
+            | ClientRequestV1::ThrowCarrier { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -962,6 +971,28 @@ pub fn handle_client_request_payloads(
                     });
                 }
             }
+            ClientRequestV1::QiColorInspect { observed, .. } => {
+                let Some(observed_entity) = resolve_qi_color_inspect_target(
+                    ev.client,
+                    observed.as_str(),
+                    &combat_params,
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
+                ) else {
+                    tracing::warn!(
+                        "[bong][network] rejected qi_color_inspect from {:?}: invalid or out-of-scope observed `{observed}`",
+                        ev.client
+                    );
+                    continue;
+                };
+                if let Some(qi_color_inspect_tx) = dispatch.qi_color_inspect_tx.as_deref_mut() {
+                    qi_color_inspect_tx.send(QiColorInspectRequest {
+                        observer: ev.client,
+                        observed: observed_entity,
+                        requested_at_tick: combat_clock.tick,
+                    });
+                }
+            }
             ClientRequestV1::UseLifeCore { instance_id, .. } => {
                 if let Some(life_core_tx) = dispatch.life_core_tx.as_deref_mut() {
                     life_core_tx.send(UseLifeCoreEvent {
@@ -979,6 +1010,34 @@ pub fn handle_client_request_payloads(
                 if let Some(defense_tx) = dispatch.defense_tx.as_deref_mut() {
                     defense_tx.send(DefenseIntent {
                         defender: ev.client,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::ChargeCarrier {
+                slot, qi_target, ..
+            } => {
+                if let Some(charge_carrier_tx) = dispatch.charge_carrier_tx.as_deref_mut() {
+                    charge_carrier_tx.send(ChargeCarrierIntent {
+                        carrier: ev.client,
+                        slot: slot.map(map_anqi_carrier_slot),
+                        qi_target: Some(qi_target),
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::ThrowCarrier {
+                slot,
+                dir_unit,
+                power,
+                ..
+            } => {
+                if let Some(throw_carrier_tx) = dispatch.throw_carrier_tx.as_deref_mut() {
+                    throw_carrier_tx.send(ThrowCarrierIntent {
+                        thrower: ev.client,
+                        slot: map_anqi_carrier_slot(slot),
+                        dir_unit,
+                        power,
                         issued_at_tick: combat_clock.tick,
                     });
                 }
@@ -1917,6 +1976,11 @@ mod tests {
 
     impl valence::prelude::Resource for CapturedStepAdvances {}
 
+    #[derive(Default)]
+    struct CapturedQiColorInspectRequests(Vec<QiColorInspectRequest>);
+
+    impl valence::prelude::Resource for CapturedQiColorInspectRequests {}
+
     fn capture_breakthrough_requests(
         mut events: EventReader<BreakthroughRequest>,
         mut captured: ResMut<CapturedBreakthroughRequests>,
@@ -1997,6 +2061,13 @@ mod tests {
     fn capture_step_advances(
         mut events: EventReader<StepAdvance>,
         mut captured: ResMut<CapturedStepAdvances>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_qi_color_inspect_requests(
+        mut events: EventReader<QiColorInspectRequest>,
+        mut captured: ResMut<CapturedQiColorInspectRequests>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -2281,6 +2352,7 @@ mod tests {
         app.add_event::<StartDrainQiRequest>();
         app.add_event::<StartExtractRequestEvent>();
         app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<QiColorInspectRequest>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -3153,6 +3225,70 @@ mod tests {
         let captured = app.world().resource::<CapturedMineralProbes>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
+    fn qi_color_inspect_rejects_entity_bits_target() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(CapturedQiColorInspectRequests::default());
+        app.add_systems(
+            Update,
+            capture_qi_color_inspect_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let observer = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(observer)
+            .insert(Position(DVec3::ZERO));
+        let observed = app
+            .world_mut()
+            .spawn(Position(DVec3::new(1.0, 0.0, 0.0)))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: observer,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::QiColorInspect {
+                    v: 1,
+                    observed: format!("entity_bits:{}", observed.to_bits()),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<CapturedQiColorInspectRequests>()
+            .0
+            .is_empty());
+    }
+
+    #[test]
+    fn qi_color_inspect_scope_requires_near_same_dimension_target() {
+        assert_eq!(parse_qi_color_inspect_protocol_id("entity:42"), Some(42));
+        assert_eq!(parse_qi_color_inspect_protocol_id("entity_bits:42"), None);
+        assert_eq!(parse_qi_color_inspect_protocol_id("entity:bad"), None);
+
+        assert!(is_qi_color_inspect_position_in_scope(
+            DVec3::ZERO,
+            DVec3::new(QI_COLOR_INSPECT_MAX_DISTANCE, 0.0, 0.0),
+            true,
+        ));
+        assert!(!is_qi_color_inspect_position_in_scope(
+            DVec3::ZERO,
+            DVec3::new(QI_COLOR_INSPECT_MAX_DISTANCE + 0.01, 0.0, 0.0),
+            true,
+        ));
+        assert!(!is_qi_color_inspect_position_in_scope(
+            DVec3::ZERO,
+            DVec3::new(1.0, 0.0, 0.0),
+            false,
+        ));
     }
 
     #[test]
@@ -4508,6 +4644,74 @@ fn resolve_skill_cast_target(
     }
     let id = raw.strip_prefix("entity_bits:")?;
     id.parse::<u64>().ok().map(Entity::from_bits)
+}
+
+fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1) -> CarrierSlot {
+    match slot {
+        crate::schema::client_request::AnqiCarrierSlotV1::MainHand => CarrierSlot::MainHand,
+        crate::schema::client_request::AnqiCarrierSlotV1::OffHand => CarrierSlot::OffHand,
+    }
+}
+
+fn resolve_qi_color_inspect_target(
+    observer: Entity,
+    raw: &str,
+    combat_params: &CombatRequestParams,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+) -> Option<Entity> {
+    let protocol_id = parse_qi_color_inspect_protocol_id(raw)?;
+    let observed = combat_params
+        .entity_manager
+        .as_deref()
+        .and_then(|manager| manager.get_by_id(protocol_id))?;
+    is_qi_color_inspect_target_in_scope(observer, observed, positions, dimensions)
+        .then_some(observed)
+}
+
+fn parse_qi_color_inspect_protocol_id(raw: &str) -> Option<i32> {
+    raw.trim().strip_prefix("entity:")?.parse().ok()
+}
+
+fn is_qi_color_inspect_target_in_scope(
+    observer: Entity,
+    observed: Entity,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+) -> bool {
+    if observer == observed {
+        return false;
+    }
+    let Ok(observer_position) = positions.get(observer) else {
+        return false;
+    };
+    let Ok(observed_position) = positions.get(observed) else {
+        return false;
+    };
+    let observer_dimension = dimension_kind_for(dimensions, observer);
+    let observed_dimension = dimension_kind_for(dimensions, observed);
+    is_qi_color_inspect_position_in_scope(
+        observer_position.get(),
+        observed_position.get(),
+        observer_dimension == observed_dimension,
+    )
+}
+
+fn is_qi_color_inspect_position_in_scope(
+    observer_position: DVec3,
+    observed_position: DVec3,
+    same_dimension: bool,
+) -> bool {
+    same_dimension
+        && observer_position.distance_squared(observed_position)
+            <= QI_COLOR_INSPECT_MAX_DISTANCE * QI_COLOR_INSPECT_MAX_DISTANCE
+}
+
+fn dimension_kind_for(dimensions: &Query<&CurrentDimension>, entity: Entity) -> DimensionKind {
+    dimensions
+        .get(entity)
+        .map(|dimension| dimension.0)
+        .unwrap_or_default()
 }
 
 fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {

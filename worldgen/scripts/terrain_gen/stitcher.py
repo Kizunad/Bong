@@ -27,8 +27,10 @@ from .profiles.abyssal_maze import fill_abyssal_maze_tile
 from .profiles.ancient_battlefield import fill_ancient_battlefield_tile
 from .profiles.broken_peaks import fill_broken_peaks_tile
 from .profiles.cave_network import fill_cave_network_tile
+from .profiles.jiu_zong_ruin import fill_jiu_zong_ruin_tile
 from .profiles.spawn_plain import fill_spawn_plain_tile
 from .profiles.pseudo_vein_oasis import fill_pseudo_vein_oasis_tile
+from .profiles.rift_mouth_barrens import fill_rift_mouth_barrens_tile
 from .profiles.rift_valley import fill_rift_valley_tile
 from .profiles.sky_isle import fill_sky_isle_tile
 from .profiles.spring_marsh import fill_spring_marsh_tile
@@ -118,7 +120,7 @@ def _shape_membership_ratio_array(
     edge_noise = _coherent_noise_2d_array(wx, wz, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
+    if shape in {"ellipse", "circular", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (wx - center_x) / (half_width * edge_warp)
         dz = (wz - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         return np.sqrt(dx * dx + dz * dz)
@@ -326,7 +328,7 @@ def _shape_membership_ratio(zone: BlueprintZone, world_x: int, world_z: int) -> 
     edge_noise = coherent_noise_2d(world_x, world_z, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
+    if shape in {"ellipse", "circular", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (world_x - center_x) / (half_width * edge_warp)
         dz = (world_z - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         return math.sqrt(dx * dx + dz * dz)
@@ -428,10 +430,14 @@ def _build_zone_overlay_tile(
         buffer = fill_rift_valley_tile(zone, tile, tile_size, palette)
     elif profile == "cave_network":
         buffer = fill_cave_network_tile(zone, tile, tile_size, palette)
+    elif profile == "jiu_zong_ruin":
+        buffer = fill_jiu_zong_ruin_tile(zone, tile, tile_size, palette)
     elif profile == "waste_plateau":
         buffer = fill_waste_plateau_tile(zone, tile, tile_size, palette)
     elif profile == "pseudo_vein_oasis":
         buffer = fill_pseudo_vein_oasis_tile(zone, tile, tile_size, palette)
+    elif profile == "rift_mouth_barrens":
+        buffer = fill_rift_mouth_barrens_tile(zone, tile, tile_size, palette)
     elif profile == "ash_dead_zone":
         buffer = fill_ash_dead_zone_tile(zone, tile, tile_size, palette)
     elif profile == "sky_isle":
@@ -505,6 +511,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: cave_network surface proxy synthesis.",
             "Implemented: waste_plateau overlay synthesis.",
             "Implemented: pseudo_vein_oasis overlay (false qi oasis + hungry ring ecology).",
+            "Implemented: rift_mouth_barrens overlay (portal_anchor_sdf + negative pressure scar).",
             "Implemented: ash_dead_zone overlay (zero qi core + ash ecology).",
             "Implemented: sky_isle overlay (sky_island_* vertical layers).",
             "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",

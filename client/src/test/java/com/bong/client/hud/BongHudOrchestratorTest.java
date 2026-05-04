@@ -9,6 +9,8 @@ import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetSnapshot;
 import com.bong.client.skill.SkillSetStore;
 import com.bong.client.state.NarrationState;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
 import org.junit.jupiter.api.AfterEach;
@@ -28,6 +30,7 @@ public class BongHudOrchestratorTest {
         InventoryStateStore.resetForTests();
         HarvestSessionStore.resetForTests();
         SkillSetStore.resetForTests();
+        PlayerStateStore.resetForTests();
     }
 
     @Test
@@ -66,6 +69,33 @@ public class BongHudOrchestratorTest {
             HudRenderLayer.TOAST,
             HudRenderLayer.VISUAL
         ), layers);
+    }
+
+    @Test
+    void localNegativePressureAppearsBelowZoneLine() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "Solidify",
+            "offline:Azure",
+            80.0,
+            100.0,
+            0.0,
+            0.5,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "rift_mouth_north_001",
+            "渊口荒丘",
+            0.05,
+            -0.8
+        ));
+        BongHudStateSnapshot snapshot = BongHudStateSnapshot.create(
+            ZoneState.create("rift_mouth_north_001", "渊口荒丘", 0.05, 5, 100L),
+            NarrationState.empty(),
+            VisualEffectState.none()
+        );
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(snapshot, 250L, FIXED_WIDTH, 220);
+
+        assertTrue(commands.stream().anyMatch(cmd -> "灵压 -0.80".equals(cmd.text())));
     }
 
     @Test

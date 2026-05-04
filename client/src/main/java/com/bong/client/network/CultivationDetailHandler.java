@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.cultivation.ColorKind;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
@@ -77,8 +78,26 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         String realm = readString(payload, "realm");
         double contaminationTotal = readDouble(payload, "contamination_total");
         JsonObject lifespan = readObject(payload, "lifespan");
+        ColorKind qiColorMain = ColorKind.fromWire(readString(payload, "qi_color_main"));
+        ColorKind qiColorSecondary = ColorKind.fromWire(readString(payload, "qi_color_secondary"));
+        boolean qiColorChaotic = readBoolean(payload, "qi_color_chaotic");
+        boolean qiColorHunyuan = readBoolean(payload, "qi_color_hunyuan");
 
-        MeridianBody body = buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm, contaminationTotal, lifespan);
+        MeridianBody body = buildBody(
+            opened,
+            flowRate,
+            flowCapacity,
+            integrity,
+            openProgress,
+            cracksCount,
+            realm,
+            contaminationTotal,
+            lifespan,
+            qiColorMain,
+            qiColorSecondary,
+            qiColorChaotic,
+            qiColorHunyuan
+        );
         MeridianStateStore.replace(body);
         syncSkillCapsFromRealm(realm);
         SkillMilestoneStore.replace(
@@ -98,6 +117,15 @@ public final class CultivationDetailHandler implements ServerDataHandler {
     static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
                                    JsonArray openProgress, JsonArray cracksCount, String realm,
                                    double contaminationTotal, JsonObject lifespan) {
+        return buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
+            contaminationTotal, lifespan, null, null, false, false);
+    }
+
+    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
+                                   JsonArray openProgress, JsonArray cracksCount, String realm,
+                                   double contaminationTotal, JsonObject lifespan,
+                                   ColorKind qiColorMain, ColorKind qiColorSecondary,
+                                   boolean qiColorChaotic, boolean qiColorHunyuan) {
         EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
         for (int i = 0; i < CHANNEL_ORDER.length; i++) {
             MeridianChannel ch = CHANNEL_ORDER[i];
@@ -144,6 +172,7 @@ public final class CultivationDetailHandler implements ServerDataHandler {
                 readBoolean(lifespan, "is_wind_candle")
             );
         }
+        builder.qiColor(qiColorMain, qiColorSecondary, qiColorChaotic, qiColorHunyuan);
         return builder.build();
     }
 

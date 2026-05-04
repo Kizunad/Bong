@@ -44,14 +44,19 @@ pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
+pub const CH_ANTICHEAT: &str = "bong:anticheat";
 pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 pub const CH_WOLIU_BACKFIRE: &str = "bong:woliu/backfire";
 pub const CH_WOLIU_PROJECTILE_DRAINED: &str = "bong:woliu/projectile_drained";
 pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
+pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
+pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
+pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
 pub const CH_PSEUDO_VEIN_DISSIPATE: &str = "bong:pseudo_vein:dissipate";
+pub const CH_ZONG_CORE_ACTIVATED: &str = "bong:zong_core_activated";
 
 // botany 观测通道（server-agent 侧），客户端 gameplay 仍走 bong:server_data / bong:client_request
 // 注：每株 spawn / wither 不单推（agent 难处理高频事件）——聚合走 `bong:botany/ecology`，
@@ -129,12 +134,20 @@ mod tests {
         assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
+        assert_eq!(CH_ANTICHEAT, "bong:anticheat");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
         assert_eq!(CH_WOLIU_BACKFIRE, "bong:woliu/backfire");
         assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
+        assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
+        assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");
+        assert_eq!(
+            CH_ANQI_PROJECTILE_DESPAWNED,
+            "bong:combat/projectile_despawned"
+        );
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
+        assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
         assert_eq!(CH_LUMBER_PROGRESS, "bong:lumber_progress");

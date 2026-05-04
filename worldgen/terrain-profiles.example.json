@@ -53,6 +53,25 @@
       "core_radius": 60,
       "rim_radius": 120
     },
+    "jiu_zong_ruin": {
+      "height": { "base": [72, 90], "peak": 100 },
+      "boundary": { "mode": "semi_hard", "width": 96 },
+      "surface": ["mossy_cobblestone", "stone_bricks", "cracked_stone_bricks", "coarse_dirt", "gravel"],
+      "water": { "level": "very_low", "coverage": 0.03 },
+      "passability": "medium",
+      "origin_field": "zongmen_origin_id",
+      "origins": ["bloodstream", "beiling", "nanyuan", "chixia", "xuanshui", "taichu", "youan"]
+    },
+    "rift_mouth_barrens": {
+      "height": { "base": [60, 80], "peak": 88 },
+      "boundary": { "mode": "hard", "width": 48 },
+      "surface": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "medium",
+      "core_radius": 30,
+      "outer_radius": 150,
+      "portal_layer": "portal_anchor_sdf"
+    },
     "ash_dead_zone": {
       "height": { "base": [70, 82], "peak": 88 },
       "boundary": { "mode": "hard", "width": 64 },

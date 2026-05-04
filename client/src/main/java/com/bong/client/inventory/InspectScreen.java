@@ -5,6 +5,9 @@ import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.cultivation.ColorKind;
+import com.bong.client.cultivation.QiColorObservedState;
+import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.component.*;
 import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
@@ -118,6 +121,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private io.wispforest.owo.ui.container.ScrollContainer<?> cultivationActionScroll;
     /** Screen 存活期间持有的 MeridianStateStore 订阅，close 时移除避免泄漏。 */
     private Consumer<MeridianBody> meridianBodyListener;
+    private Consumer<QiColorObservedState> qiColorObservedListener;
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
@@ -152,6 +156,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (meridianBodyListener != null) {
             MeridianStateStore.removeListener(meridianBodyListener);
             meridianBodyListener = null;
+        }
+        if (qiColorObservedListener != null) {
+            QiColorObservedStore.removeListener(qiColorObservedListener);
+            qiColorObservedListener = null;
         }
         if (inventoryListener != null) {
             InventoryStateStore.removeListener(inventoryListener);
@@ -358,6 +366,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     b.remainingYears(), b.deathPenaltyYears(), b.lifespanTickRateMultiplier()));
                 if (b.isWindCandle()) sb.append(" §c风烛");
             }
+            ColorKind ownColor = b.qiColorMain();
+            if (ownColor != null) {
+                if (sb.length() > 0) sb.append("  §8·  ");
+                sb.append("§7真元 §f").append(ownColor.label());
+                if (b.qiColorSecondary() != null) sb.append("/").append(b.qiColorSecondary().label());
+                if (b.qiColorChaotic()) sb.append(" §c杂");
+                if (b.qiColorHunyuan()) sb.append(" §b混");
+            }
+            QiColorObservedState observedColor = QiColorObservedStore.snapshot();
+            if (observedColor != null && !observedColor.displayText().isEmpty()) {
+                if (sb.length() > 0) sb.append("  §8·  ");
+                sb.append("§7").append(observedColor.displayText());
+            }
             bodyStatusLabel.text(Text.literal(sb.toString()));
         };
         refreshBodyStatus.run();
@@ -368,6 +389,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             refreshBodyStatus.run();
         };
         MeridianStateStore.addListener(meridianBodyListener);
+        qiColorObservedListener = ignored -> refreshBodyStatus.run();
+        QiColorObservedStore.addListener(qiColorObservedListener);
         bodyInspect.addSelectionListener(ch -> refreshBodyStatus.run());
 
         // 根据当前选择应用灰态，并订阅变化

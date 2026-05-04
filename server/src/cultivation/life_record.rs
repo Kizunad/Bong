@@ -82,6 +82,12 @@ pub enum BiographyEntry {
         damage: f32,
         tick: u64,
     },
+    /// plan-zhenmai-v1 P2：截脉震爆成功弹反，记录防御者对攻击者的战绩。
+    JiemaiParry {
+        attacker_id: String,
+        effectiveness: f32,
+        tick: u64,
+    },
     NearDeath {
         cause: String,
         tick: u64,
@@ -179,6 +185,14 @@ pub enum BiographyEntry {
     /// plan-woliu-v1 §3.1.E / P2：涡流维持或环境失败导致反噬。
     VortexBackfired {
         cause: String,
+        tick: u64,
+    },
+    /// plan-anqi-v1 P2：暗器载体命中后的生平锚点。
+    AnqiSniped {
+        attacker_id: String,
+        distance_blocks: f32,
+        sealed_qi: f32,
+        hit_qi: f32,
         tick: u64,
     },
     /// plan-spawn-tutorial-v1 P2 — 出生沉默教学完成：醒灵突破至引气。
@@ -367,6 +381,11 @@ fn format_entry(entry: &BiographyEntry) -> String {
             damage,
             tick,
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
+        BiographyEntry::JiemaiParry {
+            attacker_id,
+            effectiveness,
+            tick,
+        } => format!("t{tick}:jiemai_parry:{attacker_id}:{effectiveness:.2}"),
         BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
         BiographyEntry::LifespanExtended {
@@ -458,6 +477,15 @@ fn format_entry(entry: &BiographyEntry) -> String {
         BiographyEntry::VortexBackfired { cause, tick } => {
             format!("t{tick}:woliu:backfire:{cause}")
         }
+        BiographyEntry::AnqiSniped {
+            attacker_id,
+            distance_blocks,
+            sealed_qi,
+            hit_qi,
+            tick,
+        } => format!(
+            "t{tick}:anqi_sniped:{attacker_id}:{distance_blocks:.1}:{sealed_qi:.1}:{hit_qi:.1}"
+        ),
         BiographyEntry::SpawnTutorialCompleted {
             minutes_since_spawn,
             tick,

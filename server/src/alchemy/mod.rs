@@ -377,6 +377,10 @@ pub(crate) fn apply_alchemy_explode_outcomes(
                     "alchemy_explode furnace {:?} -> {} for {:.1} damage",
                     event.furnace, username.0, damage
                 ),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             });
         }
 

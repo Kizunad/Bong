@@ -1,6 +1,6 @@
 """Bong 图像生成的画风 prefix 常量。
 
-三档画风（对齐 local_images/generation_guide.md）：
+四档画风（对齐 local_images/generation_guide.md）：
 
 - **item** —— 物品图标（药材、符牌、武器、法宝等），photorealistic 3D render 风，
   默认透明背景，便于直接接入 icon 资源。
@@ -8,6 +8,8 @@
   生成后走 lum_to_alpha.py 转 alpha 通道。
 - **hud** —— HUD overlay 贴图（水墨边框、结霜角、符阵等），真正透明 RGBA，
   中心区域 alpha=0，只有装饰像素有 alpha。生成接口必须传 background=transparent。
+- **scene** —— 末法残土美学/构图参考图（concept art / mood board / 场景立绘）。
+  非游戏资产，用于美术对齐：苍灰末世调、压抑低彩度、电影构图。不抠图、不接 alpha。
 
 使用：`apply(style, body)` 把对应 prefix 与物品描述拼成完整 prompt。
 prompt 开头三个词已匹配 prefix 则跳过拼接（允许手动叠写）。
@@ -40,10 +42,40 @@ STYLE_HUD = (
     "when pure black ink is required. Pure black ink on transparent only."
 )
 
+STYLE_SCENE = (
+    "concept art for a dharma-ending xianxia wasteland (末法残土), "
+    "in the visual lineage of Sekiro / Shadow of the Colossus / Zdzisław Beksiński / "
+    "Kurosawa monochrome cinematography / Liang Kai sumi-e ink painting. "
+    "COMPOSITION RULES (strict): extreme negative space, asymmetric weighting, "
+    "subject pinned to one corner or edge with 60-70% of frame deliberately empty, "
+    "strong silhouette readability at poster-thumbnail scale, "
+    "foreground dark-shape framing where appropriate, deliberate diagonal or vertical tension, "
+    "human figure tiny (1-3% of frame height) used purely for scale against monumental ruin. "
+    "COLOR DISCIPLINE (strict): predominantly desaturated ash-grey and bone-white, "
+    "ONE signature accent color per image (faded jade spirit-qi residue, OR old-blood rust, "
+    "OR cinnabar seal-red, OR sickly bile-yellow) used sparingly in ONE area only, "
+    "high tonal contrast between dead grey mass and the single accent, no rainbow palette, no warm sunset glow. "
+    "MOTIF VOCABULARY: weathered carved stone meridian rings, massive eroded dao characters cut into cliffs, "
+    "broken sect archways, colossal half-buried bronze ritual swords, cliff faces honeycombed with abandoned "
+    "meditation alcoves, spiral stone platforms descending into negative-pressure voids, fallen stone steles "
+    "with mostly-illegible inscriptions, ash-filled cultivation furnaces. "
+    "CALLIGRAPHY (when any carved chinese characters appear): always rendered in the style of Mi Fu (米芾) "
+    "Song dynasty master — bold dynamic brushwork, eccentric stretched strokes, sharp angular turns, "
+    "audacious asymmetric structure, the strokes feel alive and untamed. NEVER use modern regular script "
+    "(楷书 kaiti), NEVER use running-regular script (行楷 xingkai), NEVER use printed-looking computer fonts; "
+    "the carving must look hand-cut by an eccentric master, not stenciled. "
+    "MOOD: long abandonment, depleted ley lines, geological loneliness, the awe of monumental ruin. "
+    "EXCLUSIONS (hard): no anime characters, no chibi, no JRPG glow, no celestial palaces in the sky, "
+    "no flying swords mid-flight, no glowing palm strikes, no dragons, no goddess figures, "
+    "no post-apocalyptic concrete or rebar, no industrial debris, no broken modern road, "
+    "no dramatic god rays, no warm sunset, no Death-Stranding generic post-apoc look."
+)
+
 PREFIXES: dict[str, str] = {
     "item": STYLE_ITEM,
     "particle": STYLE_PARTICLE,
     "hud": STYLE_HUD,
+    "scene": STYLE_SCENE,
 }
 
 

@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "anticheat_report",
+  "char_id": "offline:Azure",
+  "entity_id": 42,
+  "at_tick": 1200,
+  "kind": "reach_exceeded",
+  "count": 10,
+  "details": "reach: target_distance=6.200 server_max=4.000"
+}

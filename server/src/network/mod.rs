@@ -1,10 +1,13 @@
 pub mod agent_bridge;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod anqi_event_bridge;
+pub mod anticheat_bridge;
 pub mod ascension_quota_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
 pub mod burst_event_emit;
+pub mod carrier_state_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -24,6 +27,7 @@ pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
 pub mod poi_novice_bridge;
+pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod resourcepack;
@@ -107,7 +111,9 @@ use crate::skill::components::SkillId;
 use crate::social::components::{
     Anonymity, FactionMembership as PlayerFactionMembership, Relationships, Renown,
 };
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
+use crate::world::terrain::TerrainProviders;
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 #[cfg(test)]
@@ -264,7 +270,11 @@ pub fn register(app: &mut App) {
     app.insert_resource(resourcepack::ResourcePackConfig::default());
     app.insert_resource(resourcepack::ResourcePackStatusStore::default());
 
-    app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
+    app.add_systems(
+        Startup,
+        bootstrap_world_model_runtime_mirror_system
+            .after(crate::persistence::PersistenceBootstrapSet),
+    );
 
     app.add_systems(
         Update,
@@ -298,6 +308,11 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
         ),
+    );
+    app.add_systems(
+        Update,
+        anticheat_bridge::publish_anticheat_violation_events
+            .after(crate::combat::anticheat::emit_anticheat_threshold_reports),
     );
     app.add_systems(
         Update,
@@ -339,6 +354,9 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
             burst_event_emit::emit_burst_meridian_events,
+            anqi_event_bridge::publish_carrier_charged_events,
+            anqi_event_bridge::publish_carrier_impact_events,
+            anqi_event_bridge::publish_projectile_despawned_events,
             woliu_event_bridge::publish_woliu_backfire_events,
             woliu_event_bridge::publish_projectile_qi_drained_events,
         ),
@@ -347,6 +365,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            qi_color_observed_emit::emit_qi_color_observed_payloads
+                .after(client_request_handler::handle_client_request_payloads),
             audio_event_emit::handle_audio_debug_commands,
             audio_event_emit::emit_audio_play_payloads
                 .after(audio_event_emit::handle_audio_debug_commands)
@@ -484,6 +504,7 @@ pub fn register(app: &mut App) {
         ),
     );
     app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);
+    app.add_systems(Update, carrier_state_emit::emit_carrier_state_payloads);
     app.add_systems(
         Update,
         (
@@ -533,6 +554,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<audio_trigger::AudioTriggerState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
+    app.add_event::<qi_color_observed_emit::QiColorInspectRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
@@ -740,7 +762,13 @@ pub(crate) fn build_player_state_payload(
     cultivation: &Cultivation,
     zone: impl Into<String>,
 ) -> Result<Vec<u8>, PayloadBuildError> {
-    let payload = player_state.server_payload_with_social(cultivation, None, zone.into(), None);
+    let payload = player_state.server_payload_with_social_and_local_pressure(
+        cultivation,
+        None,
+        zone.into(),
+        None,
+        None,
+    );
     serialize_server_data_payload(&payload)
 }
 
@@ -1282,6 +1310,7 @@ type PlayerStateEmitQueryItem<'a> = (
     &'a mut Client,
     &'a Username,
     &'a Position,
+    Option<&'a CurrentDimension>,
     &'a PlayerState,
     &'a Cultivation,
     Option<&'a Anonymity>,
@@ -1311,16 +1340,19 @@ type PlayerStateEmitQueryFilter = (
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
     clock: Option<Res<CombatClock>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
     mut clients: Query<PlayerStateEmitQueryItem<'_>, PlayerStateEmitQueryFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let terrain_providers = terrain_providers.as_deref();
 
     for (
         entity,
         mut client,
         username,
         position,
+        current_dimension,
         player_state,
         cultivation,
         anonymity,
@@ -1337,11 +1369,14 @@ fn emit_player_state_payloads(
             relationships,
             faction_membership,
         );
-        let payload = player_state.server_payload_with_social(
+        let local_neg_pressure =
+            local_neg_pressure_at(terrain_providers, current_dimension, position);
+        let payload = player_state.server_payload_with_social_and_local_pressure(
             cultivation,
             Some(canonical_player_id(username.0.as_str())),
             zone_name,
             social,
+            local_neg_pressure,
         );
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -1360,6 +1395,29 @@ fn emit_player_state_payloads(
             username.0,
         );
     }
+}
+
+fn local_neg_pressure_at(
+    terrain_providers: Option<&TerrainProviders>,
+    current_dimension: Option<&CurrentDimension>,
+    position: &Position,
+) -> Option<f32> {
+    let providers = terrain_providers?;
+    let dimension = current_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or(DimensionKind::Overworld);
+    let provider = providers.for_dimension(dimension)?;
+    let sample = provider.sample(position.0.x.floor() as i32, position.0.z.floor() as i32);
+    local_neg_pressure_from_sample(sample.neg_pressure, sample.portal_anchor_sdf)
+}
+
+fn local_neg_pressure_from_sample(neg_pressure: f32, portal_anchor_sdf: f32) -> Option<f32> {
+    if neg_pressure <= 0.0
+        || portal_anchor_sdf > crate::cultivation::neg_pressure::HOTSPOT_RADIUS_BLOCKS
+    {
+        return None;
+    }
+    Some(-neg_pressure.clamp(0.0, 1.0))
 }
 
 type ZoneInfoClientItem<'a> = (
@@ -2362,6 +2420,13 @@ mod tests {
             (left - right).abs() < 1e-9,
             "expected {left} to be approximately equal to {right}"
         );
+    }
+
+    #[test]
+    fn local_neg_pressure_from_sample_reports_hotspot_as_negative_pressure() {
+        assert_eq!(local_neg_pressure_from_sample(0.8, 0.0), Some(-0.8));
+        assert_eq!(local_neg_pressure_from_sample(0.8, 30.1), None);
+        assert_eq!(local_neg_pressure_from_sample(0.0, 0.0), None);
     }
 
     #[test]
@@ -3519,6 +3584,7 @@ mod tests {
                 mut client,
                 username,
                 position,
+                _current_dimension,
                 player_state,
                 cultivation,
                 anonymity,
@@ -3535,11 +3601,12 @@ mod tests {
                     relationships,
                     faction_membership,
                 );
-                let payload = player_state.server_payload_with_social(
+                let payload = player_state.server_payload_with_social_and_local_pressure(
                     cultivation,
                     Some(canonical_player_id(username.0.as_str())),
                     zone_name,
                     social,
+                    None,
                 );
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {

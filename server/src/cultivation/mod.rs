@@ -45,9 +45,11 @@ pub mod known_techniques;
 pub mod life_record;
 pub mod lifespan;
 pub mod meridian_open;
+pub mod neg_pressure;
 pub mod negative_zone;
 pub mod overload;
 pub mod possession;
+pub mod qi_field;
 pub mod qi_zero_decay;
 pub mod realm_vision;
 pub mod skill_registry;
@@ -92,6 +94,7 @@ use self::lifespan::{
     LifespanExtensionIntent, LifespanExtensionLedger,
 };
 use self::meridian_open::meridian_open_tick;
+use self::neg_pressure::tick_neg_pressure;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::{
     apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
@@ -212,6 +215,10 @@ pub fn register(app: &mut App) {
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
         ),
+    );
+    app.add_systems(
+        Update,
+        tick_neg_pressure.after(qi_regen_and_zone_drain_tick),
     );
     app.add_systems(
         Update,

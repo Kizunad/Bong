@@ -1912,6 +1912,27 @@ mod tests {
         captured.0.extend(events.read().cloned());
     }
 
+    fn npc_brain_persistence_settings(
+        test_name: &str,
+    ) -> (crate::persistence::PersistenceSettings, std::path::PathBuf) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bong-npc-brain-{test_name}-{}-{nanos}",
+            std::process::id()
+        ));
+        let deceased_dir = root.join("deceased");
+        std::fs::create_dir_all(&deceased_dir).expect("test persistence dirs should be creatable");
+        let settings = crate::persistence::PersistenceSettings::with_paths(
+            root.join("bong.db"),
+            deceased_dir,
+            format!("npc-brain-{test_name}"),
+        );
+        (settings, root)
+    }
+
     #[test]
     fn player_proximity_scorer_thresholds() {
         let score_at_just_inside_threshold_distance = proximity_score(3.2);
@@ -3458,7 +3479,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(AscensionQuotaStore::default());
-        app.insert_resource(crate::persistence::PersistenceSettings::default());
+        let (settings, persistence_root) = npc_brain_persistence_settings("rogue-tribulation-loop");
+        app.insert_resource(settings);
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<InitiateXuhuaTribulation>();
@@ -3553,6 +3575,8 @@ mod tests {
             ActionState::Success,
             "StartDuXuAction should Success once Realm::Void observed"
         );
+
+        let _ = std::fs::remove_dir_all(persistence_root);
     }
 
     /// Test-only shim：CultivateAction 成功/失败后重置为 Requested，模拟

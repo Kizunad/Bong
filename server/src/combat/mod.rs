@@ -1,11 +1,16 @@
+pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
+pub mod carrier;
 pub mod components;
 #[cfg(test)]
 mod death_event_attacker_chain_test;
 pub mod debug;
+pub mod decay;
 pub mod events;
+pub mod jiemai;
 pub mod lifecycle;
+pub mod projectile;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
@@ -28,6 +33,10 @@ use crate::player::state::{
     player_character_id, PlayerStatePersistence,
 };
 
+use self::anticheat::{
+    load_anticheat_config, AntiCheatConfig, AntiCheatCounter, AntiCheatViolationEvent,
+    DEFAULT_ANTICHEAT_CONFIG_PATH,
+};
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
 use self::events::{
     ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DeathInsightRequested,
@@ -81,6 +90,8 @@ fn attach_combat_bundle_to_joined_clients(
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            AntiCheatCounter::default(),
+            carrier::CarrierStore::default(),
             Lifecycle {
                 character_id,
                 spawn_anchor,
@@ -104,6 +115,7 @@ fn attach_combat_bundle_to_joined_npcs(
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            carrier::CarrierStore::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
                 ..Default::default()
@@ -128,6 +140,14 @@ pub fn register(app: &mut App) {
     );
     app.insert_resource(armor_registry);
 
+    let anticheat_config_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ANTICHEAT_CONFIG_PATH);
+    let anticheat_config = load_anticheat_config(anticheat_config_path).unwrap_or_else(|error| {
+        tracing::error!("[bong][anticheat] config load failed, using defaults: {error}");
+        AntiCheatConfig::default()
+    });
+    app.insert_resource(anticheat_config);
+
     app.insert_resource(CombatClock::default());
     app.add_event::<AttackIntent>();
     app.add_event::<DefenseIntent>();
@@ -137,6 +157,8 @@ pub fn register(app: &mut App) {
     app.add_event::<DeathInsightRequested>();
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
+    app.add_event::<AntiCheatViolationEvent>();
+    carrier::register(app);
 
     app.configure_sets(
         Update,
@@ -159,7 +181,9 @@ pub fn register(app: &mut App) {
             attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
             debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
             resolve::apply_defense_intents.in_set(CombatSystemSet::Intent),
-            status::status_effect_apply_tick.in_set(CombatSystemSet::Intent),
+            status::status_effect_apply_tick
+                .in_set(CombatSystemSet::Intent)
+                .after(resolve::apply_defense_intents),
             lifecycle::wound_bleed_tick.in_set(CombatSystemSet::Physics),
             lifecycle::stamina_tick.in_set(CombatSystemSet::Physics),
             lifecycle::combat_state_tick.in_set(CombatSystemSet::Physics),
@@ -193,5 +217,11 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    app.add_systems(
+        Update,
+        anticheat::emit_anticheat_threshold_reports
+            .in_set(CombatSystemSet::Resolve)
+            .after(resolve::resolve_attack_intents),
     );
 }

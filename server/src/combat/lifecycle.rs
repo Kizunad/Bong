@@ -5,6 +5,7 @@ use valence::prelude::{
 };
 
 use crate::alchemy::LearnedRecipes;
+use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::death_hooks::{
@@ -1515,6 +1516,7 @@ fn reset_for_new_character(
         crate::cultivation::insight_apply::InsightModifiers::new(),
         StatusEffects::default(),
         DerivedAttrs::default(),
+        AntiCheatCounter::default(),
         QuickSlotBindings::default(),
     ));
     entity_commands.insert((
@@ -1778,10 +1780,15 @@ fn enter_near_death(
 mod tests {
     use super::*;
 
+    use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::components::{
-        BodyPart, DefenseWindow, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS, JIEMAI_DEFENSE_WINDOW_MS,
+        BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS,
+        JIEMAI_PREP_WINDOW_MS,
     };
-    use crate::combat::events::{DefenseIntent, RevivalActionIntent, RevivalActionKind};
+    use crate::combat::events::{
+        ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
+    };
+    use crate::cultivation::components::Cultivation;
     use crate::cultivation::death_hooks::CultivationDeathCause;
     use crate::cultivation::life_record::LifeRecord;
     use crate::cultivation::tick::CultivationClock;
@@ -1791,6 +1798,7 @@ mod tests {
         DeceasedSnapshot, PersistenceSettings,
     };
     use crate::player::state::player_character_id;
+    use crate::schema::anticheat::ViolationKindV1;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use rusqlite::{params, Connection};
     use std::fs;
@@ -2000,6 +2008,10 @@ mod tests {
             damage: 3.0,
             contam_delta: 0.75,
             description: "hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.update();
 
@@ -2069,6 +2081,7 @@ mod tests {
     fn defense_intent_opens_incoming_window() {
         let mut app = App::new();
         app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
         app.add_systems(Update, crate::combat::resolve::apply_defense_intents);
 
         let entity = spawn_actor(
@@ -2077,6 +2090,15 @@ mod tests {
             Stamina::default(),
             Lifecycle::default(),
         );
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 10.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            },
+            StatusEffects::default(),
+        ));
 
         app.world_mut().send_event(DefenseIntent {
             defender: entity,
@@ -2087,7 +2109,7 @@ mod tests {
         let state = app.world().entity(entity).get::<CombatState>().unwrap();
         let window = state.incoming_window.as_ref().expect("window should open");
         assert_eq!(window.opened_at_tick, 42);
-        assert_eq!(window.duration_ms, JIEMAI_DEFENSE_WINDOW_MS);
+        assert_eq!(window.duration_ms, JIEMAI_PREP_WINDOW_MS);
     }
 
     #[test]
@@ -3074,6 +3096,9 @@ mod tests {
         app.add_systems(Update, handle_revival_action_intents);
 
         let username = Username("Azure".to_string());
+        let mut anticheat_counter = AntiCheatCounter::default();
+        anticheat_counter
+            .record_violation(ViolationKindV1::ReachExceeded, "reach: previous character");
         let _ = save_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
@@ -3144,6 +3169,7 @@ mod tests {
                     karma: 0.4,
                     inventory_score: 0.8,
                 },
+                anticheat_counter,
                 Position::new([99.0, 64.0, 99.0]),
                 username.clone(),
                 SkillSet::default(),
@@ -3185,6 +3211,9 @@ mod tests {
         let inventory = entity_ref
             .get::<PlayerInventory>()
             .expect("inventory should be reinitialized for new character");
+        let anticheat_counter = entity_ref
+            .get::<AntiCheatCounter>()
+            .expect("anticheat counter should remain attached");
 
         assert_eq!(lifecycle.state, LifecycleState::Alive);
         let connection = Connection::open(settings.db_path()).expect("db should open");
@@ -3216,6 +3245,10 @@ mod tests {
         assert_eq!(meridians.opened_count(), 0);
         assert_eq!(learned.ids, vec!["kai_mai_pill_v0".to_string()]);
         assert!(inventory.revision.0 >= 1);
+        assert_eq!(anticheat_counter.reach_violations, 0);
+        assert_eq!(anticheat_counter.cooldown_violations, 0);
+        assert_eq!(anticheat_counter.qi_invest_violations, 0);
+        assert!(anticheat_counter.last_reach_details.is_empty());
 
         let persisted = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),

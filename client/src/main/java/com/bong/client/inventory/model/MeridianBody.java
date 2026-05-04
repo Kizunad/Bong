@@ -1,5 +1,7 @@
 package com.bong.client.inventory.model;
 
+import com.bong.client.cultivation.ColorKind;
+
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
@@ -28,6 +30,10 @@ public final class MeridianBody {
     private final int deathPenaltyYears;
     private final double lifespanTickRateMultiplier;
     private final boolean windCandle;
+    private final ColorKind qiColorMain;
+    private final ColorKind qiColorSecondary;
+    private final boolean qiColorChaotic;
+    private final boolean qiColorHunyuan;
 
     private MeridianBody(Builder b) {
         this.channels = Collections.unmodifiableMap(new EnumMap<>(b.channels));
@@ -46,6 +52,10 @@ public final class MeridianBody {
         this.deathPenaltyYears = Math.max(0, b.deathPenaltyYears);
         this.lifespanTickRateMultiplier = Math.max(0.0, b.lifespanTickRateMultiplier);
         this.windCandle = b.windCandle;
+        this.qiColorMain = b.qiColorMain;
+        this.qiColorSecondary = b.qiColorSecondary;
+        this.qiColorChaotic = b.qiColorChaotic;
+        this.qiColorHunyuan = b.qiColorHunyuan;
     }
 
     public ChannelState channel(MeridianChannel ch) { return channels.get(ch); }
@@ -62,6 +72,10 @@ public final class MeridianBody {
     public double lifespanTickRateMultiplier() { return lifespanTickRateMultiplier; }
     public boolean hasLifespanPreview() { return lifespanCapByRealm > 0; }
     public boolean isWindCandle() { return windCandle; }
+    public ColorKind qiColorMain() { return qiColorMain; }
+    public ColorKind qiColorSecondary() { return qiColorSecondary; }
+    public boolean qiColorChaotic() { return qiColorChaotic; }
+    public boolean qiColorHunyuan() { return qiColorHunyuan; }
     /** 某条经脉当前裂痕条目数；未记录则返回 0。 */
     public int cracksFor(MeridianChannel ch) {
         Integer n = cracksCount.get(ch);
@@ -107,6 +121,10 @@ public final class MeridianBody {
         private int deathPenaltyYears = 0;
         private double lifespanTickRateMultiplier = 0.0;
         private boolean windCandle = false;
+        private ColorKind qiColorMain = ColorKind.Mellow;
+        private ColorKind qiColorSecondary = null;
+        private boolean qiColorChaotic = false;
+        private boolean qiColorHunyuan = false;
 
         private Builder() {}
 
@@ -164,6 +182,14 @@ public final class MeridianBody {
             this.deathPenaltyYears = deathPenaltyYears;
             this.lifespanTickRateMultiplier = tickRateMultiplier;
             this.windCandle = windCandle;
+            return this;
+        }
+
+        public Builder qiColor(ColorKind main, ColorKind secondary, boolean chaotic, boolean hunyuan) {
+            this.qiColorMain = main == null ? ColorKind.Mellow : main;
+            this.qiColorSecondary = secondary;
+            this.qiColorChaotic = chaotic;
+            this.qiColorHunyuan = hunyuan;
             return this;
         }
 
