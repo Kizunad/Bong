@@ -4,12 +4,12 @@
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| P0 | SurvivalMode/EnvLock/HarvestHazard 三抽象 + 5 MVP 物种注册 + TerrainProvider::sample_layer 多通道接口 + DecorationManifest | ⬜ |
-| P1 | 余下 **12** 物种注册 + 9 worldgen profile spawn rule 全接入 | ⬜ |
-| P2 | HarvestHazard 全实装（fauna / 工具 / 相位类做 stub）+ HarvestSessionHud hazard 行 + ResonanceVision HUD 干扰 | ⬜ |
-| P3 | 17 张 item icon（gen-image 批量）+ 客户端渲染管线（entity 路线 + tint 资产 + emissive / DualPhase overlay） | ⬜ |
-| P4 | alchemy / forge / zhenfa 配方接入 v2 高阶物种；plan-tools-v1 落地后回填 WoundOnBareHand 真伤 | ⬜ |
-| P5 | 极稀事件触发：portal_rift 开闭驱动 lie_yuan_tai；灵气井相位驱动 jing_xin_zao；雪线漂移驱动 xue_po_lian；fauna 立后回填 AttractsMobs 真 spawn | ⬜ |
+| P0 | SurvivalMode/EnvLock/HarvestHazard 三抽象 + 5 MVP 物种注册 + TerrainProvider::sample_layer 多通道接口 + DecorationManifest | ✅ 2026-04-30 |
+| P1 | 余下 **12** 物种注册 + 9 worldgen profile spawn rule 全接入 | ✅ 2026-04-30 |
+| P2 | HarvestHazard 全实装（fauna / 工具 / 相位类做 stub）+ HarvestSessionHud hazard 行 + ResonanceVision HUD 干扰 | ✅ 2026-05-04 |
+| P3 | 17 张 item icon（gen-image 批量）+ 客户端渲染管线（entity 路线 + tint 资产 + emissive / DualPhase overlay） | ✅ 2026-04-30 |
+| P4 | alchemy / forge / zhenfa 配方接入 v2 高阶物种；plan-tools-v1 落地后回填 WoundOnBareHand 真伤 | ✅ 2026-05-01 |
+| P5 | 极稀事件触发：portal_rift 开闭驱动 lie_yuan_tai；灵气井相位驱动 jing_xin_zao；雪线漂移驱动 xue_po_lian；fauna 立后回填 AttractsMobs 真 spawn | ✅ 2026-05-04（相位 driver 转 `plan-lingtian-weather-v1`） |
 
 **世界观锚点**：
 - worldview.md §二（灵压三态）/ §四 / §六（真元易挥发 + 染色谱）/ §七（动态生物生态）/ §十三（六域地理）/ §十六（坍缩渊：4 起源 / 三层负压 / 入场过滤）
@@ -32,7 +32,7 @@
 - 复用 InventoryStateStore + HarvestSession；新物种 drop 走现有 herbs.toml 注册
 - v1 plant entity 路线沿用——v2 不引入新 BlockKind / 不改 Plant Component schema
 
-**交叉引用**：plan-botany-v1.md（finished）· plan-lingtian-v1.md（merged）· plan-tsy-zone-v1.md / plan-tsy-dimension-v1.md / plan-tsy-worldgen-v1.md（TSY 5 物种载体）· plan-alchemy-v1.md / plan-forge-v1.md / plan-zhenfa-v1.md（v2 物种作高阶原料 / 载体）· plan-mineral-v2.md（共享 worldgen layer 接入范式）· **plan-fauna-v1.md（待立 — AttractsMobs 真 spawn 依赖）** · **plan-tools-v1.md（待立 — WoundOnBareHand 真伤依赖）** · **plan-lingtian-weather-v1.md（骨架 — 灵气井相位 driver 依赖）** · plan-narrative-v1.md（骨架 — agent narration 模板）
+**交叉引用**：plan-botany-v1.md（finished）· plan-lingtian-v1.md（merged）· plan-tsy-zone-v1.md / plan-tsy-dimension-v1.md / plan-tsy-worldgen-v1.md（TSY 5 物种载体）· plan-alchemy-v1.md / plan-forge-v1.md / plan-zhenfa-v1.md（v2 物种作高阶原料 / 载体）· plan-mineral-v2.md（共享 worldgen layer 接入范式）· **plan-fauna-v1.md（finished — AttractsMobs 已接 Beast/FaunaTag spawn）** · **plan-tools-v1.md（finished — WoundOnBareHand required_tool 真伤与耐久已接）** · **plan-lingtian-weather-v1.md（active — 灵气井相位 driver 归属）** · plan-narrative-v1.md（骨架 — agent narration 模板）
 
 ---
 
@@ -133,8 +133,8 @@ pub enum HarvestHazard {
 
 **P0–P3 实装边界**：
 - **全实装**：QiDrainOnApproach / DispersalOnFail / ResonanceVision
-- **stub 占位**（字段注册但效果延后）：WoundOnBareHand（required_tool=None → 退化 dispersal=1.0）/ SeasonRequired / AttractsMobs
-- P4 工具 plan 立 → 回填 WoundOnBareHand 真伤；P5 fauna 立 → 接 AttractsMobs；P5 相位 driver 立 → 接 SeasonRequired
+- **已回填**：WoundOnBareHand 接 `ToolKind` required_tool 真伤与耐久；AttractsMobs 接 Beast/FaunaTag 真 spawn
+- **保留相位后续**：SeasonRequired / WaterPulse 的真实相位 driver 归 `plan-lingtian-weather-v1`
 
 ### §1.4 渲染管线（entity 路线）
 
@@ -390,9 +390,9 @@ pub enum ModelOverlay {
 - [ ] **plan-zhenfa-v1**（未立 / 骨架）：P4 把 lie_yuan_tai / bei_wen_zhi 作为阵法原料；本 plan 留 hook
 - [ ] **plan-mineral-v2**（骨架）：共享 worldgen layer 接入范式（`TerrainProvider::sample_layer`）
 - [ ] **plan-skill-v1**：herbalism XP 与 v1 一致；**WoundOnBareHand 等危险采集**给 +50% XP（高风险高回报）—— 待 skill 系统接入后回填
-- [ ] **plan-fauna-v1**（**待立 — 强依赖**）：AttractsMobs hazard 真 spawn 需此 plan；P0–P3 stub 占位；P5 接入
-- [ ] **plan-tools-v1**（**骨架 — 强依赖**）：WoundOnBareHand 的 required_tool（采药刀 / 刨锄 / 草镰 / 冰甲手套 / 骨骸钳 / 钝气夹 / 刮刀）—— P0–P3 退化为 dispersal=1.0；P4 工具系统立后回填真伤
-- [ ] **plan-lingtian-weather-v1**（骨架 — 强依赖）：灵气井相位 driver；jing_xin_zao SeasonRequired hazard 与 WaterPulse mode 依赖；P0–P3 stub，P5 接入
+- [x] **plan-fauna-v1**（finished）：AttractsMobs hazard 已从采集完成事件接入 Beast/FaunaTag 真 spawn
+- [x] **plan-tools-v1**（finished）：WoundOnBareHand 的 required_tool（采药刀 / 刨锄 / 草镰 / 冰甲手套 / 骨骸钳 / 钝气夹 / 刮刀）已接真伤与耐久
+- [ ] **plan-lingtian-weather-v1**（active — 强依赖）：灵气井相位 driver；jing_xin_zao SeasonRequired hazard 与 WaterPulse mode 依赖；由该 plan P4 反向接入
 - [ ] **plan-narrative-v1**（骨架）：每种 v2 物种给 agent narration 提供 1-3 个语调模板
 - [ ] **agent / tiandao**：BotanyEcologySnapshotV1 channel 自动包含 v2 物种（v1 已建好 channel）；agent narration 模板可引用 v2 物种语义（"北荒今见负元蕨遍野" 等）
 
@@ -423,7 +423,7 @@ pub enum ModelOverlay {
 | **ColorProvider 多对一限制（必修悖论）** | **走 entity 渲染路线（v1 现状）**——单一 entity 类型 + 按 plant_id 查 PlantRenderProfile 着色；不走 BlockColorProvider |
 | BlockEntity / 独立 BongBlock 路线作为 fallback | 若 P3 entity renderer 性能不足或 v1 entity 路线变更，可 fallback 到每物种独立 BongBlock 继承 vanilla（17 个新 BlockKind 注册）；P3 优先走 entity，开销最小 |
 | WoundOnBareHand 在工具系统未实装时变成"100% 空手 wound" | MVP 用 `required_tool=None` → 退化为 `dispersal_chance=1.0`（玩家空手只是采空，不挂真伤）；P4 工具立后回填真伤——避免 P0–P3 错挂未本意的伤口档 |
-| AttractsMobs 在 fauna 系统未实装时无效 | hazard 字段保留作 stub，注册不报错；P5 fauna 立后回填 |
+| AttractsMobs 在 fauna 系统未实装时无效 | 已随 plan-fauna-v1 finished 后回填：采集完成发 `BotanyAttractsMobsEvent`，hazard 系统生成对应 Beast NPC 并挂 `FaunaTag` |
 | SeasonRequired 在相位系统未实装时无效 | 同上，stub 占位；P5 相位 driver 立后回填 |
 | jing_xin_zao 整株物种依赖未立的相位系统 | P0–P3 注册但**不刷新**（spawn rate=0）；玩家在 P0–P3 中看不到此物种是设计；P5 上线 |
 | 双相位（xue_se_mai_cao 白叶/红叶）增加 inventory item 数量 | 单 ID + NBT meta_tag 区分（昼/夜）；不新建 item ID |
@@ -444,3 +444,44 @@ pub enum ModelOverlay {
 - [ ] **TSY 物种与 plan-tsy-* 实装顺序**：建议 v2 P0–P3 先做主世界 12 种（北荒 2 + 古战场 2 + 浮岛 2 + abyssal 3 + 湿地 1 + 雪线 1 + 血谷 1 = 12）；TSY 5 种留到 P4–P5（待 TSY 全栈成熟后接入）—— P1 注册时声明 TSY 5 种但不开 spawn
 
 按下不表。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 / P1 server 植物核心**：`server/src/botany/registry.rs` 注册 17 种 v2 物种、`SurvivalMode` / `EnvLock` / `HarvestHazard` / render profile 字段；`server/src/botany/env_lock.rs` 提供 `DecorationManifest`、多 layer `env_sample_layer` 与 EnvLock 检查；`server/src/botany/lifecycle.rs` 接 v2 spawn / wither / growth。
+- **P2 采集风险**：`server/src/botany/hazard.rs` 实装 `QiDrainOnApproach`、失败散气、怨念幻视、工具真伤、以及本轮补上的 `AttractsMobs` 真 spawn；`server/src/botany/harvest.rs` 在采集结算时发 `BotanyAttractsMobsEvent`。
+- **P3 schema / client / assets**：`server/src/schema/botany.rs`、`agent/packages/schema/src/server-data.ts`、`client/src/main/java/com/bong/client/botany/`、`client/src/main/java/com/bong/client/hud/BotanyHudPlanner.java`、`client/src/main/resources/assets/bong-client/textures/gui/items/` 覆盖 v2 render profile、entity renderer、HUD hazard 行、17 张 item icon。
+- **P4 recipe / tool / hook**：`server/assets/alchemy/recipes/*` 消费 v2 高阶药材，`server/assets/forge/blueprints/ling_feng_v0.json` 接 `yuan_ni_hong_yu` 等载体，`server/assets/zhenfa_hooks/botany_v2_hooks.json` 保留阵法材料 hook，`server/src/tools/` + `server/src/botany/harvest.rs` 接 required_tool 耐久。
+- **P5 极稀 / 诱怪回填**：`PortalRiftActive`、`SnowSurface`、TSY origin 物种、ecology snapshot channel 已在 botany 主实现内可核验；本轮新增 `BotanyAttractsMobsEvent` + `spawn_attracted_mobs_from_harvest`，将 `spirit_mice` 映射为 Rat、`mimic_spider` 映射为 Spider 并挂 `FaunaTag`。
+
+### 关键 commit
+
+- `e084f89f` 2026-04-30 `botany: 接入 v2 物种环境与采集风险`
+- `dee96978` 2026-04-30 `schema: 同步 botany v2 渲染契约`
+- `509dd97c` 2026-04-30 `client: 渲染 botany v2 采集提示`
+- `cd420e7a` 2026-04-30 `recipes: 消费 botany v2 高阶药材`
+- `a63c76b7` / `d7ee4d12` 2026-04-30 锁定并接入 botany v2 图标资产
+- `c691be35` 2026-04-30 `fix(botany): 按半径校验环境邻接锁`
+- `c8dd396e` / `d02ac7f5` 2026-04-30..2026-05-01 接入采集工具真伤判定与凡器耐久损耗
+- `6405a7da` 2026-05-04 `botany-v2: 回填采集诱怪真 spawn`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo test botany::hazard::tests -- --nocapture` ✅ 5 passed
+- `cd server && cargo test botany::harvest::tests::required_tool_harvest_ticks_tool_durability -- --nocapture` ✅ 1 passed
+- `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test` ✅ 2290 passed / 0 failed
+
+### 跨仓库核验
+
+- **server**：`BotanyKindRegistry`、`SurvivalMode`、`EnvLock`、`HarvestHazard`、`DecorationManifest`、`BotanyAttractsMobsEvent`、`spawn_attracted_mobs_from_harvest`、`BotanyEcologySnapshotV1` 均可 grep 命中。
+- **agent / schema**：`BotanyPlantV2RenderProfileV1`、`BotanyEcologySnapshotV1`、`server-data.botany-plant-v2-render-profiles.sample.json`、generated JSON schema 均已存在。
+- **client**：`BotanyPlantV2Entities`、`BotanyPlantEntityRenderer`、`BotanyPlantRenderProfileHandler`、`BotanyHudPlanner` hazard 行与 `valid-botany-plant-render-profiles.json` 测试样本均已存在。
+- **assets / recipes**：`server/assets/items/botany_v2.toml`、`scripts/images/prompts/botany_v2.toml`、`server/assets/alchemy/recipes/*`、`server/assets/forge/blueprints/ling_feng_v0.json`、`server/assets/zhenfa_hooks/botany_v2_hooks.json` 均含 v2 物种 ID。
+
+### 遗留 / 后续
+
+- `plan-lingtian-weather-v1` 仍是 `SeasonRequired` / `WaterPulse` 真实相位 driver 的归属 plan。当前 botany 侧保留 `WaterPulsePhase::Open`、`EnvLock::TimePhase` 与 `HarvestHazard::SeasonRequired` 契约，等 weather P4 提供 zone season / tide state 后反向接入 `jing_xin_zao` 的开合相位。
+- v3+ 仍保留可写 layer account、完整四季、agent 语义模板和 worldgen profile 正典收编等开放问题；它们不阻塞本 plan 归档。
