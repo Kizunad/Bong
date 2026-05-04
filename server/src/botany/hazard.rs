@@ -195,11 +195,9 @@ pub fn spawn_attracted_mobs_from_harvest(
     zone_registry: Option<Res<ZoneRegistry>>,
 ) {
     for event in events.read() {
-        let dimension = zone_registry
-            .as_deref()
-            .and_then(|registry| registry.find_zone_by_name(event.zone_name.as_str()))
-            .map(|zone| zone.dimension)
-            .unwrap_or(DimensionKind::Overworld);
+        let Some(dimension) = harvest_zone_dimension(event, zone_registry.as_deref()) else {
+            continue;
+        };
         let Some(layer) = dimension_layers
             .as_deref()
             .map(|layers| layers.entity_for(dimension))
@@ -235,6 +233,27 @@ pub fn spawn_attracted_mobs_from_harvest(
                 .insert(FaunaTag::new(beast_kind_for_botany(event.mob_kind)));
         }
     }
+}
+
+fn harvest_zone_dimension(
+    event: &BotanyAttractsMobsEvent,
+    zone_registry: Option<&ZoneRegistry>,
+) -> Option<DimensionKind> {
+    let Some(registry) = zone_registry else {
+        tracing::warn!(
+            "[bong][botany] drop AttractsMobs spawn for `{}`: ZoneRegistry missing",
+            event.zone_name
+        );
+        return None;
+    };
+    let Some(zone) = registry.find_zone_by_name(event.zone_name.as_str()) else {
+        tracing::warn!(
+            "[bong][botany] drop AttractsMobs spawn for `{}`: zone not found",
+            event.zone_name
+        );
+        return None;
+    };
+    Some(zone.dimension)
 }
 
 fn beast_kind_for_botany(kind: FaunaKind) -> BeastKind {
@@ -377,21 +396,30 @@ mod tests {
     }
 
     #[test]
+    fn plant_without_attracts_mobs_exposes_no_mob_hazard() {
+        let registry = BotanyKindRegistry::default();
+        let hazards = attracts_mobs_hazards_for_kind(BotanyPlantId::FuYuanJue, &registry);
+        assert!(hazards.is_empty());
+    }
+
+    #[test]
     fn attracts_mobs_event_spawns_fauna_tagged_beasts() {
         use crate::npc::lifecycle::NpcArchetype;
         use crate::npc::spawn::NpcMarker;
+        use crate::world::zone::ZoneRegistry;
         use valence::prelude::{App, Update, With};
 
         let mut app = App::new();
         app.add_event::<BotanyAttractsMobsEvent>();
         app.add_systems(Update, spawn_attracted_mobs_from_harvest);
+        app.insert_resource(ZoneRegistry::fallback());
         app.world_mut().spawn(OverworldLayer);
         let client = app.world_mut().spawn_empty().id();
 
         app.world_mut().send_event(BotanyAttractsMobsEvent {
             client_entity: client,
             plant_kind: BotanyPlantId::BaiYanPeng,
-            zone_name: "north_wastes".to_string(),
+            zone_name: "spawn".to_string(),
             target_pos: [12.0, 66.0, 12.0],
             mob_kind: FaunaKind::SpiritMice,
             min_count: 2,
@@ -408,5 +436,35 @@ mod tests {
             .iter()
             .all(|(tag, archetype)| tag.beast_kind == BeastKind::Rat
                 && **archetype == NpcArchetype::Beast));
+    }
+
+    #[test]
+    fn attracts_mobs_event_with_unknown_zone_spawns_nothing() {
+        use crate::npc::spawn::NpcMarker;
+        use crate::world::zone::ZoneRegistry;
+        use valence::prelude::{App, Update, With};
+
+        let mut app = App::new();
+        app.add_event::<BotanyAttractsMobsEvent>();
+        app.add_systems(Update, spawn_attracted_mobs_from_harvest);
+        app.insert_resource(ZoneRegistry::fallback());
+        app.world_mut().spawn(OverworldLayer);
+        let client = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(BotanyAttractsMobsEvent {
+            client_entity: client,
+            plant_kind: BotanyPlantId::BaiYanPeng,
+            zone_name: "missing_zone".to_string(),
+            target_pos: [12.0, 66.0, 12.0],
+            mob_kind: FaunaKind::SpiritMice,
+            min_count: 2,
+            max_count: 2,
+            issued_at_tick: 99,
+        });
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+        assert_eq!(query.iter(world).count(), 0);
     }
 }

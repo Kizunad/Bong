@@ -125,9 +125,8 @@ pub enum HarvestHazard {
     // P0–P3 stub：不真触发；P5 待相位 driver 接入
 
     AttractsMobs { mob_kind: FaunaKind, count_range: (u8, u8) },
-    // session 期间小概率刷怪
-    // P0–P3 stub：FaunaKind 仅声明（spirit_mice / mimic_spider 等）；
-    // 真 spawn 等 plan-fauna-v1（待立）实装
+    // session 完成时触发刷怪；数量由 count_range 确定性抽样
+    // FaunaKind 已接 plan-fauna-v1 的 Beast/FaunaTag 真 spawn
 }
 ```
 
@@ -187,7 +186,7 @@ python scripts/images/remove_bg.py local_images/botany_v2/{plant_id}.png
 | ID | 中文名 | Tier | SurvivalMode | EnvLock | HarvestHazard | base_mesh_ref | tint | 用途 |
 |---|---|---|---|---|---|---|---|---|
 | `fu_yuan_jue` | 负元蕨 | 区域专属 | NegPressureFeed | NegPressure(min=0.3) | QiDrainOnApproach(r=5, drain=0.4，**叠加于 zone 负灵压本身的抽吸**) | `large_fern` | `0x4A2E5A` 暗紫 | 逆灵符 / 负元丹（worldview §五 涡流流防御加成） |
-| `bai_yan_peng` | 白盐蓬 | 区域专属 | SpiritCrystallize | （无 grid layer 锁；SurvivalMode 内置 daytime 限制） | DispersalOnFail(0.6) + AttractsMobs(`spirit_mice`, 2..5) **stub** | `dead_bush` | `0xF8F8E8` 灰白 | 低品灵石替代 / 回元散辅料 / 鼠群诱饵 |
+| `bai_yan_peng` | 白盐蓬 | 区域专属 | SpiritCrystallize | （无 grid layer 锁；SurvivalMode 内置 daytime 限制） | DispersalOnFail(0.6) + AttractsMobs(`spirit_mice`, 2..5) | `dead_bush` | `0xF8F8E8` 灰白 | 低品灵石替代 / 回元散辅料 / 鼠群诱饵 |
 
 **生存自洽**：
 - **负元蕨**——负灵域是天地反向抽吸（worldview §二）。蕨叶反向利用这口"吸"作代谢，把外界负压抽进叶脉。**为何不在馈赠区生长**：正向灵气流压垮反向气孔，结构崩溃（NegPressureFeed 公式不读 zone.spirit_qi，但 EnvLock NegPressure(min=0.3) 自动排除馈赠区——**双重判定的悖论已修，统一走 grid 级 neg_pressure，无 zone 级判定**）。**为何近身吸玩家**：玩家在负灵域本就被抽吸（library 北荒坍缩渊记凝脉中期池"每息约失一点" ≈ 0.67/s），蕨叶与环境**同向**叠加 0.4/s，不是替换——这就是为什么 hazard 数值看起来温和但叠加后致命
@@ -221,7 +220,7 @@ python scripts/images/remove_bg.py local_images/botany_v2/{plant_id}.png
 
 | ID | 中文名 | Tier | SurvivalMode | EnvLock | HarvestHazard | base_mesh_ref | tint | 用途 |
 |---|---|---|---|---|---|---|---|---|
-| `ying_yuan_gu` | 萤渊菇 | 区域专属 | PhotoLuminance | UndergroundTier(1) + AdjacentLightBlock(r=2) | DispersalOnFail(0.3) + AttractsMobs(`mimic_spider`, 1..2) **stub** | `red_mushroom` + Emissive | `0xFFA040` 暖橙 | 夜视丹 / 渊光阵光源 |
+| `ying_yuan_gu` | 萤渊菇 | 区域专属 | PhotoLuminance | UndergroundTier(1) + AdjacentLightBlock(r=2) | DispersalOnFail(0.3) + AttractsMobs(`mimic_spider`, 1..2) | `red_mushroom` + Emissive | `0xFFA040` 暖橙 | 夜视丹 / 渊光阵光源 |
 | `xuan_rong_tai` | 玄绒苔 | 区域专属 | ThermalConvection | UndergroundTier(2) | WoundOnBareHand(ABRASION，required_tool=None → P0 真元 -2 + dispersal=0.8) | `moss_carpet` + Emissive（银光）| `0x101015` 漆黑 | 替尸 / 蜕壳流伪灵皮高阶夹层 / 养经苔人工替代（效力 60%） |
 | `yuan_ni_hong_yu` | 渊泥红玉 | 区域专属 | PressureDifferential | UndergroundTier(3) + AdjacentDecoration("yuan_ni_ebony", r=5) + QiVeinFlow(0.5) | DispersalOnFail(0.5) | `large_fern` | `0xC02040` 玉红 | 高阶炼器载体（堪比髓铁）/ 上品丹药主原料；herbs.toml 设 spirit_quality_initial=1.0（按 library 灵物磨损笔记的 1-5% 税扣得最狠） |
 
@@ -265,7 +264,7 @@ python scripts/images/remove_bg.py local_images/botany_v2/{plant_id}.png
 | ID | 中文名 | Tier | TSY origin | SurvivalMode | EnvLock | HarvestHazard | base_mesh_ref | tint | 用途 |
 |---|---|---|---|---|---|---|---|---|---|
 | `lie_yuan_tai` | 裂渊苔 | 极稀 / 事件触发 | 任意 origin（仅 _shallow 入口子 zone）| PortalSiphon | PortalRiftActive | DispersalOnFail(0.4)（裂缝塌缩瞬间所有株消失）| `glow_lichen` + Emissive | `0x402060` 紫黑 | 渊息丹（5s 抗负灵压）/ 地师伪虚阵载体 |
-| `ming_gu_gu` | 冥骨菇 | 区域专属 | tsy_zhanchang | RuinResonance | RuinDensity(0.4) + AdjacentDecoration("bone_mountain", r=3) | ResonanceVision(5s, composure -0.08) + AttractsMobs(`mimic_spider`, 1..3) **stub** | `brown_mushroom` | `0xE8E0D0` 骨白 | 替尸流骨灰夹层 / 骨魂丹（一次性回魂 5 真元）|
+| `ming_gu_gu` | 冥骨菇 | 区域专属 | tsy_zhanchang | RuinResonance | RuinDensity(0.4) + AdjacentDecoration("bone_mountain", r=3) | ResonanceVision(5s, composure -0.08) + AttractsMobs(`mimic_spider`, 1..3) | `brown_mushroom` | `0xE8E0D0` 骨白 | 替尸流骨灰夹层 / 骨魂丹（一次性回魂 5 真元）|
 | `bei_wen_zhi` | 碑文芝 | 区域专属 | tsy_zongmen_ruin | RuinResonance | RuinDensity(0.3) + AdjacentDecoration("array_disc_remnant", r=2) | DispersalOnFail(0.5)（碎裂后阵纹一并散）| `red_mushroom` | `0x808890` 灰青 + `0x6020A0` 紫纹 | 阵法师摹阵纸（拓印 20 种残阵图样）|
 | `ling_jing_xu` | 灵晶须 | 区域专属 | tsy_daneng_crater | PressureDifferential | AdjacentDecoration("qi_crystal_pillar", r=3) + QiVeinFlow(0.5) | WoundOnBareHand(ABRASION，required_tool=None → P0 退化 dispersal=1.0) + DispersalOnFail(0.6) | `twisting_vines` + Emissive | `0xA060FF` 紫晶 | 器修上古载体强化（一次性给上古遗物 +1 耐久）|
 | `mao_xin_wei` | 茅心薇 | 区域专属 | tsy_gaoshou_hermitage | **RuinResonance**（**修正：原 QiAbsorb 在 TSY 负灵气位面不成立**）| AdjacentDecoration("thatched_hermitage" \| "lone_grave_mound" \| "daily_artifact_cache", r=2) | （无）| `wheat`（生长阶段 7）| `0xE8C040` 暖黄 | 医道温润色染色加速 / 心安散 |
@@ -286,7 +285,7 @@ python scripts/images/remove_bg.py local_images/botany_v2/{plant_id}.png
 | 物种 | SurvivalMode | 验证意图 |
 |---|---|---|
 | `fu_yuan_jue` | NegPressureFeed | grid neg_pressure 读取 + EnvLock NegPressure + QiDrainOnApproach（**叠加于环境抽吸**的最尖锐镜像） |
-| `bai_yan_peng` | SpiritCrystallize | daytime 限制 + DispersalOnFail + AttractsMobs（stub）|
+| `bai_yan_peng` | SpiritCrystallize | daytime 限制 + DispersalOnFail + AttractsMobs 真 spawn |
 | `ying_yuan_gu` | PhotoLuminance | UndergroundTier + AdjacentLightBlock + emissive 渲染（abyssal_maze tier 1）|
 | `jiao_mai_teng` | PressureDifferential | fracture_mask + AdjacentDecoration + WoundOnBareHand 退化路径（替原 xue_po_lian——避免与 bai_yan_peng 同 mode） |
 | `lie_yuan_tai` | PortalSiphon | active_events 检查 + portal_rift 同步消失 + 恒定生长（不依赖 zone qi） |
@@ -464,7 +463,7 @@ pub enum ModelOverlay {
 - `a63c76b7` / `d7ee4d12` 2026-04-30 锁定并接入 botany v2 图标资产
 - `c691be35` 2026-04-30 `fix(botany): 按半径校验环境邻接锁`
 - `c8dd396e` / `d02ac7f5` 2026-04-30..2026-05-01 接入采集工具真伤判定与凡器耐久损耗
-- `6405a7da` 2026-05-04 `botany-v2: 回填采集诱怪真 spawn`
+- `ef6f62df` 2026-05-04 `botany-v2: 回填采集诱怪真 spawn`
 
 ### 测试结果
 
