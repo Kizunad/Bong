@@ -19,6 +19,7 @@ import {
   resolveRuntimeConfig,
   runRuntime,
   runTick,
+  type RuntimeConfig,
   type TickPublishMetadata,
 } from "./runtime.js";
 import { WorldModel } from "./world-model.js";
@@ -36,7 +37,11 @@ export interface MainOptions {
   baseUrl?: string;
   apiKey?: string;
   model: string;
+  auxiliaryRuntimeStarter?: AuxiliaryRuntimeStarter;
 }
+
+export type RuntimeCleanup = () => Promise<void>;
+export type AuxiliaryRuntimeStarter = (config: RuntimeConfig) => Promise<RuntimeCleanup[]>;
 
 export interface MockTickOptions {
   llmClient: LlmClient;
@@ -109,80 +114,70 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey ?? null,
   };
 
+  const cleanupFns = await (options.auxiliaryRuntimeStarter ?? startAuxiliaryRuntimes)(config);
+
+  try {
+    await runRuntime(config);
+  } finally {
+    for (const cleanup of cleanupFns) {
+      await cleanup();
+    }
+  }
+}
+
+async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCleanup[]> {
+  const runtimeOpts = {
+    redisUrl: config.redisUrl,
+    baseUrl: config.baseUrl ?? undefined,
+    apiKey: config.apiKey ?? undefined,
+    model: config.model,
+  };
+
   // 顿悟 runtime（事件驱动，独立于 tick loop，与 runRuntime 并行）。
   const insightCleanup = await startInsightRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const deathInsightCleanup = await startDeathInsightRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const skillLvUpCleanup = await startSkillLvUpRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const tribulationCleanup = await startTribulationRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const woliuCleanup = await startWoliuRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const zhenmaiCleanup = await startZhenmaiRuntime({
     redisUrl: config.redisUrl,
   });
   const anqiCleanup = await startAnqiRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const tuikeCleanup = await startTuikeRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
   const duguCleanup = await startDuguRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
-    redisUrl: config.redisUrl,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
+    ...runtimeOpts,
   });
 
-  try {
-    await runRuntime(config);
-  } finally {
-    await heartDemonCleanup();
-    await anqiCleanup();
-    await zhenmaiCleanup();
-    await tuikeCleanup();
-    await duguCleanup();
-    await woliuCleanup();
-    await tribulationCleanup();
-    await skillLvUpCleanup();
-    await deathInsightCleanup();
-    await insightCleanup();
-  }
+  return [
+    heartDemonCleanup,
+    anqiCleanup,
+    zhenmaiCleanup,
+    tuikeCleanup,
+    duguCleanup,
+    woliuCleanup,
+    tribulationCleanup,
+    skillLvUpCleanup,
+    deathInsightCleanup,
+    insightCleanup,
+  ];
 }
 
 async function startAnqiRuntime(opts: {

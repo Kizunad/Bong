@@ -667,6 +667,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -799,6 +800,10 @@ mod tests {
             damage: 1.0,
             contam_delta: 0.0,
             description: "qi needle hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
 
         app.update();
@@ -852,6 +857,10 @@ mod tests {
             damage: 1.0,
             contam_delta: 0.0,
             description: "plain melee hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
 
         app.update();
