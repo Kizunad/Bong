@@ -1317,6 +1317,60 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
+                  "FalseSkinShed"
+                ],
+                "properties": {
+                  "FalseSkinShed": {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "layers_shed",
+                      "contam_absorbed",
+                      "contam_overflow",
+                      "tick"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "layers_shed": {
+                        "minimum": 1,
+                        "maximum": 3,
+                        "type": "integer"
+                      },
+                      "contam_absorbed": {
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "contam_overflow": {
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "attacker_id": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
                   "SpawnTutorialCompleted"
                 ],
                 "properties": {

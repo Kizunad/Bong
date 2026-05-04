@@ -68,6 +68,7 @@ pub const EQUIP_SLOT_HEAD: &str = "head";
 pub const EQUIP_SLOT_CHEST: &str = "chest";
 pub const EQUIP_SLOT_LEGS: &str = "legs";
 pub const EQUIP_SLOT_FEET: &str = "feet";
+pub const EQUIP_SLOT_FALSE_SKIN: &str = "false_skin";
 pub const EQUIP_SLOT_MAIN_HAND: &str = "main_hand";
 pub const EQUIP_SLOT_OFF_HAND: &str = "off_hand";
 pub const EQUIP_SLOT_TWO_HAND: &str = "two_hand";
@@ -269,7 +270,7 @@ pub struct DefaultLoadout(pub LoadoutSpec);
 
 impl Resource for DefaultLoadout {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InventoryInstanceIdAllocator {
     next: u64,
 }
@@ -3015,6 +3016,15 @@ fn validate_move_semantics(
                 }
                 Ok(())
             }
+            EquipSlotV1::FalseSkin => {
+                if crate::combat::tuike::false_skin_kind_for_item(&item.template_id).is_none() {
+                    return Err(format!(
+                        "item `{}` cannot equip to false_skin; expected tuike false skin",
+                        item.template_id
+                    ));
+                }
+                Ok(())
+            }
             _ => Ok(()),
         },
         _ => Ok(()),
@@ -3224,6 +3234,7 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::Chest => EQUIP_SLOT_CHEST,
         EquipSlotV1::Legs => EQUIP_SLOT_LEGS,
         EquipSlotV1::Feet => EQUIP_SLOT_FEET,
+        EquipSlotV1::FalseSkin => EQUIP_SLOT_FALSE_SKIN,
         EquipSlotV1::MainHand => EQUIP_SLOT_MAIN_HAND,
         EquipSlotV1::OffHand => EQUIP_SLOT_OFF_HAND,
         EquipSlotV1::TwoHand => EQUIP_SLOT_TWO_HAND,
@@ -3242,6 +3253,7 @@ fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSl
         EQUIP_SLOT_CHEST => EquipSlotV1::Chest,
         EQUIP_SLOT_LEGS => EquipSlotV1::Legs,
         EQUIP_SLOT_FEET => EquipSlotV1::Feet,
+        EQUIP_SLOT_FALSE_SKIN => EquipSlotV1::FalseSkin,
         EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
         EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
         EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
@@ -3393,6 +3405,7 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         EQUIP_SLOT_CHEST,
         EQUIP_SLOT_LEGS,
         EQUIP_SLOT_FEET,
+        EQUIP_SLOT_FALSE_SKIN,
         EQUIP_SLOT_MAIN_HAND,
         EQUIP_SLOT_OFF_HAND,
         EQUIP_SLOT_TWO_HAND,
@@ -3407,12 +3420,13 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
+            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
             EQUIP_SLOT_HEAD,
             EQUIP_SLOT_CHEST,
             EQUIP_SLOT_LEGS,
             EQUIP_SLOT_FEET,
+            EQUIP_SLOT_FALSE_SKIN,
             EQUIP_SLOT_MAIN_HAND,
             EQUIP_SLOT_OFF_HAND,
             EQUIP_SLOT_TWO_HAND,

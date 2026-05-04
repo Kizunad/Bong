@@ -1,0 +1,12 @@
+{
+  "anyOf": [
+    {
+      "const": "spider_silk",
+      "type": "string"
+    },
+    {
+      "const": "rotten_wood_armor",
+      "type": "string"
+    }
+  ]
+}

@@ -95,6 +95,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to));
     }
 
+    public static void sendEquipFalseSkin(long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeEquipFalseSkin(itemInstanceId));
+    }
+
+    public static void sendForgeFalseSkin(ClientRequestProtocol.FalseSkinKind kind) {
+        dispatch(ClientRequestProtocol.encodeForgeFalseSkin(kind));
+    }
+
     public static void sendPickupDroppedItem(long instanceId) {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
     }

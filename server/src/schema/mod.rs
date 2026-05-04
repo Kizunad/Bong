@@ -36,6 +36,7 @@ pub mod spirit_eye;
 pub mod tribulation;
 pub mod tsy;
 pub mod tsy_hostile;
+pub mod tuike;
 pub mod vfx_event;
 pub mod woliu;
 pub mod world_state;

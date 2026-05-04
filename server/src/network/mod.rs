@@ -21,6 +21,7 @@ pub mod derived_attrs_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
 pub mod extract_emit;
+pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
@@ -43,6 +44,7 @@ pub mod tribulation_heart_demon_offer_emit;
 pub mod tribulation_state_emit;
 pub mod tsy_container_search_emit;
 pub mod tsy_event_bridge;
+pub mod tuike_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
 pub mod vfx_event_emit;
@@ -359,6 +361,8 @@ pub fn register(app: &mut App) {
             anqi_event_bridge::publish_projectile_despawned_events,
             woliu_event_bridge::publish_woliu_backfire_events,
             woliu_event_bridge::publish_projectile_qi_drained_events,
+            tuike_event_bridge::publish_tuike_shed_events
+                .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
     app.add_systems(
@@ -463,6 +467,10 @@ pub fn register(app: &mut App) {
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(Update, derived_attrs_emit::emit_derived_attrs_sync_payloads);
+    app.add_systems(
+        Update,
+        false_skin_state_emit::emit_false_skin_state_payloads,
+    );
     app.add_systems(
         Update,
         (

@@ -8,10 +8,11 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
     calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
-    EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND,
-    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1,
-    EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND,
-    FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
+    EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
+    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0,
+    EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3,
+    EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
+    SMALL_POUCH_CONTAINER_ID,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -208,6 +209,7 @@ pub(crate) fn build_inventory_snapshot(
         chest: equipped_slot_item(inventory, EQUIP_SLOT_CHEST),
         legs: equipped_slot_item(inventory, EQUIP_SLOT_LEGS),
         feet: equipped_slot_item(inventory, EQUIP_SLOT_FEET),
+        false_skin: equipped_slot_item(inventory, EQUIP_SLOT_FALSE_SKIN),
         main_hand: equipped_slot_item(inventory, EQUIP_SLOT_MAIN_HAND),
         off_hand: equipped_slot_item(inventory, EQUIP_SLOT_OFF_HAND),
         two_hand: equipped_slot_item(inventory, EQUIP_SLOT_TWO_HAND),

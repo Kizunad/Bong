@@ -63,6 +63,7 @@
     "chest": null,
     "legs": null,
     "feet": null,
+    "false_skin": null,
     "main_hand": {
       "instance_id": 1003,
       "item_id": "training_blade",

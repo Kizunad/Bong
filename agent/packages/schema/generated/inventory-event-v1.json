@@ -97,6 +97,10 @@
                       "type": "string"
                     },
                     {
+                      "const": "false_skin",
+                      "type": "string"
+                    },
+                    {
                       "const": "main_hand",
                       "type": "string"
                     },
@@ -219,6 +223,10 @@
                     },
                     {
                       "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "false_skin",
                       "type": "string"
                     },
                     {
@@ -371,6 +379,10 @@
                     },
                     {
                       "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "false_skin",
                       "type": "string"
                     },
                     {

@@ -12,6 +12,7 @@ use crate::combat::jiemai::{
     jiemai_qi_cost_for_realm, JIEMAI_PARRY_RECOVERY_TICKS,
 };
 use crate::combat::status::has_active_status;
+use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::combat::CombatClock;
 use crate::combat::{
@@ -33,9 +34,10 @@ use crate::cultivation::components::{
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
-    discard_inventory_item_to_dropped_loot, move_equipped_item_to_first_container_slot,
-    set_item_instance_durability, DroppedLootRegistry, InventoryDurabilityChangedEvent,
-    PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
+    consume_item_instance_once, discard_inventory_item_to_dropped_loot,
+    move_equipped_item_to_first_container_slot, set_item_instance_durability, DroppedLootRegistry,
+    InventoryDurabilityChangedEvent, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN,
+    EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -106,7 +108,8 @@ type CombatTargetItem<'a> = (
     Option<&'a Lifecycle>,
     Option<&'a mut CombatState>,
     Option<&'a mut Cultivation>,
-    Option<&'a DerivedAttrs>,
+    Option<&'a mut FalseSkin>,
+    Option<&'a mut DerivedAttrs>,
     Option<&'a mut PracticeLog>,
 );
 type CombatAttackerItem<'a> = (
@@ -116,20 +119,22 @@ type CombatAttackerItem<'a> = (
     Option<&'a mut AntiCheatCounter>,
     Option<&'a CombatState>,
 );
+type DefenseResponderItem<'a> = (
+    &'a mut CombatState,
+    &'a Cultivation,
+    Option<&'a PlayerInventory>,
+    Option<&'a StatusEffects>,
+    Option<&'a FalseSkin>,
+);
 type PositionLookItem<'a> = (&'a Position, Option<&'a Look>);
 
 pub fn apply_defense_intents(
     mut defenses: EventReader<DefenseIntent>,
-    mut defenders: Query<(
-        &mut CombatState,
-        &Cultivation,
-        Option<&PlayerInventory>,
-        Option<&StatusEffects>,
-    )>,
+    mut defenders: Query<DefenseResponderItem<'_>>,
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
 ) {
     for defense in defenses.read() {
-        let Ok((mut combat_state, cultivation, inventory, status_effects)) =
+        let Ok((mut combat_state, cultivation, inventory, status_effects, false_skin)) =
             defenders.get_mut(defense.defender)
         else {
             continue;
@@ -146,7 +151,13 @@ pub fn apply_defense_intents(
             continue;
         }
 
-        combat_state.incoming_window = Some(jiemai_prep_window(inventory, defense.issued_at_tick));
+        let mut window = jiemai_prep_window(inventory, defense.issued_at_tick);
+        if let Some(skin) = false_skin {
+            window.duration_ms = ((window.duration_ms as f32) * skin.kind.jiemai_window_modifier())
+                .round()
+                .max(1.0) as u32;
+        }
+        combat_state.incoming_window = Some(window);
         status_effect_intents.send(ApplyStatusEffectIntent {
             target: defense.defender,
             kind: StatusEffectKind::ParryRecovery,
@@ -181,6 +192,7 @@ pub fn resolve_attack_intents(
         Query<&mut PlayerInventory>,
         Option<ResMut<DroppedLootRegistry>>,
         Option<ResMut<Events<SkillXpGain>>>,
+        Option<ResMut<Events<ShedEvent>>>,
     ),
 ) {
     let (
@@ -190,6 +202,7 @@ pub fn resolve_attack_intents(
         mut inventories,
         mut dropped_loot_registry,
         mut skill_xp_events,
+        mut shed_events,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -313,6 +326,7 @@ pub fn resolve_attack_intents(
             lifecycle,
             combat_state,
             defender_cultivation,
+            false_skin,
             defender_attrs,
             defender_practice_log,
         )) = target_query.get_mut(target_entity)
@@ -329,6 +343,7 @@ pub fn resolve_attack_intents(
             body_part_multipliers(hit_probe.body_part);
         let wound_profile = wound_kind_profile(intent.wound_kind);
         let defender_damage_multiplier = defender_attrs
+            .as_ref()
             .map(|attrs| attrs.defense_power)
             .unwrap_or(1.0);
         // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
@@ -482,8 +497,10 @@ pub fn resolve_attack_intents(
         let mut jiemai_effectiveness_value = None;
         let mut jiemai_contam_reduced = None;
         let mut jiemai_wound_severity = None;
+        let mut false_skin = false_skin;
+        let mut defender_attrs = defender_attrs;
 
-        // 先写入 stamina 与污染，再做截脉与护甲减免。
+        // 污染结算顺序：截脉先改污染量，护甲再削污染，伪皮最后截胡剩余污染。
 
         stamina.current =
             (stamina.current - DEBUG_ATTACK_STAMINA_COST * decay).clamp(0.0, stamina.max);
@@ -493,13 +510,6 @@ pub fn resolve_attack_intents(
         } else {
             StaminaState::Combat
         };
-
-        contamination.entries.push(ContamSource {
-            amount: emitted_contam_delta,
-            color: ColorKind::Mellow,
-            attacker_id: Some(attacker_id.clone()),
-            introduced_at: clock.tick,
-        });
 
         if let (Some(mut combat_state), Some(mut defender_cultivation)) =
             (combat_state, defender_cultivation)
@@ -528,34 +538,31 @@ pub fn resolve_attack_intents(
                 defender_cultivation.qi_current = (defender_cultivation.qi_current - qi_cost)
                     .clamp(0.0, defender_cultivation.qi_max);
 
-                if let Some(last_contam) = contamination.entries.last_mut() {
-                    let before = last_contam.amount;
-                    let effectiveness = jiemai_effectiveness(distance);
-                    let mut concussion_severity =
-                        crate::combat::components::JIEMAI_CONCUSSION_BASE_SEVERITY;
-                    jiemai_apply_effects(
-                        effectiveness,
-                        &mut last_contam.amount,
-                        &mut concussion_severity,
-                    );
-                    jiemai_effectiveness_value = Some(effectiveness);
-                    jiemai_contam_reduced = Some((before - last_contam.amount).max(0.0));
-                    jiemai_wound_severity = Some(concussion_severity);
-                    emitted_contam_delta = last_contam.amount;
+                let before = emitted_contam_delta;
+                let effectiveness = jiemai_effectiveness(distance);
+                let mut concussion_severity =
+                    crate::combat::components::JIEMAI_CONCUSSION_BASE_SEVERITY;
+                jiemai_apply_effects(
+                    effectiveness,
+                    &mut emitted_contam_delta,
+                    &mut concussion_severity,
+                );
+                jiemai_effectiveness_value = Some(effectiveness);
+                jiemai_contam_reduced = Some((before - emitted_contam_delta).max(0.0));
+                jiemai_wound_severity = Some(concussion_severity);
 
-                    wounds.entries.push(Wound {
-                        location: hit_probe.body_part,
-                        kind: crate::combat::components::WoundKind::Concussion,
-                        severity: concussion_severity,
-                        bleeding_per_sec: JIEMAI_CONCUSSION_BLEEDING_PER_SEC,
-                        created_at_tick: clock.tick,
-                        inflicted_by: Some(attacker_id.clone()),
-                    });
-                    if let Some(mut practice_log) = defender_practice_log {
-                        record_style_practice(&mut practice_log, ColorKind::Violent);
-                    }
-                    jiemai_success = true;
+                wounds.entries.push(Wound {
+                    location: hit_probe.body_part,
+                    kind: crate::combat::components::WoundKind::Concussion,
+                    severity: concussion_severity,
+                    bleeding_per_sec: JIEMAI_CONCUSSION_BLEEDING_PER_SEC,
+                    created_at_tick: clock.tick,
+                    inflicted_by: Some(attacker_id.clone()),
+                });
+                if let Some(mut practice_log) = defender_practice_log {
+                    record_style_practice(&mut practice_log, ColorKind::Violent);
                 }
+                jiemai_success = true;
             }
 
             combat_state.incoming_window = None;
@@ -572,13 +579,9 @@ pub fn resolve_attack_intents(
 
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
         // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
-        if let Some(attrs) = defender_attrs {
+        if let Some(attrs) = defender_attrs.as_deref() {
             let armor_mitigation =
                 apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
-            // 同步污染 source 的最后一条（本次命中刚 push）。
-            if let Some(last_contam) = contamination.entries.last_mut() {
-                last_contam.amount = emitted_contam_delta;
-            }
 
             // 护甲命中：扣减装备耐久（少量）。
             if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref())
@@ -651,6 +654,52 @@ pub fn resolve_attack_intents(
                     }
                 }
             }
+        }
+
+        let false_skin_kind_before = false_skin.as_ref().map(|skin| skin.kind);
+        let filter_result = tuike_filter_contam(emitted_contam_delta, false_skin.as_deref_mut());
+        let layers_remaining = false_skin
+            .as_ref()
+            .map(|skin| skin.layers_remaining)
+            .unwrap_or(0);
+        if let Some(attrs) = defender_attrs.as_deref_mut() {
+            attrs.tuike_layers = layers_remaining;
+        }
+        if filter_result.shed_layers > 0 {
+            if let Some(kind) = false_skin_kind_before {
+                if let Some(events) = shed_events.as_deref_mut() {
+                    events.send(ShedEvent {
+                        target: target_entity,
+                        attacker: Some(intent.attacker),
+                        target_id: target_id.clone(),
+                        attacker_id: Some(attacker_id.clone()),
+                        kind,
+                        layers_shed: filter_result.shed_layers,
+                        layers_remaining,
+                        contam_absorbed: filter_result.contam_absorbed,
+                        contam_overflow: filter_result.passes_through,
+                        tick: clock.tick,
+                    });
+                }
+            }
+        }
+        if filter_result.depleted && false_skin_kind_before.is_some() {
+            commands.entity(target_entity).remove::<FalseSkin>();
+            if let Ok(mut inventory) = inventories.get_mut(target_entity) {
+                if let Some(item) = inventory.equipped.get(EQUIP_SLOT_FALSE_SKIN) {
+                    let instance_id = item.instance_id;
+                    let _ = consume_item_instance_once(&mut inventory, instance_id);
+                }
+            }
+        }
+        emitted_contam_delta = filter_result.passes_through;
+        if emitted_contam_delta > 0.0 {
+            contamination.entries.push(ContamSource {
+                amount: emitted_contam_delta,
+                color: ColorKind::Mellow,
+                attacker_id: Some(attacker_id.clone()),
+                introduced_at: clock.tick,
+            });
         }
 
         wounds.health_current =

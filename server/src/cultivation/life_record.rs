@@ -195,6 +195,16 @@ pub enum BiographyEntry {
         hit_qi: f32,
         tick: u64,
     },
+    /// plan-tuike-v1 P2：伪皮脱壳战绩，记录目标自己脱了几层壳。
+    FalseSkinShed {
+        kind: String,
+        layers_shed: u8,
+        contam_absorbed: f64,
+        contam_overflow: f64,
+        #[serde(default)]
+        attacker_id: Option<String>,
+        tick: u64,
+    },
     /// plan-spawn-tutorial-v1 P2 — 出生沉默教学完成：醒灵突破至引气。
     SpawnTutorialCompleted {
         minutes_since_spawn: u32,
@@ -486,6 +496,19 @@ fn format_entry(entry: &BiographyEntry) -> String {
         } => format!(
             "t{tick}:anqi_sniped:{attacker_id}:{distance_blocks:.1}:{sealed_qi:.1}:{hit_qi:.1}"
         ),
+        BiographyEntry::FalseSkinShed {
+            kind,
+            layers_shed,
+            contam_absorbed,
+            contam_overflow,
+            attacker_id,
+            tick,
+        } => {
+            let attacker = attacker_id.as_deref().unwrap_or("-");
+            format!(
+                "t{tick}:tuike:shed:{kind}:layers{layers_shed}:absorb{contam_absorbed:.1}:overflow{contam_overflow:.1}:attacker{attacker}"
+            )
+        }
         BiographyEntry::SpawnTutorialCompleted {
             minutes_since_spawn,
             tick,

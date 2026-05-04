@@ -24,7 +24,7 @@ use crate::schema::channels::{
     CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA,
     CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
     CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
-    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WOLIU_BACKFIRE,
+    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
     CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -59,6 +59,7 @@ use crate::schema::spirit_eye::{
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
+use crate::schema::tuike::ShedEventV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
@@ -137,6 +138,7 @@ pub enum RedisOutbound {
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
     ProjectileDespawned(ProjectileDespawnedEventV1),
+    TuikeShed(ShedEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -847,6 +849,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_ANQI_PROJECTILE_DESPAWNED,
+                payload,
+            })
+        }
+        RedisOutbound::TuikeShed(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ShedEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TUIKE_SHED,
                 payload,
             })
         }

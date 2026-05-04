@@ -203,6 +203,14 @@ pub enum BiographyEntryV1 {
         new_realm: String,
         tick: u64,
     },
+    FalseSkinShed {
+        kind: String,
+        layers_shed: u8,
+        contam_absorbed: f64,
+        contam_overflow: f64,
+        attacker_id: Option<String>,
+        tick: u64,
+    },
     SpawnTutorialCompleted {
         minutes_since_spawn: u32,
         tick: u64,

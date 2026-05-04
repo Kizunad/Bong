@@ -69,6 +69,8 @@ public class ServerDataRouterTest {
             "vortex_state",
             // plan-anqi-v1 P1 暗器载体 HUD 状态推送。
             "carrier_state",
+            // plan-tuike-v1 §P0 伪皮 HUD 状态推送。
+            "false_skin_state",
             // plan-perception-v1.1 §4 server-authoritative vision/sense push.
             "realm_vision_params",
             "spiritual_sense_targets",
