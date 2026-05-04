@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use valence::prelude::{bevy_ecs, Component, Entity, Event, Resource};
 
-use super::registry::{BotanyPlantId, PlantVariant};
+use super::registry::{BotanyPlantId, FaunaKind, PlantVariant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotanyHarvestMode {
@@ -258,6 +258,22 @@ pub struct HarvestTerminalEvent {
     pub completed: bool,
     pub detail: String,
     pub target_pos: Option<[f64; 3]>,
+}
+
+/// botany-v2 `AttractsMobs` 真 spawn 请求。
+///
+/// 采集完成时由 harvest 写入，hazard 系统消费并按 fauna 的 `FaunaTag`
+/// 生成 Beast NPC。这样采集结算不需要直接知道 layer / NPC bundle 细节。
+#[derive(Debug, Clone, PartialEq, Event)]
+pub struct BotanyAttractsMobsEvent {
+    pub client_entity: Entity,
+    pub plant_kind: BotanyPlantId,
+    pub zone_name: String,
+    pub target_pos: [f64; 3],
+    pub mob_kind: FaunaKind,
+    pub min_count: u8,
+    pub max_count: u8,
+    pub issued_at_tick: u64,
 }
 
 /// bevy Event：采药技能等级 / XP 变化（仅 add_skill_xp 路径发）。
