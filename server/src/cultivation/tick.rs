@@ -7,6 +7,8 @@
 //! P1 简化：无「静坐/行动」区分，全部按被动小系数回；静坐/打坐在 P1 末
 //! 加客户端指令时再接入。
 
+use std::collections::HashMap;
+
 use valence::prelude::{bevy_ecs, Entity, Events, Position, Query, ResMut, Resource};
 
 use crate::combat::components::StatusEffects;
@@ -25,6 +27,13 @@ use super::lifespan::LifespanComponent;
 #[derive(Debug, Default, Resource)]
 pub struct CultivationClock {
     pub tick: u64,
+}
+
+/// 修炼 session 实际引气 tick 累计器。只有发生真实 qi gain 的 tick 才计入，
+/// 避免玩家在全局分钟边界短暂在线也拿到整分钟 PracticeLog 进料。
+#[derive(Debug, Default, Resource)]
+pub struct CultivationSessionPracticeAccumulator {
+    ticks_by_entity: HashMap<Entity, u64>,
 }
 
 /// 每 tick 真元回复的归一化系数。
@@ -60,6 +69,7 @@ pub fn qi_regen_and_zone_drain_tick(
     mut clock: ResMut<CultivationClock>,
     zone_registry: Option<ResMut<ZoneRegistry>>,
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
+    mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
     mut players: Query<(
         Entity,
         &Position,
@@ -147,21 +157,43 @@ pub fn qi_regen_and_zone_drain_tick(
             cultivation.last_qi_zero_at = None;
         }
 
-        if clock
-            .tick
-            .is_multiple_of(CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE)
-        {
-            if let Some(events) = practice_events.as_deref_mut() {
-                events.send(CultivationSessionPracticeEvent {
-                    entity,
-                    active_color: qi_color
-                        .map(|color| color.main)
-                        .unwrap_or(ColorKind::Mellow),
-                    elapsed_ticks: CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE,
-                });
-            }
+        if let (Some(events), Some(accumulator)) = (
+            practice_events.as_deref_mut(),
+            practice_accumulator.as_deref_mut(),
+        ) {
+            accumulate_cultivation_session_practice_tick(
+                accumulator,
+                events,
+                entity,
+                qi_color
+                    .map(|color| color.main)
+                    .unwrap_or(ColorKind::Mellow),
+            );
         }
     }
+}
+
+pub fn accumulate_cultivation_session_practice_tick(
+    accumulator: &mut CultivationSessionPracticeAccumulator,
+    events: &mut Events<CultivationSessionPracticeEvent>,
+    entity: Entity,
+    active_color: ColorKind,
+) -> u64 {
+    let ticks = accumulator.ticks_by_entity.entry(entity).or_default();
+    *ticks = ticks.saturating_add(1);
+
+    let minutes = *ticks / CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
+    if minutes == 0 {
+        return 0;
+    }
+
+    *ticks %= CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
+    events.send(CultivationSessionPracticeEvent {
+        entity,
+        active_color,
+        elapsed_ticks: minutes * CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE,
+    });
+    minutes
 }
 
 fn humility_qi_recovery_multiplier(status_effects: &StatusEffects) -> f64 {
@@ -297,11 +329,12 @@ mod tests {
     }
 
     #[test]
-    fn qi_regen_emits_minute_session_practice_for_current_qi_color() {
+    fn qi_regen_emits_session_practice_after_actual_regen_minute() {
         let mut app = App::new();
         app.insert_resource(CultivationClock {
             tick: CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE - 1,
         });
+        app.insert_resource(CultivationSessionPracticeAccumulator::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationSessionPracticeEvent>();
         app.add_systems(Update, qi_regen_and_zone_drain_tick);
@@ -327,6 +360,12 @@ mod tests {
             .id();
 
         app.update();
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        assert_eq!(log.weights.get(&ColorKind::Heavy).copied(), None);
+
+        for _ in 0..CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE - 1 {
+            app.update();
+        }
 
         let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
         assert_eq!(

@@ -301,6 +301,10 @@ import {
   SpiritEyeUsedForBreakthroughV1,
 } from "./spirit-eye.js";
 import {
+  StyleBalanceTelemetryEventV1,
+  StyleTelemetryColorSnapshotV1,
+} from "./style-balance.js";
+import {
   DaoxiangSpawnedV1,
   TsyCollapseCompletedV1,
   TsyCollapseStartedV1,
@@ -383,6 +387,8 @@ export const SCHEMA_REGISTRY = {
   rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
+  styleTelemetryColorSnapshotV1: StyleTelemetryColorSnapshotV1,
+  styleBalanceTelemetryEventV1: StyleBalanceTelemetryEventV1,
   violationKindV1: ViolationKindV1,
   antiCheatReportV1: AntiCheatReportV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
@@ -681,6 +687,10 @@ export const GENERATED_SCHEMA_FILES = {
   "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
+  "style-telemetry-color-snapshot-v1.json":
+    SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
+  "style-balance-telemetry-event-v1.json":
+    SCHEMA_REGISTRY.styleBalanceTelemetryEventV1,
   "violation-kind-v1.json": SCHEMA_REGISTRY.violationKindV1,
   "anticheat-report-v1.json": SCHEMA_REGISTRY.antiCheatReportV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,

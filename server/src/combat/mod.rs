@@ -261,4 +261,10 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Emit)
             .after(lifecycle::death_arbiter_tick),
     );
+    app.add_systems(
+        Update,
+        style_telemetry::publish_style_balance_telemetry_events
+            .in_set(CombatSystemSet::Emit)
+            .after(style_telemetry::collect_hunyuan_pvp_telemetry),
+    );
 }

@@ -1,26 +1,21 @@
-use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query, Username};
+use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query, Res, Username};
 
-use crate::cultivation::components::{ColorKind, QiColor};
+use crate::cultivation::components::QiColor;
+use crate::network::redis_bridge::RedisOutbound;
+use crate::network::RedisBridgeResource;
+use crate::player::state::canonical_player_id;
+use crate::schema::style_balance::{StyleBalanceTelemetryEventV1, StyleTelemetryColorSnapshotV1};
 
 use super::events::DeathEvent;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StyleTelemetryColorSnapshot {
-    pub main: ColorKind,
-    pub secondary: Option<ColorKind>,
-    pub is_chaotic: bool,
-    pub is_hunyuan: bool,
-}
-
-#[derive(Debug, Clone, Event, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Event, PartialEq)]
 pub struct StyleBalanceTelemetryEvent {
     pub attacker: Entity,
     pub attacker_player_id: String,
     pub defender: Entity,
     pub defender_player_id: String,
-    pub attacker_color: Option<StyleTelemetryColorSnapshot>,
-    pub defender_color: Option<StyleTelemetryColorSnapshot>,
+    pub attacker_color: Option<StyleTelemetryColorSnapshotV1>,
+    pub defender_color: Option<StyleTelemetryColorSnapshotV1>,
     pub cause: String,
     pub resolved_at_tick: u64,
 }
@@ -45,22 +40,51 @@ pub fn collect_hunyuan_pvp_telemetry(
         let attacker_color = participants
             .get(attacker)
             .ok()
-            .and_then(|(_, color)| color.map(StyleTelemetryColorSnapshot::from));
+            .and_then(|(_, color)| color.map(StyleTelemetryColorSnapshotV1::from));
 
         telemetry.send(StyleBalanceTelemetryEvent {
             attacker,
             attacker_player_id: attacker_player_id.clone(),
             defender: death.target,
-            defender_player_id: format!("offline:{}", defender_username.0),
+            defender_player_id: canonical_player_id(defender_username.0.as_str()),
             attacker_color,
-            defender_color: defender_color.map(StyleTelemetryColorSnapshot::from),
+            defender_color: defender_color.map(StyleTelemetryColorSnapshotV1::from),
             cause: death.cause.clone(),
             resolved_at_tick: death.at_tick,
         });
     }
 }
 
-impl From<&QiColor> for StyleTelemetryColorSnapshot {
+pub fn publish_style_balance_telemetry_events(
+    redis: Option<Res<RedisBridgeResource>>,
+    mut events: EventReader<StyleBalanceTelemetryEvent>,
+) {
+    let Some(redis) = redis else {
+        return;
+    };
+
+    for event in events.read() {
+        let payload = StyleBalanceTelemetryEventV1 {
+            v: 1,
+            attacker_player_id: event.attacker_player_id.clone(),
+            defender_player_id: event.defender_player_id.clone(),
+            attacker_color: event.attacker_color.clone(),
+            defender_color: event.defender_color.clone(),
+            cause: event.cause.clone(),
+            resolved_at_tick: event.resolved_at_tick,
+        };
+        if let Err(error) = redis
+            .tx_outbound
+            .send(RedisOutbound::StyleBalanceTelemetry(payload))
+        {
+            tracing::warn!(
+                "[bong][combat][style-balance] failed to queue telemetry outbound: {error}"
+            );
+        }
+    }
+}
+
+impl From<&QiColor> for StyleTelemetryColorSnapshotV1 {
     fn from(color: &QiColor) -> Self {
         Self {
             main: color.main,
@@ -73,17 +97,33 @@ impl From<&QiColor> for StyleTelemetryColorSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use valence::prelude::{App, Events, Update, Username};
+    use valence::prelude::{App, IntoSystemConfigs, Update, Username};
 
     use super::*;
     use crate::cultivation::components::{ColorKind, QiColor};
+    use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 
-    #[test]
-    fn pvp_death_emits_hunyuan_telemetry_snapshot() {
+    fn setup_app() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.add_event::<StyleBalanceTelemetryEvent>();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
         app.add_systems(Update, collect_hunyuan_pvp_telemetry);
+        app.add_systems(
+            Update,
+            publish_style_balance_telemetry_events.after(collect_hunyuan_pvp_telemetry),
+        );
+        (app, rx_outbound)
+    }
+
+    #[test]
+    fn pvp_death_publishes_hunyuan_telemetry_snapshot() {
+        let (mut app, rx_outbound) = setup_app();
 
         let attacker = app
             .world_mut()
@@ -119,28 +159,25 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<StyleBalanceTelemetryEvent>>();
-        let mut reader = events.get_reader();
-        let collected: Vec<_> = reader.read(events).collect();
-        assert_eq!(collected.len(), 1);
-        assert_eq!(collected[0].attacker_player_id, "offline:Killer");
-        assert_eq!(collected[0].defender_player_id, "offline:Defender");
+        let outbound = rx_outbound.try_recv().expect("expected telemetry outbound");
+        let RedisOutbound::StyleBalanceTelemetry(collected) = outbound else {
+            panic!("expected style balance telemetry outbound, got {outbound:?}");
+        };
+        assert_eq!(collected.attacker_player_id, "offline:Killer");
+        assert_eq!(collected.defender_player_id, "offline:Defender");
         assert_eq!(
-            collected[0].attacker_color.as_ref().map(|c| c.is_hunyuan),
+            collected.attacker_color.as_ref().map(|c| c.is_hunyuan),
             Some(true)
         );
         assert_eq!(
-            collected[0].defender_color.as_ref().map(|c| c.main),
+            collected.defender_color.as_ref().map(|c| c.main),
             Some(ColorKind::Violent)
         );
     }
 
     #[test]
     fn non_pvp_death_does_not_emit_telemetry() {
-        let mut app = App::new();
-        app.add_event::<DeathEvent>();
-        app.add_event::<StyleBalanceTelemetryEvent>();
-        app.add_systems(Update, collect_hunyuan_pvp_telemetry);
+        let (mut app, rx_outbound) = setup_app();
         let defender = app.world_mut().spawn(Username("Defender".into())).id();
 
         app.world_mut().send_event(DeathEvent {
@@ -152,11 +189,6 @@ mod tests {
         });
         app.update();
 
-        assert_eq!(
-            app.world()
-                .resource::<Events<StyleBalanceTelemetryEvent>>()
-                .len(),
-            0
-        );
+        assert!(rx_outbound.try_recv().is_err());
     }
 }

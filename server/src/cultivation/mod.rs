@@ -122,7 +122,9 @@ use self::realm_vision::view_distance_ramp::view_distance_ramp_system;
 use self::spiritual_sense::push::{
     cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
 };
-use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
+use self::tick::{
+    qi_regen_and_zone_drain_tick, CultivationClock, CultivationSessionPracticeAccumulator,
+};
 use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
@@ -153,6 +155,7 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
+    app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());

@@ -1,0 +1,107 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "main",
+    "is_chaotic",
+    "is_hunyuan"
+  ],
+  "properties": {
+    "main": {
+      "description": "十种真元染色",
+      "anyOf": [
+        {
+          "const": "Sharp",
+          "type": "string"
+        },
+        {
+          "const": "Heavy",
+          "type": "string"
+        },
+        {
+          "const": "Mellow",
+          "type": "string"
+        },
+        {
+          "const": "Solid",
+          "type": "string"
+        },
+        {
+          "const": "Light",
+          "type": "string"
+        },
+        {
+          "const": "Intricate",
+          "type": "string"
+        },
+        {
+          "const": "Gentle",
+          "type": "string"
+        },
+        {
+          "const": "Insidious",
+          "type": "string"
+        },
+        {
+          "const": "Violent",
+          "type": "string"
+        },
+        {
+          "const": "Turbid",
+          "type": "string"
+        }
+      ]
+    },
+    "secondary": {
+      "description": "十种真元染色",
+      "anyOf": [
+        {
+          "const": "Sharp",
+          "type": "string"
+        },
+        {
+          "const": "Heavy",
+          "type": "string"
+        },
+        {
+          "const": "Mellow",
+          "type": "string"
+        },
+        {
+          "const": "Solid",
+          "type": "string"
+        },
+        {
+          "const": "Light",
+          "type": "string"
+        },
+        {
+          "const": "Intricate",
+          "type": "string"
+        },
+        {
+          "const": "Gentle",
+          "type": "string"
+        },
+        {
+          "const": "Insidious",
+          "type": "string"
+        },
+        {
+          "const": "Violent",
+          "type": "string"
+        },
+        {
+          "const": "Turbid",
+          "type": "string"
+        }
+      ]
+    },
+    "is_chaotic": {
+      "type": "boolean"
+    },
+    "is_hunyuan": {
+      "type": "boolean"
+    }
+  }
+}

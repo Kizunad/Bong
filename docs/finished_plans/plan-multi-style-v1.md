@@ -43,7 +43,7 @@
 | **P0** ✅ | 混元色判定 system: `is_hunyuan(weights)` = `weights.values().all(|v| v / total < 0.25)` 且 `weights.len() >= 5`（至少修过 5 种色） | 单元：7 色均衡 → true / 单色独大 → false / 仅 3 色 → false |
 | **P1** ✅ | PracticeLog 扩展接修炼 session 事件源（Q-MS2，依赖 vector-integration vN+1）：静坐 / 引气时按当前 active style 主色 +X/min（每分钟聚合 Q-MS1） | 单元：1h 静坐主修 baomai → PracticeLog["Heavy"] += 60×X |
 | **P2** ✅ | client UI: 显示当前 PracticeLog 7 色分布 bar chart + 是否 is_hunyuan + 距离混元缺哪几色 | 玩家可见 vector 演化路径 |
-| **P3** ✅ | 与 plan-style-balance-v1 telemetry 对接: 混元色玩家 PVP 数据回填 §P 矩阵（验证"不被克制" 是否真的不被克制） | 本 plan 已落地采集事件；4 周数据校准归 style-balance 运营观察 |
+| **P3** ✅ | 与 plan-style-balance-v1 telemetry 对接: 混元色玩家 PVP 数据回填 §P 矩阵（验证"不被克制" 是否真的不被克制） | 本 plan 已落地 `bong:style_balance_telemetry` Redis 采集事件；4 周数据校准归 style-balance 运营观察 |
 
 ---
 
@@ -110,15 +110,15 @@ pub fn is_hunyuan(log: &PracticeLog) -> bool {
 ### 落地清单
 
 - **P0 混元判定**：`server/src/cultivation/color.rs` 新增 `is_hunyuan(&PracticeLog)`，要求总量有效、至少 5 色、任一色占比 `< 25%`；`evolve_qi_color` 改为复用该函数，避免 3 色均分误判混元。
-- **P1 session 进料**：`server/src/cultivation/color.rs` 新增 `CultivationSessionPracticeEvent` 与每分钟聚合写入函数；`server/src/cultivation/tick.rs` 在引气实际获得真元且到分钟边界时按当前 `QiColor.main` 发事件；`server/src/cultivation/mod.rs` 保证事件写入发生在真元色演化前。
+- **P1 session 进料**：`server/src/cultivation/color.rs` 新增 `CultivationSessionPracticeEvent` 与每分钟聚合写入函数；`server/src/cultivation/tick.rs` 用 `CultivationSessionPracticeAccumulator` 累计实际获得真元的 tick，满 1200 tick 才按当前 `QiColor.main` 发事件；`server/src/cultivation/mod.rs` 保证事件写入发生在真元色演化前。纯静坐 / 引气只强化当前主色，混元路径仍依赖多源 PracticeLog（战斗、功法、后续 style practice source）共同均衡演化。
 - **P2 inspect UI / schema**：`server/src/network/cultivation_detail_emit.rs`、`server/src/schema/server_data.rs`、`agent/packages/schema/src/server-data.ts`、`agent/packages/schema/generated/server-data-v1.json`、`client/src/main/java/com/bong/client/network/CultivationDetailHandler.java`、`client/src/main/java/com/bong/client/inventory/model/MeridianBody.java` 串起 `practice_weights`；`client/src/main/java/com/bong/client/cultivation/QiColorVectorHud.java` 在修仙 inspect tab 展示真元向量、混元状态与缺失色。
-- **P3 telemetry 对接**：`server/src/combat/style_telemetry.rs` 与 `server/src/combat/mod.rs` 监听 PVP `DeathEvent`，发出 attacker / defender 的 `QiColor` snapshot，供 `plan-style-balance-v1` 后续 4 周矩阵校准使用。
+- **P3 telemetry 对接**：`server/src/combat/style_telemetry.rs` 与 `server/src/combat/mod.rs` 监听 PVP `DeathEvent`，发出 attacker / defender 的 `QiColor` snapshot；`server/src/schema/style_balance.rs`、`server/src/network/redis_bridge.rs`、`agent/packages/schema/src/style-balance.ts` 将契约发布到 `bong:style_balance_telemetry`，供 `plan-style-balance-v1` 后续 4 周矩阵校准使用。
 
 ### 测试结果
 
-- `server/`：`cargo test hunyuan` ✅ 5 passed；`cargo test cultivation_session_practice` ✅ 2 passed；`cargo test qi_regen_emits_minute_session_practice_for_current_qi_color` ✅ 1 passed；`cargo test style_telemetry` ✅ 2 passed。
+- `server/`：`cargo test hunyuan` ✅ 5 passed；`cargo test cultivation_session_practice` ✅ 2 passed；`cargo test qi_regen_emits_session_practice_after_actual_regen_minute` ✅ 1 passed；`cargo test style_telemetry` ✅ 2 passed；`cargo test publishes_combat_realtime_and_summary_on_correct_channels` ✅ 1 passed；`cargo test redis_v1_channel_constants_remain_frozen` ✅ 1 passed。
 - `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 2295 passed。
-- `agent/packages/schema`：`npm run generate` ✅ 266 generated schemas；`npm run check && npm test` ✅ 9 files / 268 tests passed。
+- `agent/packages/schema`：`npm run generate` ✅ 268 generated schemas；`npm run check && npm test` ✅ 9 files / 268 tests passed。
 - `agent/`：`npm run build` ✅。
 - `client/`：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL。
 
