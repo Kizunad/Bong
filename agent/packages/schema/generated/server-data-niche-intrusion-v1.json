@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "niche_pos",
+    "intruder_id",
+    "items_taken",
+    "taint_delta"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "niche_intrusion",
+      "type": "string"
+    },
+    "niche_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "intruder_id": {
+      "type": "string"
+    },
+    "items_taken": {
+      "type": "array",
+      "items": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "taint_delta": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    }
+  }
+}

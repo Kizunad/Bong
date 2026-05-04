@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "guardian_kind",
+    "intruder_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "guardian_kind": {
+      "anyOf": [
+        {
+          "const": "puppet",
+          "type": "string"
+        },
+        {
+          "const": "zhenfa_trap",
+          "type": "string"
+        },
+        {
+          "const": "bonded_daoxiang",
+          "type": "string"
+        }
+      ]
+    },
+    "intruder_id": {
+      "type": "string"
+    }
+  }
+}

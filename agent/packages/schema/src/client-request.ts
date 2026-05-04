@@ -19,6 +19,7 @@ import {
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
+import { GuardianKindV1 } from "./social.js";
 import { FalseSkinKindV1 } from "./tuike.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
@@ -534,6 +535,18 @@ export const SpiritNicheMarkCoordinateRequestV1 = Type.Object(
 );
 export type SpiritNicheMarkCoordinateRequestV1 = Static<typeof SpiritNicheMarkCoordinateRequestV1>;
 
+export const SpiritNicheActivateGuardianRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_activate_guardian"),
+    niche_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]),
+    guardian_kind: GuardianKindV1,
+    materials: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheActivateGuardianRequestV1 = Static<typeof SpiritNicheActivateGuardianRequestV1>;
+
 export const SparringInviteResponseRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -821,6 +834,7 @@ export const ClientRequestV1 = Type.Union([
   SpiritNichePlaceRequestV1,
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,
+  SpiritNicheActivateGuardianRequestV1,
   SparringInviteResponseRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,

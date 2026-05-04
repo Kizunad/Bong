@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "niche_intrusion",
+  "niche_pos": [1, 64, 2],
+  "intruder_id": "char:raider",
+  "items_taken": [42, 43],
+  "taint_delta": 0.2
+}

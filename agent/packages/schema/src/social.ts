@@ -19,6 +19,13 @@ export const RelationshipKindV1 = Type.Union([
 ]);
 export type RelationshipKindV1 = Static<typeof RelationshipKindV1>;
 
+export const GuardianKindV1 = Type.Union([
+  Type.Literal("puppet"),
+  Type.Literal("zhenfa_trap"),
+  Type.Literal("bonded_daoxiang"),
+]);
+export type GuardianKindV1 = Static<typeof GuardianKindV1>;
+
 export const RenownTagV1 = Type.Object(
   {
     tag: Type.String(),
@@ -180,6 +187,49 @@ export const SocialRenownDeltaV1 = Type.Object(
 );
 export type SocialRenownDeltaV1 = Static<typeof SocialRenownDeltaV1>;
 
+export const SpiritNicheActivateGuardianV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    niche_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]),
+    guardian_kind: GuardianKindV1,
+    materials: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheActivateGuardianV1 = Static<typeof SpiritNicheActivateGuardianV1>;
+
+export const NicheIntrusionEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    niche_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]),
+    intruder_id: Type.String(),
+    items_taken: Type.Array(Type.Integer({ minimum: 0 })),
+    taint_delta: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type NicheIntrusionEventV1 = Static<typeof NicheIntrusionEventV1>;
+
+export const NicheGuardianFatigueV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    guardian_kind: GuardianKindV1,
+    charges_remaining: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type NicheGuardianFatigueV1 = Static<typeof NicheGuardianFatigueV1>;
+
+export const NicheGuardianBrokenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    guardian_kind: GuardianKindV1,
+    intruder_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type NicheGuardianBrokenV1 = Static<typeof NicheGuardianBrokenV1>;
+
 export const SparringInvitePayloadV1 = Type.Object(
   {
     invite_id: Type.String(),
@@ -232,4 +282,8 @@ export function validateSocialFeudEventV1Contract(data: unknown): ValidationResu
 
 export function validateSocialRenownDeltaV1Contract(data: unknown): ValidationResult {
   return validate(SocialRenownDeltaV1, data);
+}
+
+export function validateNicheIntrusionEventV1Contract(data: unknown): ValidationResult {
+  return validate(NicheIntrusionEventV1, data);
 }

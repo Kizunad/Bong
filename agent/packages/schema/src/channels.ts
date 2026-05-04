@@ -86,6 +86,9 @@ export const CHANNELS = {
   /** Server → Agent: 玩家声名变动（plan-social-v1 §7） */
   SOCIAL_RENOWN_DELTA: "bong:social/renown_delta",
 
+  /** Server → Agent/Client: 灵龛抄家入侵流水（plan-niche-defense-v1 P4） */
+  SOCIAL_NICHE_INTRUSION: "bong:social/niche_intrusion",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -224,6 +227,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_PACT,
   CHANNELS.SOCIAL_FEUD,
   CHANNELS.SOCIAL_RENOWN_DELTA,
+  CHANNELS.SOCIAL_NICHE_INTRUSION,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.STYLE_BALANCE_TELEMETRY,

@@ -2069,6 +2069,66 @@
       "required": [
         "v",
         "type",
+        "niche_pos",
+        "guardian_kind",
+        "materials"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spirit_niche_activate_guardian",
+          "type": "string"
+        },
+        "niche_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "guardian_kind": {
+          "anyOf": [
+            {
+              "const": "puppet",
+              "type": "string"
+            },
+            {
+              "const": "zhenfa_trap",
+              "type": "string"
+            },
+            {
+              "const": "bonded_daoxiang",
+              "type": "string"
+            }
+          ]
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "invite_id",
         "accepted"
       ],

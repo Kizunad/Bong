@@ -582,6 +582,26 @@
                     }
                   }
                 ]
+              },
+              "lingering_owner_qi": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "owner",
+                  "expire_at"
+                ],
+                "properties": {
+                  "owner": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "expire_at": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                }
               }
             }
           }
@@ -1087,6 +1107,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -1576,6 +1616,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -2065,6 +2125,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -2554,6 +2634,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -3043,6 +3143,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -3532,6 +3652,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -4021,6 +4161,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -4510,6 +4670,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -4999,6 +5179,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -5488,6 +5688,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -5977,6 +6197,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -6466,6 +6706,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             },
@@ -6961,6 +7221,26 @@
                     }
                   }
                 ]
+              },
+              "lingering_owner_qi": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "owner",
+                  "expire_at"
+                ],
+                "properties": {
+                  "owner": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "expire_at": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                }
               }
             }
           },

@@ -157,6 +157,15 @@ export const AlchemyItemDataV1 = Type.Union([
 ]);
 export type AlchemyItemDataV1 = Static<typeof AlchemyItemDataV1>;
 
+export const LingeringQiV1 = Type.Object(
+  {
+    owner: Type.String({ minLength: 1, maxLength: 128 }),
+    expire_at: SafeIntegerV1,
+  },
+  { additionalProperties: false },
+);
+export type LingeringQiV1 = Static<typeof LingeringQiV1>;
+
 export const InventoryItemViewV1 = Type.Object(
   {
     instance_id: SafeIntegerV1,
@@ -189,6 +198,8 @@ export const InventoryItemViewV1 = Type.Object(
     forge_achieved_tier: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
     // plan-alchemy-v2 — 丹药品阶 / 残卷 / 丹心线索运行时元数据。
     alchemy: Type.Optional(AlchemyItemDataV1),
+    // plan-niche-defense-v1 P3 — 抄家物品携带龛主异体真元残留。
+    lingering_owner_qi: Type.Optional(LingeringQiV1),
   },
   { additionalProperties: false },
 );
