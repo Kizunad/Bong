@@ -273,19 +273,27 @@ pub fn dugu_poison_tick(
     )>,
     mut progress_events: EventWriter<DuguPoisonProgressEvent>,
 ) {
-    if clock.tick == 0 || !clock.tick.is_multiple_of(DUGU_POISON_TICK_INTERVAL) {
+    if clock.tick == 0 {
         return;
     }
 
     for (entity, mut meridians, mut cultivation, poison) in &mut targets {
+        let elapsed_ticks = clock.tick.saturating_sub(poison.attached_at_tick);
+        if elapsed_ticks == 0 || !elapsed_ticks.is_multiple_of(DUGU_POISON_TICK_INTERVAL) {
+            continue;
+        }
         let meridian = meridians.get_mut(poison.meridian_id);
         if !meridian.opened || meridian.flow_capacity <= f64::EPSILON {
             commands.entity(entity).remove::<DuguPoisonState>();
             continue;
         }
 
-        let tier = f64::from(poison.poisoner_realm_tier.max(1));
-        let actual_loss = (poison.loss_per_tick * tier).max(0.0);
+        if poison.poisoner_realm_tier == 0 {
+            continue;
+        }
+        let tier = f64::from(poison.poisoner_realm_tier);
+        let scheduled_loss = (poison.loss_per_tick * tier).max(0.0);
+        let actual_loss = scheduled_loss.min(meridian.flow_capacity);
         meridian.flow_capacity = (meridian.flow_capacity - actual_loss).max(0.0);
         if meridian.flow_capacity <= f64::EPSILON {
             meridian.flow_capacity = 0.0;
@@ -388,6 +396,7 @@ pub fn can_infuse_dugu(
     pending: Option<&PendingDuguInfusion>,
 ) -> bool {
     practice.dugu_practice_level >= 1
+        && realm_rank(cultivation.realm) >= realm_rank(Realm::Induce)
         && cultivation.qi_current + f64::EPSILON >= DUGU_INFUSE_COST
         && lifecycle.is_none_or(|lifecycle| lifecycle.state == LifecycleState::Alive)
         && pending.is_none()
@@ -525,6 +534,9 @@ fn resolve_shoot_needle_skill(
     {
         return rejected(CastRejectReason::OnCooldown);
     }
+    let Some(target) = target else {
+        return rejected(CastRejectReason::InvalidTarget);
+    };
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return rejected(CastRejectReason::RealmTooLow);
     };
@@ -537,7 +549,7 @@ fn resolve_shoot_needle_skill(
     }
     world.send_event(ShootNeedleIntent {
         shooter: caster,
-        target,
+        target: Some(target),
         dir_unit: [0.0, 0.0, 1.0],
         source: IntentSource::SkillBar,
     });
@@ -720,6 +732,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Cultivation {
+                    realm: Realm::Induce,
                     qi_current: 12.0,
                     qi_max: 20.0,
                     ..Cultivation::default()
@@ -755,6 +768,21 @@ mod tests {
         assert!(events.get_reader().read(events).any(|event| {
             event.infuser == infuser && event.until_tick == 100 + DUGU_EXPOSURE_TICKS
         }));
+    }
+
+    #[test]
+    fn awaken_realm_cannot_infuse_dugu_even_with_practice_flag() {
+        let cultivation = Cultivation {
+            realm: Realm::Awaken,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+        let practice = DuguPractice {
+            dugu_practice_level: 1,
+        };
+
+        assert!(!can_infuse_dugu(&cultivation, &practice, None, None));
     }
 
     #[test]
@@ -892,7 +920,7 @@ mod tests {
                 DuguPoisonState {
                     meridian_id: MeridianId::Heart,
                     attacker,
-                    attached_at_tick: 1,
+                    attached_at_tick: 0,
                     poisoner_realm_tier: 2,
                     loss_per_tick: 1.0,
                 },
@@ -910,6 +938,137 @@ mod tests {
             .get_reader()
             .read(events)
             .any(|event| event.actual_loss_this_tick == 2.0));
+    }
+
+    #[test]
+    fn poison_tick_waits_full_interval_from_attachment_tick() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: DUGU_POISON_TICK_INTERVAL,
+        });
+        app.add_event::<DuguPoisonProgressEvent>();
+        app.add_systems(Update, dugu_poison_tick);
+        let attacker = app.world_mut().spawn_empty().id();
+        let mut meridians = MeridianSystem::default();
+        open(&mut meridians, MeridianId::Heart, 100.0);
+        let target = app
+            .world_mut()
+            .spawn((
+                meridians,
+                Cultivation {
+                    qi_current: 80.0,
+                    qi_max: 110.0,
+                    ..Cultivation::default()
+                },
+                DuguPoisonState {
+                    meridian_id: MeridianId::Heart,
+                    attacker,
+                    attached_at_tick: DUGU_POISON_TICK_INTERVAL - 1,
+                    poisoner_realm_tier: 2,
+                    loss_per_tick: 1.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<MeridianSystem>(target)
+                .unwrap()
+                .get(MeridianId::Heart)
+                .flow_capacity,
+            100.0
+        );
+        app.world_mut().resource_mut::<CombatClock>().tick =
+            (DUGU_POISON_TICK_INTERVAL - 1) + DUGU_POISON_TICK_INTERVAL;
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<MeridianSystem>(target)
+                .unwrap()
+                .get(MeridianId::Heart)
+                .flow_capacity,
+            98.0
+        );
+    }
+
+    #[test]
+    fn poison_tick_reports_only_actual_drained_capacity() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: DUGU_POISON_TICK_INTERVAL,
+        });
+        app.add_event::<DuguPoisonProgressEvent>();
+        app.add_systems(Update, dugu_poison_tick);
+        let attacker = app.world_mut().spawn_empty().id();
+        let mut meridians = MeridianSystem::default();
+        open(&mut meridians, MeridianId::Heart, 0.7);
+        let target = app
+            .world_mut()
+            .spawn((
+                meridians,
+                Cultivation {
+                    qi_current: 10.0,
+                    qi_max: 10.7,
+                    ..Cultivation::default()
+                },
+                DuguPoisonState {
+                    meridian_id: MeridianId::Heart,
+                    attacker,
+                    attached_at_tick: 0,
+                    poisoner_realm_tier: 2,
+                    loss_per_tick: 1.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let meridians = app.world().get::<MeridianSystem>(target).unwrap();
+        assert_eq!(meridians.get(MeridianId::Heart).flow_capacity, 0.0);
+        let events = app.world().resource::<Events<DuguPoisonProgressEvent>>();
+        assert!(events
+            .get_reader()
+            .read(events)
+            .any(|event| event.actual_loss_this_tick == 0.7));
+    }
+
+    #[test]
+    fn shoot_needle_skill_rejects_missing_target_without_casting() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<ShootNeedleIntent>();
+        let caster = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 10.0,
+                    qi_max: 20.0,
+                    ..Cultivation::default()
+                },
+                crate::combat::components::Stamina::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+
+        let result = resolve_shoot_needle_skill(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::InvalidTarget
+            }
+        );
+        assert!(app
+            .world()
+            .get::<crate::combat::components::Casting>(caster)
+            .is_none());
+        let events = app.world().resource::<Events<ShootNeedleIntent>>();
+        assert_eq!(events.get_reader().read(events).count(), 0);
     }
 
     #[test]
