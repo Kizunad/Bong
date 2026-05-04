@@ -758,6 +758,75 @@
         },
         "qi_color_hunyuan": {
           "type": "boolean"
+        },
+        "practice_weights": {
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "color",
+              "weight",
+              "ratio"
+            ],
+            "properties": {
+              "color": {
+                "description": "十种真元染色",
+                "anyOf": [
+                  {
+                    "const": "Sharp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Heavy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Mellow",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Solid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Light",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Intricate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Gentle",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Insidious",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Violent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Turbid",
+                    "type": "string"
+                  }
+                ]
+              },
+              "weight": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "ratio": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              }
+            }
+          }
         }
       }
     },

@@ -200,6 +200,30 @@ public class CultivationDetailHandlerTest {
     }
 
     @Test
+    void appliesQiColorPracticeWeightsWhenProvided() {
+        var payload = fullPayload(twenty(true), twenty(1.0), twenty(5.0), twenty(1.0));
+        List<JsonObject> weights = new ArrayList<>();
+        JsonObject heavy = new JsonObject();
+        heavy.addProperty("color", "Heavy");
+        heavy.addProperty("weight", 60.0);
+        heavy.addProperty("ratio", 0.6);
+        JsonObject solid = new JsonObject();
+        solid.addProperty("color", "Solid");
+        solid.addProperty("weight", 40.0);
+        solid.addProperty("ratio", 0.4);
+        weights.add(heavy);
+        weights.add(solid);
+        payload.add("practice_weights", new Gson().toJsonTree(weights));
+
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+
+        MeridianBody body = MeridianStateStore.snapshot();
+        assertEquals(60.0, body.qiColorPracticeWeights().get(ColorKind.Heavy), 1e-9);
+        assertEquals(40.0, body.qiColorPracticeWeights().get(ColorKind.Solid), 1e-9);
+    }
+
+    @Test
     void openProgressIgnoredForOpenedChannels() {
         var opened = twenty(true);
         var openProg = new ArrayList<Double>();

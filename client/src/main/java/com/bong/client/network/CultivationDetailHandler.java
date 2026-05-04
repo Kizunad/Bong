@@ -82,6 +82,7 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         ColorKind qiColorSecondary = ColorKind.fromWire(readString(payload, "qi_color_secondary"));
         boolean qiColorChaotic = readBoolean(payload, "qi_color_chaotic");
         boolean qiColorHunyuan = readBoolean(payload, "qi_color_hunyuan");
+        EnumMap<ColorKind, Double> practiceWeights = parsePracticeWeights(readArray(payload, "practice_weights"));
 
         MeridianBody body = buildBody(
             opened,
@@ -96,7 +97,8 @@ public final class CultivationDetailHandler implements ServerDataHandler {
             qiColorMain,
             qiColorSecondary,
             qiColorChaotic,
-            qiColorHunyuan
+            qiColorHunyuan,
+            practiceWeights
         );
         MeridianStateStore.replace(body);
         syncSkillCapsFromRealm(realm);
@@ -118,14 +120,15 @@ public final class CultivationDetailHandler implements ServerDataHandler {
                                    JsonArray openProgress, JsonArray cracksCount, String realm,
                                    double contaminationTotal, JsonObject lifespan) {
         return buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
-            contaminationTotal, lifespan, null, null, false, false);
+            contaminationTotal, lifespan, null, null, false, false, new EnumMap<>(ColorKind.class));
     }
 
     static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
                                    JsonArray openProgress, JsonArray cracksCount, String realm,
                                    double contaminationTotal, JsonObject lifespan,
                                    ColorKind qiColorMain, ColorKind qiColorSecondary,
-                                   boolean qiColorChaotic, boolean qiColorHunyuan) {
+                                   boolean qiColorChaotic, boolean qiColorHunyuan,
+                                   EnumMap<ColorKind, Double> practiceWeights) {
         EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
         for (int i = 0; i < CHANNEL_ORDER.length; i++) {
             MeridianChannel ch = CHANNEL_ORDER[i];
@@ -173,6 +176,7 @@ public final class CultivationDetailHandler implements ServerDataHandler {
             );
         }
         builder.qiColor(qiColorMain, qiColorSecondary, qiColorChaotic, qiColorHunyuan);
+        builder.qiColorPracticeWeights(practiceWeights);
         return builder.build();
     }
 
@@ -211,6 +215,21 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         JsonElement el = obj.get(name);
         return el != null && el.isJsonPrimitive() && el.getAsJsonPrimitive().isBoolean()
             && el.getAsBoolean();
+    }
+
+    private static EnumMap<ColorKind, Double> parsePracticeWeights(JsonArray weights) {
+        EnumMap<ColorKind, Double> out = new EnumMap<>(ColorKind.class);
+        if (weights == null) return out;
+        for (JsonElement element : weights) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject obj = element.getAsJsonObject();
+            ColorKind color = ColorKind.fromWire(readString(obj, "color"));
+            double weight = readDouble(obj, "weight");
+            if (color != null && weight > 0.0) {
+                out.put(color, weight);
+            }
+        }
+        return out;
     }
 
     private static boolean asBool(JsonElement el) {

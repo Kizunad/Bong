@@ -142,5 +142,15 @@
     "death_penalty_years": 10,
     "tick_rate_multiplier": 1.0,
     "is_wind_candle": false
-  }
+  },
+  "qi_color_main": "Mellow",
+  "qi_color_chaotic": false,
+  "qi_color_hunyuan": true,
+  "practice_weights": [
+    { "color": "Heavy", "weight": 20.0, "ratio": 0.2 },
+    { "color": "Solid", "weight": 20.0, "ratio": 0.2 },
+    { "color": "Intricate", "weight": 20.0, "ratio": 0.2 },
+    { "color": "Insidious", "weight": 20.0, "ratio": 0.2 },
+    { "color": "Violent", "weight": 20.0, "ratio": 0.2 }
+  ]
 }
