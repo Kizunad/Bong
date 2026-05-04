@@ -64,6 +64,9 @@ public final class QiColorVectorHud extends BaseComponent {
         if (body == null || body.qiColorPracticeWeights().isEmpty()) {
             return "缺 全部";
         }
+        if (body.qiColorHunyuan()) {
+            return "色种已齐";
+        }
         List<ColorKind> missing = missingColors(body.qiColorPracticeWeights());
         if (missing.isEmpty()) {
             return "色种已齐";

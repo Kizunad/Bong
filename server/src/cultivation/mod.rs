@@ -123,7 +123,8 @@ use self::spiritual_sense::push::{
     cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
 };
 use self::tick::{
-    qi_regen_and_zone_drain_tick, CultivationClock, CultivationSessionPracticeAccumulator,
+    prune_cultivation_session_practice_accumulator, qi_regen_and_zone_drain_tick, CultivationClock,
+    CultivationSessionPracticeAccumulator,
 };
 use self::topology::MeridianTopology;
 use self::tribulation::{
@@ -240,6 +241,10 @@ pub fn register(app: &mut App) {
         record_cultivation_session_practice_events
             .after(qi_regen_and_zone_drain_tick)
             .before(qi_color_evolution_tick),
+    );
+    app.add_systems(
+        Update,
+        prune_cultivation_session_practice_accumulator.after(qi_regen_and_zone_drain_tick),
     );
     app.add_systems(
         Update,

@@ -9,7 +9,9 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, Entity, Events, Position, Query, ResMut, Resource};
+use valence::prelude::{
+    bevy_ecs, Despawned, Entity, Events, Position, Query, ResMut, Resource, Without,
+};
 
 use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
@@ -196,6 +198,15 @@ pub fn accumulate_cultivation_session_practice_tick(
     minutes
 }
 
+pub fn prune_cultivation_session_practice_accumulator(
+    mut accumulator: ResMut<CultivationSessionPracticeAccumulator>,
+    live_entities: Query<(), Without<Despawned>>,
+) {
+    accumulator
+        .ticks_by_entity
+        .retain(|entity, _| live_entities.get(*entity).is_ok());
+}
+
 fn humility_qi_recovery_multiplier(status_effects: &StatusEffects) -> f64 {
     status_effects
         .active
@@ -372,6 +383,35 @@ mod tests {
             log.weights.get(&ColorKind::Heavy).copied(),
             Some(STYLE_PRACTICE_AMOUNT)
         );
+    }
+
+    #[test]
+    fn session_practice_accumulator_prunes_stale_entities() {
+        let mut app = App::new();
+        app.insert_resource(CultivationSessionPracticeAccumulator::default());
+        app.add_systems(Update, prune_cultivation_session_practice_accumulator);
+
+        let live_entity = app.world_mut().spawn_empty().id();
+        let despawned_entity = app.world_mut().spawn(Despawned).id();
+        let missing_entity = Entity::from_raw(99_999);
+
+        {
+            let mut accumulator = app
+                .world_mut()
+                .resource_mut::<CultivationSessionPracticeAccumulator>();
+            accumulator.ticks_by_entity.insert(live_entity, 12);
+            accumulator.ticks_by_entity.insert(despawned_entity, 24);
+            accumulator.ticks_by_entity.insert(missing_entity, 36);
+        }
+
+        app.update();
+
+        let accumulator = app
+            .world()
+            .resource::<CultivationSessionPracticeAccumulator>();
+        assert_eq!(accumulator.ticks_by_entity.get(&live_entity), Some(&12));
+        assert!(!accumulator.ticks_by_entity.contains_key(&despawned_entity));
+        assert!(!accumulator.ticks_by_entity.contains_key(&missing_entity));
     }
 
     #[test]

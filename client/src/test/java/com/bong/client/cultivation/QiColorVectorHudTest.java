@@ -34,4 +34,20 @@ class QiColorVectorHudTest {
 
         assertEquals("色种已齐", QiColorVectorHud.hunyuanDistanceText(body));
     }
+
+    @Test
+    void hunyuanDistanceTextPrefersServerHunyuanState() {
+        EnumMap<ColorKind, Double> weights = new EnumMap<>(ColorKind.class);
+        weights.put(ColorKind.Sharp, 20.0);
+        weights.put(ColorKind.Heavy, 20.0);
+        weights.put(ColorKind.Mellow, 20.0);
+        weights.put(ColorKind.Solid, 20.0);
+        weights.put(ColorKind.Light, 20.0);
+        MeridianBody body = MeridianBody.builder()
+            .qiColor(ColorKind.Sharp, null, false, true)
+            .qiColorPracticeWeights(weights)
+            .build();
+
+        assertEquals("色种已齐", QiColorVectorHud.hunyuanDistanceText(body));
+    }
 }

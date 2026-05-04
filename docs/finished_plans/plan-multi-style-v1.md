@@ -116,11 +116,11 @@ pub fn is_hunyuan(log: &PracticeLog) -> bool {
 
 ### 测试结果
 
-- `server/`：`cargo test hunyuan` ✅ 5 passed；`cargo test cultivation_session_practice` ✅ 2 passed；`cargo test qi_regen_emits_session_practice_after_actual_regen_minute` ✅ 1 passed；`cargo test style_telemetry` ✅ 2 passed；`cargo test publishes_combat_realtime_and_summary_on_correct_channels` ✅ 1 passed；`cargo test redis_v1_channel_constants_remain_frozen` ✅ 1 passed。
-- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 2295 passed。
+- `server/`：`cargo test hunyuan` ✅ 5 passed；`cargo test cultivation_session_practice` ✅ 2 passed；`cargo test qi_regen_emits_session_practice_after_actual_regen_minute` ✅ 1 passed；`cargo test session_practice_accumulator_prunes_stale_entities` ✅ 1 passed；`cargo test style_telemetry` ✅ 2 passed；`cargo test publishes_combat_realtime_and_summary_on_correct_channels` ✅ 1 passed；`cargo test redis_v1_channel_constants_remain_frozen` ✅ 1 passed。
+- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 2296 passed。
 - `agent/packages/schema`：`npm run generate` ✅ 268 generated schemas；`npm run check && npm test` ✅ 9 files / 268 tests passed。
 - `agent/`：`npm run build` ✅。
-- `client/`：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL。
+- `client/`：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests com.bong.client.cultivation.QiColorVectorHudTest` ✅ BUILD SUCCESSFUL；`./gradlew test build`（Java 17）✅ BUILD SUCCESSFUL。
 
 ### 遗留 / 后续
 
