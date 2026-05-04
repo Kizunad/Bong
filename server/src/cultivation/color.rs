@@ -5,7 +5,7 @@
 //!   * 任一项 > 60% → main = 该色
 //!   * 次项 > 25% → secondary
 //!   * ≥3 项 > 15% → is_chaotic = true
-//!   * 全部 < 25% → is_hunyuan = true
+//!   * 至少 5 色且全部 < 25% → is_hunyuan = true
 //!
 //! P1：实际"练习事件"来源（打坐/战斗动作/丹药）由上层后续接入，这里只提供
 //! tick + 纯函数 + PracticeLog Component 作为接口。
@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Query, Res};
+use valence::prelude::{bevy_ecs, Component, Entity, Event, EventReader, Query, Res};
 
 use super::components::{ColorKind, QiColor};
 use super::life_record::{BiographyEntry, LifeRecord};
@@ -21,6 +21,7 @@ use super::tick::CultivationClock;
 
 pub const STYLE_PRACTICE_AMOUNT: f64 = 1.0;
 pub const PRACTICE_DECAY_PER_TICK: f64 = 0.001;
+pub const CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE: u64 = 20 * 60;
 
 /// 玩家修习累积日志 — 权重值可由 gameplay 系统增加，tick 会慢慢衰减。
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
@@ -62,6 +63,44 @@ pub fn record_style_practice(log: &mut PracticeLog, color: ColorKind) {
     log.add(color, STYLE_PRACTICE_AMOUNT);
 }
 
+pub fn is_hunyuan(log: &PracticeLog) -> bool {
+    let total = log.total();
+    if total <= f64::EPSILON || log.weights.len() < 5 {
+        return false;
+    }
+    log.weights.values().all(|weight| (*weight / total) < 0.25)
+}
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct CultivationSessionPracticeEvent {
+    pub entity: Entity,
+    pub active_color: ColorKind,
+    pub elapsed_ticks: u64,
+}
+
+pub fn record_cultivation_session_practice(
+    log: &mut PracticeLog,
+    active_color: ColorKind,
+    elapsed_ticks: u64,
+) -> u64 {
+    let minutes = elapsed_ticks / CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
+    if minutes > 0 {
+        log.add(active_color, STYLE_PRACTICE_AMOUNT * minutes as f64);
+    }
+    minutes
+}
+
+pub fn record_cultivation_session_practice_events(
+    mut events: EventReader<CultivationSessionPracticeEvent>,
+    mut logs: Query<&mut PracticeLog>,
+) {
+    for event in events.read() {
+        if let Ok(mut log) = logs.get_mut(event.entity) {
+            record_cultivation_session_practice(&mut log, event.active_color, event.elapsed_ticks);
+        }
+    }
+}
+
 /// 纯函数：基于日志权重演化 QiColor（plan §2 QiColorEvolutionTick 规则）。
 pub fn evolve_qi_color(log: &PracticeLog, out: &mut QiColor) {
     let total = log.total();
@@ -73,10 +112,8 @@ pub fn evolve_qi_color(log: &PracticeLog, out: &mut QiColor) {
     sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let over15 = sorted.iter().filter(|(_, r)| *r > 0.15).count();
-    let all_under_25 = sorted.iter().all(|(_, r)| *r < 0.25);
-
-    // 混元：所有项均 < 25%
-    if all_under_25 {
+    // 混元：至少 5 色且所有项均 < 25%
+    if is_hunyuan(log) {
         out.is_hunyuan = true;
         out.is_chaotic = false;
         out.secondary = None;
@@ -178,6 +215,77 @@ mod tests {
         evolve_qi_color(&log, &mut c);
         assert!(c.is_hunyuan);
         assert!(!c.is_chaotic);
+    }
+
+    #[test]
+    fn is_hunyuan_requires_five_practiced_colors() {
+        let mut log = PracticeLog::default();
+        for k in [ColorKind::Sharp, ColorKind::Heavy, ColorKind::Mellow] {
+            log.add(k, 20.0);
+        }
+        assert!(!is_hunyuan(&log));
+    }
+
+    #[test]
+    fn is_hunyuan_rejects_dominant_color() {
+        let mut log = PracticeLog::default();
+        for (color, weight) in [
+            (ColorKind::Sharp, 40.0),
+            (ColorKind::Heavy, 15.0),
+            (ColorKind::Mellow, 15.0),
+            (ColorKind::Solid, 15.0),
+            (ColorKind::Light, 15.0),
+        ] {
+            log.add(color, weight);
+        }
+        assert!(!is_hunyuan(&log));
+    }
+
+    #[test]
+    fn seven_color_balance_is_hunyuan() {
+        let mut log = PracticeLog::default();
+        for k in [
+            ColorKind::Sharp,
+            ColorKind::Heavy,
+            ColorKind::Mellow,
+            ColorKind::Solid,
+            ColorKind::Light,
+            ColorKind::Intricate,
+            ColorKind::Insidious,
+        ] {
+            log.add(k, 10.0);
+        }
+        assert!(is_hunyuan(&log));
+        let mut c = QiColor::default();
+        evolve_qi_color(&log, &mut c);
+        assert!(c.is_hunyuan);
+    }
+
+    #[test]
+    fn cultivation_session_practice_records_one_unit_per_minute() {
+        let mut log = PracticeLog::default();
+        let minutes = record_cultivation_session_practice(
+            &mut log,
+            ColorKind::Heavy,
+            CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 60,
+        );
+        assert_eq!(minutes, 60);
+        assert_eq!(
+            log.weights.get(&ColorKind::Heavy).copied(),
+            Some(STYLE_PRACTICE_AMOUNT * 60.0)
+        );
+    }
+
+    #[test]
+    fn cultivation_session_practice_ignores_sub_minute_noise() {
+        let mut log = PracticeLog::default();
+        let minutes = record_cultivation_session_practice(
+            &mut log,
+            ColorKind::Heavy,
+            CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE - 1,
+        );
+        assert_eq!(minutes, 0);
+        assert!(log.weights.is_empty());
     }
 
     #[test]

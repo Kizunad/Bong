@@ -216,6 +216,7 @@ pub enum ServerDataPayloadV1 {
         qi_color_secondary: Option<ColorKind>,
         qi_color_chaotic: bool,
         qi_color_hunyuan: bool,
+        practice_weights: Vec<PracticeWeightV1>,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -510,6 +511,14 @@ pub struct QiColorObservedV1 {
     pub realm_diff: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PracticeWeightV1 {
+    pub color: ColorKind,
+    pub weight: f64,
+    pub ratio: f64,
+}
+
 fn default_qi_color_main() -> ColorKind {
     ColorKind::Mellow
 }
@@ -587,6 +596,8 @@ enum ServerDataPayloadWireV1 {
         qi_color_chaotic: bool,
         #[serde(default)]
         qi_color_hunyuan: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        practice_weights: Vec<PracticeWeightV1>,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -1320,6 +1331,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_secondary,
                 qi_color_chaotic,
                 qi_color_hunyuan,
+                practice_weights,
             } => Ok(Self::CultivationDetail {
                 realm,
                 opened,
@@ -1336,6 +1348,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_secondary,
                 qi_color_chaotic,
                 qi_color_hunyuan,
+                practice_weights,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -1725,6 +1738,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_secondary,
                 qi_color_chaotic,
                 qi_color_hunyuan,
+                practice_weights,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 opened: opened.clone(),
@@ -1741,6 +1755,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_secondary: *qi_color_secondary,
                 qi_color_chaotic: *qi_color_chaotic,
                 qi_color_hunyuan: *qi_color_hunyuan,
+                practice_weights: practice_weights.clone(),
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -2571,6 +2586,11 @@ mod tests {
             qi_color_secondary: Some(ColorKind::Heavy),
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
+            practice_weights: vec![PracticeWeightV1 {
+                color: ColorKind::Intricate,
+                weight: 42.0,
+                ratio: 0.7,
+            }],
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -2590,6 +2610,7 @@ mod tests {
                 skill_milestones,
                 qi_color_main,
                 qi_color_secondary,
+                practice_weights,
                 ..
             } => {
                 assert_eq!(opened.len(), 20);
@@ -2604,6 +2625,8 @@ mod tests {
                 assert_eq!(skill_milestones[0].skill, "herbalism");
                 assert_eq!(qi_color_main, ColorKind::Intricate);
                 assert_eq!(qi_color_secondary, Some(ColorKind::Heavy));
+                assert_eq!(practice_weights[0].color, ColorKind::Intricate);
+                assert_eq!(practice_weights[0].weight, 42.0);
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }

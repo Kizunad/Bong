@@ -68,7 +68,10 @@ use self::breakthrough::{
     breakthrough_system, rapid_breakthrough_karma_mark_system, BreakthroughOutcome,
     BreakthroughRequest,
 };
-use self::color::{qi_color_evolution_tick, PracticeLog};
+use self::color::{
+    qi_color_evolution_tick, record_cultivation_session_practice_events,
+    CultivationSessionPracticeEvent, PracticeLog,
+};
 use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use self::composure::composure_tick;
 use self::contamination::contamination_tick;
@@ -119,7 +122,10 @@ use self::realm_vision::view_distance_ramp::view_distance_ramp_system;
 use self::spiritual_sense::push::{
     cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
 };
-use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
+use self::tick::{
+    prune_cultivation_session_practice_accumulator, qi_regen_and_zone_drain_tick, CultivationClock,
+    CultivationSessionPracticeAccumulator,
+};
 use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
@@ -150,6 +156,7 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
+    app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
@@ -190,6 +197,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianOverloadEvent>();
     app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
+    app.add_event::<CultivationSessionPracticeEvent>();
     app.add_event::<InfuseDuguPoisonIntent>();
     app.add_event::<DuguObfuscationDisruptedEvent>();
     app.add_event::<DuguPoisonProgressEvent>();
@@ -227,6 +235,16 @@ pub fn register(app: &mut App) {
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
         ),
+    );
+    app.add_systems(
+        Update,
+        record_cultivation_session_practice_events
+            .after(qi_regen_and_zone_drain_tick)
+            .before(qi_color_evolution_tick),
+    );
+    app.add_systems(
+        Update,
+        prune_cultivation_session_practice_accumulator.after(qi_regen_and_zone_drain_tick),
     );
     app.add_systems(
         Update,

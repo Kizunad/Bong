@@ -6,6 +6,7 @@ import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.cultivation.ColorKind;
+import com.bong.client.cultivation.QiColorVectorHud;
 import com.bong.client.cultivation.QiColorObservedState;
 import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.component.*;
@@ -115,6 +116,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Body inspect (cultivation tab) — dual-layer: physical + meridian
     private BodyInspectComponent bodyInspect;
+    private QiColorVectorHud qiColorVectorHud;
     private LabelComponent physicalLayerLabel;
     private LabelComponent meridianLayerLabel;
     private FlowLayout meridianFilterBar;
@@ -382,10 +384,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             bodyStatusLabel.text(Text.literal(sb.toString()));
         };
         refreshBodyStatus.run();
+        qiColorVectorHud = new QiColorVectorHud();
+        qiColorVectorHud.setBody(bodyInspect.meridianBody());
+        cultivationTabContent.child(qiColorVectorHud);
         // 网络新快照到达时推到 UI（BodyInspect 内部不会自动感知 MeridianStateStore.replace）。
         // 存成字段以便 removed() 回调里解绑 —— 否则每开一次 InspectScreen 都累积一个悬挂监听。
         meridianBodyListener = body -> {
             if (body != null) bodyInspect.setMeridianBody(body);
+            if (qiColorVectorHud != null) qiColorVectorHud.setBody(body);
             refreshBodyStatus.run();
         };
         MeridianStateStore.addListener(meridianBodyListener);

@@ -23,10 +23,10 @@ use crate::schema::channels::{
     CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH, CH_SKILL_CAP_CHANGED,
     CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
-    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE,
-    CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE,
-    CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
-    CH_ZONG_CORE_ACTIVATED,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
+    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -58,6 +58,7 @@ use crate::schema::social::{
 use crate::schema::spirit_eye::{
     SpiritEyeDiscoveredV1, SpiritEyeMigrateV1, SpiritEyeUsedForBreakthroughV1,
 };
+use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
@@ -142,6 +143,7 @@ pub enum RedisOutbound {
     CarrierImpact(CarrierImpactEventV1),
     ProjectileDespawned(ProjectileDespawnedEventV1),
     TuikeShed(ShedEventV1),
+    StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -384,6 +386,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_COMBAT_SUMMARY,
+                payload,
+            })
+        }
+        RedisOutbound::StyleBalanceTelemetry(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize StyleBalanceTelemetryEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_STYLE_BALANCE_TELEMETRY,
                 payload,
             })
         }
@@ -2354,6 +2367,40 @@ mod redis_bridge_tests {
                 assert_eq!(v["death_event_count"], 2);
                 assert_eq!(v["damage_total"], 88.0);
                 assert_eq!(v["contam_delta_total"], 16.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let style = prepare_outbound_command(RedisOutbound::StyleBalanceTelemetry(
+            crate::schema::style_balance::StyleBalanceTelemetryEventV1 {
+                v: 1,
+                attacker_player_id: "offline:Azure".to_string(),
+                defender_player_id: "offline:Crimson".to_string(),
+                attacker_color: Some(
+                    crate::schema::style_balance::StyleTelemetryColorSnapshotV1 {
+                        main: crate::cultivation::components::ColorKind::Heavy,
+                        secondary: Some(crate::cultivation::components::ColorKind::Solid),
+                        is_chaotic: false,
+                        is_hunyuan: true,
+                    },
+                ),
+                defender_color: None,
+                cause: "attack_intent:offline:Azure".to_string(),
+                resolved_at_tick: 404,
+            },
+        ))
+        .expect("style balance telemetry payload should serialize");
+        match style {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_STYLE_BALANCE_TELEMETRY);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["attacker_player_id"], "offline:Azure");
+                assert_eq!(v["defender_player_id"], "offline:Crimson");
+                assert_eq!(v["attacker_color"]["main"], "Heavy");
+                assert_eq!(v["attacker_color"]["is_hunyuan"], true);
+                assert!(v.get("defender_color").is_none());
+                assert_eq!(v["resolved_at_tick"], 404);
             }
             other => panic!("expected publish, got {other:?}"),
         }

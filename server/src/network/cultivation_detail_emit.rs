@@ -8,6 +8,7 @@
 
 use valence::prelude::{bevy_ecs, Client, Entity, Position, Query, Res, ResMut, Resource, With};
 
+use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
     ColorKind, Contamination, Cultivation, MeridianSystem, QiColor,
 };
@@ -20,7 +21,9 @@ use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::schema::cultivation::SkillMilestoneSnapshotV1;
-use crate::schema::server_data::{LifespanPreviewV1, ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::{
+    LifespanPreviewV1, PracticeWeightV1, ServerDataPayloadV1, ServerDataV1,
+};
 use crate::world::zone::ZoneRegistry;
 
 const EMIT_INTERVAL_TICKS: u64 = 20;
@@ -40,6 +43,7 @@ type CultivationDetailEmitQueryItem<'a> = (
     Option<&'a Position>,
     Option<&'a LifeRecord>,
     Option<&'a QiColor>,
+    Option<&'a PracticeLog>,
 );
 
 pub fn emit_cultivation_detail_payloads(
@@ -65,6 +69,7 @@ pub fn emit_cultivation_detail_payloads(
         position,
         life_record,
         qi_color,
+        practice_log,
     ) in &mut clients
     {
         let mut opened = Vec::with_capacity(20);
@@ -131,6 +136,7 @@ pub fn emit_cultivation_detail_payloads(
             qi_color_secondary: qi_color.and_then(|color| color.secondary),
             qi_color_chaotic: qi_color.is_some_and(|color| color.is_chaotic),
             qi_color_hunyuan: qi_color.is_some_and(|color| color.is_hunyuan),
+            practice_weights: practice_weights_payload(practice_log),
         });
         let label = payload_type_label(payload.payload_type());
         let bytes = match serialize_server_data_payload(&payload) {
@@ -147,4 +153,36 @@ pub fn emit_cultivation_detail_payloads(
         let _ = SERVER_DATA_CHANNEL; // channel constant, matches ident! literal below
         client.send_custom_payload(ident!("bong:server_data"), &bytes);
     }
+}
+
+fn practice_weights_payload(log: Option<&PracticeLog>) -> Vec<PracticeWeightV1> {
+    let Some(log) = log else {
+        return Vec::new();
+    };
+    let total = log.total();
+    if total <= f64::EPSILON {
+        return Vec::new();
+    }
+    [
+        ColorKind::Sharp,
+        ColorKind::Heavy,
+        ColorKind::Mellow,
+        ColorKind::Solid,
+        ColorKind::Light,
+        ColorKind::Intricate,
+        ColorKind::Gentle,
+        ColorKind::Insidious,
+        ColorKind::Violent,
+        ColorKind::Turbid,
+    ]
+    .into_iter()
+    .filter_map(|color| {
+        let weight = log.weights.get(&color).copied().unwrap_or(0.0);
+        (weight > 0.0).then_some(PracticeWeightV1 {
+            color,
+            weight,
+            ratio: (weight / total).clamp(0.0, 1.0),
+        })
+    })
+    .collect()
 }

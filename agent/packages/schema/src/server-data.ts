@@ -288,6 +288,16 @@ export const ServerDataUiOpenV1 = Type.Object(
 );
 export type ServerDataUiOpenV1 = Static<typeof ServerDataUiOpenV1>;
 
+export const QiColorPracticeWeightV1 = Type.Object(
+  {
+    color: ColorKind,
+    weight: Type.Number({ minimum: 0 }),
+    ratio: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type QiColorPracticeWeightV1 = Static<typeof QiColorPracticeWeightV1>;
+
 export const ServerDataCultivationDetailV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -307,6 +317,7 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     qi_color_secondary: Type.Optional(ColorKind),
     qi_color_chaotic: Type.Optional(Type.Boolean()),
     qi_color_hunyuan: Type.Optional(Type.Boolean()),
+    practice_weights: Type.Optional(Type.Array(QiColorPracticeWeightV1, { maxItems: 10 })),
   },
   { additionalProperties: false },
 );
