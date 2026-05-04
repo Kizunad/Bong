@@ -42,6 +42,10 @@
         {
           "const": "SpiritEye",
           "type": "string"
+        },
+        {
+          "const": "NicheIntrusionTrace",
+          "type": "string"
         }
       ]
     },

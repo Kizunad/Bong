@@ -11,6 +11,7 @@ export const SenseKindV1 = Type.Union([
   Type.Literal("ZhenfaArray"),
   Type.Literal("ZhenfaWardAlert"),
   Type.Literal("SpiritEye"),
+  Type.Literal("NicheIntrusionTrace"),
 ]);
 export type SenseKindV1 = Static<typeof SenseKindV1>;
 

@@ -38,6 +38,13 @@ class PerceptionEdgeRendererTest {
     }
 
     @Test
+    void nicheIntrusionWireKindMapsToInkTraceMarker() {
+        assertEquals(SenseKind.NICHE_INTRUSION_TRACE, SenseKind.fromWire("NicheIntrusionTrace"));
+        int color = PerceptionEdgeRenderer.colorFor(SenseKind.NICHE_INTRUSION_TRACE, 1.0);
+        assertEquals(0x4B4654, color & 0x00FFFFFF);
+    }
+
+    @Test
     void skipsInFovIndicatorsByContract() {
         List<HudRenderCommand> out = new ArrayList<>();
         PerceptionEdgeRenderer.append(out, List.of(

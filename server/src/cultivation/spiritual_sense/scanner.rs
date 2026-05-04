@@ -9,6 +9,7 @@ pub enum SpiritualSenseTargetKind {
     HeavenlyGaze,
     Crisis,
     SpiritEye,
+    NicheIntrusionTrace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,6 +114,13 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
             }
         }
         SpiritualSenseTargetKind::SpiritEye => SenseKindV1::SpiritEye,
+        SpiritualSenseTargetKind::NicheIntrusionTrace => {
+            if realm_rank(observer_realm) >= 3 {
+                SenseKindV1::NicheIntrusionTrace
+            } else {
+                return None;
+            }
+        }
     };
     Some(SenseEntryV1 {
         kind,
@@ -314,6 +322,22 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.kind == SenseKindV1::AmbientLeyline));
+    }
+
+    #[test]
+    fn niche_intrusion_trace_requires_solidify_sense() {
+        let targets = vec![SpiritualSenseTarget {
+            position: [40.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::NicheIntrusionTrace,
+            intensity: 0.8,
+            stealth: None,
+        }];
+
+        assert!(scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets).is_empty());
+        assert_eq!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets)[0].kind,
+            SenseKindV1::NicheIntrusionTrace
+        );
     }
 
     #[test]

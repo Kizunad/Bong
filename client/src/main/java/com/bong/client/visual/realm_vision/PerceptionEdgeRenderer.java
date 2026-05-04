@@ -36,6 +36,7 @@ public final class PerceptionEdgeRenderer {
             case ZHENFA_ARRAY -> 0x55F0C8;
             case ZHENFA_WARD_ALERT -> 0xFFD166;
             case SPIRIT_EYE -> 0x70FFD6;
+            case NICHE_INTRUSION_TRACE -> 0x4B4654;
         };
         int alpha = (int) Math.round(80.0 + Math.max(0.0, Math.min(1.0, intensity)) * 175.0);
         return (alpha << 24) | base;
