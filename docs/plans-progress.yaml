@@ -1,23 +1,19 @@
 # Bong 项目 plan 进度索引
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
-# 上一次刷新：2026-05-04 由 4 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）全审 active 组。
+# 上一次刷新：2026-05-04 由 5 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）全审 active 5 组（combat-vfx / cultivation-economy / gameplay-npc / infrastructure / worldgen）。
 #   主要发现：
-#     - 多份 active plan 已 merged 入 finished_plans/（spirit-eye/HUD/zhenfa 已早入；
-#       新增 anqi/woliu/zhenmai/style-vector-integration/cultivation-canonical-align/
-#       lifespan/anticheat/inventory-v2/poi-novice/spawn-tutorial/perception-v1.1/
-#       library-jiuzong-history/input-binding/cross-system-patch/terrain-jiuzong-ruin/
-#       terrain-rift-mouth 等 16 份）。
-#     - 旧 skeleton dugu/tuike 已升 active（dugu worktree 800+ 行未 commit；tuike 分支 ready 待 PR）。
-#     - 5 份新 active 上架：alchemy-v2 / multi-life / multi-style / tsy-raceout / library-jiuzong-history。
-#     - skeleton/ 新增 8 份骨架：economy / gameplay-acceptance / gameplay-journey /
-#       player-journey-deepseek / playthrough-100h-gpt / style-balance / void-actions / void-quota。
-#     - 已弃置：library-web-content / opencode-workflow（commit 7ad2f761）。
-#     - 实地校验回退：terrain-layer-query 的 typed API 实际未落地（仅旧 sample_layer f32），
-#       botany-agent 仅订阅未实装 WorldModel 字段，本次都下调。
-#     - 注意：plan-perception-v1.md（active 模板）已被 v1.1 取代，本次从 dashboard 撤除，
-#       仅保留 v1.1（merged）。plan-library-jiuzong-history-v1.md 在 docs/ 与
-#       finished_plans/ 同时存在但内容不同——active 版是归档遗漏残留，建议人工删除。
+#     - **plan-dugu-v1**：今早 PR #126（commit 44a6ff9b）merge 入 finished_plans/，从 active-implementing 25% 升至 merged 95%（毒蛊流闭环：DuguPoisonState/QiNeedle/ShootNeedleIntent 78 处命中）。
+#     - **plan-alchemy-client-v1**：subagent 实测 P3-P7（owo-lib UI / Redis 对齐 / 配方正典 / 炸炉 / 图标）grep 0 命中，percent 100→40。文档已归档但代码不完整，建议人工核查 plan 范围或回退 active。
+#     - 多份归档 plan grep 验证后微调 percent：HUD 95→97 / style-vector 100→90 / tuike 100→95 / woliu 100→95 / zhenmai 100→95 / zhenfa 90→92 / narrative 100→95 / persistence 100→90 / botany-v2 90→85 / library-jiuzong-history 95→100。
+#     - **plan-inventory-v1**：state merged → active-implementing 95%（subagent 注：未归入 finished_plans/，仍 active，§7.5 Manual QA 未记录 pass）。
+#     - **plan-multi-style-v1**：state active-implementing → active-design 30%（is_hunyuan 仅骨架，PracticeLog 修炼 session 扩展未实装）。
+#     - **plan-botany-agent-v1**：active-implementing 15% → active-design 10%（仅 schema/subscribe 就绪，WorldModel.botany_ecology / onBotanyEcology / ZoneStressFlag 全部缺失）。
+#     - **plan-niche-defense-v1**：5% → 0%（grep 未见 HouseGuardian/GuardianKind/NicheIntrusion 任何 symbol）。
+#     - **plan-cross-system-patch-v1**：补充 pr_refs [92]（subagent 实测确认）。
+#     - **plan-terrain-tribulation-scorch-v1**：skeleton percent 10 → 5（与骨架标准对齐）。
+#     - 注意：plan-perception-v1.md（旧 active 模板）已被 v1.1 取代，仍未从 docs/ root 删除（人工待办）；
+#       plan-library-jiuzong-history-v1.md docs/ root 与 finished_plans/ 同时存在但内容不同——active 版（11831B）是归档遗漏残留，finished_plans/ 为正本（3234B），建议人工删除前者。
 #
 # state 取值：
 #   - merged              代码已合并（PR 在主线），plan 主体已落地
@@ -64,17 +60,17 @@ plans:
   # ============================================================
   # Group: combat-vfx
   # ============================================================
-  - file: plan-HUD-v1.md
+  - file: finished_plans/plan-HUD-v1.md
     group: combat-vfx
-    title: "HUD 设计专项"
+    title: "客户端全 HUD 布局与渲染系统"
     state: merged
-    percent: 95
-    last_updated: "2026-04-29"
+    percent: 97
+    last_updated: "2026-05-02"
     pr_refs: [98]
     blocking_on: []
-    summary: "docs/finished_plans 已归档；grep 命中 Orchestrator、QuickBar、CastState、EventStream、InspectScreen，C1-C8 主体闭环。"
+    summary: "C1-C7 + C8 阈值配置全部落地；grep 确认 BongHudOrchestrator、StyleBadgeHudPlanner、EventStreamHudPlanner、QuickBarHudPlanner 等 25+ 个 symbol 存在。InspectScreen 拖拽 tab 与 event_stream_toggle 在 Finish Evidence 标注完成。"
 
-  - file: plan-anqi-v1.md
+  - file: finished_plans/plan-anqi-v1.md
     group: combat-vfx
     title: "器修·暗器流"
     state: merged
@@ -82,110 +78,100 @@ plans:
     last_updated: "2026-05-04"
     pr_refs: [121]
     blocking_on: []
-    summary: "PR #121 已合并入主线并归档 finished_plans/；server anqi/needle 流派、客户端反馈、agent narration 均落地。"
+    summary: "PR #121 合并归档。grep CarrierImprint、QiProjectile、ThrowCarrierIntent、carry_decay_tick 22 处命中，CarrierHudPlanner 落地。P1 hand-slot/HUD 与 P2 agent narration 已完成；Q41-Q44 留 vN+1。"
 
-  - file: plan-dugu-v1.md
+  - file: finished_plans/plan-dugu-v1.md
     group: combat-vfx
     title: "毒蛊流：凝针 + 灌毒蛊 + 经脉永久损伤"
-    state: active-implementing
-    percent: 25
-    last_updated: "2026-05-03"
-    pr_refs: []
+    state: merged
+    percent: 95
+    last_updated: "2026-05-04"
+    pr_refs: [126]
     blocking_on: []
-    summary: "worktree auto/plan-dugu-v1 有未提交代码：dugu.rs（808 行）+ needle.rs（247 行）+ 10 个改动文件，主线零落地，schema/client/agent 层未触动。"
+    summary: "PR #126（commit 44a6ff9b）合并入 finished_plans/。grep DuguPoisonState、QiNeedle、InfuseDuguPoisonIntent、ShootNeedleIntent、dugu_poison_tick 78 处命中，含 P0/P1 遮蔽接入与 P2 LifeRecord。NPC 信誉度/求医解/多毒源留 plan-dugu-v2。"
 
-  - file: plan-input-binding-v1.md
+  - file: finished_plans/plan-input-binding-v1.md
     group: combat-vfx
     title: "G 键统一环境交互路由"
     state: merged
     percent: 100
-    last_updated: "2026-04-29"
+    last_updated: "2026-05-02"
     pr_refs: [101]
     blocking_on: []
-    summary: "PR #101 合并归档 finished_plans/；G 键路由统一桥接所有环境交互，client InputBinding 接入。"
+    summary: "PR #101 合并归档。grep InteractKeyRouter、InteractionKeybindings、TsyContainerSearchIntentHandler、InteractPriorityResolver 33 处命中，P0-P3 全部落地并通过三栈测试。"
 
   - file: plan-iris-integration-v1.md
     group: combat-vfx
     title: "Iris 光影集成"
     state: active-design
     percent: 5
-    last_updated: "2026-04-26"
+    last_updated: "2026-04-25"
     pr_refs: []
     blocking_on: ["plan-vfx-v1", "plan-particle-system-v1", "plan-player-animation-v1"]
-    summary: "纯文档设计；无 worktree、无 iris 分支、无任何 Java/Rust 代码落地，§9 进度日志为空，所有任务标 [ ]。"
+    summary: "纯文档设计；grep IrisApi、BongClientState、bong_inkwash、CommonUniforms Mixin 在 client/src 中 0 处命中，全计划仍处调研阶段。依赖 plan-vfx-v1 Phase 1 先行。"
 
-  - file: plan-style-vector-integration-v1.md
+  - file: finished_plans/plan-style-vector-integration-v1.md
     group: combat-vfx
     title: "真元色向量链路（流派组合涌现）"
     state: merged
-    percent: 100
+    percent: 90
     last_updated: "2026-05-04"
     pr_refs: [123]
     blocking_on: []
-    summary: "PR #123 合并归档 finished_plans/；server qi_color_observed_emit + client QiColorObservedHandler/Store + agent qi-color-narration + InspectScreen 接入全部落地。"
+    summary: "PR #123 合并归档。grep record_style_practice、PracticeLog、QiColorObservedHandler、QiColorNarrationTracker 56 处命中，P0-P2 全部落地。anqi/dugu/tuike 各自流派 hook 后续补；染色亲和度精确加成留 vN+1。"
 
   - file: finished_plans/plan-tuike-v1.md
     group: combat-vfx
     title: "替尸·蜕壳流：伪灵皮 contam 过滤"
     state: merged
-    percent: 100
+    percent: 95
     last_updated: "2026-05-04"
     pr_refs: [124]
     blocking_on: []
-    summary: "PR #124 合并 + 归档 finished_plans/。tuike.rs 880 行 + FalseSkin component + schema/tuike.rs + tuike-narration.ts + FalseSkinStateHandler + LifeRecord 蜕壳事件 + tuike.toml 物品全部落地（59 文件 / 3682 行；cargo check + 2268 测试通过）。"
+    summary: "PR #124 合并 + 归档 finished_plans/。grep FalseSkin、tuike_filter_contam、ShedEvent、FalseSkinKind 161 处命中，P0/P1/P2 含 LifeRecord 全部落地，13 个 server 测试通过。三层蛛丝伪皮、灵纹伪皮、NPC 商人留 plan-tuike-v2。"
 
-  - file: plan-woliu-v1.md
+  - file: finished_plans/plan-woliu-v1.md
     group: combat-vfx
     title: "绝灵·涡流流"
     state: merged
-    percent: 100
-    last_updated: "2026-05-02"
+    percent: 95
+    last_updated: "2026-05-03"
     pr_refs: [113]
     blocking_on: []
-    summary: "PR #113 合并归档 finished_plans/；woliu 涡流核心 + 真元抽离链路落地。"
+    summary: "PR #113 合并归档。grep VortexField、VortexCastIntent、vortex_intercept_tick、VortexBackfireEvent 65 处命中，P0 持涡/P1 境界分级/抗灵压丹/P2 收口全部落地。短时瞬涡、旋转方向、完整流体算法留 vN+1/vN+2。"
 
-  - file: plan-zhenfa-v1.md
+  - file: finished_plans/plan-zhenfa-v1.md
     group: combat-vfx
     title: "地师阵法流"
     state: merged
-    percent: 90
-    last_updated: "2026-05-01"
+    percent: 92
+    last_updated: "2026-05-03"
     pr_refs: [110]
     blocking_on: []
-    summary: "PR #110 已归档；ZhenfaInstance、ZhenfaRegistry、Trap/Ward、zhenfa_* 契约与神识告警全部落地，扩展项见后续 plan。"
+    summary: "PR #110 合并归档。grep ZhenfaRegistry、ZhenfaInstance、ZhenfaAnchor、ZhenfaWardAlert 57 处命中，P0 诡雷+P1 警戒场+P2 契约全部落地。护龛阵、聚灵阵、欺天阵、幻阵留 plan-zhenfa-v2。"
 
-  - file: plan-zhenmai-v1.md
+  - file: finished_plans/plan-zhenmai-v1.md
     group: combat-vfx
     title: "截脉·震爆流"
     state: merged
-    percent: 100
-    last_updated: "2026-05-03"
+    percent: 95
+    last_updated: "2026-05-04"
     pr_refs: [122]
     blocking_on: []
-    summary: "PR #122 合并归档 finished_plans/；P0 + P1/P2 扩展全部落地（截脉/震爆/经脉损伤）。"
+    summary: "PR #122 合并归档。grep jiemai_effectiveness、jiemai_fov_check、ParryRecovery、jiemai_qi_cost_for_realm、JiemaiParry 45 处命中，P0/P1（境界分级/prep/僵直/距离梯度/FOV）/P2 LifeRecord 全部完成。极限 timing 留 vN+1。"
 
   # ============================================================
   # Group: cultivation-economy
   # ============================================================
-  - file: plan-alchemy-client-v1.md
+  - file: finished_plans/plan-alchemy-client-v1.md
     group: cultivation-economy
     title: "炼丹客户端闭环"
     state: merged
-    percent: 100
-    last_updated: "2026-05-03"
+    percent: 40
+    last_updated: "2026-05-04"
     pr_refs: []
     blocking_on: []
-    summary: "文档在 finished_plans；grep 命中 furnace_pos、AlchemyScreen/Store、开炉/投料/炸炉经脉裂痕与 schema，主链已闭环。"
-
-  - file: plan-alchemy-recycle-v1.md
-    group: cultivation-economy
-    title: "炼丹废料反哺灵田"
-    state: active-design
-    percent: 5
-    last_updated: "2026-04-27"
-    pr_refs: []
-    blocking_on: []
-    summary: "纯设计文档；grep 未见 PillResidue / ReplenishSource::PillResidue / dye_contamination 字段或 contamination.rs，lingtian session.rs 仍只有 4 来源。"
+    summary: "subagent 实测 furnace_pos (P1)、AlchemyScreen+Store+放置拦截 (P0/P2) 已实装；P3 DragTarget::FurnaceSlot/P4 Redis 对齐/P5 配方正典化/P6 炸炉 meridian_crack/P7 图标 grep 0 命中。文档已归档但代码不完整，建议人工核查 plan 范围或回退 active。"
 
   - file: finished_plans/plan-alchemy-v2.md
     group: cultivation-economy
@@ -195,19 +181,29 @@ plans:
     last_updated: "2026-05-04"
     pr_refs: [125]
     blocking_on: []
-    summary: "P0–P4 全部代码落地并归档（commit 22ab67b2）。alchemy/ 13 文件 / 5456 行 / 122 单测：side_effect_apply.rs (P0) + recipe_fragment.rs+learned.rs (P1) + quality.rs+outcome.rs (P2) + auto_profile.rs (P3) + danxin.rs (P4)。StatusEffectKind 新增 5 variant（QiRegenBoost / InsightFlash / QiCapPermMinus / ContaminationBoost / AlchemyBuff(String)）。"
+    summary: "PR #125 合并归档（commit 22ab67b2）。alchemy/ 13 文件 / 5456 行 / 122 单测：side_effect_apply (P0) + recipe_fragment+learned (P1) + quality+outcome (P2) + auto_profile+FurnaceQiReserve (P3) + danxin (P4)。StatusEffectKind 新增 5 variant。"
+
+  - file: plan-alchemy-recycle-v1.md
+    group: cultivation-economy
+    title: "炼丹废料反哺灵田"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-27"
+    pr_refs: []
+    blocking_on: ["plan-alchemy-v1", "plan-lingtian-process-v1"]
+    summary: "纯设计骨架，无代码。grep 未见 PillResidue / ReplenishSource::PillResidue / dye_contamination 任何 symbol；lingtian session.rs 仍只有 4 来源。废料路径依赖 alchemy 失败分支先实装。"
 
   - file: plan-botany-v2.md
     group: cultivation-economy
     title: "植物生态扩展"
     state: merged
-    percent: 90
+    percent: 85
     last_updated: "2026-05-03"
     pr_refs: [83, 84, 86, 105]
     blocking_on: ["plan-lingtian-weather-v1"]
-    summary: "17 种 v2 全注册（registry 断言 count==17），SurvivalMode/EnvLock/HarvestHazard/工具真伤全落；SeasonRequired/TimePhase 仅 stub，依赖 lingtian-weather-v1 P5 回填。"
+    summary: "17 种 v2 全注册（registry 断言 count==17），SurvivalMode/EnvLock/HarvestHazard/工具真伤全落；SeasonRequired/TimePhase 仍 stub，依赖 lingtian-weather-v1 P5 回填，P5 极稀触发未完成。"
 
-  - file: plan-cultivation-canonical-align-v1.md
+  - file: finished_plans/plan-cultivation-canonical-align-v1.md
     group: cultivation-economy
     title: "修炼正典对齐：六境界与经脉门槛"
     state: merged
@@ -215,19 +211,19 @@ plans:
     last_updated: "2026-04-29"
     pr_refs: [99]
     blocking_on: []
-    summary: "PR #99 合并归档 finished_plans/；六境界 PascalCase 统一 + 经脉门槛对齐 worldview，IPC 命名清理。"
+    summary: "PR #99 合并归档。regular_opened_count/extraordinary_opened_count helper、NotEnoughRegularMeridians/NotEnoughExtraordinaryMeridians BreakthroughError 全落 components.rs/breakthrough.rs，六境界 required_meridians 阈值对齐正典。"
 
-  - file: plan-fauna-v1.md
+  - file: finished_plans/plan-fauna-v1.md
     group: cultivation-economy
     title: "妖兽骨系材料"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-05-02"
     pr_refs: [105]
     blocking_on: []
-    summary: "文档在 finished_plans；FaunaTag/DropTable、六类材料、封灵骨币、shelflife、forge 正典与屠宰工具链均已落地。"
+    summary: "PR #105 合并归档。FaunaTag/BeastKind/DropTable/BoneCoinCraftSession 全落，yi_shou_gu 正典化，shelflife bone_coin profile 注册，forge blueprint 替换，2072 服务端测试通过。"
 
-  - file: plan-forge-leftovers-v1.md
+  - file: finished_plans/plan-forge-leftovers-v1.md
     group: cultivation-economy
     title: "炼器剩余收口"
     state: merged
@@ -235,17 +231,17 @@ plans:
     last_updated: "2026-05-03"
     pr_refs: [62, 66, 103]
     blocking_on: []
-    summary: "文档在 finished_plans；forge Redis bridge、station place、产物入库、三块客户端 UI 与持久化锚点均已收口。"
+    summary: "PR #103 归档。ForgeStartPayloadV1/ForgeOutcomePayloadV1 bridge、forge_outcome_to_inventory system、BlueprintScrollSpec/InscriptionScrollSpec 落 inventory、TemperingTrackComponent 实装 client ForgeScreen，P0-P4 全收口。"
 
-  - file: plan-lifespan-v1.md
+  - file: finished_plans/plan-lifespan-v1.md
     group: cultivation-economy
     title: "寿元系统：境界年限 + 死亡扣寿"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-05-04"
     pr_refs: [117]
     blocking_on: []
-    summary: "PR #117 合并归档 finished_plans/；LifespanCapTable + 死亡扣寿公式 + 境界年限正典化全部落地，multi-life-v1 单源依赖。"
+    summary: "PR #117 合并归档。LifespanComponent/LifespanCapTable/lifespan_aging_tick/风烛 Frailty/NaturalAging 老死结算/续命丹/悟道延寿/坍缩渊换寿/夺舍 全部落地，NPC 共用，inspect 跨仓库对齐。"
 
   - file: plan-lingtian-process-v1.md
     group: cultivation-economy
@@ -255,7 +251,7 @@ plans:
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: ["plan-lingtian-weather-v1"]
-    summary: "仅文档设计，无代码。grep 未见 ProcessingKind / ProcessingSession / FreshnessTracker / ProcessingRecipeRegistry，lingtian/ 目录无 processing.rs。"
+    summary: "纯设计文档，无代码。grep 未见 ProcessingKind / ProcessingSession / FreshnessTracker / ProcessingRecipeRegistry，lingtian/ 目录无 processing.rs，P0-P4 全未启动。"
 
   - file: plan-lingtian-v1.md
     group: cultivation-economy
@@ -265,7 +261,7 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [26]
     blocking_on: ["plan-skill-v1", "plan-zhenfa-v1"]
-    summary: "P0–P5 + 道伥/密度阈值/LifeRecord/偷灵/HUD/LingtianActionScreen 全落（PR #26，627 单测）；skill herbalism XP 接 plan-skill-v1，zhenfa jvling flag 默认 false 待接。"
+    summary: "P0–P5 + 道伥/密度阈值/LifeRecord/偷灵/HUD/LingtianActionScreen 全落（PR #26，627 单测）；herbalism XP 待接 plan-skill-v1，zhenfa jvling flag 默认 false 待接。"
 
   - file: plan-lingtian-weather-v1.md
     group: cultivation-economy
@@ -275,19 +271,19 @@ plans:
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: []
-    summary: "仅文档设计，无代码。grep 未见 ZoneSeasonState / season_tick_system / WeatherEvent（lingtian 下），P0–P4 全未启动。"
+    summary: "纯设计文档，无代码。grep 未见 ZoneSeasonState / Season enum (lingtian) / WeatherEvent / season_tick_system，P0-P4 全未启动；botany-v2 P5 及 lingtian-process P1 上游依赖。"
 
-  - file: plan-mineral-v1.md
+  - file: finished_plans/plan-mineral-v1.md
     group: cultivation-economy
     title: "矿物材料正典"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-04-27"
     pr_refs: [31, 44, 104]
     blocking_on: []
-    summary: "文档在 finished_plans；18 矿物、锚点物化、探矿、NBT、forge/alchemy 校验、衰变、资源包与鲸落收口均在。"
+    summary: "PR #44/#104 合并归档。MineralId/MineralRegistry/MineralOreNode/MineralProbeIntent 全落，矿脉锚点物化，alchemy/forge 校验接入，ore 改色资源包，衰变 profile，KarmaFlag bridge 完整（2063 测）。"
 
-  - file: plan-spirit-eye-v1.md
+  - file: finished_plans/plan-spirit-eye-v1.md
     group: cultivation-economy
     title: "灵眼系统"
     state: merged
@@ -295,19 +291,19 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [111]
     blocking_on: []
-    summary: "PR #111 合并归档 finished_plans/；SpiritEyeRegistry + spirit_eye_candidates + 突破环境检查 + 私有标记 + 客户端 UI 全部落地。"
+    summary: "PR #111 合并归档。SpiritEyeRegistry/spirit_eye_discovery_tick/spirit_eye_migration_tick/SpiritEyeUsedForBreakthroughV1 全落，突破环境检查接入 cultivation，私有 HUD 标记，schema/channels 对齐。"
 
-  - file: plan-spiritwood-v1.md
+  - file: finished_plans/plan-spiritwood-v1.md
     group: cultivation-economy
     title: "灵木材料体系"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-05-02"
     pr_refs: [106]
     blocking_on: []
-    summary: "文档在 finished_plans；WoodSession、ling_mu 材料、lumber_progress、ling_xia、forge 配方和 zhenfa hook 均已落地。"
+    summary: "PR #106 合并归档。WoodSession/SpiritWoodHarvestedLogs/ling_mu 四件物品/ling_xia 封灵匣/bong:lumber_progress/forge 正典化/zhenfa hook manifest 全落，ling_wood 无残留，2074 单测。"
 
-  - file: plan-tools-v1.md
+  - file: finished_plans/plan-tools-v1.md
     group: cultivation-economy
     title: "凡器工具体系"
     state: merged
@@ -315,7 +311,7 @@ plans:
     last_updated: "2026-05-03"
     pr_refs: [84, 86]
     blocking_on: []
-    summary: "文档在 finished_plans；7 件工具、ToolKind/ToolTag、forge blueprint、主手识别、botany/fauna/耐久接入均在。"
+    summary: "PR #84/#86 合并归档。ToolKind(7 variant)/ToolTag/item_kind_to_tool/main_hand_tool 全落，forge blueprint 接入，botany v2 WoundOnBareHand 真伤，fauna 屠宰会话，P4 耐久损耗，ItemCategory::Tool 新增。"
 
   - file: plan-tribulation-v1.md
     group: cultivation-economy
@@ -333,32 +329,32 @@ plans:
   - file: plan-inventory-v1.md
     group: gameplay-npc
     title: "背包与掉落闭环"
-    state: merged
+    state: active-implementing
     percent: 95
-    last_updated: "2026-05-01"
+    last_updated: "2026-04-25"
     pr_refs: [12, 27]
     blocking_on: []
-    summary: "server/client/agent 三端全量落地；InventorySnapshot/DroppedLootRegistry/DroppedItemWorldRenderer/apply_pill 均可 grep 到，剩余仅实机 QA 与 tooltip 细节。"
+    summary: "InventorySnapshotV1/DroppedLootRegistry/DroppedItemWorldRenderer 全部存在 server/client；P1-P5 闭环，145 server tests + 72 client tests passed。剩余：§7.5 Manual QA 未记录 pass，未归入 finished_plans/，仍 active。"
 
-  - file: plan-inventory-v2.md
+  - file: finished_plans/plan-inventory-v2.md
     group: gameplay-npc
     title: "背包格子分配与堆叠修复"
     state: merged
     percent: 100
-    last_updated: "2026-05-02"
+    last_updated: "2026-05-04"
     pr_refs: [115]
     blocking_on: []
-    summary: "PR #115 合并归档 finished_plans/；修复格子分配 + 堆叠 bug，inventory-v1 后续巩固。"
+    summary: "PR #115 合并归档。find_free_slot/find_mergeable_stack/max_stack_count 已落 server/src/mineral/inventory_grant.rs 及 inventory/mod.rs，2177 测通过。"
 
-  - file: plan-library-jiuzong-history-v1.md
+  - file: finished_plans/plan-library-jiuzong-history-v1.md
     group: gameplay-npc
     title: "已亡七宗宗门志 lore 入库"
     state: merged
-    percent: 95
+    percent: 100
     last_updated: "2026-05-04"
     pr_refs: [114]
     blocking_on: []
-    summary: "PR #114 合并；7 篇 JSON（血溪/北陵/南渊/赤霞/玄水/太初/幽暗志）已入 docs/library/peoples/。注意 docs/ root 下 active 版是归档遗漏残留（11831 字节），finished_plans/ 为正本（3234 字节），建议人工删除前者。"
+    summary: "PR #114 合并。docs/library/peoples/ 下七宗志 JSON（血溪/北陵/南渊/赤霞/玄水/太初/幽暗）已确认存在。注意 docs/ root active 版（11831B）是归档遗漏残留，finished_plans/ 为正本（3234B），建议人工删除前者。"
 
   - file: plan-lingtian-npc-v1.md
     group: gameplay-npc
@@ -368,7 +364,7 @@ plans:
     last_updated: "2026-04-30"
     pr_refs: []
     blocking_on: ["plan-lingtian-v1"]
-    summary: "grep server/src/ 未找到 ScatteredCultivator / FarmingTemperament / TillAction 任何 symbol；ActiveLingtianSessions.by_player → by_actor 重构 PR 尚未落地。"
+    summary: "grep 未找到 ScatteredCultivator / FarmingTemperament / TillAction / farming_brain 任何 symbol；ActiveLingtianSessions.by_player → by_actor 重构 PR 尚未落地，P0-P5 全部待启。"
 
   - file: plan-multi-life-v1.md
     group: gameplay-npc
@@ -378,29 +374,29 @@ plans:
     last_updated: "2026-05-04"
     pr_refs: []
     blocking_on: ["plan-lifespan-v1"]
-    summary: "LifespanCapTable 已 grep 到（lifespan-v1 finished），但 character_lifecycle.rs::regenerate_or_terminate / character_select.rs / per-life luck_pool 全部未找到，P0–P3 待实施。"
+    summary: "LifespanCapTable 已 grep 到（lifespan-v1 finished），但 character_lifecycle::regenerate_or_terminate / character_select / per-life luck_pool 全未找到，P0-P3 待实施。"
 
   - file: plan-multi-style-v1.md
     group: gameplay-npc
     title: "7 色均衡 PracticeLog 自然演化混元色"
-    state: active-implementing
+    state: active-design
     percent: 30
     last_updated: "2026-05-04"
     pr_refs: []
-    blocking_on: []
-    summary: "is_hunyuan 计算已落 server/src/cultivation/color.rs；6 流派 PracticeLog hook 已被 plan-style-vector-integration-v1 P2 顺手接好；client 接收路径完整（QiColorObservedHandler / CultivationDetailHandler / MeridianBody.qiColorHunyuan），InspectScreen.java:375 显示 \"§b混\" 标记。仍缺 multi-style 自身核心：QiColorVectorHud 7 色 bar chart + 自然演化代价机制（plan §0 6 个 [ ] 全空）。"
+    blocking_on: ["plan-style-vector-integration-v1"]
+    summary: "is_hunyuan / PracticeLog 已存在 server/src/cultivation/color.rs（cultivation-v1 遗留），但 QiColorVectorHud 7 色 bar chart + 自然演化代价 + PracticeLog 修炼 session 扩展均不存在，is_hunyuan 仅算骨架，P1/P2/P3 待起。"
 
   - file: plan-niche-defense-v1.md
     group: gameplay-npc
     title: "灵龛多层守家体系（傀儡/陷阱/道伥）"
     state: active-design
-    percent: 5
+    percent: 0
     last_updated: "2026-04-30"
     pr_refs: []
     blocking_on: ["plan-zhenfa-v1", "plan-fauna-v1"]
-    summary: "grep server/src/ 未找到 HouseGuardian / GuardianKind / NicheIntrusion / IntrusionRecord 任何 symbol。social-v1 预留 defense_mode hook 已存在，但本 plan P0–P5 全未开始。"
+    summary: "grep 未找到 HouseGuardian / GuardianKind / NicheIntrusion / IntrusionRecord 任何 symbol。social-v1 预留 defense_mode hook 已存，但本 plan P0-P5 全未开始。"
 
-  - file: plan-perception-v1.1.md
+  - file: finished_plans/plan-perception-v1.1.md
     group: gameplay-npc
     title: "视觉与神识感知系统 v1.1"
     state: merged
@@ -408,27 +404,27 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [85]
     blocking_on: []
-    summary: "PR #85 合并归档 finished_plans/（取代 v1 模板态）；RealmVisionParams / SpiritualSenseTargets / view_distance_ramp / client edge HUD 全落地。"
+    summary: "PR #85 合并归档（取代 v1 模板态）；RealmVisionParamsV1/SpiritualSenseTargetsV1 落 server/src/schema/realm_vision.rs，client edge HUD 全落，server 1827 + schema 224 测通过。"
 
-  - file: plan-poi-novice-v1.md
+  - file: finished_plans/plan-poi-novice-v1.md
     group: gameplay-npc
     title: "新手 POI 动态选址 + 事件叙事"
     state: merged
     percent: 100
-    last_updated: "2026-05-01"
+    last_updated: "2026-05-03"
     pr_refs: [109]
     blocking_on: []
-    summary: "PR #109 合并归档 finished_plans/；新手 POI 选址 + 事件叙事链路落地，spawn-tutorial 配套使用。"
+    summary: "PR #109 合并归档。PoiNoviceRegistry/TrespassEvent/PoiNoviceLoader 落 server/src/world/poi_novice.rs 及 network/poi_novice_bridge.rs，server 2121 + schema 258 测通过。"
 
-  - file: plan-spawn-tutorial-v1.md
+  - file: finished_plans/plan-spawn-tutorial-v1.md
     group: gameplay-npc
     title: "30min 出生沉默引导"
     state: merged
     percent: 100
-    last_updated: "2026-05-01"
+    last_updated: "2026-05-03"
     pr_refs: []
     blocking_on: []
-    summary: "已归档 finished_plans/（commit 85b90ae2 收口）；30min 沉默引导 + 7 决策闭环全部落地。"
+    summary: "已归档 finished_plans/（commit 85b90ae2 收口）。TutorialState/TutorialHook/CoffinOpen 落 server/src/world/spawn_tutorial.rs 及 schema/client_request.rs，server 2114 + client BUILD SUCCESSFUL。"
 
   - file: plan-tsy-raceout-v1.md
     group: gameplay-npc
@@ -438,62 +434,62 @@ plans:
     last_updated: "2026-05-04"
     pr_refs: []
     blocking_on: []
-    summary: "TsyCollapseStarted 事件已 grep 到 tsy_lifecycle.rs，extract_system.rs 有 StartExtractRequest 框架；tsy_raceout.rs / tsy_collapse_rifts.rs / RaceoutCountdownHud.java 均不存在。"
+    summary: "TsyCollapseStarted 事件已 grep 到 tsy_lifecycle.rs（前置存在），extract_system.rs 有 StartExtractRequest 框架；tsy_raceout.rs / tsy_collapse_rifts.rs / RaceoutCountdownHud.java 均不存在，5 决策闭环。"
 
   # ============================================================
   # Group: infrastructure
   # ============================================================
-  - file: plan-anticheat-v1.md
+  - file: finished_plans/plan-anticheat-v1.md
     group: infrastructure
     title: "反作弊计数与 Redis 上报"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-05-04"
     pr_refs: [116]
     blocking_on: []
-    summary: "PR #116 合并归档 finished_plans/；anticheat 计数 + Redis 上报通道 + 异常窗口检测落地。"
+    summary: "PR #116 合并归档。AntiCheatCounter / emit_anticheat_threshold_reports / anticheat_bridge.rs / agent/packages/schema/src/anticheat.ts 落地，2173 测通过，P0-P2 全绿。"
 
   - file: plan-botany-agent-v1.md
     group: infrastructure
     title: "植物生态接入天道"
-    state: active-implementing
-    percent: 15
+    state: active-design
+    percent: 10
     last_updated: "2026-04-27"
     pr_refs: []
     blocking_on: ["WorldModel.botany_ecology 字段未加", "ZoneStressFlag/ecology-analyzer.ts 缺失"]
-    summary: "BOTANY_ECOLOGY 已加入 CROSS_SYSTEM_EVENT_CHANNELS 订阅列表 + redis-ipc.ts 测试验证，但 WorldModel 字段、ZoneStressFlag、ecology-analyzer.ts、IReallocationNarration 全部缺失。文档自述已过期。"
+    summary: "BOTANY_ECOLOGY 已加入 CROSS_SYSTEM_EVENT_CHANNELS（cross-system-patch 落地），但 WorldModel.botany_ecology / onBotanyEcology / ZoneStressFlag/ZoneAnomalyLog / ecology-analyzer.ts 全部缺失。仅 schema/subscribe 就绪。"
 
-  - file: plan-cross-system-patch-v1.md
+  - file: finished_plans/plan-cross-system-patch-v1.md
     group: infrastructure
     title: "Cross-system 接入面补丁"
     state: merged
     percent: 100
-    last_updated: "2026-04-30"
-    pr_refs: []
+    last_updated: "2026-05-01"
+    pr_refs: [92]
     blocking_on: []
-    summary: "已归档 finished_plans/（commit 70b7653b 主线 merged）；CROSS_SYSTEM_EVENT_CHANNELS 通道扩展 + 跨系统事件路由收口。"
+    summary: "PR #92 合并归档（commit 70b7653b）。SkillId::Combat/Mineral/Cultivation、RedisOutbound::SkillXpGain、per_zone_caps、burst_meridian_event、BurstMeridianHandler 全落，1906 server + 188 agent + client BUILD SUCCESSFUL。"
 
-  - file: plan-narrative-v1.md
+  - file: finished_plans/plan-narrative-v1.md
     group: infrastructure
     title: "天道叙事风格节奏"
     state: merged
-    percent: 100
+    percent: 95
     last_updated: "2026-05-01"
     pr_refs: [89]
     blocking_on: []
-    summary: "grep 命中感知边界、广播收窄、匿名、现代腔黑名单、近轮去重、server dedupe 与 client 分流；归档证据与代码一致。"
+    summary: "grep 命中 NarrationDedupeResource、MODERN_SLANG_RE、perceptionEnvelopeBlock、NarrationHandler；§4 模板轮换与 LLM 去重 prompt 已实装（recentNarrationsBlock）；仅§2 视角剪裁'传闻/NPC口述'为人为约束未代码强制。"
 
-  - file: plan-persistence-v1.md
+  - file: finished_plans/plan-persistence-v1.md
     group: infrastructure
     title: "SQLite/WAL 存档持久化"
     state: merged
-    percent: 100
+    percent: 90
     last_updated: "2026-05-02"
     pr_refs: [24]
     blocking_on: ["plan-quest-v1"]
-    summary: "grep 命中 user_version 15、未来版本拒载、overlay payload 迁移、1000NPC+50玩家写入回归和10人终结一致性；Quest 转后续 plan。"
+    summary: "CURRENT_USER_VERSION=15、apply_migrations 拒载、bong.db 全链路落地；P0 归档阻塞项（迁移演练/性能回归）已收口。遗留 P1：quest_log 建表、zone 损坏恢复、r2d2 连接池等，非阻塞。"
 
-  - file: plan-server-cmd-system-v1.md
+  - file: finished_plans/plan-server-cmd-system-v1.md
     group: infrastructure
     title: "服务端原生命令系统"
     state: merged
@@ -501,12 +497,12 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [72]
     blocking_on: []
-    summary: "grep 命中 valence_command、/ping、11 个 dev 命令、/bong gameplay、命令树 fixture、CommandTreeS2c 测试和 legacy ! 提示；已归档一致。"
+    summary: "PR #72 合并归档。server/src/cmd/mod.rs、registry_pin、server/src/cmd/dev/ 11 命令、cmd/gameplay/ 产品命令落地；chat_collector.rs 硬解析已清理；P0-P4 全绿。"
 
   # ============================================================
   # Group: worldgen
   # ============================================================
-  - file: plan-terrain-ash-deadzone-v1.md
+  - file: finished_plans/plan-terrain-ash-deadzone-v1.md
     group: worldgen
     title: "余烬死域首版"
     state: merged
@@ -514,17 +510,17 @@ plans:
     last_updated: "2026-05-01"
     pr_refs: [94]
     blocking_on: []
-    summary: "grep 命中 ash_dead_zone profile、Generator、dead_zone tick、禁刷、corpse_mound 与灰蛛规则；文档归档状态吻合。"
+    summary: "全 P0-P3 落地：worldgen AshDeadZoneGenerator/fill_ash_dead_zone_tile/corpse_mound.py + server DeadZoneTickHandler/ban_in_dead_zone/zone_multiplier_lookup + client HUD 无节律显示。"
 
-  - file: plan-terrain-jiuzong-ruin-v1.md
+  - file: finished_plans/plan-terrain-jiuzong-ruin-v1.md
     group: worldgen
     title: "九宗故地废墟群"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-05-04"
     pr_refs: [118]
     blocking_on: []
-    summary: "PR #118 合并归档 finished_plans/；jiu_zong_ruin profile + zongmen_origin_id + Generator + 七宗壁文接口全部落地。"
+    summary: "PR #118 合并归档。worldgen JiuzongRuinGenerator/fill_jiu_zong_ruin_tile/zongmen_origin_id LAYER_REGISTRY + server QiTurbulenceField/ZongFormationCore/ZongKeeper/zong_keeper.rs 全落地。"
 
   - file: plan-terrain-layer-query-v1.md
     group: worldgen
@@ -534,9 +530,9 @@ plans:
     last_updated: "2026-04-29"
     pr_refs: []
     blocking_on: []
-    summary: "raster.rs 仅有前序 sample_layer(f32-only) 已被 botany 消费；plan 要求的 sample_layer_f32/u8 双轨 + LayerSchema + LAYER_SCHEMAS + layer_names() 全未实现，无 PR 落地。"
+    summary: "代码仅旧 sample_layer(单轨 f32)，无 sample_layer_f32/sample_layer_u8/LayerSchema/LAYER_SCHEMAS/layer_names()。Plan 设计已定，工作量约 30-50 行 Rust，零行代码落地。"
 
-  - file: plan-terrain-pseudo-vein-v1.md
+  - file: finished_plans/plan-terrain-pseudo-vein-v1.md
     group: worldgen
     title: "伪灵脉绿洲"
     state: merged
@@ -544,27 +540,27 @@ plans:
     last_updated: "2026-05-02"
     pr_refs: [107]
     blocking_on: []
-    summary: "PR #107 合并归档 finished_plans/；profile/generator、生命周期、IPC、agent narration 全部落地主线。"
+    summary: "PR #107 合并归档。worldgen PseudoVeinOasisGenerator/PSEUDO_VEIN_DECORATIONS + server PseudoVeinLifecycle/PseudoVeinSnapshotV1/build_pseudo_vein_blueprint_zone/tribulation_bait_event 落地，agent schema 双端对齐。"
 
-  - file: plan-terrain-rift-mouth-v1.md
+  - file: finished_plans/plan-terrain-rift-mouth-v1.md
     group: worldgen
     title: "渊口荒丘地表"
     state: merged
     percent: 100
-    last_updated: "2026-05-03"
+    last_updated: "2026-05-04"
     pr_refs: [119]
     blocking_on: []
-    summary: "PR #119 合并归档 finished_plans/；rift_mouth_barrens profile + portal_anchor_sdf + generator + raster_check 全部落地。"
+    summary: "PR #119 合并归档。worldgen RiftMouthBarrensGenerator/portal_anchor_sdf LAYER_REGISTRY/cave+abyssal hot-spot + server NegPressureField/tick_neg_pressure/ColumnSample.portal_anchor_sdf/extract_system rift_mouth 落点 全落。"
 
-  - file: plan-terrain-tribulation-scorch-v1.md
+  - file: plans-skeleton/plan-terrain-tribulation-scorch-v1.md
     group: worldgen
     title: "烬焰焦土地形"
     state: skeleton
-    percent: 10
+    percent: 5
     last_updated: "2026-04-29"
     pr_refs: []
-    blocking_on: ["plan-tribulation-v1", "plan-cultivation-v1"]
-    summary: "文档仍骨架（plans-skeleton/）；grep 未见 tribulation_scorch / ScorchWeatherHook / ascension_pit 或 profile。"
+    blocking_on: ["plan-tribulation-v1", "plan-vfx-v1"]
+    summary: "仅骨架，零代码。worldgen/server 均无 tribulation_scorch / TribulationScorchGenerator / ScorchWeatherHook / ascension_pit 任何 symbol，等待 plan-tribulation-v1 + plan-vfx-v1 前置。"
 
   # ============================================================
   # Group: skeleton
@@ -864,7 +860,7 @@ plans:
 
   - file: plan-armor-v1.md
     group: finished
-    title: "护甲减免系统：ArmorProfile + 耐久 + 体修 buff"
+    title: "护甲减免系统:ArmorProfile + 耐久 + 体修 buff"
     state: finished
     percent: 100
     last_updated: "2026-04-27"
@@ -944,7 +940,7 @@ plans:
 
   - file: plan-shelflife-v1.md
     group: finished
-    title: "通用保质期系统：三路径衰减/腐败/陈化 + 消费侧接入"
+    title: "通用保质期系统:三路径衰减/腐败/陈化 + 消费侧接入"
     state: finished
     percent: 100
     last_updated: "2026-04-27"
