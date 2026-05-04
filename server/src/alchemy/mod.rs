@@ -23,13 +23,18 @@
 //!   * Redis channel（bong:alchemy/*）+ agent schema 对齐
 //!   * 品阶 / 铭文 / 开光 / AutoProfile
 
+pub mod auto_profile;
+pub mod danxin;
 pub mod furnace;
 pub mod learned;
 pub mod outcome;
 pub mod pill;
+pub mod quality;
 pub mod recipe;
+pub mod recipe_fragment;
 pub mod resolver;
 pub mod session;
+pub mod side_effect_apply;
 pub mod skill_hook;
 
 use std::collections::HashSet;
@@ -44,7 +49,10 @@ use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::overload::MeridianOverloadEvent;
-use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
+use crate::inventory::{
+    consume_item_instance_once, inventory_item_by_instance, inventory_item_by_instance_borrow,
+    AlchemyItemData, PlayerInventory,
+};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::skill::components::SkillId;
@@ -110,6 +118,12 @@ pub struct PlaceFurnaceRequest {
     pub item_instance_id: u64,
 }
 
+#[derive(Debug, Clone, Event)]
+pub struct LearnRecipeFragmentIntent {
+    pub player: Entity,
+    pub item_instance_id: u64,
+}
+
 /// 注册到主 App。
 ///
 /// 资源加载 + 事件注册 + attach system(玩家加入时挂 AlchemyFurnace + LearnedRecipes)。
@@ -127,15 +141,77 @@ pub fn register(app: &mut App) {
     app.add_event::<InterventionRequest>();
     app.add_event::<AlchemyOutcomeEvent>();
     app.add_event::<PlaceFurnaceRequest>();
+    app.add_event::<LearnRecipeFragmentIntent>();
+    app.add_event::<auto_profile::InjectQiIntent>();
+    app.add_event::<danxin::DanxinIdentifyIntent>();
+    app.add_event::<danxin::AlchemyInsightEvent>();
     app.add_systems(
         Update,
         (
             attach_alchemy_to_joined_clients,
             handle_start_alchemy_requests,
+            handle_recipe_fragment_learning,
+            auto_profile::inject_qi_to_furnace_reserve,
+            auto_profile::tick_auto_profiles,
+            danxin::handle_danxin_identify_intents,
             handle_alchemy_furnace_place,
             emit_alchemy_skill_xp_from_outcomes,
         ),
     );
+}
+
+fn handle_recipe_fragment_learning(
+    mut events: EventReader<LearnRecipeFragmentIntent>,
+    recipes: Res<RecipeRegistry>,
+    mut inventories: Query<&mut PlayerInventory>,
+    mut learned_q: Query<&mut LearnedRecipes>,
+) {
+    for event in events.read() {
+        let fragment = inventories.get(event.player).ok().and_then(|inventory| {
+            inventory_item_by_instance_borrow(inventory, event.item_instance_id).and_then(|item| {
+                match item.alchemy.as_ref() {
+                    Some(AlchemyItemData::RecipeFragment { fragment }) => Some(fragment.clone()),
+                    _ => None,
+                }
+            })
+        });
+        let Some(fragment) = fragment else {
+            tracing::warn!(
+                "[bong][alchemy] recipe fragment learn rejected: player={:?} item={}",
+                event.player,
+                event.item_instance_id
+            );
+            continue;
+        };
+        let (Ok(mut inventory), Ok(mut learned)) = (
+            inventories.get_mut(event.player),
+            learned_q.get_mut(event.player),
+        ) else {
+            continue;
+        };
+
+        let Some(recipe) = recipes.get(&fragment.recipe_id) else {
+            tracing::warn!(
+                "[bong][alchemy] recipe fragment item={} references unknown recipe `{}`",
+                event.item_instance_id,
+                fragment.recipe_id
+            );
+            continue;
+        };
+
+        let result = learned.learn_fragment(fragment, recipe);
+        if matches!(
+            result,
+            learned::LearnResult::Learned | learned::LearnResult::FragmentMerged
+        ) {
+            if let Err(error) = consume_item_instance_once(&mut inventory, event.item_instance_id) {
+                tracing::warn!(
+                    "[bong][alchemy] recipe fragment consume failed after learn: item={} error={error}",
+                    event.item_instance_id
+                );
+            }
+        }
+    }
 }
 
 fn emit_alchemy_skill_xp_from_outcomes(
@@ -302,6 +378,10 @@ pub(crate) fn apply_alchemy_explode_outcomes(
                     "alchemy_explode furnace {:?} -> {} for {:.1} damage",
                     event.furnace, username.0, damage
                 ),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             });
         }
 
@@ -579,6 +659,7 @@ mod integration_tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -634,6 +715,9 @@ mod integration_tests {
                 toxin_amount: 0.2,
                 toxin_color: ColorKind::Mellow,
                 qi_gain: Some(24.0),
+                quality_tier: 5,
+                effect_multiplier: 1.5,
+                consecrated: false,
                 side_effect: None,
                 flawed_path: false,
             },

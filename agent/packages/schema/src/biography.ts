@@ -203,6 +203,20 @@ const TradeCompleted = Type.Object(
   { additionalProperties: false },
 );
 
+const FalseSkinShed = Type.Object(
+  {
+    FalseSkinShed: Type.Object({
+      kind: Type.String({ minLength: 1, maxLength: 64 }),
+      layers_shed: Type.Integer({ minimum: 1, maximum: 3 }),
+      contam_absorbed: Type.Number({ minimum: 0 }),
+      contam_overflow: Type.Number({ minimum: 0 }),
+      attacker_id: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 const SpawnTutorialCompleted = Type.Object(
   {
     SpawnTutorialCompleted: Type.Object({
@@ -234,6 +248,7 @@ export const BiographyEntryV1 = Type.Union([
   TribulationFled,
   HeartDemonRecord,
   TradeCompleted,
+  FalseSkinShed,
   SpawnTutorialCompleted,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;

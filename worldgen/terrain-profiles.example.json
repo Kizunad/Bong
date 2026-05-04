@@ -62,6 +62,16 @@
       "origin_field": "zongmen_origin_id",
       "origins": ["bloodstream", "beiling", "nanyuan", "chixia", "xuanshui", "taichu", "youan"]
     },
+    "rift_mouth_barrens": {
+      "height": { "base": [60, 80], "peak": 88 },
+      "boundary": { "mode": "hard", "width": 48 },
+      "surface": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "medium",
+      "core_radius": 30,
+      "outer_radius": 150,
+      "portal_layer": "portal_anchor_sdf"
+    },
     "ash_dead_zone": {
       "height": { "base": [70, 82], "peak": 88 },
       "boundary": { "mode": "hard", "width": 64 },

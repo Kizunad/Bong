@@ -1,0 +1,25 @@
+# plan-anqi-v1: v1 only supports one beast-bone carrier tier.
+
+[[item]]
+id = "anqi_yibian_shougu"
+name = "异变兽骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "缝合兽身上剔出的异变兽骨，可暂封真元作暗器载体。"
+max_stack_count = 16
+
+[[item]]
+id = "anqi_yibian_shougu_charged"
+name = "封元异变兽骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "已封入真元的异变兽骨。载体不可堆叠，命中时碎裂注射。"
+max_stack_count = 1

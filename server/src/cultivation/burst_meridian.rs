@@ -3,7 +3,8 @@ use valence::prelude::{bevy_ecs, Entity, Event, Position, UniqueId};
 use crate::combat::components::{CastSource, Casting, SkillBarBindings, WoundKind};
 use crate::combat::events::{AttackIntent, AttackSource, FIST_REACH};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::color::{record_style_practice, PracticeLog};
+use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -129,6 +130,9 @@ pub fn resolve_beng_quan(
                 (meridian.integrity * BENG_QUAN_INTEGRITY_MULTIPLIER).clamp(0.0, 1.0);
         }
     }
+    if let Some(mut practice_log) = world.get_mut::<PracticeLog>(caster) {
+        record_style_practice(&mut practice_log, ColorKind::Heavy);
+    }
 
     world.send_event(AttackIntent {
         attacker: caster,
@@ -246,6 +250,7 @@ mod tests {
                 MeridianSystem::default(),
                 Position::new([position.x, position.y, position.z]),
                 SkillBarBindings::default(),
+                PracticeLog::default(),
             ))
             .id()
     }
@@ -320,6 +325,15 @@ mod tests {
         assert_eq!(
             app.world().get::<Casting>(caster).unwrap().duration_ticks,
             8
+        );
+        assert_eq!(
+            app.world()
+                .get::<PracticeLog>(caster)
+                .unwrap()
+                .weights
+                .get(&ColorKind::Heavy)
+                .copied(),
+            Some(crate::cultivation::color::STYLE_PRACTICE_AMOUNT)
         );
 
         let attack_events = app.world().resource::<Events<AttackIntent>>();

@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "kind"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "forge_false_skin",
+      "type": "string"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "spider_silk",
+          "type": "string"
+        },
+        {
+          "const": "rotten_wood_armor",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

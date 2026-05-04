@@ -123,6 +123,23 @@
     "cause": {
       "minLength": 1,
       "type": "string"
+    },
+    "defense_kind": {
+      "const": "jie_mai",
+      "type": "string"
+    },
+    "defense_effectiveness": {
+      "minimum": 0.3,
+      "maximum": 1,
+      "type": "number"
+    },
+    "defense_contam_reduced": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "defense_wound_severity": {
+      "minimum": 0,
+      "type": "number"
     }
   }
 }

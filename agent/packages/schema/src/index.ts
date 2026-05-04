@@ -15,6 +15,7 @@ export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";
 export * from "./client-request.js";
+export * from "./combat-carrier.js";
 export * from "./combat-hud.js";
 export * from "./combat-event.js";
 export * from "./dugu.js";
@@ -31,6 +32,7 @@ export * from "./spiritual-sense.js";
 export * from "./spawn-tutorial.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)
 export * from "./vfx-event.js";
+export * from "./tuike.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
 export * from "./zong-formation.js";

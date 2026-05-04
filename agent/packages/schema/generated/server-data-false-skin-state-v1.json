@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "target_id",
+    "kind",
+    "layers_remaining",
+    "contam_capacity_per_layer",
+    "absorbed_contam",
+    "equipped_at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "false_skin_state",
+      "type": "string"
+    },
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "const": "spider_silk",
+              "type": "string"
+            },
+            {
+              "const": "rotten_wood_armor",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "layers_remaining": {
+      "minimum": 0,
+      "maximum": 3,
+      "type": "integer"
+    },
+    "contam_capacity_per_layer": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "absorbed_contam": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "equipped_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

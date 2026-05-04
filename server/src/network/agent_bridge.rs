@@ -51,6 +51,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PlayerState => "player_state",
         ServerDataType::UiOpen => "ui_open",
         ServerDataType::CultivationDetail => "cultivation_detail",
+        ServerDataType::QiColorObserved => "qi_color_observed",
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
@@ -80,6 +81,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::VortexState => "vortex_state",
         ServerDataType::DuguPoisonState => "dugu_poison_state",
+        ServerDataType::CarrierState => "carrier_state",
+        ServerDataType::FalseSkinState => "false_skin_state",
         ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::DeathScreen => "death_screen",
         ServerDataType::TerminateScreen => "terminate_screen",
@@ -323,6 +326,7 @@ mod server_data_tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -365,6 +369,7 @@ mod server_data_tests {
                 chest: None,
                 legs: None,
                 feet: None,
+                false_skin: None,
                 main_hand: Some(sample_inventory_item(
                     1003,
                     "training_blade",
@@ -495,6 +500,7 @@ mod server_data_tests {
                     composite_power: 0.35,
                     breakdown: sample_player_breakdown(),
                     zone: "blood_valley".to_string(),
+                    local_neg_pressure: None,
                     social: None,
                 }),
                 json!({
@@ -701,7 +707,7 @@ mod server_data_tests {
         assert_eq!(snapshot_json.get("revision"), Some(&json!(12)));
         assert_eq!(snapshot_json.get("bone_coins"), Some(&json!(57)));
 
-        let event_payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+        let event_payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(Box::new(
             InventoryEventV1::Dropped {
                 revision: 13,
                 instance_id: 1004,
@@ -734,9 +740,10 @@ mod server_data_tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 },
             },
-        ));
+        )));
         let event_bytes = serialize_server_data_payload(&event_payload)
             .expect("inventory event payload should serialize");
         let event_json: serde_json::Value = serde_json::from_slice(&event_bytes)

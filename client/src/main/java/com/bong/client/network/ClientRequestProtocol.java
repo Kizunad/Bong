@@ -31,6 +31,21 @@ public final class ClientRequestProtocol {
     /** 服务端 {@code ForgeAxis}（serde 默认 PascalCase）。 */
     public enum ForgeAxis { Rate, Capacity }
 
+    public enum FalseSkinKind {
+        SPIDER_SILK("spider_silk"),
+        ROTTEN_WOOD_ARMOR("rotten_wood_armor");
+
+        private final String wireName;
+
+        FalseSkinKind(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
     /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
     public enum TemperBeat { L, H, F }
 
@@ -196,6 +211,15 @@ public final class ClientRequestProtocol {
         }
         JsonObject obj = envelope("duo_she_request");
         obj.addProperty("target_id", targetId);
+        return obj.toString();
+    }
+
+    public static String encodeQiColorInspect(String observed) {
+        if (observed == null || observed.isBlank()) {
+            throw new IllegalArgumentException("observed must not be blank");
+        }
+        JsonObject obj = envelope("qi_color_inspect");
+        obj.addProperty("observed", observed.trim());
         return obj.toString();
     }
 
@@ -374,6 +398,25 @@ public final class ClientRequestProtocol {
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
+        return obj.toString();
+    }
+
+    public static String encodeEquipFalseSkin(long itemInstanceId) {
+        if (itemInstanceId < 0) {
+            throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+        }
+        JsonObject obj = envelope("equip_false_skin");
+        obj.addProperty("slot", "false_skin");
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeForgeFalseSkin(FalseSkinKind kind) {
+        if (kind == null) {
+            throw new IllegalArgumentException("kind must not be null");
+        }
+        JsonObject obj = envelope("forge_false_skin");
+        obj.addProperty("kind", kind.wireName());
         return obj.toString();
     }
 
@@ -663,6 +706,39 @@ public final class ClientRequestProtocol {
         binding.addProperty("kind", "item");
         binding.addProperty("template_id", templateId);
         obj.add("binding", binding);
+        return obj.toString();
+    }
+
+    public static String encodeChargeCarrier(String slot, double qiTarget) {
+        if (!Double.isFinite(qiTarget) || qiTarget < 0.0 || qiTarget > 80.0) {
+            throw new IllegalArgumentException("qiTarget must be finite in [0,80], got " + qiTarget);
+        }
+        JsonObject obj = envelope("charge_carrier");
+        if (slot != null && !slot.isBlank()) {
+            obj.addProperty("slot", slot.trim());
+        }
+        obj.addProperty("qi_target", qiTarget);
+        return obj.toString();
+    }
+
+    public static String encodeThrowCarrier(String slot, double x, double y, double z, double power) {
+        if (slot == null || slot.isBlank()) {
+            throw new IllegalArgumentException("slot must not be blank");
+        }
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            throw new IllegalArgumentException("dir vector must be finite");
+        }
+        if (!Double.isFinite(power) || power < 0.0 || power > 1.0) {
+            throw new IllegalArgumentException("power must be finite in [0,1], got " + power);
+        }
+        JsonObject obj = envelope("throw_carrier");
+        obj.addProperty("slot", slot.trim());
+        com.google.gson.JsonArray dir = new com.google.gson.JsonArray();
+        dir.add(x);
+        dir.add(y);
+        dir.add(z);
+        obj.add("dir_unit", dir);
+        obj.addProperty("power", power);
         return obj.toString();
     }
 

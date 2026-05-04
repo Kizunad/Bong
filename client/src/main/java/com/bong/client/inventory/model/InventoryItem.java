@@ -22,6 +22,7 @@ public final class InventoryItem {
     private final String forgeColor;
     private final List<String> forgeSideEffects;
     private final Integer forgeAchievedTier;
+    private final List<String> alchemyLines;
 
     private InventoryItem(
         long instanceId,
@@ -41,7 +42,8 @@ public final class InventoryItem {
         Double forgeQuality,
         String forgeColor,
         List<String> forgeSideEffects,
-        Integer forgeAchievedTier
+        Integer forgeAchievedTier,
+        List<String> alchemyLines
     ) {
         this.instanceId = instanceId;
         this.itemId = Objects.requireNonNull(itemId, "itemId");
@@ -67,6 +69,13 @@ public final class InventoryItem {
                 .filter(value -> !value.isEmpty())
                 .toList());
         this.forgeAchievedTier = forgeAchievedTier == null ? null : Math.max(1, Math.min(4, forgeAchievedTier));
+        this.alchemyLines = alchemyLines == null
+            ? List.of()
+            : List.copyOf(alchemyLines.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .toList());
     }
 
     private static double clamp01(double v) {
@@ -84,7 +93,7 @@ public final class InventoryItem {
         String rarity,
         String description
     ) {
-        return createFullWithForgeMeta(
+        return createFullWithAlchemyMeta(
             0L,
             itemId,
             displayName,
@@ -102,7 +111,8 @@ public final class InventoryItem {
             null,
             "",
             List.of(),
-            null
+            null,
+            List.of()
         );
     }
 
@@ -138,7 +148,8 @@ public final class InventoryItem {
             null,
             "",
             List.of(),
-            null
+            null,
+            List.of()
         );
     }
 
@@ -158,7 +169,7 @@ public final class InventoryItem {
         String scrollSkillId,
         int scrollXpGrant
     ) {
-        return createFullWithForgeMeta(
+        return createFullWithAlchemyMeta(
             instanceId,
             itemId,
             displayName,
@@ -176,7 +187,8 @@ public final class InventoryItem {
             null,
             "",
             List.of(),
-            null
+            null,
+            List.of()
         );
     }
 
@@ -200,6 +212,50 @@ public final class InventoryItem {
         List<String> forgeSideEffects,
         Integer forgeAchievedTier
     ) {
+        return createFullWithAlchemyMeta(
+            instanceId,
+            itemId,
+            displayName,
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity,
+            description,
+            stackCount,
+            spiritQuality,
+            durability,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier,
+            List.of()
+        );
+    }
+
+    public static InventoryItem createFullWithAlchemyMeta(
+        long instanceId,
+        String itemId,
+        String displayName,
+        int gridWidth,
+        int gridHeight,
+        double weight,
+        String rarity,
+        String description,
+        int stackCount,
+        double spiritQuality,
+        double durability,
+        String scrollKind,
+        String scrollSkillId,
+        int scrollXpGrant,
+        Double forgeQuality,
+        String forgeColor,
+        List<String> forgeSideEffects,
+        Integer forgeAchievedTier,
+        List<String> alchemyLines
+    ) {
         return new InventoryItem(
             instanceId,
             itemId == null ? "" : itemId.trim(),
@@ -218,7 +274,8 @@ public final class InventoryItem {
             forgeQuality,
             forgeColor,
             forgeSideEffects,
-            forgeAchievedTier
+            forgeAchievedTier,
+            alchemyLines
         );
     }
 
@@ -298,6 +355,10 @@ public final class InventoryItem {
         return forgeAchievedTier;
     }
 
+    public List<String> alchemyLines() {
+        return alchemyLines;
+    }
+
     public boolean isSkillScroll() {
         return "skill_scroll".equals(scrollKind);
     }
@@ -349,7 +410,8 @@ public final class InventoryItem {
             && Objects.equals(forgeQuality, other.forgeQuality)
             && forgeColor.equals(other.forgeColor)
             && forgeSideEffects.equals(other.forgeSideEffects)
-            && Objects.equals(forgeAchievedTier, other.forgeAchievedTier);
+            && Objects.equals(forgeAchievedTier, other.forgeAchievedTier)
+            && alchemyLines.equals(other.alchemyLines);
     }
 
     @Override
@@ -358,7 +420,7 @@ public final class InventoryItem {
             instanceId, itemId, displayName, gridWidth, gridHeight, weight,
             rarity, description, stackCount, spiritQuality, durability,
             scrollKind, scrollSkillId, scrollXpGrant, forgeQuality, forgeColor,
-            forgeSideEffects, forgeAchievedTier
+            forgeSideEffects, forgeAchievedTier, alchemyLines
         );
     }
 

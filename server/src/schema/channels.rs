@@ -50,6 +50,11 @@ pub const CH_WOLIU_BACKFIRE: &str = "bong:woliu/backfire";
 pub const CH_WOLIU_PROJECTILE_DRAINED: &str = "bong:woliu/projectile_drained";
 pub const CH_WOLIU_VORTEX_STATE: &str = "bong:woliu/vortex_state";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
+pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
+pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
+pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
+pub const CH_TUIKE_SHED: &str = "bong:tuike/shed";
+pub const CH_TUIKE_FALSE_SKIN_STATE: &str = "bong:tuike/false_skin_state";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
 pub const CH_PSEUDO_VEIN_ACTIVE: &str = "bong:pseudo_vein:active";
@@ -91,6 +96,7 @@ pub const CH_FORGE_OUTCOME: &str = "bong:forge/outcome";
 pub const CH_ALCHEMY_SESSION_START: &str = "bong:alchemy/session_start";
 pub const CH_ALCHEMY_SESSION_END: &str = "bong:alchemy/session_end";
 pub const CH_ALCHEMY_INTERVENTION_RESULT: &str = "bong:alchemy/intervention_result";
+pub const CH_ALCHEMY_INSIGHT: &str = "bong:alchemy_insight";
 
 #[cfg(test)]
 mod tests {
@@ -137,6 +143,14 @@ mod tests {
         assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
+        assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
+        assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");
+        assert_eq!(
+            CH_ANQI_PROJECTILE_DESPAWNED,
+            "bong:combat/projectile_despawned"
+        );
+        assert_eq!(CH_TUIKE_SHED, "bong:tuike/shed");
+        assert_eq!(CH_TUIKE_FALSE_SKIN_STATE, "bong:tuike/false_skin_state");
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");
         assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");
@@ -163,5 +177,6 @@ mod tests {
             CH_ALCHEMY_INTERVENTION_RESULT,
             "bong:alchemy/intervention_result"
         );
+        assert_eq!(CH_ALCHEMY_INSIGHT, "bong:alchemy_insight");
     }
 }

@@ -12,9 +12,10 @@ import {
   SkillBarConfigV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
+import { CarrierStateV1 } from "./combat-carrier.js";
+import { DuguPoisonStateV1 } from "./dugu.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
-import { DuguPoisonStateV1 } from "./dugu.js";
 import {
   InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
@@ -68,6 +69,7 @@ import {
   TradeOfferPayloadV1,
 } from "./social.js";
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
+import { FalseSkinStateV1 } from "./tuike.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -137,6 +139,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("player_state"),
   Type.Literal("ui_open"),
   Type.Literal("cultivation_detail"),
+  Type.Literal("qi_color_observed"),
   Type.Literal("inventory_event"),
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
@@ -163,8 +166,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("weapon_equipped"),
   Type.Literal("weapon_broken"),
   Type.Literal("treasure_equipped"),
-  Type.Literal("rift_portal_state"),
   Type.Literal("dugu_poison_state"),
+  Type.Literal("carrier_state"),
+  Type.Literal("rift_portal_state"),
   Type.Literal("rift_portal_removed"),
   Type.Literal("extract_started"),
   Type.Literal("extract_progress"),
@@ -194,6 +198,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("trade_offer"),
   Type.Literal("realm_vision_params"),
   Type.Literal("spiritual_sense_targets"),
+  Type.Literal("false_skin_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -298,12 +303,32 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     lifespan: Type.Optional(LifespanPreviewV1),
     recent_skill_milestones_summary: Type.Optional(Type.String({ maxLength: 4096 })),
     skill_milestones: Type.Optional(Type.Array(SkillMilestoneSnapshotV1)),
+    qi_color_main: Type.Optional(ColorKind),
+    qi_color_secondary: Type.Optional(ColorKind),
+    qi_color_chaotic: Type.Optional(Type.Boolean()),
+    qi_color_hunyuan: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
 export type ServerDataCultivationDetailV1 = Static<
   typeof ServerDataCultivationDetailV1
 >;
+
+export const QiColorObservedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("qi_color_observed"),
+    observer: Type.String({ minLength: 1, maxLength: 128 }),
+    observed: Type.String({ minLength: 1, maxLength: 128 }),
+    main: ColorKind,
+    secondary: Type.Optional(ColorKind),
+    is_chaotic: Type.Boolean(),
+    is_hunyuan: Type.Boolean(),
+    realm_diff: Type.Number(),
+  },
+  { additionalProperties: false },
+);
+export type QiColorObservedV1 = Static<typeof QiColorObservedV1>;
 
 export const ServerDataInventorySnapshotV1 = Type.Object(
   {
@@ -826,6 +851,26 @@ export const ServerDataDuguPoisonStateV1 = Type.Object(
 );
 export type ServerDataDuguPoisonStateV1 = Static<typeof ServerDataDuguPoisonStateV1>;
 
+export const ServerDataCarrierStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("carrier_state"),
+    ...CarrierStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataCarrierStateV1 = Static<typeof ServerDataCarrierStateV1>;
+
+export const ServerDataFalseSkinStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("false_skin_state"),
+    ...FalseSkinStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataFalseSkinStateV1 = Static<typeof ServerDataFalseSkinStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1211,6 +1256,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataPlayerStateV1,
   ServerDataUiOpenV1,
   ServerDataCultivationDetailV1,
+  QiColorObservedV1,
   ServerDataInventorySnapshotV1,
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
@@ -1237,6 +1283,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataTechniquesSnapshotV1,
   ServerDataVortexStateV1,
   ServerDataDuguPoisonStateV1,
+  ServerDataCarrierStateV1,
+  ServerDataFalseSkinStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

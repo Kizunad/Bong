@@ -54,6 +54,7 @@ import {
   TsySentinelPhaseChangedV1,
 } from "../src/tsy-hostile-v1.js";
 import {
+  AlchemyInsightV1,
   AlchemyInterventionResultV1,
   AlchemySessionEndV1,
   AlchemySessionStartV1,
@@ -132,9 +133,11 @@ describe("sample files pass schema validation", () => {
     expect(CHANNELS.ALCHEMY_INTERVENTION_RESULT).toBe(
       "bong:alchemy/intervention_result",
     );
+    expect(CHANNELS.ALCHEMY_INSIGHT).toBe("bong:alchemy_insight");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_SESSION_START);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_SESSION_END);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_INTERVENTION_RESULT);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ALCHEMY_INSIGHT);
   });
 
   it("declares anticheat Redis channel", () => {
@@ -1050,6 +1053,12 @@ describe("alchemy bridge payload samples pass schema validation", () => {
   it("alchemy-intervention-result.sample.json", () => {
     const data = loadSample("alchemy-intervention-result.sample.json");
     const result = validate(AlchemyInterventionResultV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("alchemy-insight.sample.json", () => {
+    const data = loadSample("alchemy-insight.sample.json");
+    const result = validate(AlchemyInsightV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });

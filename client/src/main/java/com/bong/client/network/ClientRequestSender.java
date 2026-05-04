@@ -95,6 +95,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to));
     }
 
+    public static void sendEquipFalseSkin(long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeEquipFalseSkin(itemInstanceId));
+    }
+
+    public static void sendForgeFalseSkin(ClientRequestProtocol.FalseSkinKind kind) {
+        dispatch(ClientRequestProtocol.encodeForgeFalseSkin(kind));
+    }
+
     public static void sendPickupDroppedItem(long instanceId) {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
     }
@@ -211,8 +219,20 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSkillBarBindItem(slot, templateId));
     }
 
+    public static void sendChargeCarrier(String slot, double qiTarget) {
+        dispatch(ClientRequestProtocol.encodeChargeCarrier(slot, qiTarget));
+    }
+
+    public static void sendThrowCarrier(String slot, double x, double y, double z, double power) {
+        dispatch(ClientRequestProtocol.encodeThrowCarrier(slot, x, y, z, power));
+    }
+
     public static void sendJiemai() {
         dispatch(ClientRequestProtocol.encodeJiemai());
+    }
+
+    public static void sendQiColorInspect(String observed) {
+        dispatch(ClientRequestProtocol.encodeQiColorInspect(observed));
     }
 
     public static void sendStartExtract(long portalEntityId) {

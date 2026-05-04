@@ -5,6 +5,7 @@ public enum EquipSlotType {
     CHEST("胸甲"),
     LEGS("腿甲"),
     FEET("足甲"),
+    FALSE_SKIN("伪皮"),
     MAIN_HAND("右手"),
     OFF_HAND("左手"),
     TWO_HAND("双手"),

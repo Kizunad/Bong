@@ -53,6 +53,11 @@ final class InventoryEquipRules {
         "broken_artifact"
     );
 
+    private static final Set<String> FALSE_SKIN_TEMPLATE_IDS = Set.of(
+        "tuike_false_skin_silk",
+        "tuike_rotten_wood_armor"
+    );
+
     private InventoryEquipRules() {
     }
 
@@ -79,8 +84,9 @@ final class InventoryEquipRules {
                 && (fromTwoHand
                     || (!isOccupied(equipped, EquipSlotType.MAIN_HAND)
                     && !isOccupied(equipped, EquipSlotType.OFF_HAND)));
+            case FALSE_SKIN -> isFalseSkin(item);
             case TREASURE_BELT_0, TREASURE_BELT_1, TREASURE_BELT_2, TREASURE_BELT_3 -> isTreasure(item);
-            case HEAD, CHEST, LEGS, FEET -> weaponKind == null && !hoe && !tool;
+            case HEAD, CHEST, LEGS, FEET -> weaponKind == null && !hoe && !tool && !isFalseSkin(item);
         };
     }
 
@@ -142,6 +148,10 @@ final class InventoryEquipRules {
 
     private static boolean isTreasure(String itemId) {
         return itemId != null && TREASURE_TEMPLATE_IDS.contains(itemId);
+    }
+
+    private static boolean isFalseSkin(InventoryItem item) {
+        return item != null && FALSE_SKIN_TEMPLATE_IDS.contains(item.itemId());
     }
 
     private static boolean isTool(String itemId) {

@@ -6,14 +6,15 @@ use std::time::Duration;
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::alchemy::{
-    AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
+    AlchemyInsightV1, AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
 };
 use crate::schema::anticheat::AntiCheatReportV1;
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
-    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START, CH_ANTICHEAT,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
+    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
+    CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
     CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
@@ -24,10 +25,13 @@ use crate::schema::channels::{
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE,
     CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE,
-    CH_TSY_EVENT, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
+    CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE,
     CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
+use crate::schema::combat_carrier::{
+    CarrierChargedEventV1, CarrierImpactEventV1, ProjectileDespawnedEventV1,
+};
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
@@ -57,6 +61,7 @@ use crate::schema::spirit_eye::{
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
+use crate::schema::tuike::ShedEventV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
@@ -99,6 +104,7 @@ pub enum RedisOutbound {
     AlchemySessionStart(AlchemySessionStartV1),
     AlchemySessionEnd(AlchemySessionEndV1),
     AlchemyInterventionResult(AlchemyInterventionResultV1),
+    AlchemyInsight(AlchemyInsightV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     HeartDemonRequest(HeartDemonPregenRequestV1),
@@ -132,6 +138,10 @@ pub enum RedisOutbound {
     DuguPoisonProgress(DuguPoisonProgressEventV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
+    CarrierCharged(CarrierChargedEventV1),
+    CarrierImpact(CarrierImpactEventV1),
+    ProjectileDespawned(ProjectileDespawnedEventV1),
+    TuikeShed(ShedEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -495,6 +505,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::AlchemyInsight(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize AlchemyInsightV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ALCHEMY_INSIGHT,
+                payload,
+            })
+        }
         RedisOutbound::CultivationDeath(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize CultivationDeathV1: {error}"))
@@ -813,6 +832,46 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DUGU_POISON_PROGRESS,
+                payload,
+            })
+        }
+        RedisOutbound::CarrierCharged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize CarrierChargedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_CHARGED,
+                payload,
+            })
+        }
+        RedisOutbound::CarrierImpact(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize CarrierImpactEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_IMPACT,
+                payload,
+            })
+        }
+        RedisOutbound::ProjectileDespawned(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ProjectileDespawnedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_PROJECTILE_DESPAWNED,
+                payload,
+            })
+        }
+        RedisOutbound::TuikeShed(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ShedEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TUIKE_SHED,
                 payload,
             })
         }
@@ -2248,6 +2307,10 @@ mod redis_bridge_tests {
                         .to_string(),
                 ),
                 cause: None,
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             }))
             .expect("combat realtime payload should serialize");
         match realtime {

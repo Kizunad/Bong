@@ -9,6 +9,7 @@ use valence::prelude::{
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
 use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
+use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
 };
@@ -125,6 +126,7 @@ struct TriggerSnapshot {
     owner: Entity,
     owner_player_id: String,
     pos: [i32; 3],
+    triggered_at_tick: u64,
     qi_invest_ratio: f64,
     effect_radius: u8,
     color_main: ColorKind,
@@ -279,6 +281,7 @@ impl ZhenfaRegistry {
                 owner: instance.owner,
                 owner_player_id: instance.owner_player_id.clone(),
                 pos: instance.pos,
+                triggered_at_tick: tick,
                 qi_invest_ratio: instance.qi_invest_ratio,
                 effect_radius: instance.effect_radius,
                 color_main: instance.color_main,
@@ -488,6 +491,7 @@ fn handle_zhenfa_trigger_requests(
     mut commands: Commands,
     players: Query<ZhenfaTriggerPlayer<'_>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
+    mut practice_logs: Query<&mut PracticeLog>,
     mut combat_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
     mut status_effects: EventWriter<ApplyStatusEffectIntent>,
@@ -548,8 +552,8 @@ fn handle_zhenfa_trigger_requests(
         despawn_triggered_anchors(&mut commands, &snapshots);
         apply_trigger_snapshots(
             snapshots,
-            req.requested_at_tick,
             &mut targets,
+            &mut practice_logs,
             &mut combat_events,
             &mut death_events,
             &mut status_effects,
@@ -598,6 +602,7 @@ fn tick_zhenfa_registry(
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
+    mut practice_logs: Query<&mut PracticeLog>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
     mut combat_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
@@ -691,8 +696,8 @@ fn tick_zhenfa_registry(
     despawn_triggered_anchors(&mut commands, &snapshots);
     apply_trigger_snapshots(
         snapshots,
-        now,
         &mut targets,
+        &mut practice_logs,
         &mut combat_events,
         &mut death_events,
         &mut status_effects,
@@ -804,14 +809,15 @@ fn emit_zhenfa_sense_pulses(
 
 fn apply_trigger_snapshots(
     snapshots: Vec<TriggerSnapshot>,
-    tick: u64,
     targets: &mut Query<ZhenfaDamageTarget<'_>>,
+    practice_logs: &mut Query<&mut PracticeLog>,
     combat_events: &mut EventWriter<CombatEvent>,
     death_events: &mut EventWriter<DeathEvent>,
     status_effects: &mut EventWriter<ApplyStatusEffectIntent>,
     sense_pulses: &mut EventWriter<ZhenfaSensePulse>,
 ) {
     for snapshot in snapshots {
+        let tick = snapshot.triggered_at_tick;
         sense_pulses.send(ZhenfaSensePulse {
             owner: snapshot.owner,
             kind: SenseKindV1::ZhenfaArray,
@@ -821,6 +827,7 @@ fn apply_trigger_snapshots(
         });
 
         let damage_profile = damage_profile(snapshot.qi_invest_ratio);
+        let mut hit_any = false;
         for (target, position, mut wounds, lifecycle, username, contamination, meridians) in
             targets.iter_mut()
         {
@@ -830,6 +837,7 @@ fn apply_trigger_snapshots(
             if !in_horizontal_radius(position.get(), snapshot.pos, snapshot.effect_radius) {
                 continue;
             }
+            hit_any = true;
 
             let was_alive = wounds.health_current > 0.0;
             wounds.health_current =
@@ -892,6 +900,10 @@ fn apply_trigger_snapshots(
                     "zhenfa_trap {} -> {:?} ratio {:.3}",
                     snapshot.id, target, snapshot.qi_invest_ratio
                 ),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
             });
 
             if was_alive
@@ -914,6 +926,11 @@ fn apply_trigger_snapshots(
                     attacker_player_id,
                     at_tick: tick,
                 });
+            }
+        }
+        if hit_any {
+            if let Ok(mut practice_log) = practice_logs.get_mut(snapshot.owner) {
+                record_style_practice(&mut practice_log, ColorKind::Intricate);
             }
         }
     }
@@ -1185,6 +1202,7 @@ mod tests {
                     ..Default::default()
                 },
                 QiColor::default(),
+                PracticeLog::default(),
                 Wounds::default(),
                 Contamination::default(),
                 MeridianSystem::default(),
@@ -1213,6 +1231,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -1420,6 +1439,15 @@ mod tests {
         );
         assert!(wounds.health_current < wounds.health_max);
         assert!(!app.world().resource::<Events<CombatEvent>>().is_empty());
+        assert_eq!(
+            app.world()
+                .get::<PracticeLog>(owner)
+                .unwrap()
+                .weights
+                .get(&ColorKind::Intricate)
+                .copied(),
+            Some(crate::cultivation::color::STYLE_PRACTICE_AMOUNT)
+        );
     }
 
     #[test]

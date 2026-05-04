@@ -1,6 +1,6 @@
 # Bong · plan-alchemy-v2 · Active
 
-> **状态**：⏳ active（2026-05-04 升级，user 拍板）。前置 plan-alchemy-v1 / plan-alchemy-client-v1 / plan-combat-no_ui 全 ✅ finished，无依赖阻塞。
+> **状态**：✅ 完成（2026-05-04）—— P0–P4 全部代码落地。代码在工作分支 `auto/plan-alchemy-v2`（commits `2dba5b27` / `3ddae947` / `114a74ac`），PR 合并 main 后将归档至 `docs/finished_plans/`。前置 plan-alchemy-v1 / plan-alchemy-client-v1 / plan-combat-no_ui 全 ✅ finished。
 
 炼丹系统扩展：side_effect_pool → StatusEffect 映射 / 丹方残卷（残缺学习）/ 品阶-铭文-开光系统 / AutoProfile 自动炼丹 / 丹心识别（玩家逆向配方）。`plan-alchemy-v1`（finished）的后续扩展，不重复已落地的核心炼丹链路。
 
@@ -35,11 +35,11 @@
 
 ## §0 设计轴心
 
-- [ ] **side_effect_pool 从字符串映射到真实效果**——当前 `tag` 只是字符串，P0 落地后丹药副作用才真正生效
-- [ ] **丹方残卷体现末法残缺感**——丹方不是完整知识，玩家只能从残卷学到有限配方；残缺版成品品阶受限
-- [ ] **品阶/开光是进深系统**——晋升炼丹路线的进深层，不影响 v1 基础炼丹（铭文不在本 plan，已并入 forge）
-- [ ] **AutoProfile 炉子有自己的 qi 储量**（user Q-A3）——`FurnaceQiReserve` 挂在 station 上，玩家通过 `InjectQiIntent` 注入；战斗不抽 player；炉 qi 与 PlayerQi 完全隔离
-- [ ] **丹心识别对应 worldview §九 情报换命**——消耗材料换情报，不是免费获取配方
+- [x] **side_effect_pool 从字符串映射到真实效果**——当前 `tag` 只是字符串，P0 落地后丹药副作用才真正生效
+- [x] **丹方残卷体现末法残缺感**——丹方不是完整知识，玩家只能从残卷学到有限配方；残缺版成品品阶受限
+- [x] **品阶/开光是进深系统**——晋升炼丹路线的进深层，不影响 v1 基础炼丹（铭文不在本 plan，已并入 forge）
+- [x] **AutoProfile 炉子有自己的 qi 储量**（user Q-A3）——`FurnaceQiReserve` 挂在 station 上，玩家通过 `InjectQiIntent` 注入；战斗不抽 player；炉 qi 与 PlayerQi 完全隔离
+- [x] **丹心识别对应 worldview §九 情报换命**——消耗材料换情报，不是免费获取配方
 
 ---
 
@@ -47,11 +47,11 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | `side_effect_pool` tag → `StatusEffectKind` 枚举映射 + 丹药服用触发副作用 | 单元：各 tag 映射不缺失；`ApplyStatusEffectIntent` 正确发出 |
-| **P1** ⬜ | 丹方残卷损坏（`RecipeFragment` 物品 + 残缺版学习路径） | 残缺丹方品阶上限 < 完整版；无法学到残缺段之外 |
-| **P2** ⬜ | 品阶 / 开光系统（v2 炼丹结果分层；~~铭文~~ 已并入 forge） | 品阶 1-5 对应不同效果幅度；开光为可选附加 |
-| **P3** ⬜ | AutoProfile 自动炼丹（傀儡绑炉，读火候曲线，高境界解锁） | 傀儡绑炉后 AutoProfile 输出品质 ≥ 手工 85%（平衡目标） |
-| **P4** ⬜ | 丹心识别（worldview §九 情报换命） | 消耗一颗丹药 → `RecipeHint` 物品入背包；agent narration 触发 |
+| **P0** ✅ 2026-05-04 | `side_effect_pool` tag → `StatusEffectKind` 枚举映射 + 丹药服用触发副作用 | 单元：各 tag 映射不缺失；`ApplyStatusEffectIntent` 正确发出 |
+| **P1** ✅ 2026-05-04 | 丹方残卷损坏（`RecipeFragment` 物品 + 残缺版学习路径） | 残缺丹方品阶上限 < 完整版；无法学到残缺段之外 |
+| **P2** ✅ 2026-05-04 | 品阶 / 开光系统（v2 炼丹结果分层；~~铭文~~ 已并入 forge） | 品阶 1-5 对应不同效果幅度；开光为可选附加 |
+| **P3** ✅ 2026-05-04 | AutoProfile 自动炼丹（傀儡绑炉，读火候曲线，高境界解锁） | 傀儡绑炉后 AutoProfile 输出品质 ≥ 手工 85%（平衡目标） |
+| **P4** ✅ 2026-05-04 | 丹心识别（worldview §九 情报换命） | 消耗一颗丹药 → `RecipeHint` 物品入背包；agent narration 触发 |
 
 ---
 
@@ -184,3 +184,47 @@ accuracy = min(1.0, (realm_tier / pill_tier) × random(0.5, 1.0))
 - 2026-05-01：从 plan-alchemy-v1 reminder 整理立项。现有代码：`SideEffect { tag, duration_s, weight, perm, color, amount }` 结构已落（`server/src/alchemy/recipe.rs:134`）；`StatusEffectKind` enum 已有 7 个 variant（`server/src/combat/events.rs:60`）；side_effect → StatusEffect 映射、丹方残卷、品阶/铭文/开光、AutoProfile、丹心识别全部未实装。
 - **2026-05-04**：skeleton → active 升级（user 拍板）。前置 plan-alchemy-v1 / plan-alchemy-client-v1 / plan-combat-no_ui 全 ✅ finished，依赖闭合。下一步起 P0 worktree（StatusEffectKind 扩展 + side_effect_apply.rs）。
 - **2026-05-04**：§7 全部 4 决策闭环（Q-A1/A2/A3/A4 详 §7）。范围修正：删除 P2 铭文章节（移交 forge），新增 §5 `FurnaceQiReserve` + `InjectQiIntent` 结构。P0 直接接 InsightRequest（顿悟系统已实装）。
+- **2026-05-04**：P0–P4 全部代码落地（commits `2dba5b27` server / `3ddae947` agent / `114a74ac` client，工作分支 `auto/plan-alchemy-v2`）。文档先标完成（user 拍板 B 选项，接受"文档先到代码后到"窗口）；待 PR 合并 main 后归档至 `docs/finished_plans/`。
+
+---
+
+## Finish Evidence
+
+> **注意**：本 plan 的代码 commits 当前在工作分支 `auto/plan-alchemy-v2`，尚未合并到 main。在 main 上 grep 以下文件路径会扑空，属于已知"文档先到"窗口（user 拍板 B），不是虚标。PR 合并后此节即为标准 Finish Evidence。
+
+### 落地清单
+
+| 阶段 | 模块 / 文件 | 行数 | 关键 symbol |
+|---|---|---|---|
+| **P0** | `server/src/alchemy/side_effect_apply.rs` | 158 | `apply_side_effect()` · `SideEffectApplyError` · 5 个 `StatusEffectKind` 新 variant（`QiRegenBoost` / `InsightFlash` / `QiCapPermMinus` / `ContaminationBoost` / `AlchemyBuff(String)`，详 `server/src/combat/events.rs`） |
+| **P1** | `server/src/alchemy/recipe_fragment.rs` | 152 | `RecipeFragment` · `FragmentLearnError` · 残缺规则（`UsablePartial` / `SeverelyDamaged`） |
+| **P2** | `server/src/alchemy/quality.rs` | 105 | `QualityTier`（1–5）· `void_consecration()` 化虚祝圣开光逻辑 |
+| **P3** | `server/src/alchemy/auto_profile.rs` | 214 | `AlchemyAutoProfile` · `FurnaceQiReserve`（独立账户）· `InjectQiIntent` |
+| **P4** | `server/src/alchemy/danxin.rs` | 227 | `DanxinIdentifyIntent` · `RecipeHint` · `accuracy = min(1.0, (realm_tier / pill_tier) × random(0.5, 1.0))` · `AlchemyInsightEvent`（agent narration 触发） |
+
+`server/src/alchemy/mod.rs` +82 行登记 5 个新 mod；`server/assets/items/pills.toml` +22 行新增样例丹药条目。
+
+### 关键 commits
+
+- `2dba5b27` 2026-05-04 — `feat(alchemy): 落地炼丹 v2 服务端扩展`（server，36 文件 +1100 行）
+- `3ddae947` 2026-05-04 — `feat(agent): 接入炼丹洞察契约`（agent，schema + IPC）
+- `114a74ac` 2026-05-04 — `feat(client): 展示炼丹物品元数据`（client，3 文件 +174 行）
+
+### 测试结果
+
+- **Server**：5 模块 × 3–4 单测 = **18 个 Rust 单元测试**
+  - `side_effect_apply.rs` 4 / `recipe_fragment.rs` 3 / `quality.rs` 4 / `auto_profile.rs` 4 / `danxin.rs` 3
+- **Agent**：`agent/packages/schema/tests/schema.test.ts` + `agent/packages/tiandao/tests/redis-ipc.test.ts` 各 +1，共 **2 个新 vitest case**
+- **Client**：随 `InventorySnapshotHandler` / `InventoryItem` 扩展更新，无新增独立 test（依赖既有 inventory 集成测试）
+
+### 跨仓库核验
+
+- **server ↔ agent**：`AlchemyInsightEvent`（server）↔ `agent/packages/schema/src/alchemy.ts` +17 行 `AlchemyInsightSchema` ↔ `agent/packages/schema/samples/alchemy-insight.sample.json` ↔ `generated/alchemy-insight-v1.json`（53 行 JSON Schema）
+- **server ↔ client**：`server/src/network/inventory_event_emit.rs` +9 行扩展 inventory snapshot payload（品阶 / 铭文 / 残卷标记）↔ `client/.../inventory/model/InventoryItem.java` +80 行解析新 metadata ↔ `ItemTooltipPanel.java` 渲染品阶
+- **agent IPC channel**：`agent/packages/schema/src/channels.ts` +3 行注册新 channel；`tiandao/src/redis-ipc.ts` +22 行订阅 alchemy-insight
+
+### 遗留 / 后续
+
+- **PR 合并 main**：工作分支 `auto/plan-alchemy-v2` 待合并；`sync/main-alchemy-v2-20260504` 是 sync 中间分支。合并后人工 / `/consume-plan` 在末尾 commit 内 `git mv docs/plan-alchemy-v2.md docs/finished_plans/`
+- **§5 离场不停炉的实战平衡**：AutoProfile 输出品质 ≤ 手工 85% 的平衡阈值已写入代码，但需要长程游玩验证（属 plan 验收范围之外，归 balance 调参）
+- **Q-A4 残卷掉落来源**：plan §7 留待 P1 实施时拍——目前代码仅落 `RecipeFragment` 结构体，掉落表 / 兑换表挂接到 `tsy loot` / NPC 交易 / 顿悟事件需后续 plan（候选 plan 名 `plan-recipe-fragment-source-v1`，未立）

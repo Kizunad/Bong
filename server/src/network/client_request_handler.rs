@@ -21,6 +21,7 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
+use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
 };
@@ -29,12 +30,13 @@ use crate::combat::events::{
     StatusEffectKind,
 };
 use crate::combat::needle::IntentSource;
+use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::{recover_current_qi, Cultivation};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
-use crate::cultivation::insight::InsightChosen;
+use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
@@ -49,14 +51,16 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
-    add_item_to_player_inventory, apply_inventory_move, apply_item_spiritual_wear,
+    add_item_to_player_inventory_with_alchemy, apply_inventory_move, apply_item_spiritual_wear,
     consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
-    InventoryMoveOutcome, ItemInstance, PlayerInventory,
+    InventoryMoveOutcome, ItemInstance, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID,
+    MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
 };
 use crate::inventory::{
-    ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
+    AlchemyItemData, ItemEffect, ItemRegistry,
+    DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
 use crate::lingtian::environment::read_environment_at;
@@ -79,6 +83,7 @@ use crate::network::cast_emit::{
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
@@ -89,7 +94,7 @@ use crate::player::state::{
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
-use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
+use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::shelflife::{
     age_peak_check, container_storage_multiplier, spoil_check, AgeBonusRoll, AgePeakCheck,
@@ -141,6 +146,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub item_registry: Res<'w, ItemRegistry>,
     pub decay_profiles: Option<Res<'w, DecayProfileRegistry>>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
+    pub insight_request_tx: Option<ResMut<'w, Events<InsightRequest>>>,
+    pub false_skin_forge_tx: Option<ResMut<'w, Events<FalseSkinForgeRequest>>>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
     pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
     pub start_search_tx: Option<ResMut<'w, Events<StartSearchRequestEvent>>>,
@@ -197,6 +204,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub insight_tx: EventWriter<'w, InsightChosen>,
     pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
     pub duo_she_tx: Option<ResMut<'w, Events<DuoSheRequestEvent>>>,
+    pub qi_color_inspect_tx: Option<ResMut<'w, Events<QiColorInspectRequest>>>,
     pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
     pub self_antidote_tx: Option<ResMut<'w, Events<SelfAntidoteIntent>>>,
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
@@ -215,6 +223,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
+    pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
+    pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
 }
 
 #[derive(SystemParam)]
@@ -233,6 +243,7 @@ pub struct SkillScrollRequestParams<'w, 's> {
 
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
+const QI_COLOR_INSPECT_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
@@ -317,6 +328,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ZhenfaDisarm { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
+            | ClientRequestV1::EquipFalseSkin { v, .. }
+            | ClientRequestV1::ForgeFalseSkin { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
@@ -325,6 +338,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::SelfAntidote { v, .. }
             | ClientRequestV1::DuoSheRequest { v, .. }
+            | ClientRequestV1::QiColorInspect { v, .. }
             | ClientRequestV1::UseLifeCore { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
@@ -351,7 +365,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeStepAdvance { v, .. }
             | ClientRequestV1::ForgeBlueprintTurnPage { v, .. }
             | ClientRequestV1::ForgeLearnBlueprint { v, .. }
-            | ClientRequestV1::ForgeStationPlace { v, .. } => *v,
+            | ClientRequestV1::ForgeStationPlace { v, .. }
+            | ClientRequestV1::ChargeCarrier { v, .. }
+            | ClientRequestV1::ThrowCarrier { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -844,6 +860,55 @@ pub fn handle_client_request_payloads(
                     durability_changed_tx.as_deref_mut(),
                 );
             }
+            ClientRequestV1::EquipFalseSkin {
+                slot,
+                item_instance_id,
+                ..
+            } => {
+                if slot != EquipSlotV1::FalseSkin {
+                    tracing::warn!(
+                        "[bong][network][tuike] equip_false_skin rejected: slot={slot:?} item_instance_id={item_instance_id}"
+                    );
+                    continue;
+                }
+                let from = inventories.get(ev.client).ok().and_then(|inventory| {
+                    find_inventory_instance_location(inventory, item_instance_id)
+                });
+                let Some(from) = from else {
+                    tracing::warn!(
+                        "[bong][network][tuike] equip_false_skin rejected: instance {item_instance_id} not found for entity {:?}",
+                        ev.client
+                    );
+                    continue;
+                };
+                handle_inventory_move(
+                    ev.client,
+                    item_instance_id,
+                    from,
+                    InventoryLocationV1::Equip {
+                        slot: EquipSlotV1::FalseSkin,
+                    },
+                    &combat_params.item_registry,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                    karma_weights.as_deref(),
+                    durability_changed_tx.as_deref_mut(),
+                );
+            }
+            ClientRequestV1::ForgeFalseSkin { kind, .. } => {
+                if let Some(events) = combat_params.false_skin_forge_tx.as_deref_mut() {
+                    events.send(FalseSkinForgeRequest {
+                        crafter: ev.client,
+                        kind: kind.into(),
+                    });
+                } else {
+                    tracing::warn!(
+                        "[bong][network][tuike] forge_false_skin ignored: FalseSkinForgeRequest event resource missing"
+                    );
+                }
+            }
             ClientRequestV1::InventoryDiscardItem {
                 instance_id, from, ..
             } => {
@@ -975,6 +1040,28 @@ pub fn handle_client_request_payloads(
                     });
                 }
             }
+            ClientRequestV1::QiColorInspect { observed, .. } => {
+                let Some(observed_entity) = resolve_qi_color_inspect_target(
+                    ev.client,
+                    observed.as_str(),
+                    &combat_params,
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
+                ) else {
+                    tracing::warn!(
+                        "[bong][network] rejected qi_color_inspect from {:?}: invalid or out-of-scope observed `{observed}`",
+                        ev.client
+                    );
+                    continue;
+                };
+                if let Some(qi_color_inspect_tx) = dispatch.qi_color_inspect_tx.as_deref_mut() {
+                    qi_color_inspect_tx.send(QiColorInspectRequest {
+                        observer: ev.client,
+                        observed: observed_entity,
+                        requested_at_tick: combat_clock.tick,
+                    });
+                }
+            }
             ClientRequestV1::UseLifeCore { instance_id, .. } => {
                 if let Some(life_core_tx) = dispatch.life_core_tx.as_deref_mut() {
                     life_core_tx.send(UseLifeCoreEvent {
@@ -992,6 +1079,34 @@ pub fn handle_client_request_payloads(
                 if let Some(defense_tx) = dispatch.defense_tx.as_deref_mut() {
                     defense_tx.send(DefenseIntent {
                         defender: ev.client,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::ChargeCarrier {
+                slot, qi_target, ..
+            } => {
+                if let Some(charge_carrier_tx) = dispatch.charge_carrier_tx.as_deref_mut() {
+                    charge_carrier_tx.send(ChargeCarrierIntent {
+                        carrier: ev.client,
+                        slot: slot.map(map_anqi_carrier_slot),
+                        qi_target: Some(qi_target),
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::ThrowCarrier {
+                slot,
+                dir_unit,
+                power,
+                ..
+            } => {
+                if let Some(throw_carrier_tx) = dispatch.throw_carrier_tx.as_deref_mut() {
+                    throw_carrier_tx.send(ThrowCarrierIntent {
+                        thrower: ev.client,
+                        slot: map_anqi_carrier_slot(slot),
+                        dir_unit,
+                        power,
                         issued_at_tick: combat_clock.tick,
                     });
                 }
@@ -1930,6 +2045,11 @@ mod tests {
 
     impl valence::prelude::Resource for CapturedStepAdvances {}
 
+    #[derive(Default)]
+    struct CapturedQiColorInspectRequests(Vec<QiColorInspectRequest>);
+
+    impl valence::prelude::Resource for CapturedQiColorInspectRequests {}
+
     fn capture_breakthrough_requests(
         mut events: EventReader<BreakthroughRequest>,
         mut captured: ResMut<CapturedBreakthroughRequests>,
@@ -2014,6 +2134,13 @@ mod tests {
         captured.0.extend(events.read().cloned());
     }
 
+    fn capture_qi_color_inspect_requests(
+        mut events: EventReader<QiColorInspectRequest>,
+        mut captured: ResMut<CapturedQiColorInspectRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
     fn skill_scroll_item(instance_id: u64, template_id: &str) -> ItemInstance {
         ItemInstance {
             instance_id,
@@ -2034,6 +2161,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
@@ -2141,6 +2269,7 @@ mod tests {
                         forge_color: None,
                         forge_side_effects: Vec::new(),
                         forge_achieved_tier: None,
+                        alchemy: None,
                     },
                 }],
             }],
@@ -2280,6 +2409,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<FalseSkinForgeRequest>();
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
@@ -2292,6 +2422,7 @@ mod tests {
         app.add_event::<StartDrainQiRequest>();
         app.add_event::<StartExtractRequestEvent>();
         app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<QiColorInspectRequest>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -2710,6 +2841,7 @@ mod tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 }),
                 Cultivation::default(),
                 PlayerState::default(),
@@ -2792,6 +2924,7 @@ mod tests {
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 }),
                 Cultivation {
                     realm: Realm::Spirit,
@@ -3162,6 +3295,70 @@ mod tests {
         let captured = app.world().resource::<CapturedMineralProbes>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
+    fn qi_color_inspect_rejects_entity_bits_target() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(CapturedQiColorInspectRequests::default());
+        app.add_systems(
+            Update,
+            capture_qi_color_inspect_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let observer = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(observer)
+            .insert(Position(DVec3::ZERO));
+        let observed = app
+            .world_mut()
+            .spawn(Position(DVec3::new(1.0, 0.0, 0.0)))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: observer,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::QiColorInspect {
+                    v: 1,
+                    observed: format!("entity_bits:{}", observed.to_bits()),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<CapturedQiColorInspectRequests>()
+            .0
+            .is_empty());
+    }
+
+    #[test]
+    fn qi_color_inspect_scope_requires_near_same_dimension_target() {
+        assert_eq!(parse_qi_color_inspect_protocol_id("entity:42"), Some(42));
+        assert_eq!(parse_qi_color_inspect_protocol_id("entity_bits:42"), None);
+        assert_eq!(parse_qi_color_inspect_protocol_id("entity:bad"), None);
+
+        assert!(is_qi_color_inspect_position_in_scope(
+            DVec3::ZERO,
+            DVec3::new(QI_COLOR_INSPECT_MAX_DISTANCE, 0.0, 0.0),
+            true,
+        ));
+        assert!(!is_qi_color_inspect_position_in_scope(
+            DVec3::ZERO,
+            DVec3::new(QI_COLOR_INSPECT_MAX_DISTANCE + 0.01, 0.0, 0.0),
+            true,
+        ));
+        assert!(!is_qi_color_inspect_position_in_scope(
+            DVec3::ZERO,
+            DVec3::new(1.0, 0.0, 0.0),
+            false,
+        ));
     }
 
     #[test]
@@ -4519,6 +4716,74 @@ fn resolve_skill_cast_target(
     id.parse::<u64>().ok().map(Entity::from_bits)
 }
 
+fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1) -> CarrierSlot {
+    match slot {
+        crate::schema::client_request::AnqiCarrierSlotV1::MainHand => CarrierSlot::MainHand,
+        crate::schema::client_request::AnqiCarrierSlotV1::OffHand => CarrierSlot::OffHand,
+    }
+}
+
+fn resolve_qi_color_inspect_target(
+    observer: Entity,
+    raw: &str,
+    combat_params: &CombatRequestParams,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+) -> Option<Entity> {
+    let protocol_id = parse_qi_color_inspect_protocol_id(raw)?;
+    let observed = combat_params
+        .entity_manager
+        .as_deref()
+        .and_then(|manager| manager.get_by_id(protocol_id))?;
+    is_qi_color_inspect_target_in_scope(observer, observed, positions, dimensions)
+        .then_some(observed)
+}
+
+fn parse_qi_color_inspect_protocol_id(raw: &str) -> Option<i32> {
+    raw.trim().strip_prefix("entity:")?.parse().ok()
+}
+
+fn is_qi_color_inspect_target_in_scope(
+    observer: Entity,
+    observed: Entity,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+) -> bool {
+    if observer == observed {
+        return false;
+    }
+    let Ok(observer_position) = positions.get(observer) else {
+        return false;
+    };
+    let Ok(observed_position) = positions.get(observed) else {
+        return false;
+    };
+    let observer_dimension = dimension_kind_for(dimensions, observer);
+    let observed_dimension = dimension_kind_for(dimensions, observed);
+    is_qi_color_inspect_position_in_scope(
+        observer_position.get(),
+        observed_position.get(),
+        observer_dimension == observed_dimension,
+    )
+}
+
+fn is_qi_color_inspect_position_in_scope(
+    observer_position: DVec3,
+    observed_position: DVec3,
+    same_dimension: bool,
+) -> bool {
+    same_dimension
+        && observer_position.distance_squared(observed_position)
+            <= QI_COLOR_INSPECT_MAX_DISTANCE * QI_COLOR_INSPECT_MAX_DISTANCE
+}
+
+fn dimension_kind_for(dimensions: &Query<&CurrentDimension>, entity: Entity) -> DimensionKind {
+    dimensions
+        .get(entity)
+        .map(|dimension| dimension.0)
+        .unwrap_or_default()
+}
+
 fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
     let raw = raw.trim();
     if raw.is_empty() || raw.starts_with("entity_bits:") {
@@ -4727,6 +4992,69 @@ fn first_instance_for_template(inventory: &PlayerInventory, template_id: &str) -
         .map(|item| item.instance_id)
 }
 
+fn find_inventory_instance_location(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<InventoryLocationV1> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            let container_id = container_id_v1_for_runtime(container.id.as_str())?;
+            return Some(InventoryLocationV1::Container {
+                container_id,
+                row: u64::from(placed.row),
+                col: u64::from(placed.col),
+            });
+        }
+    }
+
+    for (slot, item) in &inventory.equipped {
+        if item.instance_id == instance_id {
+            return equip_slot_v1_for_runtime(slot).map(|slot| InventoryLocationV1::Equip { slot });
+        }
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .enumerate()
+        .find_map(|(index, item)| {
+            item.as_ref()
+                .filter(|item| item.instance_id == instance_id)
+                .map(|_| InventoryLocationV1::Hotbar { index: index as u8 })
+        })
+}
+
+fn container_id_v1_for_runtime(id: &str) -> Option<ContainerIdV1> {
+    match id {
+        MAIN_PACK_CONTAINER_ID => Some(ContainerIdV1::MainPack),
+        SMALL_POUCH_CONTAINER_ID => Some(ContainerIdV1::SmallPouch),
+        FRONT_SATCHEL_CONTAINER_ID => Some(ContainerIdV1::FrontSatchel),
+        _ => None,
+    }
+}
+
+fn equip_slot_v1_for_runtime(slot: &str) -> Option<EquipSlotV1> {
+    match slot {
+        crate::inventory::EQUIP_SLOT_HEAD => Some(EquipSlotV1::Head),
+        crate::inventory::EQUIP_SLOT_CHEST => Some(EquipSlotV1::Chest),
+        crate::inventory::EQUIP_SLOT_LEGS => Some(EquipSlotV1::Legs),
+        crate::inventory::EQUIP_SLOT_FEET => Some(EquipSlotV1::Feet),
+        crate::inventory::EQUIP_SLOT_FALSE_SKIN => Some(EquipSlotV1::FalseSkin),
+        crate::inventory::EQUIP_SLOT_MAIN_HAND => Some(EquipSlotV1::MainHand),
+        crate::inventory::EQUIP_SLOT_OFF_HAND => Some(EquipSlotV1::OffHand),
+        crate::inventory::EQUIP_SLOT_TWO_HAND => Some(EquipSlotV1::TwoHand),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_0 => Some(EquipSlotV1::TreasureBelt0),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_1 => Some(EquipSlotV1::TreasureBelt1),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_2 => Some(EquipSlotV1::TreasureBelt2),
+        crate::inventory::EQUIP_SLOT_TREASURE_BELT_3 => Some(EquipSlotV1::TreasureBelt3),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_inventory_move(
     entity: valence::prelude::Entity,
@@ -4759,6 +5087,36 @@ fn handle_inventory_move(
             return;
         }
     };
+
+    if let InventoryLocationV1::Equip {
+        slot: EquipSlotV1::FalseSkin,
+    } = &to
+    {
+        if let Some(kind) = item_before_move
+            .as_ref()
+            .and_then(|item| false_skin_kind_for_item(&item.template_id))
+        {
+            let realm_allowed = cultivations
+                .get(entity)
+                .map(|cultivation| can_equip_false_skin(cultivation.realm, kind))
+                .unwrap_or(false);
+            if !realm_allowed {
+                tracing::warn!(
+                    "[bong][network][tuike] rejected false_skin equip entity={entity:?} instance={instance_id}: realm too low for {:?}",
+                    kind
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "false_skin_realm_rejection",
+                );
+                return;
+            }
+        }
+    }
 
     match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
@@ -4891,14 +5249,14 @@ fn send_moved_event(
     to: InventoryLocationV1,
     revision: u64,
 ) {
-    let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+    let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(Box::new(
         InventoryEventV1::Moved {
             revision,
             instance_id,
             from,
             to,
         },
-    ));
+    )));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
         Ok(bytes) => bytes,
@@ -5278,6 +5636,9 @@ fn handle_alchemy_learn(
             ),
             LearnResult::AlreadyKnown => tracing::debug!(
                 "[bong][network][alchemy] `{player_id}` already knows `{recipe_id}`"
+            ),
+            LearnResult::FragmentMerged => tracing::debug!(
+                "[bong][network][alchemy] `{player_id}` merged fragment while learning `{recipe_id}`"
             ),
         }
         alchemy_snapshot_emit::send_recipe_book_from_learned(&mut client, &player_id, &learned);
@@ -5692,16 +6053,37 @@ fn grant_alchemy_outcome_item(
     item_registry: &ItemRegistry,
     instance_allocator: &mut InventoryInstanceIdAllocator,
 ) {
-    let crate::alchemy::ResolvedOutcome::Pill { pill, .. } = outcome else {
+    let crate::alchemy::ResolvedOutcome::Pill {
+        pill,
+        recipe_id,
+        quality_tier,
+        effect_multiplier,
+        consecrated,
+        side_effect,
+        ..
+    } = outcome
+    else {
         return;
     };
     let Ok(mut inventory) = inventories.get_mut(entity) else {
         send_alchemy_error(client, player_id, "未找到背包，成丹无法入袋".to_string());
         return;
     };
-    if let Err(error) =
-        add_item_to_player_inventory(&mut inventory, item_registry, instance_allocator, pill, 1)
-    {
+    let alchemy = Some(AlchemyItemData::Pill {
+        recipe_id: recipe_id.clone(),
+        quality_tier: *quality_tier,
+        effect_multiplier: *effect_multiplier,
+        consecrated: *consecrated,
+        side_effect: side_effect.clone(),
+    });
+    if let Err(error) = add_item_to_player_inventory_with_alchemy(
+        &mut inventory,
+        item_registry,
+        instance_allocator,
+        pill,
+        1,
+        alchemy,
+    ) {
         send_alchemy_error(client, player_id, format!("成丹入袋失败：{error}"));
         return;
     }
@@ -5930,6 +6312,17 @@ fn handle_alchemy_take_pill(
         );
         return;
     };
+    let (alchemy_multiplier, alchemy_consecrated, alchemy_side_effect) =
+        match consumed_item.alchemy.as_ref() {
+            Some(AlchemyItemData::Pill {
+                effect_multiplier,
+                consecrated,
+                side_effect,
+                ..
+            }) => (*effect_multiplier, *consecrated, side_effect.clone()),
+            _ => (1.0, false, None),
+        };
+    let duration_multiplier = if alchemy_consecrated { 2 } else { 1 };
 
     let (spoil, age) = shelflife_checks_for_item(
         &consumed_item,
@@ -5971,22 +6364,24 @@ fn handle_alchemy_take_pill(
     let mut cultivation_snapshot_override = None;
     match effect {
         ItemEffect::BreakthroughBonus { magnitude } => {
+            let scaled_magnitude = magnitude * alchemy_multiplier;
             combat_params.buff_tx.send(ApplyStatusEffectIntent {
                 target: entity,
                 kind: StatusEffectKind::BreakthroughBoost,
-                magnitude: magnitude as f32,
-                duration_ticks: BREAKTHROUGH_BOOST_DURATION_TICKS,
+                magnitude: scaled_magnitude as f32,
+                duration_ticks: BREAKTHROUGH_BOOST_DURATION_TICKS * duration_multiplier,
                 issued_at_tick: clock.tick,
             });
             tracing::info!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{scaled_magnitude:.3} for {} ticks",
+                BREAKTHROUGH_BOOST_DURATION_TICKS * duration_multiplier
             );
         }
         ItemEffect::QiRecovery { amount } => {
             if let Ok(current) = cultivations.get(entity) {
                 let mut cultivation = current.clone();
                 let qi_max_before = cultivation.qi_max;
-                let recovered = recover_current_qi(&mut cultivation, amount);
+                let recovered = recover_current_qi(&mut cultivation, amount * alchemy_multiplier);
                 cultivation_snapshot_override = Some(cultivation.clone());
                 commands.entity(entity).insert(cultivation);
                 tracing::info!(
@@ -6015,11 +6410,12 @@ fn handle_alchemy_take_pill(
                 target: entity,
                 kind: StatusEffectKind::AntiSpiritPressurePill,
                 magnitude: 1.0,
-                duration_ticks,
+                duration_ticks: duration_ticks.saturating_mul(duration_multiplier),
                 issued_at_tick: clock.tick,
             });
             tracing::info!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → AntiSpiritPressurePill for {duration_ticks} ticks"
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → AntiSpiritPressurePill for {} ticks",
+                duration_ticks.saturating_mul(duration_multiplier)
             );
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
@@ -6033,6 +6429,26 @@ fn handle_alchemy_take_pill(
                 pill_item_id,
                 entity,
             );
+        }
+    }
+
+    if let Some(side_effect) = alchemy_side_effect.as_ref() {
+        let realm = cultivations
+            .get(entity)
+            .map(|cultivation| cultivation.realm)
+            .unwrap_or(crate::cultivation::components::Realm::Awaken);
+        let application = crate::alchemy::side_effect_apply::build_side_effect_application(
+            entity,
+            side_effect,
+            clock.tick,
+            realm,
+        );
+        combat_params.buff_tx.send(application.status_intent);
+        if let (Some(insight_request), Some(insight_request_tx)) = (
+            application.insight_request,
+            combat_params.insight_request_tx.as_mut(),
+        ) {
+            insight_request_tx.send(insight_request);
         }
     }
 
@@ -6260,6 +6676,7 @@ mod take_pill_tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 

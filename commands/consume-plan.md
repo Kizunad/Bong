@@ -5,7 +5,7 @@ argument-hint: <plan-name>
 
 # consume-plan $ARGUMENTS
 
-线性消费 `docs/plan-$ARGUMENTS.md`。**全自动到 merge**——PR body 主动 mention `@codex` + `@claude` 触发 review，step 6 等两边都给评论后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
+线性消费 `docs/plan-$ARGUMENTS.md`。**全自动到 merge**——PR 创建后**独立发 comment** mention `@codex` + `@claude` 触发 review（写在 PR body 里不生效，bot 只捕获 issue comment / review comment），step 6 等两边都给评论后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
 
 实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；review 意见自行判断采纳；merge conflict 先尝试 rebase（≤2 轮），拿不准交人工。不自动跳过失败 TODO。
 
@@ -135,7 +135,7 @@ PR_URL=$(gh pr create \
 
 ---
 
-@codex @claude 请 review。**有阻断意见请加前缀 \`BLOCKING:\` 或选 Request changes，否则按下方规则自动处理。**
+**有阻断意见请加前缀 \`BLOCKING:\` 或选 Request changes，否则按下方规则自动处理。**（review 触发 mention 见 PR 评论区独立 comment）
 
 <details>
 <summary>📜 自动 merge 协议（点击展开）</summary>
@@ -155,6 +155,12 @@ EOF
 )")
 PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
 echo "PR: $PR_URL (#$PR_NUM)"
+
+# 独立 comment 触发 codex / claude review
+# —— 写在 PR body 里 bot 不会捕获，必须以独立 issue comment 形式 mention 才生效。
+# 分两条发，避免一条里互相干扰；正文极简，让 bot 抓 mention 即可。
+gh pr comment "$PR_NUM" --body "@codex 请 review 这个 PR。"
+gh pr comment "$PR_NUM" --body "@claude 请 review 这个 PR。"
 ```
 
 **不加 `--auto`**——主流程要先看 review 评论再 merge（step 6 → 7 → 8 顺序），不能让 GitHub auto-merge 抢跑过 review 判定。
@@ -245,7 +251,7 @@ gh pr checks "$PR_NUM" --watch --fail-fast
 
 ## 6. 等 codex + claude review 评论
 
-PR body 已 mention `@codex` 和 `@claude`，两位 bot 会被触发上来 review。轮询直到**两边都至少有 1 条评论或 review** 才放行——单边过审就 merge 等于丢了一半保险。
+step 4 已通过独立 comment mention `@codex` 和 `@claude`，两位 bot 会被触发上来 review。轮询直到**两边都至少有 1 条评论或 review** 才放行——单边过审就 merge 等于丢了一半保险。
 
 ```bash
 cd "$WT_ABS"

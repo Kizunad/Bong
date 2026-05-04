@@ -2,6 +2,9 @@ package com.bong.client.inventory;
 
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.cultivation.ColorKind;
+import com.bong.client.cultivation.QiColorObservedState;
+import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
@@ -23,6 +26,7 @@ public class InspectScreenBootstrapTest {
     void resetStore() {
         InventoryStateStore.resetForTests();
         WeaponEquippedStore.resetForTests();
+        QiColorObservedStore.resetForTests();
     }
 
     @Test
@@ -70,10 +74,25 @@ public class InspectScreenBootstrapTest {
             "main_hand",
             new EquippedWeapon("main_hand", 1L, "iron_sword", "sword", 200.0f, 200.0f, 0)
         );
+        QiColorObservedStore.replace(new QiColorObservedState(
+            "offline:Observer",
+            "offline:Observed",
+            ColorKind.Intricate,
+            null,
+            false,
+            false,
+            1.0
+        ));
 
         InspectScreenBootstrap.clearInventorySnapshot();
 
         assertNull(WeaponEquippedStore.get("main_hand"));
+        assertNull(QiColorObservedStore.snapshot());
+    }
+
+    @Test
+    void crosshairEntityTargetIsNullWithoutClientContext() {
+        assertNull(InspectScreenBootstrap.crosshairEntityTarget(null));
     }
 
     @Test

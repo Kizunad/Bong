@@ -1,16 +1,21 @@
 pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
+pub mod carrier;
 pub mod components;
 #[cfg(test)]
 mod death_event_attacker_chain_test;
 pub mod debug;
+pub mod decay;
 pub mod events;
+pub mod jiemai;
 pub mod lifecycle;
 pub mod needle;
+pub mod projectile;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
+pub mod tuike;
 pub mod weapon;
 pub mod woliu;
 
@@ -88,6 +93,7 @@ fn attach_combat_bundle_to_joined_clients(
             StatusEffects::default(),
             DerivedAttrs::default(),
             AntiCheatCounter::default(),
+            carrier::CarrierStore::default(),
             Lifecycle {
                 character_id,
                 spawn_anchor,
@@ -111,6 +117,7 @@ fn attach_combat_bundle_to_joined_npcs(
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            carrier::CarrierStore::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
                 ..Default::default()
@@ -155,6 +162,9 @@ pub fn register(app: &mut App) {
     app.add_event::<AntiCheatViolationEvent>();
     app.add_event::<needle::ShootNeedleIntent>();
     app.add_event::<needle::QiNeedleChargedEvent>();
+    carrier::register(app);
+    app.add_event::<tuike::ShedEvent>();
+    app.add_event::<tuike::FalseSkinForgeRequest>();
 
     app.configure_sets(
         Update,
@@ -177,7 +187,9 @@ pub fn register(app: &mut App) {
             attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
             debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
             resolve::apply_defense_intents.in_set(CombatSystemSet::Intent),
-            status::status_effect_apply_tick.in_set(CombatSystemSet::Intent),
+            status::status_effect_apply_tick
+                .in_set(CombatSystemSet::Intent)
+                .after(resolve::apply_defense_intents),
             lifecycle::wound_bleed_tick.in_set(CombatSystemSet::Physics),
             lifecycle::stamina_tick.in_set(CombatSystemSet::Physics),
             lifecycle::combat_state_tick.in_set(CombatSystemSet::Physics),
@@ -211,6 +223,22 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    // Separate add_systems call to stay below Bevy 0.14 tuple-arity limits.
+    app.add_systems(
+        Update,
+        (
+            tuike::handle_false_skin_forge_requests,
+            tuike::sync_false_skin_from_inventory,
+        )
+            .chain()
+            .in_set(CombatSystemSet::Intent),
+    );
+    app.add_systems(
+        Update,
+        tuike::record_shed_events_in_life_record
+            .in_set(CombatSystemSet::Emit)
+            .after(resolve::resolve_attack_intents),
     );
     app.add_systems(
         Update,

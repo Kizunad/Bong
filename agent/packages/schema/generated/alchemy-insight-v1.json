@@ -1,0 +1,53 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_id",
+    "source_pill",
+    "accuracy",
+    "ingredients"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "source_pill": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "recipe_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "accuracy": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "ingredients": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 128,
+        "type": "string"
+      }
+    }
+  }
+}

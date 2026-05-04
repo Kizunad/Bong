@@ -11,8 +11,8 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::schema::combat_event::{
-    CombatAttackSourceV1, CombatBodyPartV1, CombatRealtimeEventV1, CombatRealtimeKindV1,
-    CombatSummaryV1, CombatWoundKindV1,
+    CombatAttackSourceV1, CombatBodyPartV1, CombatDefenseKindV1, CombatRealtimeEventV1,
+    CombatRealtimeKindV1, CombatSummaryV1, CombatWoundKindV1,
 };
 
 #[derive(Debug, Default)]
@@ -73,6 +73,10 @@ pub fn publish_combat_realtime_events(
             contam_delta: Some(ev.contam_delta),
             description: Some(ev.description.clone()),
             cause: None,
+            defense_kind: ev.defense_kind.map(map_defense_kind),
+            defense_effectiveness: ev.defense_effectiveness,
+            defense_contam_reduced: ev.defense_contam_reduced,
+            defense_wound_severity: ev.defense_wound_severity,
         };
 
         let _ = redis
@@ -107,6 +111,10 @@ pub fn publish_combat_realtime_events(
             contam_delta: None,
             description: None,
             cause: Some(ev.cause.clone()),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         };
 
         let _ = redis
@@ -258,6 +266,12 @@ fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttac
     }
 }
 
+fn map_defense_kind(kind: crate::combat::events::DefenseKind) -> CombatDefenseKindV1 {
+    match kind {
+        crate::combat::events::DefenseKind::JieMai => CombatDefenseKindV1::JieMai,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +368,10 @@ mod tests {
             damage: 20.0,
             contam_delta: 5.0,
             description: "attack_intent offline:AttackerCanonical -> offline:TargetCanonical hit Chest with Blunt for 20.0 damage at 0.90 reach decay".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.world_mut().send_event(DeathEvent {
             target,
@@ -468,6 +486,10 @@ mod tests {
             damage: 12.0,
             contam_delta: 3.0,
             description: "hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
         app.world_mut().send_event(DeathEvent {
             target,
@@ -571,6 +593,10 @@ mod tests {
             damage: 0.1 + 0.2,
             contam_delta: 0.1 + 0.2,
             description: "rounded hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
 
         {

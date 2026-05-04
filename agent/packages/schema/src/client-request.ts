@@ -19,6 +19,7 @@ import {
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
+import { FalseSkinKindV1 } from "./tuike.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 const HOTBAR_SLOT_COUNT = 9;
@@ -150,6 +151,27 @@ export const InventoryMoveIntentRequestV1 = Type.Object(
 );
 export type InventoryMoveIntentRequestV1 = Static<typeof InventoryMoveIntentRequestV1>;
 
+export const EquipFalseSkinRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("equip_false_skin"),
+    slot: Type.Literal("false_skin"),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type EquipFalseSkinRequestV1 = Static<typeof EquipFalseSkinRequestV1>;
+
+export const ForgeFalseSkinRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_false_skin"),
+    kind: FalseSkinKindV1,
+  },
+  { additionalProperties: false },
+);
+export type ForgeFalseSkinRequestV1 = Static<typeof ForgeFalseSkinRequestV1>;
+
 export const ApplyPillRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -180,6 +202,16 @@ export const DuoSheRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type DuoSheRequestV1 = Static<typeof DuoSheRequestV1>;
+
+export const QiColorInspectRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("qi_color_inspect"),
+    observed: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type QiColorInspectRequestV1 = Static<typeof QiColorInspectRequestV1>;
 
 export const UseLifeCoreRequestV1 = Type.Object(
   {
@@ -537,6 +569,35 @@ export const TradeOfferResponseRequestV1 = Type.Object(
 );
 export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
 
+export const AnqiCarrierSlotV1 = Type.Union([
+  Type.Literal("main_hand"),
+  Type.Literal("off_hand"),
+]);
+export type AnqiCarrierSlotV1 = Static<typeof AnqiCarrierSlotV1>;
+
+export const ChargeCarrierRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("charge_carrier"),
+    slot: Type.Optional(AnqiCarrierSlotV1),
+    qi_target: Type.Number({ minimum: 0, maximum: 80 }),
+  },
+  { additionalProperties: false },
+);
+export type ChargeCarrierRequestV1 = Static<typeof ChargeCarrierRequestV1>;
+
+export const ThrowCarrierRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("throw_carrier"),
+    slot: AnqiCarrierSlotV1,
+    dir_unit: Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+    power: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ThrowCarrierRequestV1 = Static<typeof ThrowCarrierRequestV1>;
+
 export const ZhenfaKindV1 = Type.Union([
   Type.Literal("trap"),
   Type.Literal("ward"),
@@ -727,9 +788,12 @@ export const ClientRequestV1 = Type.Union([
   ForgeRequestV1,
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
+  EquipFalseSkinRequestV1,
+  ForgeFalseSkinRequestV1,
   ApplyPillRequestV1,
   SelfAntidoteRequestV1,
   DuoSheRequestV1,
+  QiColorInspectRequestV1,
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
   MineralProbeRequestV1,
@@ -760,6 +824,8 @@ export const ClientRequestV1 = Type.Union([
   SparringInviteResponseRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
+  ChargeCarrierRequestV1,
+  ThrowCarrierRequestV1,
   ZhenfaPlaceRequestV1,
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,

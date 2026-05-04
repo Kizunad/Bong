@@ -22,6 +22,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
         Map.entry("chest", EquipSlotType.CHEST),
         Map.entry("legs", EquipSlotType.LEGS),
         Map.entry("feet", EquipSlotType.FEET),
+        Map.entry("false_skin", EquipSlotType.FALSE_SKIN),
         Map.entry("main_hand", EquipSlotType.MAIN_HAND),
         Map.entry("off_hand", EquipSlotType.OFF_HAND),
         Map.entry("two_hand", EquipSlotType.TWO_HAND),

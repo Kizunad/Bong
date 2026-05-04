@@ -3,12 +3,16 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
+use super::recipe::Recipe;
 use super::recipe::RecipeId;
+use super::recipe_fragment::{PartialRecipeKnowledge, RecipeFragment};
 
 /// 已学方子（玩家组件）。初始空；学习一张残卷 → push RecipeId。
 #[derive(Debug, Clone, Default, Component, Serialize, Deserialize)]
 pub struct LearnedRecipes {
     pub ids: Vec<RecipeId>,
+    #[serde(default)]
+    pub partial: Vec<PartialRecipeKnowledge>,
     /// 当前卷轴翻到第几张。0 = 尚未翻页；总是 < ids.len()。
     #[serde(default)]
     pub current_index: usize,
@@ -18,6 +22,7 @@ pub struct LearnedRecipes {
 pub enum LearnResult {
     Learned,
     AlreadyKnown,
+    FragmentMerged,
 }
 
 impl LearnedRecipes {
@@ -27,6 +32,37 @@ impl LearnedRecipes {
         }
         self.ids.push(id);
         LearnResult::Learned
+    }
+
+    pub fn learn_fragment(&mut self, fragment: RecipeFragment, recipe: &Recipe) -> LearnResult {
+        if self.ids.iter().any(|id| id == &fragment.recipe_id) {
+            return LearnResult::AlreadyKnown;
+        }
+
+        let knowledge = fragment.into_knowledge(recipe);
+        if let Some(existing) = self
+            .partial
+            .iter_mut()
+            .find(|entry| entry.recipe_id == knowledge.recipe_id)
+        {
+            existing.known_stages.extend(knowledge.known_stages);
+            existing.known_stages.sort_unstable();
+            existing.known_stages.dedup();
+            existing.max_quality_tier = existing
+                .max_quality_tier
+                .max(knowledge.max_quality_tier)
+                .clamp(1, 3);
+            return LearnResult::FragmentMerged;
+        }
+
+        self.partial.push(knowledge);
+        LearnResult::Learned
+    }
+
+    pub fn partial_for(&self, recipe_id: &str) -> Option<&PartialRecipeKnowledge> {
+        self.partial
+            .iter()
+            .find(|entry| entry.recipe_id == recipe_id)
     }
 
     pub fn current(&self) -> Option<&RecipeId> {

@@ -68,6 +68,7 @@ pub const EQUIP_SLOT_HEAD: &str = "head";
 pub const EQUIP_SLOT_CHEST: &str = "chest";
 pub const EQUIP_SLOT_LEGS: &str = "legs";
 pub const EQUIP_SLOT_FEET: &str = "feet";
+pub const EQUIP_SLOT_FALSE_SKIN: &str = "false_skin";
 pub const EQUIP_SLOT_MAIN_HAND: &str = "main_hand";
 pub const EQUIP_SLOT_OFF_HAND: &str = "off_hand";
 pub const EQUIP_SLOT_TWO_HAND: &str = "two_hand";
@@ -141,6 +142,8 @@ pub struct InscriptionScrollSpec {
 pub enum ItemCategory {
     Pill,
     Herb,
+    RecipeFragment,
+    RecipeHint,
     Weapon,
     Treasure,
     BoneCoin,
@@ -238,6 +241,28 @@ pub struct ItemInstance {
     pub forge_side_effects: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forge_achieved_tier: Option<u8>,
+    /// plan-alchemy-v2：炼丹产物 / 残卷 / 丹心线索的动态 NBT。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alchemy: Option<AlchemyItemData>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AlchemyItemData {
+    Pill {
+        recipe_id: String,
+        quality_tier: u8,
+        effect_multiplier: f64,
+        consecrated: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        side_effect: Option<crate::alchemy::recipe::SideEffect>,
+    },
+    RecipeFragment {
+        fragment: crate::alchemy::recipe_fragment::RecipeFragment,
+    },
+    RecipeHint {
+        hint: crate::alchemy::danxin::RecipeHint,
+    },
 }
 
 #[derive(Debug)]
@@ -245,7 +270,7 @@ pub struct DefaultLoadout(pub LoadoutSpec);
 
 impl Resource for DefaultLoadout {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InventoryInstanceIdAllocator {
     next: u64,
 }
@@ -719,6 +744,7 @@ fn instantiate_item_instance(
         forge_color: None,
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
+        alchemy: None,
     })
 }
 
@@ -877,6 +903,27 @@ pub fn add_customized_item_to_player_inventory(
         stack_count,
         true,
         Some(&customize_instance),
+    )
+}
+
+pub fn add_item_to_player_inventory_with_alchemy(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    template_id: &str,
+    stack_count: u32,
+    alchemy: Option<AlchemyItemData>,
+) -> Result<InventoryGrantReceipt, String> {
+    add_item_to_player_inventory_inner(
+        inventory,
+        registry,
+        allocator,
+        template_id,
+        stack_count,
+        true,
+        Some(&|instance| {
+            instance.alchemy = alchemy.clone();
+        }),
     )
 }
 
@@ -1060,6 +1107,7 @@ fn runtime_instance_from_template(
         forge_color: None,
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
+        alchemy: None,
     }
 }
 
@@ -1080,6 +1128,7 @@ fn stack_identity_matches(left: &ItemInstance, right: &ItemInstance) -> bool {
         && left.forge_color == right.forge_color
         && left.forge_side_effects == right.forge_side_effects
         && left.forge_achieved_tier == right.forge_achieved_tier
+        && left.alchemy == right.alchemy
 }
 
 fn f64_values_match(left: f64, right: f64) -> bool {
@@ -1109,6 +1158,7 @@ fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState 
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         },
     }
 }
@@ -1190,7 +1240,11 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         ItemCategory::Herb => 64,
         ItemCategory::BoneCoin => u32::MAX,
         ItemCategory::Pill | ItemCategory::Misc => 16,
-        ItemCategory::Weapon | ItemCategory::Tool | ItemCategory::Treasure => 1,
+        ItemCategory::Weapon
+        | ItemCategory::Tool
+        | ItemCategory::Treasure
+        | ItemCategory::RecipeFragment
+        | ItemCategory::RecipeHint => 1,
     }
 }
 
@@ -1414,6 +1468,8 @@ fn parse_item_category(
     match raw.trim().to_ascii_lowercase().as_str() {
         "pill" => Ok(ItemCategory::Pill),
         "herb" => Ok(ItemCategory::Herb),
+        "recipe_fragment" | "recipe-fragment" => Ok(ItemCategory::RecipeFragment),
+        "recipe_hint" | "recipe-hint" => Ok(ItemCategory::RecipeHint),
         "weapon" => Ok(ItemCategory::Weapon),
         "treasure" => Ok(ItemCategory::Treasure),
         "bonecoin" | "bone_coin" | "bone-coins" | "bone_coins" => Ok(ItemCategory::BoneCoin),
@@ -2960,6 +3016,15 @@ fn validate_move_semantics(
                 }
                 Ok(())
             }
+            EquipSlotV1::FalseSkin => {
+                if crate::combat::tuike::false_skin_kind_for_item(&item.template_id).is_none() {
+                    return Err(format!(
+                        "item `{}` cannot equip to false_skin; expected tuike false skin",
+                        item.template_id
+                    ));
+                }
+                Ok(())
+            }
             _ => Ok(()),
         },
         _ => Ok(()),
@@ -3169,6 +3234,7 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::Chest => EQUIP_SLOT_CHEST,
         EquipSlotV1::Legs => EQUIP_SLOT_LEGS,
         EquipSlotV1::Feet => EQUIP_SLOT_FEET,
+        EquipSlotV1::FalseSkin => EQUIP_SLOT_FALSE_SKIN,
         EquipSlotV1::MainHand => EQUIP_SLOT_MAIN_HAND,
         EquipSlotV1::OffHand => EQUIP_SLOT_OFF_HAND,
         EquipSlotV1::TwoHand => EQUIP_SLOT_TWO_HAND,
@@ -3187,6 +3253,7 @@ fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSl
         EQUIP_SLOT_CHEST => EquipSlotV1::Chest,
         EQUIP_SLOT_LEGS => EquipSlotV1::Legs,
         EQUIP_SLOT_FEET => EquipSlotV1::Feet,
+        EQUIP_SLOT_FALSE_SKIN => EquipSlotV1::FalseSkin,
         EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
         EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
         EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
@@ -3287,6 +3354,7 @@ fn build_item_instance_from_template(
         forge_color: None,
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
+        alchemy: None,
     })
 }
 
@@ -3337,6 +3405,7 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         EQUIP_SLOT_CHEST,
         EQUIP_SLOT_LEGS,
         EQUIP_SLOT_FEET,
+        EQUIP_SLOT_FALSE_SKIN,
         EQUIP_SLOT_MAIN_HAND,
         EQUIP_SLOT_OFF_HAND,
         EQUIP_SLOT_TWO_HAND,
@@ -3351,12 +3420,13 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
+            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
             EQUIP_SLOT_HEAD,
             EQUIP_SLOT_CHEST,
             EQUIP_SLOT_LEGS,
             EQUIP_SLOT_FEET,
+            EQUIP_SLOT_FALSE_SKIN,
             EQUIP_SLOT_MAIN_HAND,
             EQUIP_SLOT_OFF_HAND,
             EQUIP_SLOT_TWO_HAND,
@@ -4437,6 +4507,7 @@ cols = 4
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -4552,6 +4623,7 @@ cols = 4
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         });
 
         let outcome = apply_inventory_move(
@@ -4610,6 +4682,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         });
 
@@ -4771,6 +4844,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -4901,6 +4975,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -4946,6 +5021,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -4981,6 +5057,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -5101,6 +5178,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -5122,6 +5200,7 @@ cols = 4
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -5144,6 +5223,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -5209,6 +5289,7 @@ cols = 4
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 },
             });
         }
@@ -5508,6 +5589,7 @@ cols = 4
                     forge_color: None,
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
+                    alchemy: None,
                 },
             },
         );
@@ -5605,6 +5687,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -5672,6 +5755,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -5705,6 +5789,7 @@ cols = 4
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -5727,6 +5812,7 @@ cols = 4
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         );
 
@@ -5787,6 +5873,7 @@ cols = 4
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 

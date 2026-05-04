@@ -12,6 +12,7 @@ import {
 } from "./audio-event.js";
 import {
   AlchemyContaminationLevelV1,
+  AlchemyInsightV1,
   AlchemyInterventionResultV1,
   AlchemyInterventionV1,
   AlchemyOutcomeBucket,
@@ -52,6 +53,9 @@ import {
   CombatTerminateRequestV1,
   ClientRequestV1,
   DuoSheRequestV1,
+  QiColorInspectRequestV1,
+  EquipFalseSkinRequestV1,
+  ForgeFalseSkinRequestV1,
   ForgeRequestV1,
   HeartDemonDecisionRequestV1,
   ForgeStartSessionRequestV1,
@@ -209,7 +213,9 @@ import {
   ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
+  ServerDataFalseSkinStateV1,
   ServerDataVortexStateV1,
+  ServerDataCarrierStateV1,
   ServerDataDuguPoisonStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
@@ -231,12 +237,24 @@ import {
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   BurstMeridianEventV1,
+  QiColorObservedV1,
   TreasureEquippedV1,
   TreasureViewV1,
   WeaponBrokenV1,
   WeaponEquippedV1,
   WeaponViewV1,
 } from "./server-data.js";
+import {
+  CarrierChargedEventV1,
+  CarrierImpactEventV1,
+  CarrierStateV1,
+  ProjectileDespawnedEventV1,
+} from "./combat-carrier.js";
+import {
+  FalseSkinKindV1,
+  FalseSkinStateV1,
+  ShedEventV1,
+} from "./tuike.js";
 import {
   ProjectileQiDrainedEventV1,
   VortexBackfireEventV1,
@@ -365,12 +383,6 @@ export const SCHEMA_REGISTRY = {
   rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
-  duguPoisonStateV1: DuguPoisonStateV1,
-  duguPoisonProgressEventV1: DuguPoisonProgressEventV1,
-  duguObfuscationStateV1: DuguObfuscationStateV1,
-  antidoteResultV1: AntidoteResultV1,
-  antidoteResultEventV1: AntidoteResultEventV1,
-  duguRevealedEventV1: DuguRevealedEventV1,
   violationKindV1: ViolationKindV1,
   antiCheatReportV1: AntiCheatReportV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
@@ -391,8 +403,10 @@ export const SCHEMA_REGISTRY = {
   clientRequestHeartDemonDecisionV1: HeartDemonDecisionRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
-  clientRequestSelfAntidoteV1: SelfAntidoteRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
+  clientRequestQiColorInspectV1: QiColorInspectRequestV1,
+  clientRequestEquipFalseSkinV1: EquipFalseSkinRequestV1,
+  clientRequestForgeFalseSkinV1: ForgeFalseSkinRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
@@ -407,6 +421,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
+  clientRequestSelfAntidoteV1: SelfAntidoteRequestV1,
   clientRequestZhenfaPlaceV1: ZhenfaPlaceRequestV1,
   clientRequestZhenfaTriggerV1: ZhenfaTriggerRequestV1,
   clientRequestZhenfaDisarmV1: ZhenfaDisarmRequestV1,
@@ -431,6 +446,7 @@ export const SCHEMA_REGISTRY = {
   serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
   serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
   burstMeridianEventV1: BurstMeridianEventV1,
+  qiColorObservedV1: QiColorObservedV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
@@ -448,7 +464,22 @@ export const SCHEMA_REGISTRY = {
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  duguPoisonStateV1: DuguPoisonStateV1,
+  duguPoisonProgressEventV1: DuguPoisonProgressEventV1,
+  duguObfuscationStateV1: DuguObfuscationStateV1,
+  antidoteResultV1: AntidoteResultV1,
+  antidoteResultEventV1: AntidoteResultEventV1,
+  duguRevealedEventV1: DuguRevealedEventV1,
   serverDataDuguPoisonStateV1: ServerDataDuguPoisonStateV1,
+  carrierStateV1: CarrierStateV1,
+  carrierChargedEventV1: CarrierChargedEventV1,
+  carrierImpactEventV1: CarrierImpactEventV1,
+  projectileDespawnedEventV1: ProjectileDespawnedEventV1,
+  serverDataCarrierStateV1: ServerDataCarrierStateV1,
+  falseSkinKindV1: FalseSkinKindV1,
+  falseSkinStateV1: FalseSkinStateV1,
+  shedEventV1: ShedEventV1,
+  serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -504,6 +535,7 @@ export const SCHEMA_REGISTRY = {
   alchemySessionStartV1: AlchemySessionStartV1,
   alchemySessionEndV1: AlchemySessionEndV1,
   alchemyInterventionResultV1: AlchemyInterventionResultV1,
+  alchemyInsightV1: AlchemyInsightV1,
   serverDataAlchemyFurnaceV1: ServerDataAlchemyFurnaceV1,
   serverDataAlchemySessionV1: ServerDataAlchemySessionV1,
   serverDataAlchemyOutcomeForecastV1: ServerDataAlchemyOutcomeForecastV1,
@@ -649,14 +681,6 @@ export const GENERATED_SCHEMA_FILES = {
   "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
-  "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,
-  "dugu-poison-progress-event-v1.json":
-    SCHEMA_REGISTRY.duguPoisonProgressEventV1,
-  "dugu-obfuscation-state-v1.json": SCHEMA_REGISTRY.duguObfuscationStateV1,
-  "dugu-antidote-result-v1.json": SCHEMA_REGISTRY.antidoteResultV1,
-  "dugu-antidote-result-event-v1.json":
-    SCHEMA_REGISTRY.antidoteResultEventV1,
-  "dugu-revealed-event-v1.json": SCHEMA_REGISTRY.duguRevealedEventV1,
   "violation-kind-v1.json": SCHEMA_REGISTRY.violationKindV1,
   "anticheat-report-v1.json": SCHEMA_REGISTRY.antiCheatReportV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
@@ -677,9 +701,13 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
-  "client-request-self-antidote-v1.json":
-    SCHEMA_REGISTRY.clientRequestSelfAntidoteV1,
   "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
+  "client-request-qi-color-inspect-v1.json":
+    SCHEMA_REGISTRY.clientRequestQiColorInspectV1,
+  "client-request-equip-false-skin-v1.json":
+    SCHEMA_REGISTRY.clientRequestEquipFalseSkinV1,
+  "client-request-forge-false-skin-v1.json":
+    SCHEMA_REGISTRY.clientRequestForgeFalseSkinV1,
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
@@ -703,6 +731,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
+  "client-request-self-antidote-v1.json":
+    SCHEMA_REGISTRY.clientRequestSelfAntidoteV1,
   "client-request-zhenfa-place-v1.json":
     SCHEMA_REGISTRY.clientRequestZhenfaPlaceV1,
   "client-request-zhenfa-trigger-v1.json":
@@ -744,6 +774,7 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-skill-scroll-used-v1.json":
     SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
   "burst-meridian-event-v1.json": SCHEMA_REGISTRY.burstMeridianEventV1,
+  "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,
@@ -762,6 +793,21 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataWeaponBrokenV1,
   "server-data-treasure-equipped-v1.json":
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
+  "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,
+  "dugu-poison-progress-event-v1.json":
+    SCHEMA_REGISTRY.duguPoisonProgressEventV1,
+  "dugu-obfuscation-state-v1.json": SCHEMA_REGISTRY.duguObfuscationStateV1,
+  "dugu-antidote-result-v1.json": SCHEMA_REGISTRY.antidoteResultV1,
+  "dugu-antidote-result-event-v1.json":
+    SCHEMA_REGISTRY.antidoteResultEventV1,
+  "dugu-revealed-event-v1.json": SCHEMA_REGISTRY.duguRevealedEventV1,
+  "server-data-dugu-poison-state-v1.json":
+    SCHEMA_REGISTRY.serverDataDuguPoisonStateV1,
+  "false-skin-kind-v1.json": SCHEMA_REGISTRY.falseSkinKindV1,
+  "false-skin-state-v1.json": SCHEMA_REGISTRY.falseSkinStateV1,
+  "shed-event-v1.json": SCHEMA_REGISTRY.shedEventV1,
+  "server-data-false-skin-state-v1.json":
+    SCHEMA_REGISTRY.serverDataFalseSkinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7
@@ -828,6 +874,7 @@ export const GENERATED_SCHEMA_FILES = {
   "alchemy-session-end-v1.json": SCHEMA_REGISTRY.alchemySessionEndV1,
   "alchemy-intervention-result-v1.json":
     SCHEMA_REGISTRY.alchemyInterventionResultV1,
+  "alchemy-insight-v1.json": SCHEMA_REGISTRY.alchemyInsightV1,
   "server-data-alchemy-furnace-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemyFurnaceV1,
   "server-data-alchemy-session-v1.json":

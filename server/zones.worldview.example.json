@@ -231,6 +231,210 @@
       ]
     },
     {
+      "name": "rift_mouth_north_001",
+      "display_name": "渊口荒丘·枯木崖",
+      "aabb": {
+        "min": [-650.0, 50.0, -8650.0],
+        "max": [-350.0, 100.0, -8350.0]
+      },
+      "center_xz": [-500.0, -8500.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [-500.0, 74.0, -8500.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["spacetime_scar"],
+        "portal_anchor_xz": [-500.0, -8500.0],
+        "tsy_zone_link": "tsy_daneng_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "地表暴露态坍缩渊口；入口坐标由 portal_anchor_xz 驱动，不放显眼 marker。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·枯木崖",
+          "pos_xyz": [-500.0, 74.0, -8500.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:daneng_01",
+            "target_family_pos_xyz:550,100,550",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:north"
+          ],
+          "unlock": "凝脉以上灵识扫过时，焦黑裂纹下传来极远的坠响",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_north_002",
+      "display_name": "渊口荒丘·北荒东陲",
+      "aabb": {
+        "min": [1850.0, 50.0, -7950.0],
+        "max": [2150.0, 100.0, -7650.0]
+      },
+      "center_xz": [2000.0, -7800.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [2000.0, 74.0, -7800.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["fresh_collapse_rubble", "cracked_floor_seam"],
+        "portal_anchor_xz": [2000.0, -7800.0],
+        "tsy_zone_link": "tsy_zongmen_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "近代高手战死后形成的小尺度渊口，地表只留普通裂缝与寒气。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·北荒东陲",
+          "pos_xyz": [2000.0, 74.0, -7800.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:zongmen_01",
+            "target_family_pos_xyz:250,100,250",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:east"
+          ],
+          "unlock": "裂缝周围寒气凝白，靠近才察觉真元正被向下抽走",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_blood_001",
+      "display_name": "渊口荒丘·血谷露头",
+      "aabb": {
+        "min": [3050.0, 50.0, -2950.0],
+        "max": [3350.0, 100.0, -2650.0]
+      },
+      "center_xz": [3200.0, -2800.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [3200.0, 74.0, -2800.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["spacetime_scar", "ganshi_drift"],
+        "portal_anchor_xz": [3200.0, -2800.0],
+        "tsy_zone_link": "tsy_daneng_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "血谷东侧地下露头，保留 spacetime_rift 语义但不复用 rift_axis_sdf。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·血谷露头",
+          "pos_xyz": [3200.0, 74.0, -2800.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:daneng_01",
+            "target_family_pos_xyz:550,100,550",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:south"
+          ],
+          "unlock": "血谷裂纹在灵识中呈现断续的寒白回声",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
+      "name": "rift_mouth_west_001",
+      "display_name": "渊口荒丘·西南遗宗",
+      "aabb": {
+        "min": [-3650.0, 50.0, 5350.0],
+        "max": [-3350.0, 100.0, 5650.0]
+      },
+      "center_xz": [-3500.0, 5500.0],
+      "size_xz": [300.0, 300.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": ["rift_mouth_entry"],
+      "patrol_anchors": [
+        [-3500.0, 74.0, 5500.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_mouth_barrens",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "base": [60, 80], "peak": 88 },
+        "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
+        "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
+        "landmarks": ["charred_obelisk_shard", "cracked_floor_seam"],
+        "portal_anchor_xz": [-3500.0, 5500.0],
+        "tsy_zone_link": "tsy_zongmen_01_shallow",
+        "core_radius": 30,
+        "outer_radius": 150,
+        "dao_zhuang_spawn_weight_multiplier": 5,
+        "notes": "西南远端上古宗门遗迹浮现，渊口只表现为焦黑荒丘与裂缝。"
+      },
+      "pois": [
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·西南遗宗",
+          "pos_xyz": [-3500.0, 74.0, 5500.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:zongmen_01",
+            "target_family_pos_xyz:250,100,250",
+            "trigger_radius:2.0",
+            "orientation:vertical",
+            "facing:west"
+          ],
+          "unlock": "焦碑碎片之间似有宗门钟声倒灌，裂缝本身仍像普通地裂",
+          "qi_affinity": -0.80,
+          "danger_bias": 4
+        }
+      ]
+    },
+    {
       "name": "blood_valley",
       "display_name": "血谷",
       "aabb": {

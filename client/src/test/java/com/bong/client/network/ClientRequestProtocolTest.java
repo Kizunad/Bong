@@ -56,6 +56,17 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeFalseSkin() {
+        String json = ClientRequestProtocol.encodeForgeFalseSkin(
+            ClientRequestProtocol.FalseSkinKind.ROTTEN_WOOD_ARMOR
+        );
+        assertEquals(
+            "{\"type\":\"forge_false_skin\",\"v\":1,\"kind\":\"rotten_wood_armor\"}",
+            json
+        );
+    }
+
+    @Test
     void encodesApplyPillSelf() {
         String json = ClientRequestProtocol.encodeApplyPillSelf(1001L);
         assertEquals(
@@ -337,6 +348,15 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeDuoSheRequest("npc_12v0");
         assertEquals(
             "{\"type\":\"duo_she_request\",\"v\":1,\"target_id\":\"npc_12v0\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodesQiColorInspect() {
+        String json = ClientRequestProtocol.encodeQiColorInspect("entity_bits:42");
+        assertEquals(
+            "{\"type\":\"qi_color_inspect\",\"v\":1,\"observed\":\"entity_bits:42\"}",
             json
         );
     }

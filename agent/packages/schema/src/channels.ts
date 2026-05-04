@@ -110,6 +110,21 @@ export const CHANNELS = {
   /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
   DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
 
+  /** Server → Agent: 暗器载体封元完成（plan-anqi-v1 P2 narration） */
+  ANQI_CARRIER_CHARGED: "bong:combat/carrier_charged",
+
+  /** Server → Agent: 暗器载体命中注射（plan-anqi-v1 P2 narration） */
+  ANQI_CARRIER_IMPACT: "bong:combat/carrier_impact",
+
+  /** Server → Agent: 暗器投射物射空 / 蒸发（plan-anqi-v1 P2 narration） */
+  ANQI_PROJECTILE_DESPAWNED: "bong:combat/projectile_despawned",
+
+  /** Server → Agent: 替尸 / 蜕壳流脱壳事件（plan-tuike-v1 §P1） */
+  TUIKE_SHED: "bong:tuike/shed",
+
+  /** Server → Client/Agent: 伪皮 HUD 状态（plan-tuike-v1 §P0） */
+  TUIKE_FALSE_SKIN_STATE: "bong:tuike/false_skin_state",
+
   /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
 
@@ -170,6 +185,8 @@ export const CHANNELS = {
   ALCHEMY_SESSION_END: "bong:alchemy/session_end",
   /** Server → Agent: 炼丹干预结果 */
   ALCHEMY_INTERVENTION_RESULT: "bong:alchemy/intervention_result",
+  /** Server → Agent: 丹心识别高精度线索 */
+  ALCHEMY_INSIGHT: "bong:alchemy_insight",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -211,7 +228,6 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.WOLIU_BACKFIRE,
   CHANNELS.WOLIU_PROJECTILE_DRAINED,
   CHANNELS.WOLIU_VORTEX_STATE,
-  CHANNELS.DUGU_POISON_PROGRESS,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,
   CHANNELS.ZONG_CORE_ACTIVATED,
@@ -232,6 +248,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ALCHEMY_SESSION_START,
   CHANNELS.ALCHEMY_SESSION_END,
   CHANNELS.ALCHEMY_INTERVENTION_RESULT,
+  CHANNELS.ALCHEMY_INSIGHT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

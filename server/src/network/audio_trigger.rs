@@ -598,6 +598,10 @@ mod tests {
             damage: 0.4,
             contam_delta: 0.0,
             description: "test jiemai=true".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
         });
 
         app.update();

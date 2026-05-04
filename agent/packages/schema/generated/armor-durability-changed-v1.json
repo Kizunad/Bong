@@ -40,6 +40,10 @@
           "type": "string"
         },
         {
+          "const": "false_skin",
+          "type": "string"
+        },
+        {
           "const": "main_hand",
           "type": "string"
         },

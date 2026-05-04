@@ -21,6 +21,7 @@ pub enum EquipSlotV1 {
     Chest,
     Legs,
     Feet,
+    FalseSkin,
     MainHand,
     OffHand,
     TwoHand,
@@ -112,6 +113,9 @@ pub struct InventoryItemViewV1 {
         deserialize_with = "deserialize_optional_forge_tier"
     )]
     pub forge_achieved_tier: Option<u8>,
+    /// plan-alchemy-v2：丹药品阶 / 副作用 / 丹方残卷 / 丹心线索元数据。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alchemy: Option<crate::inventory::AlchemyItemData>,
 }
 
 /// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
@@ -143,6 +147,7 @@ pub struct EquippedInventorySnapshotV1 {
     pub chest: Option<InventoryItemViewV1>,
     pub legs: Option<InventoryItemViewV1>,
     pub feet: Option<InventoryItemViewV1>,
+    pub false_skin: Option<InventoryItemViewV1>,
     pub main_hand: Option<InventoryItemViewV1>,
     pub off_hand: Option<InventoryItemViewV1>,
     pub two_hand: Option<InventoryItemViewV1>,
@@ -853,6 +858,7 @@ mod tests {
                 forge_color: None,
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
+                alchemy: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -882,7 +888,7 @@ mod tests {
             .expect("server-data inventory event sample should deserialize into ServerDataV1");
 
         match payload.payload {
-            ServerDataPayloadV1::InventoryEvent(event) => match event {
+            ServerDataPayloadV1::InventoryEvent(event) => match *event {
                 InventoryEventV1::Dropped {
                     revision,
                     instance_id,
@@ -1008,6 +1014,7 @@ mod tests {
             forge_color: Some(ColorKind::Sharp),
             forge_side_effects: vec!["brittle_edge".to_string()],
             forge_achieved_tier: Some(2),
+            alchemy: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize forge item view");
@@ -1085,6 +1092,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -1118,6 +1126,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -1205,6 +1214,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(json.contains("\"mineral_id\":\"fan_tie\""));
@@ -1237,6 +1247,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(
