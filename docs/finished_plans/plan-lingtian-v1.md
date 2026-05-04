@@ -355,3 +355,47 @@ zone_pressure = Σ (crop.kind.growth_cost × crop_count)   // 作物需求
 ## §9 进度日志
 
 - 2026-04-25：核对实装—P0–P5 服务端全闭环（lingtian/ 14 模块齐 + 客户端 5 文件接入），server 627 单测；剩余 `[ ]` 集中在 client UI 切片（独立浮窗 / 种子作物图标 / 拆除回收）+ 跨 plan 钩子（skill / alchemy / forge / zhenfa）+ MID 刷新率联动 npc spawn，均无证据保留待办。
+
+---
+
+## Finish Evidence
+
+完成时间：2026-05-04
+
+### 落地清单
+
+- P0/P1 田块、锄头、开垦、翻新：`server/src/lingtian/plot.rs`、`hoe.rs`、`terrain.rs`、`environment.rs`、`session.rs`、`events.rs`、`systems.rs`；`server/assets/items/lingtian.toml` 定义铁 / 灵铁 / 玄铁三档锄；`server/src/main.rs` 经 `lingtian::register(&mut app)` 接入。
+- P2 生长与灵气账本：`server/src/lingtian/growth.rs`、`qi_account.rs`、`systems.rs::lingtian_growth_tick` 实现 plot_qi、zone leak、丰沛品质、1200 Bevy tick = 1 lingtian tick，以及死域 / 域崩阻断。
+- P3 种植与补灵：`server/src/lingtian/seed.rs` 从 `PlantKindRegistry` 的 cultivable 子集派生 `{plant_id}_seed`；`server/assets/items/seeds.toml`、`server/assets/items/herbs.toml` 提供 MVP 种子 / 作物 / 灵水；`StartPlantingRequest`、`StartReplenishRequest` 到 ECS 结算链路已覆盖材料复验、冷却、溢出回馈。
+- P4 收获与库存 / LifeRecord：`HarvestSession`、`award_item_to_inventory`、`LingtianHarvestRng`、`HarvestCompleted{ seed_dropped }` 实现作物入背包、概率掉种、贫瘠计数；非 owner 收获 / 偷灵写入 `cultivation/life_record.rs` 的灵田匿名条目。
+- P5 密度阈值与天道注视：`server/src/lingtian/pressure.rs`、`systems.rs::compute_zone_pressure_system` 实现 LOW/MID/HIGH 分档、7 天 replenish 窗口、HIGH 清 plot_qi；`server/src/npc/lingtian_pressure.rs` 消费 HIGH 事件生成 3x3 道伥。
+- P6 客户端与网络切片：`server/src/schema/lingtian.rs`、`server/src/lingtian/network_emit.rs`、`server/src/network/client_request_handler.rs`、`client/src/main/java/com/bong/client/lingtian/`、`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java`、`ClientRequestSender.java` 串起 6 类 intent、session HUD、L 键统合动作 screen、主手锄 fake vanilla icon。
+- 起手物资与跨系统补齐：`server/assets/inventory/loadouts/default.toml` 给默认 loadout 加锄头与三种种子；`server/src/skill/mod.rs` 已在 `main.rs` 注册，`server/src/lingtian/systems.rs` 对开垦 / 种植 / 补灵 / 收获 / 翻新增发 `SkillXpGain{ skill: Herbalism, plan_id: "lingtian" }`。
+
+### 关键 commit
+
+- `8b9b1f48`（2026-04-20）`feat(lingtian): plan-lingtian-v1 P0-P5 + UI + 密度阈值 + 道伥 spawn (#26)`
+- `b64e9451`（2026-04-24）`feat(server): 接通技能成长与残卷学习链路`
+- `9db3f962`（2026-04-30）`feat(server): 禁用死域灵田生长`
+- `3b05fe27`（2026-05-01）`补齐跨系统接入缺口`
+- `3f260ace`（2026-05-04）`plan-inventory-v2: 修复背包格子分配与堆叠 (#115)`
+
+### 测试结果
+
+- `cd server && cargo test lingtian::`：100 passed。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2287 passed。
+- `export JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn"; export PATH="$JAVA_HOME/bin:$PATH"; cd client && ./gradlew --no-daemon test build`：BUILD SUCCESSFUL；test result XML 汇总 809 tests，0 failures / errors / skipped。
+
+### 跨仓库核验
+
+- server：`LingtianPlot`、`CropInstance`、`SeedRegistry`、`LingtianTickAccumulator`、`ZoneQiAccount`、`ZonePressureTracker`、`StartTillRequest`、`StartPlantingRequest`、`StartHarvestRequest`、`StartReplenishRequest`、`StartDrainQiRequest`、`SkillXpGain`。
+- client：`LingtianActionScreen`、`LingtianActionScreenBootstrap`、`LingtianSessionStore`、`LingtianSessionHud`、`LingtianSessionHandler`、`HoeVanillaIconMap`、`MixinHeldItemRenderer`。
+- network/schema：`LingtianSessionDataV1`、`ServerDataPayloadV1::LingtianSession`、`ClientRequestV1::LingtianStartTill` / `Planting` / `Harvest` / `Replenish` / `Renew` / `DrainQi`，统一走 `bong:server_data` 与 `bong:client_request`。
+
+### 遗留 / 后续
+
+- 主动拆除 / 回收 plot、独立开垦 / 种植 / 收获 owo 浮窗、按钮 item 图标属于 UI / 交互 polish；v1 已用 `LingtianActionScreen` 和 session HUD 提供可用闭环。
+- BlockEntity 持久化、per-plot zone 解析、WorldQiAccount 合账、聚灵阵 / 欺天阵 flag 的最终 runtime 接入继续依赖 `plan-persistence-v1`、`plan-zhenfa-v1` 与区域系统深化；当前 v1 已保留 `PlotEnvironment`、`DEFAULT_ZONE` 账本与事件边界。
+- `bong:lingtian/*` 独立 channel 未建；v1 统一走现有 `bong:server_data` / `bong:client_request`，避免重复 IPC 面。
+- MID 压力事件已发出但未单独调高异变兽自然刷新率；HIGH 清算与道伥生成已落地，MID 调速留给后续 npc spawn / 兽潮调参。
+- alchemy / forge 深闭环（作物二级加工、灵木成熟后作为 forge 载体、炼丹废料反哺肥料）保留在对应 plan 内落地。
