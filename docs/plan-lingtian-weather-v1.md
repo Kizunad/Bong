@@ -1,5 +1,9 @@
 # Bong · plan-lingtian-weather-v1
 
+> **⚠️ 2026-05-04 范围调整**：节律基础设施（`Season` enum / `WorldSeasonState` Resource / `season_tick` system / 32 game-day 周期 / zone 同步策略 / HUD 季节 mini-tag）**已转交 `plan-jiezeq-v1`**（active，2026-05-04 立项）。本 plan 范围收窄为「消费 jiezeq-v1 的 `query_season(zone, tick)` API + 4 类 WeatherEvent + plot 影响逻辑」。
+>
+> 受影响章节：**P0 改写**为消费 jiezeq-v1 API + PlotEnvironment 加 season/weather 槽位（不再自定义 Season enum）；**P3 撤销 HUD mini-tag**（违反 worldview §K 红线第 11 条 + journey-v1 O.10 决策"完全不显式"）；**§0 第 6 条"每 zone 季节独立" 撤销**（jiezeq-v1 决定全服同步）；**§2 周期长度段 + zone 独立段 撤销**（jiezeq-v1 接管）。详见各章节 ⚠️ 标注。
+
 **天气 / 季节 → 灵田生长（夏冬二季 + 汐转）**。把 worldview §十七 起草的"天道吐纳二季节律"作为新的 `PlotEnvironment` 修饰维度，影响 `plot_qi_cap` 与生长曲线，长线影响补灵节奏。**严守末法世界观**：不引入五行季（火季 / 水季）、不引入"春天百花齐放"的丰收 buff——末法的天气只制造扰动与磨损，不制造馈赠。
 
 **世界观锚点**：
@@ -13,6 +17,7 @@
 **library 锚点**：待写 `ecology-XXXX 末法天候录`（不基于"春夏秋冬"四季，锚 §十七 二季 + 汐转 + 四类气象事件 + 与生态/修炼的物理耦合）
 
 **交叉引用**：
+- `plan-jiezeq-v1`（active 2026-05-04，**强前置**）—— 节律基础设施 + `query_season(zone, tick) -> SeasonState` 公共 API；本 plan P0 起依赖该 API，jiezeq-v1 P0 必须先 finished
 - `plan-lingtian-v1.md`（active）—— `PlotEnvironment` 已有 water_adjacent / biome / zhenfa_jvling 三槽，本 plan 加 season / weather 第 4-5 槽
 - `plan-lingtian-process-v1.md`（与本 plan 同期升 active）—— 二级加工的 freshness 衰减速率与季节耦合（夏快冬慢）
 - `plan-botany-v2.md`（active，强依赖关系）—— `xue_po_lian` / `jing_xin_zao` 的 SeasonRequired hazard 由本 plan P0–P3 提供 driver；本 plan 落地后 botany-v2 P5 回填
@@ -24,10 +29,10 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | `Season` enum（4 变体）+ `ZoneSeasonState` Resource + `season_tick` system + `PlotEnvironment` 扩展第 4 槽 + 单测 | ⬜ |
+| P0 | ⚠️ **改写**：消费 `jiezeq_v1::query_season(zone, tick)` API（**不再自定义 `Season` enum / Resource / tick system**）+ `PlotEnvironment` 扩展 season / weather 槽位 + 单测 mock query_season 注入 | ⬜ |
 | P1 | `plot_qi_cap` / `natural_supply` 季节修饰生效 + e2e 测二季 + 汐转生长差异 | ⬜ |
 | P2 | 4 类 `WeatherEvent`（雷暴 / 旱风 / 灵雾 / 阴霾）+ RNG 生成器 + plot 影响逻辑 + 季节-事件耦合（夏多雷、冬多雪/风、汐转 RNG ×2） | ⬜ |
-| P3 | schema `WeatherEventDataV1` / `SeasonStateV1` + client 渲染（粒子 / 天空 / HUD tag）+ HUD 季节相位 mini-tag | ⬜ |
+| P3 | ⚠️ **撤销 HUD 季节相位 mini-tag**（违反 §K 红线"完全不显式"）。保留 `WeatherEventDataV1` schema + client 渲染（粒子 / 天空效果——按 jiezeq-v1 P5 间接表现规范）；天气事件本身可走粒子表现，但**不显式标注当前季节** | ⬜ |
 | P4 | 阴霾 ↔ 密度阈值耦合 + 与 plan-narrative 接入（汐转 / 极端事件触发天道 narration）+ 与 plan-botany-v2 P5 SeasonRequired hazard 接入 | ⬜ |
 
 ---
@@ -38,9 +43,9 @@
 - [ ] **不做** "春耕秋收" 仪式 —— 玩家随时可种，季节只影响效率/品质而非"开放窗口"
 - [ ] **天气 = 短时事件**（数小时 in-game），季节 = 长周期相位（数日 in-game），汐转 = 节律紊乱过渡（约一周）
 - [ ] 共 4 类天气事件 + 4 个季节变体（Summer / SummerToWinter 汐转 / Winter / WinterToSummer 汐转）
-- [ ] **game-tick 驱动**：离线即停，回线续播；不做 wall-clock（避免持久化时间戳 + 多人累积时间逻辑）
-- [ ] **每 zone 季节独立**（worldview §十七 隐含）—— 全图同步会让玩家行为同步无聊；独立 zone 的季节差异是"南来北往"的玩法基础
-- [ ] **汐转危险性**：汐转期 RNG 翻倍 + 劫气标记翻倍 + 渡劫高风险；玩家应当**学会回避汐转**而不是被告知
+- [ ] **game-tick 驱动**：离线即停，回线续播；不做 wall-clock（避免持久化时间戳 + 多人累积时间逻辑）—— ⚠️ 由 jiezeq-v1 实施，本 plan 仅消费
+- [ ] ⚠️ ~~每 zone 季节独立~~ **撤销**（2026-05-04）：jiezeq-v1 决定**全服同步**（worldview §十七"天道呼吸"语义），南来北往的差异由 zone qi_density 基线提供，不再叠时间相位
+- [ ] **汐转危险性**：汐转期 RNG 翻倍 + 劫气标记翻倍 + 渡劫高风险；玩家应当**学会回避汐转**而不是被告知（**劫气倍率 / 渡劫影响在 jiezeq-v1 P1 实装**，本 plan 仅消费 SeasonState 做天气事件 RNG ×2）
 
 ---
 
@@ -62,9 +67,11 @@
 | **Winter**（凝汐） | ~40% | +0.2 | +10% | 与 zone 流速 ×0.7 | 风雪 / 长阴霾 / 偶发灵雾 |
 | **WinterToSummer**（冬→夏汐转） | ~10% | 反复 ±0.3 | RNG ±20% | 1.0–1.5 RNG | 全部事件 RNG ×2 |
 
-**周期长度**：1 game-year ≈ 32 game-day（夏 13 + 汐转 3 + 冬 13 + 汐转 3）—— **game-tick 驱动**，每 game-day 推进一次 phase tick。1 game-day = 24000 ticks ≈ 20 实时分钟（vanilla MC），所以 1 game-year ≈ 10.7 实时小时（玩家一次较长在线可经历一次循环）。
-
-**zone 独立**：每个 zone 有独立 phase offset（worldgen 阶段确定，避免全图同步），zone 之间相位差最大 ±0.5 game-year，让"南来北往"的玩家能感受到节律差异。
+> ⚠️ **2026-05-04 撤销**：以下两段（周期长度 + zone 独立）已转交 `plan-jiezeq-v1` §2 接管。jiezeq-v1 定的实际值：1 game-year = **48 实时小时** = 3,456,000 ticks（夏 19.2h / 汐转 4.8h / 冬 19.2h / 汐转 4.8h），**全服同步**。本 plan 通过 `query_season(zone, tick) -> SeasonState` 查询当前相位，上表的 plot_qi_cap / natural_supply / qi 流速修饰仍生效（这是灵田端消费逻辑）。
+>
+> ~~**周期长度**：1 game-year ≈ 32 game-day（夏 13 + 汐转 3 + 冬 13 + 汐转 3）—— **game-tick 驱动**，每 game-day 推进一次 phase tick。1 game-day = 24000 ticks ≈ 20 实时分钟（vanilla MC），所以 1 game-year ≈ 10.7 实时小时（玩家一次较长在线可经历一次循环）。~~
+>
+> ~~**zone 独立**：每个 zone 有独立 phase offset（worldgen 阶段确定，避免全图同步），zone 之间相位差最大 ±0.5 game-year，让"南来北往"的玩家能感受到节律差异。~~
 
 ---
 

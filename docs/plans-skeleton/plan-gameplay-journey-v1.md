@@ -188,7 +188,7 @@
 | **plan-style-vector-integration-v1** | ✅ active (2026-05-03) | PracticeLog.add() 接入 6 流派 P0 + 完整死亡清空修复 + inspect 神识看对方 QiColor |
 | **fauna-v1** | ✅ finished (2026-05-02，commit d2ee8a0b 归档) | 噬元鼠 / 异变兽核 / 封灵骨币 / forge 正典化全 ✅ |
 
-**worldview 同期更新**（commit fe00532c）：末土后招原则 + 身份与信誉系统 + 毒 vs 毒蛊边界正典化（接 plan-identity-v1 vN+1）。
+**worldview 同期更新**（commit fe00532c）：末土后招原则 + 身份与信誉系统 + 毒 vs 毒蛊边界正典化 → `plan-identity-v1` ✅ active (2026-05-04 立项，14 决议闭环；P0 IdentityProfile 数据模型 + P2 dugu consumer + P3 NPC 反应分级)。
 
 ---
 
@@ -228,7 +228,7 @@
 ### 系统接入面
 
 - **server**：cultivation `Realm::Solidify→Spirit` ✅ / fauna butcher ✅ / social 全套 ✅ / tsy 4 副本 ✅
-- **agent**：era_decree 全服可见的"政治叙事"已支持；**缺**：基于 social graph 的政治 narration(派生 `plan-narrative-political-v1`)
+- **agent**：era_decree 全服可见的"政治叙事"已支持 + `plan-narrative-political-v1` ✅ active (2026-05-04 立项，10 决议闭环) — 基于 social graph 的"江湖传闻型"政治叙事（feud/pact/灵龛抄家/通缉令/高 Renown 出名 5 核心事件）
 - **client**：social UI ✅ / SparringInvite ✅ / TradeOffer ✅；**缺**：阵法布置 UI(plan-zhenfa-v1)、灵龛防御 UI(plan-niche-defense-v1)
 - **worldgen**：rift_valley / cave_network / tsy_daneng_crater / tsy_zhanchang 全 ✅
 - **schema**：fauna drop / 阵法触发 / 灵龛防御均**未定义**(派生 schema 增量任务，并入对应 plan)
@@ -242,7 +242,7 @@
 
 - plan-fauna-v1 升 active(必需)
 - plan-niche-defense-v1 升 active(必需)
-- plan-narrative-political-v1 派生
+- plan-narrative-political-v1 ✅ active (2026-05-04，10 决议闭环)
 - 阵法 schema / 灵龛防御 schema 增量
 
 ---
@@ -284,7 +284,7 @@
 
 - **server**：tsy 全 ✅ / niche 防御 ⏳ / 时代节律(worldview §十七)落地状态待核(派生调研任务)
 - **agent**：era_decree ✅ "渡虚劫预兆" narration；**确认**：tiandao 是否能在通灵→化虚跨度内生成连续多日预兆叙事(派生测试)
-- **client**：守家 UI ⏳ / 节律 UI(炎汐/凝汐/汐转)未实装(派生 `plan-jiezeq-ui-v1`)
+- **client**：守家 UI ⏳ / 节律间接表现(炎汐/凝汐/汐转 — 天空温度 + 灵气条饱和度 + 粒子，**完全无显式 tag** 严守 §K 红线) → 已并入 `plan-jiezeq-v1` ✅ active (2026-05-04) P5
 - **worldgen**：waste_plateau / sky_isle / abyssal_maze / ancient_battlefield 全 ✅
 - **schema**：渡虚劫准备状态(气运/节律) **schema 未定义**(并入 plan-tribulation-v1 P0+)
 
@@ -295,7 +295,7 @@
 
 ### P4 缺口
 
-- 节律(炎汐/凝汐)落地状态调研 + UI(派生 `plan-jiezeq-v1` 或并入既有)
+- 节律(炎汐/凝汐)：`plan-jiezeq-v1` ✅ active (2026-05-04 立项，10 决议闭环) — 节律基础设施 + 跨系统 hook（突破 / shelflife / 劫气 / 寿元）+ agent prompt + client 间接表现，全节律范围 6 阶段。lingtian-weather-v1 P0 改写为 jiezeq-v1 SeasonState 消费者
 - 渡虚劫预兆多日叙事生成测试(并入 plan-narrative-v1)
 - 守家 UI(plan-niche-defense-v1 内)
 
@@ -332,7 +332,7 @@
 
 - **server**：tribulation P0 ✅ 部分；**缺**：截胡/失败 narration 链路(plan-tribulation-v1 余 ⏳)
 - **agent**：era_decree 渡劫广播 ✅；**确认**：全服在线玩家是否都收到 narration(集成测试)
-- **client**：渡劫广播 HUD ✅(`TribulationBroadcastHudPlanner`)；**缺**：渡劫第一视角 UI(三波血条/真元条 over time)
+- **client**：渡劫广播 HUD ✅(`TribulationBroadcastHudPlanner` + `TribulationStateStore` + `TribulationBroadcastStore`，5 阶段 + 三视角 + 进度 + 方位 + 距离全实装；玩家自身 HP/真元走 plan-HUD-v1 标准 HUD 复用)
 - **worldgen**：渡劫场地建议是 `tribulation_scorch` 地形(plan-terrain-tribulation-scorch-v1 ⬜ skeleton 必须升 active)
 - **schema**：tribulation announce/wave/succeed/failed 全 ✅
 
@@ -346,7 +346,7 @@
 
 - plan-tribulation-v1 余 ⏳ 升级为完整闭环
 - plan-terrain-tribulation-scorch-v1 升 active（仍 skeleton）
-- 渡劫第一视角 UI(派生 `plan-tribulation-pov-ui-v1`)
+- ~~渡劫第一视角 UI(派生 plan-tribulation-pov-ui-v1)~~ ❌ **不立**：已实装于 plan-tribulation-v1 + plan-HUD-v1 (`TribulationBroadcastHudPlanner` 5 阶段 + 三视角 + `TribulationStateStore` 已存在 + 测试通过；玩家自身 HP/真元走标准 HUD 复用)
 - plan-multi-life-v1 ✅ active (2026-05-04 升级，6 决策 + reframe 对齐 lifespan-v1)
 - plan-tsy-raceout-v1 ✅ active (2026-05-04 升级，5 决策闭环 — 3s 撤离 / 单裂口 1 人 / 允许 PVP)
 - plan-lifespan-v1 ✅ active (2026-05-04 升级，5 决策 — NaturalDeathCorpse 复用 TSY BodyInstance)
@@ -563,15 +563,15 @@ P2 必需:
 
 P3 必需:
   - plan-niche-defense-v1        ⬜ → active     (灵龛防御)
-  - plan-narrative-political-v1 (派生)         (social → narration)
+  - plan-narrative-political-v1 ✅ active (2026-05-04，10 决议闭环) — 江湖传闻型政治叙事 (5 核心事件：feud/pact/灵龛抄家/通缉令/高 Renown 出名)
 
 P4 必需:
   - plan-tribulation-v1 余        ⏳ → 推进       (渡劫闭环)
-  - plan-jiezeq-v1              (派生)         (节律 UI)
+  - plan-jiezeq-v1              ✅ active (2026-05-04，10 决议闭环) — 节律基础设施 + 跨系统 hook + agent + client 间接表现（含原 plan-jiezeq-ui-v1 范围，已合并）
   - plan-terrain-tribulation-scorch-v1 ⬜ → active(渡劫地形)
 
 P5 必需:
-  - plan-tribulation-pov-ui-v1  (派生)         (渡劫第一视角)
+  - ~~plan-tribulation-pov-ui-v1~~ ❌ **不立** — 已实装于 plan-tribulation-v1 + plan-HUD-v1 (TribulationBroadcastHudPlanner 5 阶段 / 三视角 / 进度 / 方位 / 距离全 ✅)
   - plan-void-quota-v1          (派生)         (O.3 化虚名额按世界灵气总量)
   - plan-multi-style-v1         ✅ active (2026-05-04 升级，6 决策 + reframe)：废弃 UnlockedStyles 多激活，改用 PracticeLog vector 自然演化（is_hunyuan 判定 + 修炼 session 接入 + style-balance telemetry 对接）
 
@@ -599,7 +599,7 @@ narration / agent 深化:
   - plan-narrative-v1            ⏳ → 完成       (天道叙事节奏/视角/抑制 全规范)
 
 2026-05-03 新增（6 流派 plan vN+1 hook 涌现 + worldview 正典化驱动）:
-  - plan-identity-v1            (派生)         身份/信誉系统（worldview §十一 commit fe00532c 已正典化：
+  - plan-identity-v1            ✅ active (2026-05-04，14 决议闭环) — 身份/信誉系统（worldview §十一 commit fe00532c 已正典化：
                                                 "末土后招原则" + 多 identity / NPC 信誉度 / 切换洗白机制）
                                                 —— dugu plan v1 已留 DuguRevealedEvent stub 等 consumer
                                                 —— 6 流派 vN+1 NPC 反应（高境追杀/中境拒交易）等它
@@ -610,11 +610,7 @@ narration / agent 深化:
                                                     dugu 阴诡色 +1 境界差识破容忍 / anqi 凝实色加速封真元
                                                     tuike 凝实色加速制作伪皮 / zhenmai 沉重色自伤减半
                                                     woliu 缜密色 Δ +0.05 / dugu 师阴诡色累积污染
-  - plan-baomai-v2              (派生)         越级原则 + 全力一击战后虚脱实装（worldview §四 commit d5e528aa
-                                                已正典化"池子差距矩阵 + 越级×3.6-5.1 / ×13-71 / ×52+
-                                                + 全力一击 charge 窗口 + 战后虚脱"，但 baomai-v1 未实装数值）
-                                                —— 跨流派 trade-off matrix 的对照锚点
-                                                —— P3-P5 越级偷一波 / 渡劫救场必需
+  - plan-baomai-v2              ✅ active (2026-05-05，7 决议 + plan 名澄清) — **范围跨流派**：越级原则数值 + 全力一击双 skill（charge / release）+ Exhausted 时长按 qi_committed 比例 + 完整专属 UI（蓄力球 / 释放雷光 / 虚脱灰晕）。baomai-v1 P1+ 4 招留 plan-baomai-v3
 
 合计：~25 个缺口 plan 必须推进/完成（原 22 + DEF 新增 3 - style-pick 撤销 + style-vector-integration 替换），其中 7 个派生新 plan、18 个升级既有 skeleton/active。
 ```
@@ -624,7 +620,7 @@ narration / agent 深化:
 **DEF 三 plan 切入点**（独立于主线）：
 - **plan-color-v1** —— 应在 P2 流派分化后期切入（PracticeLog 已接入后，染色养成系统加在 QiColor 之上），可与 spirit-eye-v1 / style-vector-integration-v1 并行；plan-style-vector-integration-v1 P0 仅做"事件 → PracticeLog.add()"流水，**养成 / 杂色惩罚 / 加速规则**留给 plan-color-v1
 - **plan-identity-v1** —— P3 社交博弈深化时必需（NPC 信誉度反应是 P3 灵龛战 / 仇人 / 结契机制的元数据层）
-- **plan-baomai-v2** —— P4 通灵→化虚阶段必需（越级 / 全力一击是高境 PVP 的核心算计），可与 tribulation 收尾并行
+- **plan-baomai-v2** ✅ active (2026-05-05) —— P4 通灵→化虚阶段必需（越级 / 全力一击是高境 PVP 的核心算计），可与 tribulation 收尾并行
 
 **25 plan 工时估算**：每 plan 平均 P0+P1 至少 1-2 周 → 顺序铺 12-18 个月，并行 5-7 个月。建议至少 3-4 路并行；任一路卡死(尤其 zhenfa/spirit-eye/persistence)会塌方下游。
 
