@@ -18,7 +18,7 @@ pub fn status_effect_apply_tick(
         };
 
         if intent.duration_ticks == 0 {
-            remove_status_effect(&mut status_effects, intent.kind);
+            remove_status_effect(&mut status_effects, intent.kind.clone());
             continue;
         }
 
@@ -29,7 +29,7 @@ pub fn status_effect_apply_tick(
         upsert_status_effect(
             &mut status_effects,
             ActiveStatusEffect {
-                kind: intent.kind,
+                kind: intent.kind.clone(),
                 magnitude: intent.magnitude,
                 remaining_ticks: intent.duration_ticks,
             },

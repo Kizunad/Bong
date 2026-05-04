@@ -67,6 +67,9 @@ public class ItemTooltipPanel extends BaseComponent {
         if (!item.forgeSideEffects().isEmpty()) {
             needed += lineBlock;
         }
+        if (!item.alchemyLines().isEmpty()) {
+            needed += lineBlock * item.alchemyLines().size();
+        }
 
         // plan-armor-v1 §5：护甲矩阵（仅护甲类物品显示）。
         if (com.bong.client.combat.ArmorProfileStore.isArmor(item.itemId())) {
@@ -165,6 +168,11 @@ public class ItemTooltipPanel extends BaseComponent {
         if (!hoveredItem.forgeSideEffects().isEmpty()) {
             String sideEffects = "瑕疵 " + String.join("/", hoveredItem.forgeSideEffects());
             context.drawTextWithShadow(textRenderer, Text.literal(sideEffects), cx, cy, 0xFFDDAA66);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        }
+
+        for (String line : hoveredItem.alchemyLines()) {
+            context.drawTextWithShadow(textRenderer, Text.literal(line), cx, cy, 0xFFE0B060);
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 

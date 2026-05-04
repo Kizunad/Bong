@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "player_id": "offline:Azure",
+  "source_pill": "hui_yuan_pill",
+  "recipe_id": "hui_yuan_pill_v0",
+  "accuracy": 0.86,
+  "ingredients": ["ling_grass", "qingxin_leaf", "warm_jade_powder"]
+}

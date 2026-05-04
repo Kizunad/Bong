@@ -12,6 +12,7 @@ import {
 } from "./audio-event.js";
 import {
   AlchemyContaminationLevelV1,
+  AlchemyInsightV1,
   AlchemyInterventionResultV1,
   AlchemyInterventionV1,
   AlchemyOutcomeBucket,
@@ -502,6 +503,7 @@ export const SCHEMA_REGISTRY = {
   alchemySessionStartV1: AlchemySessionStartV1,
   alchemySessionEndV1: AlchemySessionEndV1,
   alchemyInterventionResultV1: AlchemyInterventionResultV1,
+  alchemyInsightV1: AlchemyInsightV1,
   serverDataAlchemyFurnaceV1: ServerDataAlchemyFurnaceV1,
   serverDataAlchemySessionV1: ServerDataAlchemySessionV1,
   serverDataAlchemyOutcomeForecastV1: ServerDataAlchemyOutcomeForecastV1,
@@ -819,6 +821,7 @@ export const GENERATED_SCHEMA_FILES = {
   "alchemy-session-end-v1.json": SCHEMA_REGISTRY.alchemySessionEndV1,
   "alchemy-intervention-result-v1.json":
     SCHEMA_REGISTRY.alchemyInterventionResultV1,
+  "alchemy-insight-v1.json": SCHEMA_REGISTRY.alchemyInsightV1,
   "server-data-alchemy-furnace-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemyFurnaceV1,
   "server-data-alchemy-session-v1.json":

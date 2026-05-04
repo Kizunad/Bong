@@ -176,6 +176,8 @@ export const CHANNELS = {
   ALCHEMY_SESSION_END: "bong:alchemy/session_end",
   /** Server → Agent: 炼丹干预结果 */
   ALCHEMY_INTERVENTION_RESULT: "bong:alchemy/intervention_result",
+  /** Server → Agent: 丹心识别高精度线索 */
+  ALCHEMY_INSIGHT: "bong:alchemy_insight",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -237,6 +239,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ALCHEMY_SESSION_START,
   CHANNELS.ALCHEMY_SESSION_END,
   CHANNELS.ALCHEMY_INTERVENTION_RESULT,
+  CHANNELS.ALCHEMY_INSIGHT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

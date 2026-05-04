@@ -61,7 +61,7 @@ pub enum DefenseKind {
     JieMai,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatusEffectKind {
     Bleeding,
     Slowed,
@@ -81,6 +81,16 @@ pub enum StatusEffectKind {
     AntiSpiritPressurePill,
     /// plan-lifespan-v1 §4：风烛状态。`magnitude` 记录真元回复削减比例。
     Frailty,
+    /// plan-alchemy-v2 P0：丹药副作用提供短时回气增益。
+    QiRegenBoost,
+    /// plan-alchemy-v2 P0：丹药副作用触发一次顿悟机会，同时保留短时状态标记。
+    InsightFlash,
+    /// plan-alchemy-v2 P0：永久压低真元上限的副作用标记。
+    QiCapPermMinus,
+    /// plan-alchemy-v2 P0：施毒类丹药副作用，增加污染/中毒压力。
+    ContaminationBoost,
+    /// plan-alchemy-v2 P0：未知 side_effect tag 的兼容兜底，保留原始 tag 便于观测。
+    AlchemyBuff(String),
     /// plan-zhenmai-v1 §3.1.C：截脉震爆触发后的半息僵直。
     ParryRecovery,
 }

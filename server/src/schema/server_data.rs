@@ -215,7 +215,7 @@ pub enum ServerDataPayloadV1 {
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
-    InventoryEvent(InventoryEventV1),
+    InventoryEvent(Box<InventoryEventV1>),
     DroppedLootSync(Vec<DroppedLootEntryV1>),
     BotanyHarvestProgress {
         session_id: String,
@@ -1330,7 +1330,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::InventorySnapshot(snapshot))
             }
             ServerDataPayloadWireV1::InventoryEvent { event } => {
-                Ok(Self::InventoryEvent(event.try_into()?))
+                Ok(Self::InventoryEvent(Box::new(event.try_into()?)))
             }
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
@@ -1733,7 +1733,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 snapshot: snapshot.clone(),
             },
             ServerDataPayloadV1::InventoryEvent(event) => Self::InventoryEvent {
-                event: event.into(),
+                event: event.as_ref().into(),
             },
             ServerDataPayloadV1::DroppedLootSync(drops) => Self::DroppedLootSync {
                 drops: drops.clone(),

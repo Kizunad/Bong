@@ -148,6 +148,18 @@ pub struct AlchemyInterventionResultV1 {
     pub ts: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemyInsightV1 {
+    pub v: u8,
+    pub player_id: String,
+    pub source_pill: String,
+    pub recipe_id: Option<String>,
+    pub accuracy: f64,
+    pub ingredients: Vec<String>,
+    pub ts: u64,
+}
+
 // ─── server → client 推送 payload（plan §4） ────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -309,6 +321,23 @@ mod tests {
             intervention.intervention,
             AlchemyInterventionV1::InjectQi { .. }
         ));
+    }
+
+    #[test]
+    fn alchemy_insight_payload_roundtrip() {
+        let payload = AlchemyInsightV1 {
+            v: 1,
+            player_id: "offline:Azure".to_string(),
+            source_pill: "huiyuan_pill".to_string(),
+            recipe_id: Some("hui_yuan_pill_v0".to_string()),
+            accuracy: 0.82,
+            ingredients: vec!["hui_yuan_zhi".to_string(), "ling_shui".to_string()],
+            ts: 1000,
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        let back: AlchemyInsightV1 = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, payload);
     }
 
     #[test]

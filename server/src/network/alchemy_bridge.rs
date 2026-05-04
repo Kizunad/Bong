@@ -5,8 +5,10 @@ use valence::prelude::{EventReader, Query, Res};
 use super::cast_emit::current_unix_millis;
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
-use crate::alchemy::{AlchemyFurnace, AlchemyOutcomeEvent, ResolvedOutcome};
-use crate::schema::alchemy::AlchemySessionEndV1;
+use crate::alchemy::{
+    danxin::AlchemyInsightEvent, AlchemyFurnace, AlchemyOutcomeEvent, ResolvedOutcome,
+};
+use crate::schema::alchemy::{AlchemyInsightV1, AlchemySessionEndV1};
 
 pub fn publish_alchemy_session_end_events(
     redis: Option<Res<RedisBridgeResource>>,
@@ -29,6 +31,31 @@ pub fn publish_alchemy_session_end_events(
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::AlchemySessionEnd(payload));
+    }
+}
+
+pub fn publish_alchemy_insight_events(
+    redis: Option<Res<RedisBridgeResource>>,
+    mut reader: EventReader<AlchemyInsightEvent>,
+) {
+    let Some(redis) = redis else {
+        reader.clear();
+        return;
+    };
+
+    for event in reader.read() {
+        let payload = AlchemyInsightV1 {
+            v: 1,
+            player_id: event.player_id.clone(),
+            source_pill: event.hint.source_pill.clone(),
+            recipe_id: event.hint.recipe_id.clone(),
+            accuracy: event.hint.accuracy,
+            ingredients: event.hint.ingredients.clone(),
+            ts: current_unix_millis(),
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::AlchemyInsight(payload));
     }
 }
 

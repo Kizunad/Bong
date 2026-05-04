@@ -93,6 +93,7 @@ pub const CH_FORGE_OUTCOME: &str = "bong:forge/outcome";
 pub const CH_ALCHEMY_SESSION_START: &str = "bong:alchemy/session_start";
 pub const CH_ALCHEMY_SESSION_END: &str = "bong:alchemy/session_end";
 pub const CH_ALCHEMY_INTERVENTION_RESULT: &str = "bong:alchemy/intervention_result";
+pub const CH_ALCHEMY_INSIGHT: &str = "bong:alchemy_insight";
 
 #[cfg(test)]
 mod tests {
@@ -170,5 +171,6 @@ mod tests {
             CH_ALCHEMY_INTERVENTION_RESULT,
             "bong:alchemy/intervention_result"
         );
+        assert_eq!(CH_ALCHEMY_INSIGHT, "bong:alchemy_insight");
     }
 }

@@ -26,13 +26,13 @@ pub fn emit_durability_changed_inventory_events(
             continue;
         };
 
-        let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+        let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(Box::new(
             InventoryEventV1::DurabilityChanged {
                 revision: ev.revision.0,
                 instance_id: ev.instance_id,
                 durability: ev.durability,
             },
-        ));
+        )));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(bytes) => bytes,
@@ -129,7 +129,7 @@ pub fn emit_dropped_item_inventory_events(
         for (idx, dropped) in ev.dropped.iter().enumerate() {
             let base = position.0;
             let world_pos = [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35];
-            let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+            let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(Box::new(
                 InventoryEventV1::Dropped {
                     revision: ev.revision.0,
                     instance_id: dropped.instance.instance_id,
@@ -146,7 +146,7 @@ pub fn emit_dropped_item_inventory_events(
                     world_pos,
                     item: item_view_from_instance(&dropped.instance),
                 },
-            ));
+            )));
             let payload_type = payload_type_label(payload.payload_type());
             let payload_bytes = match serialize_server_data_payload(&payload) {
                 Ok(bytes) => bytes,
@@ -200,6 +200,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         }
     }
 
