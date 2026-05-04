@@ -75,6 +75,7 @@ fn item_instance(instance_id: u64, template_id: &str) -> ItemInstance {
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
         alchemy: None,
+        lingering_owner_qi: None,
     }
 }
 

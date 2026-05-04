@@ -474,6 +474,7 @@ fn grant_ling_mu_gun_to_inventory(
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
         alchemy: None,
+        lingering_owner_qi: None,
     };
     let Some(main_pack) = inventory
         .containers
@@ -530,6 +531,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 

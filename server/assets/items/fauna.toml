@@ -45,6 +45,17 @@ spirit_quality_initial = 0.75
 description = "妖兽骨材的通称，炼器与封灵骨币共用的正典载体名。"
 
 [[item]]
+id = "daoxiang_remains"
+name = "道伥残骸"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.4
+rarity = "legendary"
+spirit_quality_initial = 0.2
+description = "低阶道伥被打散后留下的空壳，可被血印短暂压作守宅载体。"
+
+[[item]]
 id = "bian_yi_hexin"
 name = "变异核心"
 category = "misc"
@@ -131,4 +142,3 @@ base_weight = 0.05
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "以缝合兽骨封入四十点真元的高额骨币，足以支撑一场小型交易。"
-

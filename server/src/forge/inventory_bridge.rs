@@ -121,6 +121,7 @@ pub fn forge_outcome_to_inventory(
             forge_side_effects: event.side_effects.clone(),
             forge_achieved_tier: Some(achieved_tier),
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         inventory.containers[main_pack_index]

@@ -138,6 +138,14 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
     },
+    /// plan-niche-defense-v1 P0/P1/P2 — 灵龛守家载体激活请求。
+    SpiritNicheActivateGuardian {
+        v: u8,
+        niche_pos: [i32; 3],
+        guardian_kind: super::social::GuardianKindV1,
+        #[serde(default)]
+        materials: Vec<String>,
+    },
     /// plan-social-v1 §6.1 — 切磋邀请 UI 回执。
     SparringInviteResponse {
         v: u8,

@@ -40,6 +40,7 @@ pub const CH_SOCIAL_EXPOSURE: &str = "bong:social/exposure";
 pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
 pub const CH_SOCIAL_FEUD: &str = "bong:social/feud";
 pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
+pub const CH_SOCIAL_NICHE_INTRUSION: &str = "bong:social/niche_intrusion";
 
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
@@ -136,6 +137,7 @@ mod tests {
         assert_eq!(CH_SOCIAL_PACT, "bong:social/pact");
         assert_eq!(CH_SOCIAL_FEUD, "bong:social/feud");
         assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
+        assert_eq!(CH_SOCIAL_NICHE_INTRUSION, "bong:social/niche_intrusion");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_STYLE_BALANCE_TELEMETRY, "bong:style_balance_telemetry");

@@ -1,0 +1,13 @@
+[[item]]
+id = "jiet_aning_dan"
+name = "解染丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "洗去行为染色的中和丹药。对龛侵色只加速，不抹去业力史。"
+effect = { kind = "contamination_cleanse", magnitude = 0.3 }
+cast_duration_ms = 1800
+cooldown_ms = 6000

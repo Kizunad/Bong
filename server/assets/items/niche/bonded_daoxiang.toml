@@ -1,0 +1,10 @@
+[[item]]
+id = "niche_bonded_daoxiang"
+name = "守宅道伥残契"
+category = "treasure"
+grid_w = 1
+grid_h = 2
+base_weight = 0.9
+rarity = "legendary"
+spirit_quality_initial = 0.4
+description = "以血印压住的低阶道伥残契。反噬风险未消，不宜久养。"

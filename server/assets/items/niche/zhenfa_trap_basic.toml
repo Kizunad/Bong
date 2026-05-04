@@ -1,0 +1,10 @@
+[[item]]
+id = "niche_zhenfa_trap_basic"
+name = "灵龛诡雷·初"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "uncommon"
+spirit_quality_initial = 0.7
+description = "埋在灵龛入口的初级阵法陷阱。触发一次后阵纹散尽。"

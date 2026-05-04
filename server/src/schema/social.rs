@@ -19,6 +19,14 @@ pub enum RelationshipKindV1 {
     Feud,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardianKindV1 {
+    Puppet,
+    ZhenfaTrap,
+    BondedDaoxiang,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RenownTagV1 {
@@ -142,6 +150,43 @@ pub struct SocialRenownDeltaV1 {
     pub tags_added: Vec<RenownTagV1>,
     pub tick: u64,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SpiritNicheActivateGuardianV1 {
+    pub v: u8,
+    pub niche_pos: [i32; 3],
+    pub guardian_kind: GuardianKindV1,
+    #[serde(default)]
+    pub materials: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NicheIntrusionEventV1 {
+    pub v: u8,
+    pub niche_pos: [i32; 3],
+    pub intruder_id: String,
+    #[serde(default)]
+    pub items_taken: Vec<u64>,
+    pub taint_delta: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NicheGuardianFatigueV1 {
+    pub v: u8,
+    pub guardian_kind: GuardianKindV1,
+    pub charges_remaining: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NicheGuardianBrokenV1 {
+    pub v: u8,
+    pub guardian_kind: GuardianKindV1,
+    pub intruder_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

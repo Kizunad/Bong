@@ -254,6 +254,7 @@ pub fn build_fauna_item_instance(
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
         alchemy: None,
+        lingering_owner_qi: None,
     })
 }
 

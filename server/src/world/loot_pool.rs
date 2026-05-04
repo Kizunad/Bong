@@ -188,6 +188,7 @@ pub fn roll_loot_pool(
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         });
     }
 

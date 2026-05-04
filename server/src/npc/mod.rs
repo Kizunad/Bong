@@ -1,6 +1,7 @@
 pub mod brain;
 pub mod faction;
 pub mod hunger;
+pub mod intrusion_npc;
 pub mod lifecycle;
 pub mod lingtian_pressure;
 pub mod lod;
@@ -42,6 +43,7 @@ pub fn register(app: &mut App) {
     lingtian_pressure::register(app);
     territory::register(app);
     social::register(app);
+    intrusion_npc::register(app);
     relic::register(app);
     lod::register(app);
     zong_keeper::register(app);

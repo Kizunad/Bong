@@ -1,5 +1,6 @@
 pub mod components;
 pub mod events;
+pub mod niche_defense;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -18,8 +19,8 @@ use valence::prelude::{
 };
 
 use self::components::{
-    Anonymity, ExposureEvent, ExposureLog, FactionMembership, Relationship, Relationships, Renown,
-    SparringState, SpiritNiche,
+    Anonymity, ExposureEvent, ExposureLog, FactionMembership, HouseGuardian, Relationship,
+    Relationships, Renown, SparringState, SpiritNiche,
 };
 use self::events::{
     FactionMembershipDecisionEvent, FactionMembershipDecisionKind, PlayerChatCollected,
@@ -77,7 +78,7 @@ const NAMELESS_LABEL: &str = "无名修士";
 
 type CompanionPairKey = (String, String);
 type FactionMembershipSqlRow = (Option<String>, i64, i64, i64, Option<i64>, i64);
-type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, Option<String>);
+type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, String);
 
 #[derive(Debug, Default, Resource)]
 struct CompanionProgress {
@@ -157,6 +158,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SpiritNichePlaceRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
     app.add_event::<SpiritNicheRevealRequest>();
+    niche_defense::register(app);
     app.add_systems(
         Update,
         (
@@ -1394,7 +1396,7 @@ fn handle_spirit_niche_place_requests(
             placed_at_tick: event.tick,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         };
         lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
         let old_niche = registry.niches.get(&lifecycle.character_id).cloned();
@@ -2055,7 +2057,7 @@ fn load_social_spirit_niche(
     let row: Option<SpiritNicheSqlRow> = connection
         .query_row(
             "
-            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, defense_mode
+            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, guardians_json
             FROM social_spirit_niches
             WHERE owner = ?1
             ",
@@ -2079,13 +2081,13 @@ fn load_social_spirit_niche(
         .optional()
         .map_err(io::Error::other)?;
     Ok(row.map(
-        |(pos, placed_at_tick, revealed, revealed_by, defense_mode)| SpiritNiche {
+        |(pos, placed_at_tick, revealed, revealed_by, guardians_json)| SpiritNiche {
             owner: char_id.to_string(),
             pos,
             placed_at_tick,
             revealed,
             revealed_by,
-            defense_mode,
+            guardians: decode_guardians_json(guardians_json.as_str()).unwrap_or_default(),
         },
     ))
 }
@@ -2097,7 +2099,7 @@ fn load_all_social_spirit_niches(
     let mut statement = connection
         .prepare(
             "
-            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, defense_mode
+            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, guardians_json
             FROM social_spirit_niches
             ORDER BY owner ASC
             ",
@@ -2117,7 +2119,15 @@ fn load_all_social_spirit_niches(
                 })?,
                 revealed: row.get::<_, i64>(5)? != 0,
                 revealed_by: row.get(6)?,
-                defense_mode: row.get(7)?,
+                guardians: decode_guardians_json(row.get::<_, String>(7)?.as_str()).map_err(
+                    |error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    },
+                )?,
             })
         })
         .map_err(io::Error::other)?;
@@ -2126,6 +2136,18 @@ fn load_all_social_spirit_niches(
         niches.push(row.map_err(io::Error::other)?);
     }
     Ok(niches)
+}
+
+fn decode_guardians_json(value: &str) -> io::Result<Vec<HouseGuardian>> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn encode_guardians_json(guardians: &[HouseGuardian]) -> io::Result<String> {
+    serde_json::to_string(guardians)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn persist_social_anonymity(
@@ -2339,7 +2361,7 @@ fn persist_social_spirit_niche(
             "
             INSERT INTO social_spirit_niches (
                 owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
-                defense_mode, schema_version, last_updated_wall
+                guardians_json, schema_version, last_updated_wall
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
             ON CONFLICT(owner) DO UPDATE SET
                 pos_x = excluded.pos_x,
@@ -2348,7 +2370,7 @@ fn persist_social_spirit_niche(
                 placed_at_tick = excluded.placed_at_tick,
                 revealed = excluded.revealed,
                 revealed_by = excluded.revealed_by,
-                defense_mode = excluded.defense_mode,
+                guardians_json = excluded.guardians_json,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -2360,7 +2382,7 @@ fn persist_social_spirit_niche(
                 tick_to_sql(niche.placed_at_tick)?,
                 if niche.revealed { 1_i64 } else { 0_i64 },
                 niche.revealed_by.as_deref(),
-                niche.defense_mode.as_deref(),
+                encode_guardians_json(&niche.guardians)?,
                 wall_clock,
             ],
         )
@@ -2638,6 +2660,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -2662,6 +2685,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -3932,7 +3956,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<SpiritNichePlaceRequest>();
@@ -3978,7 +4002,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<DiggingEvent>();
@@ -4005,7 +4029,7 @@ mod tests {
                 placed_at_tick: 1,
                 revealed: false,
                 revealed_by: None,
-                defense_mode: None,
+                guardians: Vec::new(),
             },
         ));
         let (mut observer_bundle, _observer_helper) = create_mock_client("Observer");
@@ -4054,7 +4078,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
@@ -4106,7 +4130,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<SpiritNicheCoordinateRevealRequest>();

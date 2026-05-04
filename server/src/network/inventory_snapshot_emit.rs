@@ -291,6 +291,7 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         forge_side_effects: item.forge_side_effects.clone(),
         forge_achieved_tier: item.forge_achieved_tier,
         alchemy: item.alchemy.clone(),
+        lingering_owner_qi: item.lingering_owner_qi.clone(),
     }
 }
 
@@ -566,6 +567,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -1152,6 +1154,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -1178,6 +1181,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
         let mut view = item_view_from_instance(&item);
         assert!(view.freshness_current.is_none());

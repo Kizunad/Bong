@@ -23,12 +23,13 @@ use crate::alchemy::{
 };
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
-    CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
+    CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot, Wounds,
 };
 use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
     StatusEffectKind,
 };
+use crate::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
 use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
@@ -96,6 +97,7 @@ use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::social::GuardianKindV1;
 use crate::shelflife::{
     age_peak_check, container_storage_multiplier, spoil_check, AgeBonusRoll, AgePeakCheck,
     ContainerFreshnessBehavior, DecayProfileRegistry, SpoilCheckOutcome, SpoilConsumeWarning,
@@ -104,8 +106,9 @@ use crate::shelflife::{
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
-    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest,
-    SpiritNichePlaceRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealSource,
+    TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -154,6 +157,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub cancel_search_tx: Option<ResMut<'w, Events<CancelSearchRequestEvent>>>,
     pub meridians: Query<'w, 's, &'static mut crate::cultivation::components::MeridianSystem>,
     pub contaminations: Query<'w, 's, &'static mut crate::cultivation::components::Contamination>,
+    pub wounds: Query<'w, 's, &'static mut Wounds>,
     pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
 }
@@ -216,6 +220,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
     pub spirit_niche_coordinate_reveal_tx:
         Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
+    pub spirit_niche_activate_guardian_tx:
+        Option<ResMut<'w, Events<SpiritNicheActivateGuardianRequest>>>,
     pub coffin_open_tx: Option<ResMut<'w, Events<CoffinOpenRequest>>>,
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
@@ -320,6 +326,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
+            | ClientRequestV1::SpiritNicheActivateGuardian { v, .. }
             | ClientRequestV1::SparringInviteResponse { v, .. }
             | ClientRequestV1::TradeOfferRequest { v, .. }
             | ClientRequestV1::TradeOfferResponse { v, .. }
@@ -643,6 +650,33 @@ pub fn handle_client_request_payloads(
                     observer: ev.client,
                     pos: [x, y, z],
                     source: SpiritNicheRevealSource::MarkCoordinate,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheActivateGuardian {
+                niche_pos,
+                guardian_kind,
+                materials,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_activate_guardian entity={:?} pos={:?} kind={:?}",
+                    ev.client,
+                    niche_pos,
+                    guardian_kind
+                );
+                let Some(activate_tx) = dispatch.spirit_niche_activate_guardian_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_activate_guardian because SpiritNicheActivateGuardianRequest event resource is missing"
+                    );
+                    continue;
+                };
+                activate_tx.send(SpiritNicheActivateGuardianRequest {
+                    player: ev.client,
+                    niche_pos,
+                    guardian_kind: guardian_kind_from_schema(guardian_kind),
+                    materials,
                     tick: combat_clock.tick,
                 });
             }
@@ -2162,6 +2196,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -2270,6 +2305,7 @@ mod tests {
                         forge_side_effects: Vec::new(),
                         forge_achieved_tier: None,
                         alchemy: None,
+                        lingering_owner_qi: None,
                     },
                 }],
             }],
@@ -2842,6 +2878,7 @@ mod tests {
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
                     alchemy: None,
+                    lingering_owner_qi: None,
                 }),
                 Cultivation::default(),
                 PlayerState::default(),
@@ -2925,6 +2962,7 @@ mod tests {
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
                     alchemy: None,
+                    lingering_owner_qi: None,
                 }),
                 Cultivation {
                     realm: Realm::Spirit,
@@ -4716,6 +4754,14 @@ fn resolve_skill_cast_target(
     id.parse::<u64>().ok().map(Entity::from_bits)
 }
 
+fn guardian_kind_from_schema(kind: GuardianKindV1) -> crate::social::components::GuardianKind {
+    match kind {
+        GuardianKindV1::Puppet => crate::social::components::GuardianKind::Puppet,
+        GuardianKindV1::ZhenfaTrap => crate::social::components::GuardianKind::ZhenfaTrap,
+        GuardianKindV1::BondedDaoxiang => crate::social::components::GuardianKind::BondedDaoxiang,
+    }
+}
+
 fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1) -> CarrierSlot {
     match slot {
         crate::schema::client_request::AnqiCarrierSlotV1::MainHand => CarrierSlot::MainHand,
@@ -6323,6 +6369,13 @@ fn handle_alchemy_take_pill(
             _ => (1.0, false, None),
         };
     let duration_multiplier = if alchemy_consecrated { 2 } else { 1 };
+    let foreign_qi = foreign_qi_resistance_for_use(
+        &template,
+        consumed_item
+            .lingering_owner_qi
+            .as_ref()
+            .is_some_and(|lingering| clock.tick < lingering.expire_at),
+    );
 
     let (spoil, age) = shelflife_checks_for_item(
         &consumed_item,
@@ -6360,11 +6413,22 @@ fn handle_alchemy_take_pill(
         );
         return;
     }
+    if foreign_qi.health_loss > 0.0 {
+        if let Ok(mut wounds) = combat_params.wounds.get_mut(entity) {
+            wounds.health_current =
+                (wounds.health_current - foreign_qi.health_loss).clamp(0.0, wounds.health_max);
+        }
+        tracing::info!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` triggered foreign qi rejection: effect_multiplier={:.2} health_loss={:.1}",
+            foreign_qi.effect_multiplier,
+            foreign_qi.health_loss
+        );
+    }
 
     let mut cultivation_snapshot_override = None;
     match effect {
         ItemEffect::BreakthroughBonus { magnitude } => {
-            let scaled_magnitude = magnitude * alchemy_multiplier;
+            let scaled_magnitude = magnitude * alchemy_multiplier * foreign_qi.effect_multiplier;
             combat_params.buff_tx.send(ApplyStatusEffectIntent {
                 target: entity,
                 kind: StatusEffectKind::BreakthroughBoost,
@@ -6381,7 +6445,10 @@ fn handle_alchemy_take_pill(
             if let Ok(current) = cultivations.get(entity) {
                 let mut cultivation = current.clone();
                 let qi_max_before = cultivation.qi_max;
-                let recovered = recover_current_qi(&mut cultivation, amount * alchemy_multiplier);
+                let recovered = recover_current_qi(
+                    &mut cultivation,
+                    amount * alchemy_multiplier * foreign_qi.effect_multiplier,
+                );
                 cultivation_snapshot_override = Some(cultivation.clone());
                 commands.entity(entity).insert(cultivation);
                 tracing::info!(
@@ -6395,9 +6462,11 @@ fn handle_alchemy_take_pill(
         }
         ItemEffect::LifespanExtension { years, source } => {
             if let Some(lifespan_extension_tx) = lifespan_extension_tx.as_deref_mut() {
+                let requested_years =
+                    ((f64::from(years) * foreign_qi.effect_multiplier).round() as u32).max(1);
                 lifespan_extension_tx.send(LifespanExtensionIntent {
                     entity,
-                    requested_years: years,
+                    requested_years,
                     source: source.clone(),
                 });
             }
@@ -6406,11 +6475,15 @@ fn handle_alchemy_take_pill(
             );
         }
         ItemEffect::AntiSpiritPressure { duration_ticks } => {
+            let effective_duration_ticks =
+                (duration_ticks as f64 * foreign_qi.effect_multiplier).round() as u64;
             combat_params.buff_tx.send(ApplyStatusEffectIntent {
                 target: entity,
                 kind: StatusEffectKind::AntiSpiritPressurePill,
                 magnitude: 1.0,
-                duration_ticks: duration_ticks.saturating_mul(duration_multiplier),
+                duration_ticks: effective_duration_ticks
+                    .max(1)
+                    .saturating_mul(duration_multiplier),
                 issued_at_tick: clock.tick,
             });
             tracing::info!(
@@ -6677,6 +6750,7 @@ mod take_pill_tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 

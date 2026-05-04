@@ -94,6 +94,8 @@ pub enum StatusEffectKind {
     AlchemyBuff(String),
     /// plan-zhenmai-v1 §3.1.C：截脉震爆触发后的半息僵直。
     ParryRecovery,
+    /// plan-niche-defense-v1 P1：高级灵龛阵法陷阱制造的短时迷乱。
+    Disoriented,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
