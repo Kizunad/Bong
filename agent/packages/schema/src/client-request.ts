@@ -161,6 +161,16 @@ export const ApplyPillRequestV1 = Type.Object(
 );
 export type ApplyPillRequestV1 = Static<typeof ApplyPillRequestV1>;
 
+export const SelfAntidoteRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("self_antidote"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type SelfAntidoteRequestV1 = Static<typeof SelfAntidoteRequestV1>;
+
 export const DuoSheRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -718,6 +728,7 @@ export const ClientRequestV1 = Type.Union([
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
   ApplyPillRequestV1,
+  SelfAntidoteRequestV1,
   DuoSheRequestV1,
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,

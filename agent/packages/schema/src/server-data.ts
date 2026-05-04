@@ -14,6 +14,7 @@ import {
 } from "./combat-hud.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
+import { DuguPoisonStateV1 } from "./dugu.js";
 import {
   InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
@@ -163,6 +164,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("weapon_broken"),
   Type.Literal("treasure_equipped"),
   Type.Literal("rift_portal_state"),
+  Type.Literal("dugu_poison_state"),
   Type.Literal("rift_portal_removed"),
   Type.Literal("extract_started"),
   Type.Literal("extract_progress"),
@@ -814,6 +816,16 @@ export const ServerDataVortexStateV1 = Type.Object(
 );
 export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
 
+export const ServerDataDuguPoisonStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("dugu_poison_state"),
+    ...DuguPoisonStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDuguPoisonStateV1 = Static<typeof ServerDataDuguPoisonStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1224,6 +1236,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataVortexStateV1,
+  ServerDataDuguPoisonStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

@@ -107,6 +107,9 @@ export const CHANNELS = {
   /** Server → Client/Agent: 涡流持涡 HUD 状态（plan-woliu-v1 §8） */
   WOLIU_VORTEX_STATE: "bong:woliu/vortex_state",
 
+  /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
+  DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
+
   /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
 
@@ -208,6 +211,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.WOLIU_BACKFIRE,
   CHANNELS.WOLIU_PROJECTILE_DRAINED,
   CHANNELS.WOLIU_VORTEX_STATE,
+  CHANNELS.DUGU_POISON_PROGRESS,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,
   CHANNELS.ZONG_CORE_ACTIVATED,

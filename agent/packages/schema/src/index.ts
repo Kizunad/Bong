@@ -17,6 +17,7 @@ export * from "./client-payload.js";
 export * from "./client-request.js";
 export * from "./combat-hud.js";
 export * from "./combat-event.js";
+export * from "./dugu.js";
 export * from "./inventory.js";
 export * from "./narration.js";
 export * from "./npc.js";

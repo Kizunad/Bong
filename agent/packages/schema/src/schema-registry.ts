@@ -73,6 +73,7 @@ import {
   StartExtractRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
+  SelfAntidoteRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
   ZhenfaDisarmRequestV1,
@@ -85,6 +86,14 @@ import {
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
+import {
+  AntidoteResultEventV1,
+  AntidoteResultV1,
+  DuguObfuscationStateV1,
+  DuguPoisonProgressEventV1,
+  DuguPoisonStateV1,
+  DuguRevealedEventV1,
+} from "./dugu.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { DeathInsightRequestV1 } from "./death-insight.js";
 import {
@@ -201,6 +210,7 @@ import {
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
   ServerDataVortexStateV1,
+  ServerDataDuguPoisonStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataWeaponBrokenV1,
@@ -355,6 +365,12 @@ export const SCHEMA_REGISTRY = {
   rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
+  duguPoisonStateV1: DuguPoisonStateV1,
+  duguPoisonProgressEventV1: DuguPoisonProgressEventV1,
+  duguObfuscationStateV1: DuguObfuscationStateV1,
+  antidoteResultV1: AntidoteResultV1,
+  antidoteResultEventV1: AntidoteResultEventV1,
+  duguRevealedEventV1: DuguRevealedEventV1,
   violationKindV1: ViolationKindV1,
   antiCheatReportV1: AntiCheatReportV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
@@ -375,6 +391,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestHeartDemonDecisionV1: HeartDemonDecisionRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestSelfAntidoteV1: SelfAntidoteRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
@@ -431,6 +448,7 @@ export const SCHEMA_REGISTRY = {
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  serverDataDuguPoisonStateV1: ServerDataDuguPoisonStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -631,6 +649,14 @@ export const GENERATED_SCHEMA_FILES = {
   "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
+  "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,
+  "dugu-poison-progress-event-v1.json":
+    SCHEMA_REGISTRY.duguPoisonProgressEventV1,
+  "dugu-obfuscation-state-v1.json": SCHEMA_REGISTRY.duguObfuscationStateV1,
+  "dugu-antidote-result-v1.json": SCHEMA_REGISTRY.antidoteResultV1,
+  "dugu-antidote-result-event-v1.json":
+    SCHEMA_REGISTRY.antidoteResultEventV1,
+  "dugu-revealed-event-v1.json": SCHEMA_REGISTRY.duguRevealedEventV1,
   "violation-kind-v1.json": SCHEMA_REGISTRY.violationKindV1,
   "anticheat-report-v1.json": SCHEMA_REGISTRY.antiCheatReportV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
@@ -651,6 +677,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-self-antidote-v1.json":
+    SCHEMA_REGISTRY.clientRequestSelfAntidoteV1,
   "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,

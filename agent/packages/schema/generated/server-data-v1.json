@@ -7466,6 +7466,72 @@
       "required": [
         "v",
         "type",
+        "target",
+        "active",
+        "meridian_id",
+        "attacker",
+        "attached_at_tick",
+        "poisoner_realm_tier",
+        "loss_per_tick",
+        "flow_capacity_after",
+        "qi_max_after",
+        "server_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "dugu_poison_state",
+          "type": "string"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "meridian_id": {
+          "type": "string"
+        },
+        "attacker": {
+          "type": "string"
+        },
+        "attached_at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "poisoner_realm_tier": {
+          "minimum": 0,
+          "maximum": 5,
+          "type": "integer"
+        },
+        "loss_per_tick": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "flow_capacity_after": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "qi_max_after": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "server_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {

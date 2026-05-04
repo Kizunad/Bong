@@ -92,6 +92,22 @@
         }
       ]
     },
+    "source": {
+      "anyOf": [
+        {
+          "const": "melee",
+          "type": "string"
+        },
+        {
+          "const": "burst_meridian",
+          "type": "string"
+        },
+        {
+          "const": "qi_needle",
+          "type": "string"
+        }
+      ]
+    },
     "damage": {
       "minimum": 0,
       "type": "number"

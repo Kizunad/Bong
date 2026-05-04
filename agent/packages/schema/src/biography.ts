@@ -93,6 +93,17 @@ const Rebirth = Type.Object(
   },
   { additionalProperties: false },
 );
+const DuguPoisonInflicted = Type.Object(
+  {
+    DuguPoisonInflicted: Type.Object({
+      attacker_id: Type.String({ minLength: 1, maxLength: 128 }),
+      target_id: Type.String({ minLength: 1, maxLength: 128 }),
+      meridian_id: MeridianId,
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
 const NearDeath = Type.Object(
   {
     NearDeath: Type.Object({
@@ -213,6 +224,7 @@ export const BiographyEntryV1 = Type.Union([
   ColorShift,
   InsightTaken,
   Rebirth,
+  DuguPoisonInflicted,
   NearDeath,
   Terminated,
   LifespanExtended,

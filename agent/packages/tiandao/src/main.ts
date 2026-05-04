@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import Redis from "ioredis";
 import type { Command, Narration } from "@bong/schema";
 import { DeathInsightRuntime } from "./death-insight-runtime.js";
+import { DuguNarrationRuntime } from "./dugu-narration.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
@@ -136,6 +137,12 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey,
     model: options.model,
   });
+  const duguCleanup = await startDuguRuntime({
+    redisUrl: config.redisUrl,
+    baseUrl: options.baseUrl,
+    apiKey: options.apiKey,
+    model: options.model,
+  });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
     redisUrl: config.redisUrl,
@@ -148,12 +155,51 @@ export async function main(options: MainOptions): Promise<void> {
     await runRuntime(config);
   } finally {
     await heartDemonCleanup();
+    await duguCleanup();
     await woliuCleanup();
     await tribulationCleanup();
     await skillLvUpCleanup();
     await deathInsightCleanup();
     await insightCleanup();
   }
+}
+
+async function startDuguRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DuguNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DuguNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new DuguNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] dugu runtime online"))
+    .catch((error) => console.warn("[tiandao] dugu runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] dugu runtime disconnect error:", error);
+    }
+  };
 }
 
 async function startWoliuRuntime(opts: {
