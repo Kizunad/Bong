@@ -599,6 +599,15 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSelfAntidote(long instanceId) {
+        if (instanceId < 0) {
+            throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+        }
+        JsonObject obj = envelope("self_antidote");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
     /** itemId == null → 清空槽位。 */
     public static String encodeQuickSlotBind(int slot, String itemId) {
         JsonObject obj = envelope("quick_slot_bind");

@@ -66,6 +66,8 @@ public class ServerDataRouterTest {
             "treasure_equipped",
             // plan-woliu-v1 §A.1 涡流 HUD 状态推送。
             "vortex_state",
+            // plan-dugu-v1 P0/P1 — 毒蛊受毒状态 HUD 推送。
+            "dugu_poison_state",
             // plan-perception-v1.1 §4 server-authoritative vision/sense push.
             "realm_vision_params",
             "spiritual_sense_targets",

@@ -47,6 +47,8 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.DerivedAttrsHandler();
         com.bong.client.combat.handler.VortexStateHandler vortexStateHandler =
             new com.bong.client.combat.handler.VortexStateHandler();
+        com.bong.client.combat.handler.DuguPoisonStateHandler duguPoisonStateHandler =
+            new com.bong.client.combat.handler.DuguPoisonStateHandler();
         com.bong.client.combat.handler.DeathScreenHandler deathScreenHandler =
             new com.bong.client.combat.handler.DeathScreenHandler();
         com.bong.client.combat.handler.TerminateScreenHandler terminateScreenHandler =
@@ -104,6 +106,7 @@ public final class ServerDataRouter {
         handlers.put("status_snapshot", statusSnapshotHandler);
         handlers.put("derived_attrs_sync", derivedAttrsHandler);
         handlers.put("vortex_state", vortexStateHandler);
+        handlers.put("dugu_poison_state", duguPoisonStateHandler);
         handlers.put("death_screen", deathScreenHandler);
         handlers.put("terminate_screen", terminateScreenHandler);
         handlers.put("wounds_snapshot", woundsSnapshotHandler);
