@@ -19,6 +19,7 @@ const {
   REBIRTH,
   SKILL_XP_GAIN,
   SOCIAL_FEUD,
+  SOCIAL_NICHE_INTRUSION,
   SPIRIT_EYE_DISCOVERED,
   SPIRIT_EYE_MIGRATE,
   SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
@@ -565,6 +566,7 @@ describe("redis-ipc", () => {
         AGING,
         BREAKTHROUGH_EVENT,
         SOCIAL_FEUD,
+        SOCIAL_NICHE_INTRUSION,
         COMBAT_REALTIME,
         PSEUDO_VEIN_ACTIVE,
         PSEUDO_VEIN_DISSIPATE,
@@ -590,6 +592,17 @@ describe("redis-ipc", () => {
       JSON.stringify({ v: 1, character_id: "offline:Azure", at_tick: 85, kind: "tick_rate" }),
     );
     await sub.publish(SOCIAL_FEUD, JSON.stringify({ v: 1, left: "char:a", right: "char:b", tick: 86 }));
+    await sub.publish(
+      SOCIAL_NICHE_INTRUSION,
+      JSON.stringify({
+        v: 1,
+        type: "niche_intrusion",
+        niche_pos: [1, 64, 2],
+        intruder_id: "char:raider",
+        items_taken: [41],
+        taint_delta: 0.2,
+      }),
+    );
     await sub.publish(SKILL_XP_GAIN, JSON.stringify({ v: 1, char_id: 1, skill: "herbalism", amount: 2 }));
     await sub.publish(
       PSEUDO_VEIN_ACTIVE,
@@ -652,11 +665,15 @@ describe("redis-ipc", () => {
       }),
     );
 
-    expect(callback).toHaveBeenCalledTimes(9);
+    expect(callback).toHaveBeenCalledTimes(10);
     expect(ipc.getLatestCrossSystemEvents()).toEqual([
       expect.objectContaining({ channel: BOTANY_ECOLOGY, payload: expect.objectContaining({ tick: 84 }) }),
       expect.objectContaining({ channel: AGING, payload: expect.objectContaining({ character_id: "offline:Azure" }) }),
       expect.objectContaining({ channel: SOCIAL_FEUD, payload: expect.objectContaining({ left: "char:a" }) }),
+      expect.objectContaining({
+        channel: SOCIAL_NICHE_INTRUSION,
+        payload: expect.objectContaining({ type: "niche_intrusion", intruder_id: "char:raider" }),
+      }),
       expect.objectContaining({ channel: SKILL_XP_GAIN, payload: expect.objectContaining({ skill: "herbalism" }) }),
       expect.objectContaining({ channel: PSEUDO_VEIN_ACTIVE, payload: expect.objectContaining({ id: "pseudo_vein_42" }) }),
       expect.objectContaining({

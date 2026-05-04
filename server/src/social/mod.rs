@@ -23,11 +23,12 @@ use self::components::{
     Relationships, Renown, SparringState, SpiritNiche,
 };
 use self::events::{
-    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, PlayerChatCollected,
-    SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
-    SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
-    SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
-    SpiritNicheRevealRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, NicheGuardianBroken,
+    NicheGuardianFatigue, NicheIntrusionEvent, PlayerChatCollected, SocialExposureEvent,
+    SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent, SocialRenownDeltaEvent,
+    SparringInviteRequest, SparringInviteResponseEvent, SparringInviteResponseKind,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealRequest,
+    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
@@ -51,7 +52,8 @@ use crate::player::state::{
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
-    ExposureKindV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
+    ExposureKindV1, GuardianKindV1, NicheGuardianBrokenV1, NicheGuardianFatigueV1,
+    NicheIntrusionEventV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
@@ -196,10 +198,12 @@ pub fn register(app: &mut App) {
                 .after(handle_death_social_effects)
                 .after(handle_social_pacts)
                 .after(apply_faction_membership_decisions),
+            emit_niche_defense_server_data,
             publish_social_events
                 .after(apply_social_exposures)
                 .after(apply_social_relationships)
-                .after(apply_social_renown_deltas),
+                .after(apply_social_renown_deltas)
+                .after(emit_niche_defense_server_data),
         ),
     );
     app.add_systems(
@@ -541,6 +545,92 @@ fn apply_social_exposures(
                 send_server_data_payload(&mut client, bytes.as_slice());
             }
         }
+    }
+}
+
+fn emit_niche_defense_server_data(
+    mut intrusions: EventReader<NicheIntrusionEvent>,
+    mut fatigues: EventReader<NicheGuardianFatigue>,
+    mut broken_events: EventReader<NicheGuardianBroken>,
+    mut clients: Query<(&Lifecycle, &mut Client), With<Client>>,
+) {
+    for intrusion in intrusions.read() {
+        let payload =
+            ServerDataV1::new(ServerDataPayloadV1::NicheIntrusion(NicheIntrusionEventV1 {
+                v: 1,
+                niche_pos: intrusion.niche_pos,
+                intruder_id: intrusion.intruder_char_id.clone(),
+                items_taken: intrusion.items_taken.clone(),
+                taint_delta: intrusion.taint_delta,
+            }));
+        send_niche_payload_to_participants(
+            &payload,
+            intrusion.niche_owner.as_str(),
+            Some(intrusion.intruder_char_id.as_str()),
+            &mut clients,
+        );
+    }
+
+    for fatigue in fatigues.read() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::NicheGuardianFatigue(
+            NicheGuardianFatigueV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(fatigue.guardian_kind),
+                charges_remaining: fatigue.charges_remaining,
+            },
+        ));
+        send_niche_payload_to_participants(
+            &payload,
+            fatigue.niche_owner.as_str(),
+            None,
+            &mut clients,
+        );
+    }
+
+    for broken in broken_events.read() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::NicheGuardianBroken(
+            NicheGuardianBrokenV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(broken.guardian_kind),
+                intruder_id: broken.intruder_char_id.clone(),
+            },
+        ));
+        send_niche_payload_to_participants(
+            &payload,
+            broken.niche_owner.as_str(),
+            Some(broken.intruder_char_id.as_str()),
+            &mut clients,
+        );
+    }
+}
+
+fn send_niche_payload_to_participants(
+    payload: &ServerDataV1,
+    owner: &str,
+    intruder: Option<&str>,
+    clients: &mut Query<(&Lifecycle, &mut Client), With<Client>>,
+) {
+    let Ok(bytes) = serialize_server_data_payload(payload) else {
+        tracing::warn!(
+            "[bong][social][niche-defense] failed to serialize {} payload",
+            payload_type_label(payload.payload.payload_type())
+        );
+        return;
+    };
+    for (lifecycle, mut client) in clients.iter_mut() {
+        if lifecycle.character_id == owner
+            || intruder.is_some_and(|id| id == lifecycle.character_id)
+        {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
+    }
+}
+
+fn guardian_kind_to_schema(kind: self::components::GuardianKind) -> GuardianKindV1 {
+    match kind {
+        self::components::GuardianKind::Puppet => GuardianKindV1::Puppet,
+        self::components::GuardianKind::ZhenfaTrap => GuardianKindV1::ZhenfaTrap,
+        self::components::GuardianKind::BondedDaoxiang => GuardianKindV1::BondedDaoxiang,
     }
 }
 
@@ -2440,6 +2530,9 @@ fn publish_social_events(
     mut exposures: EventReader<SocialExposureEvent>,
     mut relationships: EventReader<SocialRelationshipEvent>,
     mut renown_deltas: EventReader<SocialRenownDeltaEvent>,
+    mut intrusions: EventReader<NicheIntrusionEvent>,
+    mut fatigues: EventReader<NicheGuardianFatigue>,
+    mut broken_events: EventReader<NicheGuardianBroken>,
 ) {
     let Some(redis) = redis else {
         return;
@@ -2506,6 +2599,35 @@ fn publish_social_events(
                 tags_added: event.tags_added.clone(),
                 tick: event.tick,
                 reason: event.reason.clone(),
+            }));
+    }
+    for intrusion in intrusions.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::NicheIntrusion(NicheIntrusionEventV1 {
+                v: 1,
+                niche_pos: intrusion.niche_pos,
+                intruder_id: intrusion.intruder_char_id.clone(),
+                items_taken: intrusion.items_taken.clone(),
+                taint_delta: intrusion.taint_delta,
+            }));
+    }
+    for fatigue in fatigues.read() {
+        let _ = redis.tx_outbound.send(RedisOutbound::NicheGuardianFatigue(
+            NicheGuardianFatigueV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(fatigue.guardian_kind),
+                charges_remaining: fatigue.charges_remaining,
+            },
+        ));
+    }
+    for broken in broken_events.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::NicheGuardianBroken(NicheGuardianBrokenV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(broken.guardian_kind),
+                intruder_id: broken.intruder_char_id.clone(),
             }));
     }
 }
