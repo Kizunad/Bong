@@ -1157,6 +1157,7 @@ fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState 
             forge_color: None,
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
+            alchemy: None,
         },
     }
 }
@@ -1238,7 +1239,11 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         ItemCategory::Herb => 64,
         ItemCategory::BoneCoin => u32::MAX,
         ItemCategory::Pill | ItemCategory::Misc => 16,
-        ItemCategory::Weapon | ItemCategory::Tool | ItemCategory::Treasure => 1,
+        ItemCategory::Weapon
+        | ItemCategory::Tool
+        | ItemCategory::Treasure
+        | ItemCategory::RecipeFragment
+        | ItemCategory::RecipeHint => 1,
     }
 }
 
