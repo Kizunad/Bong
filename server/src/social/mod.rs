@@ -24,11 +24,11 @@ use self::components::{
 };
 use self::events::{
     FactionMembershipDecisionEvent, FactionMembershipDecisionKind, NicheGuardianBroken,
-    NicheGuardianFatigue, NicheIntrusionEvent, PlayerChatCollected, SocialExposureEvent,
-    SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent, SocialRenownDeltaEvent,
-    SparringInviteRequest, SparringInviteResponseEvent, SparringInviteResponseKind,
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealRequest,
-    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+    NicheGuardianFatigue, NicheIntrusionAttempt, NicheIntrusionEvent, PlayerChatCollected,
+    SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
+    SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
+    SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
+    SpiritNicheRevealRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
@@ -1540,9 +1540,10 @@ fn handle_spirit_niche_place_requests(
 
 fn detect_spirit_niche_break_attempts(
     mut digs: EventReader<DiggingEvent>,
-    clients: Query<&Lifecycle, With<Client>>,
+    clients: Query<(&Lifecycle, Option<&Cultivation>), With<Client>>,
     registry: Option<Res<SpiritNicheRegistry>>,
     mut reveals: EventWriter<SpiritNicheRevealRequest>,
+    mut attempts: EventWriter<NicheIntrusionAttempt>,
     clock: Option<Res<CombatClock>>,
 ) {
     let Some(registry) = registry.as_deref() else {
@@ -1560,21 +1561,40 @@ fn detect_spirit_niche_break_attempts(
         else {
             continue;
         };
-        let observer = clients
-            .get(event.client)
-            .ok()
-            .is_some_and(|lifecycle| lifecycle.character_id != niche.owner)
-            .then_some(event.client);
-        if observer.is_none() {
+        let Ok((observer_lifecycle, observer_cultivation)) = clients.get(event.client) else {
+            continue;
+        };
+        if observer_lifecycle.character_id == niche.owner {
             continue;
         }
         reveals.send(SpiritNicheRevealRequest {
-            observer,
+            observer: Some(event.client),
             owner: niche.owner.clone(),
             source: SpiritNicheRevealSource::BreakAttempt,
             tick,
         });
+        attempts.send(NicheIntrusionAttempt {
+            intruder: event.client,
+            intruder_char_id: observer_lifecycle.character_id.clone(),
+            niche_owner: niche.owner.clone(),
+            niche_pos: niche.pos,
+            items_taken: Vec::new(),
+            intruder_qi_fraction: cultivation_qi_fraction(observer_cultivation),
+            intruder_back_turned: false,
+            tick,
+        });
     }
+}
+
+fn cultivation_qi_fraction(cultivation: Option<&Cultivation>) -> f32 {
+    let Some(cultivation) = cultivation else {
+        return 1.0;
+    };
+    let effective_qi_max = (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
+    if !effective_qi_max.is_finite() || effective_qi_max <= f64::EPSILON {
+        return 0.0;
+    }
+    (cultivation.qi_current / effective_qi_max).clamp(0.0, 1.0) as f32
 }
 
 fn handle_spirit_niche_coordinate_reveals(
@@ -2170,16 +2190,25 @@ fn load_social_spirit_niche(
         )
         .optional()
         .map_err(io::Error::other)?;
-    Ok(row.map(
-        |(pos, placed_at_tick, revealed, revealed_by, guardians_json)| SpiritNiche {
-            owner: char_id.to_string(),
-            pos,
-            placed_at_tick,
-            revealed,
-            revealed_by,
-            guardians: decode_guardians_json(guardians_json.as_str()).unwrap_or_default(),
+    row.map(
+        |(pos, placed_at_tick, revealed, revealed_by, guardians_json)| -> io::Result<SpiritNiche> {
+            let guardians = decode_guardians_json(guardians_json.as_str()).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("invalid guardians_json for `{char_id}`: {error}"),
+                )
+            })?;
+            Ok(SpiritNiche {
+                owner: char_id.to_string(),
+                pos,
+                placed_at_tick,
+                revealed,
+                revealed_by,
+                guardians,
+            })
         },
-    ))
+    )
+    .transpose()
 }
 
 fn load_all_social_spirit_niches(
@@ -4113,6 +4142,44 @@ mod tests {
     }
 
     #[test]
+    fn load_social_spirit_niche_rejects_invalid_guardians_json() {
+        let (persistence, data_dir) = social_persistence("spirit-niche-invalid-guardians");
+        let connection =
+            open_social_connection(&persistence).expect("social sqlite should open for test");
+        connection
+            .execute(
+                "
+                INSERT INTO social_spirit_niches (
+                    owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
+                    guardians_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
+                ",
+                rusqlite::params![
+                    "char:owner",
+                    20_i64,
+                    64_i64,
+                    20_i64,
+                    1_i64,
+                    0_i64,
+                    Option::<String>::None,
+                    "{not-valid-json",
+                    100_i64,
+                ],
+            )
+            .expect("invalid guardians fixture row should insert");
+
+        let error = load_social_components(&persistence, "char:owner")
+            .expect_err("invalid guardians_json must not silently drop guardians");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().contains("invalid guardians_json"),
+            "unexpected error: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
     fn spirit_niche_break_attempt_reveals_and_disables_anchor() {
         let (persistence, data_dir) = social_persistence("spirit-niche-reveal");
         let mut app = App::new();
@@ -4129,6 +4196,7 @@ mod tests {
         app.insert_resource(registry);
         app.add_event::<DiggingEvent>();
         app.add_event::<SpiritNicheRevealRequest>();
+        app.add_event::<NicheIntrusionAttempt>();
         app.add_systems(
             Update,
             (
@@ -4157,10 +4225,17 @@ mod tests {
         let (mut observer_bundle, _observer_helper) = create_mock_client("Observer");
         observer_bundle.player.position = Position::new([20.0, 64.0, 20.0]);
         let observer = app.world_mut().spawn(observer_bundle).id();
-        app.world_mut().entity_mut(observer).insert(Lifecycle {
-            character_id: "char:observer".to_string(),
-            ..Default::default()
-        });
+        app.world_mut().entity_mut(observer).insert((
+            Lifecycle {
+                character_id: "char:observer".to_string(),
+                ..Default::default()
+            },
+            Cultivation {
+                qi_current: 2.0,
+                qi_max: 10.0,
+                ..Default::default()
+            },
+        ));
         app.world_mut().send_event(DiggingEvent {
             client: observer,
             position: BlockPos::new(20, 64, 20),
@@ -4186,6 +4261,18 @@ mod tests {
             .expect("persisted niche should load");
         assert!(loaded.revealed);
         assert_eq!(loaded.revealed_by.as_deref(), Some("char:observer"));
+
+        let mut attempts = app
+            .world_mut()
+            .resource_mut::<Events<NicheIntrusionAttempt>>();
+        let attempts = attempts.drain().collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].intruder, observer);
+        assert_eq!(attempts[0].intruder_char_id, "char:observer");
+        assert_eq!(attempts[0].niche_owner, "char:owner");
+        assert_eq!(attempts[0].niche_pos, [20, 64, 20]);
+        assert_eq!(attempts[0].items_taken, Vec::<u64>::new());
+        assert_eq!(attempts[0].intruder_qi_fraction, 0.2);
 
         let _ = std::fs::remove_dir_all(data_dir);
     }
