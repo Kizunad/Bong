@@ -622,11 +622,11 @@ vN+1 plan-identity-v1 / plan-baomai 落地后：
 |---|---|---|
 | QiNeedle component | `server/src/combat/needle.rs` | `QiNeedle` component / `ShootNeedleIntent` event / `needle_tick_system` |
 | Dugu state | `server/src/cultivation/dugu.rs` | `DuguPoisonState` component / `InfuseDuguPoisonIntent` event / `Cultivation.dugu_practice_level` 字段 / `Combat.pending_dugu_infusion` 字段 |
-| Poison tick | `server/src/cultivation/dugu.rs` | `dugu_poison_tick` system（每 5 min 边界 → flow_capacity 永久 ↓ → qi_max recompute） |
+| Poison tick | `server/src/cultivation/dugu.rs` | `dugu_poison_tick` system（按 `attached_at_tick` 每 5 min 触发 → flow_capacity 永久 ↓ → qi_max recompute） |
 | 部位映射 | `server/src/combat/dugu_mapping.rs` | `body_part_to_meridian` 函数（Q58 起手值表）+ `on_attack_resolved_dugu_handler` |
 | 自解 | `server/src/cultivation/dugu.rs` | `SelfAntidoteIntent` event / `resolve_self_antidote_intent` 系统 / 30% 失败概率 |
 | 主动遮蔽 stub | `server/src/combat/stealth.rs` | `DuguObfuscation` impl（v1 stub，P1 接 plan-perception hook） |
-| Item registry | `server/assets/items/dugu.toml` | `bong:dugu/jiegurui` (解蛊蕊) |
+| Item registry | `server/assets/items/core.toml` / `server/src/botany/registry.rs` | `jie_gu_rui` (解蛊蕊) |
 | Combat event 扩展 | `server/src/combat/events.rs` | `DuguPoisonProgressEvent` / `DuguObfuscationDisruptedEvent` / `DuguRevealedEvent` (stub) / `AntidoteResultEvent` |
 | Schema (TS) | `agent/packages/schema/src/dugu.ts` | `DuguPoisonStateV1` / `DuguPoisonProgressEventV1` / `DuguObfuscationStateV1` / `AntidoteResultEventV1` / `DuguRevealedEventV1` |
 | Inbound packets | `client/.../net/DuguPackets.java` | `bong:combat/shoot_needle` / `bong:combat/infuse_dugu_poison` / `bong:cultivation/self_antidote` |
@@ -702,6 +702,7 @@ vN+1 plan-identity-v1 / plan-baomai 落地后：
 ### 落地清单
 
 - P0 凝针 / 灌毒蛊 / 经脉损伤 / 自解闭环：`server/src/combat/needle.rs`、`server/src/cultivation/dugu.rs`、`server/src/cultivation/mod.rs`，新增 `ShootNeedleIntent`、`QiNeedle`、`InfuseDuguPoisonIntent`、`PendingDuguInfusion`、`DuguPoisonState`、`dugu_poison_tick`、`SelfAntidoteIntent`，并接入 `SkillRegistry` / `known_techniques` hotbar 技能。
+- Review 修复收口：`dugu_poison_tick` 改为按 `attached_at_tick` 满间隔触发，`actual_loss_this_tick` 只上报真实扣减量；`can_infuse_dugu` 显式要求 `Realm::Induce`；hotbar 凝针缺少 target 时拒绝为 `InvalidTarget`，不扣资源、不发事件。
 - P0/P1 命中与遮蔽接入：`server/src/combat/events.rs` 增加 `AttackSource`；`server/src/combat/resolve.rs` 透传攻击来源；`server/src/cultivation/spiritual_sense/scanner.rs`、`server/src/cultivation/spiritual_sense/push.rs` 接入 `DuguPractice` + `DuguObfuscationDisrupted`，同境/近境遮蔽为 `AmbientLeyline`，高两境界差或暴露窗口透传识破。
 - P1 agent narration：`server/src/network/dugu_event_bridge.rs`、`server/src/network/redis_bridge.rs`、`agent/packages/tiandao/src/dugu-narration.ts`、`agent/packages/tiandao/src/skills/dugu.md` 将 `DuguPoisonProgressEventV1` 发布到 `bong:dugu/poison_progress` 并生成玩家叙事。
 - P0/P1 client HUD contract：`server/src/network/dugu_state_emit.rs`、`agent/packages/schema/src/dugu.ts`、`agent/packages/schema/src/server-data.ts`、`client/src/main/java/com/bong/client/combat/handler/DuguPoisonStateHandler.java`、`client/src/main/java/com/bong/client/combat/store/DuguPoisonStateStore.java` 接通 `dugu_poison_state` 自身可见状态；`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java`、`ClientRequestSender.java` 接通 `self_antidote`。
@@ -712,16 +713,16 @@ vN+1 plan-identity-v1 / plan-baomai 落地后：
 - `edc6d428`（2026-05-04）`plan-dugu-v1: 落地毒蛊 server 闭环`
 - `cf4ed1ac`（2026-05-04）`plan-dugu-v1: 接通毒蛊 schema 与天道叙事`
 - `5378aed0`（2026-05-04）`plan-dugu-v1: 接通毒蛊客户端状态与自解请求`
+- `2c5db341`（2026-05-04）`fix(plan-dugu-v1): 修正毒蛊 tick 与凝针目标校验`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`
-- `cd server && cargo test`：2214 passed
-- `cd server && cargo test cultivation::dugu`：7 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2287 passed
+- `cd server && cargo test cultivation::dugu`：11 passed
 - `cd server && cargo test network::dugu_event_bridge`：1 passed
 - `cd agent && npm run build`
-- `cd agent/packages/tiandao && npm test`：225 passed
-- `cd agent/packages/schema && npm test`：267 passed（含 generated artifacts freshness）
+- `cd agent/packages/tiandao && npm test`：236 passed
+- `cd agent/packages/schema && npm test`：268 passed（含 generated artifacts freshness）
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL
 - `git diff --check`
 
