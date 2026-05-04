@@ -17,9 +17,9 @@ use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
 use super::components::{
-    BotanyHarvestMode, BotanyPhase, BotanySkillChangedEvent, BotanyTrampleRoll, HarvestSession,
-    HarvestSessionStore, HarvestTerminalEvent, InventorySnapshotRequestEvent, Plant,
-    PlantProximityTracker, PlantStaticPointStore,
+    BotanyAttractsMobsEvent, BotanyHarvestMode, BotanyPhase, BotanySkillChangedEvent,
+    BotanyTrampleRoll, HarvestSession, HarvestSessionStore, HarvestTerminalEvent,
+    InventorySnapshotRequestEvent, Plant, PlantProximityTracker, PlantStaticPointStore,
 };
 use super::registry::{BotanyKindRegistry, BotanyPlantId, PlantVariant};
 
@@ -97,6 +97,7 @@ pub fn complete_harvest_for_player(
     skill_events: &mut EventWriter<BotanySkillChangedEvent>,
     skill_xp_events: &mut EventWriter<SkillXpGain>,
     durability_events: &mut EventWriter<InventoryDurabilityChangedEvent>,
+    mob_attraction_events: &mut EventWriter<BotanyAttractsMobsEvent>,
     now_tick: u64,
 ) -> Result<(), String> {
     let session = store
@@ -104,10 +105,12 @@ pub fn complete_harvest_for_player(
         .ok_or_else(|| format!("missing harvest session for `{player_id}`"))?;
 
     let mut target_pos: Option<[f64; 3]> = None;
+    let mut target_zone_name: Option<String> = None;
     let mut variant = PlantVariant::None;
     if let Some(target_entity) = session.target_entity {
         if let Ok(mut plant) = plant_query.get_mut(target_entity) {
             target_pos = Some(plant.position);
+            target_zone_name = Some(plant.zone_name.clone());
             variant = plant.variant;
             if let Some(source_point) = plant.source_point {
                 if let Some(point) = static_points.get_mut(source_point) {
@@ -181,6 +184,23 @@ pub fn complete_harvest_for_player(
             actual_tool,
             now_tick,
         );
+    }
+
+    if let (Some(target_pos), Some(zone_name)) = (target_pos, target_zone_name.as_deref()) {
+        for (mob_kind, min_count, max_count) in
+            super::hazard::attracts_mobs_hazards_for_kind(session.target_plant, kind_registry)
+        {
+            mob_attraction_events.send(BotanyAttractsMobsEvent {
+                client_entity: session.client_entity,
+                plant_kind: session.target_plant,
+                zone_name: zone_name.to_string(),
+                target_pos,
+                mob_kind,
+                min_count,
+                max_count,
+                issued_at_tick: now_tick,
+            });
+        }
     }
 
     let base_xp = match session.mode {
@@ -430,6 +450,7 @@ pub fn tick_harvest_sessions(
     mut skill_events: EventWriter<BotanySkillChangedEvent>,
     mut skill_xp_events: EventWriter<SkillXpGain>,
     mut durability_events: EventWriter<InventoryDurabilityChangedEvent>,
+    mut mob_attraction_events: EventWriter<BotanyAttractsMobsEvent>,
 ) {
     let Some(gameplay_tick) = gameplay_tick else {
         return;
@@ -458,6 +479,7 @@ pub fn tick_harvest_sessions(
             &mut skill_events,
             &mut skill_xp_events,
             &mut durability_events,
+            &mut mob_attraction_events,
             now,
         );
     }
@@ -662,6 +684,7 @@ mod tests {
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_event::<HarvestTerminalEvent>();
         app.add_event::<BotanySkillChangedEvent>();
+        app.add_event::<BotanyAttractsMobsEvent>();
         app.add_event::<SkillXpGain>();
         app
     }

@@ -32,16 +32,16 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::botany::{BotanyModelOverlayV1, BotanyPlantV2RenderProfileV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use components::{
-    BotanyHarvestMode, BotanySkillChangedEvent, BotanyTrampleRoll, BotanyVariantRoll,
-    HarvestSessionStore, HarvestTerminalEvent, InventorySnapshotRequestEvent, Plant,
-    PlantLifecycleClock, PlantProximityTracker, PlantStaticPointStore,
+    BotanyAttractsMobsEvent, BotanyHarvestMode, BotanySkillChangedEvent, BotanyTrampleRoll,
+    BotanyVariantRoll, HarvestSessionStore, HarvestTerminalEvent, InventorySnapshotRequestEvent,
+    Plant, PlantLifecycleClock, PlantProximityTracker, PlantStaticPointStore,
 };
 use ecology::emit_botany_ecology_snapshot;
 use events::{spawn_event_triggered_plants_on_death, BotanyEventSpawnRoll};
 use harvest::{
     detect_non_session_trample, enforce_harvest_session_constraints, tick_harvest_sessions,
 };
-use hazard::{hazard_hints_for_kind, tick_harvest_hazards};
+use hazard::{hazard_hints_for_kind, spawn_attracted_mobs_from_harvest, tick_harvest_hazards};
 use lifecycle::{initialize_static_points_from_zones, run_botany_lifecycle_tick};
 use registry::BotanyKindRegistry;
 
@@ -71,6 +71,7 @@ pub fn register(app: &mut App) {
     app.add_event::<InventorySnapshotRequestEvent>();
     app.add_event::<HarvestTerminalEvent>();
     app.add_event::<BotanySkillChangedEvent>();
+    app.add_event::<BotanyAttractsMobsEvent>();
 
     app.add_systems(Startup, validate_botany_inventory_primitives_on_startup);
 
@@ -84,6 +85,7 @@ pub fn register(app: &mut App) {
             tick_harvest_hazards,
             enforce_harvest_session_constraints,
             tick_harvest_sessions,
+            spawn_attracted_mobs_from_harvest,
             emit_botany_inventory_snapshots,
             emit_botany_v2_render_profiles,
             emit_botany_harvest_progress,
