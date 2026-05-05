@@ -1,29 +1,30 @@
 //! plan-tsy-zone-v1 §2 — 活坍缩渊负压抽真元 tick。
 //!
 //! 公式（§2.1）：
-//!   rate = |zone.spirit_qi| × (cultivation.qi_max / REFERENCE_POOL) ^ N × BASE
+//!   rate = |zone.spirit_qi| × (cultivation.qi_max / QI_TSY_REFERENCE_POOL) ^
+//!          QI_TSY_DRAIN_NONLINEAR_EXPONENT × QI_TSY_BASE_DRAIN_PER_TICK
 //! 触发条件：玩家有 `TsyPresence` + 当前 zone 是 TSY 系列。
 //! 真元归零 → 发 `DeathEvent { cause: "tsy_drain" }`，由 combat lifecycle 接管。
 
-use valence::prelude::{Entity, EventWriter, Position, Query, Res, With, Without};
+use valence::prelude::{Entity, EventWriter, Position, Query, Res, ResMut, With, Without};
 
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::tsy_hostile::{compute_fuya_aura_drain_multiplier, FuyaAura};
+use crate::qi_physics::constants::{
+    QI_AMBIENT_EXCRETION_PER_SEC, QI_TSY_BASE_DRAIN_PER_TICK, QI_TSY_DRAIN_NONLINEAR_EXPONENT,
+    QI_TSY_REFERENCE_POOL, QI_TSY_SEARCH_DRAIN_MULTIPLIER,
+};
+use crate::qi_physics::{
+    qi_excretion_loss, ContainerKind, EnvField, QiAccountId, QiTransfer, QiTransferReason,
+    WorldQiAccount,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::tsy::TsyPresence;
-use crate::world::tsy_container::SEARCH_DRAIN_MULTIPLIER;
 use crate::world::tsy_container_search::IsSearching;
 use crate::world::zone::{Zone, ZoneRegistry};
-
-/// 引气满池基准（qi_max = 100 → pool_ratio = 1.0）。
-pub const REFERENCE_POOL: f64 = 100.0;
-/// 非线性指数。`plan-tsy-v1.md §0` 公理 2：抽取速率与池大小**平方关系**。
-pub const NONLINEAR_EXPONENT: f64 = 1.5;
-/// 基准抽速（点 / tick）。20Hz tick，0.5/tick = 10/sec @ |灵压|=1.0 引气小池。
-pub const BASE_DRAIN_PER_TICK: f64 = 0.5;
 
 type TsyDrainPlayerQuery<'w, 's> = Query<
     'w,
@@ -51,19 +52,52 @@ pub fn compute_drain_per_tick(zone: &Zone, cultivation: &Cultivation) -> f64 {
     if pool <= 0.0 {
         return 0.0;
     }
-    let pool_ratio = pool / REFERENCE_POOL;
-    let nonlinear = pool_ratio.powf(NONLINEAR_EXPONENT);
-    zone.spirit_qi.abs() * nonlinear * BASE_DRAIN_PER_TICK
+    let pool_ratio = pool / QI_TSY_REFERENCE_POOL;
+    let nonlinear = pool_ratio.powf(QI_TSY_DRAIN_NONLINEAR_EXPONENT);
+    let intensity = zone.spirit_qi.abs();
+    let env = EnvField {
+        local_zone_qi: 0.0,
+        tsy_intensity: intensity.clamp(0.0, 1.0),
+        ..EnvField::default()
+    };
+    let canonical_loss = qi_excretion_loss(intensity, ContainerKind::AmbientField, 1.0, env);
+    let normalized_loss = (canonical_loss / QI_AMBIENT_EXCRETION_PER_SEC).max(0.0);
+    normalized_loss * nonlinear * QI_TSY_BASE_DRAIN_PER_TICK
 }
 
 /// plan-tsy-container-v1 §2.3 — 搜刮中真元抽取乘数。
 /// 搜刮是主动暴露行为：抽吸速率在 baseline 上 ×1.5。
 pub fn compute_search_drain_multiplier(in_search: bool) -> f64 {
     if in_search {
-        SEARCH_DRAIN_MULTIPLIER
+        QI_TSY_SEARCH_DRAIN_MULTIPLIER
     } else {
         1.0
     }
+}
+
+fn record_tsy_drain_transfer(
+    account: Option<&mut WorldQiAccount>,
+    player: Entity,
+    zone_name: &str,
+    amount: f64,
+    before_player_qi: f64,
+) {
+    let Some(account) = account else {
+        return;
+    };
+    if amount <= 0.0 {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{player:?}"));
+    let to = QiAccountId::rift(zone_name.to_string());
+    let source_balance = account.balance(&from).max(before_player_qi.max(amount));
+    if account.set_balance(from.clone(), source_balance).is_err() {
+        return;
+    }
+    let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::RiftCollapse) else {
+        return;
+    };
+    let _ = account.transfer(transfer);
 }
 
 /// plan-tsy-zone-v1 §2.2 — 抽真元 tick system。
@@ -79,6 +113,7 @@ pub fn compute_search_drain_multiplier(in_search: bool) -> f64 {
 pub fn tsy_drain_tick(
     clock: Res<CombatClock>,
     zones: Res<ZoneRegistry>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut deaths: EventWriter<DeathEvent>,
     mut players: TsyDrainPlayerQuery,
     fuya_auras: Query<(&Position, &FuyaAura), With<NpcMarker>>,
@@ -98,7 +133,16 @@ pub fn tsy_drain_tick(
             continue;
         }
         let was_alive = cultivation.qi_current > 0.0;
-        cultivation.qi_current -= drain;
+        let before_player_qi = cultivation.qi_current.max(0.0);
+        let actual_drain = drain.min(before_player_qi);
+        record_tsy_drain_transfer(
+            qi_account.as_deref_mut(),
+            entity,
+            zone.name.as_str(),
+            actual_drain,
+            before_player_qi,
+        );
+        cultivation.qi_current = (cultivation.qi_current - drain).max(0.0);
         if was_alive && cultivation.qi_current <= 0.0 {
             // 归零 → P0 发 DeathEvent（cause="tsy_drain"），死亡结算由 P1 plan-tsy-loot 处理。
             // 环境死亡：无攻击者。
@@ -186,8 +230,7 @@ mod tests {
         let z = tsy_zone("tsy_lingxu_01_deep", -1.1);
         let p = player(30.0);
         let drain = compute_drain_per_tick(&z, &p);
-        // 1.1 * (30/100)^1.5 * 0.5 ≈ 0.0904 / tick → ~1.81/sec
-        assert!(drain > 0.08 && drain < 0.10, "got drain={drain}");
+        assert!(drain > 0.13 && drain < 0.14, "got drain={drain}");
     }
 
     /// plan §2.1 表："化虚浅" — pool=500, qi=-0.3
@@ -206,8 +249,7 @@ mod tests {
         let z = tsy_zone("tsy_lingxu_01_deep", -1.1);
         let p = player(500.0);
         let drain = compute_drain_per_tick(&z, &p);
-        // 1.1 * 11.18 * 0.5 ≈ 6.149 / tick → ~123/sec → 化虚深秒杀
-        assert!(drain > 5.7 && drain < 6.6, "got drain={drain}");
+        assert!(drain > 9.1 && drain < 9.4, "got drain={drain}");
     }
 
     #[test]
@@ -248,5 +290,28 @@ mod tests {
         let big = compute_drain_per_tick(&z, &player(500.0));
         // big / small 应远大于 (500/30) = 16.67 —— 因为非线性指数 1.5 放大
         assert!(big / small > 30.0, "got ratio {}", big / small);
+    }
+
+    #[test]
+    fn transfer_records_tsy_drain_without_losing_qi() {
+        let mut account = WorldQiAccount::default();
+        record_tsy_drain_transfer(
+            Some(&mut account),
+            Entity::from_raw(7),
+            "tsy_lingxu_01_deep",
+            3.0,
+            10.0,
+        );
+
+        let player_account = QiAccountId::player(format!("entity:{:?}", Entity::from_raw(7)));
+        let rift_account = QiAccountId::rift("tsy_lingxu_01_deep");
+        assert_eq!(account.balance(&player_account), 7.0);
+        assert_eq!(account.balance(&rift_account), 3.0);
+        assert_eq!(account.total(), 10.0);
+        assert_eq!(account.transfers().len(), 1);
+        assert_eq!(
+            account.transfers()[0].reason,
+            QiTransferReason::RiftCollapse
+        );
     }
 }

@@ -175,9 +175,6 @@ pub const SEARCH_MOVE_INTERRUPT_THRESHOLD_M: f64 = 0.5;
 /// 玩家与容器交互的最大距离（米）。plan §2.1 — 距离 > 3 block 拒绝开搜。
 pub const SEARCH_INTERACT_RANGE_M: f64 = 3.0;
 
-/// 真元抽取在搜刮期间的乘数。plan §0.3 / §2.3。
-pub const SEARCH_DRAIN_MULTIPLIER: f64 = 1.5;
-
 /// 给 `ItemInstance` 加 `as_container_key` 识别 helper（仅 server 内部；
 /// 不上 inventory schema，因为钥匙是 template_id 约定，不是新字段）。
 pub fn item_as_container_key(item: &ItemInstance) -> Option<KeyKind> {
