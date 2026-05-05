@@ -1,0 +1,43 @@
+[[item]]
+id = "processed_ci_she_hao"
+name = "炮制刺舌蒿"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "丹炉炮制过的刺舌蒿，药性收束，成丹成功率更稳。"
+
+[[item]]
+id = "processed_ning_mai_cao"
+name = "炮制凝脉草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "丹炉炮制过的凝脉草，药力较鲜草更定。"
+
+[[item]]
+id = "withered_processed_ci_she_hao"
+name = "焦刺舌蒿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "炮制失败留下的焦料，可接 alchemy-recycle-v1 反哺。"
+
+[[item]]
+id = "withered_processed_ning_mai_cao"
+name = "焦凝脉草"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "炮制失败留下的焦料，可接 alchemy-recycle-v1 反哺。"

@@ -27,6 +27,7 @@ pub mod hoe;
 pub mod network_emit;
 pub mod plot;
 pub mod pressure;
+pub mod processing;
 pub mod qi_account;
 pub mod seed;
 pub mod session;
@@ -56,6 +57,11 @@ pub use growth::{
 pub use hoe::HoeKind;
 #[allow(unused_imports)]
 pub use plot::{CropInstance, LingtianPlot, N_RENEW, PLOT_QI_CAP_BASE, PLOT_QI_CAP_MAX};
+#[allow(unused_imports)]
+pub use processing::{
+    ProcessingKind, ProcessingRecipe, ProcessingRecipeRegistry, ProcessingSession,
+    ProcessingSkillLevels,
+};
 #[allow(unused_imports)]
 pub use qi_account::{
     LingtianTickAccumulator, ZoneQiAccount, BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
@@ -102,6 +108,16 @@ pub fn register(app: &mut App) {
     app.insert_resource(LingtianHarvestRng::default());
     app.insert_resource(LingtianClock::default());
     app.insert_resource(ZonePressureTracker::new());
+    let processing_registry =
+        processing::ProcessingRecipeRegistry::load_default().unwrap_or_else(|error| {
+            tracing::error!("[bong][lingtian][processing] recipe load failed: {error}");
+            processing::ProcessingRecipeRegistry::new()
+        });
+    tracing::info!(
+        "[bong][lingtian][processing] loaded {} processing recipe(s)",
+        processing_registry.len()
+    );
+    app.insert_resource(processing_registry);
 
     app.add_event::<StartTillRequest>();
     app.add_event::<TillCompleted>();
@@ -141,6 +157,7 @@ pub fn register(app: &mut App) {
             // session emit 在 apply 后跑，client 拿到的是结算后状态
             systems::emit_harvest_inventory_snapshots,
             network_emit::emit_lingtian_session_to_clients,
+            processing::processing_session_tick_system,
         )
             .chain()
             .after(systems::apply_completed_sessions),

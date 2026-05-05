@@ -1,0 +1,21 @@
+[[item]]
+id = "powder_ci_she_hao"
+name = "刺舌蒿药粉"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.9
+description = "石臼碾成的刺舌蒿药粉，投料效率较干品更高。"
+
+[[item]]
+id = "powder_ning_mai_cao"
+name = "凝脉草药粉"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.9
+description = "石臼碾成的凝脉草药粉，适合快速入炉。"

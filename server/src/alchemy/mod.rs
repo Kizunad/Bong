@@ -29,6 +29,7 @@ pub mod furnace;
 pub mod learned;
 pub mod outcome;
 pub mod pill;
+pub mod processed_input;
 pub mod quality;
 pub mod recipe;
 pub mod recipe_fragment;

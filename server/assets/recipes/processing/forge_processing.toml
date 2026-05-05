@@ -1,0 +1,21 @@
+[[recipe]]
+id = "forge_ci_she_hao"
+kind = "forging_alchemy"
+duration_ticks = 6000
+inputs = [{ item_id = "dry_ci_she_hao", count = 2 }]
+outputs = [{ item_id = "processed_ci_she_hao", count = 2, quality_multiplier = 1.2, freshness_profile = "forging_alchemy_v1" }]
+skill_req = { herbalism = 5, alchemy = 3 }
+failure_rate = 0.10
+qi_cost = 5
+failure_output = { item_id = "withered_processed_ci_she_hao", count = 1, quality_multiplier = 0.3, freshness_profile = "forging_alchemy_v1" }
+
+[[recipe]]
+id = "forge_ning_mai_cao"
+kind = "forging_alchemy"
+duration_ticks = 6000
+inputs = [{ item_id = "dry_ning_mai_cao", count = 2 }]
+outputs = [{ item_id = "processed_ning_mai_cao", count = 2, quality_multiplier = 1.2, freshness_profile = "forging_alchemy_v1" }]
+skill_req = { herbalism = 5, alchemy = 3 }
+failure_rate = 0.10
+qi_cost = 5
+failure_output = { item_id = "withered_processed_ning_mai_cao", count = 1, quality_multiplier = 0.3, freshness_profile = "forging_alchemy_v1" }

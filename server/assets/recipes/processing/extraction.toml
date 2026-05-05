@@ -1,0 +1,17 @@
+[[recipe]]
+id = "extract_ci_she_hao"
+kind = "extraction"
+duration_ticks = 12000
+inputs = [{ item_id = "ci_she_hao", count = 3, min_freshness = 0.7 }]
+outputs = [{ item_id = "extract_ci_she_hao", count = 1, quality_multiplier = 2.0, freshness_profile = "extraction_v1" }]
+skill_req = { herbalism = 6, alchemy = 3 }
+failure_rate = 0.15
+
+[[recipe]]
+id = "extract_ning_mai_cao"
+kind = "extraction"
+duration_ticks = 12000
+inputs = [{ item_id = "ning_mai_cao", count = 3, min_freshness = 0.7 }]
+outputs = [{ item_id = "extract_ning_mai_cao", count = 1, quality_multiplier = 2.0, freshness_profile = "extraction_v1" }]
+skill_req = { herbalism = 6, alchemy = 3 }
+failure_rate = 0.15
