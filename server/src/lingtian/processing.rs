@@ -846,6 +846,104 @@ mod tests {
     }
 
     #[test]
+    fn validate_start_unknown_recipe_id_returns_unknown_recipe() {
+        let err = validate_processing_start(
+            &registry(),
+            "missing_recipe",
+            ProcessingKind::Drying,
+            &[ItemStack::new("ci_she_hao", 5, 1.0).with_freshness(0.8)],
+            ProcessingSkillLevels {
+                herbalism: 9,
+                alchemy: 9,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ProcessingStartError::UnknownRecipe);
+    }
+
+    #[test]
+    fn validate_start_kind_mismatch_between_request_and_recipe() {
+        let err = validate_processing_start(
+            &registry(),
+            "dry_ci_she_hao",
+            ProcessingKind::Grinding,
+            &[ItemStack::new("ci_she_hao", 5, 1.0).with_freshness(0.8)],
+            ProcessingSkillLevels {
+                herbalism: 9,
+                alchemy: 9,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ProcessingStartError::KindMismatch {
+                expected: ProcessingKind::Drying,
+                got: ProcessingKind::Grinding,
+            }
+        );
+    }
+
+    #[test]
+    fn validate_start_skill_locked_when_below_required_levels() {
+        let mut registry = ProcessingRecipeRegistry::new();
+        let mut locked = dry_recipe();
+        locked.id = "locked_forge_ci_she_hao".to_string();
+        locked.skill_req = SkillRequirement {
+            herbalism: 5,
+            alchemy: 3,
+        };
+        registry.insert(locked).unwrap();
+
+        let err = validate_processing_start(
+            &registry,
+            "locked_forge_ci_she_hao",
+            ProcessingKind::Drying,
+            &[ItemStack::new("ci_she_hao", 5, 1.0).with_freshness(0.8)],
+            ProcessingSkillLevels {
+                herbalism: 4,
+                alchemy: 3,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ProcessingStartError::SkillLocked {
+                required: SkillRequirement {
+                    herbalism: 5,
+                    alchemy: 3,
+                },
+                actual: ProcessingSkillLevels {
+                    herbalism: 4,
+                    alchemy: 3,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn validate_start_missing_input_when_count_below_required() {
+        let err = validate_processing_start(
+            &registry(),
+            "grind_ci_she_hao",
+            ProcessingKind::Grinding,
+            &[ItemStack::new("dry_ci_she_hao", 1, 1.0)],
+            ProcessingSkillLevels {
+                herbalism: 9,
+                alchemy: 9,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ProcessingStartError::MissingInput {
+                item_id: "dry_ci_she_hao".to_string(),
+                required: 2,
+                available: 1,
+            }
+        );
+    }
+
+    #[test]
     fn validate_start_ignores_stale_extra_stack_when_fresh_quantity_satisfies() {
         assert_eq!(
             validate_processing_start(

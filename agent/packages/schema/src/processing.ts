@@ -35,14 +35,22 @@ export const FreshnessUpdateV1 = Type.Object(
 );
 export type FreshnessUpdateV1 = Static<typeof FreshnessUpdateV1>;
 
-export const ServerDataProcessingSessionV1 = Type.Intersect([
-  Type.Object({ type: Type.Literal("processing_session"), v: Type.Literal(1) }),
-  ProcessingSessionDataV1,
-]);
+export const ServerDataProcessingSessionV1 = Type.Object(
+  {
+    type: Type.Literal("processing_session"),
+    v: Type.Literal(1),
+    ...ProcessingSessionDataV1.properties,
+  },
+  { additionalProperties: false },
+);
 export type ServerDataProcessingSessionV1 = Static<typeof ServerDataProcessingSessionV1>;
 
-export const ServerDataFreshnessUpdateV1 = Type.Intersect([
-  Type.Object({ type: Type.Literal("freshness_update"), v: Type.Literal(1) }),
-  FreshnessUpdateV1,
-]);
+export const ServerDataFreshnessUpdateV1 = Type.Object(
+  {
+    type: Type.Literal("freshness_update"),
+    v: Type.Literal(1),
+    ...FreshnessUpdateV1.properties,
+  },
+  { additionalProperties: false },
+);
 export type ServerDataFreshnessUpdateV1 = Static<typeof ServerDataFreshnessUpdateV1>;

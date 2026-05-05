@@ -1,44 +1,32 @@
 {
+  "additionalProperties": false,
   "type": "object",
-  "allOf": [
-    {
-      "type": "object",
-      "required": [
-        "type",
-        "v"
-      ],
-      "properties": {
-        "type": {
-          "const": "freshness_update",
-          "type": "string"
-        },
-        "v": {
-          "const": 1,
-          "type": "number"
-        }
-      }
+  "required": [
+    "type",
+    "v",
+    "item_uuid",
+    "freshness",
+    "profile_name"
+  ],
+  "properties": {
+    "type": {
+      "const": "freshness_update",
+      "type": "string"
     },
-    {
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "item_uuid",
-        "freshness",
-        "profile_name"
-      ],
-      "properties": {
-        "item_uuid": {
-          "type": "string"
-        },
-        "freshness": {
-          "minimum": 0,
-          "maximum": 1,
-          "type": "number"
-        },
-        "profile_name": {
-          "type": "string"
-        }
-      }
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "item_uuid": {
+      "type": "string"
+    },
+    "freshness": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "profile_name": {
+      "type": "string"
     }
-  ]
+  }
 }

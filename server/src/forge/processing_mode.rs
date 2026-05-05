@@ -3,11 +3,14 @@
 //! 这里不复用武器锻造四步状态机；它只把“丹炉可启动炮制/萃取 session”的
 //! 权限和配方校验封成事件入口，实际加工推进仍由 `lingtian::processing` 负责。
 
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Res};
+use valence::prelude::{bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Res};
 
-use crate::lingtian::processing::{
-    validate_processing_start, ItemStack, ProcessingKind, ProcessingRecipeRegistry,
-    ProcessingSkillLevels,
+use crate::lingtian::{
+    processing::{
+        validate_processing_start, ItemStack, ProcessingKind, ProcessingRecipeRegistry,
+        ProcessingSession, ProcessingSkillLevels,
+    },
+    LingtianClock, BEVY_TICKS_PER_LINGTIAN_TICK,
 };
 
 #[derive(Debug, Clone, Event)]
@@ -30,7 +33,9 @@ pub struct ForgeProcessingAccepted {
 }
 
 pub fn forge_processing_mode_handler(
+    mut commands: Commands,
     registry: Res<ProcessingRecipeRegistry>,
+    clock: Option<Res<LingtianClock>>,
     mut requests: EventReader<StartForgeProcessingRequest>,
     mut accepted: EventWriter<ForgeProcessingAccepted>,
 ) {
@@ -58,6 +63,24 @@ pub fn forge_processing_mode_handler(
         let Some(recipe) = registry.get(request.recipe_id.as_str()) else {
             continue;
         };
+        let started_at_tick = clock
+            .as_deref()
+            .map(|clock| {
+                clock
+                    .lingtian_tick
+                    .saturating_mul(BEVY_TICKS_PER_LINGTIAN_TICK as u64)
+            })
+            .unwrap_or_default();
+        commands
+            .entity(request.player)
+            .insert(ProcessingSession::new(
+                request.player,
+                request.kind,
+                request.inputs.clone(),
+                request.recipe_id.clone(),
+                started_at_tick,
+                recipe.duration_ticks,
+            ));
         accepted.send(ForgeProcessingAccepted {
             player: request.player,
             station: request.station,
@@ -71,14 +94,13 @@ pub fn forge_processing_mode_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lingtian::processing::{
-        ProcessingRecipe, RecipeInput, RecipeOutput, SkillRequirement, EXTRACTION_TICKS,
+    use crate::lingtian::{
+        processing::{
+            ProcessingRecipe, RecipeInput, RecipeOutput, SkillRequirement, EXTRACTION_TICKS,
+        },
+        LingtianClock,
     };
     use valence::prelude::{App, Update};
-
-    fn entity(raw: u32) -> Entity {
-        Entity::from_raw(raw)
-    }
 
     #[test]
     fn forging_alchemy_session_via_dan_furnace() {
@@ -111,13 +133,16 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(registry);
+        app.insert_resource(LingtianClock { lingtian_tick: 5 });
         app.add_event::<StartForgeProcessingRequest>();
         app.add_event::<ForgeProcessingAccepted>();
         app.add_systems(Update, forge_processing_mode_handler);
+        let player = app.world_mut().spawn_empty().id();
+        let station = app.world_mut().spawn_empty().id();
 
         app.world_mut().send_event(StartForgeProcessingRequest {
-            player: entity(1),
-            station: entity(2),
+            player,
+            station,
             recipe_id: "forge_ci_she_hao".to_string(),
             kind: ProcessingKind::ForgingAlchemy,
             inputs: vec![ItemStack::new("dry_ci_she_hao", 2, 1.0)],
@@ -134,6 +159,14 @@ mod tests {
         let accepted = events.iter_current_update_events().next().unwrap();
         assert_eq!(accepted.recipe_id, "forge_ci_she_hao");
         assert_eq!(accepted.kind, ProcessingKind::ForgingAlchemy);
+
+        let session = app.world().get::<ProcessingSession>(player).unwrap();
+        assert_eq!(session.recipe_id, "forge_ci_she_hao");
+        assert_eq!(session.kind, ProcessingKind::ForgingAlchemy);
+        assert_eq!(
+            session.started_at_tick,
+            5 * BEVY_TICKS_PER_LINGTIAN_TICK as u64
+        );
     }
 
     #[test]
