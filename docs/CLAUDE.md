@@ -32,6 +32,7 @@
 - **跨仓库契约**：server / agent / client 各自命中的 symbol（IPC schema 名 / Redis key / CustomPayload type ID）
 - **worldview 锚点**：这个玩法对应 `worldview.md` 哪一节？（境界？经济？传承？阵法？）
   没锚点的玩法要么补 worldview、要么不该立。
+- **qi_physics 锚点**：玩法涉及真元 / 灵气 / 衰减 / 逸散 / 半衰 / 距离损耗 / 排斥 / 吸力的，必须列出调用了 `qi_physics`(见 `plan-qi-physics-v1`) 的哪些函数 / 常数。新引入的物理常数必须先扩 `qi_physics` 而非本 plan 内写——本 plan 只声明物理参数（注入率、纯度、容器类型等），底层公式归 `qi_physics` 唯一实现。worldview §二「真元极易挥发」是全局唯一物理入口。
 
 ## 三、调研工具
 
@@ -54,6 +55,8 @@ grep -rn "<EventName>" server/src/                # 同名 / 近义 event 检查
 - **无 worldview 锚点**：纯"觉得这样好玩"加的玩法，找不到 worldview 章节对应
 - **skeleton 已有同主题却没合并**：开新版本号 / 改方向却没在 plan 头部说明为什么不并入既有骨架
 - **跨仓库契约缺一面**：只动 server 不动 agent / client（除非确实是纯服务端模块），或者只加 schema 不在两端 import
+- **自定真元 / 灵气物理常数或公式**：新模块出现 `*_DECAY*` / `*_EXCRETION*` / `*_DRAIN*` / `*_ATTEN*` / `*_HALF_LIFE*` / `RHO` / `BETA` / 形如 `0.0X_f64` 的"看起来像衰减率"的常数 / `fn ..._decay()` `fn ..._excretion()` 等衰变函数 → **必查 `qi_physics`**(`plan-qi-physics-v1`)。已存在就调用，不存在就**先扩 qi_physics 再 import**，**禁止 plan 自己写一份**。同源现象（worldview §二「真元极易挥发」）只允许一份代码实现——目前正典 0.03/格 vs `combat/decay.rs` 硬编 0.06、shelflife 5 套独立 profile、tsy_drain 与 dead_zone 两套互不相识的衰减公式，就是各 plan 自己拍数留下的烂账
+- **自定真元生成 / 释放路径，绕过守恒律**：worldview §二/§十 正典「全服灵气总量 `SPIRIT_QI_TOTAL` 恒定；修炼消耗 = 别人少掉」（const 当前 100.0，暂定可配置——**测试断言取 const 引用，不写字面 100**）。代码里所有真元/灵气流动**必须**走 `qi_physics::ledger::QiTransfer { from, to, amount }`——任何 `cultivation.qi_current += X`（无对应 zone 减）、`zone.spirit_qi -= Y`（无对应玩家增）、容器衰变把真元"凭空消失"（不归还 zone）、招式释放只扣攻方不写入环境，**都是守恒律红旗**。释放走 `qi_release_to_zone(amount, region, env)`，吸收走 `qi_excretion(initial, container, elapsed, env)`（已 clamp 到 zone 浓度下限符合压强法则）。唯一允许的"系统外流出"= 天道每时代衰减 1-3%（`QI_TIANDAO_DECAY_PER_ERA_*`），这条不是 plan 自由度。坍缩渊吸入也是中转站不是终点——塌缩时走 `collapse_redistribute_qi`，不消失
 
 ---
 

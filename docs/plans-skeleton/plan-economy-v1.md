@@ -6,52 +6,91 @@
 
 **library 锚点**：`world-0004 骨币半衰录`
 
-**交叉引用**：`plan-fauna-v1` ⬜(骨币原料异变兽骨) · `plan-social-v1` ✅(死信箱/盲盒/匿名交易) · `plan-mineral-v2` ✅(灵石燃料,**非货币**) · `plan-tsy-loot-v1` ✅(上古遗物 jackpot) · `plan-lingtian-weather-v1` ⏳(汐转节律) · `plan-gameplay-journey-v1` §E/§Q
+**交叉引用**：`plan-qi-physics-v1` 🆕(skeleton, **P1 衰变直接调底盘 `qi_excretion`**) · `plan-fauna-v1` ✅(骨币原料异变兽骨 + **P0 顺手实装**) · `plan-social-v1` ✅(死信箱/盲盒/匿名交易) · `plan-mineral-v2` ✅(灵石燃料,**非货币**) · `plan-tsy-loot-v1` ✅(上古遗物 jackpot) · `plan-lingtian-weather-v1` ⏳(汐转节律,P2 节律乘数源) · `plan-gameplay-journey-v1` §E/§Q
+
+> **2026-05-05 现状对齐**：P0 在 plan-fauna-v1（PR #105，2026-05-02）顺手落地，**字段名是 `spirit_quality (0..=1)` 而非 `remaining_qi`**；衰变机制并入 `shelflife` 走 3/7/14 day 线性归零。
+>
+> **2026-05-05 上钻**：原 §1.5 "shelflife 线性 vs 30 day 半衰" 二选一**已废弃** —— 上钻发现 worldview §二「真元极易挥发」是全局现象（骨币半衰、食材腐败、距离衰减、TSY 抽真元等同源），各 plan 各自拍数才是问题根源。已立 **`plan-qi-physics-v1`**（修仙物理底盘，唯一物理实现入口）。本 plan P1 不再自行决定衰变曲线 —— 等 qi-physics P1 通用算子 `qi_excretion(coin, ContainerKind::SealedInBone, elapsed, env)` 落地后直接调用，shelflife 现有的 `bone_coin_5/15/40_v1` profile 在 qi-physics P2 阶段一并迁出。
 
 ---
 
 ## 接入面 Checklist
 
-- **进料**：`fauna` 兽骨 drop + `mineral` 灵石产量 + `tsy_loot` 上古遗物 + `lingtian-weather` 节律状态
-- **出料**：骨币 item NBT(`remaining_qi` 字段) + 半衰 tick + 价格指数计算 + 节律影响系数
-- **共享类型**：`BoneCoin` item 与现有 `inventory::ItemStack` 集成,真元字段是 NBT 而非 stack count
-- **跨仓库契约**：`bone-coin-tick` schema + client 显示真元残量 + agent 经济 narration("天下灵气总价")
+- **进料**：`fauna` 兽骨 drop ✅(plan-fauna-v1) + `mineral` 灵石产量 ✅ + `tsy_loot` 上古遗物 ✅(`spirit_quality=0` 不参与衰变) + `lingtian-weather` 节律状态 ⏳
+- **出料**：骨币 item NBT(`spirit_quality` 字段，**复用通用真元残量**) + 半衰 tick(目前由 `shelflife::DecayProfileRegistry` 兜底) + 价格指数计算 + 节律影响系数
+- **共享类型**：**不新增 `remaining_qi`**——直接复用 `inventory::ItemInstance.spirit_quality (0..=1)`，制作时 `spirit_quality = sealed_qi / qi_cap`（已在 `bone_coin.rs:197`）。新造一份 NBT 字段是 §四"近义重名"红旗
+- **跨仓库契约**：`bone-coin-tick` schema(P2/P3) + client 显示真元残量(目前已通过通用 tooltip 显 spirit_quality，缺"骨币语义化"展示) + agent 经济 narration("天下灵气总价")
 - **worldview 锚点**：§九(骨币半衰) + §十七(节律对价格)
+- **qi_physics 锚点**：P1 调 `qi_physics::qi_excretion(coin, ContainerKind::SealedInBone, elapsed, env)`；P2 价格指数的节律乘数取 `qi_physics::constants::QI_RHYTHM_*` + `EnvField`；本 plan **不引入新物理常数**
 
 ---
 
 ## §0 设计轴心
 
-- [ ] **骨币不是堆叠数字**：每枚都有独立的 `remaining_qi` NBT,半衰是 per-coin 而非整堆
-- [ ] **持有 = 贬值**：不允许"无限囤积"——骨币每 30 in-game day 衰 50%
+- [x] **骨币不是堆叠数字**：每枚都有独立的真元残量(`spirit_quality`),半衰是 per-coin 而非整堆 —— ✅ 已实装(`fauna/bone_coin.rs`)
+- [ ] **持有 = 贬值（受地点制约）**：worldview §二 / §三 压强法则物理推导——骨币内真元逸散下限 = 当地 zone 浓度，**不是 0**。后果：
+  - **聚灵阵 / 灵田 / 高浓度 zone 储藏** → 骨币长期保值（逸散后 spirit_quality ≈ 高 zone 浓度）
+  - **废地 / 普通 zone** → 渐近 zone 基底（worldview §九「1 月只剩 ~20%」对应"末法残土普通 zone 的平均浓度水位"）
+  - **死域 / 坍缩渊** → 真归零（zone_qi=0 → 容器无下限保护 → worldview §十六.三「满灵骨币变普通骨头」）
+  - 与 §十一 「灵物密度阈值天道注视」形成张力——储太多在聚灵阵反招天道
+  - 公式由 **`plan-qi-physics-v1`** 唯一定义（不在本 plan 拍数）；本 plan P1 只负责注册 `ContainerKind::SealedInBone` 容器参数 + 阈值消失检查 + narration
 - [ ] **节律影响**：夏(炎汐)灵气活跃 → 价格 ↑;冬(凝汐)灵气稳态 → 价格 ↓;汐转期价格剧烈波动
-- [ ] **灵石不是货币**：严格 worldview §九 — 灵石是燃料,不能作为通货交易
-- [ ] **顶级资产 = 情报**：worldview §九 强调坐标/丹方/路线比骨币值钱
+- [x] **灵石不是货币**：严格 worldview §九 — 灵石是燃料,不能作为通货交易 —— ✅ plan-mineral-v2 已落
+- [ ] **顶级资产 = 情报**：worldview §九 强调坐标/丹方/路线比骨币值钱 —— **P3 narration 表达**
 
 ---
 
 ## §1 阶段总览
 
-| 阶段 | 内容 | 验收 |
-|---|---|---|
-| **P0** ⬜ | BoneCoin item 定义 + remaining_qi NBT + 制作 recipe(异变兽骨 + 阵法 + 真元注入) | 玩家可制作 + 拾取 + 真元残量可见 |
-| **P1** ⬜ | 半衰 tick 系统(per-coin 30 day 50%) + 衰至阈值自动消失 | shelflife 类似机制 |
-| **P2** ⬜ | 价格指数(基于世界总骨币真元 + 节律) + 商人 NPC 报价应用 | NPC 价格随节律波动 |
-| **P3** ⬜ | 100h 经济曲线 telemetry + tiandao "天下灵气总价" narration(每 in-game month 一次) | 经济曲线落地 §E 表 |
+| 阶段 | 内容 | 验收 | 状态 |
+|---|---|---|---|
+| **P0** | BoneCoin item 定义 + 真元残量(`spirit_quality`)+ 制作 recipe(异变兽骨 + 阵法 + 真元注入 + 可选 ZHEN_SHI_CHU 催化剂) | 玩家可制作 + 拾取 + 真元残量可见 | 🔄 **已落地于 plan-fauna-v1 (PR #105, 2026-05-02)** —— `BoneGrade::{Rat,Spider,Hybrid,General}`、`plan_bone_coin_craft`、`apply_bone_coin_craft_session`、5 单测 |
+| **P1** | 注册 `ContainerKind::SealedInBone` 物理参数 + 调 `qi_physics::qi_excretion` 衰变 + 阈值消失自动从 inventory 移除 + narration | 月内大幅贬值,无人当守财奴 | ⬜ **等 plan-qi-physics-v1 P1 算子落地后启动**（前置硬依赖） |
+| **P2** | 价格指数(基于世界总骨币真元 + 节律) + 商人 NPC 报价应用 | NPC 价格随节律波动 | ⬜ —— `npc/social::rarity_base_price()` 已是占位 baseline，待此 plan 替换 |
+| **P3** | 100h 经济曲线 telemetry + tiandao "天下灵气总价" narration(每 in-game month 一次) | 经济曲线落地 §E 表 | ⬜ |
+
+---
+
+## §1.5 P1 前置依赖（已上钻）
+
+> **2026-05-05 重写**：原 §1.5 三选一（shelflife 线性 / 指数半衰 / BoneCoin 独立 decay）**全部废弃** —— 三选一本身就是 §四"近义重名"红旗的体现：worldview §二 是全局物理（骨币半衰、食材腐败、距离衰减、TSY 抽真元同源），不该让 economy plan 单独决定衰变曲线形态。
+
+**当前裁决**：本 plan 不再自定衰变公式。骨币衰变形态由 **`plan-qi-physics-v1`** 通过 `qi_excretion(initial, container, elapsed, env)` 统一表达：
+
+- 容器侧：本 plan P1 在 `qi_physics::ContainerKind` 注册 `SealedInBone {grade}`(对应 5/15/40 三档骨币的密封等级)
+- 公式侧：曲线形态（线性 / 指数 / Stepwise）由 qi-physics P1 决定（其 §5 三红线决策门之一）
+- 现状清理：`shelflife/registry.rs` 已挂的 `bone_coin_5/15/40_v1` profile 由 qi-physics P2 阶段统一迁出，本 plan 不重复迁
+
+**P1 启动条件**（硬前置）：
+1. plan-qi-physics-v1 P1 完成 → `qi_excretion` 算子可用
+2. plan-qi-physics-v1 P0 §5 红线 1（distance decay 0.06 vs 0.03）已结案——侧面验证底盘正典化路径走得通
+
+在那之前本 plan P1 阻塞。注意：**shelflife 现行 3/7/14 day 线性归零到 0 实际违反 worldview §二 / §三 压强法则**（容器逸散下限应为当地 zone 浓度而非 0），qi-physics P2 迁移会修复——届时正常 zone 里骨币不会归零，只会渐近 zone 基底；只有死域 / 坍缩渊（zone_qi=0）才真归零，正好对应 worldview §十六.三「满灵骨币变普通骨头」。
 
 ---
 
 ## §2 关键公式
 
 ```
-半衰期:
-  remaining_qi(t) = remaining_qi(0) × 0.5^(t / 30_days)
-  当 remaining_qi < 5% 初始值 → 自动消失(物品 entity drop 死亡)
+半衰期: 不在本 plan 定义 —— 调用 plan-qi-physics-v1 通用算子:
 
-价格指数:
-  base_price(item)  = item 内在价值
-  market_factor     = log(supply / demand)
-  rhythm_factor     = 1.0(冬/凝汐) | 1.2(夏/炎汐) | random[0.7, 1.5](汐转 7 天)
+  spirit_quality(t) = qi_physics::qi_excretion(
+      initial = sealed_qi / qi_cap,
+      container = ContainerKind::SealedInBone { grade: BoneGrade },
+      elapsed_ticks = now - issued_at_tick,
+      env = EnvField { rhythm, local_qi_density, tsy_intensity },
+  )
+  spirit_quality < threshold(由 qi_physics 决定) → 自动消失
+
+  → 曲线形态(线性/指数/Stepwise)是 qi_physics P1 的事,本 plan 不关心
+
+价格指数(本 plan 自有):
+  base_price(item)  = item 内在价值(目前由 npc::social::rarity_base_price 占位:
+                                   Common 4 / Uncommon 12 / Rare 40 / ...)
+  market_factor     = log(supply / demand)  -- supply 用世界总骨币 spirit_quality 求和
+  rhythm_factor     = qi_physics::constants::QI_RHYTHM_NEUTRAL  (冬/凝汐)
+                    | qi_physics::constants::QI_RHYTHM_ACTIVE   (夏/炎汐)
+                    | random in QI_RHYTHM_TURBULENT_RANGE        (汐转 7 天)
   final_price       = base × market_factor × rhythm_factor
 ```
 
@@ -61,7 +100,7 @@
 P0-P1 醒灵-引气:    0-10 骨币(凡人级)
 P2 凝脉:            10-50 骨币(凝脉小富)
 P3 固元:            100-500 骨币(固元买卖)
-P4 通灵:            500-5000 骨币(巨贾,但每 30 day 半衰)
+P4 通灵:            500-5000 骨币(巨贾,但月内大幅半衰)
 P5 化虚:            骨币失意义,权力换算为天道注意力
 ```
 
@@ -69,23 +108,39 @@ P5 化虚:            骨币失意义,权力换算为天道注意力
 
 ## §3 数据契约
 
-- [ ] `server/src/economy/bone_coin.rs` item + NBT
-- [ ] `server/src/economy/bone_coin_decay.rs` 半衰 tick
-- [ ] `server/src/economy/price_index.rs` 价格指数 + 节律
-- [ ] `server/src/npc/merchant.rs` 商人 NPC 应用价格
-- [ ] `agent/packages/schema/src/economy.ts` BoneCoinTick + PriceIndex schema
-- [ ] `client/.../economy/BoneCoinTooltip.java` 显示真元残量
+- [x] `server/src/fauna/bone_coin.rs` — `BoneGrade` + `BoneCoinCraftSession/Request/Crafted` + `plan_bone_coin_craft` + `apply_bone_coin_craft_session` ✅(PR #105)
+- [x] `server/src/shelflife/registry.rs` — `bone_coin_5/15/40_v1` profile 已挂(线性 3/7/14 day)；**plan-qi-physics-v1 P2 阶段统一迁出**
+- [x] `server/src/inventory::ItemInstance.spirit_quality` — 真元残量字段(通用),骨币复用
+- [ ] **(P1)** 在 `qi_physics::ContainerKind` 注册 `SealedInBone { grade: BoneGrade }` + 调 `qi_excretion` 替换 shelflife 的骨币 profile
+- [ ] **(P1)** 阈值消失：检查 `shelflife` 已有此能力还是要在 qi_physics 提供（前者直接复用，后者归 qi-physics scope 不归本 plan）
+- [ ] **(P1)** narration: 「你怀里的骨币又少了几枚」类逐月提示
+- [ ] **(P2)** `server/src/economy/price_index.rs` 价格指数(用 qi_physics::constants::QI_RHYTHM_* 取节律乘数,替换 `npc::social::rarity_base_price` placeholder)
+- [ ] **(P2)** `server/src/npc/merchant.rs` 商人 NPC 应用价格(plan-fauna 之外的新模块,或扩 npc::social)
+- [ ] **(P2/P3)** `agent/packages/schema/src/economy.ts` BoneCoinTick + PriceIndex schema
+- [ ] **(P3)** `client/.../economy/BoneCoinTooltip.java` 显示"封灵真元残量"语义化(目前通用 tooltip 已显 spirit_quality 数值,缺骨币专属说明)
+- [ ] **(P3)** tiandao agent narration 模板("天下灵气总价")
 
 ---
 
 ## §4 开放问题
 
-- [ ] 节律检测依赖 plan-lingtian-weather-v1(汐转期判定),需 Wave 3 协调
-- [ ] 商人 NPC 价格策略是否有 AI(根据玩家境界涨价 / "看人下菜")?
-- [ ] 30 day 半衰是 in-game 还是 real-time? worldview 倾向 in-game(参考 1h real ≈ 1 year in-game)
-- [ ] 上古遗物如何作为"一次性大爆发"接入价格指数(脆化 = 永久消失,不参与市场)?
-- [ ] 玩家能否自制骨币 vs 必须 NPC 制造? 决策倾向: **玩家自制**(需阵法封灵 + 异变兽骨)
+收口的：
+
+- [x] **玩家能否自制骨币 vs 必须 NPC 制造** → **玩家自制**(PR #105 已实装,需阵法封灵 + 异变兽骨,可选 ZHEN_SHI_CHU 催化剂免 20% seal cost)
+- [x] **上古遗物如何作为"一次性大爆发"接入价格指数** → 上古遗物 `spirit_quality = 0`(`inventory/ancient_relics.rs:84`,worldview §十六 锚定),**不参与 remaining_qi 衰变**;P2 价格指数计算 supply 时**只统计 `spirit_quality > 0` 的骨币**,上古遗物作为离群 jackpot 不进市场公式
+- [x] **P1 衰变曲线裁决** → **上钻为 plan-qi-physics-v1**（见 §1.5）。本 plan P1 不再自定曲线，调底盘 `qi_excretion`
+- [x] **死亡时携带骨币如何处理** → worldview §十六.三 「满灵骨币 → 普通骨头」是 TSY 抽真元的体现，归 plan-qi-physics-v1 `EnvField.tsy_intensity` 物理处置；本 plan 只在 P3 narration 表达，不再独立决策
+
+未决的（P2 启动前需收口）：
+
+- [ ] **节律检测依赖** plan-lingtian-weather-v1(汐转期判定):需 Wave 3 协调,**P2 的硬前置**;qi-physics 提供 `EnvField.rhythm` 通道
+- [ ] **商人 NPC 价格策略是否 AI 化**(根据玩家境界涨价 / "看人下菜")?或单纯按节律乘数?**P2 决策点**
+- [ ] **价格指数 supply 求和的尺度**:全服骨币 spirit_quality 求和 vs 区域级求和(避免单服扫全图性能问题)?**P2 决策点**
 
 ## §5 进度日志
 
-- 2026-05-01：骨架创建。plan-gameplay-journey-v1 §E 派生。
+- 2026-05-01：骨架创建。plan-gameplay-journey-v1 §E 派生
+- 2026-05-02：plan-fauna-v1 (PR #105 commit `c5895641`) 顺手实装 **P0 全部交付**(`bone_coin.rs` + 三档 shelflife profile)。骨架本身未同步更新
+- 2026-05-05 (上午)：首次"文档↔代码"核验对齐。发现 P0 已落地、字段名 `spirit_quality` 取代了草案的 `remaining_qi`、shelflife 线性归零和 worldview "半衰期" 描述形式不同效果近似。P1 启动前曾设 §1.5 三选一裁决（shelflife 线性 / 指数半衰 / BoneCoin 独立 decay）
+- 2026-05-05 (下午)：上钻——audit 全库发现 worldview §二「真元极易挥发」是 9 类 plan 的同源现象（骨币/食材/距离/异体排斥/吸力/节律/末法残土/灵田漏液/搜刮磨损），各 plan 拍数才是问题根源。立 **`plan-qi-physics-v1`** 物理底盘骨架；本 plan §1.5 三选一**全部废弃**，P1 改为"等底盘算子 + 注册 ContainerKind::SealedInBone"。"死亡时携带骨币" 也归底盘 `EnvField.tsy_intensity` 处置
+- 2026-05-05 (下午-2)：qi-physics 骨架补"压强法则"为第二公理（worldview §二 line 20 / §三 line 32）。骨币逸散物理下限 = 当地 zone 浓度而非 0；shelflife 现行"归零到 0"违反 worldview，P2 迁移修复。同步本 plan §0「持有=贬值」补地点制约推导（聚灵阵保值/废地渐近基底/死域真归零，对应 §十六.三 "满灵骨币变普通骨头"），§1.5 末段补 shelflife 违反正典提示

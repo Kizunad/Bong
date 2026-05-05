@@ -570,10 +570,10 @@ plans:
     title: "骨币半衰期 + 末法节律 + 100h 经济曲线"
     state: skeleton
     percent: 5
-    last_updated: ""
+    last_updated: "2026-05-05"
     pr_refs: []
-    blocking_on: ["plan-gameplay-journey-v1"]
-    summary: "骨架；承接 worldview §九经济 + §十七末法节律，依赖 gameplay-journey §E。"
+    blocking_on: ["plan-qi-physics-v1", "plan-qi-physics-patch-v1"]
+    summary: "骨架；承接 worldview §九经济 + §十七末法节律。P0 已在 plan-fauna-v1 (PR #105, 2026-05-02) 顺手实装；P1 衰变曲线原 §1.5 三选一裁决废弃，等 qi-physics 底盘 qi_excretion 算子 + qi-physics-patch P1 shelflife 迁移落地后启动；本 plan 不再自定衰变公式。"
 
   - file: plan-gameplay-acceptance-v1.md
     group: skeleton
@@ -615,15 +615,35 @@ plans:
     blocking_on: []
     summary: "骨架；从醒灵普通散修到化虚的 100h 路程详细骨架（与 gameplay-journey 三方交叉验证）。"
 
+  - file: plan-qi-physics-v1.md
+    group: skeleton
+    title: "修仙物理底盘（守恒律 + 压强法则 + 唯一物理实现入口）"
+    state: skeleton
+    percent: 5
+    last_updated: "2026-05-05"
+    pr_refs: []
+    blocking_on: []
+    summary: "骨架（2026-05-05 立）；worldview §二 真元极易挥发 / §十 全服灵气总量 SPIRIT_QI_TOTAL 守恒（const 暂定 100.0 可配置）/ §二+§三 压强法则 / §十一 坍缩渊回收 等同源现象的唯一物理实现入口。P0 决策门 4 红线（distance 0.06 vs 0.03 / TSY×死域协调 / woliu 离散表 vs 物理 / 守恒释放路径）；P1 算子（qi_excretion / qi_distance_atten / qi_collision / qi_release_to_zone）+ WorldQiAccount 全局账本 + StyleAttack/Defense trait。**plan 范围只到 P1**（立底盘冻结 API），迁移工作转 plan-qi-physics-patch-v1 承接。已审 audit：combat/decay.rs:5 0.06 与正典 0.03 翻倍 / shelflife 5 套独立 profile / WorldQiAccount TODO 已在 lingtian/qi_account.rs:3-7 注释点名等本 plan。"
+
+  - file: plan-qi-physics-patch-v1.md
+    group: skeleton
+    title: "qi-physics 迁移收口（散常数 → 底盘算子）"
+    state: skeleton
+    percent: 5
+    last_updated: "2026-05-05"
+    pr_refs: []
+    blocking_on: ["plan-qi-physics-v1"]
+    summary: "骨架（2026-05-05 立）；承接 qi-physics-v1 P1 完成后的迁移工作。基于 2026-05-05 下午穷尽 audit（500+ 处 qi 调用点）：**P0 红线 6 PR**（3 公式正典化 + 3 守恒律违反 fix）—— ① combat/decay 0.06→0.03 ② tsy_drain×dead_zone 合并 ③ WorldQiAccount 合账 ④ 采集奖励 +14 凭空生灵气 ⑤ TSY 抽取 drain 去向无记账 ⑥ 域崩 RealmCollapse 暴力清零；P1 shelflife 5 profile 全迁；P2 战斗+杂项+守恒释放路径补全+NPC 修炼对冲验证；P3 新机制（坍缩渊 collapse_redistribute / 7 流派异体排斥 ρ / 时代衰减 / 阈值灾劫 / 节律对接 / 汐转守恒检查 / 暴力清零去向）。每 PR 必带守恒断言 + 旧符号 grep 全 0。**反向被依赖**：plan-economy-v1 / plan-style-balance-v1 / 等等都在等本 plan 完成。"
+
   - file: plan-style-balance-v1.md
     group: skeleton
     title: "流派克制系数 config + telemetry 回填"
     state: skeleton
     percent: 5
-    last_updated: ""
+    last_updated: "2026-05-05"
     pr_refs: []
-    blocking_on: ["plan-gameplay-journey-v1"]
-    summary: "骨架；承接 gameplay-journey §P 流派克制理论，把 ρ/W/β 表实装为 config + PVP telemetry 回喂。"
+    blocking_on: ["plan-qi-physics-v1", "plan-qi-physics-patch-v1"]
+    summary: "骨架；承接 gameplay-journey §P 流派克制理论。设计转向：从查表式 ρ/W/β const 改为 qi-physics 物理引擎应用层（StyleAttack/Defense trait 注册物理参数，克制涌现而非查表）。P1 telemetry 已在 PR #129 顺手实装混元色版（2026-05-04），但 spec 要求的 5 维（attacker_style/defender_style/distance/h_eff/qi_drain）未对齐；P0 StyleMatrix const 全空白。等 qi-physics 落地。"
 
   - file: plan-void-actions-v1.md
     group: skeleton
