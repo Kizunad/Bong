@@ -4,6 +4,13 @@
 >
 > **2026-05-05 状态补同步**（plans-status 实地核验）：多层级 plan 大幅闭合。新增 finished：alchemy-v2 / anqi-v1 / botany-v2 / dugu-v1 / multi-style-v1 / niche-defense-v1 / tuike-v1 / zhenmai-v1 / woliu-v1 / style-vector-integration-v1 / terrain-jiuzong-ruin-v1 / terrain-rift-mouth-v1 / lifespan-v1 / anticheat-v1 / inventory-v2 / library-jiuzong-history-v1 / poi-novice-v1 / spawn-tutorial-v1 / perception-v1.1 / input-binding-v1 / cross-system-patch-v1 共 21 份。仍 active 的高优先级缺口：multi-life-v1 / botany-agent-v1 / lingtian-process / lingtian-weather / lingtian-npc / alchemy-recycle / tsy-raceout-v1 / iris-integration-v1 / terrain-layer-query-v1。
 >
+> **2026-05-06 状态补同步**（最近 commits 反映）：
+> - 物理底盘：`plan-qi-physics-v1` ⏳ active（PR #132 commit 7e191505，立项 commit 832e27e2）—— 修仙物理底盘 / 守恒律 / 压强法则 / 唯一物理实现入口；P1 完成 = 底盘 API 冻结
+> - 物理迁移：`plan-qi-physics-patch-v1` ⬜ skeleton（commit 832e27e2）—— 承接 qi-physics-v1 P1，6 PR 红线（combat/decay 翻倍 / tsy_drain×dead_zone / WorldQiAccount 合账 / 采集守恒 / TSY drain 记账 / 域崩 ledger）
+> - 流派 vN+1 启动：`plan-woliu-v2` ⬜ skeleton（commit 5c3b708c）涡流五招（持涡/瞬涡/涡口/涡引/涡心）+ 搅拌器物理 99/1 + 紊流场；`plan-dugu-v2` ⬜ skeleton（commit 7bf169e5 + 审核修订 commit 6cae6d9b）毒蛊五招（蚀针/自蕴/侵染/神识遮蔽/倒蚀）+ 脏真元 ρ=0.05 + 永久阈值分三档 + 自蕴边际递减累积曲线
+> - 通用基建：`plan-craft-v1` ⬜ skeleton（commit 6c767389）—— inventory「手搓」标签 / 单任务 / 三渠道解锁（残卷/师承/顿悟）/ 配方 6 类，反向被依赖 dugu-v2 / tuike-v2 / zhenfa-v2 / anqi-v1 vN+1 / tools-v1
+> - 总数变化：原 43 → 48 子 plan（新增 qi-physics-v1 / qi-physics-patch-v1 / craft-v1 / woliu-v2 / dugu-v2 各 1）。Wave 划分新增 Wave -1 物理底盘（qi-physics-v1 + patch + craft 在 Wave 0 之前的 0.5 期），其他 wave 不变；流派 vN+1 全归 Wave 2.5（攻防对位 telemetry 之前的招式细化层）
+>
 > **三方合并产物**(2026-05-01)：本 v1 由三份独立起草稿交叉验证后合并：
 > - **opus 稿**(原 `plan-gameplay-journey-v1-opus.md`)：贡献骨架——接入面 Checklist / 阶段总览 / P0-P5 主体 / 七流派与四大产出横向 / 22 plan 依赖图执行序 / §H E2E 验收脚本
 > - **gpt 稿**(`plan-playthrough-100h-gpt-v1.md`)：贡献工程红线——§I 代码↔正典差异 + MVP 取舍 / §K 世界观红线 10 条 / §F 加速器 30% Clamp / 三栏占比表
@@ -1306,11 +1313,11 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 
 ---
 
-## Q — 完整实施图谱：43 子 plan + 6 波执行序
+## Q — 完整实施图谱：48 子 plan + 6 波执行序
 
 > §G 依赖图是粗粒度的"哪些 plan 必须做"——本节给**精确**的：每个子 plan 的状态、直接前置依赖、所属波次、并行可能性。是本 meta plan 的最终交付。
 >
-> 共 **43 个子 plan**，分为 **6 波**(Wave 0 → Wave 5) + 装饰层。任何执行 PR 起草时必须查本节对应的"前置依赖列"。
+> 共 **48 个子 plan**（2026-05-06 更新：原 43 + 新增 qi-physics-v1 / qi-physics-patch-v1 / craft-v1 / woliu-v2 / dugu-v2 各 1），分为 **6 波**(Wave 0 → Wave 5) + 装饰层。任何执行 PR 起草时必须查本节对应的"前置依赖列"。
 
 ### Q.1 全部子 plan 清单
 
@@ -1331,6 +1338,9 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 7 | `plan-server-cmd-system-v1` | ✅ finished (2026-05-01，commit 660d5b0a 归档；PR #72) | server ✅ | §G 工具(可早) |
 | 7b | `plan-anticheat-v1` | ✅ finished (2026-05-03，PR #116 commit d6a05b10) | combat-no_ui ✅, agent-v2 ✅ | 反作弊上报基建（plan-combat-no_ui §1.5.6 缺口）|
 | 7c | `plan-inventory-v2` | ✅ finished (2026-05-02，PR #115 commit 3f260ace) | inventory-v1 ⏳ | Tarkov 格子分配 + stack merge（plan-inventory-v1 缺口）|
+| 7d | `plan-qi-physics-v1` | ⏳ active (2026-05-05 PR #132 commit 7e191505，立项 832e27e2) | 无 | 修仙物理底盘 / 守恒律 / 压强法则 / 唯一物理实现入口；**关键路径**——~9 plan 等它解阻 |
+| 7e | `plan-qi-physics-patch-v1` | ⬜ skeleton (2026-05-05 commit 832e27e2) | qi-physics-v1 P1 ship | qi-physics 迁移收口；6 PR 红线（combat/decay 0.06→0.03 / tsy_drain×dead_zone 协调 / WorldQiAccount 合账 / 采集守恒 / TSY drain 记账 / 域崩 ledger）+ shelflife 5 profile 迁移 + 7 流派 ρ 矩阵 |
+| 7f | `plan-craft-v1` | ⬜ skeleton (2026-05-06 commit 6c767389) | inventory-v2 ✅, skill-v1 ✅, input-binding-v1 ✅ | 通用手搓面 / inventory 标签 / 单任务 / in-game 时间 / 三渠道解锁（残卷/师承/顿悟）/ 6 类配方；反向被依赖 dugu-v2 / tuike-v2 / zhenfa-v2 / anqi-v1 vN+1 / tools-v1 各自注册自家配方 |
 
 #### 层 B：P0/P1 资源（Tier 1）
 
@@ -1365,9 +1375,11 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 20 | `plan-baomai-v1` | ✅ finished (2026-04-29，commit b0302396 归档；PR #76) | (已完成) | §A 体修 |
 | 21 | `plan-anqi-v1` | ✅ finished (2026-05-04，PR #121 commit f0cab83f 归档) | spiritwood-v1, fauna-v1, forge-leftovers-v1 | §A 暗器 |
 | 22 | `plan-dugu-v1` | ✅ finished (2026-05-04，PR #126 commit 44a6ff9b 归档) | fauna-v1, botany-v2 | §A 毒蛊 |
+| 22b | `plan-dugu-v2` | ⬜ skeleton (2026-05-05 立 commit 7bf169e5 + 2026-05-06 审核修订 commit 6cae6d9b) | qi-physics-v1 P1, qi-physics-patch-v1 P0/P3, identity-v1, botany-v2, craft-v1 | 毒蛊功法五招完整包（蚀针/自蕴/侵染/神识遮蔽/倒蚀）+ 脏真元 ρ=0.05 + 永久阈值分三档（醒灵-凝脉仅 HP/qi / 固元短期 / 通灵+ 永久 qi_max 衰减）+ 自蕴边际递减累积曲线（0→90% 累计 ~100h）+ 暴露概率系统 + 阴诡色形貌异化永久不可洗 + 化虚倒蚀触发绝壁劫 |
 | 23 | `plan-zhenmai-v1` | ✅ finished (2026-05-03，PR #122 commit 1ae7fd88 归档) | cultivation-canonical-align-v1 | §A 截脉 |
 | 24 | `plan-tuike-v1` | ✅ finished (2026-05-04，PR #124 commit 50cc0cc4 归档) | spiritwood-v1, fauna-v1 | §A 替尸 |
 | 25 | `plan-woliu-v1` | ✅ finished (2026-05-02，PR #113 commit 06f6a726 归档；P0/P1 commit 121dbf70) | terrain-ash-deadzone-v1 | §A 涡流(P4 解锁但 plan 早做) |
+| 25b | `plan-woliu-v2` | ⬜ skeleton (2026-05-05 commit 5c3b708c) | qi-physics-v1 P1, qi-physics-patch-v1 P0/P2 | 涡流功法五招完整包（持涡/瞬涡/涡口/涡引/涡心）+ **搅拌器物理**（99% 紊流甩出 + 1% 入池 × 经脉流量 cap）+ **紊流场**（动态漩涡涡流流派专属 EnvField 边界）+ 反噬阶梯 4 级 + 化虚双场模型 + 化虚被动场可关 |
 | 26 | `plan-multi-style-v1` | ✅ finished (2026-05-04，PR #129 commit 5eefe3a9 归档) | cultivation-canonical-align-v1 ✅, style-vector-integration-v1 ✅ | §A.5 + O.14；is_hunyuan 判定 + 修炼 session 接入 + 7 色 HUD/schema + telemetry |
 
 #### 层 D：P3 中阶（Tier 3）
@@ -1721,7 +1733,9 @@ graph TD
 - [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"
-- [ ] 在 GitHub 起 43 个 plan 对应的 issue / project tracker（推荐用 milestone 按 Wave 分组）
+- [ ] 在 GitHub 起 48 个 plan 对应的 issue / project tracker（推荐用 milestone 按 Wave 分组）
+- [ ] 物理底盘三 plan（qi-physics-v1 ⏳ active / qi-physics-patch-v1 ⬜ / craft-v1 ⬜）已 2026-05-05 ~ 2026-05-06 立项，作为 Wave -1（Wave 0 之前的物理底座层），关键路径
+- [ ] 流派 vN+1 五 plan（baomai-v2 ✅ active / woliu-v2 ⬜ / dugu-v2 ⬜ / + 后续 anqi-v2 / zhenfa-v2 / zhenmai-v2 / tuike-v2）作为 Wave 2.5 招式细化层，前置等 qi-physics-patch-v1 P0/P2/P3 完成
 
 ---
 
