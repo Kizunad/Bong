@@ -25,6 +25,8 @@ mod network;
 mod npc;
 mod persistence;
 mod player;
+#[allow(dead_code)]
+mod qi_physics;
 // preview：worldgen-snapshot harness 用的 server-side teleport hook。仅在
 // BONG_PREVIEW_MODE=1 env 下激活实际 system；register() 一定会注册 event 类型
 // 让 chat_collector 编译通过。
@@ -95,6 +97,7 @@ fn run_server() {
 
     world::register(&mut app);
     player::register(&mut app);
+    qi_physics::register(&mut app);
     skin::register(&mut app);
     inventory::register(&mut app);
     botany::register(&mut app);
