@@ -19,7 +19,6 @@
 **反向被依赖**：
 
 - `plan-style-balance-v1` 🆕 → 5 招的 ρ/W/D 数值进矩阵（毒蛊 ρ=0.05 / D=15）
-- `plan-color-v1` 🆕 → 阴诡色养成机制 + 形貌异化分级
 - `plan-tribulation-v1` ⏳ → 化虚倒蚀触发绝壁劫
 - `plan-narrative-political-v1` ✅ active → 毒蛊师暴露身份后江湖传闻型政治叙事
 
@@ -70,12 +69,22 @@
   ```
   服食毒草煎汤 + 自身真元淬炼 → 阴诡色累积
   阴诡色 % = 全部蛊毒招式威力乘数（×1.0 → ×3.0）
-  服食时间累计阈值：
-    醒灵-引气：100h 阴诡色 5%（仅自感觉口齿青黑）
-    凝脉-固元：50h 阴诡色 10-30%（皮色蜡黄）
-    通灵：30h 阴诡色 30-60%（鼻周泛黑，inspect 可见）
-    化虚：15h 阴诡色 60-90%+（形貌异化不可逆，无法以普通修士身份示人）
+
+  累积曲线（边际递减——新手手感快、高手瓶颈慢，总累计 ~100h 到 90%）：
+    daily_gain = 1.5%/h × (1 - current%/90)² × hours_meditated_today
+    每日服食上限 6h（防挂机刷）
+
+  典型时间表（按累计 in-game 服食时间）：
+    0  → 5%  ：5h    （醒灵手感期，每小时 ~1%）
+    5  → 10% ：12h   （+7h）
+    10 → 20% ：25h   （+13h）
+    20 → 30% ：40h   （+15h）
+    30 → 60% ：70h   （+30h）
+    60 → 90% ：100h  （+30h，化虚级瓶颈，每小时 ~0.5%）
+    >  90%   ：渐近曲线，理论 ~95% 需 200h+
   ```
+  **境界本身不影响累积速度**（worldview §六:625 染色物理基础对所有境界一致 + §五:537 流派由组合涌现无门禁）——醒灵也能慢慢自蕴成毒源，只是低境毒源的招式威力（蚀针 / 倒蚀）受 §0 永久阈值分级限制（醒灵阴诡色 90% 蚀针对低境受害者仍只能扣 HP/qi）。
+  
   代价：阴诡色不可洗（worldview §六:631 普通可洗，但毒蛊师自蕴产生的是**永久结构改变**）。形貌异化 ≥ 60% 触发 IdentityProfile 自动写入 `dugu_self_revealed`——你不主动出招也会被高境 NPC 识破
 
 - [ ] **暴露概率系统（区别于其他流派）**：worldview §五:530-535 毒蛊师暴露=全服追杀。每次主动招式（蚀针/侵染/倒蚀/伪示失败）触发暴露 roll：
@@ -143,16 +152,17 @@
 
 **用途**：服毒草煎汤 + 自身真元淬炼 → **自身经脉变成毒源**。所有蛊毒招式威力 = 阴诡色 % 的乘数。这是毒蛊师的"修炼通路"，跟 cultivation 静坐冲击经脉**并行**而非替代。
 
-| 阴诡色累积 % | 服食时间 | 自蕴效果 | 形貌外观 | inspect 可见 |
+| 阴诡色累积 % | 累计服食时间 | 自蕴效果 | 形貌外观 | inspect 可见 |
 |---|---|---|---|---|
-| 0% | — | 蛊毒招式 ×1.0 | 普通修士 | 无标识 |
-| 5% | 100h | ×1.1 | 口齿青黑 | 仅化虚级神识可见 |
-| 10-30% | 50h | ×1.3-1.6 | 皮色蜡黄 | 通灵+ 神识可见 |
-| 30-60% | 30h | ×1.7-2.2 | 鼻周泛黑 + 自蕴气息 5 格 | 固元+ inspect 可见 |
-| 60-90% | 15h | ×2.5-3.0 | 形貌异化（不可逆）+ 凡器在手抖动 | **任何境界 inspect 可见** |
-| 90%+ | 至化虚级 | ×3.0（封顶） | 完全异化，无法以普通修士身份示人 | 自动 dugu_self_revealed |
+| 0%  | —    | 蛊毒招式 ×1.0 | 普通修士 | 无标识 |
+| 5%  | 5h   | ×1.1 | 口齿青黑 | 仅化虚级神识可见 |
+| 10% | 12h  | ×1.3 | 口齿明显泛黑 | 通灵+ 神识可见 |
+| 20% | 25h  | ×1.5 | 皮色蜡黄 | 通灵+ 神识可见 |
+| 30% | 40h  | ×1.7 | 鼻周泛黑 + 自蕴气息 3 格 | 固元+ inspect 可见 |
+| 60% | 70h  | ×2.2 | 自蕴气息 5 格 + 凡器在手抖动 | **任何境界 inspect 可见 + 自动 dugu_self_revealed** |
+| 90% | 100h | ×3.0（封顶）| 形貌完全异化，不可逆，无法以普通修士身份示人 | 同上 |
 
-**机制**：每日服食 1 次毒草煎汤（qi 10 + 1 株 dugu 类毒草）→ 阴诡色 +0.X%（按已累积量递减）。需在自家或安全点服食（被打断中止当日累积）。
+**机制**：每日服食 1 次毒草煎汤（qi 10 + 1 株 dugu 类毒草，每小时累积一次） → 触发当日累积。累积公式：`daily_gain = 1.5%/h × (1 - current%/90)² × hours_today`，每日服食上限 6h（防挂机刷，剩余时间不累积）。需在自家或安全点服食（被打断中止当日累积）。**境界不影响累积速度**——醒灵也能慢慢成毒源，只是招式威力受 §0 永久阈值分级限制。
 
 **专属毒草**（plan-botany-v2 ✅ 已 17 物种 + 留几种 dugu 专属补，比如"赤髓草"/"夜哭蛇腹叶"等，具体留 botany 配合）
 
@@ -300,7 +310,7 @@ emit SkillXpGain {
 }
 ```
 
-PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，由 plan-multi-style-v1 ✅ 已通的机制接管。但毒蛊**自蕴**产生的是**永久不可洗的染色**——区别于其他流派的可洗染色，需 plan-color-v1 配合定义 `permanent_color_locked` 字段。
+PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，由 plan-multi-style-v1 ✅ 已通的机制接管。但毒蛊**自蕴**产生的是**永久不可洗的染色**——区别于其他流派的可洗染色，本 plan P1 自行扩展 `cultivation::QiColor`（multi-style-v1 finished 模块）补 `permanent_lock_mask: HashSet<ColorKind>` 字段（dugu-v2 自蕴累积时写入，洗染色函数检查 mask 跳过该色）。注：plan-color-v1 不存在（被 plan-multi-style-v1 取代），永久 lock 字段归 dugu-v2 自身实装。
 
 ---
 
@@ -360,13 +370,15 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 
 **默认推荐 A**。B 虽更阴但化虚毒蛊师全服几乎无对策，可能破坏 PVP 平衡。
 
-### #3 自蕴时间曲线（醒灵 100h → 化虚 15h）合理吗
+### #3 自蕴累积曲线（边际递减，0→90% 总累计 ~100h）合理吗
 
-- **A**：保留（高境累积更快，符合越级原则）
-- **B**：调整为各境界统一 50h（避免低境界永远无法自蕴）
-- **C**：调整为低境界更慢（醒灵 200h → 化虚 10h），强化"高境天赋"
+当前公式：`daily_gain = 1.5%/h × (1 - current%/90)² × hours_today`，每日上限 6h。境界不影响速度（worldview §六:625 染色物理基础对所有境界一致）。
 
-**默认推荐 A**。但 §0 表里"醒灵-引气 100h 阴诡色 5%"对低境界过苛，可能调到 30h 起步。
+- **A**：保留（新手 5h 出 5% 主色手感快 + 高境瓶颈拉到 100h 边际递减）
+- **B**：陡度更平缓（base 1.0%/h，总累计 ~150h）
+- **C**：陡度更陡（base 2.0%/h，总累计 ~70h，加快爽度）
+
+**默认推荐 A**。每日上限 6h 服食可能造成"挂机刷"，留 P0 telemetry 校准。
 
 ### #4 流派识别痕迹三种统一为 `DuguTaintField` 还是各自独立
 
@@ -382,9 +394,15 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 
 **默认推荐 A**，待 P0 与 plan-botany-v2 维护者确认现有毒草特性是否够用，若不够再 B。
 
-### #6 阴诡色永久不可洗与 plan-color-v1 接口
+### #6 永久 lock 字段实装位置
 
-需 plan-color-v1（🆕 skeleton）配合定义 `permanent_color_locked` 字段。本 plan 声明依赖，落点归 plan-color-v1。
+毒蛊自蕴产生的阴诡色不可洗，需扩展 `cultivation::QiColor`（plan-multi-style-v1 ✅ finished 模块）补永久 lock 字段。**plan-color-v1 不存在**（被 plan-multi-style-v1 取代），所以无第三方 plan 接管。
+
+- **A**：本 plan dugu-v2 P1 内自行扩展 QiColor 加 `permanent_lock_mask: HashSet<ColorKind>`（推荐，归属清晰）
+- **B**：单独发 PR 改 plan-multi-style-v1 模块（如果 vN+1 立项）
+- **C**：未来其他流派若需永久 lock 字段时，提取为通用模块或派生新 plan（额外开销大）
+
+**默认推 A** —— dugu-v2 是当前唯一产生永久不可洗染色的流派，归属逻辑上属本 plan。其他流派若有类似需求 vN+1 时再讨论是否提取通用模块。
 
 ### #7 TaintMark 持久化到玩家死亡或永久持久化
 
@@ -407,7 +425,12 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
   - worldview 锚点对齐：§三:78 + §三:368 + §四:506 + §五:421-427/520-535 + §六:618-621/625 + §十一:947-970/967 + §K
   - qi_physics 锚点：等 patch P0/P3 完成后接入；脏真元注入走 qi_physics::collision，倒蚀 zone 量级走 patch P3 加新算子 reverse_burst_all_marks
   - SkillRegistry / PracticeLog / HUD / 音效 / 动画 全部底盘复用，无新建框架
-  - 待补：与 plan-style-balance-v1 ρ/W 矩阵对齐 / plan-color-v1 永久不可洗染色接口 / plan-tribulation-v1 化虚倒蚀绝壁劫触发链 / plan-identity-v1 暴露后社会反应 / plan-botany-v2 自蕴毒草确认
+  - 待补：与 plan-style-balance-v1 ρ/W 矩阵对齐 / 扩展 cultivation::QiColor 加 permanent_lock_mask 字段（plan-multi-style-v1 ✅ finished 模块，本 plan P1 自行实装）/ plan-tribulation-v1 化虚倒蚀绝壁劫触发链 / plan-identity-v1 暴露后社会反应 / plan-botany-v2 自蕴毒草确认 / plan-craft-v1 蚀针 + 自蕴煎汤配方注册
+- **2026-05-06** 审核修订（用户提出三点）：
+  - **plan-color-v1 不存在**（被 plan-multi-style-v1 取代）→ 删除 6 处引用，永久 lock 字段归 dugu-v2 P1 自行扩展 cultivation::QiColor
+  - **自蕴时间方向错 + 总量太大**：原表"醒灵 100h / 化虚 15h"违反"新手快高手慢"直觉。改为边际递减曲线 `daily_gain = 1.5%/h × (1 - current%/90)²`，0→90% 总累计 ~100h（与用户意图一致）
+  - **自蕴跟境界绑定也错**：worldview §六:625 染色物理对所有境界一致 + §五:537 流派由组合涌现无门禁——醒灵也能慢慢成毒源，只是招式威力受永久阈值分级限制
+  - 同步加 plan-craft-v1 反向被依赖（蚀针 + 自蕴煎汤通过通用手搓 tab 注册配方）
 
 ---
 
@@ -418,4 +441,4 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 - **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
 - **测试结果**：`cargo test combat::dugu_v2` + 测试数 / `narration-eval` 5 招通过率 / WSLg 联调实录 / 暴露后社会反应实测
 - **跨仓库核验**：server 5 招 SkillRegistry 注册 / agent 5 招 narration runtime + 暴露江湖传闻 / client 4 HUD + 3 粒子 + 4 动画 + 3 音效 / IdentityProfile DuguRevealedEvent consumer
-- **遗留 / 后续**：阴诡色养成（plan-color-v1）/ telemetry 校准（plan-style-balance-v1）/ 自蕴毒草扩展（plan-botany-v3）/ 多周目 TaintMark 跨角色规则（plan-multi-life-v1）
+- **遗留 / 后续**：cultivation::QiColor permanent_lock_mask 字段扩展（dugu-v2 P1 自身）/ telemetry 校准（plan-style-balance-v1）/ 自蕴毒草扩展（plan-botany-v3）/ 多周目 TaintMark 跨角色规则（plan-multi-life-v1）/ 蚀针 + 煎汤配方注册（plan-craft-v1）
