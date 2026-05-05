@@ -30,7 +30,7 @@ SPAWN_PLAIN_DECORATIONS = (
     DecorationSpec(
         name="memory_birch",
         kind="tree",
-        blocks=("birch_log", "birch_leaves", "white_wool"),
+        blocks=("birch_log", "birch_leaves"),
         size_range=(6, 10),
         rarity=0.30,
         notes="忆白桦：树皮如残碑纹路，初醒修士的路标。",

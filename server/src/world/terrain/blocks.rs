@@ -28,6 +28,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "red_sandstone" => BlockState::RED_SANDSTONE,
         "chiseled_red_sandstone" => BlockState::CHISELED_RED_SANDSTONE,
         "terracotta" => BlockState::TERRACOTTA,
+        "red_terracotta" => BlockState::RED_TERRACOTTA,
         "blackstone" => BlockState::BLACKSTONE,
         "basalt" => BlockState::BASALT,
         "polished_basalt" => BlockState::POLISHED_BASALT,
@@ -94,6 +95,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         // --- metals / crystals / quartz ---
         "iron_block" => BlockState::IRON_BLOCK,
         "copper_block" => BlockState::COPPER_BLOCK,
+        "weathered_copper" => BlockState::WEATHERED_COPPER,
         "diamond_block" => BlockState::DIAMOND_BLOCK,
         "emerald_block" => BlockState::EMERALD_BLOCK,
         "quartz_block" => BlockState::QUARTZ_BLOCK,
@@ -112,6 +114,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "chiseled_stone_bricks" => BlockState::CHISELED_STONE_BRICKS,
         "cracked_stone_bricks" => BlockState::CRACKED_STONE_BRICKS,
         "mossy_stone_bricks" => BlockState::MOSSY_STONE_BRICKS,
+        "warped_planks" => BlockState::WARPED_PLANKS,
 
         // --- wool / concrete / lights ---
         "white_wool" => BlockState::WHITE_WOOL,

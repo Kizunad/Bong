@@ -28,6 +28,9 @@ const CHUNK_SIZE: i32 = 16;
 const MIN_DENSITY: f32 = 0.05;
 /// Threshold below which a variant is dropped (catches stray <=0 entries).
 const DENSITY_PRECISION: u32 = 10_000;
+/// Small trees and petrified stumps read well as landmarks, but dense profile
+/// masks make the generic tree primitive crowd the surface too quickly.
+const TREE_DENSITY_SCALE: f32 = 0.4;
 
 pub fn decorate_chunk(
     chunk: &mut UnloadedChunk,
@@ -56,8 +59,10 @@ pub fn decorate_chunk(
             // Probability: density and rarity compound — dense regions fill up,
             // rare variants still feel sparse.
             let roll = decoration_hash(world_x, world_z, 997) % DENSITY_PRECISION;
-            let target =
-                (sample.flora_density * deco.rarity.max(0.05) * DENSITY_PRECISION as f32) as u32;
+            let target = (sample.flora_density
+                * deco.rarity.max(0.05)
+                * placement_density_scale(deco)
+                * DENSITY_PRECISION as f32) as u32;
             if roll >= target {
                 continue;
             }
@@ -131,6 +136,14 @@ fn sample_size(deco: &Decoration, world_x: i32, world_z: i32) -> i32 {
     }
     let span = (max - min + 1) as u32;
     min + (decoration_hash(world_x, world_z, 13) % span) as i32
+}
+
+fn placement_density_scale(deco: &Decoration) -> f32 {
+    if deco.kind == "tree" {
+        TREE_DENSITY_SCALE
+    } else {
+        1.0
+    }
 }
 
 // ---------------------------------------------------------------------------
