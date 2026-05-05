@@ -13,13 +13,13 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-05-04 · 共 103 份 plan_
+_自动生成于 2026-05-04 · 共 105 份 plan_
 
 ```
-总进度  ████████████████████████░░░░░░  80.1%
+总进度  ████████████████████████░░░░░░  78.7%
 ```
 
-**分布**：`merged` 36 · `wip` 1 · `design` 11 · `skeleton` 9 · `done` 46
+**分布**：`merged` 36 · `wip` 1 · `design` 11 · `skeleton` 11 · `done` 46
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 10 份 · 组均 86%_
@@ -101,16 +101,18 @@ _末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 ·
 | `skeleton` | **烬焰焦土地形** <br/><sub>`plans-skeleton/plan-terrain-tribulation-scorch-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-29 |
 
 ### 骨架 plan
-_玩家旅程 / 经济 / 化虚 / 流派平衡等待开工骨架 · 8 份 · 组均 5%_
+_玩家旅程 / 经济 / 化虚 / 流派平衡等待开工骨架 · 10 份 · 组均 5%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `skeleton` | **骨币半衰期 + 末法节律 + 100h 经济曲线** <br/><sub>`plan-economy-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **骨币半衰期 + 末法节律 + 100h 经济曲线** <br/><sub>`plan-economy-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-05-05 |
 | `skeleton` | **终极验收：6 段 E2E + 100h 实测** <br/><sub>`plan-gameplay-acceptance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **玩家旅程总线（普通人 → 化虚 100h）** <br/><sub>`plan-gameplay-journey-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-05-04 |
 | `skeleton` | **玩家全程旅途（deepseek 版）** <br/><sub>`plan-player-journey-deepseek.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **100h 游玩路程（gpt 版）** <br/><sub>`plan-playthrough-100h-gpt-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
-| `skeleton` | **流派克制系数 config + telemetry 回填** <br/><sub>`plan-style-balance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **qi-physics 迁移收口（散常数 → 底盘算子）** <br/><sub>`plan-qi-physics-patch-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-05-05 |
+| `skeleton` | **修仙物理底盘（守恒律 + 压强法则 + 唯一物理实现入口）** <br/><sub>`plan-qi-physics-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-05-05 |
+| `skeleton` | **流派克制系数 config + telemetry 回填** <br/><sub>`plan-style-balance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-05-05 |
 | `skeleton` | **化虚专属 action（镇压/引爆/阻挡/传承）** <br/><sub>`plan-void-actions-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **化虚名额按世界灵气总量动态调控** <br/><sub>`plan-void-quota-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 
