@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
-    App, Client, Entity, EventWriter, IntoSystemConfigs, ParamSet, Position, Query, Res, ResMut,
+    App, Client, Entity, EventWriter, IntoSystemConfigs, ParamSet, Position, Query, ResMut,
     Resource, Update, Username, With,
 };
 
@@ -20,13 +20,14 @@ use crate::combat::{
 };
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::Cultivation;
+use crate::qi_physics::constants::{QI_GATHER_REWARD, QI_PER_ZONE_UNIT};
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
+use crate::world::dimension::DimensionKind;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-const GATHER_SPIRIT_QI_REWARD: f64 = 14.0;
 const GATHER_INVENTORY_REWARD: f64 = 0.12;
 const GATHER_KARMA_REWARD: f64 = 0.06;
 
@@ -154,7 +155,7 @@ pub fn register(app: &mut App) {
 pub(crate) fn apply_queued_gameplay_actions(
     mut queue: ResMut<GameplayActionQueue>,
     mut gameplay_tick: ResMut<GameplayTick>,
-    zone_registry: Option<Res<ZoneRegistry>>,
+    mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
     mut harvest_sessions: Option<ResMut<HarvestSessionStore>>,
@@ -164,8 +165,6 @@ pub(crate) fn apply_queued_gameplay_actions(
     mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
     gameplay_tick.tick = gameplay_tick.tick.saturating_add(1);
-
-    let zone_registry = effective_zone_registry(zone_registry.as_deref());
 
     while let Some(request) = queue.pop_front() {
         let player_context = {
@@ -179,7 +178,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                                 entity,
                                 canonical_player_id(username.0.as_str()),
                                 position.get(),
-                                zone_name_for_position(&zone_registry, position.get()),
+                                zone_name_for_position(zone_registry.as_deref(), position.get()),
                             )
                         },
                     )
@@ -219,6 +218,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                     &mut cultivation,
                     harvest_sessions.as_deref_mut(),
                     &plants,
+                    zone_registry.as_deref_mut(),
                     active_events.as_deref_mut(),
                     &mut pending_narrations,
                 )
@@ -268,6 +268,7 @@ fn apply_gather_action(
     cultivation: &mut Cultivation,
     harvest_sessions: Option<&mut HarvestSessionStore>,
     plants: &Query<(Entity, &Plant)>,
+    zone_registry: Option<&mut ZoneRegistry>,
     active_events: Option<&mut ActiveEventsResource>,
     pending_narrations: &mut PendingGameplayNarrations,
 ) {
@@ -291,8 +292,7 @@ fn apply_gather_action(
         }
     }
 
-    cultivation.qi_current =
-        (cultivation.qi_current + GATHER_SPIRIT_QI_REWARD).clamp(0.0, cultivation.qi_max.max(1.0));
+    let qi_gain = gather_qi_from_zone(zone_registry, zone_name, cultivation);
     player_state.inventory_score =
         (player_state.inventory_score + GATHER_INVENTORY_REWARD).clamp(0.0, 1.0);
     player_state.karma = (player_state.karma + GATHER_KARMA_REWARD).clamp(-1.0, 1.0);
@@ -307,6 +307,7 @@ fn apply_gather_action(
             details: Some(HashMap::from([
                 ("action".to_string(), json!("gather")),
                 ("resource".to_string(), json!(resource_name)),
+                ("spirit_qi_gain".to_string(), json!(qi_gain)),
                 ("inventory_gain".to_string(), json!(GATHER_INVENTORY_REWARD)),
             ])),
         });
@@ -317,6 +318,29 @@ fn apply_gather_action(
         format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
         NarrationStyle::Narration,
     );
+}
+
+fn gather_qi_from_zone(
+    zone_registry: Option<&mut ZoneRegistry>,
+    zone_name: &str,
+    cultivation: &mut Cultivation,
+) -> f64 {
+    let Some(zone_registry) = zone_registry else {
+        return 0.0;
+    };
+    let Some(zone) = zone_registry.find_zone_mut(zone_name) else {
+        return 0.0;
+    };
+    let room = (cultivation.qi_max.max(1.0) - cultivation.qi_current).max(0.0);
+    let available = (zone.spirit_qi.max(0.0) * QI_PER_ZONE_UNIT).max(0.0);
+    let gain = QI_GATHER_REWARD.min(room).min(available);
+    if gain <= 0.0 {
+        return 0.0;
+    }
+
+    cultivation.qi_current += gain;
+    zone.spirit_qi = (zone.spirit_qi - gain / QI_PER_ZONE_UNIT).max(0.0);
+    gain
 }
 
 fn resolve_nearest_harvestable_plant(
@@ -345,19 +369,13 @@ fn resolve_nearest_harvestable_plant(
         .map(|(entity, _)| entity)
 }
 
-fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry {
-    match zone_registry {
-        Some(zone_registry) if !zone_registry.zones.is_empty() => zone_registry.clone(),
-        _ => ZoneRegistry::fallback(),
-    }
-}
-
 fn zone_name_for_position(
-    zone_registry: &ZoneRegistry,
+    zone_registry: Option<&ZoneRegistry>,
     position: valence::prelude::DVec3,
 ) -> String {
     zone_registry
-        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
+        .filter(|registry| !registry.zones.is_empty())
+        .and_then(|registry| registry.find_zone(DimensionKind::Overworld, position))
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
@@ -469,5 +487,55 @@ mod tests {
             .get::<PlayerState>()
             .expect("player state should remain attached after bridge");
         assert_eq!(player_state, &initial_state);
+    }
+
+    #[test]
+    fn gather_reward_drains_matching_zone_qi() {
+        let mut zones = ZoneRegistry::fallback();
+        let zone_before = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        let mut cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let gained =
+            gather_qi_from_zone(Some(&mut zones), DEFAULT_SPAWN_ZONE_NAME, &mut cultivation);
+
+        let zone_after = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        assert_eq!(gained, QI_GATHER_REWARD);
+        assert_eq!(cultivation.qi_current, 84.0);
+        assert!((zone_before - zone_after - gained / QI_PER_ZONE_UNIT).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gather_reward_caps_to_available_zone_qi() {
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi = 0.1;
+        let mut cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let gained =
+            gather_qi_from_zone(Some(&mut zones), DEFAULT_SPAWN_ZONE_NAME, &mut cultivation);
+
+        let zone_after = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        assert_eq!(gained, 0.1 * QI_PER_ZONE_UNIT);
+        assert_eq!(cultivation.qi_current, 75.0);
+        assert_eq!(zone_after, 0.0);
     }
 }
