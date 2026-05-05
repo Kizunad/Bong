@@ -1,6 +1,6 @@
 # Bong · plan-baomai-v3 · 骨架
 
-体修·爆脉功法**五招完整包**：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 反噬 / 客户端 UI 全流程。承接 `plan-baomai-v1` ✅ finished（PR #76 commit b0302396 归档；崩拳 P0 已实装）+ `plan-baomai-v2` ✅ active（2026-05-05，全力一击双 skill charge/release + Exhausted 虚脱期 + 完整专属 UI 蓄力球/释放雷光/虚脱灰晕 + 越级原则数值矩阵）—— v3 引入**爆脉物理**（worldview §五:402 过载撕裂 + §五:399-405 破产狂战士 + §P ρ=0.65 + §P.2 体修注入率）+ **经脉密集依赖**（手三阳全 + 任督，任一 SEVERED 多招同时废）+ **化虚专属散功**（worldview §三:187 化虚 ×5 凡躯重铸物理化身——主动烧 qi_max 50% 换 5s 全免）+ 熟练度生长二维划分（zhenmai-v2 通用机制回填）。
+体修·爆脉功法**五招完整包**：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 反噬 / 客户端 UI 全流程。承接 `plan-baomai-v1` ✅ finished（PR #76 commit b0302396 归档；崩拳 P0 已实装）+ `plan-baomai-v2` ✅ active（2026-05-05，全力一击双 skill charge/release + Exhausted 虚脱期 + 完整专属 UI 蓄力球/释放雷光/虚脱灰晕 + 越级原则数值矩阵）—— v3 引入**爆脉物理**（worldview §五:402 过载撕裂 + §五:399-405 破产狂战士 + §P ρ=0.65 + §P.2 体修注入率）+ **经脉密集依赖**（手三阳全 + 任督，任一 SEVERED 多招同时废）+ **化虚专属散功**（worldview §三:187 化虚 ×5 凡躯重铸物理化身——主动烧 qi_max 50%，5s 内所有经脉 flow_rate ×10 过载不撕裂窗口；**不是免疫**，敌方攻击仍正常命中，只是自己能极限连击）+ 熟练度生长二维划分（zhenmai-v2 通用机制回填）。
 
 **世界观锚点**：`worldview.md §三:187 化虚 ×5 质变（凡躯彻底重铸）`（散功物理依据）· `§五:399-405 体修/爆脉流核心定义`（破产狂战士+零距离贴脸+过载撕裂）· `§五:402 过载撕裂物理`（赌命爆发，战后真元上限永久扣除）· `§五:466 primary axis 经脉龟裂深度+真元过载倍率`· `§六:611 沉重色`（真元浑厚下沉密度极高 / 近身爆发+ / 抗物理冲击+）· `§四:354 过载撕裂引脉裂物理`· `§四:368-372 越级矩阵`（化虚拳碾压低境的池子物理）· `§P ρ=0.65 体修异体排斥率最高`· `§P.2 α=0.3 异体侵入消耗系数`· `§K narration 沉默`
 
@@ -29,7 +29,7 @@
 
 - **进料**：`cultivation::Cultivation { qi_current, qi_max, realm, contamination, qi_color }` / `cultivation::MeridianSystem` / `combat::Wounds`（HP 自伤）/ `qi_physics::ledger::QiTransfer` / `qi_physics::collision::qi_collision`（ρ=0.65）/ `SkillRegistry` + 招式 dependencies(meridian_ids) 接口（plan-meridian-severed-v1 强约束）/ `plan-baomai-v1` 崩拳 fn 复用 + `plan-baomai-v2` charge/release fn 复用
 - **出料**：5 招 `BaomaiSkillId` enum 注册到 SkillRegistry（崩拳 v1 + 全力一击 v2 双 skill + 撼山 / 焚血 / 散功 v3 新增）/ `MountainShakeEvent` 🆕（撼山 AOE 震波）/ `BloodBurnEvent` 🆕（焚血激活）/ `DispersedQiEvent` 🆕（散功化虚 qi_max -50% 永久）/ `OverloadMeridianRippleEvent`（worldview §五:466 经脉龟裂深度可视）/ MeridianSeveredEvent 通过 plan-meridian-severed-v1 接管
-- **共享类型**：`StyleAttack` trait（qi_physics::traits）/ `BloodBurnActive` component（焚血激活状态 + 持续 ticks + qi_multiplier）/ `BodyTranscendence` component（化虚散功 5s 凡躯重铸状态 + 全免疫 flag）/ `MeridianRippleScar` component（worldview §五:466 经脉龟裂可视化，体修专属"履历感"）
+- **共享类型**：`StyleAttack` trait（qi_physics::traits）/ `BloodBurnActive` component（焚血激活状态 + 持续 ticks + qi_multiplier）/ `BodyTranscendence` component（化虚散功 5s 凡躯重铸状态 + flow_rate_multiplier ×10 + cooldown_reset flag，**不含免疫 flag**）/ `MeridianRippleScar` component（worldview §五:466 经脉龟裂可视化，体修专属"履历感"）
 - **跨仓库契约**：
   - server: `combat::baomai_v3::*` 主实装（v1 崩拳 + v2 全力一击迁入 + v3 新 3 招）/ `schema::baomai_v3`
   - agent: `tiandao::baomai_v3_runtime`（5 招 narration + 化虚散功凡躯重铸叙事 + 焚血赌命叙事 + 撼山地震叙事 + 经脉龟裂履历叙事）
@@ -46,7 +46,7 @@
   - ② 全力一击：全池一次性贯注 + 战后 Exhausted 虚脱（v2 已实装）
   - ③ 撼山：AOE 砸地 + qi 消耗 + 自身经脉震荡
   - ④ 焚血：**HP 自损换 qi 倍率**（worldview §五:402 用血肉换威力）
-  - ⑤ 散功：**化虚级 qi_max 永久 -50%** 换 5s 全免
+  - ⑤ 散功：**化虚级 qi_max 永久 -50%** 换 5s 内 flow_rate ×10 过载不撕裂窗口（**不是免疫**，是凡躯极限输出）
 
 - [ ] **过载撕裂物理（worldview §四:354 + §五:402）**：
   ```
@@ -68,16 +68,30 @@
   
   体修是 7 流派中**经脉依赖最密集**的——单条 SEVERED 影响 2-3 招，全身 SEVERED 多 → 体修全废。这是 worldview §五:402 "战后长时间休养经脉"的物理体现
 
-- [ ] **化虚级散功（worldview §三:187 ×5 凡躯重铸）**：化虚体修不做新机制（如涡心紊流死区 / 倒蚀引爆 / 绝脉断链），而是**主动烧 qi_max 50% 换 5s 全免**——化虚 ×5 质变的物理化身：凡躯一次性"重铸"+ 池子永久缩水 50%。
-  - 化虚 qi_max 10700 ×50% = 5350 永久损失
-  - 5s 内免疫一切伤害（含 dugu 永久标记 / woliu 紊流场抽干 / zhenmai 反震 / 一切物理）
-  - 5s 内所有招式 cooldown 清零（极限连击窗口）
-  - **不可逆**（除非重新突破或上古遗物）
-  - 跟其他化虚专属对比：
-    - 涡心：长期场（紊流死区）
-    - 倒蚀：远程清算（积累 → 引爆）
-    - **散功：自损 50% 池子换瞬间无敌**（最 PvP 直接的化虚招）
-  - 反制 dugu 倒蚀的第三路径（与 tuike ③ 上古伪皮 / zhenmai ⑤ 绝脉断链并列）
+- [ ] **化虚级散功（worldview §三:187 ×5 凡躯重铸 + §四:354 过载撕裂反向）**：化虚体修主动烧 qi_max × 50% → 真元转化为**临时 flow_rate 放大**——5s 内所有经脉 `flow_rate × 10`，过载不撕裂窗口。化虚 ×5 质变的物理化身：凡躯**临时承载量飙升**到普通化虚体的 10 倍。**不是免疫，是凡躯极限输出**。
+  ```
+  物理推导:
+    flow_rate × 10 → 单 tick 真元投入率拉到平时 10 倍
+    overload_severity 阈值临时破例（不进入 OverloadTear SEVERED 路径）
+    → 5s 内可以连发崩拳 / 全力一击不撕裂经脉
+    → 单招 qi_invest 拉到 ×10（崩拳一次扣 qi_max 40% × 10 = 一次清空池子）
+
+  战后:
+    flow_rate 恢复正常
+    qi_max 永久 -50%（化虚 10700 → 5350）
+    敌方攻击在 5s 期间正常命中（worldview 没有"免疫"概念）
+    如果 5s 内被打死还是死（伤害正常计算）
+  ```
+  
+  - 5s 内所有招式 cooldown 清零（高密度真元下经脉协调更好）
+  - **战时玩法**：5s 内拼命输出 + 自身扛伤害（仍受全额命中）
+  - **不可逆 qi_max -50%**（除非重新突破或上古遗物）
+  - 跟其他化虚专属对比（**全部走 worldview 物理，无免疫**）：
+    - 涡心：长期场（紊流死区，敌方在场内修炼/战斗精度降低，但伤害正常）
+    - 倒蚀：远程清算（引爆已植入永久标记，物理化学反应）
+    - 绝脉断链：反震效率 ×3（断脉空隙引能高效率反震，**不是免疫**）
+    - **散功：自损 50% 池子换 5s 凡躯极限连击窗口**（PvP 极致输出招）
+  - **反制 dugu 倒蚀的第三路径**（与 tuike ③ 上古伪皮 / zhenmai ⑤ 绝脉断链并列）：化虚体修烧池子 → 5s 内可以拼命输出反杀 dugu，但 dugu 倒蚀的永久标记仍生效（受全额命中），代价 -50% qi_max + 战后扛永久标记衰减
 
 - [ ] **专属物理边界 = 经脉龟裂尾迹（永久身体记录）**：跟其他流派最大区别：
   - 涡流：紊流场 5min 散尽（外部环境）
@@ -109,7 +123,7 @@
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **P0** ⬜ | 决策门：5 招数值表锁定 + ① 崩拳 v1 数值校准 + ② 全力一击 v2 数值校准 + 新 3 招（撼山/焚血/散功）数值表 + 经脉依赖清单（plan-meridian-severed-v1 §3 强约束）+ 熟练度生长曲线 + §5 五决策门收口 + qi_physics 接入面定稿 + 与 plan-style-balance-v1 ρ/W 矩阵对齐 | 数值矩阵 + 物理公式落 plan §2 |
-| **P1** ⬜ | server `combat::baomai_v3::*` 5 招 logic（v1 崩拳 + v2 全力一击迁入 + v3 撼山/焚血/散功 新增）+ 过载撕裂物理 + 经脉依赖检查（走 plan-meridian-severed-v1）+ 焚血 HP→qi 转化 + 散功凡躯重铸 5s 全免 + qi_max 永久 -50% 持久化 + qi_physics 算子调用 + ≥120 单测 | `cargo test combat::baomai_v3` 全过 / 守恒断言 / 散功 qi_max 永久 -50% 跨 server restart 测试 / `grep -rcE '#\[test\]' server/src/combat/baomai_v3/` ≥ 120 |
+| **P1** ⬜ | server `combat::baomai_v3::*` 5 招 logic（v1 崩拳 + v2 全力一击迁入 + v3 撼山/焚血/散功 新增）+ 过载撕裂物理 + 经脉依赖检查（走 plan-meridian-severed-v1）+ 焚血 HP→qi 转化 + 散功凡躯重铸 5s flow_rate ×10 过载窗口 + qi_max 永久 -50% 持久化 + qi_physics 算子调用 + ≥120 单测 | `cargo test combat::baomai_v3` 全过 / 守恒断言 / 散功 qi_max 永久 -50% 跨 server restart 测试 / 散功期间敌方攻击正常命中测试 / `grep -rcE '#\[test\]' server/src/combat/baomai_v3/` ≥ 120 |
 | **P2** ⬜ | client 5 动画（崩拳 / 全力一击双 v2 已 ✅ / 撼山砸地姿态 / 焚血割腕滴血动作 / 散功化虚级凡躯震颤光柱）+ 4 粒子（GROUND_WAVE_DUST / BLOOD_BURN_CRIMSON / BODY_TRANSCENDENCE_PILLAR / MERIDIAN_RIPPLE_SCAR 经脉龟裂可视）+ 3 HUD 组件（BloodBurnRatioHud / BodyTranscendenceTimerHud / MeridianRippleScarHud） | render_animation.py 验证 / WSLg 实跑 5 招视觉确认 |
 | **P3** ⬜ | 4 音效 recipe（mountain_shake_rumble / blood_burn_sizzle / transcendence_thunder / meridian_crack）+ agent 5 招 narration template + 化虚散功凡躯重铸叙事 + 焚血赌命叙事 + 经脉龟裂履历叙事 + 化虚散功触发绝壁劫预兆 | narration-eval ✅ 5 招 + 化虚级孤注叙事 全过古意检测 |
 | **P4** ⬜ | PVP telemetry 校准 / 沉重色 hook（PracticeLog → QiColor 沉重色累积演化）+ vs 7 流派对位（特别 vs 涡流 W=0.8 强克 / vs 替尸 W=0.3 / vs 截脉 W=0.5）+ 化虚散功反制 dugu 倒蚀实战测试（与 tuike + zhenmai 反制路径对照）+ 长期体修经脉龟裂履历演化测试 | 7 流派 4×3 攻防对位体修通过 / 化虚级孤注实战 / 沉重色长期累积演化 |
@@ -224,39 +238,45 @@ worldview §五:402 体修代价物理化身——**用血肉换爆发**。
 **依赖经脉**：足三阴 LR（肝主血）+ 任督
 **worldview 锚**：§五:402 战后真元上限永久扣除 + §四 部位伤口物理
 
-### ⑤ 散功 — 化虚专属（凡躯重铸 5s 全免，qi_max 永久 -50%）
+### ⑤ 散功 — 化虚专属（凡躯极限输出 5s flow_rate ×10 过载不撕裂窗口，qi_max 永久 -50%）
 
-worldview §三:187 化虚 ×5 质变物理化身。**化虚专属**——通灵以下 cast 仅触发 5% qi_max 损失但无重铸效果（HUD「凡躯不应」）。
+worldview §三:187 化虚 ×5 质变 + §四:354 过载撕裂反向物理化身。**化虚专属**——通灵以下 cast 仅触发 5% qi_max 损失但无 flow_rate 放大效果（HUD「凡躯不应」）。
 
-| 施法者境界 | 凡躯重铸时长 | qi_max 永久损失 | 5s 内冷却清零 |
-|---|---|---|---|
-| 醒灵-通灵 | — | -5%（仅惩罚，无效果）| — / **HUD「凡躯不应」** |
-| 半步化虚 | 3s | -40% | 是 |
-| 化虚 | 5s（lv 100 可达 8s）| -50% | 是 |
+**重要：不是 MMO 式"免疫" / "无敌"**——敌方攻击在散功期间**仍正常命中**（伤害走 §P 物理矩阵正常计算），化虚体修开散功是**赌 5s 内能拼掉对方 / 不被对方拼死**。
+
+| 施法者境界 | 凡躯重铸时长 | qi_max 永久损失 | flow_rate 倍率 | 5s 内冷却清零 |
+|---|---|---|---|---|
+| 醒灵-通灵 | — | -5%（仅惩罚，无效果）| — | — / **HUD「凡躯不应」** |
+| 半步化虚 | 3s | -40% | ×6 | 是 |
+| 化虚 | 5s（lv 100 可达 8s）| -50% | ×10 | 是 |
 
 **机制**：
 - 主动 cast → 一次性烧 qi_max × 50%（化虚级）→ 触发 BodyTranscendence component
 - BodyTranscendence 期间 5s（lv 100 化虚级 8s）：
-  - **免疫一切伤害**（含 dugu 永久标记 / woliu 紊流场 / zhenmai 反震 / 物理 / 真元 / 阵法 全免）
-  - **所有招式 cooldown 清零**（极限连击窗口）
-  - **可继续 cast 任何招式**（包括 ② 全力一击不进入 Exhausted）
-- 5s 后：BodyTranscendence 移除 → qi_max 永久 -50% 写入 cultivation::Cultivation
+  - **所有经脉 flow_rate × 10**（半步化虚 ×6） → 临时承载量飙升
+  - `overload_severity` 阈值临时破例（不进 OverloadTear SEVERED 路径）
+  - 5s 内可连发崩拳 / 全力一击 / 撼山 不撕裂经脉
+  - 单招 qi_invest 可拉到 ×10（崩拳一次清空池子）
+  - 所有招式 cooldown 清零（高密度真元下经脉协调更好）
+  - 全力一击不进入 Exhausted（5s 内多次 charge/release）
+  - **敌方攻击仍正常命中**（伤害走 §P 物理矩阵，化虚体修扛伤）
+- 5s 后：BodyTranscendence 移除 → qi_max 永久 -50% 写入 cultivation::Cultivation + flow_rate 恢复正常
 - 不可逆（worldview §三:80 维护成本极高 + 重新突破需走完突破流程）
 - 化虚连续 cast 3 次散功（30 days in-game 内）→ 触发"绝壁劫"（强度 ×1.5，跟涡心 / 倒蚀 / 绝脉断链一致格调）
 
-**叙事意象**：化虚体修在生死关头，全身经脉骤然爆发金光 → 5s 内对手攻击如击虚空，他自己拳脚如雷霆 → 5s 后金光散尽，整个人衰老 10 岁，池子永久缩水一半。这是 worldview §三:187 "凡躯彻底重铸" 的物理化身——重铸不是变强，是用过去的本钱赌一次
+**叙事意象**：化虚体修在生死关头，全身经脉骤然爆发金光，每一掌每一拳都打出过载 ×10 的真元 → 5s 内拼命输出，但他自己也在受敌方攻击（不是无敌，是孤注） → 5s 后金光散尽，整个人衰老 10 岁，池子永久缩水一半，扛着满身伤离场。这是 worldview §三:187 "凡躯彻底重铸" + §五:402 "赌命爆发"的物理化身——**重铸不是免伤，是用过去的本钱赌 5s 极限输出**
 
 **反制 dugu 倒蚀的第三路径**（与 tuike ③ 上古伪皮 / zhenmai ⑤ 绝脉断链并列）：
 - 化虚毒蛊师倒蚀引爆永久 qi_max 衰减
-- 化虚体修 ⑤ 散功 → 5s 内全免疫（含 dugu 永久标记）
-- 代价：qi_max 永久 -50%
-- 跟其他反制路径对比：
-  - tuike ③：烧物资（一件上古级伪皮）
-  - zhenmai ⑤：烧身体（永久 SEVERED 一条经脉）
-  - **baomai ⑤**：烧池子（永久 -50% qi_max）
+- 化虚体修 ⑤ 散功 → 5s 内 flow_rate ×10 拼命输出，**赌反杀 dugu**
+- **dugu 倒蚀永久标记仍生效**（受全额命中），代价：qi_max 永久 -50% + 扛永久标记衰减
+- 跟其他反制路径对比（**全部物理可推导，无免疫机制**）：
+  - tuike ③：烧物资（上古伪皮承载 + 蜕落带走，物理是"标记转移"）
+  - zhenmai ⑤：烧身体（永久 SEVERED 一条经脉，60s 内反震效率 ×3，**仍受伤但反震高效**）
+  - **baomai ⑤**：烧池子（永久 -50% qi_max，5s 内 flow_rate ×10 拼命反杀，仍受伤）
 
-**依赖经脉**：所有 20 经脉（任一已 SEVERED → 散功失败 + 5% qi_max 损失，无重铸）
-**worldview 锚**：§三:187 + §五:402 + §三:78 化虚天道针对
+**依赖经脉**：所有 20 经脉（任一已 SEVERED → 散功失败 + 5% qi_max 损失，无 flow_rate 放大）
+**worldview 锚**：§三:187 + §四:354 过载撕裂反向 + §五:402 + §三:78 化虚天道针对
 
 ---
 
@@ -269,7 +289,8 @@ server/src/combat/baomai_v3/
 │                                              MountainShake/BloodBurn/Disperse)
 │                        + 5 resolve_fn（BengQuan/Charge/Release v1+v2 复用）
 ├── state.rs            — BloodBurnActive component (qi_multiplier + duration_ticks)
-│                        + BodyTranscendence component (5s 全免疫 + cooldown 清零 flag)
+│                        + BodyTranscendence component (5s flow_rate ×10 +
+│                                                      cooldown 清零 flag，**无免疫 flag**)
 │                        + MeridianRippleScar component (worldview §五:466 经脉龟裂
 │                                                        累积可视，体修专属履历)
 ├── tick.rs             — blood_burn_tick / body_transcendence_tick / 
@@ -298,7 +319,7 @@ client/src/main/java/.../combat/baomai/v3/
 ├── BodyTranscendencePillarParticle.java  — 散功化虚级凡躯震颤光柱（金光）
 ├── MeridianRippleScarParticle.java       — 经脉龟裂可视（inspect 模式下显示）
 ├── BloodBurnRatioHud.java                — 焚血当前 HP 比例 + 持续倒计
-├── BodyTranscendenceTimerHud.java        — 散功 5s 凡躯重铸倒计 + 全免提示
+├── BodyTranscendenceTimerHud.java        — 散功 5s 凡躯重铸倒计 + flow_rate ×10 提示
 └── MeridianRippleScarHud.java            — 经脉龟裂履历显示（inspect 经脉图扩展）
 
 client/src/main/resources/assets/bong/
@@ -383,7 +404,7 @@ PracticeLog 累积驱动 QiColor **沉重色**（worldview §六:611）演化。
 | 音效 | `transcendence_thunder` | recipe 新建 | P3 | layers: `[{ sound: "entity.lightning_bolt.thunder", pitch: 1.3, volume: 0.8 }]`（化虚级凡躯重铸雷音）|
 | 音效 | `meridian_crack` | recipe 新建 | P3 | layers: `[{ sound: "block.bone_block.break", pitch: 0.7, volume: 0.6 }]`（经脉龟裂细微声）|
 | HUD | `BloodBurnRatioHud` | 新建 | P2 | 焚血当前 HP 比例 + 持续倒计 + qi 倍率显示 |
-| HUD | `BodyTranscendenceTimerHud` | 新建 | P2 | 散功 5s 凡躯重铸倒计 + 全免提示 + qi_max 永久损失警示 |
+| HUD | `BodyTranscendenceTimerHud` | 新建 | P2 | 散功 5s 凡躯重铸倒计 + flow_rate ×10 提示 + qi_max 永久损失警示 |
 | HUD | `MeridianRippleScarHud` | 新建 | P2 | 经脉龟裂履历（inspect 经脉图扩展，体修专属，他人 inspect 也可见）|
 
 ---
@@ -398,7 +419,7 @@ PracticeLog 累积驱动 QiColor **沉重色**（worldview §六:611）演化。
 | `cast_charge / cast_release` (v2 集成) | charge 速率熟练度变化 + release 池子比例 + Exhausted 时长熟练度变化 + 任督依赖 | 22 |
 | `cast_mountain_shake` (v3) | 7 境界半径 + 震波传地 + 击退 + 失衡 + 足三阳依赖 + cooldown 熟练度 | 18 |
 | `cast_blood_burn` (v3) | 7 境界 HP→qi 倍率 + HP 不足 reject + 烧到 < 10% 强制结束 + 焚血结束 contam +5% + LR 依赖 | 20 |
-| `cast_disperse` (v3 化虚专属) | 化虚专属判定 + 通灵以下「凡躯不应」+ qi_max 永久 -50% 持久化（跨 server restart）+ 5s 全免 + cooldown 清零 + 重铸期间所有招式 cast 测试 + 反制 dugu 倒蚀实战 + 30 days 内连续 3 次触发绝壁劫 | 25 |
+| `cast_disperse` (v3 化虚专属) | 化虚专属判定 + 通灵以下「凡躯不应」+ qi_max 永久 -50% 持久化（跨 server restart）+ 5s flow_rate ×10 过载窗口 + 散功期间敌方攻击正常命中（伤害走 §P 矩阵）+ overload_severity 阈值临时破例 + cooldown 清零 + 重铸期间所有招式 cast 测试 + 反制 dugu 倒蚀实战（永久标记仍生效）+ 30 days 内连续 3 次触发绝壁劫 | 28 |
 | `meridian_ripple_scar_accumulate` | 长期体修自动累积可视化 + inspect 他人可见 + 跨 server restart 持久化 | 8 |
 | `meridian_severed_baomai` | plan-meridian-severed-v1 7 类来源中 baomai 接入（OverloadTear 过载撕裂 SEVERED 判定 + BackfireOverload 累积超阈值 SEVERED） | 9 |
 
@@ -432,13 +453,15 @@ PracticeLog 累积驱动 QiColor **沉重色**（worldview §六:611）演化。
 
 **默认推 A** —— worldview §五:466 经脉龟裂深度是 primary axis，应该是 passive 状态而非主动 trigger
 
-### #4 散功反制 dugu 倒蚀的"全免疫"是否包括所有 component
+### #4 散功 flow_rate 倍率（化虚 ×10）是否合适
 
-- **A**：全免疫（含 dugu 永久标记 / woliu 紊流场 / zhenmai 反震 / 物理 / 真元）
-- **B**：仅免疫直接伤害（永久标记仍生效，只是 5s 内不发作）
-- **C**：玩家 cast 时选 1 类免疫（同 zhenmai ⑤）
+worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。worldview 没明文给化虚 flow_rate 上限，需校准：
 
-**默认推 A** —— 化虚级孤注就是"5s 内绝对无敌"，简洁有力。代价 -50% qi_max 已极重
+- **A**：×10（化虚级，平时引气 5/s 的 10 倍）
+- **B**：×5（保守，跟化虚 ×5 池子放大对应）
+- **C**：×N 按熟练度（lv 0 ×3 / lv 100 ×10）
+
+**默认推 A** —— 化虚级孤注，5s 极限输出。代价 -50% qi_max 已极重，倍率应足以反杀。但 P0 需 telemetry 校准——倍率太高 → 散功一开必杀；太低 → 不值得烧 50% 池子
 
 ### #5 沉重色 hook 实装位置
 
@@ -455,9 +478,16 @@ PracticeLog 累积驱动 QiColor **沉重色**（worldview §六:611）演化。
 ## §6 进度日志
 
 - **2026-05-06** 骨架立项，承接 plan-baomai-v1 ✅ finished（PR #76 崩拳 P0）+ plan-baomai-v2 ✅ active（全力一击双 skill + Exhausted + UI 完整）。
-  - 设计轴心：破产狂战士定调（不依赖外物，所有代价在自身肉体经脉）+ 过载撕裂物理（worldview §四:354 + §五:402）+ 经脉密集依赖（手三阳全 + 任督，7 流派最密集）+ **化虚专属散功**（worldview §三:187 ×5 凡躯重铸：烧 qi_max 50% 换 5s 全免）+ 经脉龟裂尾迹（永久身体记录履历感）+ 熟练度生长二维划分（zhenmai-v2 通用机制回填）
+  - 设计轴心：破产狂战士定调（不依赖外物，所有代价在自身肉体经脉）+ 过载撕裂物理（worldview §四:354 + §五:402）+ 经脉密集依赖（手三阳全 + 任督，7 流派最密集）+ **化虚专属散功**（worldview §三:187 ×5 凡躯重铸 + §四:354 过载撕裂反向：烧 qi_max 50% 换 5s 内 flow_rate ×10 过载不撕裂窗口，**不是免疫**，敌方攻击仍正常命中）+ 经脉龟裂尾迹（永久身体记录履历感）+ 熟练度生长二维划分（zhenmai-v2 通用机制回填）
   - 五招完整规格 7 档威力表锁定（崩拳 v1 + 全力一击 v2 + 撼山 / 焚血 / 散功 v3 新增）
-  - **化虚做新机制**（同 woliu/dugu/zhenmai 思路，区别 tuike 物资派"无新招"）—— 体修化虚级用 -50% qi_max 换瞬间无敌
+  - **化虚做新机制**（同 woliu/dugu/zhenmai 思路，区别 tuike 物资派"无新招"）—— 体修化虚级用 -50% qi_max 换 5s 极限连击窗口（flow_rate ×10 过载不撕裂），**不是免疫**
+- **2026-05-06 修订（用户拍：免伤无物理逻辑）**：
+  - 撤销"5s 全免疫一切伤害"的 MMO hack 机制
+  - 改为 worldview §四:354 过载撕裂物理反向推导：烧 qi_max 50% 换 5s 内所有经脉 flow_rate × 10，过载不撕裂窗口
+  - 散功期间敌方攻击仍正常命中（伤害走 §P 物理矩阵），化虚体修是赌 5s 内能拼掉对方
+  - 反制 dugu 倒蚀仍可（5s 内可以反杀），但 dugu 倒蚀的永久标记仍生效（受全额命中）
+  - BodyTranscendence component 移除"全免疫 flag"，改 flow_rate_multiplier ×10 + cooldown_reset
+  - §5 #4 重写为 flow_rate 倍率 P0 校准问题
   - **反制化虚 dugu 倒蚀第三路径**：tuike ③ 烧物资 / zhenmai ⑤ 烧身体（SEVERED）/ **baomai ⑤ 烧池子（-50% qi_max）**——三种 hard counter 各有取舍
   - 经脉依赖严格遵循 plan-meridian-severed-v1 §3 强约束（每招 .with_dependencies(...) 声明）
   - 反噬阶梯继承 worldview §四 4 档损伤 + plan-meridian-severed-v1 通用 SEVERED（OverloadTear 过载撕裂 + BackfireOverload 累积）
