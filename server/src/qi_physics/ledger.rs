@@ -231,7 +231,7 @@ pub fn summarize_world_qi(world: &mut bevy_ecs::world::World) -> WorldQiSnapshot
 
     let zone_qi = world
         .get_resource::<ZoneRegistry>()
-        .map(|zones| zones.zones.iter().map(|zone| zone.spirit_qi.max(0.0)).sum())
+        .map(|zones| zones.zones.iter().map(|zone| zone.spirit_qi).sum())
         .unwrap_or(0.0);
 
     let player_qi = {
@@ -441,6 +441,18 @@ mod tests {
         assert_eq!(snap.zone_qi, 0.5);
         assert_eq!(snap.player_qi, 7.0);
         assert_eq!(snap.container_qi, 1.6);
+    }
+
+    #[test]
+    fn summarize_world_qi_preserves_negative_zone_qi() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = -0.6;
+        app.insert_resource(zones);
+
+        let snap = summarize_world_qi(app.world_mut());
+        assert_eq!(snap.zone_qi, -0.6);
+        assert_eq!(snap.total_observed(), -0.6);
     }
 
     fn snapshot(total: f64) -> WorldQiSnapshot {

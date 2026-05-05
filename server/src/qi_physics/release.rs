@@ -47,8 +47,16 @@ pub fn qi_release_to_zone(
 }
 
 pub fn accumulate_zone_release(zone_current: f64, releases: &[f64], zone_cap: f64) -> f64 {
-    let mut zone = zone_current.max(0.0);
-    let cap = zone_cap.max(0.0);
+    let mut zone = if zone_current.is_finite() {
+        zone_current
+    } else {
+        0.0
+    };
+    let cap = if zone_cap.is_finite() {
+        zone_cap.max(0.0)
+    } else {
+        0.0
+    };
     for amount in releases.iter().copied() {
         if amount.is_finite() && amount > 0.0 {
             zone = (zone + amount).min(cap);
@@ -143,5 +151,11 @@ mod tests {
         assert_eq!(outcome.accepted, 0.4);
         assert_eq!(outcome.zone_after, -0.19999999999999996);
         assert_eq!(outcome.transfer.unwrap().amount, 0.4);
+    }
+
+    #[test]
+    fn accumulated_release_preserves_negative_zone_qi() {
+        let zone_after = accumulate_zone_release(-0.6, &[0.4], 1.0);
+        assert!((zone_after - -0.2).abs() < f64::EPSILON);
     }
 }
