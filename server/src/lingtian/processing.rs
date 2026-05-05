@@ -403,28 +403,34 @@ pub fn validate_processing_start(
         });
     }
     for required in &recipe.inputs {
-        let mut available = 0;
+        let mut matching_count = 0;
+        let mut qualifying_count = 0;
+        let mut best_freshness = None::<f32>;
         for stack in inputs
             .iter()
             .filter(|stack| stack.item_id == required.item_id)
         {
-            available += stack.count;
+            matching_count += stack.count;
+            let got = stack.freshness.unwrap_or(1.0);
+            best_freshness = Some(best_freshness.map_or(got, |best| best.max(got)));
+            if required.min_freshness.is_none_or(|min| got >= min.0) {
+                qualifying_count += stack.count;
+            }
+        }
+        if qualifying_count < required.count {
             if let Some(min) = required.min_freshness {
-                let got = stack.freshness.unwrap_or(1.0);
-                if got < min.0 {
+                if matching_count >= required.count || matching_count > 0 {
                     return Err(ProcessingStartError::FreshnessTooLow {
                         item_id: required.item_id.clone(),
                         min: min.0,
-                        got,
+                        got: best_freshness.unwrap_or(0.0),
                     });
                 }
             }
-        }
-        if available < required.count {
             return Err(ProcessingStartError::MissingInput {
                 item_id: required.item_id.clone(),
                 required: required.count,
-                available,
+                available: matching_count,
             });
         }
     }
@@ -837,6 +843,26 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ProcessingStartError::FreshnessTooLow { .. }));
+    }
+
+    #[test]
+    fn validate_start_ignores_stale_extra_stack_when_fresh_quantity_satisfies() {
+        assert_eq!(
+            validate_processing_start(
+                &registry(),
+                "dry_ci_she_hao",
+                ProcessingKind::Drying,
+                &[
+                    ItemStack::new("ci_she_hao", 5, 1.0).with_freshness(0.8),
+                    ItemStack::new("ci_she_hao", 1, 1.0).with_freshness(0.2),
+                ],
+                ProcessingSkillLevels {
+                    herbalism: 0,
+                    alchemy: 0,
+                },
+            ),
+            Ok(())
+        );
     }
 
     #[test]

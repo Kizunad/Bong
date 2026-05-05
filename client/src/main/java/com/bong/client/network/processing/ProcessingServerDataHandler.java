@@ -21,6 +21,11 @@ public final class ProcessingServerDataHandler implements ServerDataHandler {
 
     private static ServerDataDispatch handleProcessingSession(ServerDataEnvelope envelope) {
         JsonObject p = envelope.payload();
+        boolean active = readBoolean(p, "active", true);
+        if (!active) {
+            ProcessingSessionStore.replace(ProcessingSessionStore.Snapshot.empty());
+            return ServerDataDispatch.handled(envelope.type(), "Cleared processing session snapshot");
+        }
         ProcessingSessionStore.replace(new ProcessingSessionStore.Snapshot(
             true,
             readString(p, "session_id", ""),
@@ -41,6 +46,12 @@ public final class ProcessingServerDataHandler implements ServerDataHandler {
             readString(p, "profile_name", "")
         );
         return ServerDataDispatch.handled(envelope.type(), "Applied freshness update");
+    }
+
+    private static boolean readBoolean(JsonObject obj, String key, boolean fallback) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) return fallback;
+        JsonElement el = obj.get(key);
+        return el.isJsonPrimitive() && el.getAsJsonPrimitive().isBoolean() ? el.getAsBoolean() : fallback;
     }
 
     private static int readInt(JsonObject obj, String key, int fallback) {

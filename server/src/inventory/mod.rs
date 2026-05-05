@@ -376,6 +376,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(DefaultLoadout(default_loadout));
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
+    app.insert_resource(freshness::FreshnessEnvironment::default());
     // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
     app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
     app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());

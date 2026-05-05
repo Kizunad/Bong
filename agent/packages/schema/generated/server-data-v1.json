@@ -10205,6 +10205,9 @@
             "player_id"
           ],
           "properties": {
+            "active": {
+              "type": "boolean"
+            },
             "session_id": {
               "type": "string"
             },

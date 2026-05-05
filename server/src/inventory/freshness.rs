@@ -5,7 +5,7 @@
 //! plan 决策只在 server tick 推进，离线自然暂停。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Query, Res};
+use valence::prelude::{bevy_ecs, Component, Query, Res, Resource};
 
 use crate::lingtian::{LingtianClock, BEVY_TICKS_PER_LINGTIAN_TICK};
 
@@ -26,6 +26,8 @@ pub struct FreshnessTracker {
     pub current_freshness: f32,
     pub frozen_until_tick: Option<u64>,
     #[serde(default)]
+    pub in_anqi: bool,
+    #[serde(default)]
     pub withered_item_id: Option<String>,
 }
 
@@ -39,6 +41,7 @@ impl FreshnessTracker {
             initial_qi,
             current_freshness: 1.0,
             frozen_until_tick: None,
+            in_anqi: false,
             withered_item_id: None,
         }
     }
@@ -124,6 +127,21 @@ impl FreshnessContext {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Resource)]
+pub struct FreshnessEnvironment {
+    pub season: Season,
+    pub tide_roll_0_1: f32,
+}
+
+impl Default for FreshnessEnvironment {
+    fn default() -> Self {
+        Self {
+            season: Season::Summer,
+            tide_roll_0_1: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum FreshnessTransition {
     Alive {
@@ -141,16 +159,25 @@ pub enum FreshnessTransition {
 
 pub fn freshness_tick_system(
     clock: Option<Res<LingtianClock>>,
+    environment: Option<Res<FreshnessEnvironment>>,
     mut trackers: Query<&mut FreshnessTracker>,
 ) {
     let Some(clock) = clock else {
         return;
     };
+    let environment = environment.as_deref().copied().unwrap_or_default();
     let now_tick = clock
         .lingtian_tick
         .saturating_mul(BEVY_TICKS_PER_LINGTIAN_TICK as u64);
     for mut tracker in &mut trackers {
-        advance_tracker_to_tick(&mut tracker, now_tick, Season::WinterToSummer, 0.5, false);
+        let in_anqi = tracker.in_anqi;
+        advance_tracker_to_tick(
+            &mut tracker,
+            now_tick,
+            environment.season,
+            environment.tide_roll_0_1,
+            in_anqi,
+        );
     }
 }
 
@@ -349,6 +376,28 @@ mod tests {
         );
         assert!((tracker.current_freshness - (1.0 - 1.0 / 3.0)).abs() < 1e-6);
         assert_eq!(tracker.last_eval_tick, GAME_DAY_TICKS);
+    }
+
+    #[test]
+    fn freshness_tracker_uses_environment_and_anqi_multiplier() {
+        let env = FreshnessEnvironment {
+            season: Season::Summer,
+            tide_roll_0_1: 0.0,
+        };
+        let mut tracker = FreshnessTracker::fresh("fresh_herb_v1", 0, 1.0);
+        tracker.in_anqi = true;
+        let in_anqi = tracker.in_anqi;
+        advance_tracker_to_tick(
+            &mut tracker,
+            GAME_DAY_TICKS,
+            env.season,
+            env.tide_roll_0_1,
+            in_anqi,
+        );
+        assert!(
+            (tracker.current_freshness - 0.85).abs() < 1e-6,
+            "summer 1.5 * anqi 0.3 should decay one fresh-herb day by 0.15"
+        );
     }
 
     #[test]

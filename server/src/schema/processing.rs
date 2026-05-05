@@ -13,6 +13,8 @@ pub enum ProcessingKindV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessingSessionDataV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
     pub session_id: String,
     pub kind: ProcessingKindV1,
     pub recipe_id: String,
@@ -35,6 +37,7 @@ mod tests {
     #[test]
     fn processing_session_data_roundtrip_uses_snake_case_kind() {
         let payload = ProcessingSessionDataV1 {
+            active: Some(true),
             session_id: "processing:1".to_string(),
             kind: ProcessingKindV1::ForgingAlchemy,
             recipe_id: "forge_ci_she_hao".to_string(),

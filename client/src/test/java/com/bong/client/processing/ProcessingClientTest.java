@@ -56,4 +56,20 @@ class ProcessingClientTest {
         assertEquals(ProcessingSessionStore.Kind.EXTRACTION, ProcessingSessionStore.snapshot().kind());
         assertEquals("extract_ci_she_hao", ProcessingSessionStore.snapshot().recipeId());
     }
+
+    @Test
+    void processing_session_payload_can_clear_active_snapshot() {
+        ProcessingSessionStore.replace(new ProcessingSessionStore.Snapshot(
+            true, "processing:old", ProcessingSessionStore.Kind.DRYING,
+            "dry_ci_she_hao", 10, 20, "offline:Azure"
+        ));
+
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        var result = router.route("""
+            {"v":1,"type":"processing_session","active":false,"session_id":"","kind":"drying","recipe_id":"","progress_ticks":0,"duration_ticks":0,"player_id":"offline:Azure"}
+            """, 192);
+
+        assertTrue(result.isHandled());
+        assertEquals(false, ProcessingSessionStore.snapshot().active());
+    }
 }

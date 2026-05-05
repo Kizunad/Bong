@@ -13,6 +13,7 @@ export type ProcessingKindV1 = Static<typeof ProcessingKindV1>;
 
 export const ProcessingSessionDataV1 = Type.Object(
   {
+    active: Type.Optional(Type.Boolean()),
     session_id: Type.String(),
     kind: ProcessingKindV1,
     recipe_id: Type.String(),
