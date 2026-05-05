@@ -165,7 +165,7 @@ impl WorldQiAccount {
     pub fn transfer(&mut self, transfer: QiTransfer) -> Result<(), QiPhysicsError> {
         let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
         let available = self.balance(&transfer.from);
-        if available + QI_EPSILON < amount {
+        if amount > available {
             return Err(QiPhysicsError::InsufficientQi {
                 account: transfer.from.to_string(),
                 available,
@@ -370,6 +370,23 @@ mod tests {
         let err = account
             .transfer(QiTransfer::new(from, to, 3.0, QiTransferReason::ReleaseToZone).unwrap())
             .expect_err("overdraft should fail");
+        assert!(matches!(err, QiPhysicsError::InsufficientQi { .. }));
+    }
+
+    #[test]
+    fn transfer_rejects_epsilon_sized_overdraft() {
+        let from = QiAccountId::player("a");
+        let to = QiAccountId::zone("spawn");
+        let mut account = WorldQiAccount::default();
+        account.set_balance(from.clone(), 0.0).unwrap();
+        account.set_balance(to.clone(), 0.0).unwrap();
+
+        let err = account
+            .transfer(
+                QiTransfer::new(from, to, QI_EPSILON * 0.5, QiTransferReason::ReleaseToZone)
+                    .unwrap(),
+            )
+            .expect_err("tiny positive overdraft should fail");
         assert!(matches!(err, QiPhysicsError::InsufficientQi { .. }));
     }
 
