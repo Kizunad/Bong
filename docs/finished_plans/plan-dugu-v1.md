@@ -8,9 +8,9 @@
 
 | 阶段 | 状态 | 验收 |
 |---|---|---|
-| **P0** 凝针 + 灌毒蛊 + 经脉损伤 + 自解（B 30% 失败）+ inspect hook stub | ⬜ | — |
-| **P1** 主动遮蔽（plan-perception hook 注入）+ 部位→经脉映射 + agent narration | ⬜ | — |
-| P2 v1 收口（饱和测试 + LifeRecord） | ⬜ | — |
+| **P0** 凝针 + 灌毒蛊 + 经脉损伤 + 自解（B 30% 失败）+ inspect hook stub | ✅ | `dugu.rs` 11 tests；tick / target review 修复已收口 |
+| **P1** 主动遮蔽（plan-perception hook 注入）+ 部位→经脉映射 + agent narration | ✅ | `obfuscate_sense_kind` / `DuguNarrationRuntime` / client HUD contract 已接通 |
+| P2 v1 收口（饱和测试 + LifeRecord） | ✅ | `BiographyEntry::DuguPoisonInflicted` + persistence / schema 已同步 |
 
 > **vN+1 (plan-dugu-v2)**：求医解 + 越级解 + 多经脉同时受毒 + 毒针变种（不同毒草不同毒效）+ 完整 NPC 信誉度系统（接 plan-identity-v1）
 
@@ -653,9 +653,9 @@ vN+1 plan-identity-v1 / plan-baomai 落地后：
 
 详见 §A.3 v1 实施阶梯。三阶段总结：
 
-- [ ] **P0** 凝针 + 灌毒蛊 + 经脉损伤 + 自解（B 30% 失败）+ 部位映射 + inspect hook stub —— 见 §3.1
-- [ ] **P1** 主动遮蔽完整接入 + agent narration + 部位映射完善 —— 见 §3.1.F + §8 P1 清单
-- [ ] **P2** v1 收口（LifeRecord + 身份系统 stub） —— 见 §8 P2 清单
+- [x] **P0** 凝针 + 灌毒蛊 + 经脉损伤 + 自解（B 30% 失败）+ 部位映射 + inspect hook stub —— 见 §3.1
+- [x] **P1** 主动遮蔽完整接入 + agent narration + 部位映射完善 —— 见 §3.1.F + §8 P1 清单
+- [x] **P2** v1 收口（LifeRecord + 身份系统 stub） —— 见 §8 P2 清单
 
 ## §10 开放问题
 

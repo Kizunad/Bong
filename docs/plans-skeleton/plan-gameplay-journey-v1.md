@@ -2,7 +2,7 @@
 
 > **总线 plan / Meta plan**——不新增子系统，而是把现有 50+ 个已落地子系统、20 份 active plan、8 份 skeleton plan 串成一条**玩家可走完**的 100h 游玩路径。本 plan 的产物不是代码，而是：(1) 路径图(P0→P5)；(2) 缺口依赖图(必须先补哪些 plan)；(3) E2E 通关验收脚本。
 >
-> **2026-05-04 状态刷新**（本次 audit-plans-progress 实地核验）：Tier 0 + Tier 1 + Tier 2 大幅闭合。新增 finished：anqi-v1 / zhenmai-v1 / woliu-v1 / style-vector-integration-v1 / terrain-jiuzong-ruin-v1 / terrain-rift-mouth-v1 / lifespan-v1 / anticheat-v1 / inventory-v2 / library-jiuzong-history-v1 / poi-novice-v1 / spawn-tutorial-v1 / perception-v1.1 / input-binding-v1 / cross-system-patch-v1 共 15 份。仍 active 的高优先级缺口：dugu-v1（worktree 未 commit）/ tuike-v1（branch ready 待 PR）/ multi-life-v1 / multi-style-v1 / niche-defense-v1 / botany-agent-v1 / lingtian-process / lingtian-weather / lingtian-npc / alchemy-recycle / alchemy-v2 / tsy-raceout-v1 / iris-integration-v1 / terrain-layer-query-v1。
+> **2026-05-05 状态补同步**（plans-status 实地核验）：多层级 plan 大幅闭合。新增 finished：alchemy-v2 / anqi-v1 / botany-v2 / dugu-v1 / multi-style-v1 / niche-defense-v1 / tuike-v1 / zhenmai-v1 / woliu-v1 / style-vector-integration-v1 / terrain-jiuzong-ruin-v1 / terrain-rift-mouth-v1 / lifespan-v1 / anticheat-v1 / inventory-v2 / library-jiuzong-history-v1 / poi-novice-v1 / spawn-tutorial-v1 / perception-v1.1 / input-binding-v1 / cross-system-patch-v1 共 21 份。仍 active 的高优先级缺口：multi-life-v1 / botany-agent-v1 / lingtian-process / lingtian-weather / lingtian-npc / alchemy-recycle / tsy-raceout-v1 / iris-integration-v1 / terrain-layer-query-v1。
 >
 > **三方合并产物**(2026-05-01)：本 v1 由三份独立起草稿交叉验证后合并：
 > - **opus 稿**(原 `plan-gameplay-journey-v1-opus.md`)：贡献骨架——接入面 Checklist / 阶段总览 / P0-P5 主体 / 七流派与四大产出横向 / 22 plan 依赖图执行序 / §H E2E 验收脚本
@@ -83,7 +83,7 @@
 1. **修炼 loop(主)**：在 spawn_plain 或附近 `broken_peaks`(灵气 0.5)静坐攒真元 → 第一次目击异变兽(噬元鼠群 plan-fauna-v1 ⬜ → 暂以普通 zombie 替代) → 第一次小战斗 → 战斗后伤口/经脉受损(`combat::resolve` ✅ + `MeridianSystem` ✅)。
 2. **凡器→法器升级 loop**：积攒铁/铜/低阶灵石(`mineral` 18 种 ✅) → 在 broken_peaks 找到第一座**炼器台**(forge `Station`，server ✅，client UI ⏳ 等 plan-forge-leftovers-v1) → 走完四步状态机(Tempering→Inscription→Consecration) → 产出 `BilletProfile::Common` 法器 → emit `forge-outcome-perfect` ✅。
 3. **炼丹 loop**：拾取灵草/低阶灵石 → 找到丹炉(alchemy `Furnace` ✅，client UI ⏳ 等 plan-alchemy-client-v1 P1+)→ 烧出第一颗 `凝脉散`(plan-alchemy-v1 ✅ 配方表) → 服用提升修炼速度。
-4. **灵田 loop**：在湿润地带找到一格 `LingtianPlot`(plan-lingtian-v1 ✅，剩 BlockEntity 持久化 ⏳) → 用 `Hoe` 开垦 → 撒灵草种子 → 浇水/补灵 → 1-2 in-game day 后收获 → 第一份"自产灵草"。
+4. **灵田 loop**：在湿润地带找到一格 `LingtianPlot`(plan-lingtian-v1 ✅ finished；BlockEntity 真持久化留给 plan-persistence-v1) → 用 `Hoe` 开垦 → 撒灵草种子 → 浇水/补灵 → 1-2 in-game day 后收获 → 第一份"自产灵草"。
 5. **MC 原生 loop**：建造草棚遮风/挖石搭灶/夜晚抗僵尸 — 与修仙完全平行，体力恢复/睡眠重置等保留原生(server 不拦截 vanilla)。
 
 ### 突破节点(3h 末)
@@ -130,7 +130,7 @@
 | 体修(爆脉) | 攻 | plan-baomai-v1 ✅ | broken_peaks 找一具断臂修士尸体，悟"血肉之躯亦是法器" |
 | 器修(暗器) | 攻 | plan-anqi-v1 ✅ active (2026-05-03) | 幽暗地穴(cave_network)拾"含毒铜针残卷" |
 | 地师(阵法) | 攻 | plan-zhenfa-v1 ✅ active (2026-05-03) | 灵泉湿地(spring_marsh)目睹一座废弃欺天阵 |
-| 毒蛊 | 攻 | plan-dugu-v1 ✅ active (2026-05-03) | 血谷(rift_valley)从蛛巢取出第一只蛊母 |
+| 毒蛊 | 攻 | plan-dugu-v1 ✅ finished (2026-05-04，PR #126) | 血谷(rift_valley)从蛛巢取出第一只蛊母 |
 | 截脉(震爆) | 防 | plan-zhenmai-v1 ✅ active (2026-05-03，P0 已实装于 plan-combat-no_ui) | 凝脉突破后 narration 自然解锁试用 |
 | 替尸/蜕壳 | 防 | plan-tuike-v1 ✅ active (2026-05-03) | cave_network 找到上一任替尸者残蜕 |
 | 涡流(绝灵) | 防 | plan-woliu-v1 ✅ active (2026-05-03) | 北荒(waste_plateau)边缘负压区静修触发 |
@@ -159,7 +159,7 @@
 
 ### 系统接入面
 
-- **server**：cultivation/topology ✅ / QiColor ✅ / extract_system ✅ / tsy ✅；**缺** zhenfa/spirit_eye/anqi/dugu/tuike/woliu/zhenmai 模块
+- **server**：cultivation/topology ✅ / QiColor ✅ / extract_system ✅ / tsy ✅ / dugu ✅；**缺** zhenfa/spirit_eye/anqi/tuike/woliu/zhenmai 模块
 - **agent**：tiandao narration 已支持流派切换叙事(skills/insight.md)；**缺**：染色锁定时的"道路确认" narration
 - **client**：UnlockedStylesStore ✅ / ExtractInteractionBootstrap ✅；**缺**：~~流派选择 UI~~（撤销，worldview §五"流派由组合涌现"无门禁）/ 灵眼标记 UI(并入 plan-spirit-eye-v1) / inspect 神识看对方 QiColor HUD（plan-style-vector-integration-v1 P1）
 - **worldgen**：broken_peaks/spring_marsh/cave_network/rift_valley/waste_plateau/tsy_zongmen_ruin 全 ✅；需要在 spring_marsh + rift_valley **注入灵眼 POI**(并入 plan-spirit-eye-v1)
@@ -179,7 +179,7 @@
 |------|---------|------|
 | zhenfa-v1 | ✅ active (2026-05-03，13+5 决策闭环) | P0 实装（commit 6c00602d / fc7d4854）|
 | anqi-v1 | ✅ active (2026-05-03，11 决策闭环) | P0 实装（commit 20b35224）|
-| dugu-v1 | ✅ active (2026-05-03，11 决策闭环) | P0 实装（commit 84d3e320）|
+| dugu-v1 | ✅ finished (2026-05-04，PR #126 commit 44a6ff9b 归档) | P0-P2 全实装 + finish evidence |
 | zhenmai-v1 | ✅ active (2026-05-03，10 决策；P0 已实装于 plan-combat-no_ui) | P1 实装（commit 530d6d53）|
 | tuike-v1 | ✅ active (2026-05-03，6 决策 + 2 reframe) | P0/P1 实装（commit 5b90b758）|
 | woliu-v1 | ✅ active (2026-05-03，9 决策 + hotbar 正典化) | P0/P1 实装（commit 121dbf70）|
@@ -223,15 +223,15 @@
 - **第一次设立灵龛**(`SpiritNicheRevealBootstrap` ✅) — 选择匿名 / 半曝光 / 实名(三档)
 - **第一次交易**：盲盒死信箱(社交模块 ✅)、游商傀儡 NPC
 - **第一次结仇**(`feud` ✅) / **第一次结契**(`pact` ✅)
-- **被抄家威胁**：plan-niche-defense-v1 ⬜ skeleton 必须升 active(P3 必需)
+- **被抄家威胁**：plan-niche-defense-v1 ✅ finished (2026-05-05，PR #130 commit e08e2efc)
 
 ### 系统接入面
 
 - **server**：cultivation `Realm::Solidify→Spirit` ✅ / fauna butcher ✅ / social 全套 ✅ / tsy 4 副本 ✅
 - **agent**：era_decree 全服可见的"政治叙事"已支持 + `plan-narrative-political-v1` ✅ active (2026-05-04 立项，10 决议闭环) — 基于 social graph 的"江湖传闻型"政治叙事（feud/pact/灵龛抄家/通缉令/高 Renown 出名 5 核心事件）
-- **client**：social UI ✅ / SparringInvite ✅ / TradeOffer ✅；**缺**：阵法布置 UI(plan-zhenfa-v1)、灵龛防御 UI(plan-niche-defense-v1)
+- **client**：social UI ✅ / SparringInvite ✅ / TradeOffer ✅ / 灵龛防御 UI ✅(plan-niche-defense-v1)；**缺**：阵法布置 UI(plan-zhenfa-v1)
 - **worldgen**：rift_valley / cave_network / tsy_daneng_crater / tsy_zhanchang 全 ✅
-- **schema**：fauna drop / 阵法触发 / 灵龛防御均**未定义**(派生 schema 增量任务，并入对应 plan)
+- **schema**：灵龛防御 ✅(plan-niche-defense-v1)；fauna drop / 阵法触发待按对应 plan 核验
 
 ### 验收抓手
 
@@ -241,9 +241,9 @@
 ### P3 缺口
 
 - plan-fauna-v1 升 active(必需)
-- plan-niche-defense-v1 升 active(必需)
+- plan-niche-defense-v1 ✅ finished (2026-05-05，PR #130 commit e08e2efc)
 - plan-narrative-political-v1 ✅ active (2026-05-04，10 决议闭环)
-- 阵法 schema / 灵龛防御 schema 增量
+- 灵龛防御 schema 增量 ✅(plan-niche-defense-v1)；阵法 schema 待按 zhenfa 核验
 
 ---
 
@@ -363,7 +363,7 @@
 | 体修(爆脉) | P2 | P3-P4 大战 | plan-baomai-v1 ✅ |
 | 器修(暗器) | P2 | P3 暗杀战 | plan-anqi-v1 ⬜ |
 | 地师(阵法) | P2 | P3-P5 守家+欺天阵 | plan-zhenfa-v1 ⬜ |
-| 毒蛊 | P2 | P3-P4 群战 | plan-dugu-v1 ⬜ |
+| 毒蛊 | P2 | P3-P4 群战 | plan-dugu-v1 ✅ |
 | 截脉(震爆) | P2 | P5 渡劫 | plan-zhenmai-v1 ⬜ |
 | 替尸/蜕壳 | P2 | P4-P5 救命 | plan-tuike-v1 ⬜ |
 | 涡流(绝灵) | P2 | P4 守家 | plan-woliu-v1 ⬜ |
@@ -389,7 +389,7 @@ worldview §六 把流派定为"路径倾向"——玩家**可以**精通全部 
 - 突破要求加成意味着 P2/P3/P4 各境界停留更久——同样的真元上限要求，多流派玩家要打更多经脉/积更多真元
 
 **接入面**：
-- server：`cultivation::QiColor` ✅ 已支持混元色检测；plan-multi-style-v1 ✅ active (2026-05-04 升级，6 决策 + reframe — 废弃 UnlockedStyles 多激活路径，改用 PracticeLog vector 自然演化)
+- server：`cultivation::QiColor` ✅ 已支持混元色检测；plan-multi-style-v1 ✅ finished (2026-05-04，PR #129 commit 5eefe3a9 归档 — 废弃 UnlockedStyles 多激活路径，改用 PracticeLog vector 自然演化)
 - 突破要求加成需调整 `cultivation::breakthrough::required_qi_pool` 公式
 - client：流派切换 UI 必须支持多激活态(SkillBar/QuickBar 槽位)
 
@@ -562,7 +562,7 @@ P2 必需:
   - 5 流派 plan 至少升 1 攻 + 1 防 active(推荐 baomai 已 ✅ + tuike)
 
 P3 必需:
-  - plan-niche-defense-v1        ⬜ → active     (灵龛防御)
+  - plan-niche-defense-v1        ✅ finished (2026-05-05 PR #130 commit e08e2efc)     (灵龛防御)
   - plan-narrative-political-v1 ✅ active (2026-05-04，10 决议闭环) — 江湖传闻型政治叙事 (5 核心事件：feud/pact/灵龛抄家/通缉令/高 Renown 出名)
 
 P4 必需:
@@ -573,7 +573,7 @@ P4 必需:
 P5 必需:
   - ~~plan-tribulation-pov-ui-v1~~ ❌ **不立** — 已实装于 plan-tribulation-v1 + plan-HUD-v1 (TribulationBroadcastHudPlanner 5 阶段 / 三视角 / 进度 / 方位 / 距离全 ✅)
   - plan-void-quota-v1          (派生)         (O.3 化虚名额按世界灵气总量)
-  - plan-multi-style-v1         ✅ active (2026-05-04 升级，6 决策 + reframe)：废弃 UnlockedStyles 多激活，改用 PracticeLog vector 自然演化（is_hunyuan 判定 + 修炼 session 接入 + style-balance telemetry 对接）
+  - plan-multi-style-v1         ✅ finished (2026-05-04，PR #129 commit 5eefe3a9 归档)：废弃 UnlockedStyles 多激活，改用 PracticeLog vector 自然演化（is_hunyuan 判定 + 修炼 session 接入 + style-balance telemetry 对接）
 
 横向必需:
   - plan-economy-v1             (派生)         (骨币半衰 + 价格)
@@ -593,7 +593,7 @@ P5 必需:
   - plan-lingtian-npc-v1         ⏳ → active     (NPC 种田/偷灵/争抢生态)
   - plan-alchemy-recycle-v1      ⏳ → active     (炼丹废料回流灵田，闭合资源循环)
   - plan-botany-agent-v1         ⬜ → active     (植物生态 → tiandao 订阅，agent 链路)
-  - plan-botany-v2               ⬜ → active     (17 新物种 + 采集 hazard)
+  - plan-botany-v2               ✅ finished (2026-05-04 PR #128 commit ed596f3b)     (17 新物种 + 采集 hazard；SeasonRequired driver 归 lingtian-weather)
 
 narration / agent 深化:
   - plan-narrative-v1            ⏳ → 完成       (天道叙事节奏/视角/抑制 全规范)
@@ -1334,7 +1334,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 
 #### 层 B：P0/P1 资源（Tier 1）
 
-> **2026-05-04 状态刷新**：P0/P1 资源链 9 plan + 新增 mineral-v2 / lifespan-v1 / terrain-jiuzong-ruin-v1 / terrain-rift-mouth-v1 / library-jiuzong-history-v1 共 14 份均 ✅ finished 归档；alchemy-v2 仍 ⏳ active（设计阶段 8%）。Wave 1 退出条件实质达成。
+> **2026-05-04 状态刷新**：P0/P1 资源链 9 plan + 新增 mineral-v2 / lifespan-v1 / terrain-jiuzong-ruin-v1 / terrain-rift-mouth-v1 / library-jiuzong-history-v1 / alchemy-v2 共 15 份均 ✅ finished 归档。Wave 1 退出条件实质达成。
 
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
@@ -1345,7 +1345,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 11b | `plan-mineral-v2` | ✅ finished (2026-04-30，commit 00df063f 归档) | mineral-v1 | 矿物体系扩展 |
 | 12 | `plan-forge-leftovers-v1` | ✅ finished (2026-05-02，commit 97829df0 归档) | forge-v1 ✅, input-binding-v1 | §G + O.6 硬依赖 |
 | 13 | `plan-alchemy-client-v1` | ✅ finished (2026-05-01，commit 25ea3816 归档) | alchemy-v1 ✅, input-binding-v1 | §G + O.6 硬依赖 |
-| 13b | `plan-alchemy-v2` | ⏳ active-design (2026-05-04 升级，~8%) | alchemy-client-v1 ✅ | 炼丹后续扩展（5 phase：side_effect 映射 / 丹方残卷 / 品阶铭文开光 / AutoProfile / 丹心识别）；P0–P4 全未启动 |
+| 13b | `plan-alchemy-v2` | ✅ finished (2026-05-04，commit 22ab67b2 归档) | alchemy-client-v1 ✅ | 炼丹后续扩展（5 phase：side_effect 映射 / 丹方残卷 / 品阶铭文开光 / AutoProfile / 丹心识别）；P0–P4 已完成 |
 | 14 | `plan-poi-novice-v1` | ✅ finished (2026-05-01，PR #109 commit 2f4a09fa 归档) | spawn-tutorial-v1, forge-leftovers-v1, alchemy-client-v1 | §L + 新手 POI |
 | 15 | `plan-terrain-ash-deadzone-v1` | ✅ finished (2026-05-01，PR #94 commit 542770ca 归档) | worldgen ✅ | §M.2 避劫 |
 | 16 | `plan-terrain-pseudo-vein-v1` | ✅ finished (2026-05-02，PR #107 commit c7a1d558 归档) | worldgen ✅, narrative-v1 | §G 教学诱饵 |
@@ -1364,24 +1364,24 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 19 | `plan-zhenfa-v1` | ✅ finished (2026-05-01，PR #110 commit 92ca1b83 归档；P0/P1 commit 6c00602d + fc7d4854) | cross-system-patch-v1 | §G P2 必需 |
 | 20 | `plan-baomai-v1` | ✅ finished (2026-04-29，commit b0302396 归档；PR #76) | (已完成) | §A 体修 |
 | 21 | `plan-anqi-v1` | ✅ finished (2026-05-04，PR #121 commit f0cab83f 归档) | spiritwood-v1, fauna-v1, forge-leftovers-v1 | §A 暗器 |
-| 22 | `plan-dugu-v1` | ⏳ active-implementing (~25%；worktree auto/plan-dugu-v1 含 dugu.rs 808 行 + needle.rs 247 行未 commit) | fauna-v1, botany-v2 | §A 毒蛊 |
+| 22 | `plan-dugu-v1` | ✅ finished (2026-05-04，PR #126 commit 44a6ff9b 归档) | fauna-v1, botany-v2 | §A 毒蛊 |
 | 23 | `plan-zhenmai-v1` | ✅ finished (2026-05-03，PR #122 commit 1ae7fd88 归档) | cultivation-canonical-align-v1 | §A 截脉 |
-| 24 | `plan-tuike-v1` | ⏳ active-implementing (分支 auto/plan-tuike-v1 ready 7 commit + 13 tests passed，待 PR merge) | spiritwood-v1, fauna-v1 | §A 替尸 |
+| 24 | `plan-tuike-v1` | ✅ finished (2026-05-04，PR #124 commit 50cc0cc4 归档) | spiritwood-v1, fauna-v1 | §A 替尸 |
 | 25 | `plan-woliu-v1` | ✅ finished (2026-05-02，PR #113 commit 06f6a726 归档；P0/P1 commit 121dbf70) | terrain-ash-deadzone-v1 | §A 涡流(P4 解锁但 plan 早做) |
-| 26 | `plan-multi-style-v1` | ⏳ active-design (~15%；is_hunyuan 已落 server color.rs，client HUD/事件接入未启动) | cultivation-canonical-align-v1 ✅, style-vector-integration-v1 ✅ | §A.5 + O.14；范围简化为 is_hunyuan 判定 + UI |
+| 26 | `plan-multi-style-v1` | ✅ finished (2026-05-04，PR #129 commit 5eefe3a9 归档) | cultivation-canonical-align-v1 ✅, style-vector-integration-v1 ✅ | §A.5 + O.14；is_hunyuan 判定 + 修炼 session 接入 + 7 色 HUD/schema + telemetry |
 
 #### 层 D：P3 中阶（Tier 3）
 
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
-| 27 | `plan-niche-defense-v1` | ⏳ active-design (~5%；HouseGuardian/NicheIntrusion 未实装，仅有 social-v1 预留 hook) | zhenfa-v1 ✅, fauna-v1 ✅, social-v1 ✅ | §G P3 |
-| 28 | `plan-lingtian-v1` | ⏳ merged (~93%；P0–P5 + 627 单测，仅 skill XP / zhenfa jvling 未接) | botany-v1 ✅ | 既有 active |
+| 27 | `plan-niche-defense-v1` | ✅ finished (2026-05-05，PR #130 commit e08e2efc；P0-P4 落地，P5 worldview prose 后续 canon PR) | zhenfa-v1 ✅, fauna-v1 ✅, social-v1 ✅ | §G P3 |
+| 28 | `plan-lingtian-v1` | ✅ finished (2026-05-04，commit 8f4074e9 归档；P0-P5 + skill XP 已接，zhenfa jvling runtime hook 后续) | botany-v1 ✅ | 既有 active |
 | 29 | `plan-lingtian-process-v1` | ⏳ active-design (~0%) | lingtian-v1, alchemy-client-v1 | §G 灵田生态 |
 | 30 | `plan-lingtian-npc-v1` | ⏳ active-design (~5%；ScatteredCultivator/FarmingTemperament 未实装；阻塞 by_actor 重构) | lingtian-v1, npc-ai ✅ | §G |
 | 31 | `plan-lingtian-weather-v1` | ⏳ active-design (~0%) | lingtian-v1 | §G + worldview §十七 |
 | 32 | `plan-alchemy-recycle-v1` | ⏳ active-design (~5%) | alchemy-client-v1, lingtian-v1 | §G |
-| 33 | `plan-botany-v2` | ⏳ merged (~90%；17 种 v2 全注册 + EnvLock/HarvestHazard 全落，SeasonRequired 仍 stub 等天气) | botany-v1 ✅ | §G |
-| 34 | `plan-botany-agent-v1` | ⏳ active-implementing (~15%；BOTANY_ECOLOGY 订阅 + 测试已落，WorldModel 字段/analyzer/决策层全缺) | botany-v2, narrative-v1 | §G |
+| 33 | `plan-botany-v2` | ✅ finished (2026-05-04，PR #128 commit ed596f3b 归档；SeasonRequired/WaterPulse driver 归 lingtian-weather) | botany-v1 ✅ | §G |
+| 34 | `plan-botany-agent-v1` | ⏳ active-implementing (~15%；BOTANY_ECOLOGY 订阅 + 测试已落，WorldModel 字段/analyzer/决策层全缺) | botany-v2 ✅, narrative-v1 | §G |
 | 35 | `plan-economy-v1` | 🆕 skeleton | fauna-v1, social-v1 ✅ | §E + 骨币半衰 |
 | 36 | `plan-style-balance-v1` | 🆕 skeleton | 7 流派 plan(20-26 全), cross-system-patch-v1 | §P + O.9 PVP telemetry |
 
@@ -1450,16 +1450,16 @@ graph TD
     zhenmai[23.zhenmai-v1]
     tuike[24.tuike-v1]
     woliu[25.woliu-v1]
-    multiStyle[26.multi-style-v1 🆕]:::derived
+    multiStyle[26.multi-style-v1 ✅]:::derived
 
     %% Wave 3: P3 中阶
-    nicheDef[27.niche-defense-v1]
-    lingtian[28.lingtian-v1 ⏳]
+    nicheDef[27.niche-defense-v1 ✅]
+    lingtian[28.lingtian-v1 ✅]
     ltProc[29.lingtian-process-v1 ⏳]
     ltNpc[30.lingtian-npc-v1 ⏳]
     ltWeath[31.lingtian-weather-v1 ⏳]
     alchemyR[32.alchemy-recycle-v1 ⏳]
-    botanyV2[33.botany-v2]
+    botanyV2[33.botany-v2 ✅]
     botanyAg[34.botany-agent-v1]
     economy[35.economy-v1 🆕]:::derived
     styleBal[36.style-balance-v1 🆕]:::derived
@@ -1609,13 +1609,13 @@ graph TD
 | 组 2-B(攻 3 plan 并行) | plan-anqi-v1 + plan-dugu-v1 + plan-zhenmai-v1 |
 | 组 2-C(攻防 2 plan 并行) | plan-tuike-v1 + plan-woliu-v1 |
 | 组 2-D(等 6 流派 P0 落地) | **plan-style-vector-integration-v1** 🆕（PracticeLog.add() 接入 6 流派 + inspect 神识看 QiColor + 完整死亡清空修复） |
-| 组 2-E(等 D 完成) | plan-multi-style-v1 🆕 |
+| 组 2-E(等 D 完成) | plan-multi-style-v1 ✅ finished |
 
 **Wave 2 退出条件**：E2E `p2-condense.sh` 全绿；7 流派(含已完成 baomai-v1)互克方向符合 §P 矩阵。
 
 > **2026-05-03 实际进度**：6 流派 plan 全部升 active+P0/P1 实装；baomai-v1 / zhenfa-v1 / woliu-v1 / spirit-eye-v1 已 ✅ finished 归档；anqi/dugu/zhenmai/tuike 仍 active；style-vector-integration-v1 active（取代撤销的 style-pick-v1）。
 >
-> **2026-05-04 实际进度**：multi-style-v1 ✅ active（6 决策 + reframe，废弃 UnlockedStyles 改 PracticeLog vector）。剩 style-balance-v1 未起 + E2E p2 脚本未跑。
+> **2026-05-04 实际进度**：dugu-v1 ✅ finished（PR #126 commit 44a6ff9b 归档）；multi-style-v1 ✅ finished（PR #129 commit 5eefe3a9 归档，废弃 UnlockedStyles 改 PracticeLog vector）。剩 style-balance-v1 未起 + E2E p2 脚本未跑。
 
 #### 🟧 Wave 3 — P3 中阶生态（Month 8-10）
 
@@ -1623,10 +1623,10 @@ graph TD
 
 | 并行组 | Plan |
 |---|---|
-| 组 3-A(灵田 4 plan 并行) | plan-lingtian-v1 ⏳ 收尾 + plan-lingtian-process-v1 + plan-lingtian-npc-v1 + plan-lingtian-weather-v1 |
-| 组 3-B(并行) | plan-alchemy-recycle-v1 + plan-botany-v2 |
-| 组 3-C(等 fauna+social) | plan-economy-v1 🆕 + plan-niche-defense-v1 |
-| 组 3-D(等 botany-v2) | plan-botany-agent-v1 |
+| 组 3-A(灵田 4 plan 并行) | plan-lingtian-v1 ✅ finished + plan-lingtian-process-v1 + plan-lingtian-npc-v1 + plan-lingtian-weather-v1 |
+| 组 3-B(并行) | plan-alchemy-recycle-v1 + plan-botany-v2 ✅ finished |
+| 组 3-C(等 fauna+social) | plan-economy-v1 🆕 + plan-niche-defense-v1 ✅ finished |
+| 组 3-D(botany-v2 已 finished) | plan-botany-agent-v1 |
 | 组 3-E(等 Wave 2 完成) | **plan-style-balance-v1** 🆕（PVP telemetry，必须 7 流派齐） |
 
 **Wave 3 退出条件**：E2E `p3-solidify.sh` 全绿；流派克制 PVP 数据回填 §P.5 矩阵。
@@ -1672,7 +1672,7 @@ graph TD
 
 ### Q.5 关键路径（Critical Path）
 
-> 不能并行优化的最长依赖链。**2026-05-04 实际进度**：前 6 个节点已全部 ✅ finished（cultivation-canonical-align / fauna / spawn-tutorial / poi-novice / spirit-eye / zhenfa）；剩临界路径塌缩到 niche-defense → tribulation → void-quota → void-actions → acceptance（约 15 周）。
+> 不能并行优化的最长依赖链。**2026-05-05 实际进度**：前 7 个节点已全部 ✅ finished（cultivation-canonical-align / fauna / spawn-tutorial / poi-novice / spirit-eye / zhenfa / niche-defense）；剩临界路径塌缩到 tribulation → void-quota → void-actions → acceptance（约 12 周）。
 
 ```
 ✅ cultivation-canonical-align-v1 (2w) — 已 finished (2026-05-02)
@@ -1681,7 +1681,7 @@ graph TD
             ✅ → poi-novice-v1 (2w) — 已 finished (2026-05-03)
                 ✅ → spirit-eye-v1 (3w) — 已 finished (2026-05-03)
                     ✅ → zhenfa-v1 (4w) — 已 finished (2026-05-03)
-                        ⬜ → niche-defense-v1 (3w) — skeleton 待启
+                        ✅ → niche-defense-v1 (3w) — 已 finished (2026-05-05 PR #130 commit e08e2efc)
                             ⏳ → tribulation-v1 (4w) — active 收尾
                                 ⬜ → void-quota-v1 (2w) — skeleton（等 tribulation）
                                     ⬜ → void-actions-v1 (2w)
@@ -1709,7 +1709,7 @@ graph TD
 
 **对策**：Wave 0 + Wave 1 关键 plan 必须**双人结对**或**同时起 2 路并行实验**——卡 1 周以上立即换路。
 
-> **2026-05-04 状态**：原 6 个塌方点 5 个已 ✅ finished 风险消除，仅剩 tribulation-v1 ⏳ active 收尾。一旦 tribulation finished → P4/P5 链路全部 unblock（void-quota / void-actions / acceptance）。
+> **2026-05-05 状态**：niche-defense-v1 已 ✅ finished；当前最高风险仍是 tribulation-v1 ⏳ active 收尾。一旦 tribulation finished → P4/P5 链路全部 unblock（void-quota / void-actions / acceptance）。
 
 ### Q.7 升 active 操作清单
 
@@ -1717,7 +1717,7 @@ graph TD
 
 - [ ] `git mv docs/plans-skeleton/plan-gameplay-journey-v1.md docs/plan-gameplay-journey-v1.md`
 - [ ] 同步起新派生 plan 的 skeleton（Q.1 标 🆕 的）：
-  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ active** (05-04) / style-balance-v1 ⬜ / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / void-quota-v1 ⬜ / void-actions-v1 ⬜ / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
+  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / style-balance-v1 ⬜ / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / void-quota-v1 ⬜ / void-actions-v1 ⬜ / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
 - [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"
