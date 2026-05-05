@@ -47,9 +47,16 @@ pub fn regen_from_zone(zone_qi: f64, rate: f64, integrity: f64, room: f64) -> (f
     } else {
         0.0
     };
-    let gain = (zone_qi * rate * integrity * QI_REGEN_COEF * QI_PER_ZONE_UNIT).min(room);
-    let drain = gain / QI_PER_ZONE_UNIT;
-    (gain, drain)
+    let raw_gain = zone_qi * rate * integrity * QI_REGEN_COEF;
+    let capped_gain = raw_gain.min(room);
+    let drain = capped_gain / QI_PER_ZONE_UNIT;
+    if drain > zone_qi {
+        let actual_drain = zone_qi;
+        let actual_gain = actual_drain * QI_PER_ZONE_UNIT;
+        (actual_gain, actual_drain)
+    } else {
+        (capped_gain, drain)
+    }
 }
 
 #[cfg(test)]
@@ -116,14 +123,22 @@ mod tests {
     #[test]
     fn regen_from_zone_is_zero_sum_scaled() {
         let (gain, drain) = regen_from_zone(0.5, 2.0, 1.0, 99.0);
+        assert_eq!(gain, 0.01);
         assert!(gain > 0.0);
         assert!((gain / QI_PER_ZONE_UNIT - drain).abs() < 1e-9);
     }
 
     #[test]
     fn regen_respects_available_room() {
-        let (gain, drain) = regen_from_zone(1.0, 100.0, 1.0, 3.0);
+        let (gain, drain) = regen_from_zone(1.0, 1_000.0, 1.0, 3.0);
         assert_eq!(gain, 3.0);
         assert_eq!(drain, 3.0 / QI_PER_ZONE_UNIT);
+    }
+
+    #[test]
+    fn regen_caps_drain_to_available_zone_qi() {
+        let (gain, drain) = regen_from_zone(0.001, 1_000_000.0, 1.0, 1_000_000.0);
+        assert_eq!(drain, 0.001);
+        assert_eq!(gain, 0.001 * QI_PER_ZONE_UNIT);
     }
 }

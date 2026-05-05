@@ -288,7 +288,7 @@ pub fn assert_conservation(
     era_decay: f64,
 ) -> Result<(), QiPhysicsError> {
     let era_decay = finite_non_negative(era_decay, "era_decay")?;
-    let expected = (before.total_observed() - era_decay).max(0.0);
+    let expected = before.total_observed() - era_decay;
     let actual = after.total_observed();
     let tolerance = QI_EPSILON.max(expected.abs() * 1e-9);
     if (expected - actual).abs() <= tolerance {
@@ -404,6 +404,13 @@ mod tests {
         let after = snapshot(90.0);
         let err = assert_conservation(&before, &after, 3.0).expect_err("drift should fail");
         assert!(matches!(err, QiPhysicsError::ConservationDrift { .. }));
+    }
+
+    #[test]
+    fn conservation_accepts_preserved_negative_observed_total() {
+        let before = snapshot(-0.6);
+        let after = snapshot(-0.6);
+        assert!(assert_conservation(&before, &after, 0.0).is_ok());
     }
 
     #[test]
