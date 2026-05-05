@@ -15,6 +15,9 @@ pub struct CollisionOutcome {
 }
 
 pub fn qi_collision(
+    attacker_id: &QiAccountId,
+    defender_id: &QiAccountId,
+    environment_id: &QiAccountId,
     atk: &dyn StyleAttack,
     def: &dyn StyleDefense,
     distance_blocks: f64,
@@ -44,8 +47,8 @@ pub fn qi_collision(
     let mut transfers = Vec::new();
     if defender_lost > 0.0 {
         if let Ok(transfer) = QiTransfer::new(
-            QiAccountId::player("attacker"),
-            QiAccountId::player("defender"),
+            defender_id.clone(),
+            environment_id.clone(),
             defender_lost,
             QiTransferReason::Collision,
         ) {
@@ -54,8 +57,8 @@ pub fn qi_collision(
     }
     if defender_absorbed > 0.0 {
         if let Ok(transfer) = QiTransfer::new(
-            QiAccountId::player("defender"),
-            QiAccountId::player("attacker"),
+            attacker_id.clone(),
+            defender_id.clone(),
             defender_absorbed,
             QiTransferReason::Collision,
         ) {
@@ -80,71 +83,162 @@ mod tests {
     use super::*;
     use crate::qi_physics::traits::{SimpleStyleAttack, SimpleStyleDefense};
 
+    fn ids() -> (QiAccountId, QiAccountId, QiAccountId) {
+        (
+            QiAccountId::player("attacker-1"),
+            QiAccountId::player("defender-1"),
+            QiAccountId::zone("impact-zone"),
+        )
+    }
+
     #[test]
     fn collision_delivers_damage_after_distance() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         let def = SimpleStyleDefense::new(ColorKind::Solid, 0.2);
-        let outcome = qi_collision(&atk, &def, 3.0, &EnvField::default());
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            3.0,
+            &EnvField::default(),
+        );
         assert!(outcome.attenuated_qi < 10.0);
         assert!(outcome.defender_lost > 0.0);
     }
 
     #[test]
     fn low_purity_fails_acoustic_threshold() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let mut atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         atk.purity = 0.1;
         let def = SimpleStyleDefense::new(ColorKind::Solid, 0.0);
-        let outcome = qi_collision(&atk, &def, 1.0, &EnvField::default());
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            1.0,
+            &EnvField::default(),
+        );
         assert_eq!(outcome.effective_hit, 0.0);
         assert!(outcome.transfers.is_empty());
     }
 
     #[test]
     fn strong_resistance_reduces_loss() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         let weak = SimpleStyleDefense::new(ColorKind::Solid, 0.1);
         let strong = SimpleStyleDefense::new(ColorKind::Solid, 0.8);
-        let weak_out = qi_collision(&atk, &weak, 1.0, &EnvField::default());
-        let strong_out = qi_collision(&atk, &strong, 1.0, &EnvField::default());
+        let weak_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &weak,
+            1.0,
+            &EnvField::default(),
+        );
+        let strong_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &strong,
+            1.0,
+            &EnvField::default(),
+        );
         assert!(strong_out.defender_lost < weak_out.defender_lost);
     }
 
     #[test]
     fn drain_affinity_is_clamped_to_half_spend() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         let mut def = SimpleStyleDefense::new(ColorKind::Solid, 0.0);
         def.drain_affinity = 1.0;
-        let outcome = qi_collision(&atk, &def, 0.0, &EnvField::default());
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
         assert!(outcome.defender_absorbed <= 5.0);
     }
 
     #[test]
     fn collision_records_bidirectional_transfers_when_absorbed() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         let mut def = SimpleStyleDefense::new(ColorKind::Solid, 0.0);
         def.drain_affinity = 0.5;
-        let outcome = qi_collision(&atk, &def, 0.0, &EnvField::default());
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
         assert_eq!(outcome.transfers.len(), 2);
+        assert_eq!(outcome.transfers[0].from, defender_id);
+        assert_eq!(outcome.transfers[0].to, environment_id);
+        assert_eq!(outcome.transfers[1].from, attacker_id);
+        assert_eq!(outcome.transfers[1].to, defender_id);
     }
 
     #[test]
     fn active_rhythm_amplifies_effective_hit() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         let def = SimpleStyleDefense::new(ColorKind::Solid, 0.0);
-        let base = qi_collision(&atk, &def, 0.0, &EnvField::default());
+        let base = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
         let active = EnvField {
             rhythm_multiplier: 1.2,
             ..Default::default()
         };
-        let boosted = qi_collision(&atk, &def, 0.0, &active);
+        let boosted = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            0.0,
+            &active,
+        );
         assert!(boosted.effective_hit > base.effective_hit);
     }
 
     #[test]
     fn zero_injected_qi_has_no_effect() {
+        let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 0.0);
         let def = SimpleStyleDefense::new(ColorKind::Solid, 0.0);
-        let outcome = qi_collision(&atk, &def, 0.0, &EnvField::default());
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
         assert_eq!(outcome.defender_lost, 0.0);
     }
 }

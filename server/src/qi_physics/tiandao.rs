@@ -44,6 +44,8 @@ pub fn collapse_redistribute_qi(
         .collect())
 }
 
+/// `era_factor`: 0.0 表示时代起始，使用最低衰减；1.0 表示时代终末，
+/// 使用最高衰减。具体时代进度由 patch plan 的调度器注入。
 pub fn era_decay_step(budget: &mut WorldQiBudget, era_factor: f64) -> Result<f64, QiPhysicsError> {
     let era_factor = finite_non_negative(era_factor, "era_factor")?.clamp(0.0, 1.0);
     let ratio = QI_TIANDAO_DECAY_PER_ERA_MIN
@@ -74,6 +76,11 @@ mod tests {
     #[test]
     fn normal_zone_does_not_trigger() {
         assert_eq!(tribulation_trigger(&EnvField::new(0.5)), None);
+    }
+
+    #[test]
+    fn default_env_does_not_trigger_starvation() {
+        assert_eq!(tribulation_trigger(&EnvField::default()), None);
     }
 
     #[test]

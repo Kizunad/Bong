@@ -124,7 +124,7 @@ impl EnvField {
 impl Default for EnvField {
     fn default() -> Self {
         Self {
-            local_zone_qi: 0.0,
+            local_zone_qi: 0.5,
             rhythm_multiplier: QI_RHYTHM_NEUTRAL,
             tsy_intensity: 0.0,
             ambient_pressure: 0.0,
@@ -165,5 +165,10 @@ mod tests {
     fn env_clamps_local_zone_qi() {
         assert_eq!(EnvField::new(2.0).local_zone_qi, 1.0);
         assert_eq!(EnvField::new(-0.5).local_zone_qi, 0.0);
+    }
+
+    #[test]
+    fn default_env_is_neutral_not_starved() {
+        assert_eq!(EnvField::default().local_zone_qi, 0.5);
     }
 }

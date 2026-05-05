@@ -90,7 +90,7 @@ pub(crate) fn finite_non_negative(value: f64, field: &'static str) -> Result<f64
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][qi_physics] registering qi physics resources");
-    app.init_resource::<WorldQiBudget>()
+    app.insert_resource(WorldQiBudget::from_env())
         .init_resource::<WorldQiAccount>()
         .add_event::<QiTransfer>();
 }

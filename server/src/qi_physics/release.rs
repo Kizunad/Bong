@@ -17,7 +17,12 @@ pub fn qi_release_to_zone(
     zone_cap: f64,
 ) -> Result<ZoneReleaseOutcome, QiPhysicsError> {
     let amount = finite_non_negative(amount, "release.amount")?;
-    let zone_current = finite_non_negative(zone_current, "zone_current")?;
+    if !zone_current.is_finite() {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "zone_current",
+            value: zone_current,
+        });
+    }
     let zone_cap = finite_non_negative(zone_cap, "zone_cap")?;
     let room = (zone_cap - zone_current).max(0.0);
     let accepted = amount.min(room);
@@ -123,5 +128,20 @@ mod tests {
         )
         .expect_err("nan should fail");
         assert!(matches!(err, QiPhysicsError::InvalidAmount { .. }));
+    }
+
+    #[test]
+    fn release_accepts_negative_zone_qi() {
+        let outcome = qi_release_to_zone(
+            0.4,
+            QiAccountId::player("p1"),
+            QiAccountId::zone("dead_edge"),
+            -0.6,
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(outcome.accepted, 0.4);
+        assert_eq!(outcome.zone_after, -0.19999999999999996);
+        assert_eq!(outcome.transfer.unwrap().amount, 0.4);
     }
 }
