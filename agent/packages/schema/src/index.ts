@@ -23,6 +23,7 @@ export * from "./inventory.js";
 export * from "./narration.js";
 export * from "./npc.js";
 export * from "./poi-novice.js";
+export * from "./processing.js";
 export * from "./pseudo-vein.js";
 export * from "./realm-vision.js";
 export * from "./server-data.js";

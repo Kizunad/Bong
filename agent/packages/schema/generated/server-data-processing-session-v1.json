@@ -1,0 +1,74 @@
+{
+  "type": "object",
+  "allOf": [
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "v"
+      ],
+      "properties": {
+        "type": {
+          "const": "processing_session",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "kind",
+        "recipe_id",
+        "progress_ticks",
+        "duration_ticks",
+        "player_id"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "plan-lingtian-process-v1 §5.3 四类作物二级加工工艺",
+          "anyOf": [
+            {
+              "const": "drying",
+              "type": "string"
+            },
+            {
+              "const": "grinding",
+              "type": "string"
+            },
+            {
+              "const": "forging_alchemy",
+              "type": "string"
+            },
+            {
+              "const": "extraction",
+              "type": "string"
+            }
+          ]
+        },
+        "recipe_id": {
+          "type": "string"
+        },
+        "progress_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "player_id": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

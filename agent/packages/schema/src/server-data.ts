@@ -73,6 +73,10 @@ import {
 } from "./social.js";
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
 import { FalseSkinStateV1 } from "./tuike.js";
+import {
+  ServerDataFreshnessUpdateV1,
+  ServerDataProcessingSessionV1,
+} from "./processing.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -150,6 +154,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("botany_plant_v2_render_profiles"),
   Type.Literal("lumber_progress"),
   Type.Literal("botany_skill"),
+  Type.Literal("processing_session"),
+  Type.Literal("freshness_update"),
   Type.Literal("alchemy_furnace"),
   Type.Literal("alchemy_session"),
   Type.Literal("alchemy_outcome_forecast"),
@@ -1320,6 +1326,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,
   ServerDataBotanySkillV1,
+  ServerDataProcessingSessionV1,
+  ServerDataFreshnessUpdateV1,
   ServerDataAlchemyFurnaceV1,
   ServerDataAlchemySessionV1,
   ServerDataAlchemyOutcomeForecastV1,
