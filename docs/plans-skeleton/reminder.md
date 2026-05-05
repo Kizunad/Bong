@@ -30,6 +30,9 @@
 > - `plan-qi-physics-v1`（修仙物理底盘：守恒律 + 压强法则 + 唯一物理实现入口）— **关键路径**。源自 plan-economy-v1 §1.5 衰变曲线裁决无解，上钻发现 worldview §二「真元极易挥发」是 9+ plan 同源现象（骨币/食材/距离/异体排斥/吸力/节律/末法残土/灵田漏液/搜刮磨损），各 plan 拍数才是问题根源。本 plan 立公理 + 算子 + 全局账本 WorldQiAccount，P1 完成 = 底盘 API 冻结
 > - `plan-qi-physics-patch-v1`（qi-physics 迁移收口）— 承接 qi-physics-v1 P1 后的迁移工作；P0 红线 3 PR（combat/decay 0.06 vs 正典 0.03 翻倍 / tsy_drain×dead_zone 协调 / WorldQiAccount 合账）；P1 shelflife / P2 战斗+守恒释放 / P3 新机制（坍缩渊 redistribute / 7 流派异体排斥 ρ / 时代衰减 / 阈值灾劫）
 >
+> **已转为独立骨架（2026-05-05）—— 流派功法**：
+> - `plan-woliu-v2`（涡流功法五招完整包：持涡 / 瞬涡 / 涡口 / 涡引 / 涡心）— 承接 plan-woliu-v1 ✅ finished。引入**搅拌器物理**（99% 紊流甩出 + 1% 入池 × 经脉流量 cap）+ **紊流场**（动态漩涡非可吸收浓度，是涡流流派专属 EnvField 边界，其他玩家在场内不可修炼 / 战斗精度 ×0.5 / shelflife ×3）+ 反噬阶梯 4 级（微感 / MICRO_TEAR / TORN / SEVERED）+ **无境界 gate 只有威力门坎**（worldview §五:537 流派由组合涌现）+ 化虚双场模型（致命场 ≤10 格 + 影响场 zone 量级）+ 化虚被动场可关。前置依赖 plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P2 完成。反向被依赖：plan-style-balance-v1（W/β/K_drain 矩阵）/ plan-color-v1（缜密色加成 hook）/ plan-tribulation-v1（化虚绝壁劫触发链）/ plan-zhenfa-v1（紊流场 vs 阵法冲突仲裁，留 zhenfa vN+1）。化虚涡心叙事意象 = worldview §四:380「化虚老怪走过新人来不及看清袍角」物理依据（整个山谷瞬间进入紊流死区）。骨架 §5 七个开放问题待 P0 决策门收口（化虚被动场默认开关 / 紊流场对 caster 自身影响 / 紊流 vs 阵法仲裁 / 99/1 比例 telemetry / 干尸涡引 / 被动场 qi 消耗 / 防御招精度衰减）
+>
 > **依赖链关键路径（plan-economy / plan-style-balance / 等等都在等）**：
 > ```
 > plan-qi-physics-v1 P0 红线决议 → P1 算子 ship
