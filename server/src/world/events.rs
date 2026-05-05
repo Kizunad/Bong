@@ -23,6 +23,7 @@ use crate::persistence::{
     ZONE_OVERLAY_PAYLOAD_VERSION,
 };
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::{collapse_redistribute_qi, tribulation_trigger, EnvField};
 use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
@@ -1175,8 +1176,45 @@ fn maybe_nullify_targeted_zone_qi(zone: &mut Zone, qi_density_heat: f32) -> Opti
     }
 
     let previous_spirit_qi = zone.spirit_qi;
+    let _ = tribulation_trigger(&EnvField::new(previous_spirit_qi));
     zone.spirit_qi = 0.0;
     Some(previous_spirit_qi)
+}
+
+fn redistribute_zone_qi_before_collapse(
+    zone_registry: &mut ZoneRegistry,
+    source_zone_name: &str,
+) -> f64 {
+    let Some(source) = zone_registry.find_zone_by_name(source_zone_name) else {
+        return 0.0;
+    };
+    let source_dimension = source.dimension;
+    let stored_qi = source.spirit_qi.max(0.0);
+    if stored_qi <= 0.0 {
+        return 0.0;
+    }
+
+    let surrounding_zones: Vec<(String, f64)> = zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.name != source_zone_name && zone.dimension == source_dimension)
+        .map(|zone| (zone.name.clone(), zone.spirit_qi))
+        .collect();
+    let Ok(redistributed) = collapse_redistribute_qi(stored_qi, &surrounding_zones) else {
+        return 0.0;
+    };
+
+    let mut total_redistributed = 0.0;
+    for (zone_name, amount) in redistributed {
+        if amount <= 0.0 {
+            continue;
+        }
+        if let Some(zone) = zone_registry.find_zone_mut(zone_name.as_str()) {
+            zone.spirit_qi = (zone.spirit_qi + amount).clamp(-1.0, 1.0);
+            total_redistributed += amount;
+        }
+    }
+    total_redistributed
 }
 
 fn maybe_targeted_daoxiang_spawn(
@@ -1636,6 +1674,7 @@ fn collapse_zone(
     collapse_targets: &[(Entity, DimensionKind, DVec3)],
     death_events: &mut EventWriter<DeathEvent>,
 ) -> usize {
+    redistribute_zone_qi_before_collapse(zone_registry, zone.name.as_str());
     let Some(active_zone) = zone_registry.find_zone_mut(zone.name.as_str()) else {
         return 0;
     };
@@ -1692,8 +1731,8 @@ mod events_tests {
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
-        RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+        persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
+        ActiveEventsResource, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
         COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
         EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
         REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
@@ -2249,6 +2288,55 @@ mod events_tests {
             !collected.iter().any(|event| event.target == outsider),
             "realm_collapse must not kill entities outside zone bounds"
         );
+    }
+
+    #[test]
+    fn collapse_redistribution_preserves_positive_zone_qi() {
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "source".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                    spirit_qi: 0.6,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "low".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(20.0, 0.0, 0.0), DVec3::new(30.0, 10.0, 10.0)),
+                    spirit_qi: 0.1,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "high".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(40.0, 0.0, 0.0), DVec3::new(50.0, 10.0, 10.0)),
+                    spirit_qi: 0.8,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        let before_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        let redistributed = redistribute_zone_qi_before_collapse(&mut zones, "source");
+        zones.find_zone_mut("source").unwrap().spirit_qi = 0.0;
+        let after_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        assert!((redistributed - 0.6).abs() < 1e-9);
+        assert!((after_total - before_total).abs() < 1e-9);
+        let low_delta = zones.find_zone_by_name("low").unwrap().spirit_qi - 0.1;
+        let high_delta = zones.find_zone_by_name("high").unwrap().spirit_qi - 0.8;
+        assert!(low_delta > high_delta);
     }
 
     #[test]
