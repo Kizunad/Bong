@@ -1,0 +1,17 @@
+[[recipe]]
+id = "grind_ci_she_hao"
+kind = "grinding"
+duration_ticks = 600
+inputs = [{ item_id = "dry_ci_she_hao", count = 2 }]
+outputs = [{ item_id = "powder_ci_she_hao", count = 2, quality_multiplier = 1.0, freshness_profile = "grinding_v1" }]
+skill_req = { herbalism = 0, alchemy = 0 }
+failure_rate = 0.10
+
+[[recipe]]
+id = "grind_ning_mai_cao"
+kind = "grinding"
+duration_ticks = 600
+inputs = [{ item_id = "dry_ning_mai_cao", count = 2 }]
+outputs = [{ item_id = "powder_ning_mai_cao", count = 2, quality_multiplier = 1.0, freshness_profile = "grinding_v1" }]
+skill_req = { herbalism = 0, alchemy = 0 }
+failure_rate = 0.10

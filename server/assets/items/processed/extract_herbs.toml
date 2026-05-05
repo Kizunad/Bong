@@ -1,0 +1,21 @@
+[[item]]
+id = "extract_ci_she_hao"
+name = "刺舌蒿萃液"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.03
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "三份鲜草萃得的一小瓶药液，品质高但极易逸散。"
+
+[[item]]
+id = "extract_ning_mai_cao"
+name = "凝脉草萃液"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.03
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "三份鲜草萃得的一小瓶药液，适合临战前炼丹或服用。"

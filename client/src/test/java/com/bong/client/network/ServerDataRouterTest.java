@@ -93,6 +93,9 @@ public class ServerDataRouterTest {
             "search_aborted",
             // plan-lingtian-v1 §4 active session 推送。
             "lingtian_session",
+            // plan-lingtian-process-v1 P3 — 加工进度 / freshness UI tag 推送。
+            "processing_session",
+            "freshness_update",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。
             "skill_xp_gain",
             "skill_lv_up",

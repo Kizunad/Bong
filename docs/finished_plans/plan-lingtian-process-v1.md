@@ -381,21 +381,28 @@ public class FreshnessTooltipHook {
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
 - 落地清单：
-  - P0：`server/src/lingtian/processing.rs` + 晾晒/碾粉 TOML × ≥4
-  - P1：`server/src/inventory/freshness.rs` + Season 耦合 + 灵气囊 hook
-  - P2：`server/src/forge/processing_mode.rs` + 炮制/萃取 TOML × ≥4
-  - P3：schema `agent/packages/schema/src/processing.ts` + Rust 镜像 + client `ProcessingActionScreen.java` + `FreshnessTooltipHook.java`
-  - P4：alchemy pill_recipe 加工产物加成接入 + recycle-v1 hook
+  - P0：`server/src/lingtian/processing.rs` 落地 `ProcessingKind` / `ProcessingSession` / `ProcessingRecipeRegistry` / `processing_session_tick_system`，`server/assets/recipes/processing/{drying,grinding}.toml` 提供晾晒 / 碾粉配方。
+  - P1：`server/src/inventory/freshness.rs` 落地 `FreshnessTracker` / `FreshnessEnvironment` / `freshness_tick_system` / `advance_tracker_to_tick`，按 `LingtianClock` game-tick 推进，并通过 resource + tracker flag 接入 Season multiplier 与灵气囊 ×0.3；`server/src/shelflife/registry.rs` 注册 `fresh_herb_v1` / `drying_v1` / `grinding_v1` / `forging_alchemy_v1` / `extraction_v1`。
+  - P2：`server/src/forge/processing_mode.rs` 接入丹炉炮制 / 萃取入口，请求验证通过后为玩家挂载 `ProcessingSession`，`server/assets/recipes/processing/{forge_processing,extraction}.toml` 提供炮制 / 萃取配方，技艺矩阵由 `ProcessingSkillLevels` 锁定。
+  - P3：`agent/packages/schema/src/processing.ts` + generated JSON + `server/src/schema/processing.rs` 镜像 `ProcessingSessionDataV1` / `FreshnessUpdateV1`；`ServerDataProcessingSessionV1` / `ServerDataFreshnessUpdateV1` 保持 closed schema；`ProcessingSessionDataV1.active` 可清空客户端 session；`client/src/main/java/com/bong/client/processing/ProcessingActionScreen.java`、`FreshnessTooltipHook.java`、`ProcessingServerDataHandler.java` 接入进度和 freshness UI。
+  - P4：`server/src/alchemy/processed_input.rs` 落地加工产物品质 / 成功率加成与 `alchemy_recycle_v1` 枯样 hook。
 - 关键 commit：
-- 测试结果：（目标 ≥ 34 条单测/e2e）
+  - `7d2abd530686b09e749efe1a5a27e1fd8f6b0804`（2026-05-06）：实现 plan-lingtian-process-v1 服务端加工核心
+  - `e042dbce975c570ed084fd1231ae80c0ee729e02`（2026-05-06）：接入 plan-lingtian-process-v1 加工契约
+  - `c23aff67c4e1842453c0594a92e9df2867e24e21`（2026-05-06）：补齐 plan-lingtian-process-v1 客户端加工面板
+  - `98b48d134ba8060366326400c6687403c0dbdc93`（2026-05-06）：补齐 review 验证面，覆盖 `ProcessingStartError` 变体、closed schema 与 forge session spawn
+- 测试结果：
+  - `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（server）：2429 passed
+  - `npm run generate -w @bong/schema`（agent）：281 schemas exported，生成后无额外 diff
+  - `npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`（agent）：schema 271 passed；tiandao 236 passed
+  - `source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk use java 17.0.18-amzn && ./gradlew test build`（client）：BUILD SUCCESSFUL（Java 17.0.18-amzn）
+  - `git diff --check`：通过
 - 跨仓库核验：
-  - server：`ProcessingKind` / `ProcessingSession` / `ProcessingRecipeRegistry` / `FreshnessTracker` / `freshness_tick_system`
-  - agent：`ProcessingKindV1` / `ProcessingSessionDataV1` / `FreshnessUpdateV1`
-  - client：`ProcessingActionScreen` / `FreshnessTooltipHook`
+  - server：`ProcessingKind` / `ProcessingSession` / `ProcessingRecipeRegistry` / `validate_processing_start`（覆盖 5 个 `ProcessingStartError` 变体）/ `FreshnessTracker` / `FreshnessEnvironment` / `freshness_tick_system` / `forge_processing_mode_handler` / `processed_alchemy_bonus`
+  - agent：`ProcessingKindV1` / `ProcessingSessionDataV1` / `FreshnessUpdateV1` / `ServerDataProcessingSessionV1` / `ServerDataFreshnessUpdateV1`
+  - client：`ProcessingActionScreen` / `ProcessingSessionStore` / `FreshnessStore` / `FreshnessTooltipHook` / `ProcessingServerDataHandler`
 - 遗留 / 后续：
-  - 加工连击（v2+）
-  - 4 类 UI 统合 vs 分窗（plan-HUD-v1 决策）
-  - 焦料反哺细节（plan-alchemy-recycle-v1）
+  - 启动加工的 client intent 与 inventory/forge 交互动作留给后续切片；本 plan 先固定 UI/进度/freshness 数据面。
+  - Season 真实 zone weather 状态读取与灵气囊实体判定留给 `plan-lingtian-weather-v1` / `plan-anqi-v1` 深接入；当前提供可测试 multiplier hook。
+  - 枯样反哺只落 `alchemy_recycle_v1` hook，不在本 plan 内实现完整回收经济。

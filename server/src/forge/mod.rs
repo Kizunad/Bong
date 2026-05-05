@@ -20,6 +20,7 @@ pub mod fallback;
 pub mod history;
 pub mod inventory_bridge;
 pub mod learned;
+pub mod processing_mode;
 pub mod session;
 pub mod skill_hook;
 pub mod station;
@@ -84,6 +85,8 @@ pub fn register(app: &mut App) {
     app.add_event::<ForgeStartAccepted>();
     app.add_event::<ForgeOutcomeEvent>();
     app.add_event::<station::PlaceForgeStationRequest>();
+    app.add_event::<processing_mode::StartForgeProcessingRequest>();
+    app.add_event::<processing_mode::ForgeProcessingAccepted>();
 
     app.add_systems(
         Update,
@@ -98,6 +101,7 @@ pub fn register(app: &mut App) {
             handle_step_advance.after(handle_consecration_injects),
             inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
             crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
+            processing_mode::forge_processing_mode_handler,
         ),
     );
 }

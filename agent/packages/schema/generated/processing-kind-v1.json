@@ -1,0 +1,21 @@
+{
+  "description": "plan-lingtian-process-v1 §5.3 四类作物二级加工工艺",
+  "anyOf": [
+    {
+      "const": "drying",
+      "type": "string"
+    },
+    {
+      "const": "grinding",
+      "type": "string"
+    },
+    {
+      "const": "forging_alchemy",
+      "type": "string"
+    },
+    {
+      "const": "extraction",
+      "type": "string"
+    }
+  ]
+}

@@ -171,6 +171,13 @@ import {
   TrespassEventV1,
 } from "./poi-novice.js";
 import {
+  FreshnessUpdateV1,
+  ProcessingKindV1,
+  ProcessingSessionDataV1,
+  ServerDataFreshnessUpdateV1,
+  ServerDataProcessingSessionV1,
+} from "./processing.js";
+import {
   PseudoVeinDissipateEventV1,
   PseudoVeinSeasonV1,
   PseudoVeinSnapshotV1,
@@ -548,6 +555,12 @@ export const SCHEMA_REGISTRY = {
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
   coffinOpenedV1: CoffinOpenedV1,
+  // 灵田加工 (plan-lingtian-process-v1 §5.3)
+  processingKindV1: ProcessingKindV1,
+  processingSessionDataV1: ProcessingSessionDataV1,
+  freshnessUpdateV1: FreshnessUpdateV1,
+  serverDataProcessingSessionV1: ServerDataProcessingSessionV1,
+  serverDataFreshnessUpdateV1: ServerDataFreshnessUpdateV1,
   // 炼丹 (plan-alchemy-v1 §4)
   alchemyOutcomeBucket: AlchemyOutcomeBucket,
   alchemyInterventionV1: AlchemyInterventionV1,
@@ -895,6 +908,13 @@ export const GENERATED_SCHEMA_FILES = {
   "tutorial-hook-v1.json": SCHEMA_REGISTRY.tutorialHookV1,
   "tutorial-hook-event-v1.json": SCHEMA_REGISTRY.tutorialHookEventV1,
   "coffin-opened-v1.json": SCHEMA_REGISTRY.coffinOpenedV1,
+  "processing-kind-v1.json": SCHEMA_REGISTRY.processingKindV1,
+  "processing-session-data-v1.json": SCHEMA_REGISTRY.processingSessionDataV1,
+  "freshness-update-v1.json": SCHEMA_REGISTRY.freshnessUpdateV1,
+  "server-data-processing-session-v1.json":
+    SCHEMA_REGISTRY.serverDataProcessingSessionV1,
+  "server-data-freshness-update-v1.json":
+    SCHEMA_REGISTRY.serverDataFreshnessUpdateV1,
   "client-request-sparring-invite-response-v1.json":
     SCHEMA_REGISTRY.clientRequestSparringInviteResponseV1,
   "audio-event-v1.json": SCHEMA_REGISTRY.audioEventV1,

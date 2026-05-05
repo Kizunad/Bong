@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "type",
+    "v",
+    "item_uuid",
+    "freshness",
+    "profile_name"
+  ],
+  "properties": {
+    "type": {
+      "const": "freshness_update",
+      "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "item_uuid": {
+      "type": "string"
+    },
+    "freshness": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "profile_name": {
+      "type": "string"
+    }
+  }
+}

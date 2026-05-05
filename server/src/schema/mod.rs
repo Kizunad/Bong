@@ -28,6 +28,7 @@ pub mod lingtian;
 pub mod narration;
 pub mod npc;
 pub mod poi_novice;
+pub mod processing;
 pub mod pseudo_vein;
 pub mod realm_vision;
 pub mod server_data;

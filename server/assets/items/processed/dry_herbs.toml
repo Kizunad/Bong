@@ -1,0 +1,43 @@
+[[item]]
+id = "dry_ci_she_hao"
+name = "干刺舌蒿"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.9
+description = "晾晒锁灵后的刺舌蒿，水气已散，入药损耗小。"
+
+[[item]]
+id = "dry_ning_mai_cao"
+name = "干凝脉草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.9
+description = "晾晒锁灵后的凝脉草，药力较鲜草稳定。"
+
+[[item]]
+id = "withered_dry_ci_she_hao"
+name = "枯干刺舌蒿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "晾晒失败或过期的刺舌蒿枯样，可等待回收反哺。"
+
+[[item]]
+id = "withered_dry_ning_mai_cao"
+name = "枯干凝脉草"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "晾晒失败或过期的凝脉草枯样，可等待回收反哺。"

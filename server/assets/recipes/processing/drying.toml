@@ -1,0 +1,19 @@
+[[recipe]]
+id = "dry_ci_she_hao"
+kind = "drying"
+duration_ticks = 24000
+inputs = [{ item_id = "ci_she_hao", count = 5, min_freshness = 0.5 }]
+outputs = [{ item_id = "dry_ci_she_hao", count = 5, quality_multiplier = 0.9, freshness_profile = "drying_v1" }]
+skill_req = { herbalism = 0, alchemy = 0 }
+failure_rate = 0.30
+failure_output = { item_id = "withered_dry_ci_she_hao", count = 3, quality_multiplier = 0.3, freshness_profile = "drying_v1" }
+
+[[recipe]]
+id = "dry_ning_mai_cao"
+kind = "drying"
+duration_ticks = 24000
+inputs = [{ item_id = "ning_mai_cao", count = 5, min_freshness = 0.5 }]
+outputs = [{ item_id = "dry_ning_mai_cao", count = 5, quality_multiplier = 0.9, freshness_profile = "drying_v1" }]
+skill_req = { herbalism = 0, alchemy = 0 }
+failure_rate = 0.30
+failure_output = { item_id = "withered_dry_ning_mai_cao", count = 3, quality_multiplier = 0.3, freshness_profile = "drying_v1" }

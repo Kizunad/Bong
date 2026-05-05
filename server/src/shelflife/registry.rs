@@ -13,6 +13,7 @@ use valence::prelude::Resource;
 use super::types::{DecayFormula, DecayProfile, DecayProfileId};
 
 const TICKS_PER_REAL_DAY: u64 = 20 * 60 * 60 * 24;
+const GAME_DAY_TICKS: u64 = 24_000;
 
 /// DecayProfile 全局注册表。**Bevy Resource** — 通过 ECS world 存取。
 #[derive(Debug, Default, Clone)]
@@ -135,6 +136,11 @@ pub fn register_production_profiles(registry: &mut DecayProfileRegistry) {
         ling_shi_profile("ling_shi_shang_v1", 7),
         ling_shi_profile("ling_shi_yi_v1", 14),
         ling_mu_gun_profile(),
+        fresh_herb_profile(),
+        processing_linear_profile("forging_alchemy_v1", 30),
+        processing_exp_profile("drying_v1", 14),
+        processing_exp_profile("grinding_v1", 7),
+        processing_exp_profile("extraction_v1", 3),
     ] {
         registry
             .insert(profile)
@@ -161,6 +167,36 @@ fn ling_mu_gun_profile() -> DecayProfile {
         id: DecayProfileId::new("ling_mu_gun_v1"),
         formula: DecayFormula::Exponential {
             half_life_ticks: TICKS_PER_REAL_DAY,
+        },
+        floor_qi: 0.0,
+    }
+}
+
+fn fresh_herb_profile() -> DecayProfile {
+    DecayProfile::Spoil {
+        id: DecayProfileId::new("fresh_herb_v1"),
+        formula: DecayFormula::Linear {
+            decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 3.0),
+        },
+        spoil_threshold: 0.01,
+    }
+}
+
+fn processing_linear_profile(id: &'static str, total_game_days: u64) -> DecayProfile {
+    DecayProfile::Decay {
+        id: DecayProfileId::new(id),
+        formula: DecayFormula::Linear {
+            decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * total_game_days as f32),
+        },
+        floor_qi: 0.0,
+    }
+}
+
+fn processing_exp_profile(id: &'static str, half_life_game_days: u64) -> DecayProfile {
+    DecayProfile::Decay {
+        id: DecayProfileId::new(id),
+        formula: DecayFormula::Exponential {
+            half_life_ticks: GAME_DAY_TICKS * half_life_game_days,
         },
         floor_qi: 0.0,
     }
@@ -274,6 +310,11 @@ mod tests {
         }
         for id in [
             "ling_mu_gun_v1",
+            "fresh_herb_v1",
+            "drying_v1",
+            "grinding_v1",
+            "forging_alchemy_v1",
+            "extraction_v1",
             "bone_coin_v1",
             "bone_coin_5_v1",
             "bone_coin_15_v1",
@@ -287,17 +328,19 @@ mod tests {
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        assert_eq!(r.len(), 15);
+        assert_eq!(r.len(), 20);
     }
 
     #[test]
-    fn register_production_profiles_registers_ling_shi_ladder_and_spiritwood() {
+    fn register_production_profiles_registers_ling_shi_spiritwood_and_processing_profiles() {
         let mut r = DecayProfileRegistry::new();
         register_production_profiles(&mut r);
-        assert_eq!(r.len(), 5);
+        assert_eq!(r.len(), 10);
         assert!(r.contains(&DecayProfileId::new("ling_shi_fan_v1")));
         assert!(r.contains(&DecayProfileId::new("ling_shi_yi_v1")));
         assert!(r.contains(&DecayProfileId::new("ling_mu_gun_v1")));
+        assert!(r.contains(&DecayProfileId::new("drying_v1")));
+        assert!(r.contains(&DecayProfileId::new("extraction_v1")));
     }
 
     #[test]
