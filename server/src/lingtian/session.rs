@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::BlockPos;
 
 use crate::botany::PlantId;
+pub use crate::qi_physics::constants::{
+    LINGTIAN_DRAIN_PLAYER_RATIO as DRAIN_QI_TO_PLAYER_RATIO,
+    LINGTIAN_DRAIN_ZONE_RATIO as DRAIN_QI_TO_ZONE_RATIO,
+};
 
 use super::environment::PlotEnvironment;
 use super::hoe::HoeKind;
@@ -114,9 +118,6 @@ pub const REPLENISH_COOLDOWN_LINGTIAN_TICKS: u64 = 4320;
 
 /// plan §1.7 — 偷灵 2s（与"普通材料补灵"同档）。
 pub const DRAIN_QI_TICKS: u32 = 40;
-/// plan §1.7 — 偷灵流入操作者比例（其余 20% 散逸回 zone，保持灵气零和）。
-pub const DRAIN_QI_TO_PLAYER_RATIO: f32 = 0.8;
-pub const DRAIN_QI_TO_ZONE_RATIO: f32 = 0.2;
 
 #[derive(Debug, Clone)]
 pub struct DrainQiSession {

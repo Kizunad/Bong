@@ -23,6 +23,9 @@ use crate::persistence::{
     ZONE_OVERLAY_PAYLOAD_VERSION,
 };
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::{
+    collapse_redistribute_qi, tribulation_trigger, EnvField, TribulationCause,
+};
 use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
@@ -289,14 +292,17 @@ impl ActiveEventsResource {
             return false;
         };
 
-        let Some(zone) = zone_registry.find_zone_mut(event.zone_name.as_str()) else {
+        if zone_registry
+            .find_zone_by_name(event.zone_name.as_str())
+            .is_none()
+        {
             tracing::warn!(
                 "[bong][world] {} target zone `{}` was not found",
                 event.event_name,
                 event.zone_name
             );
             return false;
-        };
+        }
 
         if self.contains(event.zone_name.as_str(), event.event_name.as_str()) {
             tracing::info!(
@@ -320,6 +326,9 @@ impl ActiveEventsResource {
             let karma_weight = karma_weights
                 .map(|weights| weights.weight_for_zone(event.zone_name.as_str()))
                 .unwrap_or_default();
+            let Some(zone) = zone_registry.find_zone_by_name(event.zone_name.as_str()) else {
+                return false;
+            };
             let qi_density_heat = targeted_qi_density_heat(qi_heatmap, zone);
             let roll = targeted_calamity_roll(
                 TARGETED_CALAMITY_BASE_PROBABILITY,
@@ -365,19 +374,30 @@ impl ActiveEventsResource {
                 ])),
             });
             if negative_event_triggered {
+                let Some(zone) = zone_registry.find_zone_by_name(event.zone_name.as_str()) else {
+                    return false;
+                };
                 let strike_position = targeted_calamity_strike_position(
                     zone,
                     event.target_player.as_deref(),
                     karma_weights,
                 );
-                let qi_nullified = maybe_nullify_targeted_zone_qi(zone, roll.qi_density_heat);
-                let daoxiang_spawn = maybe_targeted_daoxiang_spawn(
-                    zone,
-                    event.target_player.clone(),
-                    strike_position,
+                let qi_nullified = maybe_nullify_targeted_zone_qi(
+                    zone_registry,
+                    event.zone_name.as_str(),
                     roll.qi_density_heat,
-                    qi_nullified.is_some(),
                 );
+                let daoxiang_spawn = zone_registry
+                    .find_zone_by_name(event.zone_name.as_str())
+                    .and_then(|zone| {
+                        maybe_targeted_daoxiang_spawn(
+                            zone,
+                            event.target_player.clone(),
+                            strike_position,
+                            roll.qi_density_heat,
+                            qi_nullified.is_some(),
+                        )
+                    });
                 self.record_recent_event(GameEvent {
                     event_type: GameEventType::EventTriggered,
                     tick: 0,
@@ -402,7 +422,7 @@ impl ActiveEventsResource {
                         ),
                     ])),
                 });
-                if let Some(previous_spirit_qi) = qi_nullified {
+                if let Some(nullification) = qi_nullified {
                     self.record_recent_event(GameEvent {
                         event_type: GameEventType::EventTriggered,
                         tick: 0,
@@ -411,8 +431,19 @@ impl ActiveEventsResource {
                         zone: Some(event.zone_name.clone()),
                         details: Some(HashMap::from([
                             ("event".to_string(), Value::String("灵气归零".to_string())),
-                            ("previous_spirit_qi".to_string(), json!(previous_spirit_qi)),
+                            (
+                                "previous_spirit_qi".to_string(),
+                                json!(nullification.previous_spirit_qi),
+                            ),
                             ("spirit_qi".to_string(), json!(0.0)),
+                            (
+                                "redistributed_spirit_qi".to_string(),
+                                json!(nullification.redistributed_spirit_qi),
+                            ),
+                            (
+                                "tribulation_cause".to_string(),
+                                json!(nullification.cause.map(tribulation_cause_label)),
+                            ),
                             ("qi_density_heat".to_string(), json!(roll.qi_density_heat)),
                         ])),
                     });
@@ -453,6 +484,10 @@ impl ActiveEventsResource {
 
             return true;
         }
+
+        let Some(zone) = zone_registry.find_zone_mut(event.zone_name.as_str()) else {
+            return false;
+        };
 
         if !zone
             .active_events
@@ -1169,14 +1204,80 @@ fn targeted_qi_density_heat(qi_heatmap: Option<&QiDensityHeatmap>, zone: &Zone) 
     center_heat.max(zone_heat)
 }
 
-fn maybe_nullify_targeted_zone_qi(zone: &mut Zone, qi_density_heat: f32) -> Option<f64> {
-    if qi_density_heat < TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD || zone.spirit_qi <= 0.0 {
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TargetedQiNullification {
+    previous_spirit_qi: f64,
+    redistributed_spirit_qi: f64,
+    cause: Option<TribulationCause>,
+}
+
+fn tribulation_cause_label(cause: TribulationCause) -> &'static str {
+    match cause {
+        TribulationCause::DensityGaze => "density_gaze",
+        TribulationCause::RegionStarvation => "region_starvation",
+    }
+}
+
+fn maybe_nullify_targeted_zone_qi(
+    zone_registry: &mut ZoneRegistry,
+    zone_name: &str,
+    qi_density_heat: f32,
+) -> Option<TargetedQiNullification> {
+    let previous_spirit_qi = zone_registry.find_zone_by_name(zone_name)?.spirit_qi;
+    if qi_density_heat < TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD || previous_spirit_qi <= 0.0 {
         return None;
     }
 
-    let previous_spirit_qi = zone.spirit_qi;
+    let cause = tribulation_trigger(&EnvField::new(previous_spirit_qi));
+    let redistributed_spirit_qi = redistribute_zone_qi_before_collapse(zone_registry, zone_name);
+    if redistributed_spirit_qi <= 0.0 {
+        return None;
+    }
+
+    let zone = zone_registry.find_zone_mut(zone_name)?;
     zone.spirit_qi = 0.0;
-    Some(previous_spirit_qi)
+    Some(TargetedQiNullification {
+        previous_spirit_qi,
+        redistributed_spirit_qi,
+        cause,
+    })
+}
+
+fn redistribute_zone_qi_before_collapse(
+    zone_registry: &mut ZoneRegistry,
+    source_zone_name: &str,
+) -> f64 {
+    let Some(source) = zone_registry.find_zone_by_name(source_zone_name) else {
+        return 0.0;
+    };
+    let source_dimension = source.dimension;
+    let stored_qi = source.spirit_qi.max(0.0);
+    if stored_qi <= 0.0 {
+        return 0.0;
+    }
+
+    let surrounding_zones: Vec<(String, f64)> = zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.name != source_zone_name && zone.dimension == source_dimension)
+        .map(|zone| (zone.name.clone(), zone.spirit_qi))
+        .collect();
+    let Ok(redistributed) = collapse_redistribute_qi(stored_qi, &surrounding_zones) else {
+        return 0.0;
+    };
+
+    let mut total_redistributed = 0.0;
+    for (zone_name, amount) in redistributed {
+        if amount <= 0.0 {
+            continue;
+        }
+        if let Some(zone) = zone_registry.find_zone_mut(zone_name.as_str()) {
+            let before = zone.spirit_qi;
+            zone.spirit_qi = (before + amount).clamp(-1.0, 1.0);
+            total_redistributed += (zone.spirit_qi - before).max(0.0);
+        }
+    }
+    total_redistributed
 }
 
 fn maybe_targeted_daoxiang_spawn(
@@ -1636,6 +1737,7 @@ fn collapse_zone(
     collapse_targets: &[(Entity, DimensionKind, DVec3)],
     death_events: &mut EventWriter<DeathEvent>,
 ) -> usize {
+    redistribute_zone_qi_before_collapse(zone_registry, zone.name.as_str());
     let Some(active_zone) = zone_registry.find_zone_mut(zone.name.as_str()) else {
         return 0;
     };
@@ -1692,8 +1794,8 @@ mod events_tests {
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
-        RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+        persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
+        ActiveEventsResource, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
         COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
         EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
         REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
@@ -2249,6 +2351,55 @@ mod events_tests {
             !collected.iter().any(|event| event.target == outsider),
             "realm_collapse must not kill entities outside zone bounds"
         );
+    }
+
+    #[test]
+    fn collapse_redistribution_preserves_positive_zone_qi() {
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "source".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                    spirit_qi: 0.6,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "low".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(20.0, 0.0, 0.0), DVec3::new(30.0, 10.0, 10.0)),
+                    spirit_qi: 0.1,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "high".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(40.0, 0.0, 0.0), DVec3::new(50.0, 10.0, 10.0)),
+                    spirit_qi: 0.8,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        let before_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        let redistributed = redistribute_zone_qi_before_collapse(&mut zones, "source");
+        zones.find_zone_mut("source").unwrap().spirit_qi = 0.0;
+        let after_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        assert!((redistributed - 0.6).abs() < 1e-9);
+        assert!((after_total - before_total).abs() < 1e-9);
+        let low_delta = zones.find_zone_by_name("low").unwrap().spirit_qi - 0.1;
+        let high_delta = zones.find_zone_by_name("high").unwrap().spirit_qi - 0.8;
+        assert!(low_delta > high_delta);
     }
 
     #[test]
@@ -2966,6 +3117,18 @@ mod events_tests {
         {
             let world = app.world_mut();
             world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                zones.zones.push(Zone {
+                    name: "karma_neighbor".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(200.0, 0.0, 0.0), DVec3::new(220.0, 80.0, 20.0)),
+                    spirit_qi: 0.1,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                });
+                let before_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
                 let mut events = world.resource_mut::<ActiveEventsResource>();
                 assert!(events.enqueue_from_spawn_command_with_karma(
                     &command,
@@ -2978,6 +3141,8 @@ mod events_tests {
                     .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
                     .expect("spawn zone should exist");
                 assert_eq!(zone.spirit_qi, 0.0);
+                let after_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+                assert!((after_total - before_total).abs() < 1e-9);
 
                 let recent = events.recent_events_snapshot();
                 let marker = recent
@@ -3008,6 +3173,16 @@ mod events_tests {
                     Some(0.9)
                 );
                 assert_eq!(details.get("spirit_qi").and_then(Value::as_f64), Some(0.0));
+                assert_eq!(
+                    details
+                        .get("redistributed_spirit_qi")
+                        .and_then(Value::as_f64),
+                    Some(0.9)
+                );
+                assert_eq!(
+                    details.get("tribulation_cause").and_then(Value::as_str),
+                    Some("density_gaze")
+                );
                 assert_eq!(
                     details.get("qi_density_heat").and_then(Value::as_f64),
                     Some(1.0)

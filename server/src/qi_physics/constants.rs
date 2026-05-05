@@ -20,6 +20,12 @@ pub const QI_MAINTENANCE_IDLE: f64 = 1.0;
 pub const QI_TSY_DRAIN_FACTOR: f64 = 0.5;
 /// worldview §十六：末法残土非线性指数。
 pub const QI_TSY_DRAIN_NONLINEAR_EXPONENT: f64 = 1.5;
+/// plan-tsy-zone-v1：TSY 抽取基准真元池。
+pub const QI_TSY_REFERENCE_POOL: f64 = 100.0;
+/// plan-tsy-zone-v1：TSY 抽取基准速率（点 / tick）。
+pub const QI_TSY_BASE_DRAIN_PER_TICK: f64 = 0.5;
+/// plan-tsy-container-v1：搜刮中主动暴露的抽取乘数。
+pub const QI_TSY_SEARCH_DRAIN_MULTIPLIER: f64 = 1.5;
 /// worldview §十七：中性节律。
 pub const QI_RHYTHM_NEUTRAL: f64 = 1.0;
 /// worldview §十七：活跃节律。
@@ -40,5 +46,11 @@ pub const QI_REGION_STARVATION_THRESHOLD: f64 = 0.1;
 pub const QI_REGEN_COEF: f64 = 0.01;
 /// plan-cultivation-v1：zone qi 单位到玩家 qi 的兑换系数。
 pub const QI_PER_ZONE_UNIT: f64 = 50.0;
+/// player gather：采集动作默认真元奖励，以 zone qi 对冲供给。
+pub const QI_GATHER_REWARD: f64 = 14.0;
+/// plan-lingtian-v1：偷灵注入操作者比例。
+pub const LINGTIAN_DRAIN_PLAYER_RATIO: f32 = 0.8;
+/// plan-lingtian-v1：偷灵散逸回 zone 比例。
+pub const LINGTIAN_DRAIN_ZONE_RATIO: f32 = 0.2;
 /// 数值断言默认容忍度。
 pub const QI_EPSILON: f64 = 1e-6;
