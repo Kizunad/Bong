@@ -1,4 +1,4 @@
-# Bong · plan-qi-physics-patch-v1 · 骨架
+# Bong · plan-qi-physics-patch-v1 · Active
 
 把 audit 出的全部散常数 / 衰减函数 / 释放路径切到 `plan-qi-physics-v1` 提供的算子；删除原模块各自的物理常量；让所有真元/灵气流动都经 `qi_physics::ledger::QiTransfer` 守恒检查。**这是迁移收口 plan，不引入新物理**。
 
@@ -6,7 +6,7 @@
 
 **library 锚点**：N/A
 
-**前置硬依赖**：`plan-qi-physics-v1`(skeleton) P0 决策门 + P1 算子稳定。本 plan **不能在底盘 P1 之前启动**——没算子可调
+**前置硬依赖**：`plan-qi-physics-v1` ✅ 2026-05-05 已完成并归档（`docs/finished_plans/plan-qi-physics-v1.md`）；`server/src/qi_physics/` 底盘 API 已注册到 `server/src/main.rs`。本 plan 现在可启动，范围限定为迁移现有系统调用底盘，**不新增新物理**。
 
 **反向被依赖**：`plan-economy-v1` P1 / `plan-style-balance-v1` P0 / 任何"等 qi-physics 落地"的 plan，本 plan 完成后它们才能动
 
@@ -34,6 +34,17 @@
 - **跨仓库契约**：server 主战场；agent 端 `tiandao` arbiter 已有 conservation scaling 测试（`agent/packages/tiandao/tests/arbiter.test.ts:71`），patch 后保持不破；client 无变化
 - **worldview 锚点**：N/A
 - **qi_physics 锚点**：**100% 调用底盘**——这是 patch plan 存在的全部理由
+
+---
+
+## 代码库扫描（2026-05-05）
+
+- **底盘可用**：`server/src/qi_physics/` 已包含 `distance.rs` / `excretion.rs` / `collision.rs` / `channeling.rs` / `release.rs` / `ledger.rs` / `tiandao.rs`；`mod.rs` 对外导出 `qi_distance_atten` / `qi_excretion` / `regen_from_zone` / `qi_collision` / `qi_channeling` / `qi_release_to_zone` / `WorldQiAccount` / `QiTransfer` / `collapse_redistribute_qi` / `era_decay_step` / `tribulation_trigger` / `StyleAttack` / `StyleDefense`，并在 `server/src/main.rs:100` 注册。
+- **下游尚未接入底盘**：`rg 'qi_physics::|crate::qi_physics|use crate::qi_physics' server/src` 只命中 `server/src/main.rs` 和 `server/src/qi_physics/*` 自身测试/模块；业务模块还没有直接调用 qi_physics。
+- **P0 红线仍全部存在**：`server/src/combat/decay.rs:5` 仍是 `BASE_LOSS_PER_BLOCK = 0.06`；`server/src/world/tsy_drain.rs:17,63,101` 仍用 `SEARCH_DRAIN_MULTIPLIER` 并直接扣 `qi_current`；`server/src/lingtian/qi_account.rs:7` 仍标注未来接 `WorldQiAccount`；`server/src/player/gameplay.rs:29,294-295` 仍有固定 `GATHER_SPIRIT_QI_REWARD = 14.0`；`server/src/world/events.rs:1177-1178,1643` 仍直接把 zone 灵气清零。
+- **P1 shelflife 仍是本地公式**：`server/src/shelflife/registry.rs:69-137` 仍注册 bone coin / 灵石 / 益兽骨 / 陈酒 / 灵木棍 profile；`server/src/shelflife/compute.rs:18,173-186` 仍有 `DEAD_ZONE_SHELFLIFE_MULTIPLIER` 和 `Exponential` / `Linear` / `Stepwise` 三套公式。
+- **P2/P3 迁移点仍在**：`server/src/cultivation/tick.rs:42-45,49` 已是零和参考实现但常数未移到底盘；`server/src/lingtian/growth.rs:29` 仍有 `ZONE_LEAK_RATIO`；`server/src/world/tsy_container.rs:179` 仍有 `SEARCH_DRAIN_MULTIPLIER`；`server/src/network/client_request_handler.rs:127-129,5224-5287` 仍是本地跨界磨损；`server/src/world/tsy_lifecycle.rs:235,371` 已有 `TsyCollapseStarted` 与周期灵气改写，但未接 `collapse_redistribute_qi`；`server/src/cultivation/tribulation.rs:1736` / `server/src/cultivation/contamination.rs:97` / `server/src/cultivation/death_hooks.rs:57` 仍有 `qi_current = 0.0` 类去向待补。
+- **agent/client 边界**：agent 端 `agent/packages/tiandao/tests/arbiter.test.ts:71` 仍有 conservation scaling 测试；schema 端 `agent/packages/schema/src/common.ts:6` 仍定义 `SPIRIT_QI_TOTAL = 100.0`；client 目前只消费 `spirit_qi` / `qi_current` payload，未直接涉及 qi_physics 迁移。
 
 ---
 
