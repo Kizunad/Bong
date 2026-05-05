@@ -182,6 +182,15 @@ pub enum BiographyEntry {
         received_item: String,
         tick: u64,
     },
+    /// plan-niche-defense-v1 P3：灵龛抄家写入双方生平卷。
+    NicheIntrusion {
+        owner_id: String,
+        intruder_id: String,
+        niche_pos: [i32; 3],
+        items_taken_count: u32,
+        owner_perspective: bool,
+        tick: u64,
+    },
     /// plan-woliu-v1 §3.1.D / P2：涡流抽干飞入真元投射物。
     VortexProjectileDrained {
         projectile_id: String,
@@ -491,6 +500,24 @@ fn format_entry(entry: &BiographyEntry) -> String {
             received_item,
             tick,
         } => format!("t{tick}:trade:{counterparty_id}:{offered_item}->{received_item}"),
+        BiographyEntry::NicheIntrusion {
+            owner_id,
+            intruder_id,
+            niche_pos,
+            items_taken_count,
+            owner_perspective,
+            tick,
+        } => {
+            let perspective = if *owner_perspective {
+                "owner"
+            } else {
+                "intruder"
+            };
+            format!(
+                "t{tick}:niche_intrusion:{owner_id}:{intruder_id}:[{},{},{}]:items{items_taken_count}:{perspective}",
+                niche_pos[0], niche_pos[1], niche_pos[2]
+            )
+        }
         BiographyEntry::VortexProjectileDrained {
             projectile_id,
             drained_amount,

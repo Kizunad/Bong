@@ -59,7 +59,10 @@ export const NarrationStyle = Type.Union([
 ]);
 export type NarrationStyle = Static<typeof NarrationStyle>;
 
-export const NarrationKind = Type.Union([Type.Literal("death_insight")]);
+export const NarrationKind = Type.Union([
+  Type.Literal("death_insight"),
+  Type.Literal("niche_intrusion"),
+]);
 export type NarrationKind = Static<typeof NarrationKind>;
 
 export const ChatIntent = Type.Union([

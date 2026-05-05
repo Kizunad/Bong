@@ -52,6 +52,7 @@ pub mod overload;
 pub mod possession;
 pub mod qi_field;
 pub mod qi_zero_decay;
+pub mod realm_taint;
 pub mod realm_vision;
 pub mod skill_registry;
 pub mod spiritual_sense;
@@ -163,6 +164,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());
     app.insert_resource(SpiritualSensePushState::default());
+    realm_taint::register(app);
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();

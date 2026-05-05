@@ -19,3 +19,25 @@ base_weight = 0.05
 rarity = "uncommon"
 spirit_quality_initial = 0.6
 description = "破阵时勉强凝住的一小粒散逸真元，稍不留神便会归于天地。"
+
+[[item]]
+id = "zhen_shi_zhong"
+name = "中级阵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "可维持灵龛守家傀儡和中级陷阱的阵核。"
+
+[[item]]
+id = "zhen_shi_gao"
+name = "高级阵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "epic"
+spirit_quality_initial = 0.9
+description = "高阶地师封成的阵石，可承载迷乱与道伥血印。"

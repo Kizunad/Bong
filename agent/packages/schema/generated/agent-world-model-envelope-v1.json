@@ -251,8 +251,16 @@
                         ]
                       },
                       "kind": {
-                        "const": "death_insight",
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "const": "death_insight",
+                            "type": "string"
+                          },
+                          {
+                            "const": "niche_intrusion",
+                            "type": "string"
+                          }
+                        ]
                       }
                     }
                   }

@@ -244,6 +244,33 @@ pub struct ItemInstance {
     /// plan-alchemy-v2：炼丹产物 / 残卷 / 丹心线索的动态 NBT。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alchemy: Option<AlchemyItemData>,
+    /// plan-niche-defense-v1 P3：抄家物品携带龛主异体真元残留。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lingering_owner_qi: Option<LingeringQi>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LingeringQi {
+    pub owner: String,
+    pub expire_at: u64,
+}
+
+fn attach_lingering_owner_qi(item: &mut ItemInstance, owner: String, expire_at: u64) {
+    item.lingering_owner_qi = Some(LingeringQi { owner, expire_at });
+}
+
+pub fn attach_lingering_owner_qi_by_instance(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+    owner: String,
+    expire_at: u64,
+) -> bool {
+    let Some(item) = inventory_item_by_instance_mut(inventory, instance_id) else {
+        return false;
+    };
+    attach_lingering_owner_qi(item, owner, expire_at);
+    bump_revision(inventory);
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -745,6 +772,7 @@ fn instantiate_item_instance(
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
         alchemy: None,
+        lingering_owner_qi: None,
     })
 }
 
@@ -1108,6 +1136,7 @@ fn runtime_instance_from_template(
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
         alchemy: None,
+        lingering_owner_qi: None,
     }
 }
 
@@ -1129,6 +1158,7 @@ fn stack_identity_matches(left: &ItemInstance, right: &ItemInstance) -> bool {
         && left.forge_side_effects == right.forge_side_effects
         && left.forge_achieved_tier == right.forge_achieved_tier
         && left.alchemy == right.alchemy
+        && left.lingering_owner_qi == right.lingering_owner_qi
 }
 
 fn f64_values_match(left: f64, right: f64) -> bool {
@@ -1159,6 +1189,7 @@ fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState 
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         },
     }
 }
@@ -3355,6 +3386,7 @@ fn build_item_instance_from_template(
         forge_side_effects: Vec::new(),
         forge_achieved_tier: None,
         alchemy: None,
+        lingering_owner_qi: None,
     })
 }
 
@@ -4508,6 +4540,7 @@ cols = 4
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -4624,6 +4657,7 @@ cols = 4
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         });
 
         let outcome = apply_inventory_move(
@@ -4683,6 +4717,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         });
 
@@ -4845,6 +4880,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -4976,6 +5012,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5022,6 +5059,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5058,6 +5096,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5179,6 +5218,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -5201,6 +5241,7 @@ cols = 4
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -5224,6 +5265,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5290,6 +5332,7 @@ cols = 4
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
                     alchemy: None,
+                    lingering_owner_qi: None,
                 },
             });
         }
@@ -5590,6 +5633,7 @@ cols = 4
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
                     alchemy: None,
+                    lingering_owner_qi: None,
                 },
             },
         );
@@ -5688,6 +5732,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5756,6 +5801,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5790,6 +5836,7 @@ cols = 4
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -5813,6 +5860,7 @@ cols = 4
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         );
 
@@ -5874,6 +5922,7 @@ cols = 4
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 

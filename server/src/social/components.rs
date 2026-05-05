@@ -7,7 +7,123 @@ use crate::schema::social::RenownTagV1;
 
 pub type CharId = String;
 pub type Tick = u64;
-pub type DefenseModeId = String;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardianKind {
+    Puppet,
+    ZhenfaTrap,
+    BondedDaoxiang,
+}
+
+impl GuardianKind {
+    pub fn max_instances(self) -> usize {
+        match self {
+            GuardianKind::Puppet | GuardianKind::BondedDaoxiang => 1,
+            GuardianKind::ZhenfaTrap => 5,
+        }
+    }
+
+    pub fn default_charges(self) -> u8 {
+        match self {
+            GuardianKind::Puppet => 5,
+            GuardianKind::ZhenfaTrap => 1,
+            GuardianKind::BondedDaoxiang => 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZhenfaTrapTier {
+    Basic,
+    Middle,
+    Advanced,
+}
+
+impl Default for ZhenfaTrapTier {
+    fn default() -> Self {
+        Self::Basic
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HouseGuardian {
+    pub id: u64,
+    pub kind: GuardianKind,
+    pub charges_remaining: u8,
+    pub decay_at: Tick,
+    pub owner: CharId,
+    pub pos: [i32; 3],
+    #[serde(default)]
+    pub authorized_chars: Vec<CharId>,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub trap_tier: ZhenfaTrapTier,
+}
+
+impl HouseGuardian {
+    pub fn new(id: u64, kind: GuardianKind, owner: CharId, pos: [i32; 3], now_tick: Tick) -> Self {
+        Self {
+            id,
+            kind,
+            charges_remaining: kind.default_charges(),
+            decay_at: now_tick.saturating_add(guardian_decay_ticks(kind)),
+            owner,
+            pos,
+            authorized_chars: Vec::new(),
+            active: true,
+            trap_tier: ZhenfaTrapTier::default(),
+        }
+    }
+
+    pub fn is_decayed(&self, now_tick: Tick) -> bool {
+        !self.active || self.charges_remaining == 0 || now_tick >= self.decay_at
+    }
+
+    pub fn can_trigger_for(&self, char_id: &str, now_tick: Tick) -> bool {
+        !self.is_decayed(now_tick)
+            && self.owner != char_id
+            && !self
+                .authorized_chars
+                .iter()
+                .any(|authorized| authorized == char_id)
+    }
+
+    pub fn consume_charge(&mut self) -> bool {
+        if self.charges_remaining == 0 {
+            return false;
+        }
+        self.charges_remaining -= 1;
+        if self.charges_remaining == 0 {
+            self.active = false;
+        }
+        true
+    }
+}
+
+pub fn guardian_decay_ticks(kind: GuardianKind) -> Tick {
+    const TICKS_PER_HOUR: Tick = 20 * 60 * 60;
+    match kind {
+        GuardianKind::Puppet => 24 * TICKS_PER_HOUR,
+        GuardianKind::ZhenfaTrap => 6 * TICKS_PER_HOUR,
+        GuardianKind::BondedDaoxiang => 30 * 24 * TICKS_PER_HOUR,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IntrusionRecord {
+    pub intruder: Entity,
+    pub intruder_char_id: CharId,
+    pub owner: CharId,
+    pub time: Tick,
+    pub niche_pos: [i32; 3],
+    #[serde(default)]
+    pub items_taken: Vec<u64>,
+    #[serde(default)]
+    pub guardian_kinds_triggered: Vec<GuardianKind>,
+}
 
 #[derive(Debug, Clone, Default, Component, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Anonymity {
@@ -115,7 +231,8 @@ pub struct SpiritNiche {
     pub placed_at_tick: Tick,
     pub revealed: bool,
     pub revealed_by: Option<CharId>,
-    pub defense_mode: Option<DefenseModeId>,
+    #[serde(default)]
+    pub guardians: Vec<HouseGuardian>,
 }
 
 #[derive(Debug, Clone, Default, Component, Serialize, Deserialize, PartialEq, Eq)]
@@ -187,5 +304,23 @@ mod tests {
 
         let top = renown.top_tags(20 * 60 * 60 * 100, 1);
         assert_eq!(top[0].tag, "三叛之人");
+    }
+
+    #[test]
+    fn house_guardian_tracks_charges_and_owner_immunity() {
+        let mut guardian = HouseGuardian::new(
+            1,
+            GuardianKind::Puppet,
+            "char:owner".to_string(),
+            [10, 64, 10],
+            100,
+        );
+        assert!(!guardian.can_trigger_for("char:owner", 101));
+        assert!(guardian.can_trigger_for("char:intruder", 101));
+        for _ in 0..GuardianKind::Puppet.default_charges() {
+            assert!(guardian.consume_charge());
+        }
+        assert!(guardian.is_decayed(101));
+        assert!(!guardian.consume_charge());
     }
 }

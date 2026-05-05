@@ -297,6 +297,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -394,6 +395,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         assert!(!apply_variant_switch(
@@ -443,6 +445,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         let now = 5000;
@@ -493,6 +496,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         // bone_coin Linear decay over ~1y; use 2 years for safety margin to ensure ≤ EPSILON.

@@ -2,6 +2,7 @@ package com.bong.client.network;
 
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStore;
+import com.bong.client.social.NicheIntrusionAlertHandler;
 import com.bong.client.social.SocialStateStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -27,6 +28,9 @@ public final class SocialServerDataHandler implements ServerDataHandler {
             case "social_pact" -> handlePact(envelope);
             case "social_feud" -> handleFeud(envelope);
             case "social_renown_delta" -> handleRenownDelta(envelope);
+            case "niche_intrusion" -> handleNicheIntrusion(envelope);
+            case "niche_guardian_fatigue" -> handleNicheGuardianFatigue(envelope);
+            case "niche_guardian_broken" -> handleNicheGuardianBroken(envelope);
             case "sparring_invite" -> handleSparringInvite(envelope);
             case "trade_offer" -> handleTradeOffer(envelope);
             default -> ServerDataDispatch.noOp(envelope.type(), "Ignoring unsupported social payload type");
@@ -203,6 +207,40 @@ public final class SocialServerDataHandler implements ServerDataHandler {
         return ServerDataDispatch.handled(envelope.type(), "Recorded sparring_invite " + inviteId);
     }
 
+    private ServerDataDispatch handleNicheIntrusion(ServerDataEnvelope envelope) {
+        JsonObject p = envelope.payload();
+        String intruderId = readString(p, "intruder_id");
+        JsonArray itemsTakenArray = readArray(p, "items_taken");
+        Double taintDelta = readDouble(p, "taint_delta");
+        if (intruderId == null || itemsTakenArray == null || taintDelta == null) {
+            return ServerDataDispatch.noOp(envelope.type(), "Ignoring niche_intrusion: missing intruder/items/taint");
+        }
+        NicheIntrusionAlertHandler.recordIntrusion(intruderId, readLongArray(itemsTakenArray), taintDelta);
+        return ServerDataDispatch.handled(envelope.type(), "Recorded niche_intrusion for " + intruderId);
+    }
+
+    private ServerDataDispatch handleNicheGuardianFatigue(ServerDataEnvelope envelope) {
+        JsonObject p = envelope.payload();
+        String guardianKind = readString(p, "guardian_kind");
+        Integer chargesRemaining = readInt(p, "charges_remaining");
+        if (guardianKind == null || chargesRemaining == null) {
+            return ServerDataDispatch.noOp(envelope.type(), "Ignoring niche_guardian_fatigue: missing guardian_kind/charges");
+        }
+        NicheIntrusionAlertHandler.recordGuardianFatigue(guardianKind, chargesRemaining);
+        return ServerDataDispatch.handled(envelope.type(), "Recorded niche_guardian_fatigue " + guardianKind);
+    }
+
+    private ServerDataDispatch handleNicheGuardianBroken(ServerDataEnvelope envelope) {
+        JsonObject p = envelope.payload();
+        String guardianKind = readString(p, "guardian_kind");
+        String intruderId = readString(p, "intruder_id");
+        if (guardianKind == null || intruderId == null) {
+            return ServerDataDispatch.noOp(envelope.type(), "Ignoring niche_guardian_broken: missing guardian_kind/intruder");
+        }
+        NicheIntrusionAlertHandler.recordGuardianBroken(guardianKind, intruderId);
+        return ServerDataDispatch.handled(envelope.type(), "Recorded niche_guardian_broken " + guardianKind);
+    }
+
     private ServerDataDispatch handleTradeOffer(ServerDataEnvelope envelope) {
         JsonObject p = envelope.payload();
         String offerId = readString(p, "offer_id");
@@ -289,6 +327,18 @@ public final class SocialServerDataHandler implements ServerDataHandler {
             if (!primitive.isString()) continue;
             String value = primitive.getAsString();
             if (value != null && !value.isBlank()) values.add(value);
+        }
+        return values;
+    }
+
+    private static List<Long> readLongArray(JsonArray array) {
+        ArrayList<Long> values = new ArrayList<>();
+        for (JsonElement element : array) {
+            if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) continue;
+            JsonPrimitive primitive = element.getAsJsonPrimitive();
+            if (!primitive.isNumber()) continue;
+            long value = primitive.getAsLong();
+            if (value >= 0L) values.add(value);
         }
         return values;
     }

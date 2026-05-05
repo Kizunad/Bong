@@ -62,6 +62,9 @@ import {
   SocialAnonymityPayloadV1,
   SocialExposureEventV1,
   SocialFeudEventV1,
+  NicheGuardianBrokenV1,
+  NicheGuardianFatigueV1,
+  NicheIntrusionEventV1,
   SocialPactEventV1,
   PlayerSocialSnapshotV1,
   SocialRenownDeltaV1,
@@ -194,6 +197,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("social_pact"),
   Type.Literal("social_feud"),
   Type.Literal("social_renown_delta"),
+  Type.Literal("niche_intrusion"),
+  Type.Literal("niche_guardian_fatigue"),
+  Type.Literal("niche_guardian_broken"),
   Type.Literal("sparring_invite"),
   Type.Literal("trade_offer"),
   Type.Literal("realm_vision_params"),
@@ -1167,6 +1173,45 @@ export type ServerDataSocialRenownDeltaV1 = Static<
   typeof ServerDataSocialRenownDeltaV1
 >;
 
+export const ServerDataNicheIntrusionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("niche_intrusion"),
+    niche_pos: NicheIntrusionEventV1.properties.niche_pos,
+    intruder_id: NicheIntrusionEventV1.properties.intruder_id,
+    items_taken: NicheIntrusionEventV1.properties.items_taken,
+    taint_delta: NicheIntrusionEventV1.properties.taint_delta,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataNicheIntrusionV1 = Static<typeof ServerDataNicheIntrusionV1>;
+
+export const ServerDataNicheGuardianFatigueV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("niche_guardian_fatigue"),
+    guardian_kind: NicheGuardianFatigueV1.properties.guardian_kind,
+    charges_remaining: NicheGuardianFatigueV1.properties.charges_remaining,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataNicheGuardianFatigueV1 = Static<
+  typeof ServerDataNicheGuardianFatigueV1
+>;
+
+export const ServerDataNicheGuardianBrokenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("niche_guardian_broken"),
+    guardian_kind: NicheGuardianBrokenV1.properties.guardian_kind,
+    intruder_id: NicheGuardianBrokenV1.properties.intruder_id,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataNicheGuardianBrokenV1 = Static<
+  typeof ServerDataNicheGuardianBrokenV1
+>;
+
 export const ServerDataSparringInviteV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1324,6 +1369,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataSocialPactV1,
   ServerDataSocialFeudV1,
   ServerDataSocialRenownDeltaV1,
+  ServerDataNicheIntrusionV1,
+  ServerDataNicheGuardianFatigueV1,
+  ServerDataNicheGuardianBrokenV1,
   ServerDataSparringInviteV1,
   ServerDataTradeOfferV1,
   ServerDataRealmVisionParamsV1,

@@ -139,6 +139,16 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(x, y, z));
     }
 
+    public static void sendSpiritNicheActivateGuardian(
+        int x,
+        int y,
+        int z,
+        String guardianKind,
+        java.util.List<String> materials
+    ) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheActivateGuardian(x, y, z, guardianKind, materials));
+    }
+
     public static void sendZhenfaPlace(
         BlockPos pos,
         ClientRequestProtocol.ZhenfaKind kind,

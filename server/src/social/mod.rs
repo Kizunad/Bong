@@ -1,5 +1,6 @@
 pub mod components;
 pub mod events;
+pub mod niche_defense;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -18,11 +19,12 @@ use valence::prelude::{
 };
 
 use self::components::{
-    Anonymity, ExposureEvent, ExposureLog, FactionMembership, Relationship, Relationships, Renown,
-    SparringState, SpiritNiche,
+    Anonymity, ExposureEvent, ExposureLog, FactionMembership, HouseGuardian, Relationship,
+    Relationships, Renown, SparringState, SpiritNiche,
 };
 use self::events::{
-    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, PlayerChatCollected,
+    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, NicheGuardianBroken,
+    NicheGuardianFatigue, NicheIntrusionAttempt, NicheIntrusionEvent, PlayerChatCollected,
     SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
     SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
     SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
@@ -50,7 +52,8 @@ use crate::player::state::{
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
-    ExposureKindV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
+    ExposureKindV1, GuardianKindV1, NicheGuardianBrokenV1, NicheGuardianFatigueV1,
+    NicheIntrusionEventV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
@@ -77,7 +80,7 @@ const NAMELESS_LABEL: &str = "无名修士";
 
 type CompanionPairKey = (String, String);
 type FactionMembershipSqlRow = (Option<String>, i64, i64, i64, Option<i64>, i64);
-type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, Option<String>);
+type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, String);
 
 #[derive(Debug, Default, Resource)]
 struct CompanionProgress {
@@ -157,6 +160,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SpiritNichePlaceRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
     app.add_event::<SpiritNicheRevealRequest>();
+    niche_defense::register(app);
     app.add_systems(
         Update,
         (
@@ -194,10 +198,12 @@ pub fn register(app: &mut App) {
                 .after(handle_death_social_effects)
                 .after(handle_social_pacts)
                 .after(apply_faction_membership_decisions),
+            emit_niche_defense_server_data,
             publish_social_events
                 .after(apply_social_exposures)
                 .after(apply_social_relationships)
-                .after(apply_social_renown_deltas),
+                .after(apply_social_renown_deltas)
+                .after(emit_niche_defense_server_data),
         ),
     );
     app.add_systems(
@@ -539,6 +545,92 @@ fn apply_social_exposures(
                 send_server_data_payload(&mut client, bytes.as_slice());
             }
         }
+    }
+}
+
+fn emit_niche_defense_server_data(
+    mut intrusions: EventReader<NicheIntrusionEvent>,
+    mut fatigues: EventReader<NicheGuardianFatigue>,
+    mut broken_events: EventReader<NicheGuardianBroken>,
+    mut clients: Query<(&Lifecycle, &mut Client), With<Client>>,
+) {
+    for intrusion in intrusions.read() {
+        let payload =
+            ServerDataV1::new(ServerDataPayloadV1::NicheIntrusion(NicheIntrusionEventV1 {
+                v: 1,
+                niche_pos: intrusion.niche_pos,
+                intruder_id: intrusion.intruder_char_id.clone(),
+                items_taken: intrusion.items_taken.clone(),
+                taint_delta: intrusion.taint_delta,
+            }));
+        send_niche_payload_to_participants(
+            &payload,
+            intrusion.niche_owner.as_str(),
+            Some(intrusion.intruder_char_id.as_str()),
+            &mut clients,
+        );
+    }
+
+    for fatigue in fatigues.read() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::NicheGuardianFatigue(
+            NicheGuardianFatigueV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(fatigue.guardian_kind),
+                charges_remaining: fatigue.charges_remaining,
+            },
+        ));
+        send_niche_payload_to_participants(
+            &payload,
+            fatigue.niche_owner.as_str(),
+            None,
+            &mut clients,
+        );
+    }
+
+    for broken in broken_events.read() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::NicheGuardianBroken(
+            NicheGuardianBrokenV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(broken.guardian_kind),
+                intruder_id: broken.intruder_char_id.clone(),
+            },
+        ));
+        send_niche_payload_to_participants(
+            &payload,
+            broken.niche_owner.as_str(),
+            Some(broken.intruder_char_id.as_str()),
+            &mut clients,
+        );
+    }
+}
+
+fn send_niche_payload_to_participants(
+    payload: &ServerDataV1,
+    owner: &str,
+    intruder: Option<&str>,
+    clients: &mut Query<(&Lifecycle, &mut Client), With<Client>>,
+) {
+    let Ok(bytes) = serialize_server_data_payload(payload) else {
+        tracing::warn!(
+            "[bong][social][niche-defense] failed to serialize {} payload",
+            payload_type_label(payload.payload.payload_type())
+        );
+        return;
+    };
+    for (lifecycle, mut client) in clients.iter_mut() {
+        if lifecycle.character_id == owner
+            || intruder.is_some_and(|id| id == lifecycle.character_id)
+        {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
+    }
+}
+
+fn guardian_kind_to_schema(kind: self::components::GuardianKind) -> GuardianKindV1 {
+    match kind {
+        self::components::GuardianKind::Puppet => GuardianKindV1::Puppet,
+        self::components::GuardianKind::ZhenfaTrap => GuardianKindV1::ZhenfaTrap,
+        self::components::GuardianKind::BondedDaoxiang => GuardianKindV1::BondedDaoxiang,
     }
 }
 
@@ -1394,7 +1486,7 @@ fn handle_spirit_niche_place_requests(
             placed_at_tick: event.tick,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         };
         lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
         let old_niche = registry.niches.get(&lifecycle.character_id).cloned();
@@ -1448,9 +1540,10 @@ fn handle_spirit_niche_place_requests(
 
 fn detect_spirit_niche_break_attempts(
     mut digs: EventReader<DiggingEvent>,
-    clients: Query<&Lifecycle, With<Client>>,
+    clients: Query<(&Lifecycle, Option<&Cultivation>), With<Client>>,
     registry: Option<Res<SpiritNicheRegistry>>,
     mut reveals: EventWriter<SpiritNicheRevealRequest>,
+    mut attempts: EventWriter<NicheIntrusionAttempt>,
     clock: Option<Res<CombatClock>>,
 ) {
     let Some(registry) = registry.as_deref() else {
@@ -1468,21 +1561,40 @@ fn detect_spirit_niche_break_attempts(
         else {
             continue;
         };
-        let observer = clients
-            .get(event.client)
-            .ok()
-            .is_some_and(|lifecycle| lifecycle.character_id != niche.owner)
-            .then_some(event.client);
-        if observer.is_none() {
+        let Ok((observer_lifecycle, observer_cultivation)) = clients.get(event.client) else {
+            continue;
+        };
+        if observer_lifecycle.character_id == niche.owner {
             continue;
         }
         reveals.send(SpiritNicheRevealRequest {
-            observer,
+            observer: Some(event.client),
             owner: niche.owner.clone(),
             source: SpiritNicheRevealSource::BreakAttempt,
             tick,
         });
+        attempts.send(NicheIntrusionAttempt {
+            intruder: event.client,
+            intruder_char_id: observer_lifecycle.character_id.clone(),
+            niche_owner: niche.owner.clone(),
+            niche_pos: niche.pos,
+            items_taken: Vec::new(),
+            intruder_qi_fraction: cultivation_qi_fraction(observer_cultivation),
+            intruder_back_turned: false,
+            tick,
+        });
     }
+}
+
+fn cultivation_qi_fraction(cultivation: Option<&Cultivation>) -> f32 {
+    let Some(cultivation) = cultivation else {
+        return 1.0;
+    };
+    let effective_qi_max = (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
+    if !effective_qi_max.is_finite() || effective_qi_max <= f64::EPSILON {
+        return 0.0;
+    }
+    (cultivation.qi_current / effective_qi_max).clamp(0.0, 1.0) as f32
 }
 
 fn handle_spirit_niche_coordinate_reveals(
@@ -2055,7 +2167,7 @@ fn load_social_spirit_niche(
     let row: Option<SpiritNicheSqlRow> = connection
         .query_row(
             "
-            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, defense_mode
+            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, guardians_json
             FROM social_spirit_niches
             WHERE owner = ?1
             ",
@@ -2078,16 +2190,25 @@ fn load_social_spirit_niche(
         )
         .optional()
         .map_err(io::Error::other)?;
-    Ok(row.map(
-        |(pos, placed_at_tick, revealed, revealed_by, defense_mode)| SpiritNiche {
-            owner: char_id.to_string(),
-            pos,
-            placed_at_tick,
-            revealed,
-            revealed_by,
-            defense_mode,
+    row.map(
+        |(pos, placed_at_tick, revealed, revealed_by, guardians_json)| -> io::Result<SpiritNiche> {
+            let guardians = decode_guardians_json(guardians_json.as_str()).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("invalid guardians_json for `{char_id}`: {error}"),
+                )
+            })?;
+            Ok(SpiritNiche {
+                owner: char_id.to_string(),
+                pos,
+                placed_at_tick,
+                revealed,
+                revealed_by,
+                guardians,
+            })
         },
-    ))
+    )
+    .transpose()
 }
 
 fn load_all_social_spirit_niches(
@@ -2097,7 +2218,7 @@ fn load_all_social_spirit_niches(
     let mut statement = connection
         .prepare(
             "
-            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, defense_mode
+            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, guardians_json
             FROM social_spirit_niches
             ORDER BY owner ASC
             ",
@@ -2117,7 +2238,15 @@ fn load_all_social_spirit_niches(
                 })?,
                 revealed: row.get::<_, i64>(5)? != 0,
                 revealed_by: row.get(6)?,
-                defense_mode: row.get(7)?,
+                guardians: decode_guardians_json(row.get::<_, String>(7)?.as_str()).map_err(
+                    |error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    },
+                )?,
             })
         })
         .map_err(io::Error::other)?;
@@ -2126,6 +2255,18 @@ fn load_all_social_spirit_niches(
         niches.push(row.map_err(io::Error::other)?);
     }
     Ok(niches)
+}
+
+fn decode_guardians_json(value: &str) -> io::Result<Vec<HouseGuardian>> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn encode_guardians_json(guardians: &[HouseGuardian]) -> io::Result<String> {
+    serde_json::to_string(guardians)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn persist_social_anonymity(
@@ -2339,7 +2480,7 @@ fn persist_social_spirit_niche(
             "
             INSERT INTO social_spirit_niches (
                 owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
-                defense_mode, schema_version, last_updated_wall
+                guardians_json, schema_version, last_updated_wall
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
             ON CONFLICT(owner) DO UPDATE SET
                 pos_x = excluded.pos_x,
@@ -2348,7 +2489,7 @@ fn persist_social_spirit_niche(
                 placed_at_tick = excluded.placed_at_tick,
                 revealed = excluded.revealed,
                 revealed_by = excluded.revealed_by,
-                defense_mode = excluded.defense_mode,
+                guardians_json = excluded.guardians_json,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -2360,7 +2501,7 @@ fn persist_social_spirit_niche(
                 tick_to_sql(niche.placed_at_tick)?,
                 if niche.revealed { 1_i64 } else { 0_i64 },
                 niche.revealed_by.as_deref(),
-                niche.defense_mode.as_deref(),
+                encode_guardians_json(&niche.guardians)?,
                 wall_clock,
             ],
         )
@@ -2418,6 +2559,9 @@ fn publish_social_events(
     mut exposures: EventReader<SocialExposureEvent>,
     mut relationships: EventReader<SocialRelationshipEvent>,
     mut renown_deltas: EventReader<SocialRenownDeltaEvent>,
+    mut intrusions: EventReader<NicheIntrusionEvent>,
+    mut fatigues: EventReader<NicheGuardianFatigue>,
+    mut broken_events: EventReader<NicheGuardianBroken>,
 ) {
     let Some(redis) = redis else {
         return;
@@ -2484,6 +2628,35 @@ fn publish_social_events(
                 tags_added: event.tags_added.clone(),
                 tick: event.tick,
                 reason: event.reason.clone(),
+            }));
+    }
+    for intrusion in intrusions.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::NicheIntrusion(NicheIntrusionEventV1 {
+                v: 1,
+                niche_pos: intrusion.niche_pos,
+                intruder_id: intrusion.intruder_char_id.clone(),
+                items_taken: intrusion.items_taken.clone(),
+                taint_delta: intrusion.taint_delta,
+            }));
+    }
+    for fatigue in fatigues.read() {
+        let _ = redis.tx_outbound.send(RedisOutbound::NicheGuardianFatigue(
+            NicheGuardianFatigueV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(fatigue.guardian_kind),
+                charges_remaining: fatigue.charges_remaining,
+            },
+        ));
+    }
+    for broken in broken_events.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::NicheGuardianBroken(NicheGuardianBrokenV1 {
+                v: 1,
+                guardian_kind: guardian_kind_to_schema(broken.guardian_kind),
+                intruder_id: broken.intruder_char_id.clone(),
             }));
     }
 }
@@ -2638,6 +2811,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -2662,6 +2836,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -3932,7 +4107,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<SpiritNichePlaceRequest>();
@@ -3967,6 +4142,44 @@ mod tests {
     }
 
     #[test]
+    fn load_social_spirit_niche_rejects_invalid_guardians_json() {
+        let (persistence, data_dir) = social_persistence("spirit-niche-invalid-guardians");
+        let connection =
+            open_social_connection(&persistence).expect("social sqlite should open for test");
+        connection
+            .execute(
+                "
+                INSERT INTO social_spirit_niches (
+                    owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
+                    guardians_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
+                ",
+                rusqlite::params![
+                    "char:owner",
+                    20_i64,
+                    64_i64,
+                    20_i64,
+                    1_i64,
+                    0_i64,
+                    Option::<String>::None,
+                    "{not-valid-json",
+                    100_i64,
+                ],
+            )
+            .expect("invalid guardians fixture row should insert");
+
+        let error = load_social_components(&persistence, "char:owner")
+            .expect_err("invalid guardians_json must not silently drop guardians");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().contains("invalid guardians_json"),
+            "unexpected error: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
     fn spirit_niche_break_attempt_reveals_and_disables_anchor() {
         let (persistence, data_dir) = social_persistence("spirit-niche-reveal");
         let mut app = App::new();
@@ -3978,11 +4191,12 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<DiggingEvent>();
         app.add_event::<SpiritNicheRevealRequest>();
+        app.add_event::<NicheIntrusionAttempt>();
         app.add_systems(
             Update,
             (
@@ -4005,16 +4219,23 @@ mod tests {
                 placed_at_tick: 1,
                 revealed: false,
                 revealed_by: None,
-                defense_mode: None,
+                guardians: Vec::new(),
             },
         ));
         let (mut observer_bundle, _observer_helper) = create_mock_client("Observer");
         observer_bundle.player.position = Position::new([20.0, 64.0, 20.0]);
         let observer = app.world_mut().spawn(observer_bundle).id();
-        app.world_mut().entity_mut(observer).insert(Lifecycle {
-            character_id: "char:observer".to_string(),
-            ..Default::default()
-        });
+        app.world_mut().entity_mut(observer).insert((
+            Lifecycle {
+                character_id: "char:observer".to_string(),
+                ..Default::default()
+            },
+            Cultivation {
+                qi_current: 2.0,
+                qi_max: 10.0,
+                ..Default::default()
+            },
+        ));
         app.world_mut().send_event(DiggingEvent {
             client: observer,
             position: BlockPos::new(20, 64, 20),
@@ -4041,6 +4262,18 @@ mod tests {
         assert!(loaded.revealed);
         assert_eq!(loaded.revealed_by.as_deref(), Some("char:observer"));
 
+        let mut attempts = app
+            .world_mut()
+            .resource_mut::<Events<NicheIntrusionAttempt>>();
+        let attempts = attempts.drain().collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].intruder, observer);
+        assert_eq!(attempts[0].intruder_char_id, "char:observer");
+        assert_eq!(attempts[0].niche_owner, "char:owner");
+        assert_eq!(attempts[0].niche_pos, [20, 64, 20]);
+        assert_eq!(attempts[0].items_taken, Vec::<u64>::new());
+        assert_eq!(attempts[0].intruder_qi_fraction, 0.2);
+
         let _ = std::fs::remove_dir_all(data_dir);
     }
 
@@ -4054,7 +4287,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
@@ -4106,7 +4339,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
-            defense_mode: None,
+            guardians: Vec::new(),
         });
         app.insert_resource(registry);
         app.add_event::<SpiritNicheCoordinateRevealRequest>();

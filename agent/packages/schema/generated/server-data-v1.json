@@ -119,8 +119,16 @@
                 ]
               },
               "kind": {
-                "const": "death_insight",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "death_insight",
+                    "type": "string"
+                  },
+                  {
+                    "const": "niche_intrusion",
+                    "type": "string"
+                  }
+                ]
               }
             }
           }
@@ -1557,6 +1565,26 @@
                         }
                       }
                     ]
+                  },
+                  "lingering_owner_qi": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "owner",
+                      "expire_at"
+                    ],
+                    "properties": {
+                      "owner": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "expire_at": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
                   }
                 }
               }
@@ -2062,6 +2090,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -2551,6 +2599,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -3040,6 +3108,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -3529,6 +3617,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -4018,6 +4126,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -4507,6 +4635,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -4996,6 +5144,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -5485,6 +5653,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -5974,6 +6162,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -6463,6 +6671,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -6952,6 +7180,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -7441,6 +7689,26 @@
                           }
                         }
                       ]
+                    },
+                    "lingering_owner_qi": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "owner",
+                        "expire_at"
+                      ],
+                      "properties": {
+                        "owner": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "expire_at": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 },
@@ -7936,6 +8204,26 @@
                         }
                       }
                     ]
+                  },
+                  "lingering_owner_qi": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "owner",
+                      "expire_at"
+                    ],
+                    "properties": {
+                      "owner": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "expire_at": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
                   }
                 }
               },
@@ -8943,6 +9231,26 @@
                       }
                     }
                   ]
+                },
+                "lingering_owner_qi": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "owner",
+                    "expire_at"
+                  ],
+                  "properties": {
+                    "owner": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "expire_at": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             }
@@ -9571,6 +9879,26 @@
                         }
                       }
                     ]
+                  },
+                  "lingering_owner_qi": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "owner",
+                      "expire_at"
+                    ],
+                    "properties": {
+                      "owner": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "expire_at": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
                   }
                 }
               }
@@ -13454,6 +13782,139 @@
       "required": [
         "v",
         "type",
+        "niche_pos",
+        "intruder_id",
+        "items_taken",
+        "taint_delta"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "niche_intrusion",
+          "type": "string"
+        },
+        "niche_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "intruder_id": {
+          "type": "string"
+        },
+        "items_taken": {
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "taint_delta": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "guardian_kind",
+        "charges_remaining"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "niche_guardian_fatigue",
+          "type": "string"
+        },
+        "guardian_kind": {
+          "anyOf": [
+            {
+              "const": "puppet",
+              "type": "string"
+            },
+            {
+              "const": "zhenfa_trap",
+              "type": "string"
+            },
+            {
+              "const": "bonded_daoxiang",
+              "type": "string"
+            }
+          ]
+        },
+        "charges_remaining": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "guardian_kind",
+        "intruder_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "niche_guardian_broken",
+          "type": "string"
+        },
+        "guardian_kind": {
+          "anyOf": [
+            {
+              "const": "puppet",
+              "type": "string"
+            },
+            {
+              "const": "zhenfa_trap",
+              "type": "string"
+            },
+            {
+              "const": "bonded_daoxiang",
+              "type": "string"
+            }
+          ]
+        },
+        "intruder_id": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "invite_id",
         "initiator",
         "target",
@@ -13733,6 +14194,10 @@
                   },
                   {
                     "const": "SpiritEye",
+                    "type": "string"
+                  },
+                  {
+                    "const": "NicheIntrusionTrace",
                     "type": "string"
                   }
                 ]

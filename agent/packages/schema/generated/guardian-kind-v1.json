@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "puppet",
+      "type": "string"
+    },
+    {
+      "const": "zhenfa_trap",
+      "type": "string"
+    },
+    {
+      "const": "bonded_daoxiang",
+      "type": "string"
+    }
+  ]
+}

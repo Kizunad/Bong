@@ -73,6 +73,9 @@ import {
 import {
   SocialExposureEventV1,
   SocialFeudEventV1,
+  NicheGuardianBrokenV1,
+  NicheGuardianFatigueV1,
+  NicheIntrusionEventV1,
   SocialPactEventV1,
   SocialRenownDeltaV1,
 } from "../src/social.js";
@@ -123,8 +126,10 @@ describe("sample files pass schema validation", () => {
     expect(CHANNELS.SOCIAL_PACT).toBe("bong:social/pact");
     expect(CHANNELS.SOCIAL_FEUD).toBe("bong:social/feud");
     expect(CHANNELS.SOCIAL_RENOWN_DELTA).toBe("bong:social/renown_delta");
+    expect(CHANNELS.SOCIAL_NICHE_INTRUSION).toBe("bong:social/niche_intrusion");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_EXPOSURE);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_RENOWN_DELTA);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_NICHE_INTRUSION);
   });
 
   it("declares alchemy Redis channels", () => {
@@ -500,6 +505,9 @@ describe("sample files pass schema validation", () => {
     "server-data.social-pact.sample.json",
     "server-data.social-feud.sample.json",
     "server-data.social-renown-delta.sample.json",
+    "server-data.niche-intrusion.sample.json",
+    "server-data.niche-guardian-fatigue.sample.json",
+    "server-data.niche-guardian-broken.sample.json",
     "server-data.sparring-invite.sample.json",
     "server-data.trade-offer.sample.json",
   ]) {
@@ -857,6 +865,15 @@ describe("sample files pass schema validation", () => {
     ).toBe(true);
     expect(
       validate(SocialRenownDeltaV1, loadSample("social-renown-delta.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(NicheIntrusionEventV1, loadSample("niche-intrusion-event.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(NicheGuardianFatigueV1, loadSample("niche-guardian-fatigue.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(NicheGuardianBrokenV1, loadSample("niche-guardian-broken.sample.json")).ok,
     ).toBe(true);
   });
 });

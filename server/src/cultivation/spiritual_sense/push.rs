@@ -8,6 +8,7 @@ use valence::prelude::{
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::dugu::{DuguObfuscationDisrupted, DuguPractice};
 use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -41,6 +42,12 @@ struct PlayerSenseSnapshot {
     position: [f64; 3],
     realm: Realm,
     stealth: Option<StealthState>,
+    niche_intrusion_trace: Option<NicheIntrusionTrace>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NicheIntrusionTrace {
+    severity: f64,
 }
 
 type SpiritualSensePlayerReadItem<'a> = (
@@ -49,6 +56,7 @@ type SpiritualSensePlayerReadItem<'a> = (
     &'a Cultivation,
     Option<&'a DuguPractice>,
     Option<&'a DuguObfuscationDisrupted>,
+    Option<&'a RealmTaintState>,
 );
 type SpiritualSensePlayerReadFilter = With<Client>;
 type SpiritualSenseObserverItem<'a> = (
@@ -107,7 +115,7 @@ pub fn push_spiritual_sense_targets(
         players
             .iter()
             .map(
-                |(entity, position, cultivation, dugu_practice, dugu_disrupted)| {
+                |(entity, position, cultivation, dugu_practice, dugu_disrupted, realm_taint)| {
                     PlayerSenseSnapshot {
                         entity,
                         position: position_to_array(position),
@@ -118,6 +126,7 @@ pub fn push_spiritual_sense_targets(
                                 active: true,
                                 disrupted: dugu_disrupted.is_some(),
                             }),
+                        niche_intrusion_trace: niche_intrusion_trace(now_tick, realm_taint),
                     }
                 },
             )
@@ -152,7 +161,13 @@ pub fn push_spiritual_sense_targets(
             .unwrap_or(DimensionKind::Overworld);
         if should_scan_inner {
             let radius = super::scanner::scan_radius_for_realm(cultivation.realm);
-            let targets = build_player_sense_targets(entity, observer_pos, &snapshots, 0.0, radius);
+            let mut targets =
+                build_player_sense_targets(entity, observer_pos, &snapshots, 0.0, radius);
+            targets.extend(build_niche_intrusion_trace_targets(
+                entity,
+                observer_pos,
+                &snapshots,
+            ));
             let entries = scan_targets_inner_ring(observer_pos, cultivation.realm, &targets);
             state.inner_entries.insert(entity, entries);
             state.last_inner_scan_tick.insert(entity, now_tick);
@@ -234,6 +249,52 @@ fn build_player_sense_targets(
         .collect()
 }
 
+fn build_niche_intrusion_trace_targets(
+    observer: Entity,
+    observer_pos: [f64; 3],
+    players: &[PlayerSenseSnapshot],
+) -> Vec<SpiritualSenseTarget> {
+    players
+        .iter()
+        .filter(|target| target.entity != observer)
+        .filter_map(|target| {
+            let trace = target.niche_intrusion_trace?;
+            let max_distance = niche_intrusion_trace_radius(trace.severity);
+            if distance_between(observer_pos, target.position) > max_distance {
+                return None;
+            }
+            Some(SpiritualSenseTarget {
+                position: target.position,
+                kind: SpiritualSenseTargetKind::NicheIntrusionTrace,
+                intensity: distance_intensity(observer_pos, target.position, 0.0, max_distance)
+                    * trace.severity.clamp(0.2, 1.0),
+                stealth: None,
+            })
+        })
+        .collect()
+}
+
+fn niche_intrusion_trace(
+    now_tick: u64,
+    taint: Option<&RealmTaintState>,
+) -> Option<NicheIntrusionTrace> {
+    let taint = taint?;
+    if taint.kind != RealmTaintedKind::NicheIntrusion
+        || taint.qi_taint_severity <= 0.0
+        || now_tick >= taint.wash_available_at
+    {
+        return None;
+    }
+    Some(NicheIntrusionTrace {
+        severity: f64::from(taint.qi_taint_severity.clamp(0.0, 1.0)),
+    })
+}
+
+fn niche_intrusion_trace_radius(severity: f64) -> f64 {
+    let severity = severity.clamp(0.0, 1.0);
+    50.0 + ((severity - 0.2).max(0.0) / 0.8) * 150.0
+}
+
 fn merged_cached_entries(state: &SpiritualSensePushState, entity: Entity) -> Vec<SenseEntryV1> {
     let mut entries = state
         .inner_entries
@@ -262,15 +323,19 @@ fn trim_entries_by_intensity(entries: &mut Vec<SenseEntryV1>) {
 }
 
 fn distance_intensity(a: [f64; 3], b: [f64; 3], min_distance: f64, max_distance: f64) -> f64 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    let dz = a[2] - b[2];
-    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+    let distance = distance_between(a, b);
     let range = max_distance - min_distance;
     if range <= 0.0 {
         return 1.0;
     }
     (1.0 - (distance - min_distance).max(0.0) / range).clamp(0.1, 1.0)
+}
+
+fn distance_between(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let dz = a[2] - b[2];
+    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 fn position_to_array(position: &Position) -> [f64; 3] {
@@ -324,6 +389,7 @@ mod tests {
                 position: [0.0, 64.0, 0.0],
                 realm: Realm::Induce,
                 stealth: None,
+                niche_intrusion_trace: None,
             },
             PlayerSenseSnapshot {
                 entity: other,
@@ -333,6 +399,7 @@ mod tests {
                     active: true,
                     disrupted: false,
                 }),
+                niche_intrusion_trace: None,
             },
         ];
         let targets = build_player_sense_targets(observer, [0.0, 64.0, 0.0], &players, 0.0, 500.0);
@@ -352,6 +419,59 @@ mod tests {
 
         let position = Position(DVec3::new(1.0, 2.0, 3.0));
         assert_eq!(position_to_array(&position), [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn niche_intrusion_trace_targets_scale_with_severity_and_window() {
+        let observer = Entity::from_raw(1);
+        let traced = Entity::from_raw(2);
+        let expired = Entity::from_raw(3);
+        let mut active_taint = RealmTaintState::default();
+        active_taint.add_niche_intrusion(0.2, 10);
+        let mut expired_taint = RealmTaintState::default();
+        expired_taint.add_niche_intrusion(1.0, 10);
+
+        assert_eq!(niche_intrusion_trace_radius(0.2), 50.0);
+        assert_eq!(niche_intrusion_trace_radius(1.0), 200.0);
+        assert!(niche_intrusion_trace(11, Some(&active_taint)).is_some());
+        assert!(
+            niche_intrusion_trace(active_taint.wash_available_at, Some(&active_taint)).is_none()
+        );
+
+        let players = vec![
+            PlayerSenseSnapshot {
+                entity: observer,
+                position: [0.0, 64.0, 0.0],
+                realm: Realm::Solidify,
+                stealth: None,
+                niche_intrusion_trace: None,
+            },
+            PlayerSenseSnapshot {
+                entity: traced,
+                position: [45.0, 64.0, 0.0],
+                realm: Realm::Induce,
+                stealth: None,
+                niche_intrusion_trace: niche_intrusion_trace(11, Some(&active_taint)),
+            },
+            PlayerSenseSnapshot {
+                entity: expired,
+                position: [40.0, 64.0, 0.0],
+                realm: Realm::Induce,
+                stealth: None,
+                niche_intrusion_trace: niche_intrusion_trace(
+                    expired_taint.wash_available_at,
+                    Some(&expired_taint),
+                ),
+            },
+        ];
+
+        let targets = build_niche_intrusion_trace_targets(observer, [0.0, 64.0, 0.0], &players);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            targets[0].kind,
+            SpiritualSenseTargetKind::NicheIntrusionTrace
+        );
+        assert_eq!(targets[0].position, [45.0, 64.0, 0.0]);
     }
 
     #[test]

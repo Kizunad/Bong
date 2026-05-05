@@ -118,6 +118,9 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::SocialPact => "social_pact",
         ServerDataType::SocialFeud => "social_feud",
         ServerDataType::SocialRenownDelta => "social_renown_delta",
+        ServerDataType::NicheIntrusion => "niche_intrusion",
+        ServerDataType::NicheGuardianFatigue => "niche_guardian_fatigue",
+        ServerDataType::NicheGuardianBroken => "niche_guardian_broken",
         ServerDataType::SparringInvite => "sparring_invite",
         ServerDataType::TradeOffer => "trade_offer",
         ServerDataType::RealmVisionParams => "realm_vision_params",
@@ -327,6 +330,7 @@ mod server_data_tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -741,6 +745,7 @@ mod server_data_tests {
                     forge_side_effects: Vec::new(),
                     forge_achieved_tier: None,
                     alchemy: None,
+                    lingering_owner_qi: None,
                 },
             },
         )));

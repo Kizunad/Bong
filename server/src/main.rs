@@ -7,6 +7,8 @@ mod combat;
 #[allow(dead_code)]
 mod cultivation;
 #[allow(dead_code)]
+mod death_lifecycle;
+#[allow(dead_code)]
 mod fauna;
 #[allow(dead_code)]
 mod forge;
@@ -105,6 +107,7 @@ fn run_server() {
     audio::register(&mut app);
     combat::register(&mut app);
     social::register(&mut app);
+    death_lifecycle::register(&mut app);
     spiritwood::register(&mut app);
     forge::register(&mut app);
     lingtian::register(&mut app);

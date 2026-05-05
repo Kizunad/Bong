@@ -1,0 +1,10 @@
+[[item]]
+id = "niche_house_puppet"
+name = "守家傀儡"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 2.4
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "异兽骨与阵石封成的灵龛守家傀儡。触发五次后阵核耗尽。"

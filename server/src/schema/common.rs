@@ -54,6 +54,7 @@ pub enum NarrationStyle {
 #[serde(rename_all = "snake_case")]
 pub enum NarrationKind {
     DeathInsight,
+    NicheIntrusion,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

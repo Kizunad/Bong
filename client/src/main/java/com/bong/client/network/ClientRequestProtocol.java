@@ -494,6 +494,30 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSpiritNicheActivateGuardian(
+        int x,
+        int y,
+        int z,
+        String guardianKind,
+        java.util.List<String> materials
+    ) {
+        JsonObject obj = envelope("spirit_niche_activate_guardian");
+        JsonArray nichePos = new JsonArray();
+        nichePos.add(x);
+        nichePos.add(y);
+        nichePos.add(z);
+        obj.add("niche_pos", nichePos);
+        obj.addProperty("guardian_kind", guardianKind);
+        JsonArray materialArray = new JsonArray();
+        if (materials != null) {
+            materials.stream()
+                .filter(material -> material != null && !material.isBlank())
+                .forEach(materialArray::add);
+        }
+        obj.add("materials", materialArray);
+        return obj.toString();
+    }
+
     public static String encodeZhenfaPlace(
         BlockPos pos,
         ZhenfaKind kind,

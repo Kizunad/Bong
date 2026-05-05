@@ -22,10 +22,10 @@ use crate::schema::channels::{
     CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
     CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH, CH_SKILL_CAP_CHANGED,
     CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
-    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
-    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
+    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
+    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY,
+    CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
+    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
     CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -53,7 +53,8 @@ use crate::schema::skill::{
     SkillCapChangedPayloadV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1, SkillXpGainPayloadV1,
 };
 use crate::schema::social::{
-    SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
+    NicheGuardianBrokenV1, NicheGuardianFatigueV1, NicheIntrusionEventV1, SocialExposureEventV1,
+    SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
 };
 use crate::schema::spirit_eye::{
     SpiritEyeDiscoveredV1, SpiritEyeMigrateV1, SpiritEyeUsedForBreakthroughV1,
@@ -133,6 +134,9 @@ pub enum RedisOutbound {
     SocialPact(SocialPactEventV1),
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
+    NicheIntrusion(NicheIntrusionEventV1),
+    NicheGuardianFatigue(NicheGuardianFatigueV1),
+    NicheGuardianBroken(NicheGuardianBrokenV1),
     SpiritEyeMigrate(SpiritEyeMigrateV1),
     SpiritEyeDiscovered(SpiritEyeDiscoveredV1),
     SpiritEyeUsedForBreakthrough(SpiritEyeUsedForBreakthroughV1),
@@ -781,6 +785,39 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_SOCIAL_RENOWN_DELTA,
+                payload,
+            })
+        }
+        RedisOutbound::NicheIntrusion(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize NicheIntrusionEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_NICHE_INTRUSION,
+                payload,
+            })
+        }
+        RedisOutbound::NicheGuardianFatigue(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize NicheGuardianFatigueV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_NICHE_INTRUSION,
+                payload,
+            })
+        }
+        RedisOutbound::NicheGuardianBroken(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize NicheGuardianBrokenV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_NICHE_INTRUSION,
                 payload,
             })
         }

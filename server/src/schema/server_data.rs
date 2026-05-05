@@ -27,8 +27,9 @@ use super::skill::{
     SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
 };
 use super::social::{
-    PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
-    SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
+    NicheGuardianBrokenV1, NicheGuardianFatigueV1, NicheIntrusionEventV1, PlayerSocialSnapshotV1,
+    SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1,
+    SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
 use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
@@ -146,6 +147,9 @@ pub enum ServerDataType {
     SocialPact,
     SocialFeud,
     SocialRenownDelta,
+    NicheIntrusion,
+    NicheGuardianFatigue,
+    NicheGuardianBroken,
     SparringInvite,
     TradeOffer,
     RealmVisionParams,
@@ -334,6 +338,9 @@ pub enum ServerDataPayloadV1 {
     SocialPact(SocialPactEventV1),
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
+    NicheIntrusion(NicheIntrusionEventV1),
+    NicheGuardianFatigue(NicheGuardianFatigueV1),
+    NicheGuardianBroken(NicheGuardianBrokenV1),
     SparringInvite(SparringInvitePayloadV1),
     TradeOffer(TradeOfferPayloadV1),
     RealmVisionParams(RealmVisionParamsV1),
@@ -928,6 +935,21 @@ enum ServerDataPayloadWireV1 {
         tags_added: Vec<super::social::RenownTagV1>,
         tick: u64,
         reason: String,
+    },
+    NicheIntrusion {
+        niche_pos: [i32; 3],
+        intruder_id: String,
+        #[serde(default)]
+        items_taken: Vec<u64>,
+        taint_delta: f32,
+    },
+    NicheGuardianFatigue {
+        guardian_kind: super::social::GuardianKindV1,
+        charges_remaining: u8,
+    },
+    NicheGuardianBroken {
+        guardian_kind: super::social::GuardianKindV1,
+        intruder_id: String,
     },
     SparringInvite {
         #[serde(flatten)]
@@ -1647,6 +1669,34 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 tick,
                 reason,
             })),
+            ServerDataPayloadWireV1::NicheIntrusion {
+                niche_pos,
+                intruder_id,
+                items_taken,
+                taint_delta,
+            } => Ok(Self::NicheIntrusion(NicheIntrusionEventV1 {
+                v: 1,
+                niche_pos,
+                intruder_id,
+                items_taken,
+                taint_delta,
+            })),
+            ServerDataPayloadWireV1::NicheGuardianFatigue {
+                guardian_kind,
+                charges_remaining,
+            } => Ok(Self::NicheGuardianFatigue(NicheGuardianFatigueV1 {
+                v: 1,
+                guardian_kind,
+                charges_remaining,
+            })),
+            ServerDataPayloadWireV1::NicheGuardianBroken {
+                guardian_kind,
+                intruder_id,
+            } => Ok(Self::NicheGuardianBroken(NicheGuardianBrokenV1 {
+                v: 1,
+                guardian_kind,
+                intruder_id,
+            })),
             ServerDataPayloadWireV1::SparringInvite { invite } => Ok(Self::SparringInvite(invite)),
             ServerDataPayloadWireV1::TradeOffer { offer } => Ok(Self::TradeOffer(offer)),
             ServerDataPayloadWireV1::RealmVisionParams { params } => {
@@ -2053,6 +2103,20 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 tick: event.tick,
                 reason: event.reason.clone(),
             },
+            ServerDataPayloadV1::NicheIntrusion(event) => Self::NicheIntrusion {
+                niche_pos: event.niche_pos,
+                intruder_id: event.intruder_id.clone(),
+                items_taken: event.items_taken.clone(),
+                taint_delta: event.taint_delta,
+            },
+            ServerDataPayloadV1::NicheGuardianFatigue(event) => Self::NicheGuardianFatigue {
+                guardian_kind: event.guardian_kind,
+                charges_remaining: event.charges_remaining,
+            },
+            ServerDataPayloadV1::NicheGuardianBroken(event) => Self::NicheGuardianBroken {
+                guardian_kind: event.guardian_kind,
+                intruder_id: event.intruder_id.clone(),
+            },
             ServerDataPayloadV1::SparringInvite(invite) => Self::SparringInvite {
                 invite: invite.clone(),
             },
@@ -2244,6 +2308,9 @@ impl ServerDataPayloadV1 {
             Self::SocialPact(..) => ServerDataType::SocialPact,
             Self::SocialFeud(..) => ServerDataType::SocialFeud,
             Self::SocialRenownDelta(..) => ServerDataType::SocialRenownDelta,
+            Self::NicheIntrusion(..) => ServerDataType::NicheIntrusion,
+            Self::NicheGuardianFatigue(..) => ServerDataType::NicheGuardianFatigue,
+            Self::NicheGuardianBroken(..) => ServerDataType::NicheGuardianBroken,
             Self::SparringInvite(..) => ServerDataType::SparringInvite,
             Self::TradeOffer(..) => ServerDataType::TradeOffer,
             Self::RealmVisionParams(..) => ServerDataType::RealmVisionParams,

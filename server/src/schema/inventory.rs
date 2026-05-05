@@ -116,6 +116,9 @@ pub struct InventoryItemViewV1 {
     /// plan-alchemy-v2：丹药品阶 / 副作用 / 丹方残卷 / 丹心线索元数据。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alchemy: Option<crate::inventory::AlchemyItemData>,
+    /// plan-niche-defense-v1 P3：抄家物品携带龛主异体真元残留。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lingering_owner_qi: Option<crate::inventory::LingeringQi>,
 }
 
 /// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
@@ -859,6 +862,7 @@ mod tests {
                 forge_side_effects: Vec::new(),
                 forge_achieved_tier: None,
                 alchemy: None,
+                lingering_owner_qi: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -1015,6 +1019,7 @@ mod tests {
             forge_side_effects: vec!["brittle_edge".to_string()],
             forge_achieved_tier: Some(2),
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize forge item view");
@@ -1093,6 +1098,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -1127,6 +1133,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -1215,6 +1222,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(json.contains("\"mineral_id\":\"fan_tie\""));
@@ -1248,6 +1256,7 @@ mod tests {
             forge_side_effects: Vec::new(),
             forge_achieved_tier: None,
             alchemy: None,
+            lingering_owner_qi: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(

@@ -232,6 +232,9 @@ import {
   ServerDataSocialPactV1,
   ServerDataSocialFeudV1,
   ServerDataSocialRenownDeltaV1,
+  ServerDataNicheGuardianBrokenV1,
+  ServerDataNicheGuardianFatigueV1,
+  ServerDataNicheIntrusionV1,
   ServerDataSparringInviteV1,
   ServerDataTradeOfferV1,
   ServerDataRealmVisionParamsV1,
@@ -266,6 +269,10 @@ import {
   DeceasedSocialSnapshotV1,
   ExposureKindV1,
   FactionMembershipSnapshotV1,
+  GuardianKindV1,
+  NicheGuardianBrokenV1,
+  NicheGuardianFatigueV1,
+  NicheIntrusionEventV1,
   PlayerSocialSnapshotV1,
   RelationshipKindV1,
   RelationshipSnapshotV1,
@@ -278,6 +285,7 @@ import {
   SocialRemoteIdentityV1,
   SocialRenownDeltaV1,
   SparringInvitePayloadV1,
+  SpiritNicheActivateGuardianV1,
   TradeItemSummaryV1,
   TradeOfferPayloadV1,
 } from "./social.js";
@@ -491,6 +499,7 @@ export const SCHEMA_REGISTRY = {
   // plan-social-v1 §7
   exposureKindV1: ExposureKindV1,
   relationshipKindV1: RelationshipKindV1,
+  guardianKindV1: GuardianKindV1,
   renownTagV1: RenownTagV1,
   relationshipSnapshotV1: RelationshipSnapshotV1,
   renownSnapshotV1: RenownSnapshotV1,
@@ -505,6 +514,10 @@ export const SCHEMA_REGISTRY = {
   socialPactEventV1: SocialPactEventV1,
   socialFeudEventV1: SocialFeudEventV1,
   socialRenownDeltaV1: SocialRenownDeltaV1,
+  spiritNicheActivateGuardianV1: SpiritNicheActivateGuardianV1,
+  nicheIntrusionEventV1: NicheIntrusionEventV1,
+  nicheGuardianFatigueV1: NicheGuardianFatigueV1,
+  nicheGuardianBrokenV1: NicheGuardianBrokenV1,
   sparringInvitePayloadV1: SparringInvitePayloadV1,
   tradeItemSummaryV1: TradeItemSummaryV1,
   tradeOfferPayloadV1: TradeOfferPayloadV1,
@@ -513,6 +526,9 @@ export const SCHEMA_REGISTRY = {
   serverDataSocialPactV1: ServerDataSocialPactV1,
   serverDataSocialFeudV1: ServerDataSocialFeudV1,
   serverDataSocialRenownDeltaV1: ServerDataSocialRenownDeltaV1,
+  serverDataNicheIntrusionV1: ServerDataNicheIntrusionV1,
+  serverDataNicheGuardianFatigueV1: ServerDataNicheGuardianFatigueV1,
+  serverDataNicheGuardianBrokenV1: ServerDataNicheGuardianBrokenV1,
   serverDataSparringInviteV1: ServerDataSparringInviteV1,
   serverDataTradeOfferV1: ServerDataTradeOfferV1,
   fogShapeV1: FogShapeV1,
@@ -823,6 +839,7 @@ export const GENERATED_SCHEMA_FILES = {
   // plan-social-v1 §7
   "exposure-kind-v1.json": SCHEMA_REGISTRY.exposureKindV1,
   "relationship-kind-v1.json": SCHEMA_REGISTRY.relationshipKindV1,
+  "guardian-kind-v1.json": SCHEMA_REGISTRY.guardianKindV1,
   "renown-tag-v1.json": SCHEMA_REGISTRY.renownTagV1,
   "relationship-snapshot-v1.json": SCHEMA_REGISTRY.relationshipSnapshotV1,
   "renown-snapshot-v1.json": SCHEMA_REGISTRY.renownSnapshotV1,
@@ -841,6 +858,11 @@ export const GENERATED_SCHEMA_FILES = {
   "social-pact-event-v1.json": SCHEMA_REGISTRY.socialPactEventV1,
   "social-feud-event-v1.json": SCHEMA_REGISTRY.socialFeudEventV1,
   "social-renown-delta-v1.json": SCHEMA_REGISTRY.socialRenownDeltaV1,
+  "spirit-niche-activate-guardian-v1.json":
+    SCHEMA_REGISTRY.spiritNicheActivateGuardianV1,
+  "niche-intrusion-event-v1.json": SCHEMA_REGISTRY.nicheIntrusionEventV1,
+  "niche-guardian-fatigue-v1.json": SCHEMA_REGISTRY.nicheGuardianFatigueV1,
+  "niche-guardian-broken-v1.json": SCHEMA_REGISTRY.nicheGuardianBrokenV1,
   "sparring-invite-payload-v1.json": SCHEMA_REGISTRY.sparringInvitePayloadV1,
   "trade-item-summary-v1.json": SCHEMA_REGISTRY.tradeItemSummaryV1,
   "trade-offer-payload-v1.json": SCHEMA_REGISTRY.tradeOfferPayloadV1,
@@ -852,6 +874,12 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-social-feud-v1.json": SCHEMA_REGISTRY.serverDataSocialFeudV1,
   "server-data-social-renown-delta-v1.json":
     SCHEMA_REGISTRY.serverDataSocialRenownDeltaV1,
+  "server-data-niche-intrusion-v1.json":
+    SCHEMA_REGISTRY.serverDataNicheIntrusionV1,
+  "server-data-niche-guardian-fatigue-v1.json":
+    SCHEMA_REGISTRY.serverDataNicheGuardianFatigueV1,
+  "server-data-niche-guardian-broken-v1.json":
+    SCHEMA_REGISTRY.serverDataNicheGuardianBrokenV1,
   "server-data-sparring-invite-v1.json":
     SCHEMA_REGISTRY.serverDataSparringInviteV1,
   "server-data-trade-offer-v1.json": SCHEMA_REGISTRY.serverDataTradeOfferV1,

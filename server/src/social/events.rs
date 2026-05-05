@@ -3,6 +3,7 @@ use valence::prelude::{bevy_ecs, Entity, Event};
 
 use crate::npc::faction::FactionId;
 use crate::schema::social::{ExposureKindV1, RelationshipKindV1, RenownTagV1};
+use crate::social::components::GuardianKind;
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct PlayerChatCollected {
@@ -151,5 +152,55 @@ pub struct SpiritNicheCoordinateRevealRequest {
     pub observer: Entity,
     pub pos: [i32; 3],
     pub source: SpiritNicheRevealSource,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SpiritNicheActivateGuardianRequest {
+    pub player: Entity,
+    pub niche_pos: [i32; 3],
+    pub guardian_kind: GuardianKind,
+    pub materials: Vec<String>,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct NicheIntrusionAttempt {
+    pub intruder: Entity,
+    pub intruder_char_id: String,
+    pub niche_owner: String,
+    pub niche_pos: [i32; 3],
+    pub items_taken: Vec<u64>,
+    pub intruder_qi_fraction: f32,
+    pub intruder_back_turned: bool,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct NicheIntrusionEvent {
+    pub niche_owner: String,
+    pub intruder: Entity,
+    pub intruder_char_id: String,
+    pub niche_pos: [i32; 3],
+    pub items_taken: Vec<u64>,
+    pub taint_delta: f32,
+    pub guardian_kinds_triggered: Vec<GuardianKind>,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct NicheGuardianFatigue {
+    pub niche_owner: String,
+    pub guardian_kind: GuardianKind,
+    pub charges_remaining: u8,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct NicheGuardianBroken {
+    pub niche_owner: String,
+    pub guardian_kind: GuardianKind,
+    pub intruder: Entity,
+    pub intruder_char_id: String,
     pub tick: u64,
 }

@@ -8,6 +8,7 @@ mod death_event_attacker_chain_test;
 pub mod debug;
 pub mod decay;
 pub mod events;
+pub mod foreign_qi_resistance;
 pub mod jiemai;
 pub mod lifecycle;
 pub mod needle;

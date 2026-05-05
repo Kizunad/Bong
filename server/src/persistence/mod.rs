@@ -33,7 +33,7 @@ use crate::schema::social::{
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 15;
+const CURRENT_USER_VERSION: i32 = 16;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -496,7 +496,7 @@ pub struct SocialSpiritNicheRecord {
     pub placed_at_tick: u64,
     pub revealed: bool,
     pub revealed_by: Option<String>,
-    pub defense_mode: Option<String>,
+    pub guardians_json: String,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1265,6 +1265,7 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 revealed INTEGER NOT NULL CHECK (revealed IN (0, 1)),
                 revealed_by TEXT,
                 defense_mode TEXT,
+                guardians_json TEXT NOT NULL DEFAULT '[]',
                 schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
                 last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
             );
@@ -1294,6 +1295,23 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             PRAGMA user_version = 15;
             ",
         )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 16 {
+        let transaction = connection.transaction()?;
+        let columns = table_columns(&transaction, "social_spirit_niches")?;
+        if !columns.iter().any(|column| column == "guardians_json") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE social_spirit_niches
+                ADD COLUMN guardians_json TEXT NOT NULL DEFAULT '[]';
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 16;")?;
         transaction.commit()?;
     }
 
@@ -1392,6 +1410,17 @@ fn backfill_legacy_player_cultivation(
     }
 
     Ok(())
+}
+
+fn table_columns(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut statement = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 fn legacy_player_realm_to_cultivation(realm: &str) -> Option<Realm> {
@@ -3963,6 +3992,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::TribulationFled { .. } => "tribulation_fled",
         BiographyEntry::HeartDemonRecord { .. } => "heart_demon_record",
         BiographyEntry::TradeCompleted { .. } => "trade_completed",
+        BiographyEntry::NicheIntrusion { .. } => "niche_intrusion",
         BiographyEntry::VortexProjectileDrained { .. } => "vortex_projectile_drained",
         BiographyEntry::VortexBackfired { .. } => "vortex_backfired",
         BiographyEntry::AnqiSniped { .. } => "anqi_sniped",
@@ -4046,6 +4076,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::TribulationFled { tick, .. }
         | BiographyEntry::HeartDemonRecord { tick, .. }
         | BiographyEntry::TradeCompleted { tick, .. }
+        | BiographyEntry::NicheIntrusion { tick, .. }
         | BiographyEntry::VortexProjectileDrained { tick, .. }
         | BiographyEntry::VortexBackfired { tick, .. }
         | BiographyEntry::AnqiSniped { tick, .. }

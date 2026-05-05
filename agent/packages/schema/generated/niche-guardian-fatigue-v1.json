@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "guardian_kind",
+    "charges_remaining"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "guardian_kind": {
+      "anyOf": [
+        {
+          "const": "puppet",
+          "type": "string"
+        },
+        {
+          "const": "zhenfa_trap",
+          "type": "string"
+        },
+        {
+          "const": "bonded_daoxiang",
+          "type": "string"
+        }
+      ]
+    },
+    "charges_remaining": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
