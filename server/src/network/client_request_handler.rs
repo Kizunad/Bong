@@ -17,7 +17,7 @@ use valence::prelude::{
     Events, Query, Res, ResMut, Resource, Username, With,
 };
 
-use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_failure_outcome};
+use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
 use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
@@ -2573,7 +2573,7 @@ mod tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[2,64,3],"intervention":{"kind":"adjust_temp","value":1.0}}"#
+                data: br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[2,64,3],"intervention":{"kind":"adjust_temp","temp":1.0}}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -2602,6 +2602,73 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].entity, entity);
         assert!((events[0].severity - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn alchemy_flawed_take_back_grants_flawed_pill_residue() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            crate::cultivation::components::Cultivation::default(),
+            PlayerState::default(),
+            inventory_with_stack("ci_she_hao", 3),
+        ));
+
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(3, 64, 4), 1);
+        furnace.owner = Some("offline:Azure".into());
+        app.world_mut().spawn(furnace);
+        for data in [
+            br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[3,64,4],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
+            br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[3,64,4],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
+            br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[3,64,4],"intervention":{"kind":"inject_qi","qi":15.0}}"#.as_slice(),
+            br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[3,64,4],"intervention":{"kind":"adjust_temp","temp":0.60}}"#.as_slice(),
+            br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[3,64,4],"slot_idx":0}"#.as_slice(),
+        ] {
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: data.to_vec().into_boxed_slice(),
+                });
+        }
+
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let item_summary: Vec<_> = inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|placed| {
+                format!(
+                    "{}:{:?}",
+                    placed.instance.template_id, placed.instance.alchemy
+                )
+            })
+            .collect();
+        assert!(
+            inventory.containers.iter().any(|container| {
+                container.items.iter().any(|placed| {
+                    placed.instance.template_id
+                        == crate::alchemy::residue::FLAWED_PILL_RESIDUE_TEMPLATE_ID
+                        && matches!(
+                            placed.instance.alchemy,
+                            Some(AlchemyItemData::PillResidue {
+                                residue_kind: crate::alchemy::residue::PillResidueKind::FlawedPill,
+                                ..
+                            })
+                        )
+                })
+            }),
+            "expected flawed pill residue in inventory, got {item_summary:?}"
+        );
     }
 
     #[test]
@@ -2677,7 +2744,7 @@ mod tests {
         for data in [
             br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[4,64,5],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
             br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[4,64,5],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
-            br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[4,64,5],"intervention":{"kind":"adjust_temp","value":1.0}}"#.as_slice(),
+            br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[4,64,5],"intervention":{"kind":"adjust_temp","temp":1.0}}"#.as_slice(),
             br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[4,64,5],"slot_idx":0}"#.as_slice(),
         ] {
             app.world_mut()
@@ -6133,8 +6200,14 @@ fn grant_alchemy_outcome_item(
     item_registry: &ItemRegistry,
     instance_allocator: &mut InventoryInstanceIdAllocator,
 ) {
-    let (template_id, alchemy, reason) = match outcome {
-        crate::alchemy::ResolvedOutcome::Pill {
+    let (template_id, alchemy, reason) =
+        if let Some(residue_kind) = residue_kind_for_recyclable_outcome(outcome) {
+            (
+                residue_kind.spec().template_id,
+                Some(residue_alchemy_data(residue_kind, tick)),
+                "alchemy_residue_grant",
+            )
+        } else if let crate::alchemy::ResolvedOutcome::Pill {
             pill,
             recipe_id,
             quality_tier,
@@ -6142,28 +6215,22 @@ fn grant_alchemy_outcome_item(
             consecrated,
             side_effect,
             ..
-        } => (
-            pill.as_str(),
-            Some(AlchemyItemData::Pill {
-                recipe_id: recipe_id.clone(),
-                quality_tier: *quality_tier,
-                effect_multiplier: *effect_multiplier,
-                consecrated: *consecrated,
-                side_effect: side_effect.clone(),
-            }),
-            "alchemy_outcome_grant",
-        ),
-        other => {
-            let Some(residue_kind) = residue_kind_for_failure_outcome(other) else {
-                return;
-            };
+        } = outcome
+        {
             (
-                residue_kind.spec().template_id,
-                Some(residue_alchemy_data(residue_kind, tick)),
-                "alchemy_residue_grant",
+                pill.as_str(),
+                Some(AlchemyItemData::Pill {
+                    recipe_id: recipe_id.clone(),
+                    quality_tier: *quality_tier,
+                    effect_multiplier: *effect_multiplier,
+                    consecrated: *consecrated,
+                    side_effect: side_effect.clone(),
+                }),
+                "alchemy_outcome_grant",
             )
-        }
-    };
+        } else {
+            return;
+        };
     let Ok(mut inventory) = inventories.get_mut(entity) else {
         send_alchemy_error(
             client,

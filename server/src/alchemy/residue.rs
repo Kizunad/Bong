@@ -87,14 +87,19 @@ pub fn residue_alchemy_data(kind: PillResidueKind, produced_at_tick: u64) -> Alc
     }
 }
 
-pub fn residue_kind_for_failure_outcome(
+pub fn residue_kind_for_recyclable_outcome(
     outcome: &crate::alchemy::ResolvedOutcome,
 ) -> Option<PillResidueKind> {
     match outcome {
+        crate::alchemy::ResolvedOutcome::Pill {
+            flawed_path: true, ..
+        } => Some(PillResidueKind::FlawedPill),
         crate::alchemy::ResolvedOutcome::Waste { .. }
         | crate::alchemy::ResolvedOutcome::Mismatch
         | crate::alchemy::ResolvedOutcome::Explode { .. } => Some(PillResidueKind::FailedPill),
-        crate::alchemy::ResolvedOutcome::Pill { .. } => None,
+        crate::alchemy::ResolvedOutcome::Pill {
+            flawed_path: false, ..
+        } => None,
     }
 }
 
@@ -272,19 +277,35 @@ mod tests {
     }
 
     #[test]
-    fn failure_outcomes_produce_failed_pill_residue_kind() {
+    fn recyclable_outcomes_map_to_residue_kinds() {
         assert_eq!(
-            residue_kind_for_failure_outcome(&crate::alchemy::ResolvedOutcome::Waste {
+            residue_kind_for_recyclable_outcome(&crate::alchemy::ResolvedOutcome::Waste {
                 recipe_id: Some("hui_yuan_pill_v0".to_string()),
             }),
             Some(PillResidueKind::FailedPill)
         );
         assert_eq!(
-            residue_kind_for_failure_outcome(&crate::alchemy::ResolvedOutcome::Mismatch),
+            residue_kind_for_recyclable_outcome(&crate::alchemy::ResolvedOutcome::Mismatch),
             Some(PillResidueKind::FailedPill)
         );
         assert_eq!(
-            residue_kind_for_failure_outcome(&crate::alchemy::ResolvedOutcome::Pill {
+            residue_kind_for_recyclable_outcome(&crate::alchemy::ResolvedOutcome::Pill {
+                recipe_id: "hui_yuan_pill_v0".to_string(),
+                pill: "hui_yuan_pill".to_string(),
+                quality: 0.4,
+                toxin_amount: 0.3,
+                toxin_color: crate::cultivation::components::ColorKind::Mellow,
+                qi_gain: None,
+                quality_tier: 3,
+                effect_multiplier: 0.6,
+                consecrated: false,
+                side_effect: None,
+                flawed_path: true,
+            }),
+            Some(PillResidueKind::FlawedPill)
+        );
+        assert_eq!(
+            residue_kind_for_recyclable_outcome(&crate::alchemy::ResolvedOutcome::Pill {
                 recipe_id: "hui_yuan_pill_v0".to_string(),
                 pill: "hui_yuan_pill".to_string(),
                 quality: 1.0,

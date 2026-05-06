@@ -137,7 +137,7 @@ fn plot_status_at(pos: BlockPos, plots: &Query<&LingtianPlot>) -> LingtianSessio
     }
 }
 
-fn replenish_source_wire(source: ReplenishSource) -> &'static str {
+pub(crate) fn replenish_source_wire(source: ReplenishSource) -> &'static str {
     match source {
         ReplenishSource::Zone => "zone",
         ReplenishSource::BoneCoin => "bone_coin",
