@@ -3,6 +3,7 @@ package com.bong.client.network;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.state.RealmCollapseHudState;
+import com.bong.client.state.SeasonState;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -21,6 +22,7 @@ public final class ServerDataDispatch {
     private final NarrationState narrationState;
     private final NarrationState toastNarrationState;
     private final PlayerStateViewModel playerStateViewModel;
+    private final SeasonState seasonState;
     private final ZoneState zoneState;
     private final VisualEffectState visualEffectState;
     private final ToastSpec alertToast;
@@ -36,6 +38,7 @@ public final class ServerDataDispatch {
         NarrationState narrationState,
         NarrationState toastNarrationState,
         PlayerStateViewModel playerStateViewModel,
+        SeasonState seasonState,
         ZoneState zoneState,
         VisualEffectState visualEffectState,
         ToastSpec alertToast,
@@ -50,6 +53,7 @@ public final class ServerDataDispatch {
         this.narrationState = sanitizeNarrationState(narrationState);
         this.toastNarrationState = sanitizeNarrationState(toastNarrationState);
         this.playerStateViewModel = sanitizePlayerStateViewModel(playerStateViewModel);
+        this.seasonState = seasonState;
         this.zoneState = sanitizeZoneState(zoneState);
         this.visualEffectState = sanitizeVisualEffectState(visualEffectState);
         this.alertToast = sanitizeToastSpec(alertToast);
@@ -58,7 +62,7 @@ public final class ServerDataDispatch {
     }
 
     public static ServerDataDispatch handled(String routeType, String logMessage) {
-        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, null, null, null, null);
+        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, null, null, null, null, null);
     }
 
     public static ServerDataDispatch handledWithLegacyMessage(String routeType, String legacyMessage, String logMessage) {
@@ -68,6 +72,7 @@ public final class ServerDataDispatch {
             logMessage,
             Objects.requireNonNull(legacyMessage, "legacyMessage"),
             List.of(),
+            null,
             null,
             null,
             null,
@@ -99,6 +104,7 @@ public final class ServerDataDispatch {
             null,
             null,
             null,
+            null,
             null
         );
     }
@@ -121,12 +127,37 @@ public final class ServerDataDispatch {
             null,
             null,
             null,
+            null,
+            null
+        );
+    }
+
+    public static ServerDataDispatch handledWithPlayerStateAndSeason(
+        String routeType,
+        PlayerStateViewModel playerStateViewModel,
+        SeasonState seasonState,
+        String logMessage
+    ) {
+        return new ServerDataDispatch(
+            routeType,
+            true,
+            logMessage,
+            null,
+            List.of(),
+            null,
+            null,
+            playerStateViewModel,
+            seasonState,
+            null,
+            null,
+            null,
+            null,
             null
         );
     }
 
     public static ServerDataDispatch handledWithZoneState(String routeType, ZoneState zoneState, String logMessage) {
-        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, zoneState, null, null, null, null);
+        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, zoneState, null, null, null, null);
     }
 
     public static ServerDataDispatch handledWithEventAlert(
@@ -136,7 +167,7 @@ public final class ServerDataDispatch {
         RealmCollapseHudState realmCollapseHudState,
         String logMessage
     ) {
-        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, visualEffectState, alertToast, realmCollapseHudState, null);
+        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, null, visualEffectState, alertToast, realmCollapseHudState, null);
     }
 
     public static ServerDataDispatch handledWithEventAlert(
@@ -149,11 +180,11 @@ public final class ServerDataDispatch {
     }
 
     public static ServerDataDispatch handledWithUiOpen(String routeType, UiOpenState uiOpenState, String logMessage) {
-        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, null, null, null, uiOpenState);
+        return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, null, null, null, null, uiOpenState);
     }
 
     public static ServerDataDispatch noOp(String routeType, String logMessage) {
-        return new ServerDataDispatch(routeType, false, logMessage, null, List.of(), null, null, null, null, null, null, null, null);
+        return new ServerDataDispatch(routeType, false, logMessage, null, List.of(), null, null, null, null, null, null, null, null, null);
     }
 
     private static NarrationState sanitizeNarrationState(NarrationState narrationState) {
@@ -235,6 +266,10 @@ public final class ServerDataDispatch {
 
     public Optional<PlayerStateViewModel> playerStateViewModel() {
         return Optional.ofNullable(playerStateViewModel);
+    }
+
+    public Optional<SeasonState> seasonState() {
+        return Optional.ofNullable(seasonState);
     }
 
     public Optional<ZoneState> zoneState() {

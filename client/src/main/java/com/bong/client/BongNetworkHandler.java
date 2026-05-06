@@ -14,6 +14,7 @@ import com.bong.client.visual.particle.BongVfxParticleBridge;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.RealmCollapseHudStateStore;
+import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -163,6 +164,7 @@ public class BongNetworkHandler {
 
     private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
         dispatch.playerStateViewModel().ifPresent(PlayerStateStore::replace);
+        dispatch.seasonState().ifPresent(SeasonStateStore::replace);
         dispatch.narrationState().ifPresent(BongNetworkHandler::replaceNarrationState);
         dispatch.toastNarrationState().ifPresent(toastNarrationState -> BongToast.show(toastNarrationState, System.currentTimeMillis()));
         dispatch.zoneState().ifPresent(BongNetworkHandler::replaceZoneState);

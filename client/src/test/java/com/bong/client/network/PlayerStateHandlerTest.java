@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.state.SeasonState;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -84,6 +85,28 @@ public class PlayerStateHandlerTest {
 
         assertTrue(dispatch.handled());
         assertEquals(-0.8, playerState.localNegPressure(), 0.0001);
+    }
+
+    @Test
+    void mapsOptionalSeasonStateWithoutPlayerVisibleText() {
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
+            {"v":1,"type":"player_state","realm":"Solidify","spirit_qi":42.0,
+             "karma":0.0,"composite_power":0.5,
+              "breakdown":{"combat":0.5,"wealth":0.2,"social":0.2,"territory":0.2},
+              "zone":"spawn",
+              "season_state":{"season":"winter_to_summer","tick_into_phase":12,
+                "phase_total_ticks":345600,"year_index":2}}
+            """));
+
+        SeasonState seasonState = dispatch.seasonState().orElseThrow();
+
+        assertTrue(dispatch.handled());
+        assertTrue(dispatch.chatMessages().isEmpty());
+        assertTrue(dispatch.legacyMessage().isEmpty());
+        assertEquals(SeasonState.Phase.WINTER_TO_SUMMER, seasonState.phase());
+        assertEquals(12L, seasonState.tickIntoPhase());
+        assertEquals(345_600L, seasonState.phaseTotalTicks());
+        assertEquals(2L, seasonState.yearIndex());
     }
 
     @Test
