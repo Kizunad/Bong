@@ -2,6 +2,7 @@ use valence::prelude::{EventReader, Res};
 
 use crate::lingtian::events::ZonePressureCrossed;
 use crate::lingtian::pressure::PressureLevel;
+use crate::player::gameplay::GameplayTick;
 use crate::schema::lingtian::{LingtianZonePressureLevelV1, LingtianZonePressureV1};
 
 use super::redis_bridge::RedisOutbound;
@@ -9,14 +10,19 @@ use super::RedisBridgeResource;
 
 pub fn publish_lingtian_zone_pressure_events(
     mut events: EventReader<ZonePressureCrossed>,
+    gameplay_tick: Res<GameplayTick>,
     redis: Res<RedisBridgeResource>,
 ) {
     for event in events.read() {
         let Some(level) = pressure_level_to_wire(event.level) else {
             continue;
         };
-        let payload =
-            LingtianZonePressureV1::new(event.zone.clone(), level, event.raw_pressure, event.tick);
+        let payload = LingtianZonePressureV1::new(
+            event.zone.clone(),
+            level,
+            event.raw_pressure,
+            gameplay_tick.current_tick(),
+        );
         if let Err(error) = redis
             .tx_outbound
             .send(RedisOutbound::LingtianZonePressure(payload))
@@ -42,6 +48,7 @@ mod tests {
 
     use super::*;
     use crate::network::redis_bridge::RedisOutbound;
+    use crate::player::gameplay::GameplayTick;
 
     fn setup_app() -> (App, Receiver<RedisOutbound>) {
         let mut app = App::new();
@@ -51,6 +58,7 @@ mod tests {
             tx_outbound: tx,
             rx_inbound: in_rx,
         });
+        app.insert_resource(GameplayTick::default());
         app.add_event::<ZonePressureCrossed>();
         app.add_systems(Update, publish_lingtian_zone_pressure_events);
         (app, rx)
@@ -74,7 +82,7 @@ mod tests {
                 assert_eq!(payload.zone, "starter_zone");
                 assert_eq!(payload.level, LingtianZonePressureLevelV1::High);
                 assert!((payload.raw_pressure - 1.1).abs() < f32::EPSILON);
-                assert_eq!(payload.tick, 1440);
+                assert_eq!(payload.tick, 0);
             }
             other => panic!("expected LingtianZonePressure, got {other:?}"),
         }

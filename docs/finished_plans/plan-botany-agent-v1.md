@@ -145,12 +145,13 @@ server 侧已就绪：
 - P0：`agent/packages/tiandao/src/redis-ipc.ts` typed 订阅 / 校验 / drain `BOTANY_ECOLOGY`；`agent/packages/tiandao/src/world-model.ts` 保留 `botany_ecology`、zone ecology history、`ZoneStressFlag`、`ZoneAnomalyLog`。
 - P1：`agent/packages/tiandao/src/ecology-analyzer.ts` 实装连续 5 次低灵气高植物密度 + 富余 zone 的灵气重分配 narration，经 `runtime.ts` 发布到 `AGENT_NARRATE`。
 - P2：`ecology-analyzer.ts` 实装 tainted 多 zone 连续异常、thunder 3x spike 叙事，以及 10 分钟 tick 冷却。
-- P3：`agent/packages/schema/src/lingtian.ts` + `agent/packages/schema/generated/lingtian-zone-pressure-v1.json` 定义 `LingtianZonePressureV1`；`server/src/network/lingtian_pressure_bridge.rs` 将 `ZonePressureCrossed` 发布到 `bong:lingtian/zone_pressure`；tiandao 联合 HIGH pressure + low qi + tainted 触发强叙事。
+- P3：`agent/packages/schema/src/lingtian.ts` + `agent/packages/schema/generated/lingtian-zone-pressure-v1.json` 定义 `LingtianZonePressureV1`；`server/src/network/lingtian_pressure_bridge.rs` 将 `ZonePressureCrossed` 发布到 `bong:lingtian/zone_pressure`，wire `tick` 统一为 gameplay tick；tiandao 联合 HIGH pressure + low qi + tainted 触发强叙事。
 
 **关键 commit**
 - `5e974cb6` · 2026-05-06 · `plan-botany-agent-v1: 接入灵田压力契约`
 - `01c4f922` · 2026-05-06 · `plan-botany-agent-v1: 摄取生态快照进 WorldModel`
 - `7b310b0b` · 2026-05-06 · `plan-botany-agent-v1: 生成生态异常叙事`
+- PR #136 review fix · 2026-05-06 · 将灵田压力 Redis 事件 `tick` 从内部 `lingtian_tick` 收敛为 `GameplayTick.current_tick()`，避免 agent joint 叙事冷却跨时钟域失真。
 
 **测试结果**
 - `agent/ npm run generate -w @bong/schema`：生成 282 个 schema artifact，新增 `lingtian-zone-pressure-v1.json`。
@@ -158,11 +159,12 @@ server 侧已就绪：
 - `agent/ npm test -w @bong/schema`：9 files / 273 tests passed。
 - `agent/ npm test -w @bong/tiandao`：36 files / 242 tests passed。
 - `server/ cargo fmt --check`：通过。
+- `server/ cargo test lingtian_pressure_bridge`：2 tests passed，覆盖 pressure bridge 使用 gameplay tick。
 - `server/ cargo clippy --all-targets -- -D warnings`：通过。
 - `server/ cargo test`：2433 tests passed。
 
 **跨仓库核验**
-- server：`ZonePressureCrossed { tick }`、`LingtianZonePressureV1`、`RedisOutbound::LingtianZonePressure`、`CH_LINGTIAN_ZONE_PRESSURE`。
+- server：`ZonePressureCrossed { tick }` 内部仍为灵田域 tick；`LingtianZonePressureV1.tick` 经 bridge 输出为 gameplay tick；`RedisOutbound::LingtianZonePressure`、`CH_LINGTIAN_ZONE_PRESSURE`。
 - agent/schema：`CHANNELS.BOTANY_ECOLOGY`、`CHANNELS.LINGTIAN_ZONE_PRESSURE`、`BotanyEcologySnapshotV1`、`LingtianZonePressureV1`、`validateBotanyEcologySnapshotV1Contract`。
 - tiandao：`drainBotanyEcologyEvents()`、`drainLingtianZonePressureEvents()`、`WorldModel.botany_ecology`、`EcologyAnalyzer.ingestBotanyEcology()`、`EcologyAnalyzer.ingestLingtianZonePressure()`。
 
