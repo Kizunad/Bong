@@ -9,6 +9,7 @@ pub mod poi_mutant_nest;
 pub mod poi_novice;
 pub mod poi_respawn_tick;
 pub mod rift_portal;
+pub mod season;
 pub mod spawn_tutorial;
 pub mod spirit_eye;
 pub mod terrain;
@@ -98,6 +99,7 @@ pub fn register(app: &mut App) {
     dimension::register(app);
     dimension_transfer::register(app);
     zone::register(app);
+    season::register(app);
     spirit_eye::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());
     app.insert_resource(karma::QiDensityHeatmap::default());

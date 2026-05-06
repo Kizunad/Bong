@@ -99,9 +99,9 @@ use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryEventV1, Inv
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::GuardianKindV1;
 use crate::shelflife::{
-    age_peak_check, container_storage_multiplier, spoil_check, AgeBonusRoll, AgePeakCheck,
-    ContainerFreshnessBehavior, DecayProfileRegistry, SpoilCheckOutcome, SpoilConsumeWarning,
-    SpoilSeverity,
+    age_peak_check_with_season, container_storage_multiplier, spoil_check_with_season,
+    AgeBonusRoll, AgePeakCheck, ContainerFreshnessBehavior, DecayProfileRegistry,
+    SpoilCheckOutcome, SpoilConsumeWarning, SpoilSeverity,
 };
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
@@ -117,6 +117,7 @@ use crate::world::extract_system::{
     StartExtractRequest as StartExtractRequestEvent,
 };
 use crate::world::karma::KarmaWeightStore;
+use crate::world::season::query_season;
 use crate::world::spawn_tutorial::CoffinOpenRequest;
 use crate::world::tsy_container_search::{
     CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
@@ -6669,9 +6670,24 @@ fn shelflife_checks_for_item(
     };
 
     let multiplier = container_storage_multiplier(&ContainerFreshnessBehavior::Normal, profile);
+    let season = query_season("", now_tick).season;
     (
-        spoil_check(freshness, profile, now_tick, multiplier),
-        age_peak_check(freshness, profile, now_tick, multiplier),
+        spoil_check_with_season(
+            freshness,
+            profile,
+            now_tick,
+            multiplier,
+            season,
+            item.instance_id,
+        ),
+        age_peak_check_with_season(
+            freshness,
+            profile,
+            now_tick,
+            multiplier,
+            season,
+            item.instance_id,
+        ),
     )
 }
 

@@ -12,6 +12,7 @@ use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::season::Season;
 use crate::world::zone::ZoneRegistry;
 
 pub const KARMA_WEIGHT_MIN: f32 = 0.0;
@@ -241,6 +242,25 @@ pub fn targeted_calamity_roll(
         qi_density_heat,
         effective_probability,
     }
+}
+
+pub fn season_calamity_multiplier(season: Season) -> f32 {
+    if season.is_xizhuan() {
+        2.0
+    } else {
+        1.0
+    }
+}
+
+pub fn targeted_calamity_roll_with_season(
+    base_probability: f32,
+    karma_weight: f32,
+    qi_density_heat: f32,
+    season: Season,
+) -> TargetedCalamityRoll {
+    let adjusted_base = (base_probability * season_calamity_multiplier(season))
+        .clamp(0.0, TARGETED_CALAMITY_MAX_PROBABILITY);
+    targeted_calamity_roll(adjusted_base, karma_weight, qi_density_heat)
 }
 
 pub fn targeted_calamity_event_hit(effective_probability: f32, seed: u64) -> (f32, bool) {
@@ -518,6 +538,48 @@ mod tests {
         let heat_driven = targeted_calamity_roll(TARGETED_CALAMITY_BASE_PROBABILITY, 0.1, 0.6);
         assert!(heat_driven.effective_probability > TARGETED_CALAMITY_BASE_PROBABILITY);
         assert!(heat_driven.effective_probability < TARGETED_CALAMITY_MAX_PROBABILITY);
+    }
+
+    #[test]
+    fn targeted_calamity_in_xizhuan_doubles_probability() {
+        let normal = targeted_calamity_roll_with_season(
+            TARGETED_CALAMITY_BASE_PROBABILITY,
+            0.0,
+            0.0,
+            Season::Summer,
+        );
+        let xizhuan = targeted_calamity_roll_with_season(
+            TARGETED_CALAMITY_BASE_PROBABILITY,
+            0.0,
+            0.0,
+            Season::WinterToSummer,
+        );
+
+        assert_eq!(
+            normal.effective_probability,
+            TARGETED_CALAMITY_BASE_PROBABILITY
+        );
+        assert_eq!(
+            xizhuan.effective_probability,
+            TARGETED_CALAMITY_BASE_PROBABILITY * 2.0
+        );
+        assert_eq!(season_calamity_multiplier(Season::SummerToWinter), 2.0);
+    }
+
+    #[test]
+    fn targeted_calamity_season_multiplier_clamps_to_max() {
+        let xizhuan = targeted_calamity_roll_with_season(
+            TARGETED_CALAMITY_MAX_PROBABILITY,
+            1.0,
+            1.0,
+            Season::SummerToWinter,
+        );
+
+        assert_eq!(
+            xizhuan.effective_probability,
+            TARGETED_CALAMITY_MAX_PROBABILITY
+        );
+        assert_eq!(xizhuan.base_probability, TARGETED_CALAMITY_MAX_PROBABILITY);
     }
 
     #[test]

@@ -505,6 +505,7 @@ mod server_data_tests {
                     breakdown: sample_player_breakdown(),
                     zone: "blood_valley".to_string(),
                     local_neg_pressure: None,
+                    season_state: None,
                     social: None,
                 }),
                 json!({

@@ -23,6 +23,7 @@ use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{KarmaWeightStore, KARMA_WEIGHT_MAX};
+use crate::world::season::{query_season, Season};
 use crate::world::spirit_eye::{SpiritEyeId, SpiritEyeRegistry, SpiritEyeUsedForBreakthroughEvent};
 use crate::world::zone::ZoneRegistry;
 
@@ -190,6 +191,35 @@ pub fn compute_success_rate_with_env_bonus(
     raw.clamp(0.0, 1.0)
 }
 
+pub fn season_success_modifier(season: Season) -> f64 {
+    match season {
+        Season::Summer => 1.05,
+        Season::Winter => 0.95,
+        Season::SummerToWinter | Season::WinterToSummer => 0.85,
+    }
+}
+
+pub fn compute_success_rate_with_env_and_season_bonus(
+    next: Realm,
+    meridian_integrity_avg: f64,
+    composure: f64,
+    completeness: f64,
+    material_bonus: f64,
+    env_bonus: f64,
+    season: Season,
+) -> f64 {
+    let material = material_bonus.clamp(0.0, 0.30);
+    let env_bonus = env_bonus.clamp(0.0, 0.50);
+    let raw = base_success_rate(next)
+        * meridian_integrity_avg
+        * composure
+        * completeness
+        * (1.0 + material)
+        * (1.0 + env_bonus)
+        * season_success_modifier(season);
+    raw.clamp(0.0, 1.0)
+}
+
 pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64) -> f64 {
     let delta = magnitude.clamp(0.0, 0.30);
     cultivation.pending_material_bonus =
@@ -347,6 +377,24 @@ pub fn try_breakthrough_with_env_bonus<R: RollSource>(
     env_bonus: f64,
     roll: &mut R,
 ) -> Result<BreakthroughSuccess, BreakthroughError> {
+    try_breakthrough_with_env_season_bonus(
+        cultivation,
+        meridians,
+        material_bonus,
+        env_bonus,
+        None,
+        roll,
+    )
+}
+
+pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
+    cultivation: &mut Cultivation,
+    meridians: &mut MeridianSystem,
+    material_bonus: f64,
+    env_bonus: f64,
+    season: Option<Season>,
+    roll: &mut R,
+) -> Result<BreakthroughSuccess, BreakthroughError> {
     let from = cultivation.realm;
     if let Some(error) = breakthrough_precondition_error(cultivation, meridians) {
         return Err(error);
@@ -369,14 +417,25 @@ pub fn try_breakthrough_with_env_bonus<R: RollSource>(
     let effective_material_bonus =
         (material_bonus + cultivation.pending_material_bonus).clamp(0.0, 0.30);
 
-    let success_rate = compute_success_rate_with_env_bonus(
-        next,
-        integrity_avg,
-        cultivation.composure,
-        completeness,
-        effective_material_bonus,
-        env_bonus,
-    );
+    let success_rate = match season {
+        Some(season) => compute_success_rate_with_env_and_season_bonus(
+            next,
+            integrity_avg,
+            cultivation.composure,
+            completeness,
+            effective_material_bonus,
+            env_bonus,
+            season,
+        ),
+        None => compute_success_rate_with_env_bonus(
+            next,
+            integrity_avg,
+            cultivation.composure,
+            completeness,
+            effective_material_bonus,
+            env_bonus,
+        ),
+    };
 
     // 扣费（不论成败）
     cultivation.qi_current -= cost;
@@ -413,6 +472,23 @@ pub fn try_breakthrough_with_env_bonus<R: RollSource>(
         cultivation.composure = (cultivation.composure - 0.3).max(0.0);
         Err(BreakthroughError::RolledFailure { severity })
     }
+}
+
+fn breakthrough_season(
+    position_context: Option<(&Position, DimensionKind)>,
+    zones: Option<&ZoneRegistry>,
+    tick: u64,
+) -> Season {
+    let zone_name = position_context
+        .and_then(|(position, dimension)| {
+            zones.and_then(|zones| {
+                zones
+                    .find_zone(dimension, position.get())
+                    .map(|zone| zone.name.as_str())
+            })
+        })
+        .unwrap_or("");
+    query_season(zone_name, tick).season
 }
 
 fn spirit_eye_env_bonus_for(from: Realm, blood_valley: Option<bool>) -> f64 {
@@ -491,6 +567,7 @@ pub fn breakthrough_system(
                 .as_ref()
                 .map(|(_, _, blood_valley)| *blood_valley),
         );
+        let season = breakthrough_season(position_context, zones.as_deref(), now);
 
         let zone_error = position_context.and_then(|(position, dimension)| {
             breakthrough_environment_error(
@@ -506,11 +583,12 @@ pub fn breakthrough_system(
             .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
             .map_or_else(
                 || {
-                    try_breakthrough_with_env_bonus(
+                    try_breakthrough_with_env_season_bonus(
                         &mut cultivation,
                         &mut meridians,
                         material_bonus,
                         env_bonus,
+                        Some(season),
                         &mut roll,
                     )
                 },
@@ -776,6 +854,39 @@ mod tests {
         assert_eq!(c.realm, Realm::Awaken);
         // qi 已扣
         assert!(c.qi_current < 100.0);
+    }
+
+    #[test]
+    fn breakthrough_season_modifier_matches_four_phases() {
+        assert_eq!(season_success_modifier(Season::Summer), 1.05);
+        assert_eq!(season_success_modifier(Season::Winter), 0.95);
+        assert_eq!(season_success_modifier(Season::SummerToWinter), 0.85);
+        assert_eq!(season_success_modifier(Season::WinterToSummer), 0.85);
+    }
+
+    #[test]
+    fn breakthrough_in_xizhuan_phase_has_lower_success_rate() {
+        let summer = compute_success_rate_with_env_and_season_bonus(
+            Realm::Induce,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            Season::Summer,
+        );
+        let xizhuan = compute_success_rate_with_env_and_season_bonus(
+            Realm::Induce,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            Season::SummerToWinter,
+        );
+
+        assert!(xizhuan < summer);
+        assert!((xizhuan - 0.765).abs() < 1e-9);
     }
 
     #[test]

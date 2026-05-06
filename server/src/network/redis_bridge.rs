@@ -20,12 +20,13 @@ use crate::schema::channels::{
     CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
     CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
     CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
-    CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH, CH_SKILL_CAP_CHANGED,
-    CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
-    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY,
-    CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
-    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
+    CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH, CH_SEASON_CHANGED,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
+    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
     CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -48,6 +49,7 @@ use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::pseudo_vein::{PseudoVeinDissipateEventV1, PseudoVeinSnapshotV1};
+use crate::schema::season::SeasonChangedV1;
 use crate::schema::server_data::HeartDemonOfferV1;
 use crate::schema::skill::{
     SkillCapChangedPayloadV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1, SkillXpGainPayloadV1,
@@ -88,6 +90,7 @@ pub enum RedisInbound {
 #[derive(Debug, Clone)]
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
+    SeasonChanged(SeasonChangedV1),
     #[allow(dead_code)]
     PlayerChat(ChatMessageV1),
     CombatRealtime(CombatRealtimeEventV1),
@@ -360,6 +363,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
 
             Ok(RedisIoCommand::Publish {
                 channel: CH_WORLD_STATE,
+                payload,
+            })
+        }
+        RedisOutbound::SeasonChanged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SeasonChangedV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SEASON_CHANGED,
                 payload,
             })
         }

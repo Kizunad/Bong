@@ -18,8 +18,11 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event};
 
-use super::compute::compute_current_qi;
+use super::compute::{
+    compute_current_qi, compute_current_qi_with_season, compute_track_state_with_season,
+};
 use super::types::{DecayProfile, Freshness, TrackState};
+use crate::world::season::Season;
 
 /// plan §5.2 — Spoil 路径"极低拒消费"的阈值比例。
 /// `current < CRITICAL_BLOCK_RATIO × spoil_threshold` 时返回 `CriticalBlock`，
@@ -124,6 +127,29 @@ pub fn decay_current_qi_factor(
     (current / initial).max(0.0)
 }
 
+pub fn decay_current_qi_factor_with_season(
+    freshness: &Freshness,
+    profile: &DecayProfile,
+    now_tick: u64,
+    storage_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+) -> f32 {
+    let current = compute_current_qi_with_season(
+        freshness,
+        profile,
+        now_tick,
+        storage_multiplier,
+        season,
+        entropy_seed,
+    );
+    let initial = freshness.initial_qi;
+    if initial <= f32::EPSILON {
+        return 0.0;
+    }
+    (current / initial).max(0.0)
+}
+
 /// plan §5.2 — Spoil 路径消费前置校验。
 ///
 /// 非 Spoil profile 直接返回 `NotApplicable`；Spoil profile 按 `current` 与
@@ -164,6 +190,46 @@ pub fn spoil_check(
     }
 }
 
+pub fn spoil_check_with_season(
+    freshness: &Freshness,
+    profile: &DecayProfile,
+    now_tick: u64,
+    storage_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+) -> SpoilCheckOutcome {
+    let DecayProfile::Spoil {
+        spoil_threshold, ..
+    } = profile
+    else {
+        return SpoilCheckOutcome::NotApplicable;
+    };
+    let current = compute_current_qi_with_season(
+        freshness,
+        profile,
+        now_tick,
+        storage_multiplier,
+        season,
+        entropy_seed,
+    );
+    let threshold = *spoil_threshold;
+    if current >= threshold {
+        SpoilCheckOutcome::Safe {
+            current_qi: current,
+        }
+    } else if current < CRITICAL_BLOCK_RATIO * threshold {
+        SpoilCheckOutcome::CriticalBlock {
+            current_qi: current,
+            spoil_threshold: threshold,
+        }
+    } else {
+        SpoilCheckOutcome::Warn {
+            current_qi: current,
+            spoil_threshold: threshold,
+        }
+    }
+}
+
 /// plan §5.3 — Age 路径峰值检查。
 ///
 /// 复用 `compute_track_state` 的 `Peaking` 判定，避免逻辑重复 / 漂移。返回
@@ -181,6 +247,34 @@ pub fn age_peak_check(
     };
     let state =
         super::compute::compute_track_state(freshness, profile, now_tick, storage_multiplier);
+    if state == TrackState::Peaking {
+        AgePeakCheck::Peaking {
+            bonus_strength: *peak_bonus,
+        }
+    } else {
+        AgePeakCheck::NotPeaking
+    }
+}
+
+pub fn age_peak_check_with_season(
+    freshness: &Freshness,
+    profile: &DecayProfile,
+    now_tick: u64,
+    storage_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+) -> AgePeakCheck {
+    let DecayProfile::Age { peak_bonus, .. } = profile else {
+        return AgePeakCheck::NotApplicable;
+    };
+    let state = compute_track_state_with_season(
+        freshness,
+        profile,
+        now_tick,
+        storage_multiplier,
+        season,
+        entropy_seed,
+    );
     if state == TrackState::Peaking {
         AgePeakCheck::Peaking {
             bonus_strength: *peak_bonus,

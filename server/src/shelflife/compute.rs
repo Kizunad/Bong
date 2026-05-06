@@ -14,6 +14,7 @@
 //! - Linear 公式特意走 f64 内部算 — 骨币 real-year scale decay 精度关键。
 
 use super::types::{DecayFormula, DecayProfile, Freshness, TrackState};
+use crate::world::season::Season;
 
 pub const DEAD_ZONE_SHELFLIFE_MULTIPLIER: f32 = 3.0;
 
@@ -27,6 +28,64 @@ pub fn zone_multiplier_lookup(zone_qi_density: f64) -> f32 {
 
 pub fn combine_storage_and_zone_multiplier(storage_multiplier: f32, zone_qi_density: f64) -> f32 {
     storage_multiplier.max(0.0) * zone_multiplier_lookup(zone_qi_density)
+}
+
+pub fn season_decay_modifier(season: Season, entropy_seed: u64) -> f32 {
+    match season {
+        Season::Summer => 1.3,
+        Season::Winter => 0.7,
+        Season::SummerToWinter | Season::WinterToSummer => {
+            let bucket = (splitmix64(entropy_seed) % 10_001) as f32 / 10_000.0;
+            0.8 + bucket * 0.4
+        }
+    }
+}
+
+pub fn combine_storage_zone_and_season_multiplier(
+    freshness: &Freshness,
+    storage_multiplier: f32,
+    zone_qi_density: f64,
+    season: Season,
+    entropy_seed: u64,
+) -> f32 {
+    let base = combine_storage_and_zone_multiplier(storage_multiplier, zone_qi_density);
+    if base <= 0.0 || freshness.frozen_since_tick.is_some() {
+        base
+    } else {
+        base * season_decay_modifier(season, entropy_seed)
+    }
+}
+
+pub fn compute_current_qi_with_season(
+    freshness: &Freshness,
+    profile: &DecayProfile,
+    now_tick: u64,
+    storage_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+) -> f32 {
+    let multiplier = if storage_multiplier <= 0.0 || freshness.frozen_since_tick.is_some() {
+        storage_multiplier
+    } else {
+        storage_multiplier * season_decay_modifier(season, entropy_seed)
+    };
+    compute_current_qi(freshness, profile, now_tick, multiplier)
+}
+
+pub fn compute_track_state_with_season(
+    freshness: &Freshness,
+    profile: &DecayProfile,
+    now_tick: u64,
+    storage_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+) -> TrackState {
+    let multiplier = if storage_multiplier <= 0.0 || freshness.frozen_since_tick.is_some() {
+        storage_multiplier
+    } else {
+        storage_multiplier * season_decay_modifier(season, entropy_seed)
+    };
+    compute_track_state(freshness, profile, now_tick, multiplier)
 }
 
 /// plan §1 / §6.1 — 按 lazy eval 算物品当下灵气 / 真元 / 药力值。
@@ -216,6 +275,13 @@ fn compute_age(
     }
 }
 
+fn splitmix64(seed: u64) -> u64 {
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::{DecayProfileId, DecayTrack};
@@ -336,6 +402,42 @@ mod tests {
         assert_eq!(combined, 1.5);
         let current = compute_current_qi(&f, &p, 1000, combined);
         assert!((current - (100.0 * (0.5_f32).powf(1.5))).abs() < 1e-3);
+    }
+
+    #[test]
+    fn bone_coin_decays_faster_in_summer_than_winter() {
+        let p = decay_exp_profile(1000, 0.0);
+        let f = fresh_item(&p, 100.0, 0);
+
+        let summer = compute_current_qi_with_season(&f, &p, 1000, 1.0, Season::Summer, 7);
+        let winter = compute_current_qi_with_season(&f, &p, 1000, 1.0, Season::Winter, 7);
+
+        assert!(summer < winter);
+        assert_eq!(season_decay_modifier(Season::Summer, 7), 1.3);
+        assert_eq!(season_decay_modifier(Season::Winter, 7), 0.7);
+    }
+
+    #[test]
+    fn xizhuan_decay_modifier_stays_in_chaotic_band() {
+        for season in [Season::SummerToWinter, Season::WinterToSummer] {
+            for seed in [0, 1, 42, u64::MAX] {
+                let modifier = season_decay_modifier(season, seed);
+                assert!((0.8..=1.2).contains(&modifier));
+            }
+        }
+    }
+
+    #[test]
+    fn frozen_item_ignores_season_decay_modifier() {
+        let p = decay_exp_profile(1000, 0.0);
+        let mut f = fresh_item(&p, 100.0, 0);
+        f.frozen_since_tick = Some(0);
+
+        let summer = compute_current_qi_with_season(&f, &p, 10_000, 1.0, Season::Summer, 7);
+        let winter = compute_current_qi_with_season(&f, &p, 10_000, 1.0, Season::Winter, 7);
+
+        assert_eq!(summer, winter);
+        assert!((summer - 100.0).abs() < 1e-3);
     }
 
     #[test]

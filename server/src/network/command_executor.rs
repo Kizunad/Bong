@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use valence::prelude::{
-    Commands, Despawned, Entity, EventWriter, Query, ResMut, Resource, With, Without,
+    Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource, With, Without,
 };
 
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
@@ -23,6 +23,7 @@ use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::events::ActiveEventsResource;
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
+use crate::world::season::query_season;
 use crate::world::zone::ZoneRegistry;
 
 const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
@@ -141,6 +142,7 @@ pub fn execute_agent_commands(
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
     karma_weights: Option<valence::prelude::Res<KarmaWeightStore>>,
     qi_heatmap: Option<valence::prelude::Res<QiDensityHeatmap>>,
+    clock: Option<Res<crate::cultivation::tick::CultivationClock>>,
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     layers: LayerQuery<'_, '_>,
@@ -172,6 +174,7 @@ pub fn execute_agent_commands(
                 &mut npc_behavior,
                 karma_weights.as_deref(),
                 qi_heatmap.as_deref(),
+                clock.as_deref().map(|clock| clock.tick),
                 &mut npc_spawn_notices,
                 &mut faction_notices,
                 &layers,
@@ -210,6 +213,7 @@ fn execute_single_command(
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
+    tick: Option<u64>,
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
     layers: &LayerQuery<'_, '_>,
@@ -252,6 +256,7 @@ fn execute_single_command(
             active_events,
             karma_weights,
             qi_heatmap,
+            tick,
         ),
     };
 
@@ -608,6 +613,7 @@ fn execute_spawn_event(
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
+    tick: Option<u64>,
 ) -> &'static str {
     let Some(active_events) = active_events.as_deref_mut() else {
         tracing::warn!(
@@ -617,11 +623,13 @@ fn execute_spawn_event(
         return "rejected_missing_active_events";
     };
 
-    if active_events.enqueue_from_spawn_command_with_karma(
+    let season = query_season("", tick.unwrap_or_default()).season;
+    if active_events.enqueue_from_spawn_command_with_karma_and_season(
         command,
         zone_registry.as_deref_mut(),
         karma_weights,
         qi_heatmap,
+        season,
     ) {
         "ok"
     } else {
