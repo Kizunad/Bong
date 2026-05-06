@@ -1,10 +1,10 @@
 //! plan-lingtian-v1 §1.3 / §1.4 — 灵气账本（区域级）+ lingtian-tick 计数器。
 //!
-//! `ZoneQiAccount` 是 lingtian 系统**自有**的区域灵气账本，与 `world::zone::Zone.spirit_qi`
-//! （归一化 -1..=1 用于 NPC AI / heal）暂时解耦。设计原因：
+//! `ZoneQiAccount` 是 lingtian 系统的区域灵气 facade，与 `world::zone::Zone.spirit_qi`
+//! （归一化 -1..=1 用于 NPC AI / heal）保持边界清晰。所有分账比例由
+//! `qi_physics::constants` 主张，避免灵田模块继续自带物理常量。设计原因：
 //!   * plan §1.4 把"补灵 +0.5 / 抽吸 -0.5"作为绝对量记，与 -1..=1 归一化不兼容
-//!   * lingtian 是首个引入"灵气流出 / 流入区域"的系统，先在自家立账更安全
-//!   * 后续 plan-zhenfa-v1 / WorldQiAccount 落地时再合账（TODO 已记录）
+//!   * lingtian 仍需要自有 plot/zone 视图；跨系统总账由 WorldQiAccount 统一汇总
 //!
 //! `LingtianTickAccumulator` 把 Bevy tick（1/20s）累计到 lingtian-tick（60s）。
 

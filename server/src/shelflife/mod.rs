@@ -28,7 +28,6 @@ pub use compute::{
     combine_storage_and_zone_multiplier, combine_storage_zone_and_season_multiplier,
     compute_current_qi, compute_current_qi_with_season, compute_track_state,
     compute_track_state_with_season, season_decay_modifier, zone_multiplier_lookup,
-    DEAD_ZONE_SHELFLIFE_MULTIPLIER,
 };
 #[allow(unused_imports)]
 pub use consume::{

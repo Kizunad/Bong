@@ -1,7 +1,7 @@
 //! QiRegenTick + ZoneQiDrainTick（plan §2 QiRegenTick / ZoneQiDrainTick）。
 //!
 //! 两者合并到一个 system 里执行以天然保证零和：玩家每 tick 吸纳的 qi
-//! 必然等量从 zone.spirit_qi 扣除（按 `QI_PER_ZONE_UNIT` 换算）。符合
+//! 必然等量从 zone.spirit_qi 扣除（按 qi_physics 底盘换算系数换算）。符合
 //! worldview §一"灵气零和守恒"公理。
 //!
 //! P1 简化：无「静坐/行动」区分，全部按被动小系数回；静坐/打坐在 P1 末
@@ -15,6 +15,7 @@ use valence::prelude::{
 
 use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
+use crate::qi_physics::regen_from_zone;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
@@ -38,31 +39,10 @@ pub struct CultivationSessionPracticeAccumulator {
     ticks_by_entity: HashMap<Entity, u64>,
 }
 
-/// 每 tick 真元回复的归一化系数。
-pub const QI_REGEN_COEF: f64 = 0.01;
-/// 1.0 单位 zone concentration 可支撑多少 qi 吸纳 — 决定 zone 枯竭速度。
-/// 数值越大 zone 越耐抽。
-pub const QI_PER_ZONE_UNIT: f64 = 50.0;
-
 /// 纯函数：给定 zone 浓度、rate、可用额度（qi_max - qi_current - qi_max_frozen 等）
 /// 计算本 tick 的实际 gain 与 zone 浓度变化量（均为非负）。
 pub fn compute_regen(zone_qi: f64, rate: f64, avg_integrity: f64, qi_room: f64) -> (f64, f64) {
-    if zone_qi <= 0.0 || rate <= 0.0 || qi_room <= 0.0 {
-        return (0.0, 0.0);
-    }
-    let raw_gain = zone_qi * rate * avg_integrity * QI_REGEN_COEF;
-    // 池容量上限
-    let capped_gain = raw_gain.min(qi_room);
-    // 该次 gain 对应 zone 浓度扣减
-    let drain = capped_gain / QI_PER_ZONE_UNIT;
-    // 若扣减将 zone 拉到负值，再等比回退 gain
-    if drain > zone_qi {
-        let actual_drain = zone_qi;
-        let actual_gain = actual_drain * QI_PER_ZONE_UNIT;
-        (actual_gain, actual_drain)
-    } else {
-        (capped_gain, drain)
-    }
+    regen_from_zone(zone_qi, rate, avg_integrity, qi_room)
 }
 
 /// QiRegenTick + ZoneQiDrainTick 合并实现。零和：玩家 qi 增量 = zone 浓度减量 × coef。
@@ -258,8 +238,7 @@ mod tests {
     fn gain_drains_zone_by_ratio() {
         let (g, d) = compute_regen(0.5, 1.0, 1.0, 100.0);
         assert!(g > 0.0);
-        // gain / QI_PER_ZONE_UNIT == drain
-        assert!((g - d * QI_PER_ZONE_UNIT).abs() < 1e-9);
+        assert!((g - d * zone_unit_qi()).abs() < 1e-9);
     }
 
     #[test]
@@ -267,7 +246,7 @@ mod tests {
         let (g, d) = compute_regen(1.0, 100.0, 1.0, 0.5);
         assert!(g <= 0.5);
         // 即使被 qi_room 截断，drain 依然按 gain 换算
-        assert!((g - d * QI_PER_ZONE_UNIT).abs() < 1e-9);
+        assert!((g - d * zone_unit_qi()).abs() < 1e-9);
     }
 
     #[test]
@@ -276,12 +255,12 @@ mod tests {
         let zone_qi = 0.001;
         let (g, d) = compute_regen(zone_qi, 1e6, 1.0, 1e9);
         assert!(d <= zone_qi + 1e-12);
-        assert!((g - d * QI_PER_ZONE_UNIT).abs() < 1e-6);
+        assert!((g - d * zone_unit_qi()).abs() < 1e-6);
     }
 
     #[test]
     fn zero_sum_property() {
-        // 多次 tick 后累积玩家 gain == 累积 zone drain × QI_PER_ZONE_UNIT
+        // 多次 tick 后累积玩家 gain == 累积 zone drain × 底盘换算系数
         let mut zone_qi = 0.5;
         let mut player_qi = 0.0;
         for _ in 0..50 {
@@ -290,8 +269,12 @@ mod tests {
             player_qi += g;
             zone_qi -= d;
         }
-        let leaked = player_qi - (0.5 - zone_qi) * QI_PER_ZONE_UNIT;
+        let leaked = player_qi - (0.5 - zone_qi) * zone_unit_qi();
         assert!(leaked.abs() < 1e-6);
+    }
+
+    fn zone_unit_qi() -> f64 {
+        crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY
     }
 
     #[test]

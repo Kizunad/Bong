@@ -15,7 +15,7 @@ use crate::npc::spawn::NpcMarker;
 use crate::npc::tsy_hostile::{compute_fuya_aura_drain_multiplier, FuyaAura};
 use crate::qi_physics::constants::{
     QI_AMBIENT_EXCRETION_PER_SEC, QI_TSY_BASE_DRAIN_PER_TICK, QI_TSY_DRAIN_NONLINEAR_EXPONENT,
-    QI_TSY_REFERENCE_POOL, QI_TSY_SEARCH_DRAIN_MULTIPLIER,
+    QI_TSY_REFERENCE_POOL, QI_TSY_SEARCH_EXPOSURE_FACTOR,
 };
 use crate::qi_physics::{
     qi_excretion_loss, ContainerKind, EnvField, QiAccountId, QiTransfer, QiTransferReason,
@@ -69,7 +69,7 @@ pub fn compute_drain_per_tick(zone: &Zone, cultivation: &Cultivation) -> f64 {
 /// 搜刮是主动暴露行为：抽吸速率在 baseline 上 ×1.5。
 pub fn compute_search_drain_multiplier(in_search: bool) -> f64 {
     if in_search {
-        QI_TSY_SEARCH_DRAIN_MULTIPLIER
+        QI_TSY_SEARCH_EXPOSURE_FACTOR
     } else {
         1.0
     }

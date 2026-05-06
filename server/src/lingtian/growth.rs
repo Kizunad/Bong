@@ -14,20 +14,18 @@
 //!     growth      += per_tick × quality_multiplier(plot_qi / cap) × contamination
 //!     quality_acc += quality_bonus(plot_qi / cap) × contamination
 //!     plot_qi     -= base_drain
-//! 否则若 zone_qi >= base_drain × ZONE_LEAK_RATIO:
+//! 否则若 zone_qi >= base_drain × qi_physics 漏吸比例:
 //!     growth      += per_tick × ZONE_LEAK_GROWTH_FACTOR (0.3)
-//!     zone_qi     -= base_drain × ZONE_LEAK_RATIO
+//!     zone_qi     -= base_drain × qi_physics 漏吸比例
 //!     quality_acc 不增（漏吸不带品质增益）
 //! 否则：
 //!     growth 停滞
 //! ```
 
 use crate::botany::PlantKind;
+use crate::qi_physics::constants::QI_LINGTIAN_AMBIENT_LEAK_RATIO;
 
 use super::plot::LingtianPlot;
-
-/// 区域漏吸比例：plot_qi 不足时按本系数从 zone qi 抽 base_drain × ratio。
-pub const ZONE_LEAK_RATIO: f32 = 0.2;
 
 /// 区域漏吸状态下生长速率衰减（plan §1.3 注释 "30%"）。
 pub const ZONE_LEAK_GROWTH_FACTOR: f32 = 0.3;
@@ -127,7 +125,7 @@ pub fn advance_one_lingtian_tick(
         };
     }
 
-    let leak_demand = base_drain * ZONE_LEAK_RATIO;
+    let leak_demand = base_drain * QI_LINGTIAN_AMBIENT_LEAK_RATIO;
     if *zone_qi >= leak_demand {
         let delta = per_tick * ZONE_LEAK_GROWTH_FACTOR;
         crop.growth = (crop.growth + delta).min(1.0);
@@ -249,7 +247,9 @@ mod tests {
                 let expected_delta = per_tick * ZONE_LEAK_GROWTH_FACTOR;
                 assert!((delta_growth - expected_delta).abs() < 1e-6);
                 assert!(
-                    (zone_qi_consumed - GrowthCost::Low.drain_per_tick() * ZONE_LEAK_RATIO).abs()
+                    (zone_qi_consumed
+                        - GrowthCost::Low.drain_per_tick() * QI_LINGTIAN_AMBIENT_LEAK_RATIO)
+                        .abs()
                         < 1e-6
                 );
             }

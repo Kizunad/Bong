@@ -14,13 +14,12 @@
 //! - Linear 公式特意走 f64 内部算 — 骨币 real-year scale decay 精度关键。
 
 use super::types::{DecayFormula, DecayProfile, Freshness, TrackState};
+use crate::qi_physics::EnvField;
 use crate::world::season::Season;
-
-pub const DEAD_ZONE_SHELFLIFE_MULTIPLIER: f32 = 3.0;
 
 pub fn zone_multiplier_lookup(zone_qi_density: f64) -> f32 {
     if (0.0..crate::cultivation::dead_zone::DEAD_ZONE_QI_THRESHOLD).contains(&zone_qi_density) {
-        DEAD_ZONE_SHELFLIFE_MULTIPLIER
+        EnvField::dead_zone().tsy_drain_factor() as f32
     } else {
         1.0
     }
@@ -378,14 +377,14 @@ mod tests {
     }
 
     #[test]
-    fn dead_zone_multiplier_triples_effective_decay_time() {
+    fn dead_zone_multiplier_comes_from_qi_physics_env() {
         let p = decay_exp_profile(1000, 0.0);
         let f = fresh_item(&p, 100.0, 0);
         let normal = compute_current_qi(&f, &p, 1000, zone_multiplier_lookup(0.4));
         let dead_zone = compute_current_qi(&f, &p, 1000, zone_multiplier_lookup(0.0));
 
         assert!((normal - 50.0).abs() < 1e-3);
-        assert!((dead_zone - 12.5).abs() < 1e-3);
+        assert!((dead_zone - (100.0 * (0.5_f32).powf(1.5))).abs() < 1e-3);
         assert_eq!(
             zone_multiplier_lookup(-0.1),
             1.0,
@@ -399,9 +398,9 @@ mod tests {
         let f = fresh_item(&p, 100.0, 0);
         let combined = combine_storage_and_zone_multiplier(0.5, 0.0);
 
-        assert_eq!(combined, 1.5);
+        assert_eq!(combined, 0.75);
         let current = compute_current_qi(&f, &p, 1000, combined);
-        assert!((current - (100.0 * (0.5_f32).powf(1.5))).abs() < 1e-3);
+        assert!((current - (100.0 * (0.5_f32).powf(0.75))).abs() < 1e-3);
     }
 
     #[test]

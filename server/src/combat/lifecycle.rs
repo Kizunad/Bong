@@ -1783,7 +1783,6 @@ mod tests {
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::components::{
         BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS,
-        JIEMAI_PREP_WINDOW_MS,
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
@@ -1798,6 +1797,7 @@ mod tests {
         DeceasedSnapshot, PersistenceSettings,
     };
     use crate::player::state::player_character_id;
+    use crate::qi_physics::constants::QI_ZHENMAI_PREP_WINDOW_MS;
     use crate::schema::anticheat::ViolationKindV1;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use rusqlite::{params, Connection};
@@ -2110,7 +2110,7 @@ mod tests {
         let state = app.world().entity(entity).get::<CombatState>().unwrap();
         let window = state.incoming_window.as_ref().expect("window should open");
         assert_eq!(window.opened_at_tick, 42);
-        assert_eq!(window.duration_ms, JIEMAI_PREP_WINDOW_MS);
+        assert_eq!(window.duration_ms, QI_ZHENMAI_PREP_WINDOW_MS);
     }
 
     #[test]

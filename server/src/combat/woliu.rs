@@ -15,6 +15,7 @@ use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::qi_physics::constants::{QI_DRAIN_CLAMP, QI_NEGATIVE_FIELD_K};
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
     ProjectileQiDrainedEventV1, VortexBackfireCauseV1, VortexBackfireEventV1, VortexFieldStateV1,
@@ -26,7 +27,6 @@ pub const WOLIU_VORTEX_SKILL_ID: &str = "woliu.vortex";
 pub const VORTEX_CASTING_MAGNITUDE: f32 = 1.0;
 pub const VORTEX_CASTING_DURATION_TICKS: u64 = u64::MAX;
 pub const VORTEX_COOLDOWN_TICKS: u64 = TICKS_PER_SECOND;
-pub const VORTEX_THEORETICAL_LIMIT_DELTA: f32 = 0.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -450,8 +450,10 @@ pub fn vortex_intercept_tick(
     }
 
     for (projectile_entity, position, mut projectile) in &mut projectiles {
-        if let Some((caster, delta)) = vortex_aggregate_at(position.get(), fields.iter()) {
-            let drained = drain_qi_payload(&mut projectile.qi_payload, delta);
+        if let Some((caster, delta, distance_blocks)) =
+            vortex_aggregate_at(position.get(), fields.iter())
+        {
+            let drained = drain_qi_payload(&mut projectile.qi_payload, delta, distance_blocks);
             if drained > f32::EPSILON {
                 record_projectile_drain(
                     &mut life_records,
@@ -475,8 +477,10 @@ pub fn vortex_intercept_tick(
     }
 
     for (needle_entity, position, mut needle) in &mut needles {
-        if let Some((caster, delta)) = vortex_aggregate_at(position.get(), fields.iter()) {
-            let drained = drain_qi_payload(&mut needle.qi_payload, delta);
+        if let Some((caster, delta, distance_blocks)) =
+            vortex_aggregate_at(position.get(), fields.iter())
+        {
+            let drained = drain_qi_payload(&mut needle.qi_payload, delta, distance_blocks);
             if drained > f32::EPSILON {
                 record_projectile_drain(
                     &mut life_records,
@@ -643,22 +647,34 @@ pub fn vortex_qi_cost_per_sec(realm: Realm) -> f64 {
 pub fn vortex_aggregate_at<'a>(
     position: DVec3,
     fields: impl Iterator<Item = &'a VortexField>,
-) -> Option<(Entity, f32)> {
+) -> Option<(Entity, f32, f32)> {
     fields
-        .filter(|field| position.distance(field.center) <= f64::from(field.radius))
-        .max_by(|a, b| a.delta.total_cmp(&b.delta))
-        .map(|field| (field.caster, field.delta))
+        .filter_map(|field| {
+            let distance = position.distance(field.center);
+            (distance <= f64::from(field.radius)).then_some((field, distance as f32))
+        })
+        .max_by(|(a, a_distance), (b, b_distance)| {
+            vortex_qi_drain_ratio(a.delta, *a_distance)
+                .total_cmp(&vortex_qi_drain_ratio(b.delta, *b_distance))
+        })
+        .map(|(field, distance)| (field.caster, field.delta, distance))
 }
 
-pub fn drain_qi_payload(qi_payload: &mut f32, delta: f32) -> f32 {
+pub fn drain_qi_payload(qi_payload: &mut f32, delta: f32, distance_blocks: f32) -> f32 {
     if *qi_payload <= 0.0 {
         *qi_payload = 0.0;
         return 0.0;
     }
-    let ratio = (delta / VORTEX_THEORETICAL_LIMIT_DELTA).clamp(0.0, 1.0);
+    let ratio = vortex_qi_drain_ratio(delta, distance_blocks);
     let drained = (*qi_payload * ratio).clamp(0.0, *qi_payload);
     *qi_payload = (*qi_payload - drained).max(0.0);
     drained
+}
+
+fn vortex_qi_drain_ratio(delta: f32, distance_blocks: f32) -> f32 {
+    let distance = f64::from(distance_blocks.max(1.0));
+    let field = f64::from(delta.max(0.0)) * QI_NEGATIVE_FIELD_K / (distance * distance);
+    field.clamp(0.0, QI_DRAIN_CLAMP) as f32
 }
 
 pub fn ambient_qi_perception(
@@ -1112,15 +1128,15 @@ mod tests {
         };
         assert_eq!(
             vortex_aggregate_at(DVec3::new(0.5, 0.0, 0.0), [&low, &high].into_iter()),
-            Some((Entity::from_raw(11), 0.65))
+            Some((Entity::from_raw(11), 0.65, 0.5))
         );
 
         let mut payload = 1.0;
-        let drained = drain_qi_payload(&mut payload, 0.65);
-        assert!((drained - 0.8125).abs() < 1e-6);
-        let drained_again = drain_qi_payload(&mut payload, 0.8);
-        assert!(drained_again <= 0.1875 + 1e-6);
-        assert_eq!(payload, 0.0);
+        let drained = drain_qi_payload(&mut payload, 0.65, 0.5);
+        assert!((drained - 0.5).abs() < 1e-6);
+        let drained_again = drain_qi_payload(&mut payload, 0.8, 1.0);
+        assert!((drained_again - 0.25).abs() < 1e-6);
+        assert!((payload - 0.25).abs() < 1e-6);
     }
 
     #[test]

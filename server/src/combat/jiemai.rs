@@ -1,10 +1,7 @@
 use valence::entity::Look;
 use valence::prelude::{bevy_ecs, DVec3, Entity, Events};
 
-use crate::combat::components::{
-    DefenseWindow, SkillBarBindings, JIEMAI_CONCUSSION_BASE_SEVERITY, JIEMAI_CONTAM_MULTIPLIER,
-    JIEMAI_PREP_WINDOW_MS,
-};
+use crate::combat::components::{DefenseWindow, SkillBarBindings};
 use crate::combat::events::{DefenseIntent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, Realm};
@@ -12,10 +9,12 @@ use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegi
 use crate::inventory::{
     PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
+use crate::qi_physics::constants::{
+    QI_ZHENMAI_CONCUSSION_BASE_SEVERITY, QI_ZHENMAI_CONTAM_RESIDUAL_MULTIPLIER,
+    QI_ZHENMAI_PARRY_RECOVERY_TICKS, QI_ZHENMAI_PREP_WINDOW_MS,
+};
 
 pub const ZHENMAI_PARRY_SKILL_ID: &str = "zhenmai.parry";
-pub const JIEMAI_PARRY_RECOVERY_TICKS: u64 = 10;
-pub const JIEMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER: f32 = 0.7;
 
 pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(ZHENMAI_PARRY_SKILL_ID, resolve_zhenmai_parry_skill);
@@ -62,10 +61,13 @@ pub fn resolve_zhenmai_parry_skill(
     });
 
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(JIEMAI_PARRY_RECOVERY_TICKS));
+        bindings.set_cooldown(
+            slot,
+            now_tick.saturating_add(QI_ZHENMAI_PARRY_RECOVERY_TICKS),
+        );
     }
     CastResult::Started {
-        cooldown_ticks: JIEMAI_PARRY_RECOVERY_TICKS,
+        cooldown_ticks: QI_ZHENMAI_PARRY_RECOVERY_TICKS,
         anim_duration_ticks: 1,
     }
 }
@@ -95,7 +97,7 @@ pub fn jiemai_prep_window_ms(inventory: Option<&PlayerInventory>) -> u32 {
     let modifier = inventory
         .map(jiemai_armor_modifier_from_inventory)
         .unwrap_or(1.0);
-    ((JIEMAI_PREP_WINDOW_MS as f32 * modifier).round() as u32).max(1)
+    ((QI_ZHENMAI_PREP_WINDOW_MS as f32 * modifier).round() as u32).max(1)
 }
 
 pub fn jiemai_armor_modifier_from_inventory(inventory: &PlayerInventory) -> f32 {
@@ -134,11 +136,11 @@ pub fn jiemai_effectiveness(hit_distance: f32) -> f32 {
 
 pub fn jiemai_contam_multiplier_for_effectiveness(effectiveness: f32) -> f64 {
     let effectiveness = effectiveness.clamp(0.3, 1.0) as f64;
-    1.0 - (1.0 - JIEMAI_CONTAM_MULTIPLIER) * effectiveness
+    1.0 - (1.0 - QI_ZHENMAI_CONTAM_RESIDUAL_MULTIPLIER) * effectiveness
 }
 
 pub fn jiemai_concussion_severity_for_effectiveness(effectiveness: f32) -> f32 {
-    JIEMAI_CONCUSSION_BASE_SEVERITY / effectiveness.clamp(0.3, 1.0)
+    QI_ZHENMAI_CONCUSSION_BASE_SEVERITY / effectiveness.clamp(0.3, 1.0)
 }
 
 pub fn jiemai_apply_effects(
@@ -242,13 +244,13 @@ mod tests {
     #[test]
     fn effectiveness_applies_dual_axis_contam_and_concussion() {
         let mut contam = 10.0;
-        let mut severity = JIEMAI_CONCUSSION_BASE_SEVERITY;
+        let mut severity = QI_ZHENMAI_CONCUSSION_BASE_SEVERITY;
         jiemai_apply_effects(0.3, &mut contam, &mut severity);
         assert!((contam - 7.6).abs() < 1e-6);
         assert!((severity - 1.0).abs() < 1e-6);
 
         let mut full_contam = 10.0;
-        let mut full_severity = JIEMAI_CONCUSSION_BASE_SEVERITY;
+        let mut full_severity = QI_ZHENMAI_CONCUSSION_BASE_SEVERITY;
         jiemai_apply_effects(1.0, &mut full_contam, &mut full_severity);
         assert!((full_contam - 2.0).abs() < 1e-9);
         assert!((full_severity - 0.3).abs() < 1e-6);
