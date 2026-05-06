@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "zone",
+    "level",
+    "raw_pressure",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "zone_pressure_crossed",
+      "type": "string"
+    },
+    "zone": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "level": {
+      "anyOf": [
+        {
+          "const": "low",
+          "type": "string"
+        },
+        {
+          "const": "mid",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "type": "string"
+        }
+      ]
+    },
+    "raw_pressure": {
+      "type": "number"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

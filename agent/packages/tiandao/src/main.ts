@@ -5,6 +5,7 @@ import { DeathInsightRuntime } from "./death-insight-runtime.js";
 import { DuguNarrationRuntime } from "./dugu-narration.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
+import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
@@ -161,6 +162,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const duguCleanup = await startDuguRuntime({
     ...runtimeOpts,
   });
+  const scatteredCultivatorCleanup = await startScatteredCultivatorRuntime({
+    redisUrl: config.redisUrl,
+  });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
     ...runtimeOpts,
@@ -172,12 +176,42 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     zhenmaiCleanup,
     tuikeCleanup,
     duguCleanup,
+    scatteredCultivatorCleanup,
     woliuCleanup,
     tribulationCleanup,
     skillLvUpCleanup,
     deathInsightCleanup,
     insightCleanup,
   ];
+}
+
+async function startScatteredCultivatorRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ScatteredCultivatorNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ScatteredCultivatorNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new ScatteredCultivatorNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] scattered cultivator runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] scattered cultivator runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] scattered cultivator runtime disconnect error:", error);
+    }
+  };
 }
 
 async function startAnqiRuntime(opts: {
