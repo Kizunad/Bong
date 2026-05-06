@@ -45,7 +45,7 @@
 | **失败丹**（alchemy 完全失败） | +0.4 | 高（30% 杂染累积 +0.1）| 5s | 量最多，最便宜 |
 | **废丹**（alchemy 成品但效果偏低） | +0.6 | 中（10% 杂染 +0.05）| 4s | 玩家挑选保留 |
 | **药渣**（炮制 / 萃取下脚料） | +0.3 | 低（3% 杂染 +0.02）| 3s | 来自 plan-lingtian-process-v1 |
-| **加工废料**（晾晒过期 / 碾粉散落） | +0.2 | 极低（<1%） | 3s | 数量稀少，主要是"清扫"用 |
+| **加工废料**（晾晒过期 / 碾粉散落） | +0.2 | 极低（<1% 杂染 +0.01） | 3s | 数量稀少，主要是"清扫"用 |
 
 加成介于 LingShui (+0.3) 和 BeastCore (+2.0) 之间，但带 risk —— 玩家若"懒人补灵"会累积污染。
 
@@ -105,10 +105,10 @@
 
 ### 落地清单
 
-- P0/P2：`server/src/alchemy/residue.rs` 定义 `PillResidueKind`、72h TTL、4 类废料规格、失败炼丹 outcome → `FailedPill` 残料映射、库存可用性/扣除 helper；`server/assets/items/residue/alchemy_residue.toml` 注册 4 种废料 item。
-- P0/P2：`server/src/network/client_request_handler.rs::grant_alchemy_outcome_item` 在 `Waste` / `Mismatch` / `Explode` 失败 outcome 上发放 `AlchemyItemData::PillResidue`，保留成丹路径。
-- P0/P1/P2：`server/src/lingtian/session.rs::ReplenishSource::PillResidue`、`server/src/lingtian/systems.rs::handle_start_replenish` / `apply_replenish_completion` 接入第 5 档补灵来源，按废料规格注入 plot_qi、扣库存、拒绝过期废料。
-- P1/P3：`server/src/lingtian/plot.rs`、`server/src/lingtian/contamination.rs`、`server/src/lingtian/growth.rs` 落地 `dye_contamination`、自然衰减、翻新清零、quality_accum 衰减与 0.3 警戒线。
+- P0/P2：`server/src/alchemy/residue.rs` 定义 `PillResidueKind`、72h TTL、4 类废料规格、失败炼丹 outcome → `FailedPill` 残料映射、flawed-path 成丹 → `FlawedPill` 残料映射、库存可用性/扣除 helper；`server/assets/items/residue/alchemy_residue.toml` 注册 4 种废料 item。
+- P0/P2：`server/src/network/client_request_handler.rs::grant_alchemy_outcome_item` 在 `Waste` / `Mismatch` / `Explode` 失败 outcome 上发放 `FailedPill` 残料，在 take-back flawed-path outcome 上发放 `FlawedPill` 残料，保留正常成丹路径。
+- P0/P1/P2：`server/src/lingtian/session.rs::ReplenishSource::PillResidue`、`server/src/lingtian/systems.rs::handle_start_replenish` / `apply_replenish_completion` 接入第 5 档补灵来源，按废料规格注入 plot_qi、扣库存、使用 `CombatClock.tick` 判定残料过期。
+- P1/P3：`server/src/lingtian/plot.rs`、`server/src/lingtian/contamination.rs`、`server/src/lingtian/growth.rs` 落地 `dye_contamination`、自然衰减、翻新清零、growth multiplier / quality_accum 衰减与 0.3 警戒线。
 - P3：`server/src/lingtian/network_emit.rs`、`server/src/schema/lingtian.rs`、`client/src/main/java/com/bong/client/lingtian/*` 推送/解析 `source`、`dye_contamination`、`dye_contamination_warning`，客户端补灵入口扩展到废料按钮并在 HUD 显示"已染杂"。
 - P4：`server/src/lingtian/events.rs::DyeContaminationWarning` 与 `record_dye_contamination_warning_recent_events` 把首次跨 0.3 警戒线写入 `ActiveEventsResource.recent_events`，目标 `lingtian_plot_dye_contamination_warning` 进入天道 world_state recent_events 管道；加工过期物 `withered_processed_*` / `withered_dry_*` 已映射到 `ProcessingDregs` / `AgingScraps`。
 - Schema：`agent/packages/schema/src/client-request.ts`、`agent/packages/schema/src/inventory.ts`、generated JSON schema 与 `agent/packages/schema/tests/schema.test.ts` 覆盖 pill residue metadata 与废料补灵 request source。
@@ -119,12 +119,13 @@
 - `3846a216` · 2026-05-06 · `plan-alchemy-recycle-v1: 扩展废料协议 schema`
 - `7e2797a6` · 2026-05-06 · `plan-alchemy-recycle-v1: 补齐废料补灵客户端入口`
 - `567b673e` · 2026-05-06 · `plan-alchemy-recycle-v1: 对齐 NPC 灵田测试字段`
+- `93427c96` · 2026-05-06 · `fix(plan-alchemy-recycle-v1): 收口废料反哺评审问题`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ `2477 passed; 0 failed`
+- `cd server && cargo test` ✅ `2480 passed; 0 failed`
 - `cd agent && npm run build` ✅
 - `cd agent && npm test -w @bong/schema` ✅ `277 passed`
 - `cd agent && npm test -w @bong/tiandao` ✅ `241 passed`
