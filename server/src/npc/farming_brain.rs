@@ -782,6 +782,7 @@ mod tests {
             plot_qi_cap: 1.0,
             harvest_count: 0,
             last_replenish_at: 0,
+            dye_contamination: 0.0,
         };
         assert_eq!(plot_needs_planting(&ripe), 0.0);
         assert_eq!(plot_needs_harvest(&ripe), 0.8);
