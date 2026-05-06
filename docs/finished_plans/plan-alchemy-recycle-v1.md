@@ -115,10 +115,10 @@
 
 ### 关键 commit
 
-- `20ffbbe7` · 2026-05-06 · `plan-alchemy-recycle-v1: 接入废料反哺灵田`
-- `d37a14a6` · 2026-05-06 · `plan-alchemy-recycle-v1: 扩展废料协议 schema`
-- `96bbe849` · 2026-05-06 · `plan-alchemy-recycle-v1: 补齐废料补灵客户端入口`
-- `b942ed3e` · 2026-05-06 · `plan-alchemy-recycle-v1: 对齐 NPC 灵田测试字段`
+- `87165319` · 2026-05-06 · `plan-alchemy-recycle-v1: 接入废料反哺灵田`
+- `3846a216` · 2026-05-06 · `plan-alchemy-recycle-v1: 扩展废料协议 schema`
+- `7e2797a6` · 2026-05-06 · `plan-alchemy-recycle-v1: 补齐废料补灵客户端入口`
+- `567b673e` · 2026-05-06 · `plan-alchemy-recycle-v1: 对齐 NPC 灵田测试字段`
 
 ### 测试结果
 
