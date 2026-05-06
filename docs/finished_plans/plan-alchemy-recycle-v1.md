@@ -110,7 +110,7 @@
 - P0/P1/P2：`server/src/lingtian/session.rs::ReplenishSource::PillResidue`、`server/src/lingtian/systems.rs::handle_start_replenish` / `apply_replenish_completion` 接入第 5 档补灵来源，按废料规格注入 plot_qi、扣库存、使用 `CombatClock.tick` 判定残料过期。
 - P1/P3：`server/src/lingtian/plot.rs`、`server/src/lingtian/contamination.rs`、`server/src/lingtian/growth.rs` 落地 `dye_contamination`、自然衰减、翻新清零、growth multiplier / quality_accum 衰减与 0.3 警戒线。
 - P3：`server/src/lingtian/network_emit.rs`、`server/src/schema/lingtian.rs`、`client/src/main/java/com/bong/client/lingtian/*` 推送/解析 `source`、`dye_contamination`、`dye_contamination_warning`，客户端补灵入口扩展到废料按钮并在 HUD 显示"已染杂"。
-- P4：`server/src/lingtian/events.rs::DyeContaminationWarning` 与 `record_dye_contamination_warning_recent_events` 把首次跨 0.3 警戒线写入 `ActiveEventsResource.recent_events`，目标 `lingtian_plot_dye_contamination_warning` 进入天道 world_state recent_events 管道；加工过期物 `withered_processed_*` / `withered_dry_*` 已映射到 `ProcessingDregs` / `AgingScraps`。
+- P4：`server/src/lingtian/events.rs::DyeContaminationWarning` 与 `record_dye_contamination_warning_recent_events` 把首次跨 0.3 警戒线写入 `ActiveEventsResource.recent_events`，目标 `lingtian_plot_dye_contamination_warning` 进入天道 world_state recent_events 管道；事件时间使用 `CombatClock.tick`，玩家字段使用稳定 `offline:<name>` canonical id；加工过期物 `withered_processed_*` / `withered_dry_*` 已映射到 `ProcessingDregs` / `AgingScraps`。
 - Schema：`agent/packages/schema/src/client-request.ts`、`agent/packages/schema/src/inventory.ts`、generated JSON schema 与 `agent/packages/schema/tests/schema.test.ts` 覆盖 pill residue metadata 与废料补灵 request source。
 
 ### 关键 commit
@@ -121,11 +121,13 @@
 - `567b673e` · 2026-05-06 · `plan-alchemy-recycle-v1: 对齐 NPC 灵田测试字段`
 - `93427c96` · 2026-05-06 · `fix(plan-alchemy-recycle-v1): 收口废料反哺评审问题`
 - `f4276620` · 2026-05-07 · `fix(plan-alchemy-recycle-v1): 收紧模板残料保鲜校验`
+- `fe8907b6` · 2026-05-07 · `fix(plan-alchemy-recycle-v1): 对齐杂染事件时间与玩家标识`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test lingtian::systems::tests::residue_contamination_warning_records_world_state_event -- --nocapture` ✅
 - `cd server && cargo test` ✅ `2483 passed; 0 failed`
 - `cd agent && npm run build` ✅
 - `cd agent && npm test -w @bong/schema` ✅ `277 passed`
