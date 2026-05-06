@@ -6,7 +6,7 @@
 //!   * `apply_completed_sessions` —— Finished 的 session：spawn / reset Plot Entity，
 //!     扣玩家主手锄耐久（归零则从 equipped 移除）
 //!
-//! 单 player 单 session：`ActiveLingtianSessions` 以玩家 Entity 为 key，
+//! 单 actor 单 session：`ActiveLingtianSessions` 以 actor Entity 为 key，
 //! 进新请求时若已有活 session 直接拒。
 //!
 //! plot 实体：当前切片把 LingtianPlot 作为独立 Entity（`spawn(LingtianPlot, ...)`）
@@ -143,7 +143,7 @@ impl Default for LingtianHarvestRng {
 
 #[derive(Debug, Default, Resource)]
 pub struct ActiveLingtianSessions {
-    by_player: HashMap<Entity, ActiveSession>,
+    by_actor: HashMap<Entity, ActiveSession>,
 }
 
 impl ActiveLingtianSessions {
@@ -151,52 +151,52 @@ impl ActiveLingtianSessions {
         Self::default()
     }
 
-    pub fn has_session(&self, player: Entity) -> bool {
-        self.by_player.contains_key(&player)
+    pub fn has_session(&self, actor: Entity) -> bool {
+        self.by_actor.contains_key(&actor)
     }
 
-    pub fn get(&self, player: Entity) -> Option<&ActiveSession> {
-        self.by_player.get(&player)
+    pub fn get(&self, actor: Entity) -> Option<&ActiveSession> {
+        self.by_actor.get(&actor)
     }
 
     pub fn len(&self) -> usize {
-        self.by_player.len()
+        self.by_actor.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_player.is_empty()
+        self.by_actor.is_empty()
     }
 
-    /// 插入新 session。若该 player 已有则返回 false，调用方丢弃请求。
-    pub fn try_insert(&mut self, player: Entity, session: ActiveSession) -> bool {
-        if self.by_player.contains_key(&player) {
+    /// 插入新 session。若该 actor 已有则返回 false，调用方丢弃请求。
+    pub fn try_insert(&mut self, actor: Entity, session: ActiveSession) -> bool {
+        if self.by_actor.contains_key(&actor) {
             return false;
         }
-        self.by_player.insert(player, session);
+        self.by_actor.insert(actor, session);
         true
     }
 
-    /// 清掉某 player 的 session（cancel / 完成结算后）。
-    pub fn clear(&mut self, player: Entity) -> Option<ActiveSession> {
-        self.by_player.remove(&player)
+    /// 清掉某 actor 的 session（cancel / 完成结算后）。
+    pub fn clear(&mut self, actor: Entity) -> Option<ActiveSession> {
+        self.by_actor.remove(&actor)
     }
 
-    /// 返回所有当前已 Finished 的 (player, session) 对，并从表中移除。
+    /// 返回所有当前已 Finished 的 (actor, session) 对，并从表中移除。
     fn drain_finished(&mut self) -> Vec<(Entity, ActiveSession)> {
-        let finished_players: Vec<Entity> = self
-            .by_player
+        let finished_actors: Vec<Entity> = self
+            .by_actor
             .iter()
             .filter(|(_, s)| s.is_finished())
             .map(|(e, _)| *e)
             .collect();
-        finished_players
+        finished_actors
             .into_iter()
-            .map(|e| (e, self.by_player.remove(&e).expect("just iterated")))
+            .map(|e| (e, self.by_actor.remove(&e).expect("just iterated")))
             .collect()
     }
 
     fn tick_all(&mut self) {
-        for s in self.by_player.values_mut() {
+        for s in self.by_actor.values_mut() {
             s.tick();
         }
     }
@@ -731,7 +731,7 @@ pub fn release_lingtian_plot_owner_on_npc_death(
 
 #[allow(clippy::too_many_arguments)]
 fn apply_planting_completion(
-    player: Entity,
+    actor: Entity,
     pos: &valence::prelude::BlockPos,
     plant_id: &PlantId,
     inventories: &mut Query<&mut PlayerInventory>,
@@ -747,10 +747,8 @@ fn apply_planting_completion(
         );
         return;
     };
-    // 复验种子仍在 + 复验 plot 仍空
-    let Ok(mut inv) = inventories.get_mut(player) else {
-        return;
-    };
+    // 玩家复验种子仍在；NPC 散修没有 PlayerInventory，按自带低阶种子处理。
+    let mut inventory = inventories.get_mut(actor).ok();
     let Some((_e, mut plot)) = plots
         .iter_mut()
         .find(|(_, p)| &p.pos == pos && p.is_empty() && !p.is_barren())
@@ -760,24 +758,30 @@ fn apply_planting_completion(
         );
         return;
     };
-    if !consume_one_seed(&mut inv, &seed_id) {
-        tracing::warn!(
-            "[bong][lingtian] PlantingSession finished but seed `{seed_id}` no longer in inventory"
+    if let Some(inv) = inventory.as_deref_mut() {
+        if !consume_one_seed(inv, &seed_id) {
+            tracing::warn!(
+                "[bong][lingtian] PlantingSession finished but seed `{seed_id}` no longer in inventory"
+            );
+            return;
+        }
+    } else {
+        tracing::debug!(
+            "[bong][lingtian] PlantingSession actor={actor:?} has no PlayerInventory; treating as NPC self-supplied seed"
         );
-        return;
     }
     plot.crop = Some(CropInstance::new(plant_id.clone()));
     planting_completed.send(PlantingCompleted {
-        player,
+        player: actor,
         pos: *pos,
         plant_id: plant_id.clone(),
     });
-    emit_lingtian_skill_xp(skill_xp_events, player, 1, "plant");
+    emit_lingtian_skill_xp(skill_xp_events, actor, 1, "plant");
 }
 
 #[allow(clippy::too_many_arguments)]
 fn apply_harvest_completion(
-    player: Entity,
+    actor: Entity,
     pos: &valence::prelude::BlockPos,
     plant_id: &PlantId,
     inventories: &mut Query<&mut PlayerInventory>,
@@ -798,9 +802,7 @@ fn apply_harvest_completion(
         );
         return;
     };
-    let Ok(mut inv) = inventories.get_mut(player) else {
-        return;
-    };
+    let mut inventory = inventories.get_mut(actor).ok();
 
     // 锁定 owner 在借用 plot 的局部作用域里读出
     let plot_owner = {
@@ -822,9 +824,15 @@ fn apply_harvest_completion(
             );
             return;
         };
-        if !award_item_to_inventory(&mut inv, plant_item_template, allocator) {
-            tracing::warn!(
-                "[bong][lingtian] inventory full; dropped 1× {plant_id} for player={player:?}"
+        if let Some(inv) = inventory.as_deref_mut() {
+            if !award_item_to_inventory(inv, plant_item_template, allocator) {
+                tracing::warn!(
+                    "[bong][lingtian] inventory full; dropped 1× {plant_id} for actor={actor:?}"
+                );
+            }
+        } else {
+            tracing::debug!(
+                "[bong][lingtian] HarvestSession actor={actor:?} has no PlayerInventory; NPC consumes harvest offscreen"
             );
         }
 
@@ -833,16 +841,23 @@ fn apply_harvest_completion(
         let roll = rng.next_f32();
         let seed_dropped = if roll < drop_rate {
             let seed_id = seed_id_for(plant_id);
-            if let Some(seed_template) = item_registry.get(&seed_id) {
-                if !award_item_to_inventory(&mut inv, seed_template, allocator) {
+            if let (Some(seed_template), Some(inv)) =
+                (item_registry.get(&seed_id), inventory.as_deref_mut())
+            {
+                if !award_item_to_inventory(inv, seed_template, allocator) {
                     tracing::warn!(
-                        "[bong][lingtian] inventory full; dropped 1× {seed_id} for player={player:?}"
+                        "[bong][lingtian] inventory full; dropped 1× {seed_id} for actor={actor:?}"
                     );
                 }
                 true
-            } else {
+            } else if inventory.is_some() {
                 tracing::warn!(
                     "[bong][lingtian] no ItemTemplate for seed `{seed_id}` (need entry in seeds.toml)"
+                );
+                false
+            } else {
+                tracing::debug!(
+                    "[bong][lingtian] HarvestSession actor={actor:?} has no PlayerInventory; seed drop is consumed offscreen"
                 );
                 false
             }
@@ -855,7 +870,7 @@ fn apply_harvest_completion(
         plot.harvest_count = plot.harvest_count.saturating_add(1);
 
         harvest_completed.send(HarvestCompleted {
-            player,
+            player: actor,
             pos: *pos,
             plant_id: plant_id.clone(),
             seed_dropped,
@@ -864,14 +879,14 @@ fn apply_harvest_completion(
             super::session::SessionMode::Manual => (2, "harvest_manual"),
             super::session::SessionMode::Auto => (5, "harvest_auto"),
         };
-        emit_lingtian_skill_xp(skill_xp_events, player, amount, action);
+        emit_lingtian_skill_xp(skill_xp_events, actor, amount, action);
 
         owner
     };
 
-    // 4. 偷菜匿名记账（plan §1.7）：owner != player 时双方各记一条
+    // 4. 偷菜匿名记账（plan §1.7）：owner != actor 时双方各记一条
     if let Some(owner) = plot_owner {
-        if owner != player {
+        if owner != actor {
             let pos_arr = [pos.x, pos.y, pos.z];
             if let Ok(mut owner_lr) = life_records.get_mut(owner) {
                 owner_lr.push(BiographyEntry::PlotHarvestedByOther {
@@ -880,8 +895,8 @@ fn apply_harvest_completion(
                     tick: now_lingtian_tick,
                 });
             }
-            if let Ok(mut player_lr) = life_records.get_mut(player) {
-                player_lr.push(BiographyEntry::PlotHarvestedFromOther {
+            if let Ok(mut actor_lr) = life_records.get_mut(actor) {
+                actor_lr.push(BiographyEntry::PlotHarvestedFromOther {
                     plot_pos: pos_arr,
                     plant_id: plant_id.clone(),
                     tick: now_lingtian_tick,
@@ -1205,13 +1220,13 @@ fn wear_main_hand_hoe(
     }
 }
 
-/// 取消某 player 的 session（外部如 quit / 离线 / 主动取消调用）。
+/// 取消某 actor 的 session（外部如 quit / 离线 / 主动取消调用）。
 #[allow(dead_code)]
-pub fn cancel_player_session(
+pub fn cancel_actor_session(
     sessions: &mut ActiveLingtianSessions,
-    player: Entity,
+    actor: Entity,
 ) -> Option<ActiveSession> {
-    sessions.clear(player)
+    sessions.clear(actor)
 }
 
 // ============================================================================
@@ -2948,8 +2963,12 @@ mod tests {
     }
 
     fn spawn_high_cost_planted(app: &mut App, n: u32) {
+        spawn_high_cost_planted_with_owner(app, n, None);
+    }
+
+    fn spawn_high_cost_planted_with_owner(app: &mut App, n: u32, owner: Option<Entity>) {
         for i in 0..n {
-            let mut p = LingtianPlot::new(BlockPos::new(i as i32, 64, 0), None);
+            let mut p = LingtianPlot::new(BlockPos::new(i as i32, 64, 0), owner);
             p.plot_qi = 1.0;
             p.crop = Some(CropInstance::new("ling_mu_miao".into()));
             app.world_mut().spawn(p);
@@ -3020,6 +3039,21 @@ mod tests {
             .iter(app.world())
             .any(|p| p.plot_qi > 0.0);
         assert!(!any_nonzero, "HIGH 应清掉所有 plot_qi");
+    }
+
+    #[test]
+    fn npc_owned_plots_count_toward_zone_pressure() {
+        let mut app = build_pressure_app(0.0);
+        let npc = app.world_mut().spawn(NpcMarker).id();
+        spawn_high_cost_planted_with_owner(&mut app, 85, Some(npc)); // demand ~1.02 → HIGH
+        step_one_lingtian_tick(&mut app);
+
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        assert_eq!(
+            tracker.state(DEFAULT_ZONE).unwrap().last_level,
+            PL::High,
+            "ZonePressureTracker 应统计 NPC owner 的灵田，而不是只统计玩家灵田"
+        );
     }
 
     #[test]

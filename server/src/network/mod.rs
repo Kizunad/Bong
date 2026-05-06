@@ -54,6 +54,7 @@ pub mod weapon_equipped_emit;
 pub mod woliu_event_bridge;
 pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
+pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
@@ -324,6 +325,8 @@ pub fn register(app: &mut App) {
             npc_event_bridge::publish_npc_spawn_events,
             npc_event_bridge::publish_npc_death_events,
             npc_event_bridge::publish_faction_events.after(execute_agent_commands),
+            zone_pressure_bridge::publish_zone_pressure_crossed_events
+                .after(crate::lingtian::systems::compute_zone_pressure_system),
         ),
     );
     app.add_systems(

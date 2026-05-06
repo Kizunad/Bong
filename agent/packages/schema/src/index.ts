@@ -37,6 +37,7 @@ export * from "./vfx-event.js";
 export * from "./tuike.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
+export * from "./zone-pressure.js";
 export * from "./zong-formation.js";
 
 // Validation & registry

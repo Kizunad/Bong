@@ -26,7 +26,7 @@ use crate::schema::channels::{
     CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY,
     CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
     CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
-    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -66,6 +66,7 @@ use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
+use crate::schema::zone_pressure::ZonePressureCrossedV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
@@ -123,6 +124,7 @@ pub enum RedisOutbound {
     NpcSpawned(NpcSpawnedV1),
     NpcDeath(NpcDeathV1),
     FactionEvent(FactionEventV1),
+    ZonePressureCrossed(ZonePressureCrossedV1),
     BotanyEcology(BotanyEcologySnapshotV1),
     TsyEnter(TsyEnterEventV1),
     TsyExit(TsyExitEventV1),
@@ -680,6 +682,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_FACTION_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::ZonePressureCrossed(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ZonePressureCrossedV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ZONE_PRESSURE_CROSSED,
                 payload,
             })
         }
@@ -1839,6 +1852,26 @@ mod redis_bridge_tests {
                 let v: Value = serde_json::from_str(payload.as_str()).unwrap();
                 assert_eq!(v["kind"], "faction_event");
                 assert_eq!(v["event_kind"], "adjust_loyalty_bias");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let pressure =
+            prepare_outbound_command(RedisOutbound::ZonePressureCrossed(ZonePressureCrossedV1 {
+                v: 1,
+                kind: "zone_pressure_crossed".to_string(),
+                zone: "spawn".to_string(),
+                level: "high".to_string(),
+                raw_pressure: 1.25,
+                at_tick: 42,
+            }))
+            .expect("zone pressure payload should serialize");
+        match pressure {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ZONE_PRESSURE_CROSSED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "zone_pressure_crossed");
+                assert_eq!(v["level"], "high");
             }
             other => panic!("expected publish, got {other:?}"),
         }

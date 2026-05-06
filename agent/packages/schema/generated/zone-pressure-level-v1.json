@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "low",
+      "type": "string"
+    },
+    {
+      "const": "mid",
+      "type": "string"
+    },
+    {
+      "const": "high",
+      "type": "string"
+    }
+  ]
+}

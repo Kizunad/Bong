@@ -62,6 +62,9 @@ export type NarrationStyle = Static<typeof NarrationStyle>;
 export const NarrationKind = Type.Union([
   Type.Literal("death_insight"),
   Type.Literal("niche_intrusion"),
+  Type.Literal("niche_intrusion_by_npc"),
+  Type.Literal("npc_farm_pressure"),
+  Type.Literal("scattered_cultivator"),
 ]);
 export type NarrationKind = Static<typeof NarrationKind>;
 

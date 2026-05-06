@@ -344,6 +344,7 @@ import {
 } from "./container-interaction.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
+import { ZonePressureCrossedV1, ZonePressureLevelV1 } from "./zone-pressure.js";
 
 export const SCHEMA_REGISTRY = {
   worldStateV1: WorldStateV1,
@@ -351,6 +352,8 @@ export const SCHEMA_REGISTRY = {
   agentWorldModelEnvelopeV1: AgentWorldModelEnvelopeV1,
   agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
   narrationV1: NarrationV1,
+  zonePressureLevelV1: ZonePressureLevelV1,
+  zonePressureCrossedV1: ZonePressureCrossedV1,
   npcArchetypeV1: NpcArchetypeV1,
   npcSpawnSourceV1: NpcSpawnSourceV1,
   npcDeathCauseV1: NpcDeathCauseV1,
@@ -657,6 +660,8 @@ export const GENERATED_SCHEMA_FILES = {
   "agent-world-model-envelope-v1.json": SCHEMA_REGISTRY.agentWorldModelEnvelopeV1,
   "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
+  "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
+  "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
   "npc-archetype-v1.json": SCHEMA_REGISTRY.npcArchetypeV1,
   "npc-spawn-source-v1.json": SCHEMA_REGISTRY.npcSpawnSourceV1,
   "npc-death-cause-v1.json": SCHEMA_REGISTRY.npcDeathCauseV1,
