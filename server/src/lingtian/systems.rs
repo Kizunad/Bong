@@ -33,7 +33,7 @@ use crate::inventory::{
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::npc::spawn::NpcMarker;
-use crate::player::state::PlayerState;
+use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::common::GameEventType;
 use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
@@ -1248,7 +1248,8 @@ fn residue_now_tick(combat_clock: Option<&CombatClock>, lingtian_clock: &Lingtia
 pub fn record_dye_contamination_warning_recent_events(
     mut events: EventReader<DyeContaminationWarning>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
-    clock: Res<LingtianClock>,
+    clock: Res<CombatClock>,
+    usernames: Query<&Username>,
 ) {
     let Some(active_events) = active_events.as_deref_mut() else {
         for _ in events.read() {}
@@ -1273,8 +1274,11 @@ pub fn record_dye_contamination_warning_recent_events(
 
         active_events.record_recent_event(GameEvent {
             event_type: GameEventType::EventTriggered,
-            tick: clock.lingtian_tick,
-            player: Some(format!("{:?}", event.player)),
+            tick: clock.tick,
+            player: usernames
+                .get(event.player)
+                .ok()
+                .map(|username| canonical_player_id(username.0.as_str())),
             target: Some("lingtian_plot_dye_contamination_warning".to_string()),
             zone: Some(DEFAULT_ZONE.to_string()),
             details: Some(details),
@@ -2955,10 +2959,14 @@ mod tests {
     fn residue_contamination_warning_records_world_state_event() {
         let mut app = build_app();
         app.world_mut().insert_resource(LingtianHarvestRng::new(2));
+        app.world_mut().resource_mut::<CombatClock>().tick = 987;
         let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
         let player = app
             .world_mut()
-            .spawn(make_inventory_with_residue(kind, 0, 1))
+            .spawn((
+                Username("Azure".to_string()),
+                make_inventory_with_residue(kind, 0, 1),
+            ))
             .id();
         let pos = BlockPos::new(0, 64, 0);
         let plot = spawn_empty_plot(&mut app, pos);
@@ -2988,6 +2996,8 @@ mod tests {
             Some("lingtian_plot_dye_contamination_warning")
         );
         assert_eq!(events[0].zone.as_deref(), Some(DEFAULT_ZONE));
+        assert_eq!(events[0].tick, 987);
+        assert_eq!(events[0].player.as_deref(), Some("offline:Azure"));
         assert_eq!(
             events[0]
                 .details
