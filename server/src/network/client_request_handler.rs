@@ -117,7 +117,7 @@ use crate::world::extract_system::{
     StartExtractRequest as StartExtractRequestEvent,
 };
 use crate::world::karma::KarmaWeightStore;
-use crate::world::season::query_season;
+use crate::world::season::{query_season, WorldSeasonState};
 use crate::world::spawn_tutorial::CoffinOpenRequest;
 use crate::world::tsy_container_search::{
     CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
@@ -161,6 +161,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub wounds: Query<'w, 's, &'static mut Wounds>,
     pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
+    pub season_state: Option<Res<'w, WorldSeasonState>>,
 }
 
 #[derive(SystemParam)]
@@ -6382,6 +6383,7 @@ fn handle_alchemy_take_pill(
         &consumed_item,
         clock.tick,
         combat_params.decay_profiles.as_deref(),
+        combat_params.season_state.as_deref(),
     );
     emit_shelflife_consume_events(
         entity,
@@ -6650,6 +6652,7 @@ fn shelflife_checks_for_item(
     item: &crate::inventory::ItemInstance,
     now_tick: u64,
     profiles: Option<&DecayProfileRegistry>,
+    season_state: Option<&WorldSeasonState>,
 ) -> (SpoilCheckOutcome, AgePeakCheck) {
     let Some(freshness) = item.freshness.as_ref() else {
         return (
@@ -6670,7 +6673,9 @@ fn shelflife_checks_for_item(
     };
 
     let multiplier = container_storage_multiplier(&ContainerFreshnessBehavior::Normal, profile);
-    let season = query_season("", now_tick).season;
+    let season = season_state
+        .map(|state| state.current.season)
+        .unwrap_or_else(|| query_season("", now_tick).season);
     (
         spoil_check_with_season(
             freshness,
@@ -6862,7 +6867,7 @@ mod take_pill_tests {
         let mut item = make_pill(9, "guyuan_pill", 1);
         item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
 
-        let (spoil, age) = shelflife_checks_for_item(&item, 100, Some(&profiles));
+        let (spoil, age) = shelflife_checks_for_item(&item, 100, Some(&profiles), None);
 
         assert!(matches!(spoil, SpoilCheckOutcome::Warn { .. }));
         assert!(matches!(age, AgePeakCheck::NotApplicable));
@@ -6882,8 +6887,39 @@ mod take_pill_tests {
         let mut item = make_pill(9, "guyuan_pill", 1);
         item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
 
-        let (spoil, _age) = shelflife_checks_for_item(&item, 1_000, Some(&profiles));
+        let (spoil, _age) = shelflife_checks_for_item(&item, 1_000, Some(&profiles), None);
 
         assert!(matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }));
+    }
+
+    #[test]
+    fn shelflife_checks_use_forced_world_season_state() {
+        let profile = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 100,
+            },
+            spoil_threshold: 60.0,
+        };
+        let mut profiles = DecayProfileRegistry::new();
+        profiles.insert(profile.clone()).unwrap();
+        let mut item = make_pill(9, "guyuan_pill", 1);
+        item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
+        let now_tick = 70;
+        let mut forced = WorldSeasonState::default();
+        forced.set_phase(crate::world::season::Season::Winter, now_tick);
+
+        let (raw_spoil, _) = shelflife_checks_for_item(&item, now_tick, Some(&profiles), None);
+        let (forced_spoil, _) =
+            shelflife_checks_for_item(&item, now_tick, Some(&profiles), Some(&forced));
+
+        assert!(
+            matches!(raw_spoil, SpoilCheckOutcome::Warn { .. }),
+            "raw tick should still be summer-fast enough to warn"
+        );
+        assert!(
+            matches!(forced_spoil, SpoilCheckOutcome::Safe { .. }),
+            "forced winter phase should slow spoil checks immediately"
+        );
     }
 }
