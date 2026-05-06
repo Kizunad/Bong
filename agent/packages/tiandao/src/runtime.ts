@@ -1,8 +1,10 @@
 import type {
   AgentWorldModelEnvelopeV1,
+  BotanyEcologySnapshotV1,
   ChatMessageV1,
   ChatSignal,
   Command,
+  LingtianZonePressureV1,
   Narration,
   WorldStateV1,
 } from "@bong/schema";
@@ -15,6 +17,7 @@ import { TiandaoAgent, resolveAgentTools } from "./agent.js";
 import type { AgentDecisionWithMetadata } from "./agent.js";
 import { mergeChatSignals, processChatBatch } from "./chat-processor.js";
 import { CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE } from "./context.js";
+import { EcologyAnalyzer } from "./ecology-analyzer.js";
 import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
@@ -111,6 +114,8 @@ export interface RuntimeRedis {
   connect(): Promise<void>;
   getLatestState(): WorldStateV1 | null;
   loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
+  drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
+  drainLingtianZonePressureEvents?(): LingtianZonePressureV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
   publishNarrations(request: NarrationPublishRequest): Promise<void>;
@@ -682,6 +687,45 @@ function resolveTickAgentRole(name: string): TickAgentRole {
   return "default";
 }
 
+async function processEcologyEvents(args: {
+  redis: RuntimeRedis;
+  worldModel: WorldModel;
+  ecologyAnalyzer: EcologyAnalyzer;
+  logger: Pick<typeof console, "warn">;
+}): Promise<void> {
+  const { redis, worldModel, ecologyAnalyzer, logger } = args;
+  const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
+  const pressureEvents = redis.drainLingtianZonePressureEvents?.() ?? [];
+  const narrations: Narration[] = [];
+  let sourceTick: number | null = null;
+
+  for (const event of ecologyEvents) {
+    sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
+    narrations.push(...ecologyAnalyzer.ingestBotanyEcology(worldModel, event));
+  }
+
+  for (const event of pressureEvents) {
+    sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
+    narrations.push(...ecologyAnalyzer.ingestLingtianZonePressure(worldModel, event));
+  }
+
+  if (narrations.length === 0 || sourceTick === null) {
+    return;
+  }
+
+  try {
+    await redis.publishNarrations({
+      narrations,
+      metadata: {
+        sourceTick,
+        correlationId: `botany-ecology:${sourceTick}`,
+      },
+    });
+  } catch (error) {
+    logger.warn("[tiandao] failed to publish botany ecology narration:", error);
+  }
+}
+
 export async function runRuntime(
   config: RuntimeConfig,
   deps: RuntimeDeps = {},
@@ -707,6 +751,7 @@ export async function runRuntime(
   const sleep = deps.sleep ?? defaultSleep;
   const telemetrySink = deps.telemetrySink ?? createDefaultTelemetrySink({ logger });
   const qiColorNarrationTracker = new QiColorNarrationTracker();
+  const ecologyAnalyzer = new EcologyAnalyzer();
 
   logger.log(
     `[tiandao] models: default=${modelOverrides.default}, annotate=${modelOverrides.annotate}, calamity=${modelOverrides.calamity}, mutation=${modelOverrides.mutation}, era=${modelOverrides.era}, base_url: ${config.baseUrl ?? "(mock/no-remote)"}`,
@@ -822,6 +867,13 @@ export async function runRuntime(
         }
 
         const state = redis.getLatestState();
+        await processEcologyEvents({
+          redis,
+          worldModel,
+          ecologyAnalyzer,
+          logger,
+        });
+
         if (state) {
           if (isStaleWorldState(state, lastProcessedStateCursor)) {
             logger.log(
