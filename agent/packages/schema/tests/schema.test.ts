@@ -150,6 +150,11 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ANTICHEAT);
   });
 
+  it("declares season changed Redis channel", () => {
+    expect(CHANNELS.SEASON_CHANGED).toBe("bong:season_changed");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SEASON_CHANGED);
+  });
+
   it("declares pseudo vein Redis channels", () => {
     expect(CHANNELS.PSEUDO_VEIN_ACTIVE).toBe("bong:pseudo_vein:active");
     expect(CHANNELS.PSEUDO_VEIN_DISSIPATE).toBe("bong:pseudo_vein:dissipate");

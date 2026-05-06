@@ -338,6 +338,50 @@
         "zone": {
           "type": "string"
         },
+        "season_state": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "season",
+            "tick_into_phase",
+            "phase_total_ticks",
+            "year_index"
+          ],
+          "properties": {
+            "season": {
+              "anyOf": [
+                {
+                  "const": "summer",
+                  "type": "string"
+                },
+                {
+                  "const": "summer_to_winter",
+                  "type": "string"
+                },
+                {
+                  "const": "winter",
+                  "type": "string"
+                },
+                {
+                  "const": "winter_to_summer",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick_into_phase": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "phase_total_ticks": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "year_index": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        },
         "social": {
           "additionalProperties": false,
           "type": "object",

@@ -55,6 +55,12 @@ function createState(args: {
     v: 1,
     ts: 1_710_000_000 + args.tick,
     tick: args.tick,
+    season_state: {
+      season: "summer",
+      tick_into_phase: args.tick,
+      phase_total_ticks: 1_382_400,
+      year_index: 0,
+    },
     players,
     npcs: [],
     zones,
@@ -395,6 +401,12 @@ describe("WorldModel", () => {
       v: 1,
       ts: 1_710_000_123,
       tick: 123,
+      season_state: {
+        season: "summer",
+        tick_into_phase: 123,
+        phase_total_ticks: 1_382_400,
+        year_index: 0,
+      },
       players: [createPlayer("DiscipleHost")],
       npcs: [
         {

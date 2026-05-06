@@ -9,6 +9,12 @@ export function createMockWorldState(): WorldStateV1 {
     v: 1,
     ts: Math.floor(Date.now() / 1000),
     tick: 84000,
+    season_state: {
+      season: "summer",
+      tick_into_phase: 84000,
+      phase_total_ticks: 1_382_400,
+      year_index: 0,
+    },
     players: [
       {
         uuid: "offline:Steve",
