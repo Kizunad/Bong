@@ -114,11 +114,22 @@ pub fn item_is_usable_residue(item: &ItemInstance, kind: PillResidueKind, now_ti
     if item.stack_count == 0 || item_residue_kind(item) != Some(kind) {
         return false;
     }
+    item_residue_expires_at_tick(item).is_some_and(|expires_at_tick| now_tick < expires_at_tick)
+}
+
+fn item_residue_expires_at_tick(item: &ItemInstance) -> Option<u64> {
     match item.alchemy.as_ref() {
         Some(AlchemyItemData::PillResidue {
             expires_at_tick, ..
-        }) => now_tick < *expires_at_tick,
-        _ => true,
+        }) => Some(*expires_at_tick),
+        _ if kind_for_template_id(item.template_id.as_str()).is_some() => {
+            item.freshness.as_ref().map(|freshness| {
+                freshness
+                    .created_at_tick
+                    .saturating_add(PILL_RESIDUE_TTL_TICKS)
+            })
+        }
+        _ => None,
     }
 }
 
@@ -212,6 +223,42 @@ mod tests {
         }
     }
 
+    fn template_only_residue_item(
+        template_id: &str,
+        created_at_tick: Option<u64>,
+        stack_count: u32,
+    ) -> ItemInstance {
+        ItemInstance {
+            instance_id: 11,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.04,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count,
+            spirit_quality: 0.3,
+            durability: 1.0,
+            freshness: created_at_tick.map(|tick| crate::shelflife::Freshness {
+                created_at_tick: tick,
+                initial_qi: 0.3,
+                track: crate::shelflife::DecayTrack::Spoil,
+                profile: crate::shelflife::DecayProfileId::new("drying_v1"),
+                frozen_accumulated: 0,
+                frozen_since_tick: None,
+            }),
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
     fn inventory_with(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -246,6 +293,58 @@ mod tests {
             &mut inventory,
             PillResidueKind::FailedPill,
             expired_tick
+        ));
+    }
+
+    #[test]
+    fn template_only_residue_rejects_missing_freshness_metadata() {
+        let item = template_only_residue_item("withered_dry_ci_she_hao", None, 1);
+        let mut inventory = inventory_with(item);
+
+        assert!(!inventory_has_usable_residue(
+            &inventory,
+            PillResidueKind::AgingScraps,
+            11
+        ));
+        assert!(!consume_one_residue(
+            &mut inventory,
+            PillResidueKind::AgingScraps,
+            11
+        ));
+    }
+
+    #[test]
+    fn template_only_residue_rejects_expired_freshness_metadata() {
+        let item = template_only_residue_item("withered_processed_ci_she_hao", Some(10), 1);
+        let mut inventory = inventory_with(item);
+        let expired_tick = 10 + PILL_RESIDUE_TTL_TICKS;
+
+        assert!(!inventory_has_usable_residue(
+            &inventory,
+            PillResidueKind::ProcessingDregs,
+            expired_tick
+        ));
+        assert!(!consume_one_residue(
+            &mut inventory,
+            PillResidueKind::ProcessingDregs,
+            expired_tick
+        ));
+    }
+
+    #[test]
+    fn template_only_residue_accepts_freshness_within_ttl() {
+        let item = template_only_residue_item("withered_processed_ci_she_hao", Some(10), 1);
+        let mut inventory = inventory_with(item);
+
+        assert!(inventory_has_usable_residue(
+            &inventory,
+            PillResidueKind::ProcessingDregs,
+            10 + PILL_RESIDUE_TTL_TICKS - 1
+        ));
+        assert!(consume_one_residue(
+            &mut inventory,
+            PillResidueKind::ProcessingDregs,
+            10 + PILL_RESIDUE_TTL_TICKS - 1
         ));
     }
 
