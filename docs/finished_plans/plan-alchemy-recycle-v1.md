@@ -1,4 +1,4 @@
-# Bong · plan-alchemy-recycle-v1 · 骨架
+# Bong · plan-alchemy-recycle-v1 · 完成归档
 
 **炼丹废料反哺灵田**。把 alchemy 失败丹 / 药渣 / 炮制下脚料导回 lingtian 作为新的 `ReplenishSource` 一档，闭合"种田 → 加工 → 炼丹 → 废料 → 补灵 → 再种田"的资源循环。废料补灵 effect 介于 LingShui 和 Zone 之间（量小、便宜、有副作用风险）。
 
@@ -21,11 +21,11 @@
 
 ## §0 设计轴心
 
-- [ ] 废料反哺 = **第 5 档 ReplenishSource**，不是新 session 类型
-- [ ] **量大、灵气加成中等、有 risk** —— 与 BoneCoin（量小、灵气加成中、安全）形成差异化选择
-- [ ] 废料保鲜 72h（与鲜采作物同），逾期 → 转为"枯渣"无法反哺
-- [ ] **杂染机制**：单次反哺多色废料叠加 → plot 染上杂污染 → 后续作物 quality_accum 衰减
-- [ ] 不做"废料分类机器" —— 玩家自己挑选/平衡（增加策略深度）
+- [x] 废料反哺 = **第 5 档 ReplenishSource**，不是新 session 类型
+- [x] **量大、灵气加成中等、有 risk** —— 与 BoneCoin（量小、灵气加成中、安全）形成差异化选择
+- [x] 废料保鲜 72h（与鲜采作物同），逾期 → 转为"枯渣"无法反哺
+- [x] **杂染机制**：单次反哺多色废料叠加 → plot 染上杂污染 → 后续作物 quality_accum 衰减
+- [x] 不做"废料分类机器" —— 玩家自己挑选/平衡（增加策略深度）
 
 ---
 
@@ -53,48 +53,89 @@
 
 ## §3 杂染机制
 
-- [ ] `LingtianPlot` 加 `dye_contamination: f32`（[0, 1.0]）
-- [ ] dye_contamination 影响 quality_accum：`quality_multiplier *= 1.0 - dye_contamination * 0.3`
-- [ ] dye_contamination 衰减：每 lingtian-tick -0.001（自然净化），翻新（plan-lingtian-v1 §1.5 RenewSession）清零
-- [ ] 警戒线 0.3 → HUD 给 plot 加 "已染杂" tag
+- [x] `LingtianPlot` 加 `dye_contamination: f32`（[0, 1.0]）
+- [x] dye_contamination 影响 quality_accum：`quality_multiplier *= 1.0 - dye_contamination * 0.3`
+- [x] dye_contamination 衰减：每 lingtian-tick -0.001（自然净化），翻新（plan-lingtian-v1 §1.5 RenewSession）清零
+- [x] 警戒线 0.3 → HUD 给 plot 加 "已染杂" tag
 
 ---
 
 ## §4 数据契约
 
-- [ ] `server/src/lingtian/session.rs::ReplenishSource` 加 `PillResidue` 变体（含 `residue_kind: PillResidueKind`）
+- [x] `server/src/lingtian/session.rs::ReplenishSource` 加 `PillResidue` 变体（含 `residue_kind: PillResidueKind`）
   ```rust
   pub enum PillResidueKind { FailedPill, FlawedPill, ProcessingDregs, AgingScraps }
   ```
-- [ ] `server/src/lingtian/plot.rs::LingtianPlot` 加 `dye_contamination: f32`
-- [ ] `server/src/alchemy/residue.rs`（新文件）—— `PillResidue` item + `produce_residue_on_failure` 钩子
-- [ ] `assets/items/residue/` —— 4 种 residue toml 定义
-- [ ] `server/src/lingtian/contamination.rs`（新文件）—— `apply_dye_contamination_on_replenish` system + `dye_contamination_decay_tick`
-- [ ] schema `LingtianReplenishSource` 扩展 PillResidue 变体
-- [ ] client `LingtianActionScreen` 补灵 4→5 子按钮 + dye_contamination HUD tag
+- [x] `server/src/lingtian/plot.rs::LingtianPlot` 加 `dye_contamination: f32`
+- [x] `server/src/alchemy/residue.rs`（新文件）—— `PillResidue` item + `produce_residue_on_failure` 钩子
+- [x] `assets/items/residue/` —— 4 种 residue toml 定义
+- [x] `server/src/lingtian/contamination.rs`（新文件）—— `apply_dye_contamination_on_replenish` system + `dye_contamination_decay_tick`
+- [x] schema `LingtianReplenishSource` 扩展 PillResidue 变体
+- [x] client `LingtianActionScreen` 补灵 4→5 子按钮 + dye_contamination HUD tag
 
 ---
 
 ## §5 实施节点
 
-- [ ] **P0**：`PillResidue` item + `FailedPill` 一种废料 + ReplenishSource::PillResidue 变体接入 + 单测覆盖反哺成功路径
-- [ ] **P1**：`dye_contamination` field + 杂染累积 + quality_multiplier 衰减 + e2e 测累积到 0.3 警戒线
-- [ ] **P2**：4 种废料全接入 + 各自 risk 概率 + RNG 确定性测试
-- [ ] **P3**：客户端 LingtianActionScreen 第 5 子按钮 + 杂染 HUD tag + 翻新清零路径
-- [ ] **P4**：与 plan-lingtian-process-v1 联动 —— 加工废料自动产出 + 与 plan-narrative 接入（高杂染 plot 触发天道 narration）
+- [x] **P0**：`PillResidue` item + `FailedPill` 一种废料 + ReplenishSource::PillResidue 变体接入 + 单测覆盖反哺成功路径
+- [x] **P1**：`dye_contamination` field + 杂染累积 + quality_multiplier 衰减 + e2e 测累积到 0.3 警戒线
+- [x] **P2**：4 种废料全接入 + 各自 risk 概率 + RNG 确定性测试
+- [x] **P3**：客户端 LingtianActionScreen 第 5 子按钮 + 杂染 HUD tag + 翻新清零路径
+- [x] **P4**：与 plan-lingtian-process-v1 联动 —— 加工废料自动产出 + 与 plan-narrative 接入（高杂染 plot 触发天道 narration）
 
 ---
 
-## §6 开放问题
+## §6 后续问题（未纳入本 plan）
 
-- [ ] 失败丹的产出概率与 plan-alchemy-v1 现有失败率挂钩（每次失败必产 1 残料 vs RNG）？
-- [ ] 玩家是否可手动"丢弃废料"避免累积 inventory 压力？还是必须反哺 / 烧毁？
-- [ ] 杂染累积过 0.3 后是否会影响相邻 plot（zone 内扩散）？
-- [ ] 废料是否可作为 `plan-zhenfa-v1` 阵法的低品载体（替代石块）？跨 plan 复用值得探讨
-- [ ] NPC 散修（plan-lingtian-npc-v1）是否也走废料反哺循环？还是只用 BoneCoin / Zone？
+- 失败丹的产出概率与 plan-alchemy-v1 现有失败率挂钩（每次失败必产 1 残料 vs RNG）？
+- 玩家是否可手动"丢弃废料"避免累积 inventory 压力？还是必须反哺 / 烧毁？
+- 杂染累积过 0.3 后是否会影响相邻 plot（zone 内扩散）？
+- 废料是否可作为 `plan-zhenfa-v1` 阵法的低品载体（替代石块）？跨 plan 复用值得探讨
+- NPC 散修（plan-lingtian-npc-v1）是否也走废料反哺循环？还是只用 BoneCoin / Zone？
 
 ---
 
 ## §7 进度日志
 
 - 2026-04-27：骨架创建。前置 `plan-lingtian-v1` ✅；`plan-alchemy-v1` 仅 P0 框架（炼丹失败路径需先实装才能挂废料钩子）；`plan-lingtian-process-v1` 同骨架，二者实施节点可并行。本 plan P0 只依赖 alchemy 现有失败路径（不依赖 process plan），可优先启动。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- P0/P2：`server/src/alchemy/residue.rs` 定义 `PillResidueKind`、72h TTL、4 类废料规格、失败炼丹 outcome → `FailedPill` 残料映射、库存可用性/扣除 helper；`server/assets/items/residue/alchemy_residue.toml` 注册 4 种废料 item。
+- P0/P2：`server/src/network/client_request_handler.rs::grant_alchemy_outcome_item` 在 `Waste` / `Mismatch` / `Explode` 失败 outcome 上发放 `AlchemyItemData::PillResidue`，保留成丹路径。
+- P0/P1/P2：`server/src/lingtian/session.rs::ReplenishSource::PillResidue`、`server/src/lingtian/systems.rs::handle_start_replenish` / `apply_replenish_completion` 接入第 5 档补灵来源，按废料规格注入 plot_qi、扣库存、拒绝过期废料。
+- P1/P3：`server/src/lingtian/plot.rs`、`server/src/lingtian/contamination.rs`、`server/src/lingtian/growth.rs` 落地 `dye_contamination`、自然衰减、翻新清零、quality_accum 衰减与 0.3 警戒线。
+- P3：`server/src/lingtian/network_emit.rs`、`server/src/schema/lingtian.rs`、`client/src/main/java/com/bong/client/lingtian/*` 推送/解析 `source`、`dye_contamination`、`dye_contamination_warning`，客户端补灵入口扩展到废料按钮并在 HUD 显示"已染杂"。
+- P4：`server/src/lingtian/events.rs::DyeContaminationWarning` 与 `record_dye_contamination_warning_recent_events` 把首次跨 0.3 警戒线写入 `ActiveEventsResource.recent_events`，目标 `lingtian_plot_dye_contamination_warning` 进入天道 world_state recent_events 管道；加工过期物 `withered_processed_*` / `withered_dry_*` 已映射到 `ProcessingDregs` / `AgingScraps`。
+- Schema：`agent/packages/schema/src/client-request.ts`、`agent/packages/schema/src/inventory.ts`、generated JSON schema 与 `agent/packages/schema/tests/schema.test.ts` 覆盖 pill residue metadata 与废料补灵 request source。
+
+### 关键 commit
+
+- `20ffbbe7` · 2026-05-06 · `plan-alchemy-recycle-v1: 接入废料反哺灵田`
+- `d37a14a6` · 2026-05-06 · `plan-alchemy-recycle-v1: 扩展废料协议 schema`
+- `96bbe849` · 2026-05-06 · `plan-alchemy-recycle-v1: 补齐废料补灵客户端入口`
+- `b942ed3e` · 2026-05-06 · `plan-alchemy-recycle-v1: 对齐 NPC 灵田测试字段`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test` ✅ `2454 passed; 0 failed`
+- `cd agent && npm run build` ✅
+- `cd agent && npm test -w @bong/schema` ✅ `276 passed`
+- `cd agent && npm test -w @bong/tiandao` ✅ `241 passed`
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build` ✅
+
+### 跨仓库核验
+
+- server：`PillResidueKind`、`AlchemyItemData::PillResidue`、`ReplenishSource::PillResidue`、`apply_dye_contamination_on_replenish`、`DyeContaminationWarning`、`lingtian_plot_dye_contamination_warning`。
+- agent/schema：`PillResidueKindV1`、`AlchemyItemDataV1.kind = "pill_residue"`、`LingtianStartReplenishRequestV1.source = "pill_residue_*"`。
+- client：`LingtianActionScreen.REPLENISH_SOURCES`、`LingtianSessionStore.Snapshot.dyeContaminationWarning`、`LingtianSessionHud` 的"已染杂" tag。
+
+### 遗留 / 后续
+
+- 本 plan 不新增独立废料分类机器，也不扩展相邻 plot 污染扩散、阵法载体复用或 NPC 专用策略；这些仍归后续 plan 决策。
