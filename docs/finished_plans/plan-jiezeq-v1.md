@@ -332,14 +332,14 @@ pub struct WorldSeasonState {
 
 ### 关键 commit
 
-- `d498ebf6`（2026-05-06）`plan-jiezeq-v1：落地服务端节律总线与高价值 hooks`
-- `f060e5e3`（2026-05-06）`plan-jiezeq-v1：同步天道节律契约`
-- `bb9ea505`（2026-05-06）`plan-jiezeq-v1：接入客户端节律暗示表现`
+- `b9bdf400`（2026-05-06）`plan-jiezeq-v1：落地服务端节律总线与高价值 hooks`
+- `43adc3da`（2026-05-06）`plan-jiezeq-v1：同步天道节律契约`
+- `91765b97`（2026-05-06）`plan-jiezeq-v1：接入客户端节律暗示表现`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` = 2452 passed。
-- `cd agent && npm run build && npm test --workspace @bong/tiandao && npm test --workspace @bong/schema`：通过；tiandao = 236 passed，schema = 272 passed。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` = 2466 passed。
+- `cd agent && npm run build && npm test --workspace @bong/tiandao && npm test --workspace @bong/schema`：通过；tiandao = 241 passed，schema = 274 passed。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build --no-daemon`：通过；JUnit XML 汇总 = 830 tests，0 failures，0 errors，0 skipped。
 - `git diff --check`：通过。
 
