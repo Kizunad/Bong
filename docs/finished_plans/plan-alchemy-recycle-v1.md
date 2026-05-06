@@ -105,7 +105,7 @@
 
 ### 落地清单
 
-- P0/P2：`server/src/alchemy/residue.rs` 定义 `PillResidueKind`、72h TTL、4 类废料规格、失败炼丹 outcome → `FailedPill` 残料映射、flawed-path 成丹 → `FlawedPill` 残料映射、库存可用性/扣除 helper；`server/assets/items/residue/alchemy_residue.toml` 注册 4 种废料 item。
+- P0/P2：`server/src/alchemy/residue.rs` 定义 `PillResidueKind`、72h TTL、4 类废料规格、失败炼丹 outcome → `FailedPill` 残料映射、flawed-path 成丹 → `FlawedPill` 残料映射、库存可用性/扣除 helper；模板映射的 `withered_processed_*` / `withered_dry_*` 残料必须携带 freshness metadata 且同样受 72h TTL 约束；`server/assets/items/residue/alchemy_residue.toml` 注册 4 种废料 item。
 - P0/P2：`server/src/network/client_request_handler.rs::grant_alchemy_outcome_item` 在 `Waste` / `Mismatch` / `Explode` 失败 outcome 上发放 `FailedPill` 残料，在 take-back flawed-path outcome 上发放 `FlawedPill` 残料，保留正常成丹路径。
 - P0/P1/P2：`server/src/lingtian/session.rs::ReplenishSource::PillResidue`、`server/src/lingtian/systems.rs::handle_start_replenish` / `apply_replenish_completion` 接入第 5 档补灵来源，按废料规格注入 plot_qi、扣库存、使用 `CombatClock.tick` 判定残料过期。
 - P1/P3：`server/src/lingtian/plot.rs`、`server/src/lingtian/contamination.rs`、`server/src/lingtian/growth.rs` 落地 `dye_contamination`、自然衰减、翻新清零、growth multiplier / quality_accum 衰减与 0.3 警戒线。
@@ -120,12 +120,13 @@
 - `7e2797a6` · 2026-05-06 · `plan-alchemy-recycle-v1: 补齐废料补灵客户端入口`
 - `567b673e` · 2026-05-06 · `plan-alchemy-recycle-v1: 对齐 NPC 灵田测试字段`
 - `93427c96` · 2026-05-06 · `fix(plan-alchemy-recycle-v1): 收口废料反哺评审问题`
+- `f4276620` · 2026-05-07 · `fix(plan-alchemy-recycle-v1): 收紧模板残料保鲜校验`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ `2480 passed; 0 failed`
+- `cd server && cargo test` ✅ `2483 passed; 0 failed`
 - `cd agent && npm run build` ✅
 - `cd agent && npm test -w @bong/schema` ✅ `277 passed`
 - `cd agent && npm test -w @bong/tiandao` ✅ `241 passed`
