@@ -485,6 +485,31 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
+export const LingtianReplenishSourceV1 = Type.Union([
+  Type.Literal("zone"),
+  Type.Literal("bone_coin"),
+  Type.Literal("beast_core"),
+  Type.Literal("ling_shui"),
+  Type.Literal("pill_residue_failed_pill"),
+  Type.Literal("pill_residue_flawed_pill"),
+  Type.Literal("pill_residue_processing_dregs"),
+  Type.Literal("pill_residue_aging_scraps"),
+]);
+export type LingtianReplenishSourceV1 = Static<typeof LingtianReplenishSourceV1>;
+
+export const LingtianStartReplenishRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("lingtian_start_replenish"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    source: LingtianReplenishSourceV1,
+  },
+  { additionalProperties: false },
+);
+export type LingtianStartReplenishRequestV1 = Static<typeof LingtianStartReplenishRequestV1>;
+
 export const CoffinOpenRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -830,6 +855,7 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  LingtianStartReplenishRequestV1,
   CoffinOpenRequestV1,
   SpiritNichePlaceRequestV1,
   SpiritNicheGazeRequestV1,

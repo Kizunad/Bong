@@ -120,6 +120,17 @@ pub struct ReplenishCompleted {
     pub overflow_to_zone: f32,
 }
 
+/// plan-alchemy-recycle-v1 §5 P4 — plot 首次跨过杂染警戒线时写入 world_state
+/// recent_events，供天道叙事上下文消费。
+#[derive(Debug, Clone, Event)]
+pub struct DyeContaminationWarning {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub source: ReplenishSource,
+    pub dye_contamination: f32,
+    pub added: f32,
+}
+
 /// plan §5.1 — zone_pressure 跨入更高档时由 lingtian 发出（仅"上升"边沿，
 /// 不发"回落"事件，避免噪音）。下游（npc/agent）按 level 接：
 ///   * Low  → 天道 narration

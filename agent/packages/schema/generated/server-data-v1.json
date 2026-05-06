@@ -1619,6 +1619,52 @@
                             }
                           }
                         }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "residue_kind",
+                          "produced_at_tick",
+                          "expires_at_tick"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "pill_residue",
+                            "type": "string"
+                          },
+                          "residue_kind": {
+                            "anyOf": [
+                              {
+                                "const": "failed_pill",
+                                "type": "string"
+                              },
+                              {
+                                "const": "flawed_pill",
+                                "type": "string"
+                              },
+                              {
+                                "const": "processing_dregs",
+                                "type": "string"
+                              },
+                              {
+                                "const": "aging_scraps",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "produced_at_tick": {
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          "expires_at_tick": {
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          }
+                        }
                       }
                     ]
                   },
@@ -2144,6 +2190,52 @@
                               }
                             }
                           }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          }
                         }
                       ]
                     },
@@ -2651,6 +2743,52 @@
                                   }
                                 }
                               }
+                            }
+                          }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
                             }
                           }
                         }
@@ -3162,6 +3300,52 @@
                               }
                             }
                           }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          }
                         }
                       ]
                     },
@@ -3669,6 +3853,52 @@
                                   }
                                 }
                               }
+                            }
+                          }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
                             }
                           }
                         }
@@ -4180,6 +4410,52 @@
                               }
                             }
                           }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          }
                         }
                       ]
                     },
@@ -4687,6 +4963,52 @@
                                   }
                                 }
                               }
+                            }
+                          }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
                             }
                           }
                         }
@@ -5198,6 +5520,52 @@
                               }
                             }
                           }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          }
                         }
                       ]
                     },
@@ -5705,6 +6073,52 @@
                                   }
                                 }
                               }
+                            }
+                          }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
                             }
                           }
                         }
@@ -6216,6 +6630,52 @@
                               }
                             }
                           }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          }
                         }
                       ]
                     },
@@ -6723,6 +7183,52 @@
                                   }
                                 }
                               }
+                            }
+                          }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
                             }
                           }
                         }
@@ -7234,6 +7740,52 @@
                               }
                             }
                           }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          }
                         }
                       ]
                     },
@@ -7741,6 +8293,52 @@
                                   }
                                 }
                               }
+                            }
+                          }
+                        },
+                        {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "residue_kind",
+                            "produced_at_tick",
+                            "expires_at_tick"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "const": "pill_residue",
+                              "type": "string"
+                            },
+                            "residue_kind": {
+                              "anyOf": [
+                                {
+                                  "const": "failed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "flawed_pill",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "processing_dregs",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "aging_scraps",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "produced_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            "expires_at_tick": {
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
                             }
                           }
                         }
@@ -8256,6 +8854,52 @@
                                 }
                               }
                             }
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "residue_kind",
+                          "produced_at_tick",
+                          "expires_at_tick"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "pill_residue",
+                            "type": "string"
+                          },
+                          "residue_kind": {
+                            "anyOf": [
+                              {
+                                "const": "failed_pill",
+                                "type": "string"
+                              },
+                              {
+                                "const": "flawed_pill",
+                                "type": "string"
+                              },
+                              {
+                                "const": "processing_dregs",
+                                "type": "string"
+                              },
+                              {
+                                "const": "aging_scraps",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "produced_at_tick": {
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          "expires_at_tick": {
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
                           }
                         }
                       }
@@ -9285,6 +9929,52 @@
                           }
                         }
                       }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "residue_kind",
+                        "produced_at_tick",
+                        "expires_at_tick"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "pill_residue",
+                          "type": "string"
+                        },
+                        "residue_kind": {
+                          "anyOf": [
+                            {
+                              "const": "failed_pill",
+                              "type": "string"
+                            },
+                            {
+                              "const": "flawed_pill",
+                              "type": "string"
+                            },
+                            {
+                              "const": "processing_dregs",
+                              "type": "string"
+                            },
+                            {
+                              "const": "aging_scraps",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "produced_at_tick": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "expires_at_tick": {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
                     }
                   ]
                 },
@@ -9931,6 +10621,52 @@
                                 }
                               }
                             }
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "residue_kind",
+                          "produced_at_tick",
+                          "expires_at_tick"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "pill_residue",
+                            "type": "string"
+                          },
+                          "residue_kind": {
+                            "anyOf": [
+                              {
+                                "const": "failed_pill",
+                                "type": "string"
+                              },
+                              {
+                                "const": "flawed_pill",
+                                "type": "string"
+                              },
+                              {
+                                "const": "processing_dregs",
+                                "type": "string"
+                              },
+                              {
+                                "const": "aging_scraps",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "produced_at_tick": {
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          "expires_at_tick": {
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
                           }
                         }
                       }

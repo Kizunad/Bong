@@ -63,6 +63,9 @@ public final class LingtianSessionHud {
         if (s.plantId() != null && !s.plantId().isEmpty()) {
             sb.append(" · ").append(s.plantId());
         }
+        if (s.dyeContaminationWarning()) {
+            sb.append(" · 已染杂");
+        }
         return sb.toString();
     }
 }

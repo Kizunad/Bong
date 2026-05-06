@@ -21,8 +21,10 @@ use valence::prelude::{
     Events, Query, Res, ResMut, Resource, Username, With,
 };
 
+use crate::alchemy::residue::{consume_one_residue, inventory_has_usable_residue};
 use crate::botany::{PlantId, PlantKindRegistry};
 use crate::combat::events::DeathEvent;
+use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
@@ -31,21 +33,28 @@ use crate::inventory::{
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::npc::spawn::NpcMarker;
-use crate::player::state::PlayerState;
+use crate::player::state::{canonical_player_id, PlayerState};
+use crate::schema::common::GameEventType;
+use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::events::ActiveEventsResource;
 
+use super::contamination::{apply_dye_contamination_on_replenish, dye_contamination_decay_tick};
 use super::environment::compute_plot_qi_cap;
 use super::events::{
-    DrainQiCompleted, HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted,
-    StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
-    StartReplenishRequest, StartTillRequest, TillCompleted, ZonePressureCrossed,
+    DrainQiCompleted, DyeContaminationWarning, HarvestCompleted, PlantingCompleted, RenewCompleted,
+    ReplenishCompleted, StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest,
+    StartRenewRequest, StartReplenishRequest, StartTillRequest, TillCompleted, ZonePressureCrossed,
 };
 use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
+use super::network_emit::replenish_source_wire;
 use super::plot::{CropInstance, LingtianPlot};
 use super::pressure::{compute_zone_pressure, PressureLevel, ZonePressureTracker};
-use super::qi_account::{LingtianTickAccumulator, ZoneQiAccount, DEFAULT_ZONE};
+use super::qi_account::{
+    LingtianTickAccumulator, ZoneQiAccount, BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
+};
 use super::seed::{seed_id_for, SeedRegistry};
 use super::session::{
     DrainQiSession, HarvestSession, PlantingSession, RenewSession, ReplenishSession,
@@ -110,6 +119,24 @@ pub struct CompletionEventWriters<'w> {
     pub harvest: EventWriter<'w, HarvestCompleted>,
     pub replenish: EventWriter<'w, ReplenishCompleted>,
     pub drain_qi: EventWriter<'w, DrainQiCompleted>,
+    pub dye_warning: EventWriter<'w, DyeContaminationWarning>,
+}
+
+/// 灵田逻辑时间：冷却仍用 lingtian-tick，残料保鲜用真实 server tick。
+#[derive(SystemParam)]
+pub struct LingtianTime<'w> {
+    clock: Res<'w, LingtianClock>,
+    combat_clock: Option<Res<'w, CombatClock>>,
+}
+
+impl LingtianTime<'_> {
+    fn lingtian_tick(&self) -> u64 {
+        self.clock.lingtian_tick
+    }
+
+    fn residue_tick(&self) -> u64 {
+        residue_now_tick(self.combat_clock.as_deref(), &self.clock)
+    }
 }
 
 /// xorshift64 — 确定性 RNG，用于种子掉落决策。测试可注入种子。
@@ -423,11 +450,12 @@ pub fn handle_start_harvest(
 pub fn handle_start_replenish(
     mut events: EventReader<StartReplenishRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
-    clock: Res<LingtianClock>,
+    time: LingtianTime,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
     zone_qi: Res<ZoneQiAccount>,
 ) {
+    let residue_tick = time.residue_tick();
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -445,7 +473,7 @@ pub fn handle_start_replenish(
         };
         // 冷却检查：last_replenish_at = 0 视为从未补过（允许）
         if plot.last_replenish_at != 0 {
-            let elapsed = clock.lingtian_tick.saturating_sub(plot.last_replenish_at);
+            let elapsed = time.lingtian_tick().saturating_sub(plot.last_replenish_at);
             if elapsed < REPLENISH_COOLDOWN_LINGTIAN_TICKS {
                 tracing::warn!(
                     "[bong][lingtian] StartReplenishRequest rejected: plot at {:?} on cooldown ({elapsed}/{REPLENISH_COOLDOWN_LINGTIAN_TICKS} lingtian-ticks)",
@@ -468,6 +496,10 @@ pub fn handle_start_replenish(
             ReplenishSource::LingShui => inventories
                 .get(req.player)
                 .map(|inv| inventory_has_template(inv, LING_SHUI_ITEM_ID))
+                .unwrap_or(false),
+            ReplenishSource::PillResidue { residue_kind } => inventories
+                .get(req.player)
+                .map(|inv| inventory_has_usable_residue(inv, residue_kind, residue_tick))
                 .unwrap_or(false),
         };
         if !material_ok {
@@ -563,7 +595,7 @@ pub fn apply_completed_sessions(
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut harvest_rng: ResMut<LingtianHarvestRng>,
     mut zone_qi: ResMut<ZoneQiAccount>,
-    clock: Res<LingtianClock>,
+    time: LingtianTime,
     mut writers: CompletionEventWriters,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
@@ -637,7 +669,7 @@ pub fn apply_completed_sessions(
                     &item_registry,
                     &mut allocator,
                     &mut harvest_rng,
-                    clock.lingtian_tick,
+                    time.lingtian_tick(),
                     &mut writers.harvest,
                     &mut skill_xp_events,
                     s.mode,
@@ -650,6 +682,7 @@ pub fn apply_completed_sessions(
                 }
             }
             ActiveSession::Replenish(s) => {
+                let residue_tick = time.residue_tick();
                 apply_replenish_completion(
                     player,
                     &s.pos,
@@ -657,8 +690,11 @@ pub fn apply_completed_sessions(
                     &mut inventories,
                     &mut plots,
                     &mut zone_qi,
-                    &clock,
+                    time.lingtian_tick(),
+                    residue_tick,
+                    &mut harvest_rng,
                     &mut writers.replenish,
+                    &mut writers.dye_warning,
                     &mut skill_xp_events,
                 );
             }
@@ -670,7 +706,7 @@ pub fn apply_completed_sessions(
                     &mut cultivations,
                     &mut life_records,
                     &mut zone_qi,
-                    clock.lingtian_tick,
+                    time.lingtian_tick(),
                     &mut writers.drain_qi,
                 );
             }
@@ -1087,8 +1123,11 @@ fn apply_replenish_completion(
     inventories: &mut Query<&mut PlayerInventory>,
     plots: &mut Query<(Entity, &mut LingtianPlot)>,
     zone_qi: &mut ZoneQiAccount,
-    clock: &LingtianClock,
+    now_lingtian_tick: u64,
+    residue_now_tick: u64,
+    rng: &mut LingtianHarvestRng,
     replenish_completed: &mut EventWriter<ReplenishCompleted>,
+    dye_warning_events: &mut EventWriter<DyeContaminationWarning>,
     skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
 ) {
     let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
@@ -1139,6 +1178,15 @@ fn apply_replenish_completion(
                 paid = false;
             }
         }
+        ReplenishSource::PillResidue { residue_kind } => {
+            if let Ok(mut inv) = inventories.get_mut(player) {
+                if !consume_one_residue(&mut inv, residue_kind, residue_now_tick) {
+                    paid = false;
+                }
+            } else {
+                paid = false;
+            }
+        }
     }
 
     if !paid {
@@ -1159,7 +1207,24 @@ fn apply_replenish_completion(
         let z = zone_qi.get_mut(zone_key);
         *z += overflow;
     }
-    plot.last_replenish_at = clock.lingtian_tick.max(1);
+    let had_dye_warning = plot.has_dye_contamination_warning();
+    let contamination_added =
+        apply_dye_contamination_on_replenish(&mut plot, source, rng.next_f32());
+    if contamination_added > 0.0 {
+        tracing::info!(
+            "[bong][lingtian] residue replenish added dye_contamination={contamination_added:.3} source={source:?} at {pos:?}"
+        );
+    }
+    if !had_dye_warning && plot.has_dye_contamination_warning() {
+        dye_warning_events.send(DyeContaminationWarning {
+            player,
+            pos: *pos,
+            source,
+            dye_contamination: plot.dye_contamination,
+            added: contamination_added,
+        });
+    }
+    plot.last_replenish_at = now_lingtian_tick.max(1);
 
     replenish_completed.send(ReplenishCompleted {
         player,
@@ -1169,6 +1234,56 @@ fn apply_replenish_completion(
         overflow_to_zone: overflow,
     });
     emit_lingtian_skill_xp(skill_xp_events, player, 1, "replenish");
+}
+
+fn residue_now_tick(combat_clock: Option<&CombatClock>, lingtian_clock: &LingtianClock) -> u64 {
+    if let Some(clock) = combat_clock {
+        return clock.tick;
+    }
+    lingtian_clock
+        .lingtian_tick
+        .saturating_mul(u64::from(BEVY_TICKS_PER_LINGTIAN_TICK))
+}
+
+pub fn record_dye_contamination_warning_recent_events(
+    mut events: EventReader<DyeContaminationWarning>,
+    mut active_events: Option<ResMut<ActiveEventsResource>>,
+    clock: Res<CombatClock>,
+    usernames: Query<&Username>,
+) {
+    let Some(active_events) = active_events.as_deref_mut() else {
+        for _ in events.read() {}
+        return;
+    };
+
+    for event in events.read() {
+        let mut details = HashMap::new();
+        details.insert(
+            "pos".to_string(),
+            serde_json::json!([event.pos.x, event.pos.y, event.pos.z]),
+        );
+        details.insert(
+            "source".to_string(),
+            serde_json::json!(replenish_source_wire(event.source)),
+        );
+        details.insert(
+            "dye_contamination".to_string(),
+            serde_json::json!(event.dye_contamination),
+        );
+        details.insert("added".to_string(), serde_json::json!(event.added));
+
+        active_events.record_recent_event(GameEvent {
+            event_type: GameEventType::EventTriggered,
+            tick: clock.tick,
+            player: usernames
+                .get(event.player)
+                .ok()
+                .map(|username| canonical_player_id(username.0.as_str())),
+            target: Some("lingtian_plot_dye_contamination_warning".to_string()),
+            zone: Some(DEFAULT_ZONE.to_string()),
+            details: Some(details),
+        });
+    }
 }
 
 fn emit_lingtian_skill_xp(
@@ -1255,6 +1370,7 @@ pub fn lingtian_growth_tick(
     clock.lingtian_tick = clock.lingtian_tick.saturating_add(1);
     let zone_registry = zone_registry.as_deref();
     for mut plot in plots.iter_mut() {
+        dye_contamination_decay_tick(&mut plot);
         advance_plot_one_lingtian_tick_in_zone(&mut plot, &registry, &mut zone_qi, zone_registry);
     }
     // plan §1.5 — 作物成熟在 plot 顶部放 HayBlock 作"熟"标记，空 / 未熟时 Air。
@@ -1474,6 +1590,8 @@ mod tests {
             .insert_resource(LingtianHarvestRng::default())
             .insert_resource(ZoneQiAccount::new())
             .insert_resource(LingtianClock::default())
+            .insert_resource(CombatClock::default())
+            .insert_resource(ActiveEventsResource::default())
             .add_event::<StartTillRequest>()
             .add_event::<TillCompleted>()
             .add_event::<StartRenewRequest>()
@@ -1484,6 +1602,7 @@ mod tests {
             .add_event::<HarvestCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
             .add_event::<SkillXpGain>()
@@ -1497,6 +1616,7 @@ mod tests {
                     handle_start_drain_qi,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
+                    record_dye_contamination_warning_recent_events,
                 )
                     .chain(),
             );
@@ -2087,6 +2207,7 @@ mod tests {
             .add_event::<HarvestCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
             .add_event::<SkillXpGain>()
@@ -2327,6 +2448,7 @@ mod tests {
             .add_event::<PlantingCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
             .add_event::<SkillXpGain>()
@@ -2589,6 +2711,7 @@ mod tests {
             .add_event::<PlantingCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
             .add_event::<SkillXpGain>()
@@ -2669,6 +2792,18 @@ mod tests {
                     lingering_owner_qi: None,
                 },
             });
+        inv
+    }
+
+    fn make_inventory_with_residue(
+        kind: crate::alchemy::residue::PillResidueKind,
+        produced_at_tick: u64,
+        stack: u32,
+    ) -> PlayerInventory {
+        let mut inv = make_inventory_with_misc_stack(kind.spec().template_id, stack);
+        inv.containers[0].items[0].instance.alchemy = Some(
+            crate::alchemy::residue::residue_alchemy_data(kind, produced_at_tick),
+        );
         inv
     }
 
@@ -2776,6 +2911,134 @@ mod tests {
         assert!((p.plot_qi - 0.3).abs() < 1e-6);
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert_eq!(count_in_main_pack(inv, "ling_shui"), 1);
+    }
+
+    #[test]
+    fn all_pill_residue_kinds_consume_stack_and_apply_spec_effects() {
+        for kind in [
+            crate::alchemy::residue::PillResidueKind::FailedPill,
+            crate::alchemy::residue::PillResidueKind::FlawedPill,
+            crate::alchemy::residue::PillResidueKind::ProcessingDregs,
+            crate::alchemy::residue::PillResidueKind::AgingScraps,
+        ] {
+            let mut app = build_app();
+            app.world_mut()
+                .insert_resource(LingtianHarvestRng::new(343));
+            let player = app
+                .world_mut()
+                .spawn(make_inventory_with_residue(kind, 0, 1))
+                .id();
+            let pos = BlockPos::new(0, 64, 0);
+            let plot = spawn_empty_plot(&mut app, pos);
+            app.world_mut().send_event(StartReplenishRequest {
+                player,
+                pos,
+                source: ReplenishSource::PillResidue { residue_kind: kind },
+            });
+            let duration = (ReplenishSource::PillResidue { residue_kind: kind }).duration_ticks();
+            for _ in 0..duration {
+                app.update();
+            }
+
+            let spec = kind.spec();
+            let p = app.world().get::<LingtianPlot>(plot).unwrap();
+            assert!(
+                (p.plot_qi - spec.plot_qi_amount).abs() < 1e-6,
+                "{kind:?} should add plot_qi per spec"
+            );
+            assert!(
+                (p.dye_contamination - spec.contamination_delta).abs() < 1e-6,
+                "{kind:?} should add contamination per spec when roll hits"
+            );
+            let inv = app.world().get::<PlayerInventory>(player).unwrap();
+            assert_eq!(count_in_main_pack(inv, spec.template_id), 0);
+        }
+    }
+
+    #[test]
+    fn residue_contamination_warning_records_world_state_event() {
+        let mut app = build_app();
+        app.world_mut().insert_resource(LingtianHarvestRng::new(2));
+        app.world_mut().resource_mut::<CombatClock>().tick = 987;
+        let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
+        let player = app
+            .world_mut()
+            .spawn((
+                Username("Azure".to_string()),
+                make_inventory_with_residue(kind, 0, 1),
+            ))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        app.world_mut()
+            .get_mut::<LingtianPlot>(plot)
+            .unwrap()
+            .dye_contamination = 0.25;
+
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::PillResidue { residue_kind: kind },
+        });
+        let duration = (ReplenishSource::PillResidue { residue_kind: kind }).duration_ticks();
+        for _ in 0..duration {
+            app.update();
+        }
+
+        let events = app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, GameEventType::EventTriggered);
+        assert_eq!(
+            events[0].target.as_deref(),
+            Some("lingtian_plot_dye_contamination_warning")
+        );
+        assert_eq!(events[0].zone.as_deref(), Some(DEFAULT_ZONE));
+        assert_eq!(events[0].tick, 987);
+        assert_eq!(events[0].player.as_deref(), Some("offline:Azure"));
+        assert_eq!(
+            events[0]
+                .details
+                .as_ref()
+                .and_then(|details| details.get("source")),
+            Some(&serde_json::json!("pill_residue_failed_pill"))
+        );
+    }
+
+    #[test]
+    fn replenish_rejects_expired_residue() {
+        let mut app = build_app();
+        let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_residue(kind, 10, 1))
+            .id();
+        app.world_mut().resource_mut::<CombatClock>().tick =
+            10 + crate::alchemy::residue::PILL_RESIDUE_TTL_TICKS;
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::PillResidue { residue_kind: kind },
+        });
+        app.update();
+
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(count_in_main_pack(inv, kind.spec().template_id), 1);
+    }
+
+    #[test]
+    fn residue_now_tick_prefers_combat_clock_over_lingtian_clock() {
+        let combat_clock = CombatClock { tick: 123 };
+        let lingtian_clock = LingtianClock {
+            lingtian_tick: 99_999,
+        };
+
+        assert_eq!(residue_now_tick(Some(&combat_clock), &lingtian_clock), 123);
     }
 
     #[test]

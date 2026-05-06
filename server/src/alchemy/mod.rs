@@ -33,6 +33,7 @@ pub mod processed_input;
 pub mod quality;
 pub mod recipe;
 pub mod recipe_fragment;
+pub mod residue;
 pub mod resolver;
 pub mod session;
 pub mod side_effect_apply;

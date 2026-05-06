@@ -292,6 +292,11 @@ pub enum AlchemyItemData {
     RecipeHint {
         hint: crate::alchemy::danxin::RecipeHint,
     },
+    PillResidue {
+        residue_kind: crate::alchemy::residue::PillResidueKind,
+        produced_at_tick: u64,
+        expires_at_tick: u64,
+    },
 }
 
 #[derive(Debug)]

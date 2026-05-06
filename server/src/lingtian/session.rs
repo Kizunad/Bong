@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::BlockPos;
 
+use crate::alchemy::residue::PillResidueKind;
 use crate::botany::PlantId;
 pub use crate::qi_physics::constants::{
     LINGTIAN_DRAIN_PLAYER_RATIO as DRAIN_QI_TO_PLAYER_RATIO,
@@ -34,7 +35,8 @@ pub const PLANTING_TICKS: u32 = 20;
 pub const HARVEST_MANUAL_TICKS: u32 = 50;
 pub const HARVEST_AUTO_TICKS: u32 = 140;
 
-/// plan §1.4 — 补灵 4 来源。各档 amount / duration 见 [`ReplenishSource`] 方法。
+/// plan §1.4 + plan-alchemy-recycle-v1 — 补灵 5 来源。
+/// 各档 amount / duration 见 [`ReplenishSource`] 方法。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplenishSource {
@@ -46,6 +48,8 @@ pub enum ReplenishSource {
     BeastCore,
     /// 灵水 1 瓶 → +0.3。
     LingShui,
+    /// 炼丹/炮制废料反哺；具体数值由 residue_kind 决定。
+    PillResidue { residue_kind: PillResidueKind },
 }
 
 impl ReplenishSource {
@@ -56,6 +60,7 @@ impl ReplenishSource {
             Self::BoneCoin => 0.8,
             Self::BeastCore => 2.0,
             Self::LingShui => 0.3,
+            Self::PillResidue { residue_kind } => residue_kind.spec().plot_qi_amount,
         }
     }
 
@@ -64,6 +69,7 @@ impl ReplenishSource {
     pub fn duration_ticks(self) -> u32 {
         match self {
             Self::Zone => 160,
+            Self::PillResidue { residue_kind } => residue_kind.spec().duration_ticks,
             _ => 40,
         }
     }
@@ -528,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn replenish_zone_takes_8s_others_take_2s() {
+    fn replenish_durations_match_plan() {
         assert_eq!(ReplenishSource::Zone.duration_ticks(), 160);
         for s in [
             ReplenishSource::BoneCoin,
@@ -537,6 +543,13 @@ mod tests {
         ] {
             assert_eq!(s.duration_ticks(), 40);
         }
+        assert_eq!(
+            ReplenishSource::PillResidue {
+                residue_kind: PillResidueKind::FailedPill,
+            }
+            .duration_ticks(),
+            100
+        );
     }
 
     #[test]
@@ -545,6 +558,13 @@ mod tests {
         assert_eq!(ReplenishSource::BoneCoin.plot_qi_amount(), 0.8);
         assert_eq!(ReplenishSource::BeastCore.plot_qi_amount(), 2.0);
         assert_eq!(ReplenishSource::LingShui.plot_qi_amount(), 0.3);
+        assert_eq!(
+            ReplenishSource::PillResidue {
+                residue_kind: PillResidueKind::FailedPill,
+            }
+            .plot_qi_amount(),
+            0.4
+        );
     }
 
     #[test]

@@ -24,7 +24,11 @@ import {
   DuoSheEventV1,
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
-import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
+import {
+  AlchemyItemDataV1,
+  InventoryEventV1,
+  InventorySnapshotV1,
+} from "../src/inventory.js";
 import {
   ZonePressureCrossedV1,
   validateZonePressureCrossedV1Contract,
@@ -287,6 +291,16 @@ describe("sample files pass schema validation", () => {
     expect(data.equipped.main_hand.forge_color).toBe("Sharp");
     expect(data.equipped.main_hand.forge_side_effects).toEqual(["brittle_edge"]);
     expect(data.equipped.main_hand.forge_achieved_tier).toBe(1);
+  });
+
+  it("alchemy item data accepts pill residue metadata", () => {
+    const result = validate(AlchemyItemDataV1, {
+      kind: "pill_residue",
+      residue_kind: "failed_pill",
+      produced_at_tick: 120,
+      expires_at_tick: 5_184_120,
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("server-data.inventory-event.sample.json", () => {
@@ -653,6 +667,30 @@ describe("sample files pass schema validation", () => {
       expect(result.ok, result.errors.join("; ")).toBe(true);
     });
   }
+
+  it("client-request.lingtian_start_replenish accepts pill residue source", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "lingtian_start_replenish",
+      x: 1,
+      y: 64,
+      z: -2,
+      source: "pill_residue_failed_pill",
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.lingtian_start_replenish rejects unknown replenish source", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "lingtian_start_replenish",
+      x: 1,
+      y: 64,
+      z: -2,
+      source: "raw_sludge",
+    });
+    expect(result.ok).toBe(false);
+  });
 
   it("rejects stale alchemy furnace_id routing", () => {
     const result = validate(ClientRequestV1, {
