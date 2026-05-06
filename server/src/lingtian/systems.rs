@@ -856,7 +856,10 @@ fn apply_harvest_completion(
                 );
                 false
             } else {
-                true
+                tracing::debug!(
+                    "[bong][lingtian] HarvestSession actor={actor:?} has no PlayerInventory; seed drop is consumed offscreen"
+                );
+                false
             }
         } else {
             false

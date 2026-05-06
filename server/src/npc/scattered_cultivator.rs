@@ -52,6 +52,14 @@ impl ScatteredCultivator {
         self.fail_streak = 0;
         self.migration_cooldown_until = now_tick.saturating_add(MIGRATION_COOLDOWN_TICKS);
     }
+
+    pub fn record_farming_failure(&mut self) {
+        self.fail_streak = self.fail_streak.saturating_add(1);
+    }
+
+    pub fn record_farming_success(&mut self) {
+        self.fail_streak = 0;
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +198,7 @@ pub fn detect_scattered_cultivator_plot_trespass(
             let dz = pos.z - plot_center[2];
             if (dx * dx + dy * dy + dz * dz).sqrt() > PLAYER_PLOT_REACTION_RADIUS {
                 memory.linger_started_at.remove(&(cultivator, player));
+                memory.intrusion_sent_at.remove(&(cultivator, player));
                 continue;
             }
 
@@ -331,6 +340,60 @@ mod tests {
         assert_eq!(attempts[0].niche_owner, "char:owner");
         assert_eq!(attempts[0].niche_pos, [8, 64, 8]);
         assert_eq!(attempts[0].tick, u64::from(PLAYER_PLOT_LINGER_TICKS));
+    }
+
+    #[test]
+    fn leaving_plot_radius_clears_linger_and_intrusion_cooldown() {
+        let mut app = App::new();
+        app.insert_resource(ScatteredCultivatorSocialMemory::default())
+            .insert_resource(GameTick(0))
+            .add_event::<NicheIntrusionAttempt>()
+            .add_systems(Update, detect_scattered_cultivator_plot_trespass);
+
+        let plot = BlockPos::new(4, 64, 4);
+        let cultivator = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([4.5, 65.0, 4.5]),
+                ScatteredCultivator::new(FarmingTemperament::Aggressive).with_home_for_test(plot),
+            ))
+            .id();
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([4.5, 64.0, 4.5]),
+                Lifecycle {
+                    character_id: "char:owner".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().spawn(SpiritNiche {
+            owner: "char:owner".to_string(),
+            pos: [8, 64, 8],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            guardians: Vec::new(),
+        });
+
+        app.update();
+        app.world_mut().resource_mut::<GameTick>().0 = PLAYER_PLOT_LINGER_TICKS;
+        app.update();
+        {
+            let memory = app.world().resource::<ScatteredCultivatorSocialMemory>();
+            assert!(memory.intrusion_sent_at.contains_key(&(cultivator, player)));
+        }
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new([100.0, 64.0, 100.0]));
+        app.update();
+
+        let memory = app.world().resource::<ScatteredCultivatorSocialMemory>();
+        assert!(!memory.linger_started_at.contains_key(&(cultivator, player)));
+        assert!(!memory.intrusion_sent_at.contains_key(&(cultivator, player)));
     }
 
     trait ScatteredCultivatorTestExt {

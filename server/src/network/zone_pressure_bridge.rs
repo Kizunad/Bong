@@ -15,11 +15,18 @@ pub fn publish_zone_pressure_crossed_events(
 ) {
     let at_tick = game_tick.map(|tick| u64::from(tick.0)).unwrap_or_default();
     for event in events.read() {
+        let Some(level) = pressure_level_to_wire(event.level) else {
+            debug_assert!(
+                matches!(event.level, PressureLevel::None),
+                "unexpected unmapped zone pressure level"
+            );
+            continue;
+        };
         let wire = ZonePressureCrossedV1 {
             v: ZONE_PRESSURE_EVENT_VERSION,
             kind: "zone_pressure_crossed".to_string(),
             zone: event.zone.clone(),
-            level: pressure_level_to_wire(event.level).to_string(),
+            level: level.to_string(),
             raw_pressure: event.raw_pressure,
             at_tick,
         };
@@ -32,12 +39,12 @@ pub fn publish_zone_pressure_crossed_events(
     }
 }
 
-fn pressure_level_to_wire(level: PressureLevel) -> &'static str {
+fn pressure_level_to_wire(level: PressureLevel) -> Option<&'static str> {
     match level {
-        PressureLevel::None => "none",
-        PressureLevel::Low => "low",
-        PressureLevel::Mid => "mid",
-        PressureLevel::High => "high",
+        PressureLevel::None => None,
+        PressureLevel::Low => Some("low"),
+        PressureLevel::Mid => Some("mid"),
+        PressureLevel::High => Some("high"),
     }
 }
 
@@ -80,5 +87,24 @@ mod tests {
         assert_eq!(payload.level, "high");
         assert_eq!(payload.raw_pressure, 1.25);
         assert_eq!(payload.at_tick, 77);
+    }
+
+    #[test]
+    fn skips_none_pressure_level_before_agent_schema_boundary() {
+        let (mut app, rx) = setup_app();
+        app.add_event::<ZonePressureCrossed>();
+        app.add_systems(Update, publish_zone_pressure_crossed_events);
+
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: "spawn".to_string(),
+            level: PressureLevel::None,
+            raw_pressure: 0.0,
+        });
+        app.update();
+
+        assert!(
+            rx.try_recv().is_err(),
+            "PressureLevel::None is not part of ZonePressureCrossedV1"
+        );
     }
 }

@@ -399,7 +399,7 @@ worldview §七 "大区域灵气被吸干即将化为死域时，所有野生生
 
 - `cd server && cargo fmt --check`
 - `cd server && cargo clippy --all-targets -- -D warnings`
-- `cd server && cargo test`：2441 passed
+- `cd server && cargo test`：2444 passed
 - `cd agent && npm ci`：补齐 worktree 内 `node_modules`
 - `cd agent && npm run generate -w @bong/schema`
 - `cd agent && npm run generate:check -w @bong/schema`
@@ -420,3 +420,5 @@ worldview §七 "大区域灵气被吸干即将化为死域时，所有野生生
 - v1 不实现散修集体迁徙总开关；后续应在 fauna / tribulation 事件系统落地后统一处理 zone 级迁徙。
 - v1 不为 NPC 写一生卷、不开放散修豢养异变兽 / 道伥、不做散修间偷田协作；这些仍保留为 worldview / 后续 plan 的边界问题。
 - `bong:lingtian/session_event` 继续保持玩家 HUD 兼容，不承载 NPC ambient 行为；散修叙事入口统一走 `bong:zone/pressure_crossed` 与 `bong:social/niche_intrusion`。
+- `SeasonScorer` 与 `ToolPossessionScorer` 在 v1 中只锁定 big-brain scorer 接口形状；真实节律和凡器持有判定应在末法节律 / plan-tools-v1 落地后接入。
+- `intruder_char_id` 仍沿用现有 NPC intrusion 的 Bevy entity debug 形式；若后续要跨重生追踪仇家，需要引入稳定 NPC identity。

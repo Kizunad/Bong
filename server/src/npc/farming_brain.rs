@@ -395,7 +395,10 @@ fn till_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<TillAction>>,
 ) {
     let Some(sessions) = sessions.as_deref_mut() else {
-        for (_, mut state) in &mut actions {
+        for (Actor(actor), mut state) in &mut actions {
+            if let Ok((_, mut cultivator)) = npcs.get_mut(*actor) {
+                cultivator.record_farming_failure();
+            }
             *state = ActionState::Failure;
         }
         return;
@@ -421,17 +424,25 @@ fn till_action_system(
                 );
                 if inserted {
                     cultivator.home_plot = Some(pos);
+                    cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                 }
             }
             ActionState::Executing => {
                 if !sessions.has_session(*actor) {
+                    if let Ok((_, mut cultivator)) = npcs.get_mut(*actor) {
+                        cultivator.record_farming_success();
+                    }
                     *state = ActionState::Success;
                 }
             }
             ActionState::Cancelled => {
+                if let Ok((_, mut cultivator)) = npcs.get_mut(*actor) {
+                    cultivator.record_farming_failure();
+                }
                 *state = ActionState::Failure;
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
@@ -440,13 +451,16 @@ fn till_action_system(
 }
 
 fn plant_action_system(
-    cultivators: Query<&ScatteredCultivator, With<NpcMarker>>,
+    mut cultivators: Query<&mut ScatteredCultivator, With<NpcMarker>>,
     plant_registry: Option<Res<PlantKindRegistry>>,
     mut sessions: Option<ResMut<ActiveLingtianSessions>>,
     mut actions: Query<(&Actor, &mut ActionState), With<PlantAction>>,
 ) {
     let Some(sessions) = sessions.as_deref_mut() else {
-        for (_, mut state) in &mut actions {
+        for (Actor(actor), mut state) in &mut actions {
+            if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                cultivator.record_farming_failure();
+            }
             *state = ActionState::Failure;
         }
         return;
@@ -458,15 +472,17 @@ fn plant_action_system(
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
-                let Some(plant_id) = plant_id.clone() else {
+                let Ok(mut cultivator) = cultivators.get_mut(*actor) else {
                     *state = ActionState::Failure;
                     continue;
                 };
-                let Ok(cultivator) = cultivators.get(*actor) else {
+                let Some(plant_id) = plant_id.clone() else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                     continue;
                 };
                 let Some(pos) = cultivator.home_plot else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -474,30 +490,43 @@ fn plant_action_system(
                     *actor,
                     ActiveSession::Planting(PlantingSession::new(pos, plant_id)),
                 ) {
+                    cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                 }
             }
             ActionState::Executing => {
                 if !sessions.has_session(*actor) {
+                    if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                        cultivator.record_farming_success();
+                    }
                     *state = ActionState::Success;
                 }
             }
-            ActionState::Cancelled => *state = ActionState::Failure,
+            ActionState::Cancelled => {
+                if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                    cultivator.record_farming_failure();
+                }
+                *state = ActionState::Failure;
+            }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
     }
 }
 
 fn harvest_action_system(
-    cultivators: Query<&ScatteredCultivator, With<NpcMarker>>,
+    mut cultivators: Query<&mut ScatteredCultivator, With<NpcMarker>>,
     plots: Query<&LingtianPlot>,
     mut sessions: Option<ResMut<ActiveLingtianSessions>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HarvestAction>>,
 ) {
     let Some(sessions) = sessions.as_deref_mut() else {
-        for (_, mut state) in &mut actions {
+        for (Actor(actor), mut state) in &mut actions {
+            if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                cultivator.record_farming_failure();
+            }
             *state = ActionState::Failure;
         }
         return;
@@ -505,11 +534,12 @@ fn harvest_action_system(
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
-                let Ok(cultivator) = cultivators.get(*actor) else {
+                let Ok(mut cultivator) = cultivators.get_mut(*actor) else {
                     *state = ActionState::Failure;
                     continue;
                 };
                 let Some(home) = cultivator.home_plot else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -521,6 +551,7 @@ fn harvest_action_system(
                             .map(|crop| (plot.pos, crop.kind.clone()))
                     })
                 else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -528,17 +559,27 @@ fn harvest_action_system(
                     *actor,
                     ActiveSession::Harvest(HarvestSession::new(pos, plant_id, SessionMode::Auto)),
                 ) {
+                    cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                 }
             }
             ActionState::Executing => {
                 if !sessions.has_session(*actor) {
+                    if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                        cultivator.record_farming_success();
+                    }
                     *state = ActionState::Success;
                 }
             }
-            ActionState::Cancelled => *state = ActionState::Failure,
+            ActionState::Cancelled => {
+                if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                    cultivator.record_farming_failure();
+                }
+                *state = ActionState::Failure;
+            }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
     }
@@ -551,7 +592,10 @@ fn replenish_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<ReplenishAction>>,
 ) {
     let Some(sessions) = sessions.as_deref_mut() else {
-        for (_, mut state) in &mut actions {
+        for (Actor(actor), mut state) in &mut actions {
+            if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                cultivator.record_farming_failure();
+            }
             *state = ActionState::Failure;
         }
         return;
@@ -565,6 +609,7 @@ fn replenish_action_system(
                     continue;
                 };
                 let Some(pos) = cultivator.home_plot else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -573,17 +618,27 @@ fn replenish_action_system(
                     ActiveSession::Replenish(ReplenishSession::new(pos, ReplenishSource::Zone)),
                 ) {
                     cultivator.last_replenish_tick = now;
+                    cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                 }
             }
             ActionState::Executing => {
                 if !sessions.has_session(*actor) {
+                    if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                        cultivator.record_farming_success();
+                    }
                     *state = ActionState::Success;
                 }
             }
-            ActionState::Cancelled => *state = ActionState::Failure,
+            ActionState::Cancelled => {
+                if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                    cultivator.record_farming_failure();
+                }
+                *state = ActionState::Failure;
+            }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
     }
@@ -609,6 +664,7 @@ fn migrate_action_system(
                 }
                 let Some(target) = best_migration_zone(&patrol.home_zone, zone_registry.as_deref())
                 else {
+                    cultivator.record_farming_failure();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -628,6 +684,7 @@ fn migrate_action_system(
             }
             ActionState::Cancelled => {
                 navigator.stop();
+                cultivator.record_farming_failure();
                 *state = ActionState::Failure;
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
@@ -696,6 +753,7 @@ pub fn tool_possession_score(has_tool: bool) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::Update;
 
     #[test]
     fn qi_density_respects_temperament_weight() {
@@ -734,5 +792,33 @@ mod tests {
         assert_eq!(nearby_threat_score(4.0), 1.0);
         assert_eq!(nearby_threat_score(12.0), 0.5);
         assert_eq!(nearby_threat_score(40.0), 0.0);
+    }
+
+    #[test]
+    fn plant_action_failures_increment_cultivator_fail_streak() {
+        let mut app = App::new();
+        app.insert_resource(ActiveLingtianSessions::new())
+            .add_systems(Update, plant_action_system);
+
+        let actor = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                ScatteredCultivator::new(FarmingTemperament::Anxious),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(actor), ActionState::Requested, PlantAction))
+            .id();
+
+        for expected in 1..=3 {
+            app.world_mut()
+                .entity_mut(action)
+                .insert(ActionState::Requested);
+            app.update();
+            let cultivator = app.world().get::<ScatteredCultivator>(actor).unwrap();
+            assert_eq!(cultivator.fail_streak, expected);
+        }
     }
 }
