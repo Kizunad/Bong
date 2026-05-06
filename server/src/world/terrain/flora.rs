@@ -20,7 +20,8 @@
 use valence::prelude::{BlockState, Chunk, ChunkPos, UnloadedChunk};
 
 use super::blocks::block_from_name;
-use super::raster::{Decoration, TerrainProvider};
+use super::column;
+use super::raster::{ColumnSample, Decoration, TerrainProvider};
 
 const CHUNK_SIZE: i32 = 16;
 /// Minimum flora_density before we even roll placement. Mirrors the 0..1
@@ -51,10 +52,10 @@ pub fn decorate_chunk(
             let Some(deco) = terrain.decoration(sample.flora_variant_id) else {
                 continue;
             };
-            let base_y = top_y + 1;
-            if base_y <= min_y {
+            let Some(base_y) = placement_base_y(deco, &sample, top_y, min_y, chunk.height() as i32)
+            else {
                 continue;
-            }
+            };
 
             // Probability: density and rarity compound — dense regions fill up,
             // rare variants still feel sparse.
@@ -104,6 +105,13 @@ fn place_decoration(
     }
     let size = sample_size(deco, world_x, world_z);
 
+    if is_sky_isle_bottom_flora(deco) {
+        place_hanging_crystal(
+            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+        );
+        return;
+    }
+
     match deco.kind.as_str() {
         "tree" => place_tree(
             chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
@@ -138,12 +146,40 @@ fn sample_size(deco: &Decoration, world_x: i32, world_z: i32) -> i32 {
     min + (decoration_hash(world_x, world_z, 13) % span) as i32
 }
 
+fn placement_base_y(
+    deco: &Decoration,
+    sample: &ColumnSample,
+    ground_top_y: i32,
+    min_y: i32,
+    world_height: i32,
+) -> Option<i32> {
+    if is_sky_isle_top_flora(deco) {
+        return column::sky_island_span_for_sample(sample, min_y, world_height)
+            .map(|span| span.top_y + 1);
+    }
+
+    if is_sky_isle_bottom_flora(deco) {
+        return column::sky_island_span_for_sample(sample, min_y, world_height)
+            .map(|span| span.bottom_y - 1);
+    }
+
+    Some(ground_top_y + 1)
+}
+
 fn placement_density_scale(deco: &Decoration) -> f32 {
     if deco.kind == "tree" {
         TREE_DENSITY_SCALE
     } else {
         1.0
     }
+}
+
+fn is_sky_isle_top_flora(deco: &Decoration) -> bool {
+    deco.profile == "sky_isle" && matches!(deco.name.as_str(), "ling_yu_tree" | "fei_yu_bamboo")
+}
+
+fn is_sky_isle_bottom_flora(deco: &Decoration) -> bool {
+    deco.profile == "sky_isle" && deco.name == "tian_mai_crystal"
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +385,38 @@ fn place_crystal(
                 for sy in 0..stub_h {
                     set_block_if_air(chunk, local_x + dx, base_y + sy, local_z + dz, min_y, acc);
                 }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_hanging_crystal(
+    chunk: &mut UnloadedChunk,
+    local_x: i32,
+    anchor_y: i32,
+    local_z: i32,
+    min_y: i32,
+    blocks: &[BlockState],
+    size: i32,
+    world_x: i32,
+    world_z: i32,
+) {
+    let body = blocks.get(1).copied().unwrap_or(blocks[0]);
+    let tip = blocks[0];
+    let accent = blocks.get(2).copied();
+
+    let h = size.max(3);
+    for i in 0..h {
+        set_block_if_air(chunk, local_x, anchor_y - i, local_z, min_y, body);
+    }
+    set_block_if_air(chunk, local_x, anchor_y - h, local_z, min_y, tip);
+
+    if let Some(acc) = accent {
+        for (i, (dx, dz)) in [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().enumerate() {
+            let roll = decoration_hash(world_x, world_z, 111 + i as u32) % 8;
+            if roll < 2 {
+                set_block_if_air(chunk, local_x + dx, anchor_y, local_z + dz, min_y, acc);
             }
         }
     }

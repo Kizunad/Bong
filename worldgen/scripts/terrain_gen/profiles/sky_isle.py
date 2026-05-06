@@ -36,25 +36,25 @@ SKY_ISLE_DECORATIONS = (
     DecorationSpec(
         name="ling_yu_tree",
         kind="tree",
-        blocks=("diamond_block", "cyan_stained_glass", "light_blue_stained_glass"),
+        blocks=("stripped_birch_log", "flowering_azalea_leaves", "glow_lichen"),
         size_range=(7, 12),
         rarity=0.18,
-        notes="灵玉树：钻石块树干，青/浅蓝玻璃叶，夜间似有星光。生于浮岛顶面。",
+        notes="灵玉树：浅木树干与带光花叶，夜间似有星光。生于浮岛顶面。",
     ),
     DecorationSpec(
         name="yun_lan_shrub",
         kind="shrub",
-        blocks=("quartz_stairs", "white_wool", "glow_lichen"),
-        size_range=(2, 3),
-        rarity=0.55,
-        notes="云兰：层叠石英阶 + 白羊毛冠，附发光地衣。成片生长于地面。",
+        blocks=("azalea_leaves", "flowering_azalea_leaves", "glow_lichen"),
+        size_range=(1, 2),
+        rarity=0.35,
+        notes="云兰：低矮花叶丛，附发光地衣。稀疏生长于地面。",
     ),
     DecorationSpec(
         name="yu_pu_boulder",
         kind="boulder",
-        blocks=("calcite", "quartz_block", "smooth_quartz"),
-        size_range=(4, 8),
-        rarity=0.32,
+        blocks=("calcite", "moss_block", "smooth_quartz"),
+        size_range=(2, 4),
+        rarity=0.18,
         notes="玉璞石：方解石-石英混合巨石，偶尔开裂露出内部灵晶。",
     ),
     DecorationSpec(
@@ -68,7 +68,7 @@ SKY_ISLE_DECORATIONS = (
     DecorationSpec(
         name="fei_yu_bamboo",
         kind="tree",
-        blocks=("bamboo_block", "stripped_bamboo_block", "emerald_block"),
+        blocks=("bamboo_block", "stripped_bamboo_block", "azalea_leaves"),
         size_range=(5, 9),
         rarity=0.30,
         notes="飞羽竹：翠绿竹段间嵌翡翠节点，风中轻响。喜生浮岛边缘。",
@@ -101,8 +101,9 @@ class SkyIsleGenerator(TerrainProfileGenerator):
             "above y=300 as sky_island_* layers.",
             "Rust runtime must gate rendering on sky_island_mask >= 0.2; "
             "otherwise base_y sentinel 9999 will produce void overhangs.",
-            "Flora placement: ground uses variants 2-3 (云兰/玉璞), isle-top "
-            "uses variants 1/5 (灵玉树/飞羽竹), isle-bottom variant 4 (天脉水晶).",
+            "Flora placement: ground uses variants 2-3, island tops route "
+            "variants 1/5 to sky_island top y, and island rims route variant 4 "
+            "to the underside.",
         )
 
 
@@ -228,33 +229,38 @@ def fill_sky_isle_tile(
     surface_id = np.where(sky_island_mask > 0.3, moss_id, surface_id)
     surface_id = np.where(sky_island_mask > 0.6, calcite_id, surface_id)
 
+    poi_clearance = np.zeros_like(height)
+    for poi in zone.pois:
+        if poi.kind not in {"spirit_font", "shrine", "ruin"}:
+            continue
+        poi_x, _, poi_z = poi.pos_xyz
+        dist = np.sqrt((wx - poi_x) ** 2 + (wz - poi_z) ** 2)
+        poi_clearance = np.maximum(poi_clearance, np.clip(1.0 - dist / 96.0, 0.0, 1.0))
+
     # --- Flora placement indices (variant_id 1..5 match SKY_ISLE_DECORATIONS) ---
-    # variant 1 ling_yu_tree / 5 fei_yu_bamboo on isle-top (mask > 0.4)
-    # variant 4 tian_mai_crystal on isle-bottom (mask > 0.15 but not peak)
-    # variant 2 yun_lan_shrub on ground heartland
-    # variant 3 yu_pu_boulder scattered
+    # Rust routes sky-isle variants 1/5 to the island top and variant 4 to the
+    # island underside; ground variants 2-3 stay on the terrain surface.
     flora_density = np.zeros_like(height)
     flora_variant = np.zeros_like(height, dtype=np.int32)
 
     # Ground decorations
-    ground_flora = heartland * 0.35 + np.clip(rolling + 0.3, 0.0, 1.0) * 0.25
+    ground_flora = heartland * 0.10 + np.clip(rolling + 0.3, 0.0, 1.0) * 0.06
+    ground_flora *= 1.0 - poi_clearance
     flora_density = np.maximum(flora_density, ground_flora)
-    # Shrub (yun_lan) default on ground
-    flora_variant = np.where(ground_flora > 0.20, 2, flora_variant)
-    # Boulder scattered where detail noise peaks
-    flora_variant = np.where(detail > 0.45, 3, flora_variant)
+    flora_variant = np.where(ground_flora > 0.13, 2, flora_variant)
 
-    # Isle-top flora: dominant where sky_island_mask strong
+    boulder_band = (detail > 0.60) & (ground_flora > 0.10)
+    flora_variant = np.where(boulder_band, 3, flora_variant)
+    flora_density = np.where(boulder_band, np.maximum(flora_density, 0.22), flora_density)
+
     isle_top = sky_island_mask > 0.35
-    flora_density = np.where(isle_top, np.maximum(flora_density, sky_island_mask), flora_density)
-    # Alternate between ling_yu_tree (1) and fei_yu_bamboo (5) based on altitude noise
+    flora_density = np.where(isle_top, np.maximum(flora_density, sky_island_mask * 0.55), flora_density)
     flora_variant = np.where(isle_top & (altitude_warp > 0.0), 1, flora_variant)
     flora_variant = np.where(isle_top & (altitude_warp <= 0.0), 5, flora_variant)
 
-    # Isle-bottom crystal: where mask moderate (rim of isle)
     isle_rim = (sky_island_mask > 0.10) & (sky_island_mask <= 0.35)
     flora_variant = np.where(isle_rim, 4, flora_variant)
-    flora_density = np.where(isle_rim, np.maximum(flora_density, 0.35), flora_density)
+    flora_density = np.where(isle_rim, np.maximum(flora_density, 0.22), flora_density)
 
     flora_density = np.clip(flora_density, 0.0, 1.0)
 

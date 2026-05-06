@@ -12,7 +12,12 @@ pub fn fill_column(
     sample: &ColumnSample,
 ) -> i32 {
     let column = resolve_column(sample, min_y, chunk.height() as i32);
-    let max_y = column.top_y.max(column.water_top).max(column.bedrock_y);
+    let sky_top_y = column.sky_island.map(|span| span.top_y).unwrap_or(min_y);
+    let max_y = column
+        .top_y
+        .max(column.water_top)
+        .max(column.bedrock_y)
+        .max(sky_top_y);
 
     for world_y in min_y..=max_y {
         let Some(local_y) = local_y(world_y, min_y, chunk.height() as i32) else {
@@ -27,6 +32,34 @@ pub fn fill_column(
 
 pub(super) fn surface_y_for_sample(sample: &ColumnSample, min_y: i32, world_height: i32) -> i32 {
     resolve_column(sample, min_y, world_height).top_y
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SkyIslandSpan {
+    pub bottom_y: i32,
+    pub top_y: i32,
+}
+
+pub(super) fn sky_island_span_for_sample(
+    sample: &ColumnSample,
+    min_y: i32,
+    world_height: i32,
+) -> Option<SkyIslandSpan> {
+    if sample.sky_island_mask < 0.2
+        || sample.sky_island_base_y >= 9000.0
+        || sample.sky_island_thickness < 4.0
+    {
+        return None;
+    }
+
+    let bottom_y = clamp_world_y(sample.sky_island_base_y.round() as i32, min_y, world_height);
+    let thickness = sample.sky_island_thickness.round().clamp(4.0, 40.0) as i32;
+    let top_y = clamp_world_y(bottom_y + thickness, min_y, world_height);
+    if top_y <= bottom_y {
+        return None;
+    }
+
+    Some(SkyIslandSpan { bottom_y, top_y })
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +90,7 @@ struct ResolvedColumn {
     filler_depth: i32,
     carve_floor: Option<i32>,
     carve_ceiling: Option<i32>,
+    sky_island: Option<SkyIslandSpan>,
 }
 
 fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> ResolvedColumn {
@@ -75,6 +109,7 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
     let mut filler_depth = 4;
     let mut carve_floor = None;
     let mut carve_ceiling = None;
+    let sky_island = sky_island_span_for_sample(sample, min_y, world_height);
 
     if matches!(
         sample.surface_block,
@@ -186,6 +221,7 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
         filler_depth,
         carve_floor,
         carve_ceiling,
+        sky_island,
     }
 }
 
@@ -200,6 +236,12 @@ fn block_at(world_y: i32, column: &ResolvedColumn) -> BlockState {
                 return BlockState::WATER;
             }
             return BlockState::AIR;
+        }
+    }
+
+    if let Some(span) = column.sky_island {
+        if world_y >= span.bottom_y && world_y <= span.top_y {
+            return sky_island_block_at(world_y, span, column);
         }
     }
 
@@ -224,6 +266,22 @@ fn block_at(world_y: i32, column: &ResolvedColumn) -> BlockState {
     }
 
     deep_block_at(world_y, column.bedrock_y, column.deep_block_bias)
+}
+
+fn sky_island_block_at(world_y: i32, span: SkyIslandSpan, column: &ResolvedColumn) -> BlockState {
+    if world_y == span.top_y {
+        return column.surface_block;
+    }
+
+    if world_y >= span.top_y - column.filler_depth.min(4) {
+        return column.filler_block;
+    }
+
+    if world_y <= span.bottom_y + 1 && column.deep_block_bias.is_multiple_of(3) {
+        return BlockState::CALCITE;
+    }
+
+    BlockState::STONE
 }
 
 fn deep_block_at(world_y: i32, bedrock_y: i32, deep_block_bias: u32) -> BlockState {
@@ -289,7 +347,7 @@ pub fn sea_level() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{deep_block_at, smoothstep, subsurface_hash};
+    use super::{deep_block_at, sky_island_span_for_sample, smoothstep, subsurface_hash};
     use crate::world::terrain::raster::ColumnSample;
     use valence::prelude::{BiomeId, BlockState};
 
@@ -351,5 +409,17 @@ mod tests {
         assert_eq!(smoothstep(0.0), 0.0);
         assert_eq!(smoothstep(1.0), 1.0);
         assert!((smoothstep(0.5) - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sky_island_span_uses_manifest_vertical_layers() {
+        let mut sample = sample();
+        sample.sky_island_mask = 0.5;
+        sample.sky_island_base_y = 260.0;
+        sample.sky_island_thickness = 12.0;
+
+        let span = sky_island_span_for_sample(&sample, -64, 512).unwrap();
+        assert_eq!(span.bottom_y, 260);
+        assert_eq!(span.top_y, 272);
     }
 }
