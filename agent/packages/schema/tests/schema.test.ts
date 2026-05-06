@@ -25,6 +25,7 @@ import {
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
+import { LingtianZonePressureV1, validateLingtianZonePressureV1Contract } from "../src/lingtian.js";
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
@@ -173,6 +174,11 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(
       CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
     );
+  });
+
+  it("declares lingtian pressure Redis channel", () => {
+    expect(CHANNELS.LINGTIAN_ZONE_PRESSURE).toBe("bong:lingtian/zone_pressure");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.LINGTIAN_ZONE_PRESSURE);
   });
 
   it("world-state.sample.json", () => {
@@ -350,6 +356,23 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("server-data.botany-skill.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("lingtian zone pressure contract accepts rising pressure events", () => {
+    const data = {
+      v: 1,
+      zone: "starter_zone",
+      level: "high",
+      raw_pressure: 1.25,
+      tick: 1440,
+    };
+
+    expect(validate(LingtianZonePressureV1, data).ok).toBe(true);
+    expectContractAccepts("LingtianZonePressureV1", validateLingtianZonePressureV1Contract, data);
+    expectContractRejects("LingtianZonePressureV1", validateLingtianZonePressureV1Contract, {
+      ...data,
+      level: "none",
+    });
   });
 
   it("server-data.cultivation-detail.sample.json", () => {

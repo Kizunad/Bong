@@ -28,6 +28,7 @@ pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod lingtian_pressure_bridge;
 pub mod npc_event_bridge;
 pub mod poi_novice_bridge;
 pub mod qi_color_observed_emit;
@@ -399,6 +400,8 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
             poi_novice_bridge::publish_poi_spawned_events,
             poi_novice_bridge::publish_trespass_events,
+            lingtian_pressure_bridge::publish_lingtian_zone_pressure_events
+                .after(crate::lingtian::systems::compute_zone_pressure_system),
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),

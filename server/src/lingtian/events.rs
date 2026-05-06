@@ -125,6 +125,7 @@ pub struct ZonePressureCrossed {
     pub zone: String,
     pub level: PressureLevel,
     pub raw_pressure: f32,
+    pub tick: u64,
 }
 
 /// plan §1.7 — 偷灵：把目标 plot 的 plot_qi 全部抽走，80% 注入操作者，

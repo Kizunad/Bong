@@ -19,13 +19,14 @@ use crate::schema::channels::{
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
     CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
     CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
-    CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH, CH_SKILL_CAP_CHANGED,
-    CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
-    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY,
-    CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
-    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
+    CH_LIFESPAN_EVENT, CH_LINGTIAN_ZONE_PRESSURE, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT,
+    CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_REBIRTH,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
+    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
     CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -44,6 +45,7 @@ use crate::schema::death_lifecycle::{
 };
 use crate::schema::dugu::DuguPoisonProgressEventV1;
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
+use crate::schema::lingtian::LingtianZonePressureV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
@@ -124,6 +126,7 @@ pub enum RedisOutbound {
     NpcDeath(NpcDeathV1),
     FactionEvent(FactionEventV1),
     BotanyEcology(BotanyEcologySnapshotV1),
+    LingtianZonePressure(LingtianZonePressureV1),
     TsyEnter(TsyEnterEventV1),
     TsyExit(TsyExitEventV1),
     TsyNpcSpawned(TsyNpcSpawnedV1),
@@ -691,6 +694,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BOTANY_ECOLOGY,
+                payload,
+            })
+        }
+        RedisOutbound::LingtianZonePressure(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize LingtianZonePressureV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_LINGTIAN_ZONE_PRESSURE,
                 payload,
             })
         }
@@ -2499,6 +2513,32 @@ mod redis_bridge_tests {
                 assert_eq!(v["instance_id"], 88);
                 assert_eq!(v["template_id"], "fake_spirit_hide");
                 assert_eq!(v["broken"], true);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_lingtian_zone_pressure_on_dedicated_channel() {
+        let command = prepare_outbound_command(RedisOutbound::LingtianZonePressure(
+            LingtianZonePressureV1::new(
+                "starter_zone",
+                crate::schema::lingtian::LingtianZonePressureLevelV1::High,
+                1.25,
+                1440,
+            ),
+        ))
+        .expect("lingtian zone pressure payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_LINGTIAN_ZONE_PRESSURE);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["zone"], "starter_zone");
+                assert_eq!(v["level"], "high");
+                assert_eq!(v["raw_pressure"], 1.25);
+                assert_eq!(v["tick"], 1440);
             }
             other => panic!("expected publish, got {other:?}"),
         }

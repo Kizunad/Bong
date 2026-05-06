@@ -1317,6 +1317,7 @@ pub fn compute_zone_pressure_system(
             zone: zone.clone(),
             level: new_level,
             raw_pressure: pressure,
+            tick: now,
         });
         if matches!(new_level, PressureLevel::High) {
             // plan §5.1 — HIGH 触发 zone plot_qi 瞬时清零

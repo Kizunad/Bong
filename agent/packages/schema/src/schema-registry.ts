@@ -143,6 +143,7 @@ import {
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
+import { LingtianZonePressureV1 } from "./lingtian.js";
 import {
   HeartDemonOfferDraftV1,
   HeartDemonPregenRequestV1,
@@ -502,6 +503,7 @@ export const SCHEMA_REGISTRY = {
   shedEventV1: ShedEventV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
+  lingtianZonePressureV1: LingtianZonePressureV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
   exposureKindV1: ExposureKindV1,
@@ -848,6 +850,7 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-false-skin-state-v1.json":
     SCHEMA_REGISTRY.serverDataFalseSkinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
+  "lingtian-zone-pressure-v1.json": SCHEMA_REGISTRY.lingtianZonePressureV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7
   "exposure-kind-v1.json": SCHEMA_REGISTRY.exposureKindV1,
