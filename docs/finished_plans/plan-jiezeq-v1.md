@@ -318,3 +318,39 @@ pub struct WorldSeasonState {
 ## §10 进度日志
 
 - **2026-05-04 立项**：骨架立项。来源：用户灵感 = 末法节律系统 server + UI 都未实装。调研：worldview §十七 全节 + plan-lingtian-weather-v1（active ~0% 已设计 Season 但未落代码）+ botany::HarvestHazard::SeasonRequired stub（xue_po_lian / jing_xin_zao 等本 plan API）+ cultivation/world/karma/shelflife/lifespan 现有 hook 点。**关键发现**：lingtian-weather-v1 已设计 Season 基础设施大半但 mini-tag 违反 §K 红线 + zone 独立设计与 worldview "天道呼吸"全服同步语义不符 → 本 plan 接管基础设施 + 拉清楚边界。10 决议（Q1-Q10）一次性闭环 + jiezeq-ui-v1 取消（合并至 P5）。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 基础设施**：`server/src/world/season/mod.rs` 落地 `Season` / `SeasonState` / `WorldSeasonState` / `query_season` / `season_tick` / `SeasonChangedEvent`；`server/src/cmd/dev/season.rs` 接入 `/season query|set|advance`；`server/src/cmd/registry_pin.rs` pin 命令树。
+- **P1 高 ROI hook**：`server/src/cultivation/breakthrough.rs` 接入 `season_success_modifier`；`server/src/shelflife/compute.rs` + `consume.rs` + `probe.rs` + `sweep.rs` + `variant.rs` 接入 season-aware 衰减；`server/src/world/karma.rs` + `server/src/world/events.rs` 接入汐转劫气倍率。
+- **P2 中 ROI hook**：`server/src/cultivation/lifespan.rs` 接入 `season_aging_modifier`；`server/src/worldgen/pseudo_vein.rs` / `server/src/worldgen/zong_formation.rs` 既有汐转倍率测试继续锁住伪灵脉与阵核后续接入语义。
+- **P3 公共 API 文档**：`server/src/world/season/README.md` 写明 `query_season(zone, tick)` 调用约定、mock 方式、下游 hook 清单。
+- **P4 agent 接入**：`agent/packages/schema/src/world-state.ts` 新增 `SeasonStateV1`；`agent/packages/schema/src/channels.ts` 新增 `bong:season_changed`；`agent/packages/tiandao/src/skills/mutation.md` 要求只能用物象暗示，不直说季节名；`agent/packages/tiandao/src/world-model.ts` / `redis-ipc.ts` 消费 season 字段与事件。
+- **P5 client 间接表现**：`client/src/main/java/com/bong/client/state/SeasonState*.java` + `network/SeasonStatePayload.java` 接收状态；`client/src/main/java/com/bong/client/visual/season/SeasonVisuals.java` / `SeasonVisualBootstrap.java` 实现天空 tint、真元条饱和度、远景粒子暗示；`MiniBodyHudPlanner` 只改颜色不加文字 tag。
+
+### 关键 commit
+
+- `b9bdf400`（2026-05-06）`plan-jiezeq-v1：落地服务端节律总线与高价值 hooks`
+- `43adc3da`（2026-05-06）`plan-jiezeq-v1：同步天道节律契约`
+- `91765b97`（2026-05-06）`plan-jiezeq-v1：接入客户端节律暗示表现`
+- `363d6069`（2026-05-06）`fix(plan-jiezeq-v1): 服丹保质期使用有效节律`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` = 2467 passed。
+- `cd agent && npm run build && npm test --workspace @bong/tiandao && npm test --workspace @bong/schema`：通过；tiandao = 241 passed，schema = 274 passed。
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build --no-daemon`：通过；JUnit XML 汇总 = 830 tests，0 failures，0 errors，0 skipped。
+- `git diff --check`：通过。
+
+### 跨仓库核验
+
+- **server**：`Season` / `WorldSeasonState` / `query_season` / `season_tick` / `SeasonChangedEvent` / `SeasonCmd` / `season_success_modifier` / `season_decay_modifier` / `season_calamity_multiplier` / `season_aging_modifier` 均有编译与单测覆盖。
+- **agent**：`SeasonStateV1`、`CHANNELS.SEASON_CHANGED`、`world_state.season_state` fixture、mutation prompt 禁显式季节名均有 schema / tiandao 测试覆盖。
+- **client**：`SeasonStatePayload`、`SeasonStateStore`、`SeasonVisuals`、`MiniBodyHudPlanner` season 色彩路径、无 HUD 文字 tag 行为均有 JVM 测试覆盖。
+
+### 遗留 / 后续
+
+- 本 plan 只暴露 terrain / botany / lingtian-weather 后续消费 API，不在本 PR 内实现灵田天气事件、plot 影响、植物模型 swap 或 terrain vN+1 响应。
+- 自动测试覆盖四相位数据契约与间接视觉逻辑；真实 `runClient` 盲测视频与表现强度调参保留为人工视觉验收项。

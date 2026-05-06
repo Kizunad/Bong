@@ -9,6 +9,46 @@ use super::social::PlayerSocialSnapshotV1;
 
 pub type Vec3 = [f64; 3];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeasonV1 {
+    Summer,
+    SummerToWinter,
+    Winter,
+    WinterToSummer,
+}
+
+impl From<crate::world::season::Season> for SeasonV1 {
+    fn from(value: crate::world::season::Season) -> Self {
+        match value {
+            crate::world::season::Season::Summer => Self::Summer,
+            crate::world::season::Season::SummerToWinter => Self::SummerToWinter,
+            crate::world::season::Season::Winter => Self::Winter,
+            crate::world::season::Season::WinterToSummer => Self::WinterToSummer,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeasonStateV1 {
+    pub season: SeasonV1,
+    pub tick_into_phase: u64,
+    pub phase_total_ticks: u64,
+    pub year_index: u64,
+}
+
+impl From<crate::world::season::SeasonState> for SeasonStateV1 {
+    fn from(value: crate::world::season::SeasonState) -> Self {
+        Self {
+            season: value.season.into(),
+            tick_into_phase: value.tick_into_phase,
+            phase_total_ticks: value.phase_total_ticks,
+            year_index: value.year_index,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ZoneStatusV1 {
@@ -146,6 +186,7 @@ pub struct WorldStateV1 {
     pub v: u8,
     pub ts: u64,
     pub tick: u64,
+    pub season_state: SeasonStateV1,
     pub players: Vec<PlayerProfile>,
     pub npcs: Vec<NpcSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -189,6 +230,7 @@ mod tests {
 
         assert_eq!(state.v, 1);
         assert_eq!(state.tick, 84000);
+        assert_eq!(state.season_state.season, SeasonV1::Summer);
         assert_eq!(state.players.len(), 2);
         assert_eq!(state.players[0].name, "Steve");
         assert_eq!(state.players[0].pos, [128.5, 66.0, 200.3]);

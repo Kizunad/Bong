@@ -7,6 +7,8 @@ import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
+import com.bong.client.state.SeasonState;
+import com.bong.client.visual.season.SeasonVisuals;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumMap;
@@ -85,6 +87,26 @@ class MiniBodyHudPlannerTest {
         // When qi is 0%, the qi fill rect is omitted (one less command).
         assertTrue(emptySize < midSize, "empty qi skips fill rect: empty=" + emptySize + " mid=" + midSize);
         assertEquals(fullSize, midSize, "non-zero qi always emits the fill rect");
+    }
+
+    @Test
+    void seasonStateOnlyChangesQiBarColorWithoutTextTag() {
+        CombatHudState hud = CombatHudState.create(1.0f, 0.8f, 0.6f, DerivedAttrFlags.none());
+        SeasonState winter = new SeasonState(SeasonState.Phase.WINTER, 0L, 1_382_400L, 0L);
+
+        List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(
+            hud,
+            null,
+            null,
+            0L,
+            1920,
+            1080,
+            winter
+        );
+
+        int winterQiColor = SeasonVisuals.qiBarColor(MiniBodyHudPlanner.QI_FILL_COLOR, winter, 0L);
+        assertTrue(cmds.stream().anyMatch(cmd -> cmd.isRect() && cmd.color() == winterQiColor));
+        assertTrue(cmds.stream().noneMatch(HudRenderCommand::isText));
     }
 
     @Test

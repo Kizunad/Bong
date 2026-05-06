@@ -9,11 +9,12 @@ use valence::prelude::{Position, Query, Res, ResMut, Update};
 
 use crate::inventory::{bump_revision, ItemRegistry, PlayerInventory};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::season::query_season;
 use crate::world::zone::ZoneRegistry;
 
 use super::compute::zone_multiplier_lookup;
 use super::registry::DecayProfileRegistry;
-use super::variant::apply_variant_switch;
+use super::variant::apply_variant_switch_with_season;
 
 /// plan §6.1 第 7 条：每 200 tick sweep 所有玩家 inventory，
 /// 对 `TrackState::Dead` / `AgePostPeakSpoiled` 的 item 执行变体切换。
@@ -33,15 +34,19 @@ pub fn sweep_shelflife_variants(
     for (position, current_dim, mut inventory) in inventories.iter_mut() {
         let mut any_switched = false;
         let zone_multiplier = zone_multiplier_for_position(zones.as_deref(), position, current_dim);
+        let season = query_season("", tick_counter.0).season;
 
         for container in &mut inventory.containers {
             for placed in &mut container.items {
-                if apply_variant_switch(
+                let entropy_seed = placed.instance.instance_id;
+                if apply_variant_switch_with_season(
                     &mut placed.instance,
                     &profile_registry,
                     &item_registry,
                     tick_counter.0,
                     zone_multiplier,
+                    season,
+                    entropy_seed,
                 ) {
                     any_switched = true;
                 }
@@ -49,24 +54,30 @@ pub fn sweep_shelflife_variants(
         }
 
         for item in inventory.equipped.values_mut() {
-            if apply_variant_switch(
+            let entropy_seed = item.instance_id;
+            if apply_variant_switch_with_season(
                 item,
                 &profile_registry,
                 &item_registry,
                 tick_counter.0,
                 zone_multiplier,
+                season,
+                entropy_seed,
             ) {
                 any_switched = true;
             }
         }
 
         for item in inventory.hotbar.iter_mut().flatten() {
-            if apply_variant_switch(
+            let entropy_seed = item.instance_id;
+            if apply_variant_switch_with_season(
                 item,
                 &profile_registry,
                 &item_registry,
                 tick_counter.0,
                 zone_multiplier,
+                season,
+                entropy_seed,
             ) {
                 any_switched = true;
             }

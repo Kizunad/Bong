@@ -408,6 +408,12 @@ export class WorldModel {
       v: 1,
       ts: normalizedLastStateTs ?? 0,
       tick: normalizedLastTick,
+      season_state: {
+        season: "summer",
+        tick_into_phase: normalizedLastTick,
+        phase_total_ticks: 1_382_400,
+        year_index: 0,
+      },
       players: [],
       npcs: [],
       zones: [],
@@ -612,10 +618,11 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       : undefined,
   }));
 
-    return {
-      v: state.v,
-      ts: state.ts,
-      tick: state.tick,
+  return {
+    v: state.v,
+    ts: state.ts,
+    tick: state.tick,
+    season_state: { ...state.season_state },
     players: state.players.map((player) => ({
       uuid: player.uuid,
       name: player.name,

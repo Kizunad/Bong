@@ -2,6 +2,12 @@
   "v": 1,
   "ts": 1712345678,
   "tick": 84000,
+  "season_state": {
+    "season": "summer",
+    "tick_into_phase": 84000,
+    "phase_total_ticks": 1382400,
+    "year_index": 0
+  },
   "players": [
     {
       "uuid": "offline:Steve",

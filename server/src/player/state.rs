@@ -226,6 +226,7 @@ impl PlayerState {
             breakdown,
             zone: zone.into(),
             local_neg_pressure,
+            season_state: None,
             social,
         })
     }

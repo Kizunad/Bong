@@ -57,7 +57,7 @@ import {
   SkillSnapshotPayloadV1,
   SkillXpGainPayloadV1,
 } from "./skill.js";
-import { PlayerPowerBreakdown, Vec3, ZoneStatusV1 } from "./world-state.js";
+import { PlayerPowerBreakdown, SeasonStateV1, Vec3, ZoneStatusV1 } from "./world-state.js";
 import {
   SocialAnonymityPayloadV1,
   SocialExposureEventV1,
@@ -283,6 +283,7 @@ export const ServerDataPlayerStateV1 = Type.Object(
     composite_power: Type.Number({ minimum: 0, maximum: 1 }),
     breakdown: PlayerPowerBreakdown,
     zone: Type.String(),
+    season_state: Type.Optional(SeasonStateV1),
     social: Type.Optional(PlayerSocialSnapshotV1),
   },
   { additionalProperties: false },

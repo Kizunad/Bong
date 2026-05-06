@@ -9,12 +9,13 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query, Res};
 
-use super::compute::{compute_current_qi, compute_track_state};
+use super::compute::{compute_current_qi_with_season, compute_track_state_with_season};
 use super::container::container_storage_multiplier;
 use super::registry::DecayProfileRegistry;
 use super::types::{ContainerFreshnessBehavior, DecayTrack, TrackState};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::inventory::{inventory_item_by_instance_borrow, PlayerInventory};
+use crate::world::season::query_season;
 
 /// plan §4 — 神识感知查询意图。`issued_at_tick` 由 caller（chat 命令 / 未来
 /// ClientRequest wire）在构造时设置当前 server tick。
@@ -130,8 +131,24 @@ fn resolve_one_probe(
     // 6. 全部通过 — compute + 返回精确结果。
     //    容器行为 M4a 默认 Normal；M4b 接入 item 所在容器 lookup。
     let multiplier = container_storage_multiplier(&ContainerFreshnessBehavior::Normal, profile);
-    let current_qi = compute_current_qi(freshness, profile, intent.issued_at_tick, multiplier);
-    let track_state = compute_track_state(freshness, profile, intent.issued_at_tick, multiplier);
+    let season = query_season("", intent.issued_at_tick).season;
+    let entropy_seed = intent.instance_id;
+    let current_qi = compute_current_qi_with_season(
+        freshness,
+        profile,
+        intent.issued_at_tick,
+        multiplier,
+        season,
+        entropy_seed,
+    );
+    let track_state = compute_track_state_with_season(
+        freshness,
+        profile,
+        intent.issued_at_tick,
+        multiplier,
+        season,
+        entropy_seed,
+    );
 
     FreshnessProbeResponse {
         player: intent.player,
@@ -409,7 +426,7 @@ mod tests {
             .spawn((inv, make_cultivation(Realm::Condense)))
             .id();
 
-        // tick 1000 = 1 half_life → current = 50
+        // tick 1000 = 1 half_life, then summer dispersal applies ×1.3.
         app.world_mut().send_event(FreshnessProbeIntent {
             player,
             instance_id: 1,
@@ -427,7 +444,8 @@ mod tests {
                 predicted_event_ticks,
             } => {
                 assert_eq!(track, DecayTrack::Decay);
-                assert!((current_qi - 50.0).abs() < 1e-3);
+                let expected = 100.0 * (0.5_f32).powf(1.3);
+                assert!((current_qi - expected).abs() < 1e-3);
                 assert!((initial_qi - 100.0).abs() < 1e-3);
                 assert_eq!(track_state, TrackState::Declining);
                 assert!(predicted_event_ticks.is_none(), "M4a predictor not wired");

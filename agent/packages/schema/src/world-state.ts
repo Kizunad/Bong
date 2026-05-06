@@ -83,6 +83,25 @@ export const ZoneStatusV1 = Type.Union([
 ]);
 export type ZoneStatusV1 = Static<typeof ZoneStatusV1>;
 
+export const SeasonV1 = Type.Union([
+  Type.Literal("summer"),
+  Type.Literal("summer_to_winter"),
+  Type.Literal("winter"),
+  Type.Literal("winter_to_summer"),
+]);
+export type SeasonV1 = Static<typeof SeasonV1>;
+
+export const SeasonStateV1 = Type.Object(
+  {
+    season: SeasonV1,
+    tick_into_phase: Type.Integer({ minimum: 0 }),
+    phase_total_ticks: Type.Integer({ minimum: 1 }),
+    year_index: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type SeasonStateV1 = Static<typeof SeasonStateV1>;
+
 export const PlayerProfile = Type.Object(
   {
     uuid: Type.String(),
@@ -161,6 +180,7 @@ export const WorldStateV1 = Type.Object(
     v: Type.Literal(1),
     ts: Type.Integer({ description: "Unix timestamp (seconds)" }),
     tick: Type.Integer({ description: "Server game tick" }),
+    season_state: SeasonStateV1,
     players: Type.Array(PlayerProfile),
     npcs: Type.Array(NpcSnapshot),
     factions: Type.Optional(Type.Array(FactionSummaryV1)),

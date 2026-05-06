@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.state.SeasonState;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -75,9 +76,12 @@ public final class PlayerStateHandler implements ServerDataHandler {
             );
         }
 
-        return ServerDataDispatch.handledWithPlayerState(
+        SeasonState seasonState = SeasonStatePayload.readOptional(payload, "season_state").orElse(null);
+
+        return ServerDataDispatch.handledWithPlayerStateAndSeason(
             envelope.type(),
             playerStateViewModel,
+            seasonState,
             "Routed player_state payload into player state view model"
         );
     }

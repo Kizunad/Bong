@@ -8,6 +8,8 @@ import com.bong.client.inventory.model.BodyPartState;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
+import com.bong.client.state.SeasonState;
+import com.bong.client.visual.season.SeasonVisuals;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -62,6 +64,18 @@ public final class MiniBodyHudPlanner {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(hud, body, equipped, nowMillis, screenWidth, screenHeight, null);
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        CombatHudState hud,
+        PhysicalBody body,
+        Map<EquipSlotType, InventoryItem> equipped,
+        long nowMillis,
+        int screenWidth,
+        int screenHeight,
+        SeasonState seasonState
+    ) {
         List<HudRenderCommand> out = new ArrayList<>();
         if (hud == null || !hud.active()) {
             return out;
@@ -86,7 +100,7 @@ public final class MiniBodyHudPlanner {
         appendSilhouette(out, anchorX, anchorY);
         appendBrokenArmorCracks(out, anchorX, anchorY, equipped);
         appendWoundDots(out, anchorX, anchorY, body);
-        appendBars(out, anchorX, anchorY, hud, nowMillis);
+        appendBars(out, anchorX, anchorY, hud, nowMillis, seasonState);
 
         return out;
     }
@@ -273,13 +287,14 @@ public final class MiniBodyHudPlanner {
         int anchorX,
         int anchorY,
         CombatHudState hud,
-        long nowMillis
+        long nowMillis,
+        SeasonState seasonState
     ) {
         int qiX = anchorX + BAR_X_OFFSET;
         int staminaX = qiX + BAR_W + BAR_GAP;
         int barTop = anchorY + BAR_Y_OFFSET;
 
-        appendBar(out, qiX, barTop, hud.qiPercent(), QI_FILL_COLOR, nowMillis);
+        appendBar(out, qiX, barTop, hud.qiPercent(), SeasonVisuals.qiBarColor(QI_FILL_COLOR, seasonState, nowMillis), nowMillis);
         appendBar(out, staminaX, barTop, hud.staminaPercent(), STAMINA_FILL_COLOR, nowMillis);
     }
 

@@ -35,6 +35,12 @@ export function createTestWorldState(): WorldStateV1 {
     v: 1,
     ts: 1_712_345_678,
     tick: 123,
+    season_state: {
+      season: "summer",
+      tick_into_phase: 123,
+      phase_total_ticks: 1_382_400,
+      year_index: 0,
+    },
     players: [
       {
         uuid: "offline:test-player",

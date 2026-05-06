@@ -29,6 +29,7 @@ import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
 import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
+import com.bong.client.visual.season.SeasonVisualBootstrap;
 import com.bong.client.weapon.WeaponRenderBootstrap;
 import com.bong.client.weapon.WeaponScreenshotHarness;
 import net.fabricmc.api.ClientModInitializer;
@@ -62,6 +63,7 @@ public class BongClient implements ClientModInitializer {
         BongParticles.register();
         BongParticles.registerClient();
         WorldVfxDemoBootstrap.register();
+        SeasonVisualBootstrap.register();
         VfxBootstrap.registerDefaults();
         BongAnimations.bootstrap();
         BongAnimationPlayer.init();

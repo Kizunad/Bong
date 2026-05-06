@@ -43,6 +43,8 @@ describe("Tiandao prompts narration era coverage", () => {
     expect(mutationPrompt).toContain("近轮天道叙事");
     expect(mutationPrompt).toContain("只输出**单个合法 JSON 对象**");
     expect(mutationPrompt).toContain("工具是可选的");
+    expect(mutationPrompt).toContain("world_state.season_state");
+    expect(mutationPrompt).toContain("不要直接说现在是夏、冬、汐转或季节");
   });
 
   it("writes era decree narration constraints explicitly into era prompt", () => {

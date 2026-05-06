@@ -2,6 +2,7 @@ pub mod gm;
 pub mod health;
 pub mod npc_scenario;
 pub mod preview_tp;
+pub mod season;
 pub mod shrine;
 pub mod spawn;
 pub mod stamina;
@@ -18,6 +19,7 @@ pub fn register(app: &mut App) {
     spawn::register(app);
     top::register(app);
     zones::register(app);
+    season::register(app);
     gm::register(app);
     health::register(app);
     stamina::register(app);

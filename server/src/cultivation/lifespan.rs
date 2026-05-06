@@ -19,6 +19,7 @@ use crate::schema::common::NarrationStyle;
 use crate::schema::death_lifecycle::{
     AgingEventKindV1, AgingEventV1, LifespanEventKindV1, LifespanEventV1,
 };
+use crate::world::season::{query_season, Season};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 use super::tick::frailty_qi_recovery_multiplier_for_realm;
@@ -432,7 +433,8 @@ pub fn lifespan_aging_tick(
         };
         lifespan.apply_cap(cap);
 
-        let multiplier = lifespan_tick_rate_multiplier(position, zones);
+        let multiplier = lifespan_tick_rate_multiplier(position, zones)
+            * season_aging_modifier(lifespan_season(position, zones, clock.tick));
         let delta_years = lifespan_delta_years_for_ticks(1, multiplier);
         lifespan.years_lived =
             (lifespan.years_lived + delta_years).min(lifespan.cap_by_realm as f64);
@@ -831,6 +833,30 @@ pub fn lifespan_tick_rate_multiplier(
     }
 }
 
+pub fn season_aging_modifier(season: Season) -> f64 {
+    if season.is_xizhuan() {
+        1.2
+    } else {
+        1.0
+    }
+}
+
+fn lifespan_season(position: Option<&Position>, zones: Option<&ZoneRegistry>, tick: u64) -> Season {
+    let zone_name = position
+        .and_then(|position| {
+            zones.and_then(|zones| {
+                zones
+                    .find_zone(
+                        crate::world::dimension::DimensionKind::Overworld,
+                        position.get(),
+                    )
+                    .map(|zone| zone.name.as_str())
+            })
+        })
+        .unwrap_or("");
+    query_season(zone_name, tick).season
+}
+
 pub fn is_collapse_abyss_zone(zone: &Zone) -> bool {
     zone.spirit_qi < NEGATIVE_ZONE_SPIRIT_QI_THRESHOLD
         && (zone.name.contains("collapse")
@@ -1165,6 +1191,14 @@ mod tests {
             lifespan_tick_rate_multiplier(Some(&position), Some(&zones)),
             LIFESPAN_NEGATIVE_ZONE_MULTIPLIER
         );
+    }
+
+    #[test]
+    fn xizhuan_phase_accelerates_aging_by_20_percent() {
+        assert_eq!(season_aging_modifier(Season::Summer), 1.0);
+        assert_eq!(season_aging_modifier(Season::Winter), 1.0);
+        assert_eq!(season_aging_modifier(Season::SummerToWinter), 1.2);
+        assert_eq!(season_aging_modifier(Season::WinterToSummer), 1.2);
     }
 
     #[test]

@@ -25,6 +25,7 @@ use crate::schema::inventory::{
     InventorySnapshotV1, InventoryWeightV1, ItemRarityV1, PlacedInventoryItemV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::world::season::query_season;
 
 const ORDERED_CONTAINER_IDS: [&str; 3] = [
     MAIN_PACK_CONTAINER_ID,
@@ -339,10 +340,24 @@ pub(crate) fn enrich_with_derived_freshness(
         return;
     };
     let multiplier = crate::shelflife::container_storage_multiplier(container_behavior, profile);
+    let season = query_season("", now_tick).season;
+    let entropy_seed = view.instance_id;
     view.freshness_current = Some(crate::schema::inventory::FreshnessDerivedV1 {
-        current_qi: crate::shelflife::compute_current_qi(freshness, profile, now_tick, multiplier),
-        track_state: crate::shelflife::compute_track_state(
-            freshness, profile, now_tick, multiplier,
+        current_qi: crate::shelflife::compute_current_qi_with_season(
+            freshness,
+            profile,
+            now_tick,
+            multiplier,
+            season,
+            entropy_seed,
+        ),
+        track_state: crate::shelflife::compute_track_state_with_season(
+            freshness,
+            profile,
+            now_tick,
+            multiplier,
+            season,
+            entropy_seed,
         ),
     });
 }
@@ -1245,9 +1260,10 @@ mod tests {
         );
 
         let derived = view.freshness_current.expect("derived should be Some");
-        // 1 half_life @ Normal multiplier 1.0 → current = 50
-        assert!((derived.current_qi - 50.0).abs() < 1e-3);
-        // 50/100 = 0.5 → Declining (headroom-based)
+        // 1 half_life @ Normal, then summer dispersal applies ×1.3.
+        let expected = 100.0 * (0.5_f32).powf(1.3);
+        assert!((derived.current_qi - expected).abs() < 1e-3);
+        // Summer-shifted current stays below half headroom → Declining.
         assert_eq!(derived.track_state, crate::shelflife::TrackState::Declining);
     }
 
@@ -1284,8 +1300,8 @@ mod tests {
 
     #[test]
     fn enrich_with_spoil_profile_derives_spoiled_state() {
-        // Spoil 端到端：兽肉 half_life=1000 @ spoil_threshold=20
-        // 3000 tick (3 half_lives) → current = 12.5 < 20 → Spoiled
+        // Spoil 端到端：兽肉 half_life=1000 @ spoil_threshold=20。
+        // 3000 tick 在夏散 ×1.3 下约 3.9 half_lives → Spoiled。
         let p = crate::shelflife::DecayProfile::Spoil {
             id: crate::shelflife::DecayProfileId::new("test_spoil"),
             formula: crate::shelflife::DecayFormula::Exponential {
@@ -1307,7 +1323,8 @@ mod tests {
         );
 
         let derived = view.freshness_current.expect("derived should be Some");
-        assert!((derived.current_qi - 12.5).abs() < 0.1);
+        let expected = 100.0 * (0.5_f32).powf(3.9);
+        assert!((derived.current_qi - expected).abs() < 0.1);
         assert_eq!(derived.track_state, crate::shelflife::TrackState::Spoiled);
     }
 
@@ -1332,7 +1349,7 @@ mod tests {
         enrich_with_derived_freshness(
             &mut view,
             &registry,
-            1000,
+            769,
             &crate::shelflife::ContainerFreshnessBehavior::Normal,
         );
 
@@ -1343,7 +1360,7 @@ mod tests {
 
     #[test]
     fn enrich_with_age_past_peak_derives_past_peak_state() {
-        // Age 过峰：peak=1000, post_half=500, tick 1500 → current = 75 > threshold 30 → PastPeak
+        // Age 过峰：peak=1000, post_half=500, tick 1500 经夏散后 effective_dt=1950。
         let p = crate::shelflife::DecayProfile::Age {
             id: crate::shelflife::DecayProfileId::new("test_age_pp"),
             peak_at_ticks: 1000,
@@ -1367,7 +1384,8 @@ mod tests {
         );
 
         let derived = view.freshness_current.expect("derived should be Some");
-        assert!((derived.current_qi - 75.0).abs() < 1e-3);
+        let expected = 150.0 * (0.5_f32).powf(950.0 / 500.0);
+        assert!((derived.current_qi - expected).abs() < 1e-3);
         assert_eq!(derived.track_state, crate::shelflife::TrackState::PastPeak);
     }
 }

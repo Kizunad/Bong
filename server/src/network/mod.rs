@@ -104,13 +104,14 @@ use crate::schema::cultivation::{
     realm_from_string, realm_to_string, CultivationSnapshotV1, LifeRecordSnapshotV1,
     SkillMilestoneSnapshotV1,
 };
+use crate::schema::season::SeasonChangedV1;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
     FactionMembershipSnapshotV1, PlayerSocialSnapshotV1, RelationshipSnapshotV1, RenownSnapshotV1,
 };
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
-    NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot, ZoneStatusV1,
+    NpcSnapshot, PlayerProfile, SeasonStateV1, WorldStateV1, ZoneSnapshot, ZoneStatusV1,
 };
 use crate::skill::components::SkillId;
 use crate::social::components::{
@@ -118,6 +119,7 @@ use crate::social::components::{
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
+use crate::world::season::{query_season, SeasonChangedEvent, WorldSeasonState};
 use crate::world::terrain::TerrainProviders;
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -313,6 +315,10 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
         ),
+    );
+    app.add_systems(
+        Update,
+        publish_season_changed_events.after(crate::world::season::season_tick),
     );
     app.add_systems(
         Update,
@@ -631,6 +637,7 @@ fn publish_world_state_to_redis(
     >,
     zone_registry: Option<Res<ZoneRegistry>>,
     active_events: Option<Res<ActiveEventsResource>>,
+    season_state: Option<Res<WorldSeasonState>>,
     faction_store: Option<Res<FactionStore>>,
     npcs: Query<
         (
@@ -673,6 +680,7 @@ fn publish_world_state_to_redis(
         &clients,
         zone_registry.as_deref(),
         active_events.as_deref(),
+        season_state.as_deref().map(|state| state.current.into()),
         faction_store.as_deref(),
         &npcs,
         &npc_action_states,
@@ -711,6 +719,24 @@ fn collect_cultivation_snapshots(
         .collect()
 }
 
+fn publish_season_changed_events(
+    redis: Res<RedisBridgeResource>,
+    mut events: EventReader<SeasonChangedEvent>,
+    season_state: Option<Res<WorldSeasonState>>,
+) {
+    for event in events.read() {
+        let state = season_state
+            .as_deref()
+            .map(|state| state.current)
+            .unwrap_or_else(|| query_season("", event.tick));
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::SeasonChanged(SeasonChangedV1::new(
+                *event, state,
+            )));
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn build_world_state_snapshot(
     ts: u64,
@@ -731,6 +757,7 @@ fn build_world_state_snapshot(
     >,
     zone_registry: Option<&ZoneRegistry>,
     active_events: Option<&ActiveEventsResource>,
+    season_state: Option<SeasonStateV1>,
     faction_store: Option<&FactionStore>,
     npcs: &Query<
         (
@@ -756,6 +783,7 @@ fn build_world_state_snapshot(
         v: 1,
         ts,
         tick,
+        season_state: season_state.unwrap_or_else(|| query_season("", tick).into()),
         players,
         npcs: collect_npc_snapshots(
             npcs,
@@ -1357,11 +1385,16 @@ fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
     clock: Option<Res<CombatClock>>,
     terrain_providers: Option<Res<TerrainProviders>>,
+    season_state: Option<Res<WorldSeasonState>>,
     mut clients: Query<PlayerStateEmitQueryItem<'_>, PlayerStateEmitQueryFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     let terrain_providers = terrain_providers.as_deref();
+    let season_state_for_client: SeasonStateV1 = season_state
+        .as_deref()
+        .map(|state| state.current.into())
+        .unwrap_or_else(|| query_season("", tick).into());
 
     for (
         entity,
@@ -1387,13 +1420,16 @@ fn emit_player_state_payloads(
         );
         let local_neg_pressure =
             local_neg_pressure_at(terrain_providers, current_dimension, position);
-        let payload = player_state.server_payload_with_social_and_local_pressure(
+        let mut payload = player_state.server_payload_with_social_and_local_pressure(
             cultivation,
             Some(canonical_player_id(username.0.as_str())),
             zone_name,
             social,
             local_neg_pressure,
         );
+        if let ServerDataPayloadV1::PlayerState { season_state, .. } = &mut payload.payload {
+            *season_state = Some(season_state_for_client);
+        }
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(payload) => payload,
@@ -3729,12 +3765,17 @@ mod tests {
                     realm,
                     spirit_qi,
                     zone,
+                    season_state,
                     ..
                 } => {
                     assert_eq!(player.as_deref(), Some("offline:Azure"));
                     assert_eq!(realm, "Condense");
                     assert_eq!(*spirit_qi, 78.0);
                     assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
+                    assert!(
+                        season_state.is_some(),
+                        "player_state payload should carry SeasonState for indirect client visuals"
+                    );
                 }
                 other => panic!("expected player_state payload, got {other:?}"),
             }

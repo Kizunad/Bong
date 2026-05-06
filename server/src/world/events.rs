@@ -33,10 +33,11 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{
-    targeted_calamity_event_hit, targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap,
-    TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
+    targeted_calamity_event_hit, targeted_calamity_roll_with_season, KarmaWeightStore,
+    QiDensityHeatmap, TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
     TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD,
 };
+use crate::world::season::Season;
 use crate::world::zone::Zone;
 
 pub const EVENT_THUNDER_TRIBULATION: &str = "thunder_tribulation";
@@ -270,6 +271,23 @@ impl ActiveEventsResource {
         karma_weights: Option<&KarmaWeightStore>,
         qi_heatmap: Option<&QiDensityHeatmap>,
     ) -> bool {
+        self.enqueue_from_spawn_command_with_karma_and_season(
+            command,
+            zone_registry,
+            karma_weights,
+            qi_heatmap,
+            Season::Summer,
+        )
+    }
+
+    pub fn enqueue_from_spawn_command_with_karma_and_season(
+        &mut self,
+        command: &Command,
+        zone_registry: Option<&mut ZoneRegistry>,
+        karma_weights: Option<&KarmaWeightStore>,
+        qi_heatmap: Option<&QiDensityHeatmap>,
+        season: Season,
+    ) -> bool {
         let Some(event) = ActiveEvent::from_spawn_command(command) else {
             let event_name = command
                 .params
@@ -330,10 +348,11 @@ impl ActiveEventsResource {
                 return false;
             };
             let qi_density_heat = targeted_qi_density_heat(qi_heatmap, zone);
-            let roll = targeted_calamity_roll(
+            let roll = targeted_calamity_roll_with_season(
                 TARGETED_CALAMITY_BASE_PROBABILITY,
                 karma_weight,
                 qi_density_heat,
+                season,
             );
             let roll_seed = targeted_calamity_event_seed(
                 event.zone_name.as_str(),

@@ -31,6 +31,7 @@ pub mod poi_novice;
 pub mod processing;
 pub mod pseudo_vein;
 pub mod realm_vision;
+pub mod season;
 pub mod server_data;
 pub mod skill;
 pub mod social;

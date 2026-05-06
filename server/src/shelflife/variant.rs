@@ -13,9 +13,16 @@
 //! - server tick boundary 200 sweep
 
 use crate::inventory::{ItemInstance, ItemRegistry};
+use crate::world::season::Season;
 
 use super::types::{DecayTrack, Freshness, TrackState};
-use super::{compute::compute_track_state, registry::DecayProfileRegistry};
+use super::{
+    compute::{
+        compute_current_qi, compute_current_qi_with_season, compute_track_state,
+        compute_track_state_with_season,
+    },
+    registry::DecayProfileRegistry,
+};
 
 /// 对单个 ItemInstance 做 shelflife 变体切换（如有必要）。
 ///
@@ -48,19 +55,83 @@ pub fn apply_variant_switch(
         }
         TrackState::AgePostPeakSpoiled => {
             if let Some(spoil_id) = age_spoil_variant_mapping(freshness.profile.as_str()) {
+                let current_qi =
+                    compute_current_qi(freshness, profile, now_tick, zone_multiplier.max(0.0));
                 if migrate_age_to_spoil(
                     item,
                     profile,
                     spoil_id,
                     item_registry,
                     now_tick,
-                    zone_multiplier,
+                    current_qi,
                 ) {
                     return true;
                 }
             }
         }
         // Spoil Spoiled：不切 item ID，由消费侧按 TrackState::Spoiled 做 contam 警告。
+        _ => {}
+    }
+
+    false
+}
+
+pub fn apply_variant_switch_with_season(
+    item: &mut ItemInstance,
+    profile_registry: &DecayProfileRegistry,
+    item_registry: &ItemRegistry,
+    now_tick: u64,
+    zone_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+) -> bool {
+    let Some(freshness) = &item.freshness else {
+        return false;
+    };
+
+    let Some(profile) = profile_registry.get(&freshness.profile) else {
+        return false;
+    };
+
+    let state = compute_track_state_with_season(
+        freshness,
+        profile,
+        now_tick,
+        zone_multiplier.max(0.0),
+        season,
+        entropy_seed,
+    );
+
+    match state {
+        TrackState::Dead => {
+            if let Some(dead_id) = dead_variant_mapping(freshness.profile.as_str()) {
+                if switch_template(item, dead_id, item_registry) {
+                    return true;
+                }
+            }
+        }
+        TrackState::AgePostPeakSpoiled => {
+            if let Some(spoil_id) = age_spoil_variant_mapping(freshness.profile.as_str()) {
+                let current_qi = compute_current_qi_with_season(
+                    freshness,
+                    profile,
+                    now_tick,
+                    zone_multiplier.max(0.0),
+                    season,
+                    entropy_seed,
+                );
+                if migrate_age_to_spoil(
+                    item,
+                    profile,
+                    spoil_id,
+                    item_registry,
+                    now_tick,
+                    current_qi,
+                ) {
+                    return true;
+                }
+            }
+        }
         _ => {}
     }
 
@@ -123,14 +194,11 @@ fn migrate_age_to_spoil(
     spoil_template_id: &str,
     item_registry: &ItemRegistry,
     now_tick: u64,
-    zone_multiplier: f32,
+    current_qi: f32,
 ) -> bool {
-    let Some(freshness) = &item.freshness else {
+    if item.freshness.is_none() {
         return false;
-    };
-
-    let current_qi =
-        compute_track_state_current_qi(freshness, age_profile, now_tick, zone_multiplier);
+    }
 
     let spoil_profile_id = match age_profile {
         super::types::DecayProfile::Age {
@@ -159,17 +227,6 @@ fn migrate_age_to_spoil(
     });
 
     true
-}
-
-/// 算 current_qi（仅用于 Age→Spoil 迁移时的 initial_qi 重置）。
-/// 不引入完整 compute_current_qi 以保持 variant 模块不依赖 container multiplier。
-fn compute_track_state_current_qi(
-    freshness: &Freshness,
-    profile: &super::types::DecayProfile,
-    now_tick: u64,
-    zone_multiplier: f32,
-) -> f32 {
-    super::compute::compute_current_qi(freshness, profile, now_tick, zone_multiplier.max(0.0))
 }
 
 #[cfg(test)]

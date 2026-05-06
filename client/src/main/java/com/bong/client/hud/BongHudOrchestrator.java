@@ -125,6 +125,15 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             );
+            int seasonTint = screenWidth > 0 && screenHeight > 0
+                ? com.bong.client.visual.season.SeasonVisuals.skyTintArgb(
+                    com.bong.client.state.SeasonStateStore.snapshot(),
+                    nowMillis
+                )
+                : 0;
+            if (seasonTint != 0) {
+                commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
+            }
         }
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {
@@ -134,7 +143,8 @@ public final class BongHudOrchestrator {
                 com.bong.client.inventory.state.InventoryStateStore.snapshot().equipped(),
                 nowMillis,
                 screenWidth,
-                screenHeight
+                screenHeight,
+                com.bong.client.state.SeasonStateStore.snapshot()
             ));
             if (combatSnapshot.combatHudState().active()) {
                 commands.addAll(StyleBadgeHudPlanner.buildCommands(

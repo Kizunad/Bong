@@ -33,7 +33,7 @@ use super::social::{
 };
 use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
-use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
+use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
 use crate::cultivation::components::ColorKind;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
@@ -190,6 +190,7 @@ pub enum ServerDataPayloadV1 {
         breakdown: PlayerPowerBreakdown,
         zone: String,
         local_neg_pressure: Option<f32>,
+        season_state: Option<SeasonStateV1>,
         social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
@@ -572,6 +573,8 @@ enum ServerDataPayloadWireV1 {
         zone: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         local_neg_pressure: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        season_state: Option<SeasonStateV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         social: Option<PlayerSocialSnapshotV1>,
     },
@@ -1324,6 +1327,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 breakdown,
                 zone,
                 local_neg_pressure,
+                season_state,
                 social,
             } => Ok(Self::PlayerState {
                 player,
@@ -1334,6 +1338,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 breakdown,
                 zone,
                 local_neg_pressure,
+                season_state,
                 social,
             }),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
@@ -1756,6 +1761,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 breakdown,
                 zone,
                 local_neg_pressure,
+                season_state,
                 social,
             } => Self::PlayerState {
                 player: player.clone(),
@@ -1766,6 +1772,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 breakdown: breakdown.clone(),
                 zone: zone.clone(),
                 local_neg_pressure: *local_neg_pressure,
+                season_state: *season_state,
                 social: social.clone(),
             },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {

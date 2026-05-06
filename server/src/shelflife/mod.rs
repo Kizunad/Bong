@@ -25,13 +25,16 @@ pub mod variant;
 
 #[allow(unused_imports)]
 pub use compute::{
-    combine_storage_and_zone_multiplier, compute_current_qi, compute_track_state,
-    zone_multiplier_lookup, DEAD_ZONE_SHELFLIFE_MULTIPLIER,
+    combine_storage_and_zone_multiplier, combine_storage_zone_and_season_multiplier,
+    compute_current_qi, compute_current_qi_with_season, compute_track_state,
+    compute_track_state_with_season, season_decay_modifier, zone_multiplier_lookup,
+    DEAD_ZONE_SHELFLIFE_MULTIPLIER,
 };
 #[allow(unused_imports)]
 pub use consume::{
-    age_peak_check, decay_current_qi_factor, spoil_check, AgeBonusRoll, AgePeakCheck,
-    SpoilCheckOutcome, SpoilConsumeWarning, SpoilSeverity, CRITICAL_BLOCK_RATIO,
+    age_peak_check, age_peak_check_with_season, decay_current_qi_factor,
+    decay_current_qi_factor_with_season, spoil_check, spoil_check_with_season, AgeBonusRoll,
+    AgePeakCheck, SpoilCheckOutcome, SpoilConsumeWarning, SpoilSeverity, CRITICAL_BLOCK_RATIO,
 };
 #[allow(unused_imports)]
 pub use container::{container_storage_multiplier, enter_container, exit_container};
@@ -47,7 +50,7 @@ pub use types::{
     TrackState,
 };
 #[allow(unused_imports)]
-pub use variant::apply_variant_switch;
+pub use variant::{apply_variant_switch, apply_variant_switch_with_season};
 
 /// plan-shelflife-v1 M3a + M4a + M5a + M6 — 注册 shelflife 资源 + 事件 + 系统。
 /// - DecayProfileRegistry 默认注册 active plan 的生产 profile
