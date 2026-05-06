@@ -1,12 +1,24 @@
-import type { NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
+import type {
+  BotanyEcologySnapshotV1,
+  BotanyZoneEcologyV1,
+  LingtianZonePressureV1,
+  NpcSnapshot,
+  PlayerProfile,
+  WorldStateV1,
+  ZoneSnapshot,
+} from "@bong/schema";
 import { NEWBIE_POWER_THRESHOLD } from "@bong/schema";
 import type { AgentDecision } from "./parse.js";
 import { summarizeBalance, type BalanceSummary } from "./balance.js";
 
 const MAX_ZONE_HISTORY = 10;
+const MAX_BOTANY_ECOLOGY_SNAPSHOTS = 5;
+const MAX_ZONE_ANOMALY_HISTORY = 5;
 const TREND_WINDOW = 3;
 const TREND_EPSILON = 0.02;
 const KEY_PLAYER_LIMIT = 3;
+const ZONE_STRESS_MIN_PLANTS = 10;
+const ZONE_STRESS_QI_THRESHOLD = 0.2;
 
 const AGENT_ORDER = ["calamity", "mutation", "era", "npc_producer"] as const;
 
@@ -80,6 +92,27 @@ export interface WorldModelSnapshot {
   lastStateTs: number | null;
 }
 
+export interface ZoneStressFlag {
+  zone: string;
+  tick: number;
+  spiritQi: number;
+  plantCount: number;
+  qiUtilization: number;
+  plantCountDelta: number;
+  spiritQiDelta: number;
+  reason: "low_qi_high_density";
+}
+
+export interface ZoneAnomalyLog {
+  zone: string;
+  tick: number;
+  taintedCount: number;
+  thunderCount: number;
+  taintedThresholdExceeded: boolean;
+  thunderThresholdExceeded: boolean;
+  thunderSpikeRatio: number | null;
+}
+
 interface MutableKeyPlayerSummary {
   player: PlayerProfile;
   reasons: string[];
@@ -92,6 +125,12 @@ export class WorldModel {
   readonly zoneHistory = new Map<string, ZoneSnapshot[]>();
   readonly lastDecisions = new Map<string, AgentDecision>();
   private readonly playerFirstSeenTick = new Map<string, number>();
+  private botanyEcologyValue: BotanyEcologySnapshotV1 | null = null;
+  private readonly botanyEcologySnapshots: BotanyEcologySnapshotV1[] = [];
+  readonly botanyEcologyHistory = new Map<string, BotanyZoneEcologyV1[]>();
+  readonly zoneStressFlags = new Map<string, ZoneStressFlag>();
+  readonly zoneAnomalyHistory = new Map<string, ZoneAnomalyLog[]>();
+  readonly latestLingtianZonePressure = new Map<string, LingtianZonePressureV1>();
   private newPlayersThisTick = new Set<string>();
   private suppressNewPlayersThisTickOnNextUpdate = false;
 
@@ -125,6 +164,10 @@ export class WorldModel {
 
   get lastStateTs(): number | null {
     return this.lastStateTsValue;
+  }
+
+  get botany_ecology(): BotanyEcologySnapshotV1 | null {
+    return this.botanyEcologyValue ? cloneBotanyEcologySnapshot(this.botanyEcologyValue) : null;
   }
 
   toJSON(): WorldModelSnapshot {
@@ -178,6 +221,53 @@ export class WorldModel {
 
   recordDecision(agentName: string, decision: AgentDecision): void {
     this.lastDecisions.set(agentName, cloneDecision(decision));
+  }
+
+  ingestBotanyEcology(snapshot: BotanyEcologySnapshotV1): void {
+    const clonedSnapshot = cloneBotanyEcologySnapshot(snapshot);
+    this.botanyEcologyValue = clonedSnapshot;
+    this.botanyEcologySnapshots.push(cloneBotanyEcologySnapshot(clonedSnapshot));
+    if (this.botanyEcologySnapshots.length > MAX_BOTANY_ECOLOGY_SNAPSHOTS) {
+      this.botanyEcologySnapshots.shift();
+    }
+
+    for (const zone of clonedSnapshot.zones) {
+      const history = this.botanyEcologyHistory.get(zone.zone) ?? [];
+      const previous = history.at(-1) ?? null;
+      history.push(cloneBotanyZoneEcology(zone));
+      if (history.length > MAX_BOTANY_ECOLOGY_SNAPSHOTS) {
+        history.shift();
+      }
+      this.botanyEcologyHistory.set(zone.zone, history);
+
+      this.updateZoneStressFlag(clonedSnapshot.tick, zone, previous);
+      this.recordZoneAnomaly(clonedSnapshot.tick, zone, previous);
+    }
+  }
+
+  ingestLingtianZonePressure(event: LingtianZonePressureV1): void {
+    this.latestLingtianZonePressure.set(event.zone, { ...event });
+  }
+
+  getRecentBotanyEcologySnapshots(): BotanyEcologySnapshotV1[] {
+    return this.botanyEcologySnapshots.map(cloneBotanyEcologySnapshot);
+  }
+
+  getBotanyEcologyHistory(zoneName: string): BotanyZoneEcologyV1[] {
+    return (this.botanyEcologyHistory.get(zoneName) ?? []).map(cloneBotanyZoneEcology);
+  }
+
+  getZoneStressFlags(): ZoneStressFlag[] {
+    return [...this.zoneStressFlags.values()].map((flag) => ({ ...flag }));
+  }
+
+  getZoneAnomalyWindow(zoneName: string): ZoneAnomalyLog[] {
+    return (this.zoneAnomalyHistory.get(zoneName) ?? []).map((entry) => ({ ...entry }));
+  }
+
+  getLatestLingtianZonePressure(zoneName: string): LingtianZonePressureV1 | null {
+    const event = this.latestLingtianZonePressure.get(zoneName);
+    return event ? { ...event } : null;
   }
 
   setCurrentEra(currentEra: CurrentEra): void {
@@ -414,6 +504,61 @@ export class WorldModel {
       recent_events: [],
     };
     this.newPlayersThisTick = new Set<string>();
+  }
+
+  private updateZoneStressFlag(
+    tick: number,
+    zone: BotanyZoneEcologyV1,
+    previous: BotanyZoneEcologyV1 | null,
+  ): void {
+    const plantCount = totalPlantCount(zone);
+    const previousPlantCount = previous ? totalPlantCount(previous) : plantCount;
+    const plantCountDelta = plantCount - previousPlantCount;
+    const spiritQiDelta = previous ? zone.spirit_qi - previous.spirit_qi : 0;
+    const qiUtilization = plantCount / Math.max(zone.spirit_qi, 0.01);
+
+    if (zone.spirit_qi < ZONE_STRESS_QI_THRESHOLD && plantCount >= ZONE_STRESS_MIN_PLANTS) {
+      this.zoneStressFlags.set(zone.zone, {
+        zone: zone.zone,
+        tick,
+        spiritQi: zone.spirit_qi,
+        plantCount,
+        qiUtilization,
+        plantCountDelta,
+        spiritQiDelta,
+        reason: "low_qi_high_density",
+      });
+      return;
+    }
+
+    this.zoneStressFlags.delete(zone.zone);
+  }
+
+  private recordZoneAnomaly(
+    tick: number,
+    zone: BotanyZoneEcologyV1,
+    previous: BotanyZoneEcologyV1 | null,
+  ): void {
+    const taintedCount = variantCount(zone, "tainted");
+    const thunderCount = variantCount(zone, "thunder");
+    const previousThunderCount = previous ? variantCount(previous, "thunder") : 0;
+    const thunderSpikeRatio =
+      previousThunderCount > 0 ? thunderCount / previousThunderCount : null;
+
+    const history = this.zoneAnomalyHistory.get(zone.zone) ?? [];
+    history.push({
+      zone: zone.zone,
+      tick,
+      taintedCount,
+      thunderCount,
+      taintedThresholdExceeded: taintedCount > 3,
+      thunderThresholdExceeded: thunderCount > 5,
+      thunderSpikeRatio,
+    });
+    if (history.length > MAX_ZONE_ANOMALY_HISTORY) {
+      history.shift();
+    }
+    this.zoneAnomalyHistory.set(zone.zone, history);
   }
 }
 
@@ -670,6 +815,33 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       details: event.details ? { ...event.details } : undefined,
     })),
   };
+}
+
+function cloneBotanyEcologySnapshot(snapshot: BotanyEcologySnapshotV1): BotanyEcologySnapshotV1 {
+  return {
+    v: snapshot.v,
+    tick: snapshot.tick,
+    zones: snapshot.zones.map(cloneBotanyZoneEcology),
+  };
+}
+
+function cloneBotanyZoneEcology(zone: BotanyZoneEcologyV1): BotanyZoneEcologyV1 {
+  return {
+    zone: zone.zone,
+    spirit_qi: zone.spirit_qi,
+    plant_counts: zone.plant_counts.map((entry) => ({ ...entry })),
+    variant_counts: zone.variant_counts.map((entry) => ({ ...entry })),
+  };
+}
+
+function totalPlantCount(zone: BotanyZoneEcologyV1): number {
+  return zone.plant_counts.reduce((total, entry) => total + entry.count, 0);
+}
+
+function variantCount(zone: BotanyZoneEcologyV1, variant: "tainted" | "thunder"): number {
+  return zone.variant_counts
+    .filter((entry) => entry.variant === variant)
+    .reduce((total, entry) => total + entry.count, 0);
 }
 
 function cloneJsonValue<T>(value: T): T {

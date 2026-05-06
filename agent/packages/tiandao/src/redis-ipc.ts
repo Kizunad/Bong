@@ -5,7 +5,9 @@ import {
   type ChannelName,
   validateAlchemyInsightV1Contract,
   validateAlchemySessionEndV1Contract,
+  validateBotanyEcologySnapshotV1Contract,
   validateFactionEventV1Contract,
+  validateLingtianZonePressureV1Contract,
   validateNpcDeathV1Contract,
   validateNpcSpawnedV1Contract,
   validatePoiSpawnedEventV1Contract,
@@ -19,7 +21,9 @@ import type {
   AgentCommandV1,
   AlchemySessionEndV1,
   AlchemyInsightV1,
+  BotanyEcologySnapshotV1,
   FactionEventV1,
+  LingtianZonePressureV1,
   NarrationV1,
   NpcDeathV1,
   NpcSpawnedV1,
@@ -46,6 +50,7 @@ const {
   ALCHEMY_SESSION_END,
   ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
+  LINGTIAN_ZONE_PRESSURE,
   AGING,
   LIFESPAN_EVENT,
   DUO_SHE_EVENT,
@@ -112,6 +117,7 @@ export interface CrossSystemRuntimeEventV1 {
 
 const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   BOTANY_ECOLOGY,
+  LINGTIAN_ZONE_PRESSURE,
   AGING,
   LIFESPAN_EVENT,
   DUO_SHE_EVENT,
@@ -194,12 +200,16 @@ export class RedisIpc {
   private latestAlchemyEvents: AlchemyRuntimeEventV1[] = [];
   private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
+  private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
+  private latestLingtianZonePressureEvents: LingtianZonePressureV1[] = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
   private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
   private alchemyEventCallbacks: Array<(event: AlchemyRuntimeEventV1) => void> = [];
   private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
+  private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
+  private lingtianZonePressureCallbacks: Array<(event: LingtianZonePressureV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel === WORLD_STATE) {
@@ -225,6 +235,16 @@ export class RedisIpc {
 
     if (channel === POI_NOVICE_EVENT) {
       this.handlePoiNoviceEventMessage(message);
+      return;
+    }
+
+    if (channel === BOTANY_ECOLOGY) {
+      this.handleBotanyEcologyMessage(message);
+      return;
+    }
+
+    if (channel === LINGTIAN_ZONE_PRESSURE) {
+      this.handleLingtianZonePressureMessage(message);
       return;
     }
 
@@ -383,6 +403,58 @@ export class RedisIpc {
     }
   }
 
+  private handleBotanyEcologyMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateBotanyEcologySnapshotV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid botany ecology snapshot:", result.errors.join("; "));
+        return;
+      }
+      this.recordBotanyEcologyEvent(data as BotanyEcologySnapshotV1);
+      this.recordCrossSystemEvent({ channel: BOTANY_ECOLOGY, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse botany ecology snapshot:", e);
+    }
+  }
+
+  private recordBotanyEcologyEvent(event: BotanyEcologySnapshotV1): void {
+    this.latestBotanyEcologyEvents.push(event);
+    if (this.latestBotanyEcologyEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
+      this.latestBotanyEcologyEvents =
+        this.latestBotanyEcologyEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.botanyEcologyCallbacks) {
+      cb(event);
+    }
+  }
+
+  private handleLingtianZonePressureMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateLingtianZonePressureV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid lingtian zone pressure event:", result.errors.join("; "));
+        return;
+      }
+      this.recordLingtianZonePressureEvent(data as LingtianZonePressureV1);
+      this.recordCrossSystemEvent({ channel: LINGTIAN_ZONE_PRESSURE, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse lingtian zone pressure event:", e);
+    }
+  }
+
+  private recordLingtianZonePressureEvent(event: LingtianZonePressureV1): void {
+    this.latestLingtianZonePressureEvents.push(event);
+    if (this.latestLingtianZonePressureEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
+      this.latestLingtianZonePressureEvents =
+        this.latestLingtianZonePressureEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.lingtianZonePressureCallbacks) {
+      cb(event);
+    }
+  }
+
   private handleCrossSystemEventMessage(channel: ChannelName, message: string): void {
     try {
       this.recordCrossSystemEvent({ channel, payload: JSON.parse(message) as unknown });
@@ -480,6 +552,26 @@ export class RedisIpc {
 
   onCrossSystemEvent(cb: (event: CrossSystemRuntimeEventV1) => void): void {
     this.crossSystemEventCallbacks.push(cb);
+  }
+
+  drainBotanyEcologyEvents(): BotanyEcologySnapshotV1[] {
+    const events = [...this.latestBotanyEcologyEvents];
+    this.latestBotanyEcologyEvents = [];
+    return events;
+  }
+
+  onBotanyEcology(cb: (event: BotanyEcologySnapshotV1) => void): void {
+    this.botanyEcologyCallbacks.push(cb);
+  }
+
+  drainLingtianZonePressureEvents(): LingtianZonePressureV1[] {
+    const events = [...this.latestLingtianZonePressureEvents];
+    this.latestLingtianZonePressureEvents = [];
+    return events;
+  }
+
+  onLingtianZonePressure(cb: (event: LingtianZonePressureV1) => void): void {
+    this.lingtianZonePressureCallbacks.push(cb);
   }
 
   async publishCommands(request: CommandPublishRequest): Promise<void> {
