@@ -128,6 +128,14 @@ export const RecipeHintV1 = Type.Object(
 );
 export type RecipeHintV1 = Static<typeof RecipeHintV1>;
 
+export const PillResidueKindV1 = Type.Union([
+  Type.Literal("failed_pill"),
+  Type.Literal("flawed_pill"),
+  Type.Literal("processing_dregs"),
+  Type.Literal("aging_scraps"),
+]);
+export type PillResidueKindV1 = Static<typeof PillResidueKindV1>;
+
 export const AlchemyItemDataV1 = Type.Union([
   Type.Object(
     {
@@ -151,6 +159,15 @@ export const AlchemyItemDataV1 = Type.Union([
     {
       kind: Type.Literal("recipe_hint"),
       hint: RecipeHintV1,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("pill_residue"),
+      residue_kind: PillResidueKindV1,
+      produced_at_tick: SafeIntegerV1,
+      expires_at_tick: SafeIntegerV1,
     },
     { additionalProperties: false },
   ),

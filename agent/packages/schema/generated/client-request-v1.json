@@ -1945,6 +1945,73 @@
         "type",
         "x",
         "y",
+        "z",
+        "source"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "lingtian_start_replenish",
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "z": {
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "const": "zone",
+              "type": "string"
+            },
+            {
+              "const": "bone_coin",
+              "type": "string"
+            },
+            {
+              "const": "beast_core",
+              "type": "string"
+            },
+            {
+              "const": "ling_shui",
+              "type": "string"
+            },
+            {
+              "const": "pill_residue_failed_pill",
+              "type": "string"
+            },
+            {
+              "const": "pill_residue_flawed_pill",
+              "type": "string"
+            },
+            {
+              "const": "pill_residue_processing_dregs",
+              "type": "string"
+            },
+            {
+              "const": "pill_residue_aging_scraps",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "x",
+        "y",
         "z"
       ],
       "properties": {
