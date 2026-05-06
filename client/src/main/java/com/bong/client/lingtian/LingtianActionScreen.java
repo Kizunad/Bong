@@ -35,12 +35,19 @@ import net.minecraft.util.math.BlockPos;
 public final class LingtianActionScreen extends BaseOwoScreen<FlowLayout> {
     private static final Text TITLE = Text.literal("灵田动作");
     private static final int PANEL_W = 280;
-    private static final int PANEL_H = 280;
+    private static final int PANEL_H = 304;
 
     private static final String[] SEED_PLANTS = {"ci_she_hao", "ning_mai_cao", "ling_mu_miao"};
     private static final String[] SEED_LABELS = {"§a刺舌蒿", "§a凝脉草", "§b灵木苗"};
-    private static final String[] REPLENISH_SOURCES = {"zone", "bone_coin", "beast_core", "ling_shui"};
-    private static final String[] REPLENISH_LABELS = {"§7区域抽吸 (8s)", "§e骨币 +0.8", "§d兽核 +2.0", "§b灵水 +0.3"};
+    private static final String[] REPLENISH_SOURCES = {
+        "zone", "bone_coin", "beast_core", "ling_shui",
+        "pill_residue_failed_pill", "pill_residue_flawed_pill",
+        "pill_residue_processing_dregs", "pill_residue_aging_scraps"
+    };
+    private static final String[] REPLENISH_LABELS = {
+        "§7区域", "§e骨币", "§d兽核", "§b灵水",
+        "§6失败丹渣", "§6废丹渣", "§2药渣", "§8加工碎"
+    };
 
     private final BlockPos target;
 
@@ -129,16 +136,19 @@ public final class LingtianActionScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout expandableReplenish() {
         FlowLayout col = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
         col.gap(2);
-        col.child(labelRow("§b补灵", "选 1 来源（骨币/兽核/灵水从背包扣）"));
-        FlowLayout srcRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-        srcRow.gap(2);
-        srcRow.horizontalAlignment(HorizontalAlignment.CENTER);
-        for (int i = 0; i < REPLENISH_SOURCES.length; i++) {
-            final String src = REPLENISH_SOURCES[i];
-            srcRow.child(button(REPLENISH_LABELS[i], () -> send(() ->
-                ClientRequestSender.sendLingtianStartReplenish(target.getX(), target.getY(), target.getZ(), src))));
+        col.child(labelRow("§b补灵", "选 1 来源（废料有杂染风险）"));
+        for (int rowStart = 0; rowStart < REPLENISH_SOURCES.length; rowStart += 4) {
+            FlowLayout srcRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+            srcRow.gap(2);
+            srcRow.horizontalAlignment(HorizontalAlignment.CENTER);
+            int rowEnd = Math.min(rowStart + 4, REPLENISH_SOURCES.length);
+            for (int i = rowStart; i < rowEnd; i++) {
+                final String src = REPLENISH_SOURCES[i];
+                srcRow.child(button(REPLENISH_LABELS[i], () -> send(() ->
+                    ClientRequestSender.sendLingtianStartReplenish(target.getX(), target.getY(), target.getZ(), src))));
+            }
+            col.child(srcRow);
         }
-        col.child(srcRow);
         return col;
     }
 

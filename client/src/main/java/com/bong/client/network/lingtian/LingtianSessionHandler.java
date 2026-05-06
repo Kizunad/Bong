@@ -21,7 +21,10 @@ import com.google.gson.JsonObject;
  *   "pos": [x, y, z],
  *   "elapsed_ticks": 12,
  *   "target_ticks": 40,
- *   "plant_id": "ci_she_hao"   // 仅 planting / harvest
+ *   "plant_id": "ci_she_hao",  // 仅 planting / harvest
+ *   "source": "pill_residue_failed_pill",
+ *   "dye_contamination": 0.31,
+ *   "dye_contamination_warning": true
  * }
  * </pre>
  */
@@ -38,13 +41,23 @@ public final class LingtianSessionHandler implements ServerDataHandler {
             String plantId = p.has("plant_id") && p.get("plant_id").isJsonPrimitive()
                 ? p.get("plant_id").getAsString()
                 : null;
+            String source = p.has("source") && p.get("source").isJsonPrimitive()
+                ? p.get("source").getAsString()
+                : null;
+            float dyeContamination = readFloat(p, "dye_contamination", 0.0f);
+            boolean dyeWarning = p.has("dye_contamination_warning")
+                && p.get("dye_contamination_warning").isJsonPrimitive()
+                && p.get("dye_contamination_warning").getAsBoolean();
 
             LingtianSessionStore.replace(new LingtianSessionStore.Snapshot(
                 active,
                 LingtianSessionStore.Kind.fromWire(kindStr),
                 pos[0], pos[1], pos[2],
                 elapsed, target,
-                plantId
+                plantId,
+                source,
+                dyeContamination,
+                dyeWarning
             ));
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied lingtian_session snapshot (active=" + active + ", kind=" + kindStr + ", "
@@ -66,6 +79,13 @@ public final class LingtianSessionHandler implements ServerDataHandler {
         if (!obj.has(key) || obj.get(key).isJsonNull()) return fallback;
         JsonElement el = obj.get(key);
         return el.isJsonPrimitive() ? el.getAsString() : fallback;
+    }
+
+    private static float readFloat(JsonObject obj, String key, float fallback) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) return fallback;
+        JsonElement el = obj.get(key);
+        if (!el.isJsonPrimitive() || !el.getAsJsonPrimitive().isNumber()) return fallback;
+        return el.getAsFloat();
     }
 
     private static int[] readIntArray3(JsonObject obj, String key) {

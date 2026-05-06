@@ -52,10 +52,13 @@ public final class LingtianSessionStore {
         int z,
         int elapsedTicks,
         int targetTicks,
-        String plantId
+        String plantId,
+        String source,
+        float dyeContamination,
+        boolean dyeContaminationWarning
     ) {
         public static Snapshot empty() {
-            return new Snapshot(false, Kind.TILL, 0, 0, 0, 0, 0, null);
+            return new Snapshot(false, Kind.TILL, 0, 0, 0, 0, 0, null, null, 0.0f, false);
         }
 
         public float progress() {

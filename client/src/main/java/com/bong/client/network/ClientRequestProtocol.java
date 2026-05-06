@@ -836,7 +836,7 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    /** plan §1.4 — 起补灵 session。{@code source} = "zone" | "bone_coin" | "beast_core" | "ling_shui"。 */
+    /** plan §1.4 + plan-alchemy-recycle-v1 — 起补灵 session。 */
     public static String encodeLingtianStartReplenish(int x, int y, int z, String source) {
         JsonObject obj = envelope("lingtian_start_replenish");
         obj.addProperty("x", x);
