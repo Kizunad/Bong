@@ -124,9 +124,9 @@
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ `2454 passed; 0 failed`
+- `cd server && cargo test` ✅ `2477 passed; 0 failed`
 - `cd agent && npm run build` ✅
-- `cd agent && npm test -w @bong/schema` ✅ `276 passed`
+- `cd agent && npm test -w @bong/schema` ✅ `277 passed`
 - `cd agent && npm test -w @bong/tiandao` ✅ `241 passed`
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build` ✅
 
