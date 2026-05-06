@@ -36,6 +36,7 @@ pub struct StartTillRequest {
 /// 开垦完成（session.tick 完成后由 system 派发）。
 #[derive(Debug, Clone, Event)]
 pub struct TillCompleted {
+    /// 历史字段名；完成事件可由玩家或散修 NPC actor 触发。
     pub player: Entity,
     pub pos: BlockPos,
     pub hoe: HoeKind,
@@ -53,6 +54,7 @@ pub struct StartRenewRequest {
 
 #[derive(Debug, Clone, Event)]
 pub struct RenewCompleted {
+    /// 历史字段名；完成事件可由玩家或散修 NPC actor 触发。
     pub player: Entity,
     pub pos: BlockPos,
     pub hoe: HoeKind,
@@ -73,6 +75,7 @@ pub struct StartPlantingRequest {
 
 #[derive(Debug, Clone, Event)]
 pub struct PlantingCompleted {
+    /// 历史字段名；完成事件可由玩家或散修 NPC actor 触发。
     pub player: Entity,
     pub pos: BlockPos,
     pub plant_id: PlantId,
@@ -89,6 +92,7 @@ pub struct StartHarvestRequest {
 
 #[derive(Debug, Clone, Event)]
 pub struct HarvestCompleted {
+    /// 历史字段名；完成事件可由玩家或散修 NPC actor 触发。
     pub player: Entity,
     pub pos: BlockPos,
     pub plant_id: PlantId,
@@ -106,6 +110,7 @@ pub struct StartReplenishRequest {
 
 #[derive(Debug, Clone, Event)]
 pub struct ReplenishCompleted {
+    /// 历史字段名；完成事件可由玩家或散修 NPC actor 触发。
     pub player: Entity,
     pub pos: BlockPos,
     pub source: ReplenishSource,
@@ -125,7 +130,6 @@ pub struct ZonePressureCrossed {
     pub zone: String,
     pub level: PressureLevel,
     pub raw_pressure: f32,
-    pub tick: u64,
 }
 
 /// plan §1.7 — 偷灵：把目标 plot 的 plot_qi 全部抽走，80% 注入操作者，

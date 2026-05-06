@@ -4,9 +4,9 @@ import type {
   ChatMessageV1,
   ChatSignal,
   Command,
-  LingtianZonePressureV1,
   Narration,
   WorldStateV1,
+  ZonePressureCrossedV1,
 } from "@bong/schema";
 import dotenv from "dotenv";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
@@ -115,7 +115,7 @@ export interface RuntimeRedis {
   getLatestState(): WorldStateV1 | null;
   loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
-  drainLingtianZonePressureEvents?(): LingtianZonePressureV1[];
+  drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
   publishNarrations(request: NarrationPublishRequest): Promise<void>;
@@ -695,7 +695,7 @@ async function processEcologyEvents(args: {
 }): Promise<void> {
   const { redis, worldModel, ecologyAnalyzer, logger } = args;
   const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
-  const pressureEvents = redis.drainLingtianZonePressureEvents?.() ?? [];
+  const pressureEvents = redis.drainZonePressureCrossedEvents?.() ?? [];
   const narrations: Narration[] = [];
   let sourceTick: number | null = null;
 
@@ -705,8 +705,8 @@ async function processEcologyEvents(args: {
   }
 
   for (const event of pressureEvents) {
-    sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
-    narrations.push(...ecologyAnalyzer.ingestLingtianZonePressure(worldModel, event));
+    sourceTick = Math.max(sourceTick ?? event.at_tick, event.at_tick);
+    narrations.push(...ecologyAnalyzer.ingestZonePressureCrossed(worldModel, event));
   }
 
   if (narrations.length === 0 || sourceTick === null) {

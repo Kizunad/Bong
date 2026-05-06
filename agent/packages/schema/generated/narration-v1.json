@@ -74,6 +74,18 @@
               {
                 "const": "niche_intrusion",
                 "type": "string"
+              },
+              {
+                "const": "niche_intrusion_by_npc",
+                "type": "string"
+              },
+              {
+                "const": "npc_farm_pressure",
+                "type": "string"
+              },
+              {
+                "const": "scattered_cultivator",
+                "type": "string"
               }
             ]
           }

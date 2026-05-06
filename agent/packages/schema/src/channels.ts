@@ -89,6 +89,9 @@ export const CHANNELS = {
   /** Server → Agent/Client: 灵龛抄家入侵流水（plan-niche-defense-v1 P4） */
   SOCIAL_NICHE_INTRUSION: "bong:social/niche_intrusion",
 
+  /** Server → Agent: 灵田 zone pressure 跨档事件（plan-lingtian-npc-v1 P5） */
+  ZONE_PRESSURE_CROSSED: "bong:zone/pressure_crossed",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -145,9 +148,6 @@ export const CHANNELS = {
 
   /** Server → Agent: botany 生态快照 (plan-botany-v1 §7 · 定时聚合 zone spirit_qi + 植物密度 + variant 分布) */
   BOTANY_ECOLOGY: "bong:botany/ecology",
-
-  /** Server → Agent: 灵田 zone pressure 上升沿观测（plan-botany-agent-v1 P3） */
-  LINGTIAN_ZONE_PRESSURE: "bong:lingtian/zone_pressure",
 
   /** Server → Client/Agent: 灵木伐木进度（plan-spiritwood-v1 §3） */
   LUMBER_PROGRESS: "bong:lumber_progress",
@@ -231,6 +231,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_FEUD,
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.SOCIAL_NICHE_INTRUSION,
+  CHANNELS.ZONE_PRESSURE_CROSSED,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.STYLE_BALANCE_TELEMETRY,
@@ -244,7 +245,6 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ZONG_CORE_ACTIVATED,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
-  CHANNELS.LINGTIAN_ZONE_PRESSURE,
   CHANNELS.LUMBER_PROGRESS,
   CHANNELS.SKILL_XP_GAIN,
   CHANNELS.SKILL_LV_UP,

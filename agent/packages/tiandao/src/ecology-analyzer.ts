@@ -1,8 +1,8 @@
 import type {
   BotanyEcologySnapshotV1,
   BotanyZoneEcologyV1,
-  LingtianZonePressureV1,
   Narration,
+  ZonePressureCrossedV1,
 } from "@bong/schema";
 import type { WorldModel } from "./world-model.js";
 
@@ -43,11 +43,11 @@ export class EcologyAnalyzer {
     return narrations;
   }
 
-  ingestLingtianZonePressure(
+  ingestZonePressureCrossed(
     worldModel: WorldModel,
-    event: LingtianZonePressureV1,
+    event: ZonePressureCrossedV1,
   ): Narration[] {
-    worldModel.ingestLingtianZonePressure(event);
+    worldModel.ingestZonePressureCrossed(event);
     if (event.level !== "high") {
       return [];
     }
@@ -57,7 +57,7 @@ export class EcologyAnalyzer {
       return [];
     }
 
-    if (!this.canNarrate(`joint:${event.zone}`, event.tick)) {
+    if (!this.canNarrate(`joint:${event.zone}`, event.at_tick)) {
       return [];
     }
 

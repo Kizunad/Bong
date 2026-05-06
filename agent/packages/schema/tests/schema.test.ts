@@ -25,7 +25,10 @@ import {
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
-import { LingtianZonePressureV1, validateLingtianZonePressureV1Contract } from "../src/lingtian.js";
+import {
+  ZonePressureCrossedV1,
+  validateZonePressureCrossedV1Contract,
+} from "../src/zone-pressure.js";
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
@@ -176,9 +179,9 @@ describe("sample files pass schema validation", () => {
     );
   });
 
-  it("declares lingtian pressure Redis channel", () => {
-    expect(CHANNELS.LINGTIAN_ZONE_PRESSURE).toBe("bong:lingtian/zone_pressure");
-    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.LINGTIAN_ZONE_PRESSURE);
+  it("declares zone pressure Redis channel", () => {
+    expect(CHANNELS.ZONE_PRESSURE_CROSSED).toBe("bong:zone/pressure_crossed");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONE_PRESSURE_CROSSED);
   });
 
   it("world-state.sample.json", () => {
@@ -358,18 +361,19 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
-  it("lingtian zone pressure contract accepts rising pressure events", () => {
+  it("zone pressure contract accepts rising pressure events", () => {
     const data = {
       v: 1,
+      kind: "zone_pressure_crossed",
       zone: "starter_zone",
       level: "high",
       raw_pressure: 1.25,
-      tick: 1440,
+      at_tick: 1440,
     };
 
-    expect(validate(LingtianZonePressureV1, data).ok).toBe(true);
-    expectContractAccepts("LingtianZonePressureV1", validateLingtianZonePressureV1Contract, data);
-    expectContractRejects("LingtianZonePressureV1", validateLingtianZonePressureV1Contract, {
+    expect(validate(ZonePressureCrossedV1, data).ok).toBe(true);
+    expectContractAccepts("ZonePressureCrossedV1", validateZonePressureCrossedV1Contract, data);
+    expectContractRejects("ZonePressureCrossedV1", validateZonePressureCrossedV1Contract, {
       ...data,
       level: "none",
     });

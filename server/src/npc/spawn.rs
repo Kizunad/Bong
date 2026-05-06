@@ -5,9 +5,9 @@ use valence::entity::villager::VillagerEntityBundle;
 use valence::entity::witch::WitchEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
-    EventWriter, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId,
-    Update, With,
+    bevy_ecs, App, Bundle, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId,
+    EventReader, EventWriter, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut,
+    Resource, UniqueId, Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -25,6 +25,9 @@ use crate::npc::faction::{
     FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
     MissionQueue, MissionQueueScorer, Reputation,
 };
+use crate::npc::farming_brain::{
+    HarvestAction, LingtianFarmingScorer, MigrateAction, PlantAction, ReplenishAction, TillAction,
+};
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
     npc_runtime_bundle, npc_runtime_bundle_with_age, NpcArchetype, NpcRegistry,
@@ -37,6 +40,7 @@ use crate::npc::relic::{
     GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
     TrialEval, TrialEvalScorer, TrialState,
 };
+use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
 use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
@@ -387,13 +391,14 @@ fn seed_initial_rogue_population_on_startup(
         for _ in 0..count {
             let (pos, patrol_target) = seed_position_for_zone(zone, global_index);
             let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
-            let entity = spawn_rogue_npc_at(
+            let entity = spawn_scattered_cultivator_at(
                 &mut commands,
                 NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
                 layer,
                 zone.name.as_str(),
                 pos,
                 patrol_target,
+                zone.spirit_qi,
                 age,
             );
             notices.send(spawn_notice(
@@ -592,6 +597,23 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
+fn scattered_cultivator_thinker() -> ThinkerBuilder {
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(AgeingScorer, RetireAction)
+        .when(SeclusionScorer, SeclusionAction)
+        .when(TribulationReadyScorer, StartDuXuAction)
+        .when(LingtianFarmingScorer::migrate(), MigrateAction)
+        .when(LingtianFarmingScorer::harvest(), HarvestAction)
+        .when(LingtianFarmingScorer::replenish(), ReplenishAction)
+        .when(LingtianFarmingScorer::plant(), PlantAction)
+        .when(LingtianFarmingScorer::till(), TillAction)
+        .when(PlayerProximityScorer, FleeAction)
+        .when(CultivationDriveScorer, CultivateAction)
+        .when(CuriosityScorer, WanderAction)
+        .when(WanderScorer, WanderAction)
+}
+
 fn beast_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
@@ -664,6 +686,68 @@ pub fn spawn_rogue_npc_at(
         CultivationDriveHistory::default(),
         rogue_npc_thinker(),
     ));
+
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
+    commands.entity(entity).insert(runtime);
+
+    entity
+}
+
+#[derive(Bundle)]
+pub struct ScatteredCultivatorBundle {
+    pub scattered: ScatteredCultivator,
+    pub wander: WanderState,
+    pub cultivate: CultivateState,
+    pub drive_history: CultivationDriveHistory,
+    pub thinker: ThinkerBuilder,
+}
+
+impl ScatteredCultivatorBundle {
+    pub fn new(temperament: FarmingTemperament) -> Self {
+        Self {
+            scattered: ScatteredCultivator::new(temperament),
+            wander: WanderState::default(),
+            cultivate: CultivateState::default(),
+            drive_history: CultivationDriveHistory::default(),
+            thinker: scattered_cultivator_thinker(),
+        }
+    }
+}
+
+/// Spawn a Rogue-based scattered cultivator that owns a farming brain.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_scattered_cultivator_at(
+    commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
+    layer: Entity,
+    home_zone: &str,
+    spawn_position: DVec3,
+    patrol_target: DVec3,
+    qi_density: f64,
+    initial_age_ticks: f64,
+) -> Entity {
+    let loadout = NpcCombatLoadout::civilian();
+    let skin = draw_npc_skin(skin_context, NpcArchetype::Rogue, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        loadout.clone(),
+        NpcArchetype::Rogue,
+        home_zone,
+        patrol_target,
+    );
+
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Rogue, skin);
+    }
+
+    let seed = skin_salt(spawn_position) ^ qi_density.to_bits();
+    let temperament = FarmingTemperament::deterministic(seed);
+    commands
+        .entity(entity)
+        .insert(ScatteredCultivatorBundle::new(temperament));
 
     let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
     commands.entity(entity).insert(runtime);
@@ -1424,6 +1508,51 @@ mod tests {
     }
 
     #[test]
+    fn spawn_scattered_cultivator_at_attaches_farming_brain_components() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_scattered_cultivator.after(setup_test_layer),
+            ),
+        );
+
+        app.update();
+        app.update();
+
+        let npc = only_spawned_npc(&mut app);
+
+        assert_eq!(
+            *app.world().get::<NpcArchetype>(npc).unwrap(),
+            NpcArchetype::Rogue
+        );
+        let scattered = app
+            .world()
+            .get::<ScatteredCultivator>(npc)
+            .expect("scattered cultivator should mark seeded Rogue NPCs");
+        assert_eq!(scattered.home_plot, None);
+        assert_eq!(scattered.fail_streak, 0);
+        assert!(matches!(
+            scattered.temperament,
+            FarmingTemperament::Patient
+                | FarmingTemperament::Greedy
+                | FarmingTemperament::Anxious
+                | FarmingTemperament::Aggressive
+        ));
+        assert!(
+            app.world().get::<ThinkerBuilder>(npc).is_some(),
+            "scattered cultivator should carry a live farming thinker"
+        );
+        assert!(
+            app.world()
+                .get::<crate::npc::brain::CultivateState>(npc)
+                .is_some(),
+            "scattered cultivator remains a cultivating Rogue"
+        );
+    }
+
+    #[test]
     fn rogue_commoner_visual_kind_uses_player_only_for_real_skin() {
         assert_eq!(fallback_rogue_commoner_kind(&None), EntityKind::VILLAGER);
         assert_eq!(
@@ -1451,6 +1580,19 @@ mod tests {
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(18.0, 66.0, 18.0),
             DVec3::new(18.0, 66.0, 18.0),
+            0.0,
+        );
+    }
+
+    fn spawn_test_scattered_cultivator(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_scattered_cultivator_at(
+            &mut commands,
+            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(19.0, 66.0, 19.0),
+            DVec3::new(19.0, 66.0, 19.0),
+            0.9,
             0.0,
         );
     }

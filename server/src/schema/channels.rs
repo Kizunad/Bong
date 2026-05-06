@@ -41,6 +41,7 @@ pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
 pub const CH_SOCIAL_FEUD: &str = "bong:social/feud";
 pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
 pub const CH_SOCIAL_NICHE_INTRUSION: &str = "bong:social/niche_intrusion";
+pub const CH_ZONE_PRESSURE_CROSSED: &str = "bong:zone/pressure_crossed";
 
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
@@ -69,7 +70,6 @@ pub const CH_ZONG_CORE_ACTIVATED: &str = "bong:zong_core_activated";
 // 可扩 ecology snapshot 加 delta 字段或新增 alert 专用 channel。
 pub const CH_BOTANY_HARVEST_PROGRESS: &str = "bong:botany/harvest_progress";
 pub const CH_BOTANY_ECOLOGY: &str = "bong:botany/ecology";
-pub const CH_LINGTIAN_ZONE_PRESSURE: &str = "bong:lingtian/zone_pressure";
 pub const CH_LUMBER_PROGRESS: &str = "bong:lumber_progress";
 
 // 子技能 (plan-skill-v1 §8)：server → agent，agent 消费生成升级 narration / NPC skill 画像
@@ -139,6 +139,7 @@ mod tests {
         assert_eq!(CH_SOCIAL_FEUD, "bong:social/feud");
         assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
         assert_eq!(CH_SOCIAL_NICHE_INTRUSION, "bong:social/niche_intrusion");
+        assert_eq!(CH_ZONE_PRESSURE_CROSSED, "bong:zone/pressure_crossed");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_STYLE_BALANCE_TELEMETRY, "bong:style_balance_telemetry");
@@ -161,7 +162,6 @@ mod tests {
         assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
-        assert_eq!(CH_LINGTIAN_ZONE_PRESSURE, "bong:lingtian/zone_pressure");
         assert_eq!(CH_LUMBER_PROGRESS, "bong:lumber_progress");
         assert_eq!(CH_SKILL_XP_GAIN, "bong:skill/xp_gain");
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");

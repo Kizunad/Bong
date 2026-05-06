@@ -32,41 +32,6 @@ pub struct LingtianSessionDataV1 {
     pub plant_id: Option<String>,
 }
 
-/// plan-botany-agent-v1 P3 — 灵田压力上升沿 Redis 观测事件。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LingtianZonePressureLevelV1 {
-    Low,
-    Mid,
-    High,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LingtianZonePressureV1 {
-    pub v: u8,
-    pub zone: String,
-    pub level: LingtianZonePressureLevelV1,
-    pub raw_pressure: f32,
-    pub tick: u64,
-}
-
-impl LingtianZonePressureV1 {
-    pub fn new(
-        zone: impl Into<String>,
-        level: LingtianZonePressureLevelV1,
-        raw_pressure: f32,
-        tick: u64,
-    ) -> Self {
-        Self {
-            v: 1,
-            zone: zone.into(),
-            level,
-            raw_pressure,
-            tick,
-        }
-    }
-}
-
 impl Default for LingtianSessionDataV1 {
     fn default() -> Self {
         Self {

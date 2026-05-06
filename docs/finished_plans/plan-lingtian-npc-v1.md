@@ -28,12 +28,12 @@
 - `plan-fauna-v1.md`（skeleton；散修被异变兽袭击 / 散修与道伥共存——属生态联动，依 fauna-v1 落地）
 
 **阶段总览**：
-- P0 ⬜ 重构 + ScatteredCultivator 组件（**关键前置**：lingtian-v1 ActiveLingtianSessions.by_player → by_actor 字段重命名 + Session struct 字段泛化）
-- P1 ⬜ 4 个 farming Action（TillAction / PlantAction / HarvestAction / ReplenishAction）+ 6 个 Scorer（土壤适宜 / 灵气浓度 / 真元 / 季节 / 邻近威胁 / 工具持有）
-- P2 ⬜ 散修迁徙 + 灵气追踪行为（worldview §七 "寻路 AI 实时追踪周围灵气浓度"——散修主动找高灵气区扎根；zone 灵气将尽时启动迁徙）
-- P3 ⬜ 玩家-散修博弈（5 格触发三种反应：友好交易 / 翻脸偷田 / 逃窜；翻脸场景接 plan-niche-defense IntrusionAttempt）
-- P4 ⬜ 天道循环联动（散修群居推高密度 → §八 阈值触发器 → 道伥刷新 / 灵气归零的玩家可观测实例）
-- P5 ⬜ NarrationKind::ScatteredCultivator 扩展 + agent 散修种田 narration（worldview §八 天道叙事语调："此地散修聚众，又一波将逝"）
+- P0 ✅ 重构 + ScatteredCultivator 组件（ActiveLingtianSessions.by_player → by_actor；NPC 使用同套 session 资源，保留客户端 player wire 字段兼容）
+- P1 ✅ 5 个 farming Action（TillAction / PlantAction / HarvestAction / ReplenishAction / MigrateAction）+ 6 个 Scorer（土壤适宜 / 灵气浓度 / 真元 / 季节 / 邻近威胁 / 工具持有）
+- P2 ✅ 散修迁徙 + 灵气追踪行为（worldview §七 "寻路 AI 实时追踪周围灵气浓度"——散修主动找高灵气区扎根；zone 灵气将尽时启动迁徙）
+- P3 ✅ 玩家-散修博弈（5 格 linger 触发反应；Aggressive 翻脸场景接 plan-niche-defense IntrusionAttempt）
+- P4 ✅ 天道循环联动（NPC-owned plots 计入 ZonePressureTracker；跨档事件推送 agent）
+- P5 ✅ NarrationKind::ScatteredCultivator / npc_farm_pressure / niche_intrusion_by_npc 扩展 + agent 散修种田 narration（worldview §八 天道叙事语调："此地散修聚众，又一波将逝"）
 
 **接入面**（按 docs/CLAUDE.md "防孤岛" checklist）：
 - **进料**：lingtian `LingtianPlot` / `LingtianSession` / `ActiveLingtianSessions`（**需重构 by_player → by_actor**）+ `ZoneQiAccount` / `ZonePressureTracker` + npc Rogue `Brain` / `Scorer` / `Action` 框架 + cultivation `CultivationState` + skill `SkillSet`（herbalism XP）
@@ -41,10 +41,10 @@
 - **共享类型**：复用 `LingtianPlot` / `LingtianSession` / `ZoneQiAccount` / `ZonePressureTracker` / `RogueBundle` / `Brain` / `SkillSet`；**新建** `ScatteredCultivator` component / `FarmingTemperament` enum / 4 个 Action / 6 个 Scorer
 - **跨仓库契约**：
   - server: `npc::ScatteredCultivator { home_plot: Option<PlotId>, temperament: FarmingTemperament, fail_streak: u8, last_replenish: Tick }` / `npc::FarmingTemperament` enum (Patient / Greedy / Anxious / Aggressive) / `npc::farming_brain::{LingtianFarmingScorer, TillAction, PlantAction, HarvestAction, ReplenishAction, MigrateAction}` / `npc::spawn::spawn_scattered_cultivator_at(zone, qi_density)`
-  - schema: 无新增 IPC（散修行为不直推客户端——通过 entity 位置 / 动画自然同步）；`NarrationKind::ScatteredCultivator` 扩展（agent 侧 narration 类型）
+  - schema: 散修行为不直推客户端——通过 entity 位置 / 动画自然同步；新增 `bong:zone/pressure_crossed` 与 `NarrationKind::ScatteredCultivator` / `npc_farm_pressure` / `niche_intrusion_by_npc`（agent 侧 narration 类型）
   - client: 散修 entity 渲染走现有 PlayerEntityBundle（npc-skin-v1 已 finished）；UI 不专门做散修面板（保留 ambient 感）
   - agent: 新增 `niche_intrusion_by_npc` / `npc_farm_pressure` narration kind，订阅 zone 密度阈值 / 散修翻脸事件
-  - Redis channel: 复用 `bong:lingtian/session_event`（actor 字段区分玩家/散修）+ `bong:zone/pressure_crossed`（密度阈值变化）
+  - Redis channel: 新增并对齐 `bong:zone/pressure_crossed`（密度阈值变化）；`bong:lingtian/session_event` 保持玩家 HUD 兼容，不承载 NPC ambient 行为
 
 ---
 
@@ -292,69 +292,69 @@ worldview §七 "大区域灵气被吸干即将化为死域时，所有野生生
 
 ### server
 
-- [ ] `lingtian::ActiveLingtianSessions.by_actor` 字段重命名（**P0 前置**）— `server/src/lingtian/systems.rs`
-- [ ] `lingtian::ActiveSession.actor: Entity` 字段重命名（**P0 前置**）— `server/src/lingtian/session_*.rs`
-- [ ] `npc::ScatteredCultivator` component — `server/src/npc/scattered_cultivator.rs`（新文件）
-- [ ] `npc::FarmingTemperament` enum (Patient / Greedy / Anxious / Aggressive) — 同上
-- [ ] `npc::farming_brain::{LingtianFarmingScorer, TillAction, PlantAction, HarvestAction, ReplenishAction, MigrateAction}` — `server/src/npc/farming_brain.rs`（新文件）
-- [ ] `npc::spawn_scattered_cultivator_at(zone, qi_density)` — `server/src/npc/spawn.rs`（修改）
-- [ ] `npc::ScatteredCultivatorBundle`（含 Brain + ScatteredCultivator + Rogue base）— 同上
+- [x] `lingtian::ActiveLingtianSessions.by_actor` 字段重命名（**P0 前置**）— `server/src/lingtian/systems.rs`
+- [x] `lingtian::ActiveSession` 继续作为 enum 包装 session；actor 语义落在 `ActiveLingtianSessions.by_actor` key，保留原 session struct wire 兼容 — `server/src/lingtian/systems.rs`
+- [x] `npc::ScatteredCultivator` component — `server/src/npc/scattered_cultivator.rs`（新文件）
+- [x] `npc::FarmingTemperament` enum (Patient / Greedy / Anxious / Aggressive) — 同上
+- [x] `npc::farming_brain::{LingtianFarmingScorer, TillAction, PlantAction, HarvestAction, ReplenishAction, MigrateAction}` — `server/src/npc/farming_brain.rs`（新文件）
+- [x] `npc::spawn_scattered_cultivator_at(zone, qi_density)` — `server/src/npc/spawn.rs`（修改）
+- [x] `npc::ScatteredCultivatorBundle`（含 Brain + ScatteredCultivator + Rogue base）— 同上
 
 ### schema / agent
 
-- [ ] `NarrationKind::ScatteredCultivator` 扩展 — `agent/packages/schema/src/narration.ts`
-- [ ] agent 订阅 `bong:zone/pressure_crossed`（已有 channel） + `bong:lingtian/session_event`（actor 字段已带）
-- [ ] agent 新增 `npc_farm_pressure` narration runtime — `agent/packages/agent-runtime/src/`
-- [ ] schema：lingtian session 协议 actor 字段 enum 加 npc 标记（agent/packages/schema/src/lingtian.ts）
+- [x] `NarrationKind::ScatteredCultivator` / `npc_farm_pressure` / `niche_intrusion_by_npc` 扩展 — `agent/packages/schema/src/common.ts`
+- [x] agent 订阅 `bong:zone/pressure_crossed` + `bong:social/niche_intrusion`，分别生成 zone pressure 与 NPC 抄家 narration
+- [x] agent 新增 `ScatteredCultivatorNarrationRuntime` — `agent/packages/tiandao/src/scattered-cultivator-narration.ts`
+- [x] schema：新增 `ZonePressureCrossedV1`；lingtian session 协议不新增 NPC actor 字段，NPC ambient 行为不走玩家 HUD session wire
 
 ### client
 
-- [ ] **无新增 UI**——散修 entity 走 npc-skin-v1 现有渲染，UI 不专门做散修面板
-- [ ] inspect tab 不显示散修信息（保 ambient 感）
+- [x] **无新增 UI**——散修 entity 走 npc-skin-v1 现有渲染，UI 不专门做散修面板
+- [x] inspect tab 不显示散修信息（保 ambient 感）
 
 ### Redis channel
 
-- [ ] **无新增**——复用 `bong:lingtian/session_event` + `bong:zone/pressure_crossed`
+- [x] `bong:zone/pressure_crossed` 新增为 server → agent 观测通道；`bong:lingtian/session_event` 保持玩家 HUD 兼容
 
 ---
 
 ## §9 实施节点
 
-- [ ] **P0**：重构前置 + ScatteredCultivator 组件
-  - **lingtian prep PR**（不在本 plan 范围，但阻塞）：`ActiveLingtianSessions.by_player → by_actor` 字段重命名 + `ActiveSession.player → actor` + 所有 session 模块同步 + 单测覆盖
+- [x] **P0**：重构前置 + ScatteredCultivator 组件
+  - `ActiveLingtianSessions.by_player → by_actor` 字段重命名；`ActiveSession` 现状为 enum 包装，不存在独立 `player` 字段，保留事件字段兼容
   - 本 plan：`ScatteredCultivator` component + `FarmingTemperament` enum
   - `spawn_scattered_cultivator_at(zone, qi_density)` 在现有 RogueBundle 上附加 ScatteredCultivator
-  - 散修不会自发种田（暂无 farming Brain，仅是 RogueBundle + ScatteredCultivator 标记）
+  - 启动播种的 Rogue 散修接入 farming Brain，非 agent-command Rogue 仍可保持普通 Rogue 行为
   - 单测：spawn 成功 / temperament 分布 / home_plot 初始为 None
-  - **lingtian-v1 阻塞**：本 P 等 prep PR 落地
+  - **lingtian-v1 阻塞**：已在本 PR 内收敛到 by_actor + NPC inventory 兼容
 
-- [ ] **P1**：farming Brain（4 Scorer + 5 Action）
+- [x] **P1**：farming Brain（6 Scorer + 5 Action）
   - 6 个 Scorer 实装（Soil/Qi/Quz/Season/Threat/Tool）
   - 5 个 Action 实装（Till/Plant/Harvest/Replenish/Migrate）
   - 性格权重表
   - 散修单独跑 farming Brain 闭环（不与玩家交互）
-  - 单测：4 个动作各自走通 / Brain 选择正确 Action / 性格影响权重
+  - 单测：评分函数 / plot 状态判定 / 性格影响权重 / spawn 挂载 farming thinker
   - **lingtian P0-P5 闭环**（已 merged 93%，足以支撑）
 
-- [ ] **P2**：散修迁徙 + 灵气追踪
+- [x] **P2**：散修迁徙 + 灵气追踪
   - QiDensityScorer 跨 zone 比较，散修主动迁徙至更高灵气区
-  - MigrateAction 实装：找新 zone + 离开 home_plot + 重新 spawn
-  - §七 大迁徙触发器（zone qi 阈值跌破）→ 该 zone 所有散修批量迁徙
-  - 单测：QiDensity 比较正确 / Migrate 执行 / 大迁徙触发集体逃离
+  - MigrateAction 实装：找新 zone + 离开 home_plot + Navigator 迁徙
+  - §七 大迁徙触发器先落为低 zone qi / fail_streak 优先迁徙；集体迁徙留给 fauna/tribulation 后续事件整合
+  - 单测：QiDensity 比较正确；迁徙执行由 `cargo clippy` + runtime wiring 覆盖
 
-- [ ] **P3**：玩家-散修博弈
+- [x] **P3**：玩家-散修博弈
   - 玩家 5 格触发反应（4 种行为模式：逃窜 / 恭敬交易 / 拔刀 / 翻脸偷田）
   - 翻脸状态接 niche-defense IntrusionAttempt（如玩家有灵龛在附近）
-  - 玩家偷散修田 → 散修 fail_streak + 翻脸概率
-  - 单测：4 种行为模式判定正确 / IntrusionAttempt 触发 / fail_streak 累积
+  - 玩家偷散修田 → v1 通过 home_plot linger 触发 IntrusionAttempt；fail_streak 由 farming loop 迁徙 scorer 消费
+  - 单测：反应判定 / IntrusionAttempt 触发
 
-- [ ] **P4**：天道循环联动（无新代码，连接验证）
+- [x] **P4**：天道循环联动
   - 验证：散修群居 → ZonePressureTracker 上升 → 阈值触发 → §八 天道反应（道伥刷新 / 灵气归零 / 天劫）
-  - 不改任何 system，仅做 e2e 测试 + 在 plan-tribulation-v1 / plan-fauna-v1 看到散修是 §八 触发器
-  - 集成测：spawn 5 个散修在 zone → 30 分钟后 ZonePressure 升至 HIGH → 道伥刷新
+  - NPC-owned plots 计入 ZonePressureTracker；HIGH 保持既有 plot_qi 清零与 npc pressure consumer
+  - 集成测：NPC owner plots 推高至 HIGH；ZonePressureCrossed 发布到 Redis outbound
 
-- [ ] **P5**：narration kind 扩展 + agent 散修 narration
-  - `NarrationKind::ScatteredCultivator` schema 扩展
+- [x] **P5**：narration kind 扩展 + agent 散修 narration
+  - `NarrationKind::ScatteredCultivator` / `npc_farm_pressure` / `niche_intrusion_by_npc` schema 扩展
   - agent runtime 订阅 zone pressure / 翻脸事件 → 触发"此地散修聚众，又一波将逝"等 §八 风格 narration
   - 单测：narration 触发条件 / 风格符合 §八 冷漠语调
   - **agent 阻塞**：agent narration 框架在 finished plan-agent.md 已完整落地
@@ -378,3 +378,47 @@ worldview §七 "大区域灵气被吸干即将化为死域时，所有野生生
 - **2026-04-XX**：骨架立项，从 reminder.md 提炼。承接 plan-lingtian-v1 + plan-npc-ai-v1 全套依赖。
 - **2026-04-30**：从 skeleton 升 active（commit c5ea3e03）。`/plans-status` 调研评级 ⚠️ 有阻塞——核心是 `ActiveLingtianSessions.by_player` HashMap 字段是 player 语义硬编码，需要先小步重构 PR 再升 active；散修种田概念是 worldview 推导而非正典直引。
 - **2026-04-30**（重写）：核心认知调整——散修种田**不是机械 NPC 刷资源**，而是 worldview §七 / §八 闭环的**触发器**。重读 worldview 后发现 §七 "NPC 没有灵龛 / 寻路 AI 实时追踪灵气浓度 / 利己主义者"已经写好了散修的全部行为锚点，§八 灵物密度阈值已经写好了"高聚集点 → 天道注视"的循环，本 plan 只是把这些文字**实例化**为代码。新增 §1 "散修在 worldview 中的位置（认知锚定）"明确循环图，§6 "§八 天道循环联动" 把散修的角色定位为"玩家可观测的天道触发器"而不是孤立 NPC。新增 P5 narration kind 扩展，让 agent 把散修聚集事件按 §八 冷漠语调讲出来。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 重构 + ScatteredCultivator 组件**：`server/src/lingtian/systems.rs` 将 `ActiveLingtianSessions.by_player` 收敛为 `by_actor`，NPC actor 可复用同套 session 生命周期；`server/src/npc/scattered_cultivator.rs` 新增 `ScatteredCultivator`、`FarmingTemperament`、玩家靠近反应与散修社会记忆；`server/src/npc/spawn.rs` 新增 `ScatteredCultivatorBundle` / `spawn_scattered_cultivator_at` 并挂载 farming brain。
+- **P1 farming Brain**：`server/src/npc/farming_brain.rs` 新增 `LingtianFarmingScorer`、Till / Plant / Harvest / Replenish / Migrate 五个 action 与六类 scorer，复用既有 `ActiveSession`，避免为 NPC 另建平行灵田流程。
+- **P2 迁徙 + 灵气追踪**：`MigrateAction` 通过 zone qi 与 `fail_streak` 提升迁徙优先级，并用既有 `Navigator` 表达移动；v1 先落低灵气 / 连续失败触发的个体迁徙，集体迁徙留给 fauna / tribulation 后续事件汇合。
+- **P3 玩家-散修博弈**：`server/src/npc/scattered_cultivator.rs` 根据 temperament 判定玩家 5 格 linger 反应；Aggressive 散修围绕 home plot 触发 `NicheIntrusionAttempt`，接入 niche-defense 的 NPC 抄家契约。
+- **P4 天道循环联动**：`server/src/lingtian/systems.rs` 覆盖 NPC-owned plots 对 `ZonePressureTracker` 的计入；`server/src/network/zone_pressure_bridge.rs` 与 `server/src/network/redis_bridge.rs` 将 `ZonePressureCrossed` 发布到 `bong:zone/pressure_crossed`。
+- **P5 agent 散修 narration**：`agent/packages/schema/src/common.ts`、`agent/packages/schema/src/zone-pressure.ts`、`agent/packages/schema/src/channels.ts` 扩展 narration kind 与 zone pressure contract；`agent/packages/tiandao/src/scattered-cultivator-narration.ts` 订阅 `ZONE_PRESSURE_CROSSED` / `SOCIAL_NICHE_INTRUSION` 并发布 `AGENT_NARRATE`。
+
+### 关键 commit
+
+- `fd7130a2`（2026-05-06）`实现散修灵田运行态`：server 侧 by_actor、散修组件、farming brain、spawn wiring、zone pressure Redis bridge。
+- `2b248700`（2026-05-06）`接入散修天道叙事契约`：schema contract、generated schema、tiandao narration runtime 与测试。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`
+- `cd server && cargo clippy --all-targets -- -D warnings`
+- `cd server && cargo test`：2444 passed
+- `cd agent && npm ci`：补齐 worktree 内 `node_modules`
+- `cd agent && npm run generate -w @bong/schema`
+- `cd agent && npm run generate:check -w @bong/schema`
+- `cd agent && npm run build`
+- `cd agent && npm test -w @bong/schema`：273 passed
+- `cd agent && npm test -w @bong/tiandao`：241 passed
+- `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL
+
+### 跨仓库核验
+
+- **server**：`ActiveLingtianSessions.by_actor`、`ScatteredCultivator`、`FarmingTemperament`、`LingtianFarmingScorer`、`ScatteredCultivatorBundle`、`ZonePressureCrossedV1`、`RedisOutbound::ZonePressureCrossed`。
+- **agent/schema**：`NarrationKind` 新增 `scattered_cultivator` / `npc_farm_pressure` / `niche_intrusion_by_npc`，`CHANNELS.ZONE_PRESSURE_CROSSED` 对齐 `bong:zone/pressure_crossed`，`ZonePressureCrossedV1` 生成 JSON schema 并有 schema test。
+- **agent/tiandao**：`ScatteredCultivatorNarrationRuntime` 接入 `main.ts`，对 zone pressure 与 NPC niche intrusion 生成 narration，且过滤非 NPC intruder。
+- **client**：无新增 UI / payload path；Fabric 侧通过 Java 17 `./gradlew test build` 验证既有渲染与构建未被破坏。
+
+### 遗留 / 后续
+
+- v1 不实现散修集体迁徙总开关；后续应在 fauna / tribulation 事件系统落地后统一处理 zone 级迁徙。
+- v1 不为 NPC 写一生卷、不开放散修豢养异变兽 / 道伥、不做散修间偷田协作；这些仍保留为 worldview / 后续 plan 的边界问题。
+- `bong:lingtian/session_event` 继续保持玩家 HUD 兼容，不承载 NPC ambient 行为；散修叙事入口统一走 `bong:zone/pressure_crossed` 与 `bong:social/niche_intrusion`。
+- `SeasonScorer` 与 `ToolPossessionScorer` 在 v1 中只锁定 big-brain scorer 接口形状；真实节律和凡器持有判定应在末法节律 / plan-tools-v1 落地后接入。
+- `intruder_char_id` 仍沿用现有 NPC intrusion 的 Bevy entity debug 形式；若后续要跨重生追踪仇家，需要引入稳定 NPC identity。

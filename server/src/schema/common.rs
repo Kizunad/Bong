@@ -55,6 +55,9 @@ pub enum NarrationStyle {
 pub enum NarrationKind {
     DeathInsight,
     NicheIntrusion,
+    NicheIntrusionByNpc,
+    NpcFarmPressure,
+    ScatteredCultivator,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

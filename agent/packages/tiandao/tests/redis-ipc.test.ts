@@ -13,7 +13,7 @@ const {
   BOTANY_ECOLOGY,
   BREAKTHROUGH_EVENT,
   COMBAT_REALTIME,
-  LINGTIAN_ZONE_PRESSURE,
+  ZONE_PRESSURE_CROSSED,
   PSEUDO_VEIN_ACTIVE,
   PSEUDO_VEIN_DISSIPATE,
   FORGE_OUTCOME,
@@ -545,7 +545,7 @@ describe("redis-ipc", () => {
     warn.mockRestore();
   });
 
-  it("observes lingtian zone pressure events from the dedicated channel", async () => {
+  it("observes zone pressure crossed events from the dedicated channel", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
 
@@ -561,25 +561,26 @@ describe("redis-ipc", () => {
       },
     );
     const callback = vi.fn();
-    ipc.onLingtianZonePressure(callback);
+    ipc.onZonePressureCrossed(callback);
 
     await ipc.connect();
     await sub.publish(
-      LINGTIAN_ZONE_PRESSURE,
+      ZONE_PRESSURE_CROSSED,
       JSON.stringify({
         v: 1,
+        kind: "zone_pressure_crossed",
         zone: "starter_zone",
         level: "high",
         raw_pressure: 1.1,
-        tick: 1440,
+        at_tick: 1440,
       }),
     );
 
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(ipc.drainLingtianZonePressureEvents()).toEqual([
+    expect(ipc.drainZonePressureCrossedEvents()).toEqual([
       expect.objectContaining({ zone: "starter_zone", level: "high", raw_pressure: 1.1 }),
     ]);
-    expect(ipc.drainLingtianZonePressureEvents()).toEqual([]);
+    expect(ipc.drainZonePressureCrossedEvents()).toEqual([]);
   });
 
   it("observes novice POI events for narration triggers", async () => {
@@ -657,7 +658,7 @@ describe("redis-ipc", () => {
     expect(sub.getSubscribedChannels()).toEqual(
       expect.arrayContaining([
         BOTANY_ECOLOGY,
-        LINGTIAN_ZONE_PRESSURE,
+        ZONE_PRESSURE_CROSSED,
         AGING,
         BREAKTHROUGH_EVENT,
         SOCIAL_FEUD,

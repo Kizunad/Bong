@@ -3,15 +3,20 @@
   "type": "object",
   "required": [
     "v",
+    "kind",
     "zone",
     "level",
     "raw_pressure",
-    "tick"
+    "at_tick"
   ],
   "properties": {
     "v": {
       "const": 1,
       "type": "number"
+    },
+    "kind": {
+      "const": "zone_pressure_crossed",
+      "type": "string"
     },
     "zone": {
       "minLength": 1,
@@ -36,7 +41,7 @@
     "raw_pressure": {
       "type": "number"
     },
-    "tick": {
+    "at_tick": {
       "minimum": 0,
       "type": "integer"
     }

@@ -1,10 +1,10 @@
 import type {
   BotanyEcologySnapshotV1,
   BotanyZoneEcologyV1,
-  LingtianZonePressureV1,
   NpcSnapshot,
   PlayerProfile,
   WorldStateV1,
+  ZonePressureCrossedV1,
   ZoneSnapshot,
 } from "@bong/schema";
 import { NEWBIE_POWER_THRESHOLD } from "@bong/schema";
@@ -130,7 +130,7 @@ export class WorldModel {
   readonly botanyEcologyHistory = new Map<string, BotanyZoneEcologyV1[]>();
   readonly zoneStressFlags = new Map<string, ZoneStressFlag>();
   readonly zoneAnomalyHistory = new Map<string, ZoneAnomalyLog[]>();
-  readonly latestLingtianZonePressure = new Map<string, LingtianZonePressureV1>();
+  readonly latestZonePressureCrossed = new Map<string, ZonePressureCrossedV1>();
   private newPlayersThisTick = new Set<string>();
   private suppressNewPlayersThisTickOnNextUpdate = false;
 
@@ -245,8 +245,8 @@ export class WorldModel {
     }
   }
 
-  ingestLingtianZonePressure(event: LingtianZonePressureV1): void {
-    this.latestLingtianZonePressure.set(event.zone, { ...event });
+  ingestZonePressureCrossed(event: ZonePressureCrossedV1): void {
+    this.latestZonePressureCrossed.set(event.zone, { ...event });
   }
 
   getRecentBotanyEcologySnapshots(): BotanyEcologySnapshotV1[] {
@@ -265,8 +265,8 @@ export class WorldModel {
     return (this.zoneAnomalyHistory.get(zoneName) ?? []).map((entry) => ({ ...entry }));
   }
 
-  getLatestLingtianZonePressure(zoneName: string): LingtianZonePressureV1 | null {
-    const event = this.latestLingtianZonePressure.get(zoneName);
+  getLatestZonePressureCrossed(zoneName: string): ZonePressureCrossedV1 | null {
+    const event = this.latestZonePressureCrossed.get(zoneName);
     return event ? { ...event } : null;
   }
 

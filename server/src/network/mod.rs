@@ -28,7 +28,6 @@ pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
-pub mod lingtian_pressure_bridge;
 pub mod npc_event_bridge;
 pub mod poi_novice_bridge;
 pub mod qi_color_observed_emit;
@@ -55,6 +54,7 @@ pub mod weapon_equipped_emit;
 pub mod woliu_event_bridge;
 pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
+pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
@@ -325,6 +325,8 @@ pub fn register(app: &mut App) {
             npc_event_bridge::publish_npc_spawn_events,
             npc_event_bridge::publish_npc_death_events,
             npc_event_bridge::publish_faction_events.after(execute_agent_commands),
+            zone_pressure_bridge::publish_zone_pressure_crossed_events
+                .after(crate::lingtian::systems::compute_zone_pressure_system),
         ),
     );
     app.add_systems(
@@ -400,8 +402,6 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
             poi_novice_bridge::publish_poi_spawned_events,
             poi_novice_bridge::publish_trespass_events,
-            lingtian_pressure_bridge::publish_lingtian_zone_pressure_events
-                .after(crate::lingtian::systems::compute_zone_pressure_system),
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),

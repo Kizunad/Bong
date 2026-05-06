@@ -143,7 +143,6 @@ import {
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
-import { LingtianZonePressureV1 } from "./lingtian.js";
 import {
   HeartDemonOfferDraftV1,
   HeartDemonPregenRequestV1,
@@ -345,6 +344,7 @@ import {
 } from "./container-interaction.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
+import { ZonePressureCrossedV1, ZonePressureLevelV1 } from "./zone-pressure.js";
 
 export const SCHEMA_REGISTRY = {
   worldStateV1: WorldStateV1,
@@ -352,6 +352,8 @@ export const SCHEMA_REGISTRY = {
   agentWorldModelEnvelopeV1: AgentWorldModelEnvelopeV1,
   agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
   narrationV1: NarrationV1,
+  zonePressureLevelV1: ZonePressureLevelV1,
+  zonePressureCrossedV1: ZonePressureCrossedV1,
   npcArchetypeV1: NpcArchetypeV1,
   npcSpawnSourceV1: NpcSpawnSourceV1,
   npcDeathCauseV1: NpcDeathCauseV1,
@@ -503,7 +505,6 @@ export const SCHEMA_REGISTRY = {
   shedEventV1: ShedEventV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
-  lingtianZonePressureV1: LingtianZonePressureV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
   exposureKindV1: ExposureKindV1,
@@ -659,6 +660,8 @@ export const GENERATED_SCHEMA_FILES = {
   "agent-world-model-envelope-v1.json": SCHEMA_REGISTRY.agentWorldModelEnvelopeV1,
   "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
+  "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
+  "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
   "npc-archetype-v1.json": SCHEMA_REGISTRY.npcArchetypeV1,
   "npc-spawn-source-v1.json": SCHEMA_REGISTRY.npcSpawnSourceV1,
   "npc-death-cause-v1.json": SCHEMA_REGISTRY.npcDeathCauseV1,
@@ -850,7 +853,6 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-false-skin-state-v1.json":
     SCHEMA_REGISTRY.serverDataFalseSkinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
-  "lingtian-zone-pressure-v1.json": SCHEMA_REGISTRY.lingtianZonePressureV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7
   "exposure-kind-v1.json": SCHEMA_REGISTRY.exposureKindV1,

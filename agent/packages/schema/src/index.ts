@@ -20,7 +20,6 @@ export * from "./combat-hud.js";
 export * from "./combat-event.js";
 export * from "./dugu.js";
 export * from "./inventory.js";
-export * from "./lingtian.js";
 export * from "./narration.js";
 export * from "./npc.js";
 export * from "./poi-novice.js";
@@ -38,6 +37,7 @@ export * from "./vfx-event.js";
 export * from "./tuike.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
+export * from "./zone-pressure.js";
 export * from "./zong-formation.js";
 
 // Validation & registry

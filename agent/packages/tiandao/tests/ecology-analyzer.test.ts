@@ -114,12 +114,13 @@ describe("EcologyAnalyzer", () => {
     );
 
     expect(
-      analyzer.ingestLingtianZonePressure(model, {
+      analyzer.ingestZonePressureCrossed(model, {
         v: 1,
+        kind: "zone_pressure_crossed",
         zone: "starter_zone",
         level: "high",
         raw_pressure: 1.2,
-        tick: 700,
+        at_tick: 700,
       }),
     ).toEqual([
       expect.objectContaining({
