@@ -43,4 +43,5 @@ pub mod tuike;
 pub mod vfx_event;
 pub mod woliu;
 pub mod world_state;
+pub mod zone_pressure;
 pub mod zong_formation;

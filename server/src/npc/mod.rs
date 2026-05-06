@@ -1,5 +1,6 @@
 pub mod brain;
 pub mod faction;
+pub mod farming_brain;
 pub mod hunger;
 pub mod intrusion_npc;
 pub mod lifecycle;
@@ -12,6 +13,7 @@ pub mod patrol;
 pub mod poi_rogue_village;
 pub mod possession;
 pub mod relic;
+pub mod scattered_cultivator;
 pub mod scenario;
 pub mod social;
 pub mod spawn;
@@ -25,7 +27,7 @@ use valence::prelude::App;
 
 pub fn register(app: &mut App) {
     tracing::info!(
-        "[bong][npc] registering faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/movement/navigator/scenario/lingtian_pressure/territory systems"
+        "[bong][npc] registering faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/farming/movement/navigator/scenario/lingtian_pressure/territory systems"
     );
     faction::register(app);
     spawn::register(app);
@@ -36,12 +38,14 @@ pub fn register(app: &mut App) {
     patrol::register(app);
     sync::register(app);
     brain::register(app);
+    farming_brain::register(app);
     tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator
     navigator::register(app);
     scenario::register(app);
     lingtian_pressure::register(app);
     territory::register(app);
+    scattered_cultivator::register(app);
     social::register(app);
     intrusion_npc::register(app);
     relic::register(app);
