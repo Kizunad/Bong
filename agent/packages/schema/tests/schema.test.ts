@@ -26,6 +26,10 @@ import {
 } from "../src/death-lifecycle.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
+  ZonePressureCrossedV1,
+  validateZonePressureCrossedV1Contract,
+} from "../src/zone-pressure.js";
+import {
   INTENSITY_MAX,
   INTENSITY_MIN,
   MAX_COMMANDS_PER_TICK,
@@ -178,6 +182,11 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(
       CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
     );
+  });
+
+  it("declares zone pressure Redis channel", () => {
+    expect(CHANNELS.ZONE_PRESSURE_CROSSED).toBe("bong:zone/pressure_crossed");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONE_PRESSURE_CROSSED);
   });
 
   it("world-state.sample.json", () => {
@@ -355,6 +364,24 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("server-data.botany-skill.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("zone pressure contract accepts rising pressure events", () => {
+    const data = {
+      v: 1,
+      kind: "zone_pressure_crossed",
+      zone: "starter_zone",
+      level: "high",
+      raw_pressure: 1.25,
+      at_tick: 1440,
+    };
+
+    expect(validate(ZonePressureCrossedV1, data).ok).toBe(true);
+    expectContractAccepts("ZonePressureCrossedV1", validateZonePressureCrossedV1Contract, data);
+    expectContractRejects("ZonePressureCrossedV1", validateZonePressureCrossedV1Contract, {
+      ...data,
+      level: "none",
+    });
   });
 
   it("server-data.cultivation-detail.sample.json", () => {

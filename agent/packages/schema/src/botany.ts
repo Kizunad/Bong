@@ -1,5 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+import { validate, type ValidationResult } from "./validate.js";
+
 export const BotanyHarvestModeV1 = Type.Union([
   Type.Literal("manual"),
   Type.Literal("auto"),
@@ -64,3 +66,7 @@ export const BotanyEcologySnapshotV1 = Type.Object(
   { additionalProperties: false },
 );
 export type BotanyEcologySnapshotV1 = Static<typeof BotanyEcologySnapshotV1>;
+
+export function validateBotanyEcologySnapshotV1Contract(data: unknown): ValidationResult {
+  return validate(BotanyEcologySnapshotV1, data);
+}

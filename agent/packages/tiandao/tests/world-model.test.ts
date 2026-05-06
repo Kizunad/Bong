@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
+import type { BotanyEcologySnapshotV1, PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
 import { WorldModel } from "../src/world-model.js";
 
 interface PlayerOverrides extends Partial<Omit<PlayerProfile, "breakdown" | "pos" | "name">> {
@@ -456,5 +456,47 @@ describe("WorldModel", () => {
     expect(model.latestState?.npcs[0]?.digest?.disciple?.mission_queue?.top_mission_id).toBe(
       "mission:hold_spawn_gate",
     );
+  });
+
+  it("ingests botany ecology snapshots into latest state, stress flags, and anomaly windows", () => {
+    const model = new WorldModel();
+    const snapshot: BotanyEcologySnapshotV1 = {
+      v: 1,
+      tick: 600,
+      zones: [
+        {
+          zone: "starter_zone",
+          spirit_qi: 0.12,
+          plant_counts: [{ kind: "ning_mai_cao", count: 12 }],
+          variant_counts: [
+            { variant: "tainted", count: 4 },
+            { variant: "thunder", count: 6 },
+          ],
+        },
+      ],
+    };
+
+    model.ingestBotanyEcology(snapshot);
+    snapshot.zones[0]?.plant_counts.push({ kind: "mutated", count: 99 });
+
+    expect(model.botany_ecology?.tick).toBe(600);
+    expect(model.botany_ecology?.zones[0]?.plant_counts).toEqual([
+      { kind: "ning_mai_cao", count: 12 },
+    ]);
+    expect(model.getZoneStressFlags()).toEqual([
+      expect.objectContaining({
+        zone: "starter_zone",
+        plantCount: 12,
+        reason: "low_qi_high_density",
+      }),
+    ]);
+    expect(model.getZoneAnomalyWindow("starter_zone")).toEqual([
+      expect.objectContaining({
+        taintedCount: 4,
+        thunderCount: 6,
+        taintedThresholdExceeded: true,
+        thunderThresholdExceeded: true,
+      }),
+    ]);
   });
 });

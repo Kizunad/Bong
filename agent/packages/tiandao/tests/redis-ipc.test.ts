@@ -13,6 +13,7 @@ const {
   BOTANY_ECOLOGY,
   BREAKTHROUGH_EVENT,
   COMBAT_REALTIME,
+  ZONE_PRESSURE_CROSSED,
   PSEUDO_VEIN_ACTIVE,
   PSEUDO_VEIN_DISSIPATE,
   FORGE_OUTCOME,
@@ -488,6 +489,100 @@ describe("redis-ipc", () => {
     ]);
   });
 
+  it("observes valid botany ecology snapshots and skips invalid payloads", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onBotanyEcology(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      BOTANY_ECOLOGY,
+      JSON.stringify({
+        v: 1,
+        tick: 84,
+        zones: [
+          {
+            zone: "starter_zone",
+            spirit_qi: 0.12,
+            plant_counts: [{ kind: "ning_mai_cao", count: 12 }],
+            variant_counts: [{ variant: "tainted", count: 4 }],
+          },
+        ],
+      }),
+    );
+    await sub.publish(
+      BOTANY_ECOLOGY,
+      JSON.stringify({ v: 1, tick: 85, zones: [{ zone: "bad", spirit_qi: 2 }] }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.drainBotanyEcologyEvents()).toEqual([
+      expect.objectContaining({
+        tick: 84,
+        zones: [expect.objectContaining({ zone: "starter_zone" })],
+      }),
+    ]);
+    expect(ipc.drainBotanyEcologyEvents()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[redis-ipc] invalid botany ecology snapshot:",
+      expect.stringContaining("spirit_qi"),
+    );
+
+    warn.mockRestore();
+  });
+
+  it("observes zone pressure crossed events from the dedicated channel", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onZonePressureCrossed(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      ZONE_PRESSURE_CROSSED,
+      JSON.stringify({
+        v: 1,
+        kind: "zone_pressure_crossed",
+        zone: "starter_zone",
+        level: "high",
+        raw_pressure: 1.1,
+        at_tick: 1440,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.drainZonePressureCrossedEvents()).toEqual([
+      expect.objectContaining({ zone: "starter_zone", level: "high", raw_pressure: 1.1 }),
+    ]);
+    expect(ipc.drainZonePressureCrossedEvents()).toEqual([]);
+  });
+
   it("observes novice POI events for narration triggers", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
@@ -563,6 +658,7 @@ describe("redis-ipc", () => {
     expect(sub.getSubscribedChannels()).toEqual(
       expect.arrayContaining([
         BOTANY_ECOLOGY,
+        ZONE_PRESSURE_CROSSED,
         AGING,
         BREAKTHROUGH_EVENT,
         SOCIAL_FEUD,
