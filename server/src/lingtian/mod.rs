@@ -20,6 +20,7 @@
 //! valence BlockKind ↔ TerrainKind 适配 + 真正的 BlockEntity 持久化留给
 //! 下游切片（与 plan-persistence-v1 联动）。
 
+pub mod contamination;
 pub mod environment;
 pub mod events;
 pub mod growth;
@@ -34,6 +35,8 @@ pub mod session;
 pub mod systems;
 pub mod terrain;
 
+#[allow(unused_imports)]
+pub use contamination::{apply_dye_contamination_on_replenish, dye_contamination_decay_tick};
 #[allow(unused_imports)]
 pub use environment::{compute_plot_qi_cap, PlotBiome, PlotEnvironment};
 #[allow(unused_imports)]
@@ -129,6 +132,7 @@ pub fn register(app: &mut App) {
     app.add_event::<HarvestCompleted>();
     app.add_event::<StartReplenishRequest>();
     app.add_event::<ReplenishCompleted>();
+    app.add_event::<events::DyeContaminationWarning>();
     app.add_event::<StartDrainQiRequest>();
     app.add_event::<DrainQiCompleted>();
     app.add_event::<ZonePressureCrossed>();
@@ -152,6 +156,7 @@ pub fn register(app: &mut App) {
         (
             systems::lingtian_growth_tick,
             // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）
+            systems::record_dye_contamination_warning_recent_events,
             systems::record_replenish_to_pressure,
             systems::compute_zone_pressure_system,
             // session emit 在 apply 后跑，client 拿到的是结算后状态

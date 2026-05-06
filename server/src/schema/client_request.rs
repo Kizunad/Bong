@@ -381,7 +381,9 @@ pub enum ClientRequestV1 {
         x: i32,
         y: i32,
         z: i32,
-        /// "zone" / "bone_coin" / "beast_core" / "ling_shui"。
+        /// "zone" / "bone_coin" / "beast_core" / "ling_shui" /
+        /// "pill_residue_failed_pill" / "pill_residue_flawed_pill" /
+        /// "pill_residue_processing_dregs" / "pill_residue_aging_scraps"。
         source: String,
     },
     /// plan §1.7 — 起偷灵 session。

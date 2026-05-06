@@ -17,6 +17,7 @@ use valence::prelude::{
     Events, Query, Res, ResMut, Resource, Username, With,
 };
 
+use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_failure_outcome};
 use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
@@ -4375,6 +4376,20 @@ fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
         "bone_coin" => Some(ReplenishSource::BoneCoin),
         "beast_core" => Some(ReplenishSource::BeastCore),
         "ling_shui" => Some(ReplenishSource::LingShui),
+        "pill_residue_failed_pill" | "failed_pill" => Some(ReplenishSource::PillResidue {
+            residue_kind: crate::alchemy::residue::PillResidueKind::FailedPill,
+        }),
+        "pill_residue_flawed_pill" | "flawed_pill" => Some(ReplenishSource::PillResidue {
+            residue_kind: crate::alchemy::residue::PillResidueKind::FlawedPill,
+        }),
+        "pill_residue_processing_dregs" | "processing_dregs" => {
+            Some(ReplenishSource::PillResidue {
+                residue_kind: crate::alchemy::residue::PillResidueKind::ProcessingDregs,
+            })
+        }
+        "pill_residue_aging_scraps" | "aging_scraps" => Some(ReplenishSource::PillResidue {
+            residue_kind: crate::alchemy::residue::PillResidueKind::AgingScraps,
+        }),
         _ => None,
     }
 }
@@ -5970,7 +5985,7 @@ fn handle_alchemy_take_back(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     slot_idx: u8,
-    _tick: u64,
+    tick: u64,
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     registry: &RecipeRegistry,
@@ -5979,7 +5994,7 @@ fn handle_alchemy_take_back(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
-    instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
+    mut instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -6028,6 +6043,21 @@ fn handle_alchemy_take_back(
                     let scaled_meridian_crack =
                         scale_alchemy_explosion_crack(*meridian_crack, furnace.tier);
                     furnace.apply_explode((*damage / 100.0).clamp(0.05, 0.75));
+                    if let Some(instance_allocator) = instance_allocator.as_deref_mut() {
+                        grant_alchemy_outcome_item(
+                            entity,
+                            &mut client,
+                            username.0.as_str(),
+                            &player_id,
+                            &outcome,
+                            tick,
+                            inventories,
+                            player_states,
+                            cultivations,
+                            item_registry,
+                            instance_allocator,
+                        );
+                    }
                     if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
                         outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
                             furnace: furnace_entity,
@@ -6050,7 +6080,7 @@ fn handle_alchemy_take_back(
                         send_alchemy_error(
                             &mut client,
                             &player_id,
-                            "成丹入袋失败：实例编号器未就绪".to_string(),
+                            "炼丹产物入袋失败：实例编号器未就绪".to_string(),
                         );
                         return;
                     };
@@ -6060,6 +6090,7 @@ fn handle_alchemy_take_back(
                         username.0.as_str(),
                         &player_id,
                         &outcome,
+                        tick,
                         inventories,
                         player_states,
                         cultivations,
@@ -6095,44 +6126,61 @@ fn grant_alchemy_outcome_item(
     username: &str,
     player_id: &str,
     outcome: &crate::alchemy::ResolvedOutcome,
+    tick: u64,
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
     instance_allocator: &mut InventoryInstanceIdAllocator,
 ) {
-    let crate::alchemy::ResolvedOutcome::Pill {
-        pill,
-        recipe_id,
-        quality_tier,
-        effect_multiplier,
-        consecrated,
-        side_effect,
-        ..
-    } = outcome
-    else {
-        return;
+    let (template_id, alchemy, reason) = match outcome {
+        crate::alchemy::ResolvedOutcome::Pill {
+            pill,
+            recipe_id,
+            quality_tier,
+            effect_multiplier,
+            consecrated,
+            side_effect,
+            ..
+        } => (
+            pill.as_str(),
+            Some(AlchemyItemData::Pill {
+                recipe_id: recipe_id.clone(),
+                quality_tier: *quality_tier,
+                effect_multiplier: *effect_multiplier,
+                consecrated: *consecrated,
+                side_effect: side_effect.clone(),
+            }),
+            "alchemy_outcome_grant",
+        ),
+        other => {
+            let Some(residue_kind) = residue_kind_for_failure_outcome(other) else {
+                return;
+            };
+            (
+                residue_kind.spec().template_id,
+                Some(residue_alchemy_data(residue_kind, tick)),
+                "alchemy_residue_grant",
+            )
+        }
     };
     let Ok(mut inventory) = inventories.get_mut(entity) else {
-        send_alchemy_error(client, player_id, "未找到背包，成丹无法入袋".to_string());
+        send_alchemy_error(
+            client,
+            player_id,
+            "未找到背包，炼丹产物无法入袋".to_string(),
+        );
         return;
     };
-    let alchemy = Some(AlchemyItemData::Pill {
-        recipe_id: recipe_id.clone(),
-        quality_tier: *quality_tier,
-        effect_multiplier: *effect_multiplier,
-        consecrated: *consecrated,
-        side_effect: side_effect.clone(),
-    });
     if let Err(error) = add_item_to_player_inventory_with_alchemy(
         &mut inventory,
         item_registry,
         instance_allocator,
-        pill,
+        template_id,
         1,
         alchemy,
     ) {
-        send_alchemy_error(client, player_id, format!("成丹入袋失败：{error}"));
+        send_alchemy_error(client, player_id, format!("炼丹产物入袋失败：{error}"));
         return;
     }
     if let (Ok(player_state), Ok(cultivation)) =
@@ -6145,7 +6193,7 @@ fn grant_alchemy_outcome_item(
             &inventory,
             player_state,
             cultivation,
-            "alchemy_outcome_grant",
+            reason,
         );
     }
 }

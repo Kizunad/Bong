@@ -92,6 +92,7 @@ pub fn advance_one_lingtian_tick(
     kind: &PlantKind,
     zone_qi: &mut f32,
 ) -> GrowthOutcome {
+    let contamination_multiplier = plot.contamination_quality_multiplier();
     let Some(crop) = plot.crop.as_mut() else {
         return GrowthOutcome::NoCrop;
     };
@@ -114,7 +115,7 @@ pub fn advance_one_lingtian_tick(
 
     if plot.plot_qi >= base_drain {
         let mult = quality_multiplier(qi_ratio);
-        let bonus = quality_bonus(qi_ratio);
+        let bonus = quality_bonus(qi_ratio) * contamination_multiplier;
         let delta = per_tick * mult;
         crop.growth = (crop.growth + delta).min(1.0);
         crop.quality_accum += bonus;

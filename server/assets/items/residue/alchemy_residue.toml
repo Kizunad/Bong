@@ -1,0 +1,49 @@
+# plan-alchemy-recycle-v1 §2 — 炼丹/炮制废料，反哺灵田用。
+
+[[item]]
+id = "alchemy_residue_failed_pill"
+name = "失败丹渣"
+category = "misc"
+max_stack_count = 16
+grid_w = 1
+grid_h = 1
+base_weight = 0.08
+rarity = "common"
+spirit_quality_initial = 0.25
+description = "炉中彻底败坏后剩下的丹渣，残灵未散，可反哺灵田但杂染风险很高。"
+
+[[item]]
+id = "alchemy_residue_flawed_pill"
+name = "废丹残渣"
+category = "misc"
+max_stack_count = 16
+grid_w = 1
+grid_h = 1
+base_weight = 0.07
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "品相低劣的废丹碾碎所得，补灵较足，仍会把杂音留在田里。"
+
+[[item]]
+id = "alchemy_residue_processing_dregs"
+name = "炮制药渣"
+category = "misc"
+max_stack_count = 16
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.20
+description = "炮制、萃取后留下的药渣，灵气少而杂染风险较低。"
+
+[[item]]
+id = "alchemy_residue_aging_scraps"
+name = "加工碎屑"
+category = "misc"
+max_stack_count = 16
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "晾晒过期、碾粉散落后的碎屑，只够给灵田补一点残气。"

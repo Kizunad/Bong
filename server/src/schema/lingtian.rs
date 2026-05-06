@@ -30,6 +30,15 @@ pub struct LingtianSessionDataV1 {
     /// 仅 Planting / Harvest 携带 plant_id；其余 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plant_id: Option<String>,
+    /// 仅 Replenish 携带来源 wire id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// 当前目标 plot 的杂染值；缺省表示 server 未携带 plot 状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dye_contamination: Option<f32>,
+    /// `dye_contamination >= 0.3` 时客户端 HUD 显示"已染杂" tag。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dye_contamination_warning: bool,
 }
 
 impl Default for LingtianSessionDataV1 {
@@ -41,6 +50,13 @@ impl Default for LingtianSessionDataV1 {
             elapsed_ticks: 0,
             target_ticks: 0,
             plant_id: None,
+            source: None,
+            dye_contamination: None,
+            dye_contamination_warning: false,
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

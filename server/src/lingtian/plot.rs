@@ -23,6 +23,8 @@ pub struct LingtianPlot {
     pub harvest_count: u32,
     /// plan §1.4 补灵冷却（72-168h）的基准时刻，单位 server tick。
     pub last_replenish_at: u64,
+    /// plan-alchemy-recycle-v1 §3：plot 级杂染，范围 [0, 1]。
+    pub dye_contamination: f32,
 }
 
 /// 田块基线 cap（plan §1.1 — 1.0 / 水源 +0.3 / 湿地 +0.5 / 聚灵阵 +1.0，封顶 3.0）。
@@ -31,6 +33,9 @@ pub const PLOT_QI_CAP_MAX: f32 = 3.0;
 
 /// plan §1.6：累计 N_RENEW 次收获后进入"贫瘠"，必须翻新。
 pub const N_RENEW: u32 = 5;
+pub const DYE_CONTAMINATION_WARNING_THRESHOLD: f32 = 0.3;
+pub const DYE_CONTAMINATION_DECAY_PER_LINGTIAN_TICK: f32 = 0.001;
+pub const DYE_CONTAMINATION_QUALITY_PENALTY_MAX: f32 = 0.3;
 
 impl LingtianPlot {
     pub fn new(pos: BlockPos, owner: Option<Entity>) -> Self {
@@ -42,6 +47,7 @@ impl LingtianPlot {
             plot_qi_cap: PLOT_QI_CAP_BASE,
             harvest_count: 0,
             last_replenish_at: 0,
+            dye_contamination: 0.0,
         }
     }
 
@@ -59,6 +65,7 @@ impl LingtianPlot {
         self.crop = None;
         self.plot_qi = 0.0;
         self.harvest_count = 0;
+        self.dye_contamination = 0.0;
     }
 
     /// 灵气注入，封顶 cap，溢出量返回（用于 plan §1.4 回馈环境）。
@@ -73,6 +80,25 @@ impl LingtianPlot {
             self.plot_qi = self.plot_qi_cap;
             overflow
         }
+    }
+
+    pub fn add_dye_contamination(&mut self, amount: f32) -> f32 {
+        let before = self.dye_contamination;
+        self.dye_contamination = (self.dye_contamination + amount.max(0.0)).clamp(0.0, 1.0);
+        self.dye_contamination - before
+    }
+
+    pub fn decay_dye_contamination(&mut self) {
+        self.dye_contamination =
+            (self.dye_contamination - DYE_CONTAMINATION_DECAY_PER_LINGTIAN_TICK).max(0.0);
+    }
+
+    pub fn contamination_quality_multiplier(&self) -> f32 {
+        1.0 - self.dye_contamination.clamp(0.0, 1.0) * DYE_CONTAMINATION_QUALITY_PENALTY_MAX
+    }
+
+    pub fn has_dye_contamination_warning(&self) -> bool {
+        self.dye_contamination >= DYE_CONTAMINATION_WARNING_THRESHOLD
     }
 }
 
@@ -128,6 +154,7 @@ mod tests {
         plot.renew();
         assert!(!plot.is_barren());
         assert_eq!(plot.harvest_count, 0);
+        assert_eq!(plot.dye_contamination, 0.0);
     }
 
     #[test]
@@ -136,5 +163,17 @@ mod tests {
         assert!(!crop.is_ripe());
         crop.growth = 1.0;
         assert!(crop.is_ripe());
+    }
+
+    #[test]
+    fn dye_contamination_clamps_decays_and_flags_warning() {
+        let mut plot = LingtianPlot::new(dummy_pos(), None);
+        assert_eq!(plot.add_dye_contamination(0.31), 0.31);
+        assert!(plot.has_dye_contamination_warning());
+        assert!((plot.contamination_quality_multiplier() - 0.907).abs() < 1e-6);
+        plot.decay_dye_contamination();
+        assert!((plot.dye_contamination - 0.309).abs() < 1e-6);
+        plot.add_dye_contamination(2.0);
+        assert_eq!(plot.dye_contamination, 1.0);
     }
 }
