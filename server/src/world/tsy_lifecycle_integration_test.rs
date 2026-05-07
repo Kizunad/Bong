@@ -80,6 +80,7 @@ mod tests {
             source_row: 0,
             source_col: 0,
             world_pos: [pos.x, pos.y, pos.z],
+            dimension: DimensionKind::Tsy,
             item: ancient_item(id),
         }
     }

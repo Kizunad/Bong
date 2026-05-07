@@ -25,6 +25,8 @@ use crate::schema::inventory::{
     InventorySnapshotV1, InventoryWeightV1, ItemRarityV1, PlacedInventoryItemV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+#[cfg(test)]
+use crate::world::dimension::DimensionKind;
 use crate::world::season::query_season;
 
 const ORDERED_CONTAINER_IDS: [&str; 3] = [
@@ -919,6 +921,7 @@ mod tests {
                     source_row: 0,
                     source_col: 0,
                     world_pos: [8.5, 66.0, 8.5],
+                    dimension: DimensionKind::Overworld,
                     item: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
                 },
             );

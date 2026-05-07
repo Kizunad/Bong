@@ -10,6 +10,7 @@ use valence::prelude::{
 
 use crate::cultivation::death_hooks::{PlayerRevived, PlayerTerminated};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 /// Worldview §十二：死亡掉落应落在「死亡点」而不是「重生点」。
 ///
@@ -421,6 +422,7 @@ pub fn apply_termination_drop_on_terminate(
     positions: Query<&Position>,
     anchors: Query<&DeathDropAnchor>,
     layer_ids: Query<&EntityLayerId>,
+    dimensions: Query<&CurrentDimension>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
 ) {
     for ev in terminated.read() {
@@ -442,6 +444,10 @@ pub fn apply_termination_drop_on_terminate(
                 })
             })
             .unwrap_or([0.0, 64.0, 0.0]);
+        let entity_dimension = dimensions
+            .get(ev.entity)
+            .map(|dimension| dimension.0)
+            .unwrap_or_default();
 
         let mut drained = Vec::new();
         for container in &mut inventory.containers {
@@ -488,6 +494,7 @@ pub fn apply_termination_drop_on_terminate(
                             base[1],
                             base[2] + 0.35,
                         ],
+                        dimension: entity_dimension,
                         item,
                     };
                     dropped_registry.entries.insert(entry.instance_id, entry);
@@ -530,6 +537,7 @@ pub fn apply_termination_drop_on_terminate(
                         base[1],
                         base[2] + 0.35,
                     ],
+                    dimension: entity_dimension,
                     item,
                 };
                 dropped_registry.entries.insert(entry.instance_id, entry);
@@ -1939,6 +1947,7 @@ pub struct DroppedLootEntry {
     pub source_row: u8,
     pub source_col: u8,
     pub world_pos: [f64; 3],
+    pub dimension: DimensionKind,
     pub item: ItemInstance,
 }
 
@@ -2300,6 +2309,7 @@ pub fn apply_death_drop_on_revive(
     registry: bevy_ecs::system::Res<ItemRegistry>,
     positions: Query<&Position>,
     anchors: Query<&DeathDropAnchor>,
+    dimensions: Query<&CurrentDimension>,
     presences: Query<&crate::world::tsy::TsyPresence>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
@@ -2313,6 +2323,10 @@ pub fn apply_death_drop_on_revive(
             .get(ev.entity)
             .map(|pos| pos.0)
             .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
+        let entity_dimension = dimensions
+            .get(ev.entity)
+            .map(|dimension| dimension.0)
+            .unwrap_or_default();
 
         // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
         // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
@@ -2346,6 +2360,7 @@ pub fn apply_death_drop_on_revive(
                     source_row: record.row,
                     source_col: record.col,
                     world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                    dimension: DimensionKind::Tsy,
                     item: record.instance.clone(),
                 };
                 dropped_registry.entries.insert(entry.instance_id, entry);
@@ -2403,6 +2418,7 @@ pub fn apply_death_drop_on_revive(
                     base[1],
                     base[2] + 0.35,
                 ],
+                dimension: entity_dimension,
                 item: dropped.instance.clone(),
             };
             dropped_registry.entries.insert(entry.instance_id, entry);
@@ -2668,6 +2684,7 @@ pub fn discard_inventory_item_to_dropped_loot(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
     player_pos: [f64; 3],
+    player_dimension: DimensionKind,
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
 ) -> Result<InventoryDiscardOutcome, String> {
@@ -2712,6 +2729,7 @@ pub fn discard_inventory_item_to_dropped_loot(
             player_pos[1],
             player_pos[2] + 0.35,
         ],
+        dimension: player_dimension,
         item,
     };
     registry.entries.insert(instance_id, dropped.clone());
@@ -5622,6 +5640,7 @@ cols = 4
                 source_row: 0,
                 source_col: 0,
                 world_pos: [0.5, 64.0, 0.5],
+                dimension: DimensionKind::Overworld,
                 item: ItemInstance {
                     instance_id: 42,
                     template_id: "starter_talisman".to_string(),
@@ -5667,6 +5686,7 @@ cols = 4
             &mut inventory,
             &mut registry,
             [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
             42,
             &crate::schema::inventory::InventoryLocationV1::Container {
                 container_id: crate::schema::inventory::ContainerIdV1::MainPack,

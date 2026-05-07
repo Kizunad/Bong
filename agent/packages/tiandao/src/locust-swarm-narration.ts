@@ -46,7 +46,7 @@ export class LocustSwarmNarrationTracker {
       return emptyDecision("another calamity is already active");
     }
 
-    const targetZone = selectTargetZone(state);
+    const targetZone = selectTargetZone(state, event.zone);
     if (!targetZone) {
       return emptyDecision("no zone exceeds locust swarm qi threshold");
     }
@@ -112,9 +112,9 @@ function isTransitioning(phase: RatPhaseV1): boolean {
   return typeof phase === "object" && phase !== null && "transitioning" in phase;
 }
 
-function selectTargetZone(state: WorldStateV1): ZoneSnapshot | null {
+function selectTargetZone(state: WorldStateV1, phaseZone: string): ZoneSnapshot | null {
   return state.zones
-    .filter((zone) => zone.spirit_qi > HIGH_QI_THRESHOLD)
+    .filter((zone) => zone.name !== phaseZone && zone.spirit_qi > HIGH_QI_THRESHOLD)
     .sort((left, right) => right.spirit_qi - left.spirit_qi)[0] ?? null;
 }
 

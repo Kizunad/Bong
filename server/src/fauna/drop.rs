@@ -13,6 +13,7 @@ use crate::inventory::{
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::shelflife::{DecayProfileRegistry, Freshness};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 use super::components::{BeastKind, FaunaDropIssued, FaunaTag};
 
@@ -23,6 +24,7 @@ type FaunaDropNpcQuery<'w, 's> = Query<
         Option<&'static FaunaTag>,
         Option<&'static NpcArchetype>,
         &'static Position,
+        Option<&'static CurrentDimension>,
         Option<&'static FaunaDropIssued>,
     ),
     With<NpcMarker>,
@@ -163,7 +165,7 @@ pub fn fauna_drop_system(
     let decay_profiles = decay_profiles.as_deref();
 
     for event in deaths.read() {
-        let Ok((tag, archetype, pos, issued)) = npcs.get(event.target) else {
+        let Ok((tag, archetype, pos, dimension, issued)) = npcs.get(event.target) else {
             continue;
         };
         if issued.is_some() {
@@ -201,6 +203,9 @@ pub fn fauna_drop_system(
                     source_row: 0,
                     source_col: 0,
                     world_pos,
+                    dimension: dimension
+                        .map(|dim| dim.0)
+                        .unwrap_or(DimensionKind::Overworld),
                     item,
                 },
             );

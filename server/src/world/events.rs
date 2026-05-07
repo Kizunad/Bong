@@ -2085,7 +2085,7 @@ fn advance_locust_swarm(
             }
         }
         if let Some(dropped_loot) = dropped_loot {
-            drain_locust_consumable_loot(dropped_loot, current_chunk);
+            drain_locust_consumable_loot(dropped_loot, origin_zone.dimension, current_chunk);
         }
     }
 
@@ -2149,10 +2149,15 @@ fn resolve_locust_target_zone_name(
         .unwrap_or_else(|| origin_zone.name.clone())
 }
 
-fn drain_locust_consumable_loot(registry: &mut DroppedLootRegistry, chunk: ChunkPos) {
+fn drain_locust_consumable_loot(
+    registry: &mut DroppedLootRegistry,
+    dimension: DimensionKind,
+    chunk: ChunkPos,
+) {
     registry.entries.retain(|_, entry| {
         let pos = DVec3::new(entry.world_pos[0], entry.world_pos[1], entry.world_pos[2]);
-        chunk_pos_from_world(pos) != chunk
+        entry.dimension != dimension
+            || chunk_pos_from_world(pos) != chunk
             || !locust_consumes_template(entry.item.template_id.as_str())
     });
 }
@@ -2844,17 +2849,32 @@ mod events_tests {
         heatmap.add_heat(DimensionKind::Overworld, heat_block, 0.9);
         app.insert_resource(heatmap);
         app.insert_resource(DroppedLootRegistry {
-            entries: HashMap::from([(
-                41,
-                DroppedLootEntry {
-                    instance_id: 41,
-                    source_container_id: "test".to_string(),
-                    source_row: 0,
-                    source_col: 0,
-                    world_pos: [zone_center.x, zone_center.y, zone_center.z],
-                    item: test_item(41, "bone_coin_5"),
-                },
-            )]),
+            entries: HashMap::from([
+                (
+                    41,
+                    DroppedLootEntry {
+                        instance_id: 41,
+                        source_container_id: "test".to_string(),
+                        source_row: 0,
+                        source_col: 0,
+                        world_pos: [zone_center.x, zone_center.y, zone_center.z],
+                        dimension: DimensionKind::Overworld,
+                        item: test_item(41, "bone_coin_5"),
+                    },
+                ),
+                (
+                    42,
+                    DroppedLootEntry {
+                        instance_id: 42,
+                        source_container_id: "test".to_string(),
+                        source_row: 0,
+                        source_col: 0,
+                        world_pos: [zone_center.x, zone_center.y, zone_center.z],
+                        dimension: DimensionKind::Tsy,
+                        item: test_item(42, "bone_coin_5"),
+                    },
+                ),
+            ]),
         });
         let cultivator = app
             .world_mut()
@@ -2893,12 +2913,15 @@ mod events_tests {
             heat_after < 0.9,
             "locust front should drain qi density heat from the traversed chunk"
         );
-        assert!(
+        assert_eq!(
             app.world()
                 .resource::<DroppedLootRegistry>()
                 .entries
-                .is_empty(),
-            "locust front should consume exposed bone-coin style dropped loot in its chunk"
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![42],
+            "locust front should consume same-dimension loot without deleting matching drops in another dimension"
         );
         let bites = app.world().resource::<Events<RatBiteEvent>>();
         assert!(

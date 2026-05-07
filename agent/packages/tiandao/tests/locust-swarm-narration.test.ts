@@ -35,6 +35,13 @@ function worldState(overrides: Partial<WorldStateV1> = {}): WorldStateV1 {
         active_events: [],
         player_count: 1,
       },
+      {
+        name: "green_cloud_peak",
+        spirit_qi: 0.84,
+        danger_level: 2,
+        active_events: [],
+        player_count: 0,
+      },
     ],
     rat_density_heatmap: {
       zones: {
@@ -69,14 +76,15 @@ describe("LocustSwarmNarrationTracker", () => {
         params: expect.objectContaining({
           event: "beast_tide",
           tide_kind: "locust_swarm",
-          target_zone: "starter_zone",
+          origin_zone: "starter_zone",
+          target_zone: "green_cloud_peak",
         }),
       }),
     ]);
     expect(decision.narrations).toEqual([
       expect.objectContaining({
         scope: "zone",
-        target: "starter_zone",
+        target: "green_cloud_peak",
         text: expect.stringContaining("灵蝗潮"),
       }),
     ]);
@@ -123,6 +131,41 @@ describe("LocustSwarmNarrationTracker", () => {
         target: "green_cloud_peak",
       }),
     );
+  });
+
+  it("excludes_phase_zone_when_selecting_locust_target_zone", () => {
+    const decision = new LocustSwarmNarrationTracker().ingest(
+      ratPhaseEvent({ zone: "starter_zone" }),
+      worldState({
+        zones: [
+          {
+            name: "starter_zone",
+            spirit_qi: 0.99,
+            danger_level: 2,
+            active_events: [],
+            player_count: 1,
+          },
+          {
+            name: "green_cloud_peak",
+            spirit_qi: 0.7,
+            danger_level: 2,
+            active_events: [],
+            player_count: 0,
+          },
+        ],
+      }),
+    );
+
+    expect(decision.commands[0]).toEqual(
+      expect.objectContaining({
+        target: "starter_zone",
+        params: expect.objectContaining({
+          origin_zone: "starter_zone",
+          target_zone: "green_cloud_peak",
+        }),
+      }),
+    );
+    expect(decision.reasoning).toContain("target=green_cloud_peak");
   });
 
   it("skips_escalation_when_calamity_in_progress", () => {

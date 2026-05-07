@@ -438,6 +438,7 @@ pub fn resolve_attack_intents(
                                         attacker_position.y,
                                         attacker_position.z,
                                     ],
+                                    crate::world::dimension::DimensionKind::Overworld,
                                     instance_id,
                                     &InventoryLocationV1::Equip { slot },
                                 );
