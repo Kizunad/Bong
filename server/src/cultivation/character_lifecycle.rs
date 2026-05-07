@@ -374,6 +374,138 @@ mod tests {
 
     // ---------------- TerminateReason 全变体覆盖 ----------------
 
+    // ---------------- P1 集成：决策 → spec 应用链路 ----------------
+    //
+    // plan-multi-life-v1 §1 P1 验收："寿元归零玩家自动进 character_select"。
+    // 现有 combat::lifecycle 已实装：lifespan_aging_tick → CultivationDeathTrigger{NaturalAging}
+    // → terminate_lifecycle_with_death_context（emit_terminate_screen）→ 用户点
+    // CreateNewCharacter → reset_for_new_character（应用 character_select::next_character_spec）。
+    //
+    // 下面的集成测试用 character_lifecycle::regenerate_or_terminate **决策器** 与
+    // character_select::next_character_spec **spec 提供器** 拼接，验证 plan §2
+    // 流程语义在两者之间正确衔接：寿元归零或运数耗尽时，应同时拿到 Terminate 决策
+    // 与一份合法的下一世 spec（spawn_plain / Awaken / fortune=3 / cap=AWAKEN）。
+
+    #[test]
+    fn lifespan_zero_to_new_life_spec_full_chain() {
+        use crate::cultivation::character_select::next_character_spec;
+        use crate::cultivation::lifespan::LifespanCapTable;
+
+        // 玩家寿元归零（被杀 / 渡劫扣寿后到 0）
+        let mut lifespan = fresh_lifespan();
+        lifespan.years_lived = lifespan.cap_by_realm as f64;
+        let lc = fresh_lifecycle();
+
+        // 第 1 步：决策器报终结 (LifespanExhausted)
+        let outcome = regenerate_or_terminate(
+            &lifespan,
+            &lc,
+            CultivationDeathCause::NegativeZoneDrain,
+        );
+        assert_eq!(
+            outcome,
+            LifeOutcome::Terminate {
+                reason: TerminateReason::LifespanExhausted,
+            },
+        );
+
+        // 第 2 步：character_select 提供下一世 spec —— 必须满足 plan §2
+        let spec = next_character_spec();
+        assert_eq!(
+            spec.realm,
+            crate::cultivation::components::Realm::Awaken,
+            "新角色 realm 必须 = Awaken（plan §0 第 4 条 + Q-ML4）",
+        );
+        assert_eq!(
+            spec.lifespan_cap,
+            LifespanCapTable::AWAKEN,
+            "新角色寿元 cap = AWAKEN（plan §2 + Q-ML0 reframe to lifespan-v1 §2）",
+        );
+        assert_eq!(
+            spec.initial_fortune,
+            crate::cultivation::luck_pool::INITIAL_FORTUNE_PER_LIFE,
+            "新角色 fortune = INITIAL_FORTUNE_PER_LIFE（plan §0 O.4）",
+        );
+        assert_eq!(
+            spec.spawn_pos,
+            crate::player::spawn_position(),
+            "新角色 spawn_pos = spawn_plain（Q-ML4）",
+        );
+    }
+
+    #[test]
+    fn natural_aging_to_new_life_spec_full_chain() {
+        // plan §2 流程：寿命归零（NaturalAging cause）→ 终结 → 提供下一世 spec
+        // 即使运数池满 (fortune=3)，NaturalAging 也直接终结，不消耗运数
+        use crate::cultivation::character_select::next_character_spec;
+
+        let lifespan = fresh_lifespan(); // 寿元未归零
+        let lc = fresh_lifecycle(); // fortune=3 满
+
+        let outcome = regenerate_or_terminate(
+            &lifespan,
+            &lc,
+            CultivationDeathCause::NaturalAging,
+        );
+        assert!(matches!(
+            outcome,
+            LifeOutcome::Terminate {
+                reason: TerminateReason::NaturalAging
+            }
+        ));
+
+        // 即便玩家寿元尚未到 cap、运数仍满，老死语义也应进 character_select
+        let spec = next_character_spec();
+        assert_eq!(spec.initial_fortune, INITIAL_FORTUNE_PER_LIFE_OK);
+    }
+
+    // 局部别名，避免在测试里重复 crate 路径
+    const INITIAL_FORTUNE_PER_LIFE_OK: u8 = crate::cultivation::luck_pool::INITIAL_FORTUNE_PER_LIFE;
+
+    #[test]
+    fn fortune_exhausted_to_new_life_spec_resets_pool() {
+        // plan §2："运数耗尽 → 角色终结 → 新角色生成 ... 运数 = 3"
+        use crate::cultivation::character_select::next_character_spec;
+
+        let lifespan = fresh_lifespan();
+        let mut lc = fresh_lifecycle();
+        lc.fortune_remaining = 0;
+
+        // 决策：终结，原因 FortuneExhausted
+        let outcome = regenerate_or_terminate(
+            &lifespan,
+            &lc,
+            CultivationDeathCause::NegativeZoneDrain,
+        );
+        assert!(matches!(
+            outcome,
+            LifeOutcome::Terminate {
+                reason: TerminateReason::FortuneExhausted
+            }
+        ));
+
+        // spec 应给新角色 fortune=3（per-life pool 重置而非保留耗尽态）
+        let spec = next_character_spec();
+        assert_eq!(spec.initial_fortune, 3);
+        assert_eq!(spec.initial_fortune, INITIAL_FORTUNE_PER_LIFE_OK);
+    }
+
+    #[test]
+    fn revive_outcome_does_not_use_new_life_spec() {
+        // 反例：决策返回 Revive 时，调用方不应当读 next_character_spec
+        // （spec 是"开新角色"用的，重生只 spend_fortune，不动 cultivation/realm）
+        let lifespan = fresh_lifespan();
+        let lc = fresh_lifecycle();
+        let outcome = regenerate_or_terminate(
+            &lifespan,
+            &lc,
+            CultivationDeathCause::NegativeZoneDrain,
+        );
+        assert!(outcome.is_revive());
+        // is_terminate 为 false：调用方据此跳过 spec 应用
+        assert!(!outcome.is_terminate());
+    }
+
     #[test]
     fn all_terminate_reasons_reachable() {
         // schema-pin 测试：每个 TerminateReason 变体至少一条命中 case
