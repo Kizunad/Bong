@@ -1,18 +1,20 @@
 //! plan-mineral-v1 §2.2 — `BlockBreakEvent`（valence `DiggingEvent`）监听器。
 //!
-//! 流程（plan §2.2）：
-//!  1. 读取 valence `DiggingEvent` 的"挖掘完成"语义（Stop = Survival 完成）。
-//!  2. 反查 `MineralOreIndex` 看 BlockPos 是否对应一个 `MineralOreNode`。
-//!  3. 是 → 不让 vanilla loot table 走默认掉落，主动发 `MineralDropEvent`，
-//!     让 inventory listener 按 mineral_id 写入物品 NBT。
-//!  4. `remaining_units` 减一；归零则发 `MineralExhaustedEvent`、移除 entity 与 index。
-//!  5. 品阶 ≥ 3 按概率 5% / 15% / 30% 发 `KarmaFlagIntent` 给天道 agent。
+//! 流程：
+//!  - **Survival + Stop**：完整 drop 流水（pickaxe 检查 → `MineralDropEvent` →
+//!    karma 概率推送 → 客户端 mining_progress feedback → 减 unit → exhaust 清理）。
+//!  - **Creative + Start**：cleanup-only。Creative 不掉物（vanilla 行为），但默认
+//!    block_break 系统已把 chunk 抹成 AIR，本路径同步把 `MineralOreNode` 减 unit
+//!    并在归零时 despawn —— 否则 `MineralOreIndex` 留下"chunk 已空但 entity 还在"
+//!    的鬼影状态，`/probe` / 重 spawn 等会读到陈旧数据。
+//!  - 其余 (state, mode) 组合（Survival Start/Abort、Adventure、Spectator）跳过。
 //!
 //! 与 `inventory::DroppedItemEvent` 解耦：本系统只发 mineral_id 语义的 drop 事件，
 //! 由 inventory 侧的 listener 把 mineral_id 序列化到新建 InventoryItem 的 NBT。
 
 use valence::prelude::{
-    Client, Commands, DiggingEvent, DiggingState, EventReader, EventWriter, Query, Res, ResMut,
+    Client, Commands, DiggingEvent, DiggingState, EventReader, EventWriter, GameMode, Query, Res,
+    ResMut, With,
 };
 
 use super::components::{MineralOreIndex, MineralOreNode};
@@ -49,12 +51,29 @@ pub fn karma_probability(rarity: MineralRarity) -> f32 {
     }
 }
 
+/// 区分本次破坏走哪条流水。`SurvivalDrop` 完整跑 drop / karma / feedback；
+/// `CreativeCleanup` 不掉物只清状态（vanilla Creative 不掉物 + 防 index 鬼影）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BreakIntent {
+    SurvivalDrop,
+    CreativeCleanup,
+}
+
+fn classify_break(state: DiggingState, mode: GameMode) -> Option<BreakIntent> {
+    match (state, mode) {
+        (DiggingState::Stop, GameMode::Survival) => Some(BreakIntent::SurvivalDrop),
+        (DiggingState::Start, GameMode::Creative) => Some(BreakIntent::CreativeCleanup),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system signature; queries/events stay explicit.
 pub fn handle_block_break_for_mineral(
     mut commands: Commands,
     mut digs: EventReader<DiggingEvent>,
     mut nodes: Query<&mut MineralOreNode>,
     dimensions: Query<&CurrentDimension>,
+    game_modes: Query<&GameMode, With<Client>>,
     mut index: ResMut<MineralOreIndex>,
     mut drop_events: EventWriter<MineralDropEvent>,
     mut exhausted_events: EventWriter<MineralExhaustedEvent>,
@@ -67,12 +86,12 @@ pub fn handle_block_break_for_mineral(
     spirit_niches: Option<valence::prelude::Res<SpiritNicheRegistry>>,
 ) {
     for event in digs.read() {
-        // Survival 模式 Stop = 挖掘动画走完；plan §2.2 重写 drop 必须等 Stop 才触发，
-        // 避免 Start/Abort 误判。Creative 模式（Start）的特例由 worldview 暂不支持。
-        if event.state != DiggingState::Stop {
+        let player_mode = game_modes.get(event.client).copied().unwrap_or_default();
+        let Some(intent) = classify_break(event.state, player_mode) else {
             continue;
-        }
+        };
 
+        // 灵龛保护：niche 已登记的位置由 social 系统接管，矿脉系统两条流水都退让。
         let actor_char_id = lifecycles
             .get(event.client)
             .ok()
@@ -120,61 +139,70 @@ pub fn handle_block_break_for_mineral(
                 mineral_id,
                 event.position
             );
-            feedback_events.send(MineralFeedbackEvent::unknown_for_forge(event.client));
+            // 反馈仅 Survival 玩家关心（Creative 拿不到 inventory 反馈）。
+            if matches!(intent, BreakIntent::SurvivalDrop) {
+                feedback_events.send(MineralFeedbackEvent::unknown_for_forge(event.client));
+            }
             continue;
         };
 
-        let held_tier = inventories
-            .get(event.client)
-            .ok()
-            .and_then(equipped_pickaxe_tier)
-            .unwrap_or(0);
-        if held_tier < entry.pickaxe_tier_min {
-            feedback_events.send(MineralFeedbackEvent::pickaxe_tier_mismatch(
-                event.client,
-                pickaxe_tier_name(held_tier),
-                entry.display_name_zh,
-                entry.pickaxe_tier_min,
-            ));
-            tracing::debug!(
-                target: "bong::mineral",
-                "pickaxe tier {held_tier} < required {} for {} at {:?}",
-                entry.pickaxe_tier_min,
-                entry.canonical_name,
-                event.position
-            );
-            continue;
-        }
+        // Survival drop 流水：先做 pickaxe / drop / karma / mining_progress，再走通用清理。
+        // Creative cleanup：跳过这一段，直接进通用清理。
+        if matches!(intent, BreakIntent::SurvivalDrop) {
+            let held_tier = inventories
+                .get(event.client)
+                .ok()
+                .and_then(equipped_pickaxe_tier)
+                .unwrap_or(0);
+            if held_tier < entry.pickaxe_tier_min {
+                feedback_events.send(MineralFeedbackEvent::pickaxe_tier_mismatch(
+                    event.client,
+                    pickaxe_tier_name(held_tier),
+                    entry.display_name_zh,
+                    entry.pickaxe_tier_min,
+                ));
+                tracing::debug!(
+                    target: "bong::mineral",
+                    "pickaxe tier {held_tier} < required {} for {} at {:?}",
+                    entry.pickaxe_tier_min,
+                    entry.canonical_name,
+                    event.position
+                );
+                continue;
+            }
 
-        drop_events.send(MineralDropEvent {
-            player: event.client,
-            mineral_id,
-            position: event.position,
-        });
-        if let Ok(mut client) = clients.get_mut(event.client) {
-            send_mining_progress_to_client(
-                &mut client,
-                format!(
-                    "mining:{}:{}:{}:{:?}",
-                    event.position.x, event.position.y, event.position.z, mineral_id
-                ),
-                [event.position.x, event.position.y, event.position.z],
-                1.0,
-                false,
-                true,
-            );
-        }
-
-        let probability = karma_probability(mineral_id.rarity());
-        if probability > 0.0 {
-            karma_events.send(KarmaFlagIntent {
+            drop_events.send(MineralDropEvent {
                 player: event.client,
                 mineral_id,
                 position: event.position,
-                probability,
             });
+            if let Ok(mut client) = clients.get_mut(event.client) {
+                send_mining_progress_to_client(
+                    &mut client,
+                    format!(
+                        "mining:{}:{}:{}:{:?}",
+                        event.position.x, event.position.y, event.position.z, mineral_id
+                    ),
+                    [event.position.x, event.position.y, event.position.z],
+                    1.0,
+                    false,
+                    true,
+                );
+            }
+
+            let probability = karma_probability(mineral_id.rarity());
+            if probability > 0.0 {
+                karma_events.send(KarmaFlagIntent {
+                    player: event.client,
+                    mineral_id,
+                    position: event.position,
+                    probability,
+                });
+            }
         }
 
+        // 通用清理（Survival 完整流程的尾段，也是 Creative 的全部动作）：减 unit，
+        // 归零则发 exhausted + 移 index + despawn entity。
         node.remaining_units = node.remaining_units.saturating_sub(1);
         if node.remaining_units == 0 {
             exhausted_events.send(MineralExhaustedEvent {
@@ -401,5 +429,204 @@ mod tests {
         assert_eq!(value["ore_pos"], serde_json::json!([1, 64, 2]));
         assert_eq!(value["progress"], 1.0);
         assert_eq!(value["completed"], true);
+    }
+
+    /// 真值表：12 组 (state, mode) 必须只有 (Stop, Survival) 与 (Start, Creative)
+    /// 命中本系统；其他全部 None。任何漏判都会让块挖了之后 MineralOreIndex 留鬼影
+    /// 或反过来 Survival Start 误触发 drop。
+    #[test]
+    fn classify_break_truth_table() {
+        for state in [DiggingState::Start, DiggingState::Stop, DiggingState::Abort] {
+            for mode in [
+                GameMode::Survival,
+                GameMode::Creative,
+                GameMode::Adventure,
+                GameMode::Spectator,
+            ] {
+                let expected = match (state, mode) {
+                    (DiggingState::Stop, GameMode::Survival) => Some(BreakIntent::SurvivalDrop),
+                    (DiggingState::Start, GameMode::Creative) => Some(BreakIntent::CreativeCleanup),
+                    _ => None,
+                };
+                assert_eq!(
+                    classify_break(state, mode),
+                    expected,
+                    "({state:?}, {mode:?}) misclassified"
+                );
+            }
+        }
+    }
+
+    /// Creative cleanup 整链路集成测试：一次 Start/Creative 命中 ore →
+    /// (1) 不发 MineralDropEvent；(2) MineralOreNode.remaining_units 减 1；
+    /// (3) 不发 KarmaFlagIntent / MineralFeedbackEvent；(4) 节点未耗尽时 entity / index 仍在。
+    #[test]
+    fn creative_cleanup_decrements_units_without_drops() {
+        use crate::mineral::components::{MineralOreIndex, MineralOreNode};
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use valence::prelude::{App, BlockPos, Events, GameMode, IntoSystemConfigs, Update};
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<DiggingEvent>();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<MineralExhaustedEvent>();
+        app.add_event::<KarmaFlagIntent>();
+        app.add_event::<MineralFeedbackEvent>();
+        app.insert_resource(crate::mineral::registry::build_default_registry());
+        app.insert_resource(MineralOreIndex::default());
+        app.add_systems(Update, handle_block_break_for_mineral.into_configs());
+
+        let (client_bundle, _helper) = create_mock_client("Creative");
+        let player = app.world_mut().spawn(client_bundle).id();
+        // 覆盖 GameMode（默认 Survival）+ 挂 CurrentDimension（query 用得到）。
+        app.world_mut()
+            .entity_mut(player)
+            .insert((GameMode::Creative, CurrentDimension(DimensionKind::Overworld)));
+        let pos = BlockPos::new(10, 64, 10);
+        let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
+        node.remaining_units = 3;
+        let ore_entity = app.world_mut().spawn(node).id();
+        app.world_mut()
+            .resource_mut::<MineralOreIndex>()
+            .insert(DimensionKind::Overworld, pos, ore_entity);
+
+        app.world_mut().send_event(DiggingEvent {
+            client: player,
+            position: pos,
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Start,
+        });
+
+        app.update();
+
+        // (1) 没发 drop event
+        let drops = app.world().resource::<Events<MineralDropEvent>>();
+        assert_eq!(
+            drops.get_reader().read(drops).count(),
+            0,
+            "Creative cleanup must not emit MineralDropEvent"
+        );
+        // (2) units 减 1
+        let node_after = app.world().get::<MineralOreNode>(ore_entity).unwrap();
+        assert_eq!(node_after.remaining_units, 2);
+        // (3) 没发 karma / feedback
+        let karma = app.world().resource::<Events<KarmaFlagIntent>>();
+        assert_eq!(karma.get_reader().read(karma).count(), 0);
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        assert_eq!(feedback.get_reader().read(feedback).count(), 0);
+        // (4) entity / index 仍在（units 还没归零）
+        assert!(app
+            .world()
+            .resource::<MineralOreIndex>()
+            .lookup(DimensionKind::Overworld, pos)
+            .is_some());
+        let _ = ore_entity;
+    }
+
+    /// Creative cleanup 把最后一个 unit 也消掉时：必须发 MineralExhaustedEvent +
+    /// 移除 MineralOreIndex 项 + despawn entity。否则 server 重启后 anchor 重撒会
+    /// 把已挖空的位置当作"还可挖"，破坏 plan-mineral-v1 §M6 的耗尽语义。
+    #[test]
+    fn creative_cleanup_exhausts_last_unit() {
+        use crate::mineral::components::{MineralOreIndex, MineralOreNode};
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use valence::prelude::{App, BlockPos, Events, GameMode, IntoSystemConfigs, Update};
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<DiggingEvent>();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<MineralExhaustedEvent>();
+        app.add_event::<KarmaFlagIntent>();
+        app.add_event::<MineralFeedbackEvent>();
+        app.insert_resource(crate::mineral::registry::build_default_registry());
+        app.insert_resource(MineralOreIndex::default());
+        app.add_systems(Update, handle_block_break_for_mineral.into_configs());
+
+        let (client_bundle, _helper) = create_mock_client("Creative");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert((GameMode::Creative, CurrentDimension(DimensionKind::Overworld)));
+        let pos = BlockPos::new(10, 64, 10);
+        let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
+        node.remaining_units = 1; // 最后一颗
+        let ore_entity = app.world_mut().spawn(node).id();
+        app.world_mut()
+            .resource_mut::<MineralOreIndex>()
+            .insert(DimensionKind::Overworld, pos, ore_entity);
+
+        app.world_mut().send_event(DiggingEvent {
+            client: player,
+            position: pos,
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Start,
+        });
+
+        app.update();
+
+        // exhausted event 命中
+        let exhausted = app.world().resource::<Events<MineralExhaustedEvent>>();
+        let exhausted_collected: Vec<_> = exhausted.get_reader().read(exhausted).cloned().collect();
+        assert_eq!(exhausted_collected.len(), 1);
+        assert_eq!(exhausted_collected[0].position, pos);
+        // index 项已移
+        assert!(app
+            .world()
+            .resource::<MineralOreIndex>()
+            .lookup(DimensionKind::Overworld, pos)
+            .is_none());
+        // entity 已 despawn
+        assert!(app.world().get::<MineralOreNode>(ore_entity).is_none());
+    }
+
+    /// Survival Start 不该触发任何路径（Survival 流水必须等 Stop）。回归保护：
+    /// 若有人把 (Start, Survival) 误归到 SurvivalDrop，会让 drop 在挖到一半就发。
+    #[test]
+    fn survival_start_does_not_drop_or_cleanup() {
+        use crate::mineral::components::{MineralOreIndex, MineralOreNode};
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use valence::prelude::{App, BlockPos, Events, GameMode, IntoSystemConfigs, Update};
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<DiggingEvent>();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<MineralExhaustedEvent>();
+        app.add_event::<KarmaFlagIntent>();
+        app.add_event::<MineralFeedbackEvent>();
+        app.insert_resource(crate::mineral::registry::build_default_registry());
+        app.insert_resource(MineralOreIndex::default());
+        app.add_systems(Update, handle_block_break_for_mineral.into_configs());
+
+        let (client_bundle, _helper) = create_mock_client("Survivor");
+        let player = app.world_mut().spawn(client_bundle).id();
+        // GameMode 默认就是 Survival，仍显式设一遍防 valence 默认值漂移。
+        app.world_mut()
+            .entity_mut(player)
+            .insert((GameMode::Survival, CurrentDimension(DimensionKind::Overworld)));
+        let pos = BlockPos::new(10, 64, 10);
+        let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
+        node.remaining_units = 3;
+        let ore_entity = app.world_mut().spawn(node).id();
+        app.world_mut()
+            .resource_mut::<MineralOreIndex>()
+            .insert(DimensionKind::Overworld, pos, ore_entity);
+
+        app.world_mut().send_event(DiggingEvent {
+            client: player,
+            position: pos,
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Start,
+        });
+
+        app.update();
+
+        // 没 drop / 没 cleanup
+        let drops = app.world().resource::<Events<MineralDropEvent>>();
+        assert_eq!(drops.get_reader().read(drops).count(), 0);
+        let node_after = app.world().get::<MineralOreNode>(ore_entity).unwrap();
+        assert_eq!(node_after.remaining_units, 3, "units must not change on Survival Start");
     }
 }

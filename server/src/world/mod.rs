@@ -1,3 +1,4 @@
+pub mod block_break;
 pub mod dimension;
 pub mod dimension_transfer;
 pub mod events;
@@ -98,6 +99,10 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering world setup systems");
     dimension::register(app);
     dimension_transfer::register(app);
+    // 默认方块破坏 apply（Creative Start / Survival Stop → set AIR）。各业务模块
+    // 仍消费同一份 DiggingEvent 做 drop / 索引清理，本系统在 Update 阶段统一抹平
+    // chunk —— 否则 vanilla / 普通方块挖了会"复原"。
+    block_break::register(app);
     zone::register(app);
     season::register(app);
     spirit_eye::register(app);

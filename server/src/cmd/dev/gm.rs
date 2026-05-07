@@ -8,6 +8,7 @@ use valence::protocol::packets::play::command_tree_s2c::Parser;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GmMode {
+    Survival,
     Creative,
     Adventure,
     Spectator,
@@ -16,6 +17,7 @@ pub enum GmMode {
 impl GmMode {
     pub fn as_game_mode(self) -> GameMode {
         match self {
+            Self::Survival => GameMode::Survival,
             Self::Creative => GameMode::Creative,
             Self::Adventure => GameMode::Adventure,
             Self::Spectator => GameMode::Spectator,
@@ -24,6 +26,7 @@ impl GmMode {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Survival => "Survival",
             Self::Creative => "Creative",
             Self::Adventure => "Adventure",
             Self::Spectator => "Spectator",
@@ -34,12 +37,14 @@ impl GmMode {
 impl CommandArg for GmMode {
     fn parse_arg(input: &mut ParseInput) -> Result<Self, CommandArgParseError> {
         let raw = String::parse_arg(input)?;
+        // 别名同 vanilla `/gamemode`：s=survival、c=creative、a=adventure、sp=spectator。
         match raw.as_str() {
+            "s" | "survival" => Ok(Self::Survival),
             "c" | "creative" => Ok(Self::Creative),
             "a" | "adventure" => Ok(Self::Adventure),
-            "s" | "spectator" => Ok(Self::Spectator),
+            "sp" | "spectator" => Ok(Self::Spectator),
             _ => Err(CommandArgParseError::InvalidArgument {
-                expected: "c|a|s".to_string(),
+                expected: "s|c|a|sp".to_string(),
                 got: raw,
             }),
         }
@@ -95,11 +100,13 @@ mod tests {
     #[test]
     fn gm_mode_parses_aliases() {
         for (raw, expected) in [
+            ("s", GmMode::Survival),
+            ("survival", GmMode::Survival),
             ("c", GmMode::Creative),
             ("creative", GmMode::Creative),
             ("a", GmMode::Adventure),
             ("adventure", GmMode::Adventure),
-            ("s", GmMode::Spectator),
+            ("sp", GmMode::Spectator),
             ("spectator", GmMode::Spectator),
         ] {
             assert_eq!(GmMode::arg_from_str(raw).unwrap(), expected);
@@ -108,12 +115,20 @@ mod tests {
 
     #[test]
     fn gm_mode_rejects_unknown_mode() {
-        assert!(GmMode::arg_from_str("survival").is_err());
+        // 历史上 `s` 曾是 spectator 的别名（与 vanilla 不一致），切到 survival 之后
+        // 旧别名失效；下面这些字串确认 parser 不会接受非正典写法。
+        for raw in ["spec", "creat", "adv", "survive", "0", ""] {
+            assert!(
+                GmMode::arg_from_str(raw).is_err(),
+                "unexpectedly parsed `{raw}`"
+            );
+        }
     }
 
     #[test]
     fn gm_modes_map_to_expected_labels_and_game_modes() {
         for (mode, label, game_mode) in [
+            (GmMode::Survival, "Survival", GameMode::Survival),
             (GmMode::Creative, "Creative", GameMode::Creative),
             (GmMode::Adventure, "Adventure", GameMode::Adventure),
             (GmMode::Spectator, "Spectator", GameMode::Spectator),
@@ -125,25 +140,31 @@ mod tests {
 
     #[test]
     fn gm_command_sets_game_mode() {
-        let mut app = App::new();
-        app.add_event::<CommandResultEvent<GmCmd>>();
-        app.add_systems(Update, handle_gm);
-        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
-        app.world_mut()
-            .resource_mut::<Events<CommandResultEvent<GmCmd>>>()
-            .send(CommandResultEvent {
-                result: GmCmd::Set {
-                    mode: GmMode::Spectator,
-                },
-                executor: player,
-                modifiers: Default::default(),
-            });
+        for target_mode in [
+            GmMode::Survival,
+            GmMode::Creative,
+            GmMode::Adventure,
+            GmMode::Spectator,
+        ] {
+            let mut app = App::new();
+            app.add_event::<CommandResultEvent<GmCmd>>();
+            app.add_systems(Update, handle_gm);
+            let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+            app.world_mut()
+                .resource_mut::<Events<CommandResultEvent<GmCmd>>>()
+                .send(CommandResultEvent {
+                    result: GmCmd::Set { mode: target_mode },
+                    executor: player,
+                    modifiers: Default::default(),
+                });
 
-        run_update(&mut app);
+            run_update(&mut app);
 
-        assert_eq!(
-            *app.world().get::<GameMode>(player).unwrap(),
-            GameMode::Spectator
-        );
+            assert_eq!(
+                *app.world().get::<GameMode>(player).unwrap(),
+                target_mode.as_game_mode(),
+                "command failed to set {target_mode:?}"
+            );
+        }
     }
 }
