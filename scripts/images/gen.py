@@ -25,8 +25,8 @@
         --name ink_wash_vignette --style hud --transparent --size 1536x1024
 
 环境（`scripts/images/.env`，拷贝 `.env.example` 起步）：
-    CLIPROXY_API_KEY    默认 "kiz"
-    CLIPROXY_BASE_URL   默认 https://cliproxy.kizunadesu.cc
+    CLIPROXY_API_KEY    cliproxy backend 必需（无默认）
+    CLIPROXY_BASE_URL   cliproxy backend 必需，例 https://your-cliproxy.example.com
     CLIPROXY_MODEL      默认 gpt-image-2
     OPENAI_API_KEY      openai 直连 / fallback 必需
     OPENAI_BASE_URL     默认 https://api.openai.com/v1
@@ -49,9 +49,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import style as style_mod  # noqa: E402
 
-# CLI Proxy 默认
-CLIPROXY_DEFAULT_BASE = "https://cliproxy.kizunadesu.cc"
-CLIPROXY_DEFAULT_KEY = "kiz"
+# CLI Proxy 默认（base/key 必填 .env，model 留个保底）
+CLIPROXY_DEFAULT_BASE = ""
+CLIPROXY_DEFAULT_KEY = ""
 CLIPROXY_DEFAULT_MODEL = "gpt-image-2"
 # urllib 默认 UA 会被 Cloudflare 1010 拦，必须伪装
 CLIPROXY_FAKE_UA = "curl/8.5.0"
@@ -370,6 +370,10 @@ def dispatch(
         key = _env(env, "CLIPROXY_API_KEY", CLIPROXY_DEFAULT_KEY)
         base = (_env(env, "CLIPROXY_BASE_URL", CLIPROXY_DEFAULT_BASE) or "").rstrip("/")
         model = _env(env, "CLIPROXY_MODEL", CLIPROXY_DEFAULT_MODEL)
+        if not key or not base:
+            raise RuntimeError(
+                "CLIPROXY_API_KEY / CLIPROXY_BASE_URL 未配置（见 scripts/images/.env.example）"
+            )
         print(
             f"[cliproxy] model={model} size={size} quality={quality} "
             f"bg={background} fmt={output_format} n={n}",

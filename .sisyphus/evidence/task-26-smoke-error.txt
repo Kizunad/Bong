@@ -1,5 +1,0 @@
-task=26
-status=FAILED
-stage=redis
-message=cannot reach Redis at redis://127.0.0.1:6399; expected PONG
-log=/workspace/worktrees/server-law-engine-cross-layer/.sisyphus/evidence/task-26-smoke.log

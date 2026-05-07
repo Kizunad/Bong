@@ -1,9 +1,0 @@
-subscribe
-bong:world_state
-1
-subscribe
-bong:agent_command
-2
-subscribe
-bong:agent_narrate
-3
