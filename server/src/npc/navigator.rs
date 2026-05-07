@@ -294,6 +294,15 @@ pub fn navigator_tick_system(
 
         if nav.repath_countdown == 0 || destination_moved || nav.path_index >= nav.path.len() {
             let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
+            if new_path.is_empty() {
+                tracing::warn!(
+                    "[bong][navigator] A* failed: from={:?} to={:?} dist={:.1} chunk_loaded={} terrain={}",
+                    current_pos, goal.destination,
+                    current_pos.distance(goal.destination),
+                    layer.is_some(),
+                    terrain.is_some(),
+                );
+            }
             nav.path = new_path;
             nav.path_index = 0;
             nav.repath_countdown = REPATH_INTERVAL_TICKS;

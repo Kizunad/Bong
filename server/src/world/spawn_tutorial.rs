@@ -24,7 +24,7 @@ use crate::inventory::{
 };
 use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
 use crate::npc::lifecycle::{NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
-use crate::npc::spawn::{spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext};
+use crate::npc::spawn::{snap_spawn_y_to_surface, spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext};
 use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
@@ -278,7 +278,8 @@ fn spawn_tutorial_poi_markers(
                 chest_count += 1;
             }
             "tutorial_rogue_anchor" => {
-                let pos = poi_pos_dvec3(poi.pos_xyz);
+                let raw_pos = poi_pos_dvec3(poi.pos_xyz);
+                let pos = snap_spawn_y_to_surface(raw_pos, Some(&providers.overworld));
                 let patrol_target = first_lingquan.unwrap_or(pos);
                 let entity = spawn_rogue_npc_at(
                     &mut commands,
