@@ -976,8 +976,6 @@ pub fn spawn_beast_npc_at(
 pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
     if skin.as_ref().is_some_and(|skin| !skin.is_fallback()) {
         EntityKind::PLAYER
-    } else if skin.as_ref().is_some_and(SignedSkin::is_fallback) {
-        EntityKind::WITCH
     } else {
         EntityKind::VILLAGER
     }
@@ -1567,11 +1565,15 @@ mod tests {
 
     #[test]
     fn rogue_commoner_visual_kind_uses_player_only_for_real_skin() {
-        assert_eq!(fallback_rogue_commoner_kind(&None), EntityKind::VILLAGER);
+        assert_eq!(
+            fallback_rogue_commoner_kind(&None),
+            EntityKind::VILLAGER,
+            "None skin should produce villager (neutral NPC model)",
+        );
         assert_eq!(
             fallback_rogue_commoner_kind(&Some(SignedSkin::fallback())),
-            EntityKind::WITCH,
-            "MineSkin fallback sentinel should produce visible vanilla fallback, not Steve"
+            EntityKind::VILLAGER,
+            "MineSkin fallback skin should produce villager, not witch (散修不该是女巫模型)",
         );
         assert_eq!(
             fallback_rogue_commoner_kind(&Some(SignedSkin {
@@ -1581,7 +1583,8 @@ mod tests {
                     hash: "hash".into(),
                 },
             })),
-            EntityKind::PLAYER
+            EntityKind::PLAYER,
+            "real MineSkin skin should produce player entity",
         );
     }
 
