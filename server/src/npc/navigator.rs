@@ -273,13 +273,14 @@ pub fn navigator_tick_system(
         }
 
         let Some(goal) = nav.current_goal else {
-            if let Some(layer_ref) = layer {
-                let current = position.get();
-                let snapped = snap_to_ground(current, Some(layer_ref));
-                if (snapped.y - current.y).abs() > 1e-4 {
-                    position.set(snapped);
-                    transform.translation.y = snapped.y as f32;
-                }
+            // Idle gravity: try chunk-based snap first (exact, respects loaded
+            // blocks), then fall back to the terrain height map for NPCs that
+            // are far above the chunk's ±GROUND_SCAN window.
+            let current = position.get();
+            let snapped = snap_to_ground_with_fallback(current, layer, terrain);
+            if (snapped.y - current.y).abs() > 1e-4 {
+                position.set(snapped);
+                transform.translation.y = snapped.y as f32;
             }
             continue;
         };
@@ -294,14 +295,22 @@ pub fn navigator_tick_system(
 
         if nav.repath_countdown == 0 || destination_moved || nav.path_index >= nav.path.len() {
             let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
+            // Empty path is normal when the NPC is already within
+            // GOAL_REACH_XZ of the destination (compute_path early-returns).
+            // Only warn when the path is empty *and* the NPC is genuinely far
+            // from the goal — that means A* actually failed.
             if new_path.is_empty() {
-                tracing::warn!(
-                    "[bong][navigator] A* failed: from={:?} to={:?} dist={:.1} chunk_loaded={} terrain={}",
-                    current_pos, goal.destination,
-                    current_pos.distance(goal.destination),
-                    layer.is_some(),
-                    terrain.is_some(),
-                );
+                let dx = (current_pos.x.floor() as i32).abs_diff(goal.destination.x.floor() as i32);
+                let dz = (current_pos.z.floor() as i32).abs_diff(goal.destination.z.floor() as i32);
+                if dx > GOAL_REACH_XZ as u32 || dz > GOAL_REACH_XZ as u32 {
+                    tracing::warn!(
+                        "[bong][navigator] A* failed: from={:?} to={:?} dist={:.1} chunk_loaded={} terrain={}",
+                        current_pos, goal.destination,
+                        current_pos.distance(goal.destination),
+                        layer.is_some(),
+                        terrain.is_some(),
+                    );
+                }
             }
             nav.path = new_path;
             nav.path_index = 0;
@@ -795,6 +804,34 @@ fn snap_to_ground(pos: DVec3, layer: Option<&ChunkLayer>) -> DVec3 {
     }
 }
 
+/// Idle ground-snap with terrain height-map fallback. Used for NPCs that may
+/// be spawned (or otherwise displaced) far above the loaded chunk's ±scan
+/// window — the height-map query is unbounded, so it can drop them from any
+/// altitude.
+fn snap_to_ground_with_fallback<S>(
+    pos: DVec3,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&S>,
+) -> DVec3
+where
+    S: crate::world::terrain::SurfaceProvider + ?Sized,
+{
+    let wx = pos.x.floor() as i32;
+    let wz = pos.z.floor() as i32;
+    let ref_y = pos.y.floor() as i32;
+
+    if let Some(ground_y) = resolve_ground_y_from_chunk(wx, wz, ref_y, layer) {
+        return DVec3::new(pos.x, f64::from(ground_y + 1), pos.z);
+    }
+    if let Some(terrain) = terrain {
+        let info = terrain.query_surface(wx, wz);
+        if info.passable {
+            return DVec3::new(pos.x, f64::from(info.y + 1), pos.z);
+        }
+    }
+    pos
+}
+
 fn rotate_y(dir: DVec3, angle: f64) -> DVec3 {
     let (sin, cos) = angle.sin_cos();
     DVec3::new(dir.x * cos - dir.z * sin, 0.0, dir.x * sin + dir.z * cos)
@@ -1055,6 +1092,62 @@ mod tests {
             (y_after_goal - 67.0).abs() < 2.0,
             "second tick after set_goal: NPC should stay near ground, not jitter back to 80; got Y={}",
             y_after_goal,
+        );
+    }
+
+    // -- Bug #1.B: high-altitude idle gravity (terrain height-map fallback) --
+    //
+    // Regression: when an NPC is spawned/displaced FAR above the chunk's
+    // GROUND_SCAN_DEPTH=16 / GROUND_SCAN_UP=4 window, chunk-based snap can't
+    // see the ground and the NPC stays floating. The fallback path queries
+    // the terrain height map, which has no scan-window limit.
+
+    #[test]
+    fn snap_with_fallback_uses_height_map_when_chunk_out_of_range() {
+        let surface = FlatSurface(66);
+        let snapped = snap_to_ground_with_fallback(
+            DVec3::new(0.5, 200.0, 0.5),
+            None, // no chunk loaded — chunk path can't help
+            Some(&surface),
+        );
+        assert!(
+            (snapped.y - 67.0).abs() < 1e-6,
+            "height-map fallback should drop NPC from Y=200 to ground+1=67, got {}",
+            snapped.y,
+        );
+    }
+
+    #[test]
+    fn snap_with_fallback_keeps_pos_when_no_terrain_and_no_chunk() {
+        let snapped = snap_to_ground_with_fallback::<crate::world::terrain::TerrainProvider>(
+            DVec3::new(0.5, 200.0, 0.5),
+            None,
+            None,
+        );
+        assert!(
+            (snapped.y - 200.0).abs() < 1e-6,
+            "without chunk or terrain, NPC must stay put (no panic, no NaN), got {}",
+            snapped.y,
+        );
+    }
+
+    #[test]
+    fn snap_with_fallback_skips_height_map_when_not_passable() {
+        struct LavaSurface;
+        impl crate::world::terrain::SurfaceProvider for LavaSurface {
+            fn query_surface(&self, _x: i32, _z: i32) -> crate::world::terrain::SurfaceInfo {
+                crate::world::terrain::SurfaceInfo {
+                    y: 60,
+                    passable: false,
+                }
+            }
+        }
+        let snapped =
+            snap_to_ground_with_fallback(DVec3::new(0.5, 200.0, 0.5), None, Some(&LavaSurface));
+        assert!(
+            (snapped.y - 200.0).abs() < 1e-6,
+            "non-passable terrain (lava/deep water) should NOT snap NPC into hazard; got {}",
+            snapped.y,
         );
     }
 }

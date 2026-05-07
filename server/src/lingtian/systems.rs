@@ -765,20 +765,27 @@ pub fn release_lingtian_plot_owner_on_npc_death(
     }
 }
 
+/// Backfill empty `LingtianPlot::zone` from `ZoneRegistry`. Runs every tick
+/// over plots whose zone is still empty (typically only newly-spawned plots,
+/// since the predicate is self-clearing on success). We do NOT use
+/// `Added<LingtianPlot>` because the registry may not be available on the
+/// frame the plot is spawned — Added fires once and is gone, leaving zone
+/// permanently empty. Iterating + `is_empty()` filter is naturally idempotent
+/// and self-retrying.
 pub fn auto_set_plot_zone(
-    mut plots: Query<&mut LingtianPlot, bevy_ecs::query::Added<LingtianPlot>>,
+    mut plots: Query<&mut LingtianPlot>,
     zone_registry: Option<Res<ZoneRegistry>>,
 ) {
     let Some(zr) = zone_registry.as_deref() else {
         return;
     };
     for mut plot in &mut plots {
-        if plot.zone.is_empty() {
-            let pos = DVec3::new(plot.pos.x as f64, plot.pos.y as f64, plot.pos.z as f64);
-            if let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
-            {
-                plot.zone = zone.name.clone();
-            }
+        if !plot.zone.is_empty() {
+            continue;
+        }
+        let pos = DVec3::new(plot.pos.x as f64, plot.pos.y as f64, plot.pos.z as f64);
+        if let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos) {
+            plot.zone = zone.name.clone();
         }
     }
 }
@@ -3606,6 +3613,103 @@ mod tests {
                 BE::PlotHarvestedByOther { .. } | BE::PlotHarvestedFromOther { .. }
             )),
             0
+        );
+    }
+
+    // -- M1: auto_set_plot_zone retries when ZoneRegistry arrives late ------
+    //
+    // Regression: the previous implementation used `Added<LingtianPlot>` and
+    // returned early when ZoneRegistry was missing. If a plot spawned on a
+    // frame where the registry hadn't been inserted yet, `Added` fired once,
+    // the system bailed, and the plot's zone field stayed empty forever —
+    // breaking later zone-keyed queries (e.g. daoshen spawn).
+
+    fn zone_named(name: &str, min: DVec3, max: DVec3) -> crate::world::zone::Zone {
+        crate::world::zone::Zone {
+            name: name.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (min, max),
+            spirit_qi: 1.0,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn auto_set_plot_zone_retries_when_registry_inserted_late() {
+        use crate::lingtian::plot::LingtianPlot;
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.add_systems(Update, auto_set_plot_zone);
+
+        // Spawn a plot WITHOUT a ZoneRegistry resource (simulates registry
+        // not yet ready when worldgen-driven plot spawning happens).
+        let plot_entity = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None))
+            .id();
+
+        app.update();
+
+        let plot = app.world().get::<LingtianPlot>(plot_entity).unwrap();
+        assert!(
+            plot.zone.is_empty(),
+            "tick 1: no registry → zone must stay empty (got {:?})",
+            plot.zone
+        );
+
+        // Now insert the registry. With the old `Added`-only impl, the system
+        // would never re-fire for this plot. The fixed impl iterates every
+        // tick and back-fills.
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone_named(
+                "spawn_zone",
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(100.0, 100.0, 100.0),
+            )],
+        });
+
+        app.update();
+
+        let plot = app.world().get::<LingtianPlot>(plot_entity).unwrap();
+        assert_eq!(
+            plot.zone, "spawn_zone",
+            "tick 2: registry present → zone must be back-filled (got {:?})",
+            plot.zone
+        );
+    }
+
+    #[test]
+    fn auto_set_plot_zone_does_not_overwrite_existing_zone() {
+        use crate::lingtian::plot::LingtianPlot;
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone_named(
+                "registry_zone",
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(100.0, 100.0, 100.0),
+            )],
+        });
+        app.add_systems(Update, auto_set_plot_zone);
+
+        // Pre-set plot zone — system must NOT overwrite it (idempotent).
+        let plot_entity = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("explicit_zone"))
+            .id();
+
+        app.update();
+        app.update();
+
+        let plot = app.world().get::<LingtianPlot>(plot_entity).unwrap();
+        assert_eq!(
+            plot.zone, "explicit_zone",
+            "system must not overwrite a non-empty zone field"
         );
     }
 }

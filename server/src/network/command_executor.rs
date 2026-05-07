@@ -13,8 +13,8 @@ use crate::npc::faction::{
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry, NpcSpawnNotice, NpcSpawnSource};
 use crate::npc::spawn::{
-    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_notice,
-    spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    snap_spawn_y_to_surface, spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at,
+    spawn_notice, spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
     NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
@@ -24,6 +24,7 @@ use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::events::ActiveEventsResource;
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::season::query_season;
+use crate::world::terrain::{TerrainProvider, TerrainProviders};
 use crate::world::zone::ZoneRegistry;
 
 const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
@@ -143,6 +144,7 @@ pub fn execute_agent_commands(
     karma_weights: Option<valence::prelude::Res<KarmaWeightStore>>,
     qi_heatmap: Option<valence::prelude::Res<QiDensityHeatmap>>,
     clock: Option<Res<crate::cultivation::tick::CultivationClock>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     layers: LayerQuery<'_, '_>,
@@ -150,6 +152,7 @@ pub fn execute_agent_commands(
 ) {
     let mut remaining_budget = MAX_COMMANDS_PER_TICK;
     let mut pending_despawn_targets = HashSet::new();
+    let terrain = terrain_providers.as_deref().map(|p| &p.overworld);
 
     while remaining_budget > 0 {
         let Some(mut batch) = executor.pending_batches.pop_front() else {
@@ -175,6 +178,7 @@ pub fn execute_agent_commands(
                 karma_weights.as_deref(),
                 qi_heatmap.as_deref(),
                 clock.as_deref().map(|clock| clock.tick),
+                terrain,
                 &mut npc_spawn_notices,
                 &mut faction_notices,
                 &layers,
@@ -214,6 +218,7 @@ fn execute_single_command(
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
     tick: Option<u64>,
+    terrain: Option<&TerrainProvider>,
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
     layers: &LayerQuery<'_, '_>,
@@ -240,6 +245,7 @@ fn execute_single_command(
             skin_pool,
             npc_spawn_notices,
             layers,
+            terrain,
         ),
         CommandType::DespawnNpc => {
             execute_despawn_npc(command, commands, npc_entities, pending_despawn_targets)
@@ -339,6 +345,7 @@ fn execute_despawn_npc(
     "ok"
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_spawn_npc(
     command: &Command,
     commands: &mut Commands,
@@ -347,6 +354,7 @@ fn execute_spawn_npc(
     skin_pool: &mut Option<ResMut<SkinPool>>,
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     layers: &LayerQuery<'_, '_>,
+    terrain: Option<&TerrainProvider>,
 ) -> &'static str {
     let Some(archetype) = command.params.get("archetype").and_then(Value::as_str) else {
         tracing::warn!(
@@ -433,11 +441,15 @@ fn execute_spawn_npc(
         );
     }
 
-    let spawn_position = zone
+    let raw_spawn_position = zone
         .patrol_anchors
         .first()
         .copied()
         .unwrap_or_else(|| zone.center());
+    // Snap to actual terrain surface — zone bounds and patrol anchors are
+    // hand-authored and can drift from regenerated terrain. Without this,
+    // agent-issued spawns can drop NPCs into the air or below ground.
+    let spawn_position = snap_spawn_y_to_surface(raw_spawn_position, terrain);
     let patrol_target = zone.center();
 
     let initial_age_ticks = command

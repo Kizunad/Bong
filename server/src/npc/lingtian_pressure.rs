@@ -7,21 +7,24 @@
 //! 后续如有专门的"道伥" archetype（异色 / 高伤），换 archetype 即可。
 
 use valence::prelude::{
-    App, Commands, DVec3, Entity, EventReader, IntoSystemConfigs, Query, Update, With,
+    App, Commands, DVec3, Entity, EventReader, IntoSystemConfigs, Query, Res, Update, With,
 };
 
 use crate::lingtian::pressure::PressureLevel;
 use crate::lingtian::{LingtianPlot, ZonePressureCrossed};
+use crate::world::terrain::TerrainProviders;
 
-use super::spawn::spawn_zombie_npc_at;
+use super::spawn::{snap_spawn_y_to_surface, spawn_zombie_npc_at};
 
 /// 触发时在 zone 某 plot 周围 spawn 9 个 zombie 作为 "道伥"。
 pub fn spawn_daoshen_on_pressure_high(
     mut events: EventReader<ZonePressureCrossed>,
     plots: Query<&LingtianPlot>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
+    providers: Option<Res<TerrainProviders>>,
     mut commands: Commands,
 ) {
+    let terrain = providers.as_deref().map(|p| &p.overworld);
     for e in events.read() {
         if !matches!(e.level, PressureLevel::High) {
             continue;
@@ -46,7 +49,12 @@ pub fn spawn_daoshen_on_pressure_high(
         let mut spawned = 0;
         for dx in -1..=1i32 {
             for dz in -1..=1i32 {
-                let pos = DVec3::new(center.x + dx as f64, center.y, center.z + dz as f64);
+                let raw = DVec3::new(center.x + dx as f64, center.y, center.z + dz as f64);
+                // Snap each spawn point to the actual surface — the plot's
+                // recorded Y can drift from the live terrain (terrain edits,
+                // chunk regen), and floating daoshen would never engage the
+                // farm.
+                let pos = snap_spawn_y_to_surface(raw, terrain);
                 spawn_zombie_npc_at(&mut commands, layer, &e.zone, pos, pos);
                 spawned += 1;
             }

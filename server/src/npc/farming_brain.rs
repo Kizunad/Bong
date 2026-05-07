@@ -447,6 +447,16 @@ fn till_action_system(
                         tracing::warn!("[farming] till action timeout actor={actor:?}");
                         *state = ActionState::Failure;
                     }
+                } else {
+                    // Session exists but cultivator query miss — actor was
+                    // despawned or lost ScatteredCultivator. Drop the session
+                    // and fail; otherwise the action stays Executing forever
+                    // and the timeout never fires.
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] till action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -522,6 +532,12 @@ fn plant_action_system(
                         tracing::warn!("[farming] plant action timeout actor={actor:?}");
                         *state = ActionState::Failure;
                     }
+                } else {
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] plant action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -600,6 +616,12 @@ fn harvest_action_system(
                         tracing::warn!("[farming] harvest action timeout actor={actor:?}");
                         *state = ActionState::Failure;
                     }
+                } else {
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] harvest action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -668,6 +690,12 @@ fn replenish_action_system(
                         tracing::warn!("[farming] replenish action timeout actor={actor:?}");
                         *state = ActionState::Failure;
                     }
+                } else {
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] replenish action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {

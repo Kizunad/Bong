@@ -727,6 +727,7 @@ fn flee_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    navigator.stop();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -856,6 +857,7 @@ fn chase_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    navigator.stop();
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -1218,6 +1220,7 @@ fn flee_cultivator_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    navigator.stop();
                     *state = ActionState::Failure;
                     continue;
                 };
