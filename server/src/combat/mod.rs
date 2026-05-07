@@ -13,6 +13,7 @@ pub mod jiemai;
 pub mod lifecycle;
 pub mod needle;
 pub mod projectile;
+pub mod rat_bite;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
@@ -163,6 +164,7 @@ pub fn register(app: &mut App) {
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
+    app.add_event::<rat_bite::RatBiteEvent>();
     app.add_event::<needle::ShootNeedleIntent>();
     app.add_event::<needle::QiNeedleChargedEvent>();
     carrier::register(app);
@@ -207,7 +209,8 @@ pub fn register(app: &mut App) {
                 .after(resolve::resolve_attack_intents),
             lifecycle::near_death_tick
                 .in_set(CombatSystemSet::Resolve)
-                .after(lifecycle::death_arbiter_tick),
+                .after(lifecycle::death_arbiter_tick)
+                .after(rat_bite::apply_rat_bite_qi_drain),
             lifecycle::handle_revival_action_intents
                 .in_set(CombatSystemSet::Resolve)
                 .after(lifecycle::near_death_tick),
@@ -226,6 +229,12 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    app.add_systems(
+        Update,
+        rat_bite::apply_rat_bite_qi_drain
+            .in_set(CombatSystemSet::Resolve)
+            .after(resolve::resolve_attack_intents),
     );
     // Separate add_systems call to stay below Bevy 0.14 tuple-arity limits.
     app.add_systems(

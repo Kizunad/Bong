@@ -171,10 +171,11 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            23,
-            "plan §3 MVP recipe list plus narration cue should contain 23 recipes"
+            24,
+            "plan §3 MVP recipe list plus narration and locust cues should contain 24 recipes"
         );
         assert!(registry.get("pill_consume").is_some());
+        assert!(registry.get("locust_swarm_warning").is_some());
         assert!(registry.get("tribulation_thunder_distant").is_some());
         assert!(registry.get("skill_lv_up").is_some());
     }

@@ -32,6 +32,7 @@ pub mod npc_event_bridge;
 pub mod poi_novice_bridge;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
+pub mod rat_phase_bridge;
 pub mod redis_bridge;
 pub mod resourcepack;
 pub mod skill_emit;
@@ -82,11 +83,13 @@ use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
+use crate::fauna::rat_phase::{collect_rat_density_heatmap, RatDensityHeatmapV1, RatPhase};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
+use crate::npc::spawn_rat::RatBlackboard;
 use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
     persist_life_record_death_insight, world_model_snapshot_to_mirror_fields,
@@ -331,6 +334,8 @@ pub fn register(app: &mut App) {
             npc_event_bridge::publish_npc_spawn_events,
             npc_event_bridge::publish_npc_death_events,
             npc_event_bridge::publish_faction_events.after(execute_agent_commands),
+            rat_phase_bridge::publish_rat_phase_events
+                .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
             zone_pressure_bridge::publish_zone_pressure_crossed_events
                 .after(crate::lingtian::systems::compute_zone_pressure_system),
         ),
@@ -388,6 +393,7 @@ pub fn register(app: &mut App) {
             audio_event_emit::emit_audio_play_payloads
                 .after(audio_event_emit::handle_audio_debug_commands)
                 .after(process_redis_inbound)
+                .after(emit_event_alerts_on_major_event_creation)
                 .after(emit_gameplay_narrations),
             audio_event_emit::emit_audio_stop_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
@@ -652,6 +658,7 @@ fn publish_world_state_to_redis(
         ),
         With<NpcMarker>,
     >,
+    rat_density_q: Query<(&RatBlackboard, &RatPhase), With<NpcMarker>>,
     flee_actions: Query<(&Actor, &ActionState), With<FleeAction>>,
     chase_actions: Query<(&Actor, &ActionState), With<ChaseAction>>,
     melee_actions: Query<(&Actor, &ActionState), With<MeleeAttackAction>>,
@@ -673,6 +680,7 @@ fn publish_world_state_to_redis(
         collect_npc_action_states(&flee_actions, &chase_actions, &melee_actions, &dash_actions);
 
     let cultivation_by_entity = collect_cultivation_snapshots(&cultivation_q);
+    let rat_density_heatmap = collect_rat_density_heatmap(rat_density_q.iter());
 
     let state = build_world_state_snapshot(
         current_unix_timestamp_secs(),
@@ -685,6 +693,7 @@ fn publish_world_state_to_redis(
         &npcs,
         &npc_action_states,
         &cultivation_by_entity,
+        rat_density_heatmap,
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
@@ -774,6 +783,7 @@ fn build_world_state_snapshot(
     >,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
+    rat_density_heatmap: RatDensityHeatmapV1,
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
     let (players, player_ids_by_entity, player_counts_by_zone) =
@@ -792,6 +802,7 @@ fn build_world_state_snapshot(
             &zone_registry,
         ),
         factions: faction_store.map(collect_faction_summaries),
+        rat_density_heatmap,
         zones: collect_zone_snapshots(&zone_registry, &player_counts_by_zone),
         recent_events: active_events
             .map(ActiveEventsResource::recent_events_snapshot)
@@ -1560,14 +1571,16 @@ fn has_zone_qi_inspect(
 
 fn emit_event_alerts_on_major_event_creation(
     mut active_events: Option<valence::prelude::ResMut<ActiveEventsResource>>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<(Entity, &mut Client), With<Client>>,
+    audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
 ) {
     let Some(active_events) = active_events.as_deref_mut() else {
         return;
     };
+    let mut audio_events = audio_events;
 
     for pending_alert in active_events.drain_major_event_alerts() {
-        let message = pending_alert.message.unwrap_or_else(|| {
+        let message = pending_alert.message.clone().unwrap_or_else(|| {
             major_event_alert_message(
                 pending_alert.event_name.as_str(),
                 pending_alert.zone_name.as_str(),
@@ -1585,7 +1598,7 @@ fn emit_event_alerts_on_major_event_creation(
 
         let payload = ServerDataV1::new(ServerDataPayloadV1::EventAlert {
             event: event_kind,
-            message,
+            message: message.clone(),
             zone: Some(pending_alert.zone_name.clone()),
             duration_ticks: Some(pending_alert.duration_ticks),
         });
@@ -1598,10 +1611,46 @@ fn emit_event_alerts_on_major_event_creation(
             }
         };
 
-        for mut client in &mut clients {
+        let locust_payload = locust_swarm_warning_payload(&pending_alert, message.as_str());
+
+        for (entity, mut client) in &mut clients {
             send_server_data_payload(&mut client, payload_bytes.as_slice());
+            if let Some(locust_payload) = locust_payload.as_ref() {
+                client.send_custom_payload(ident!("bong:locust_swarm_warning"), locust_payload);
+                if let Some(audio_events) = audio_events.as_deref_mut() {
+                    audio_events.send(audio_event_emit::PlaySoundRecipeRequest {
+                        recipe_id: "locust_swarm_warning".to_string(),
+                        instance_id: 0,
+                        pos: None,
+                        flag: None,
+                        volume_mul: 1.0,
+                        pitch_shift: 0.0,
+                        recipient: audio_event_emit::AudioRecipient::Single(entity),
+                    });
+                }
+            }
         }
     }
+}
+
+fn locust_swarm_warning_payload(
+    pending_alert: &crate::world::events::MajorEventAlert,
+    message: &str,
+) -> Option<Vec<u8>> {
+    if pending_alert.event_name != crate::world::events::EVENT_BEAST_TIDE
+        || !message.contains("灵蝗潮")
+    {
+        return None;
+    }
+
+    let payload = serde_json::json!({
+        "v": 1,
+        "type": "locust_swarm_warning",
+        "zone": pending_alert.zone_name,
+        "message": message,
+        "duration_ticks": pending_alert.duration_ticks,
+    });
+    serde_json::to_vec(&payload).ok()
 }
 
 fn event_kind_from_name(event_name: &str) -> Option<EventKind> {
@@ -3976,9 +4025,12 @@ mod tests {
 
     mod event_payload_tests {
         use super::*;
-        use crate::world::events::{ActiveEventsResource, EVENT_THUNDER_TRIBULATION};
+        use crate::world::events::{
+            ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_THUNDER_TRIBULATION,
+        };
         use crate::world::zone::ZoneRegistry;
         use std::collections::HashMap;
+        use valence::prelude::Events;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
 
@@ -4005,6 +4057,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(ActiveEventsResource::default());
             app.insert_resource(ZoneRegistry::fallback());
+            app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
             app.add_systems(Update, emit_event_alerts_on_major_event_creation);
             app
         }
@@ -4102,6 +4155,53 @@ mod tests {
             assert!(
                 second.is_empty(),
                 "drained major-event alerts must not be resent on subsequent ticks"
+            );
+        }
+
+        #[test]
+        fn locust_swarm_alert_emits_custom_warning_and_audio_request() {
+            let mut app = setup_event_alert_app();
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            {
+                let world = app.world_mut();
+                let mut command = spawn_event_command("spawn", EVENT_BEAST_TIDE, 24000);
+                command
+                    .params
+                    .insert("tide_kind".to_string(), serde_json::json!("locust_swarm"));
+                world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                    let mut events = world.resource_mut::<ActiveEventsResource>();
+                    let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
+                    assert!(accepted, "locust swarm should be accepted into scheduler");
+                });
+            }
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let has_locust_payload = helper.collect_received().0.into_iter().any(|frame| {
+                let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                    return false;
+                };
+                packet.channel.as_str() == "bong:locust_swarm_warning"
+            });
+            assert!(
+                has_locust_payload,
+                "locust swarm should emit dedicated warning payload"
+            );
+
+            let audio_events = app
+                .world()
+                .resource::<Events<audio_event_emit::PlaySoundRecipeRequest>>();
+            let request = audio_events
+                .iter_current_update_events()
+                .next()
+                .expect("locust swarm warning should queue an audio cue");
+            assert_eq!(request.recipe_id, "locust_swarm_warning");
+            assert_eq!(
+                request.recipient,
+                audio_event_emit::AudioRecipient::Single(entity)
             );
         }
     }

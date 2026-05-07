@@ -2,7 +2,8 @@
 //!
 //! v1 keeps the tutorial silent: no quest UI, no explicit progress packet. The
 //! server only records player-driven hooks, grants the coffin spirit niche
-//! stone once per player, and spawns placeholder "rat" zombies that drain qi.
+//! stone once per player, and spawns tutorial rats that drain qi through the
+//! shared RatBiteEvent path.
 
 use std::collections::BTreeSet;
 
@@ -13,6 +14,7 @@ use valence::prelude::{
     Update, Username, With, Without,
 };
 
+use crate::combat::rat_bite::RatBiteEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::{BreakthroughOutcome, BreakthroughSuccess};
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
@@ -22,9 +24,8 @@ use crate::inventory::{
 };
 use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
 use crate::npc::lifecycle::{NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
-use crate::npc::spawn::{
-    spawn_notice, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcSkinSpawnContext,
-};
+use crate::npc::spawn::{spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext};
+use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::DimensionLayers;
@@ -528,7 +529,7 @@ fn dynamic_rat_swarm_spawner(
                 base[1],
                 base[2] + direction[0] * offset,
             );
-            let rat = spawn_zombie_npc_at(
+            let rat = spawn_rat_npc_at(
                 &mut commands,
                 layers.overworld,
                 DEFAULT_SPAWN_ZONE_NAME,
@@ -552,8 +553,9 @@ fn dynamic_rat_swarm_spawner(
 
 fn tutorial_rat_qi_drain_tick(
     clock: Option<Res<CombatClock>>,
-    rats: Query<(&Position, &TutorialRatSwarmNpc)>,
-    mut players: Query<(Entity, &Position, &mut Cultivation), With<TutorialState>>,
+    rats: Query<(Entity, &Position, &TutorialRatSwarmNpc)>,
+    players: Query<(Entity, &Position, &Cultivation), With<TutorialState>>,
+    mut bites: EventWriter<RatBiteEvent>,
 ) {
     let Some(clock) = clock else {
         return;
@@ -562,18 +564,23 @@ fn tutorial_rat_qi_drain_tick(
         return;
     }
 
-    for (player_entity, player_pos, mut cultivation) in &mut players {
+    for (player_entity, player_pos, cultivation) in &players {
         if cultivation.qi_current <= 0.0 {
             continue;
         }
         let player = player_pos.get();
-        let near_rat = rats.iter().any(|(rat_pos, rat)| {
-            rat.spawned_for == player_entity
+        let near_rat = rats.iter().find_map(|(rat_entity, rat_pos, rat)| {
+            (rat.spawned_for == player_entity
                 && clock.tick.saturating_sub(rat.spawned_at_tick) <= 10 * 60 * 20
-                && distance_xz(player, rat_pos.get()) <= RAT_SWARM_DRAIN_RADIUS
+                && distance_xz(player, rat_pos.get()) <= RAT_SWARM_DRAIN_RADIUS)
+                .then_some(rat_entity)
         });
-        if near_rat {
-            cultivation.qi_current = (cultivation.qi_current - RAT_SWARM_DRAIN_AMOUNT).max(0.0);
+        if let Some(rat_entity) = near_rat {
+            bites.send(RatBiteEvent {
+                rat: rat_entity,
+                target: player_entity,
+                qi_steal: RAT_SWARM_DRAIN_AMOUNT as u32,
+            });
         }
     }
 }

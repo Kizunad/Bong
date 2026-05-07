@@ -1,0 +1,11 @@
+{
+  "id": "locust_swarm_warning",
+  "layers": [
+    { "sound": "minecraft:entity.silverfish.ambient", "volume": 0.35, "pitch": 0.65, "delay_ticks": 0 },
+    { "sound": "minecraft:block.gravel.break", "volume": 0.22, "pitch": 0.55, "delay_ticks": 4 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.12, "pitch": 0.6, "delay_ticks": 10 }
+  ],
+  "priority": 88,
+  "attenuation": "global_hint",
+  "category": "AMBIENT"
+}

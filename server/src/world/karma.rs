@@ -169,6 +169,21 @@ impl QiDensityHeatmap {
         *entry = (*entry + heat_delta.max(0.0)).min(QI_DENSITY_HEAT_MAX);
     }
 
+    pub fn drain_heat(
+        &mut self,
+        dimension: DimensionKind,
+        position: BlockPos,
+        heat_delta: f32,
+    ) -> f32 {
+        let cell = QiDensityCell::from_position(dimension, position);
+        let Some(entry) = self.by_cell.get_mut(&cell) else {
+            return 0.0;
+        };
+        let before = *entry;
+        *entry = (*entry - heat_delta.max(0.0)).max(0.0);
+        before - *entry
+    }
+
     pub fn heat_at(&self, dimension: DimensionKind, position: BlockPos) -> f32 {
         self.by_cell
             .get(&QiDensityCell::from_position(dimension, position))

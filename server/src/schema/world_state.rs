@@ -1,6 +1,7 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+use crate::fauna::rat_phase::RatDensityHeatmapV1;
 use crate::npc::faction::{FactionId, FactionRank};
 
 use super::common::{GameEventType, NpcStateKind, PlayerTrend};
@@ -191,6 +192,7 @@ pub struct WorldStateV1 {
     pub npcs: Vec<NpcSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub factions: Option<Vec<FactionSummaryV1>>,
+    pub rat_density_heatmap: RatDensityHeatmapV1,
     pub zones: Vec<ZoneSnapshot>,
     pub recent_events: Vec<GameEvent>,
 }
@@ -252,6 +254,14 @@ mod tests {
             Some(FactionId::Neutral)
         );
         assert_eq!(state.factions.as_ref().map(Vec::len), Some(3));
+        assert_eq!(
+            state
+                .rat_density_heatmap
+                .zones
+                .get("spawn")
+                .map(|snapshot| snapshot.gregarious),
+            Some(2)
+        );
         assert_eq!(state.zones.len(), 2);
         assert_eq!(state.recent_events.len(), 2);
         assert_eq!(CH_WORLD_STATE, "bong:world_state");

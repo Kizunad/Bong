@@ -44,6 +44,9 @@ pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
 pub const CH_SOCIAL_NICHE_INTRUSION: &str = "bong:social/niche_intrusion";
 pub const CH_ZONE_PRESSURE_CROSSED: &str = "bong:zone/pressure_crossed";
 
+// 噬元鼠相变（plan-rat-v1 P4）。server 检测 chunk 局部相变，agent 决定是否升级为跨 zone 灵蝗潮。
+pub const CH_RAT_PHASE_EVENT: &str = "bong:rat_phase_event";
+
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
@@ -142,6 +145,7 @@ mod tests {
         assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
         assert_eq!(CH_SOCIAL_NICHE_INTRUSION, "bong:social/niche_intrusion");
         assert_eq!(CH_ZONE_PRESSURE_CROSSED, "bong:zone/pressure_crossed");
+        assert_eq!(CH_RAT_PHASE_EVENT, "bong:rat_phase_event");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_STYLE_BALANCE_TELEMETRY, "bong:style_balance_telemetry");

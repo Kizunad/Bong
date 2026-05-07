@@ -624,12 +624,13 @@ fn execute_spawn_event(
     };
 
     let season = query_season("", tick.unwrap_or_default()).season;
-    if active_events.enqueue_from_spawn_command_with_karma_and_season(
+    if active_events.enqueue_from_spawn_command_with_karma_and_season_at_tick(
         command,
         zone_registry.as_deref_mut(),
         karma_weights,
         qi_heatmap,
         season,
+        tick.unwrap_or_default(),
     ) {
         "ok"
     } else {
