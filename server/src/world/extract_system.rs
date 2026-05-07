@@ -140,7 +140,7 @@ fn distance_from_started(pos: &Position, started: [f64; 3]) -> f64 {
     ))
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn start_extract_request(
     mut events: EventReader<StartExtractRequest>,
     mut results: EventWriter<StartExtractResult>,
@@ -851,7 +851,10 @@ mod tests {
             "second extractor on same CollapseTear should hit PortalOccupied, got {collected:?}"
         );
         assert!(
-            app.world().entity(second).get::<ExtractProgress>().is_none(),
+            app.world()
+                .entity(second)
+                .get::<ExtractProgress>()
+                .is_none(),
             "rejected request should not insert ExtractProgress"
         );
     }
