@@ -14,13 +14,12 @@
 //! - Linear 公式特意走 f64 内部算 — 骨币 real-year scale decay 精度关键。
 
 use super::types::{DecayFormula, DecayProfile, Freshness, TrackState};
+use crate::qi_physics::constants::QI_SHELFLIFE_DEAD_ZONE_MULTIPLIER;
 use crate::world::season::Season;
-
-pub const DEAD_ZONE_SHELFLIFE_MULTIPLIER: f32 = 3.0;
 
 pub fn zone_multiplier_lookup(zone_qi_density: f64) -> f32 {
     if (0.0..crate::cultivation::dead_zone::DEAD_ZONE_QI_THRESHOLD).contains(&zone_qi_density) {
-        DEAD_ZONE_SHELFLIFE_MULTIPLIER
+        QI_SHELFLIFE_DEAD_ZONE_MULTIPLIER
     } else {
         1.0
     }

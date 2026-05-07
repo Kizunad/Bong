@@ -5,8 +5,8 @@ use crate::combat::components::{
     STATUS_EFFECT_TICK_INTERVAL_TICKS,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
-use crate::combat::jiemai::JIEMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER;
 use crate::combat::CombatClock;
+use crate::qi_physics::constants::QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER;
 
 pub fn status_effect_apply_tick(
     mut intents: EventReader<ApplyStatusEffectIntent>,
@@ -126,7 +126,7 @@ pub fn attribute_aggregate_tick(
             };
         let parry_recovery_multiplier =
             if has_active_status(status_effects, StatusEffectKind::ParryRecovery) {
-                JIEMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER
+                QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER
             } else {
                 1.0
             };

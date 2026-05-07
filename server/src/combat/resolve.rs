@@ -9,7 +9,7 @@ use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::jiemai::{
     jiemai_apply_effects, jiemai_effectiveness, jiemai_fov_check, jiemai_prep_window,
-    jiemai_qi_cost_for_realm, JIEMAI_PARRY_RECOVERY_TICKS,
+    jiemai_qi_cost_for_realm,
 };
 use crate::combat::status::has_active_status;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
@@ -19,8 +19,7 @@ use crate::combat::{
     components::{
         BodyPart, CombatState, DerivedAttrs, Lifecycle, LifecycleState, Stamina, StaminaState,
         StatusEffects, Wound, Wounds, HEAD_STUN_DURATION_TICKS, HEAD_STUN_SEVERITY_THRESHOLD,
-        JIEMAI_CONCUSSION_BLEEDING_PER_SEC, LEG_SLOWED_DURATION_TICKS,
-        LEG_SLOWED_SEVERITY_THRESHOLD,
+        LEG_SLOWED_DURATION_TICKS, LEG_SLOWED_SEVERITY_THRESHOLD,
     },
     events::{
         ApplyStatusEffectIntent, AttackIntent, AttackSource, CombatEvent, DeathEvent,
@@ -42,6 +41,10 @@ use crate::inventory::{
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::constants::{
+    QI_ZHENMAI_CONCUSSION_BASE_SEVERITY, QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC,
+    QI_ZHENMAI_PARRY_RECOVERY_TICKS,
+};
 use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -162,7 +165,7 @@ pub fn apply_defense_intents(
             target: defense.defender,
             kind: StatusEffectKind::ParryRecovery,
             magnitude: 1.0,
-            duration_ticks: JIEMAI_PARRY_RECOVERY_TICKS,
+            duration_ticks: QI_ZHENMAI_PARRY_RECOVERY_TICKS,
             issued_at_tick: defense.issued_at_tick,
         });
     }
@@ -540,8 +543,7 @@ pub fn resolve_attack_intents(
 
                 let before = emitted_contam_delta;
                 let effectiveness = jiemai_effectiveness(distance);
-                let mut concussion_severity =
-                    crate::combat::components::JIEMAI_CONCUSSION_BASE_SEVERITY;
+                let mut concussion_severity = QI_ZHENMAI_CONCUSSION_BASE_SEVERITY;
                 jiemai_apply_effects(
                     effectiveness,
                     &mut emitted_contam_delta,
@@ -555,7 +557,7 @@ pub fn resolve_attack_intents(
                     location: hit_probe.body_part,
                     kind: crate::combat::components::WoundKind::Concussion,
                     severity: concussion_severity,
-                    bleeding_per_sec: JIEMAI_CONCUSSION_BLEEDING_PER_SEC,
+                    bleeding_per_sec: QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC,
                     created_at_tick: clock.tick,
                     inflicted_by: Some(attacker_id.clone()),
                 });

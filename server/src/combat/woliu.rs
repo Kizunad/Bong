@@ -15,6 +15,7 @@ use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::qi_physics::constants::QI_WOLIU_VORTEX_THEORETICAL_LIMIT_DELTA;
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
     ProjectileQiDrainedEventV1, VortexBackfireCauseV1, VortexBackfireEventV1, VortexFieldStateV1,
@@ -26,7 +27,6 @@ pub const WOLIU_VORTEX_SKILL_ID: &str = "woliu.vortex";
 pub const VORTEX_CASTING_MAGNITUDE: f32 = 1.0;
 pub const VORTEX_CASTING_DURATION_TICKS: u64 = u64::MAX;
 pub const VORTEX_COOLDOWN_TICKS: u64 = TICKS_PER_SECOND;
-pub const VORTEX_THEORETICAL_LIMIT_DELTA: f32 = 0.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -655,7 +655,7 @@ pub fn drain_qi_payload(qi_payload: &mut f32, delta: f32) -> f32 {
         *qi_payload = 0.0;
         return 0.0;
     }
-    let ratio = (delta / VORTEX_THEORETICAL_LIMIT_DELTA).clamp(0.0, 1.0);
+    let ratio = (delta / QI_WOLIU_VORTEX_THEORETICAL_LIMIT_DELTA).clamp(0.0, 1.0);
     let drained = (*qi_payload * ratio).clamp(0.0, *qi_payload);
     *qi_payload = (*qi_payload - drained).max(0.0);
     drained
@@ -1119,8 +1119,8 @@ mod tests {
         let drained = drain_qi_payload(&mut payload, 0.65);
         assert!((drained - 0.8125).abs() < 1e-6);
         let drained_again = drain_qi_payload(&mut payload, 0.8);
-        assert!(drained_again <= 0.1875 + 1e-6);
-        assert_eq!(payload, 0.0);
+        assert!((drained_again - 0.1875).abs() < 1e-6);
+        assert!(payload.abs() < 1e-6);
     }
 
     #[test]

@@ -54,7 +54,7 @@ pub use events::{
 #[allow(unused_imports)]
 pub use growth::{
     advance_one_lingtian_tick, quality_bonus, quality_multiplier, GrowthOutcome,
-    FENGPEI_QUALITY_BONUS, FENGPEI_THRESHOLD, ZONE_LEAK_GROWTH_FACTOR, ZONE_LEAK_RATIO,
+    FENGPEI_QUALITY_BONUS, FENGPEI_THRESHOLD, ZONE_LEAK_GROWTH_FACTOR,
 };
 #[allow(unused_imports)]
 pub use hoe::HoeKind;
