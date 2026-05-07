@@ -1,9 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
-     Running unittests src/main.rs (target/debug/deps/bong_server-7acc5c9ba6ee5990)
-
-running 2 tests
-test network::combat_bridge::tests::publishes_realtime_for_combat_and_death_events ... ok
-test network::combat_bridge::tests::summary_counts_events_and_resets_on_world_state_interval ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 257 filtered out; finished in 0.00s
-

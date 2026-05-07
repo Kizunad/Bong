@@ -1,7 +1,0 @@
-Worktree path: /workspace/worktrees/Bong-combat-no-ui-c1-c3
-Current branch: atlas/combat-no-ui-c1-c3
-git status --short:
- M .sisyphus/boulder.json
-?? .sisyphus/evidence/task-1-worktree-error.txt
-?? .sisyphus/plans/combat-no-ui-worktree-c1-c3.md
-base branch = main
