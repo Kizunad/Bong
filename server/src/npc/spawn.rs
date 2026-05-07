@@ -2175,8 +2175,7 @@ mod tests {
     #[test]
     fn snap_spawn_y_no_terrain_keeps_original() {
         let pos = DVec3::new(5.0, 80.0, 5.0);
-        let snapped =
-            snap_spawn_y_to_surface(pos, None::<&crate::world::terrain::TerrainProvider>);
+        let snapped = snap_spawn_y_to_surface(pos, None::<&crate::world::terrain::TerrainProvider>);
         assert!(
             (snapped.y - 80.0).abs() < 0.01,
             "no terrain provider should keep original Y=80, got {}",

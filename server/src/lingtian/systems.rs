@@ -775,8 +775,7 @@ pub fn auto_set_plot_zone(
     for mut plot in &mut plots {
         if plot.zone.is_empty() {
             let pos = DVec3::new(plot.pos.x as f64, plot.pos.y as f64, plot.pos.z as f64);
-            if let Some(zone) =
-                zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
+            if let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
             {
                 plot.zone = zone.name.clone();
             }

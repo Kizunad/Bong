@@ -116,6 +116,7 @@ pub(crate) fn npc_tribulation_auto_wave_tick(
 
 /// 结束后释放配额：任何挂在 `AscensionQuotaStore.active` 但已没有
 /// `TribulationState` 的 NPC 都会被释放（涵盖成功进 Void / 失败 / 被取消）。
+#[allow(clippy::type_complexity)]
 pub(crate) fn release_quota_for_ended_tribulations(
     mut store: ResMut<AscensionQuotaStore>,
     ongoing: Query<Entity, (With<NpcMarker>, With<TribulationState>, Without<Despawned>)>,

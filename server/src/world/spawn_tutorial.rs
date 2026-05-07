@@ -24,7 +24,9 @@ use crate::inventory::{
 };
 use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
 use crate::npc::lifecycle::{NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
-use crate::npc::spawn::{snap_spawn_y_to_surface, spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext};
+use crate::npc::spawn::{
+    snap_spawn_y_to_surface, spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext,
+};
 use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};

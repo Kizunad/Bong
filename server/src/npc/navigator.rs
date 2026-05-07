@@ -932,10 +932,7 @@ mod tests {
             q.iter(world).next().unwrap()
         };
         {
-            let mut layer = app
-                .world_mut()
-                .get_mut::<ChunkLayer>(layer_entity)
-                .unwrap();
+            let mut layer = app.world_mut().get_mut::<ChunkLayer>(layer_entity).unwrap();
             let mut chunk = UnloadedChunk::with_height(384);
             let min_y = layer.min_y();
             let local_y = (ground_y - min_y) as u32;

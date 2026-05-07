@@ -86,12 +86,10 @@ mod tests {
             .world_mut()
             .spawn(crate::world::dimension::OverworldLayer)
             .id();
-        app.world_mut().spawn(
-            LingtianPlot::new(BlockPos::new(100, 64, 100), None).with_zone("zone_a"),
-        );
-        app.world_mut().spawn(
-            LingtianPlot::new(BlockPos::new(900, 64, 900), None).with_zone("zone_b"),
-        );
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(100, 64, 100), None).with_zone("zone_a"));
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(900, 64, 900), None).with_zone("zone_b"));
         app.world_mut().send_event(ZonePressureCrossed {
             zone: "zone_b".to_string(),
             level: PressureLevel::High,
@@ -124,9 +122,8 @@ mod tests {
         let mut app = make_app();
         app.world_mut()
             .spawn(crate::world::dimension::OverworldLayer);
-        app.world_mut().spawn(
-            LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"),
-        );
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"));
         app.world_mut().send_event(ZonePressureCrossed {
             zone: "spawn".to_string(),
             level: PressureLevel::High,
@@ -147,9 +144,8 @@ mod tests {
         let mut app = make_app();
         app.world_mut()
             .spawn(crate::world::dimension::OverworldLayer);
-        app.world_mut().spawn(
-            LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("other"),
-        );
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("other"));
         app.world_mut().send_event(ZonePressureCrossed {
             zone: "nonexistent".to_string(),
             level: PressureLevel::High,
@@ -173,9 +169,8 @@ mod tests {
         let mut app = make_app();
         app.world_mut()
             .spawn(crate::world::dimension::OverworldLayer);
-        app.world_mut().spawn(
-            LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"),
-        );
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"));
         app.world_mut().send_event(ZonePressureCrossed {
             zone: "spawn".to_string(),
             level: PressureLevel::Low,
