@@ -1,0 +1,34 @@
+{
+  "anyOf": [
+    {
+      "const": "solitary",
+      "type": "string"
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "transitioning"
+      ],
+      "properties": {
+        "transitioning": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "progress"
+          ],
+          "properties": {
+            "progress": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "const": "gregarious",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "chunk",
+    "zone",
+    "group_id",
+    "from",
+    "to",
+    "rat_count",
+    "local_qi",
+    "qi_gradient",
+    "tick"
+  ],
+  "properties": {
+    "chunk": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "zone": {
+      "type": "string"
+    },
+    "group_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "from": {
+      "anyOf": [
+        {
+          "const": "solitary",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "transitioning"
+          ],
+          "properties": {
+            "transitioning": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "progress"
+              ],
+              "properties": {
+                "progress": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        {
+          "const": "gregarious",
+          "type": "string"
+        }
+      ]
+    },
+    "to": {
+      "anyOf": [
+        {
+          "const": "solitary",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "transitioning"
+          ],
+          "properties": {
+            "transitioning": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "progress"
+              ],
+              "properties": {
+                "progress": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        {
+          "const": "gregarious",
+          "type": "string"
+        }
+      ]
+    },
+    "rat_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "local_qi": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "qi_gradient": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

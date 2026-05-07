@@ -72,6 +72,9 @@ export function createTestWorldState(): WorldStateV1 {
         player_count: 1,
       },
     ],
+    rat_density_heatmap: {
+      zones: {},
+    },
     recent_events: [],
   };
 }

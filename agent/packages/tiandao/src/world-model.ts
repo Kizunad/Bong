@@ -506,6 +506,9 @@ export class WorldModel {
       },
       players: [],
       npcs: [],
+      rat_density_heatmap: {
+        zones: {},
+      },
       zones: [],
       recent_events: [],
     };
@@ -812,6 +815,14 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       leader_lineage: faction.leader_lineage ? { ...faction.leader_lineage } : undefined,
       mission_queue: faction.mission_queue ? { ...faction.mission_queue } : undefined,
     })),
+    rat_density_heatmap: {
+      zones: Object.fromEntries(
+        Object.entries(state.rat_density_heatmap.zones).map(([zoneName, snapshot]) => [
+          zoneName,
+          { ...snapshot },
+        ]),
+      ),
+    },
     zones: state.zones.map(cloneZoneSnapshot),
     recent_events: state.recent_events.map((event) => ({
       type: event.type,

@@ -71,6 +71,9 @@ export function createMockWorldState(): WorldStateV1 {
       { name: "green_cloud_peak", spirit_qi: 0.88, danger_level: 1, active_events: [], player_count: 1 },
       { name: "newbie_valley", spirit_qi: 0.95, danger_level: 0, active_events: [], player_count: 1 },
     ],
+    rat_density_heatmap: {
+      zones: {},
+    },
     recent_events: [
       { type: "player_kill_npc", tick: 83200, player: "offline:Steve", zone: "blood_valley" },
       { type: "player_kill_npc", tick: 83500, player: "offline:Steve", zone: "blood_valley" },

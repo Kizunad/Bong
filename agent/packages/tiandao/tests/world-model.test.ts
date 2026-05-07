@@ -63,6 +63,9 @@ function createState(args: {
     },
     players,
     npcs: [],
+    rat_density_heatmap: {
+      zones: {},
+    },
     zones,
     recent_events: [],
   };
@@ -446,6 +449,9 @@ describe("WorldModel", () => {
           mission_queue: { pending_count: 1, top_mission_id: "mission:hold_spawn_gate" },
         },
       ],
+      rat_density_heatmap: {
+        zones: {},
+      },
       zones: [createZone("starter_zone", 0.5, { player_count: 1 })],
       recent_events: [],
     });

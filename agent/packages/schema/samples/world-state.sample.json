@@ -140,6 +140,22 @@
       }
     }
   ],
+  "rat_density_heatmap": {
+    "zones": {
+      "spawn": {
+        "total": 3,
+        "solitary": 1,
+        "transitioning": 0,
+        "gregarious": 2
+      },
+      "starter_valley": {
+        "total": 0,
+        "solitary": 0,
+        "transitioning": 0,
+        "gregarious": 0
+      }
+    }
+  },
   "zones": [
     {
       "name": "blood_valley",

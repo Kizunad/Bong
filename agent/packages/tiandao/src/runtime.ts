@@ -5,6 +5,7 @@ import type {
   ChatSignal,
   Command,
   Narration,
+  RatPhaseChangeEventV1,
   WorldStateV1,
   ZonePressureCrossedV1,
 } from "@bong/schema";
@@ -18,6 +19,10 @@ import type { AgentDecisionWithMetadata } from "./agent.js";
 import { mergeChatSignals, processChatBatch } from "./chat-processor.js";
 import { CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE } from "./context.js";
 import { EcologyAnalyzer } from "./ecology-analyzer.js";
+import {
+  LocustSwarmNarrationTracker,
+  type LocustSwarmDecision,
+} from "./locust-swarm-narration.js";
 import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
@@ -114,6 +119,7 @@ export interface RuntimeRedis {
   connect(): Promise<void>;
   getLatestState(): WorldStateV1 | null;
   loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
+  drainRatPhaseEvents?(): RatPhaseChangeEventV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
   drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
@@ -726,6 +732,53 @@ async function processEcologyEvents(args: {
   }
 }
 
+export async function processLocustSwarmEvents(args: {
+  redis: RuntimeRedis;
+  state: WorldStateV1;
+  tracker: LocustSwarmNarrationTracker;
+  logger: Pick<typeof console, "warn">;
+}): Promise<void> {
+  const { redis, state, tracker, logger } = args;
+  const events = redis.drainRatPhaseEvents?.() ?? [];
+  if (events.length === 0) {
+    return;
+  }
+
+  const decisions: LocustSwarmDecision[] = events.map((event) => tracker.ingest(event, state));
+  const commands = decisions.flatMap((decision) => decision.commands);
+  const narrations = decisions.flatMap((decision) => decision.narrations);
+  if (commands.length === 0 && narrations.length === 0) {
+    return;
+  }
+
+  const sourceTick = Math.max(
+    state.tick,
+    ...events.map((event) => event.tick),
+  );
+  const metadata = {
+    sourceTick,
+    correlationId: `locust-swarm:${sourceTick}`,
+  };
+
+  try {
+    if (commands.length > 0) {
+      await redis.publishCommands({
+        source: "arbiter",
+        commands,
+        metadata,
+      });
+    }
+    if (narrations.length > 0) {
+      await redis.publishNarrations({
+        narrations,
+        metadata,
+      });
+    }
+  } catch (error) {
+    logger.warn("[tiandao] failed to publish locust swarm decision:", error);
+  }
+}
+
 export async function runRuntime(
   config: RuntimeConfig,
   deps: RuntimeDeps = {},
@@ -752,6 +805,7 @@ export async function runRuntime(
   const telemetrySink = deps.telemetrySink ?? createDefaultTelemetrySink({ logger });
   const qiColorNarrationTracker = new QiColorNarrationTracker();
   const ecologyAnalyzer = new EcologyAnalyzer();
+  const locustSwarmTracker = new LocustSwarmNarrationTracker();
 
   logger.log(
     `[tiandao] models: default=${modelOverrides.default}, annotate=${modelOverrides.annotate}, calamity=${modelOverrides.calamity}, mutation=${modelOverrides.mutation}, era=${modelOverrides.era}, base_url: ${config.baseUrl ?? "(mock/no-remote)"}`,
@@ -875,6 +929,13 @@ export async function runRuntime(
         });
 
         if (state) {
+          await processLocustSwarmEvents({
+            redis,
+            state,
+            tracker: locustSwarmTracker,
+            logger,
+          });
+
           if (isStaleWorldState(state, lastProcessedStateCursor)) {
             logger.log(
               `[tiandao] stale_state_skip tick=${state.tick} last_processed_tick=${lastProcessedStateCursor?.tick ?? "(none)"}`,

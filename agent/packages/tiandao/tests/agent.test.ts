@@ -13,6 +13,7 @@ describe("TiandaoAgent fake clock seam", () => {
       "query-player",
       "query-player-skill-milestones",
       "list-active-events",
+      "query-rat-density",
     ]);
     expect(resolveAgentTools("mutation.md").map((tool) => tool.name)).toEqual([
       "query-zone-history",
