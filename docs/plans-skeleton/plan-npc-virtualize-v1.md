@@ -12,15 +12,17 @@ NPC 隐式更新框架 **二态 MVP** —— 把"远方 NPC"完全移出 ECS 改
 - **§十二:1043 寿元代际更替**：dormant NPC 的代际继承（凡人邻居生子 / 散修偶发批量 spawn）走 dormant 内部，不触发 hydrate 风暴
 - **§P 真元浓度场**：dormant NPC 修炼受所在 zone EnvField 限制（远 zone 中心 = 距离衰减 distance.rs / 多 NPC 共 zone = 异体排斥 collision.rs）
 
-**qi_physics 锚点**（所有 dormant 灵气调用走以下函数，**禁止 plan 内自定**）：
+**qi_physics 锚点**（所有 dormant 灵气调用走以下函数，**校对到 `server/src/qi_physics/` 实际导出符号**；禁止 plan 内自定包装）：
 
-- `qi_physics::ledger::QiTransfer { from, to, amount }` —— 所有灵气转移记账
-- `qi_physics::excretion::container_intake(npc.cultivation, zone, dt)` —— dormant NPC 修炼吸收量计算
-- `qi_physics::release::release_to_zone(amount, zone, ledger)` —— dormant NPC 老死 / 战斗释放灵气回 zone（三参数：amount + 目标 zone + ledger 引用，跟 §3 强约束 #2 / §4.4 / §4.5 写法一致）
-- `qi_physics::distance::attenuation(npc.position, zone.center)` —— 距 zone 中心衰减
-- `qi_physics::collision::repulsion(npc.style_rho, others_in_zone)` —— 同 zone 多 NPC 异体排斥（worldview §P ρ 矩阵）
+- `qi_physics::ledger::QiTransfer::new(from, to, amount, reason)` → `Result<QiTransfer>` —— 所有灵气转移记账（reason: `CultivationRegen` / `ReleaseToZone` / `Combat` 等枚举，server/src/qi_physics/ledger.rs）
+- `qi_physics::regen_from_zone(zone_qi, rate, integrity, room) -> (gain, drain)` —— **dormant NPC 修炼吸收**（zone qi × rate × integrity → NPC gain + zone drain，server/src/qi_physics/excretion.rs:42 实装；不是 `qi_excretion`——后者是容器对外泄漏不同语义）
+- `qi_physics::qi_release_to_zone(amount, from, zone, zone_current, zone_cap)` → `Result<ZoneReleaseOutcome>` —— dormant 老死 / 战斗释放灵气回 zone（5 参数 + Result 返回 `{ zone_after, accepted, overflow, transfer }`，server/src/qi_physics/release.rs:12 实装）
+- `qi_physics::qi_distance_atten(initial, distance_blocks, medium)` —— 距 zone 中心衰减（server/src/qi_physics/distance.rs:4 实装）
+- 多 dormant NPC 同 zone：**不调 `qi_collision`**（那是战斗 API：attacker/defender 双 entity，server/src/qi_physics/collision.rs:17）；改为 dormant_global_tick 内 sequential `regen_from_zone` 累计扣 zone_qi → 先来 NPC 拿走部分 → 后来 NPC 输入更小 zone_qi → 吸收量自然衰减，是 worldview §P ρ 矩阵的 dormant 化身（无显式 ρ，靠扣减顺序天然 emerge）
 - `qi_physics::env::EnvField` —— zone 浓度场边界（dormant NPC 距 zone > 64 格不可吸收，对应 worldview §二「真元极易挥发」）
-- `qi_physics::tiandao::era_decay(...)` —— 时代衰减不影响 dormant NPC 个体（已是全服级减项）
+- `qi_physics::tiandao::era_decay_step(budget, era_factor)` → `Result<f64>` —— 时代衰减不影响 dormant NPC 个体（已是全服级减项，server/src/qi_physics/tiandao.rs:49 实装）
+
+> **§4 / §5 代码示例约定**：示例为 conceptual 简写（如 `release_to_zone(amount, zone, ledger)`），P0 决策门收口 + P1 实装时按上述实际 4/5/3/7 参数签名 + Result/Outcome 返回类型对齐。本 plan 不允许实装时绕过实际签名造新包装。
 
 **前置依赖**：
 
@@ -209,8 +211,8 @@ pub fn dormant_global_tick(
 
 1. **所有 dormant cultivation.qi_current 写入必须有对应 ledger 项**。直接 `snapshot.cultivation.qi_current += X` = 红旗
 2. **所有 dormant 老死 / 渡劫失败 / 战斗死亡必须 release 灵气回 zone**（worldview §二「修炼消耗 = 别人少掉」+ §十「真元守恒」）。死亡时先 `let zone = zones.find(&snapshot.position)?;` 经 ZoneRegistry 由 position 反查（NpcDormantSnapshot 不含 zone 字段），再 `qi_physics::release::release_to_zone(snapshot.cultivation.qi_current, zone, ledger)` → 内部 emit `QiTransfer { from: npc, to: zone, amount }`
-3. **所有 dormant 修炼吸收必须走 zone EnvField 边界**：dormant NPC 距 zone 中心 > 64 格（zone EnvField 边界，对应 worldview §二「真元极易挥发」）→ 不可吸收（`excretion::container_intake` 自动 clamp 到 0）
-4. **多 dormant NPC 同 zone 必须走 collision::repulsion**（worldview §P 异体排斥 ρ 矩阵）：3 个散修同时在 spirit_marsh 修炼，每人吸收量按 ρ 矩阵衰减
+3. **所有 dormant 修炼吸收必须走 zone EnvField 边界**：dormant NPC 距 zone 中心 > 64 格 → 不可吸收（`regen_from_zone(zone_qi=0, ...)` 自动返回 `(0, 0)`，对应 worldview §二「真元极易挥发」）
+4. **多 dormant NPC 同 zone：sequential `regen_from_zone`**（worldview §P 异体排斥 ρ 矩阵的 dormant 化身）：3 个散修同时在 spirit_marsh 修炼，按 char_id 排序逐个调 `regen_from_zone(zone.spirit_qi, ...)` → 每次扣减后下个 NPC 输入更小 zone_qi → 吸收量天然递减（无显式 ρ 参数，扣减顺序产生压强法则）
 5. **不允许 dormant 内部"自循环"灵气**（如 dormant NPC A 给 B 传功）：必须先 hydrate 双方走正常战斗 / 社交链。dormant 期 SoA 状态全员独立
 6. **审计字段 `qi_ledger_net`**：dormant 期累计 emit 的 ledger 净额（应等于 cultivation.qi_current 增量），P3 验收 e2e 检查全 dormant NPC `qi_ledger_net == cultivation.qi_current - dormant_initial_qi`，差值 > 1e-6 = 红旗
 
