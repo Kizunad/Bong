@@ -381,6 +381,7 @@ pub struct PressureSensor {
 - **P3 灵蝗潮天灾**：`server/src/world/events.rs` 扩展 `BeastTideRuntimeState::{Wandering, LocustSwarm}`、`LocustSwarmState`、`tide_kind` 参数、`LocustSwarmCooldownStore` 硬阻、蝗锋推进、路径 qi/loot/cultivator drain、disperse death event；`server/src/fauna/rat_phase.rs` 新增 `release_drained_qi_on_death_system`。
 - **P4 天道 agent 接入**：`server/src/network/rat_phase_bridge.rs` 与 `server/src/network/redis_bridge.rs` 推送 `bong:rat_phase_event`；`agent/packages/schema/src/rat-phase-event.ts`、`agent/packages/schema/src/world-state.ts`、generated schema/sample 同步；`agent/packages/tiandao/src/locust-swarm-narration.ts`、`query-rat-density` tool、`calamity.md` 决策说明接入。
 - **P5 客户端警示**：`agent/packages/schema/src/client-payload.ts` 新增 `locust_swarm_warning` payload；`server/src/network/mod.rs` 发 `bong:locust_swarm_warning` 与 `locust_swarm_warning` audio recipe；`client/src/main/java/com/bong/client/network/LocustSwarmWarningHandler.java` 与 `BongNetworkHandler` 接收 HUD/event alert。
+- **测试指令**：`server/src/cmd/dev/rat.rs` 新增 `/summon rat` 与 `/rat activate`，前者复用 `spawn_rat_npc_at` 生成 silverfish 噬元鼠，后者强制最近 RatGroup 进入 `Transitioning` 并发出 `RatPhaseChangeEvent`。
 
 ### 关键 commit
 
@@ -390,7 +391,8 @@ pub struct PressureSensor {
 
 ### 测试结果
 
-- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅，`cargo test` 2505 passed。
+- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅，`cargo test` 2507 passed。
+- `server/`: `cargo test cmd::dev::rat` ✅，2 passed；`cargo test command_registry` ✅，5 passed（验证 `/summon rat` 与 `/rat activate` 命令树）。
 - `agent/`: `npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅，schema 283 passed，tiandao 253 passed。
 - `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅。
 - repo hygiene: `git diff --check` ✅。

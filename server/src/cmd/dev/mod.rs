@@ -2,6 +2,7 @@ pub mod gm;
 pub mod health;
 pub mod npc_scenario;
 pub mod preview_tp;
+pub mod rat;
 pub mod season;
 pub mod shrine;
 pub mod spawn;
@@ -30,6 +31,7 @@ pub fn register(app: &mut App) {
     tsy_spawn::register(app);
     npc_scenario::register(app);
     preview_tp::register(app);
+    rat::register(app);
 }
 
 #[cfg(test)]
