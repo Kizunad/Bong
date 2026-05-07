@@ -156,15 +156,9 @@ const username = isPlaceholder
         return parts[0] + ":" + parts[1];
       }
 
-      function generationOf(charId) {
-        // char_id `offline:Alice:char_3` → 第 3 世；旧格式 `offline:Alice`
-        // 视为第 1 世。返回值仅供显示，不参与游戏逻辑。
-        var parts = String(charId || "").split(":");
-        if (parts.length < 3) return 1;
-        var tail = parts[parts.length - 1];
-        var match = tail.match(/(\d+)/);
-        return match ? Number(match[1]) : 1;
-      }
+      // 注意：char_id 后缀是 UUIDv7（见 server/src/player/state.rs::rotate_current_character_id），
+      // 不是顺序编号，不能从 char_id 反推第几世。世代序号从"按 died_at_tick 升序"的
+      // 列表位置 (idx + 1) 计算——最早终结的角色 = 第 1 世，依此类推。
 
       fetch("/deceased/_index.json", { cache: "no-store" })
         .then(function (response) {
@@ -200,7 +194,8 @@ const username = isPlaceholder
                 ? "/deceased/view?path=" +
                   encodeURIComponent(path.replace(/^\/+/, ""))
                 : "#";
-              var generation = generationOf(charId);
+              // 列表已按 died_at_tick 升序，idx + 1 即"第几世"
+              var generation = idx + 1;
               var diedAt = entry.died_at_tick || 0;
               return (
                 '<li class="lives-card ink-reveal visible">' +
