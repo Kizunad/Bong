@@ -26,6 +26,7 @@ NPC 隐式更新框架 **二态 MVP** —— 把"远方 NPC"完全移出 ECS 改
 
 - `plan-npc-ai-v1` ✅ → 所有 archetype Bundle / Cultivation / Lifespan / FactionMembership / Lineage / Reputation / NpcLootTable / NpcDigest / `bong:npc/{spawn,death}` 通道 / `max_npc_count` config
 - `plan-npc-perf-v1` ⏳ → spatial index + navigator 分桶 + per-NPC FixedUpdate（hydrated NPC 性能基础；virtualize 前必须先把 hydrated 100 跑通）
+- `plan-meridian-severed-v1` 🆕 → `MeridianSeveredPermanent` component + `MeridianSeveredEvent`（NpcDormantSnapshot.meridian_severed 字段 + DormantSeveredAt event 桥接走通用类型，本 plan 不另造 dormant 副本）
 - `plan-qi-physics-v1` P1 ✅ → ledger::QiTransfer + excretion + release + distance + collision API 冻结
 - `plan-qi-physics-patch-v1` P0/P1/P2 ✅（守恒律 hot zones 完成迁移）
 - `plan-agent-v2` ✅ → NpcDigest 已是远方 NPC 压缩表示，本 plan 把 dormant 内部状态原样塞进 NpcDigest 给天道 agent 推演
@@ -103,8 +104,9 @@ NPC 隐式更新框架 **二态 MVP** —— 把"远方 NPC"完全移出 ECS 改
 
 #[derive(Resource, Default)]
 pub struct NpcDormantStore {
-    /// SoA 形式（按字段分 Vec 而非 Vec<Snapshot>，cache-friendly 且批量推演快）
-    /// MVP 先用 HashMap<CharId, NpcDormantSnapshot>，P4 决策门考虑改 SoA
+    /// MVP 用 **AoS**（`HashMap<CharId, NpcDormantSnapshot>`）求实现简洁。
+    /// 真正的 SoA = 按字段分 Vec（`char_ids: Vec<CharId>` / `positions: Vec<DVec3>` / `cultivations: Vec<Cultivation>` / ...），
+    /// cache-friendly 且批量推演快。SoA 演进留 P4 决策门评估（5000+ NPC 时收益是否值得 dehydrate/hydrate 字段重组开销 + 索引维护成本）
     snapshots: HashMap<CharId, NpcDormantSnapshot>,
     /// 索引：archetype → CharIds（批量推演时按 archetype 分桶）
     by_archetype: HashMap<ArchetypeId, Vec<CharId>>,
@@ -214,7 +216,7 @@ pub fn dormant_global_tick(
 
 ### docs/CLAUDE.md §四 红旗候选（决策门 #6 决定是否升级到项目级）
 
-```
+```text
 - **dormant NPC 灵气未走 ledger 账本**：dormant_global_tick 内 grep 出 `snapshot.cultivation.qi_current
   [+\-]=` 模式 → 必查 plan-npc-virtualize-v1 §3。所有 dormant 灵气流动必须 emit
   `qi_physics::ledger::QiTransfer { from, to, amount }` 并走 zone.spirit_qi 同步扣减
@@ -276,7 +278,20 @@ if snapshot.lifespan.years_remaining < years_aged {
 
 ### 4.4 自动境界推进
 
-满足突破条件 → `Cultivation::auto_breakthrough()`（plan-cultivation 已正典「NPC 无 UI 自动选默认」）。**注意**：突破成功后 qi_current 重置走 release（凡破境多余灵气返还 zone，worldview §三）。
+满足突破条件 → `Cultivation::auto_breakthrough()`（plan-cultivation 已正典「NPC 无 UI 自动选默认」）。**注意**：突破成功后 qi_current 重置走 release（凡破境多余灵气返还 zone，worldview §三），与 §4.2 / §4.5 一样必走 ledger 守恒：
+
+```rust
+if snapshot.cultivation.try_auto_breakthrough() {
+    let leftover = snapshot.cultivation.qi_current;  // 突破后重置前的余量
+    snapshot.cultivation.qi_current = 0.0;
+    if let Some(zone) = zones.find_mut(&snapshot.position) {
+        // 凡破境多余灵气返还 zone（worldview §三 + §二 守恒律）
+        qi_physics::release::release_to_zone(leftover, zone, ledger);
+        snapshot.qi_ledger_net -= leftover;  // 守恒律审计：emit ledger 反向项
+    }
+    // emit narration「远方有人破境」by agent
+}
+```
 
 ### 4.5 dormant 老死
 

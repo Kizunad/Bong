@@ -418,7 +418,7 @@ sonnet Explore 已提到但未详细列出的 3 个：
 
 ### docs/CLAUDE.md §四 红旗候选（决策门 #3 决定是否升级到项目级）
 
-```
+```text
 - **NPC ECS query 缺 Without<Despawned>**：scorer/action system 内修改 NPC component 或
   发 event 但 query 没有 Without<Despawned> filter → 必查 plan-npc-fixups-v2 §3 #1。
   Valence 软删 1-tick 窗口内对已删 entity 写 component / 发 event 会污染持久化数据
@@ -445,9 +445,9 @@ sonnet Explore 已提到但未详细列出的 3 个：
 | `AscensionQuota 立即释放` | 单 despawn 立即释放 / 正常释放不变 / 多 simultaneous | 3 |
 | **e2e 烟雾**：100 hydrated NPC + 4 Spirit realm 渡劫 + 战斗触发击杀 + 灵田道伥召唤 + commoner 老死繁殖 5min | 无 NPC 卡死 + quota 一致 + 道伥位置正确 + 繁殖不超配额 + auto_wave 不误升 realm | 1（重） |
 
-**P1 验收**：`grep -rcE '#\[test\]' server/src/npc/lingtian_pressure.rs server/src/npc/brain.rs server/src/npc/tsy_hostile.rs` ≥ 25。
+**P1 验收**：`grep -hroE '#\[test\]' server/src/npc/lingtian_pressure.rs server/src/npc/brain.rs server/src/npc/tsy_hostile.rs | wc -l` ≥ 25（`-h` 抑制文件名 / `-o` 仅输出匹配 / `wc -l` 算总数，避免 `-rcE` 多文件每文件一行计数的歧义）。
 
-**P2 验收**：`grep -rcE '#\[test\]' server/src/npc/tribulation.rs server/src/npc/farming_brain.rs` ≥ 18。
+**P2 验收**：`grep -hroE '#\[test\]' server/src/npc/tribulation.rs server/src/npc/farming_brain.rs | wc -l` ≥ 18。
 
 ---
 

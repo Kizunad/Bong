@@ -41,6 +41,7 @@ NPC 系统性能恢复专项 —— 100 rogue seed 让单核 WSL2 TPS 跌至 **0
 - **共享类型 / event**：
   - 复用 `NpcLodTier` / `NpcLodConfig`（不新建 LOD 概念）
   - 复用 `NpcSpatialIndex` 于所有空间查询 system（**禁止各 scorer 自己造一份**——孤岛红旗）
+  - **新增 `ScorerKind` enum**（Critical / Standard / Cosmetic，见 §2 数据模型 `should_skip_scorer_tick` 接口分级 LOD 策略）
   - 不新增 Schema / Component / Event（纯内部优化）
 - **跨仓库契约**：
   - server: `npc::spatial::*` 新模块 / 现有 system 改造，无对外 schema 变化
@@ -169,7 +170,7 @@ pub fn should_skip_scorer_tick(
 
 P0 决策门必须先录基线：
 
-```
+```text
 2026-05-07 baseline（BONG_ROGUE_SEED_COUNT=100, 1 player at spawn, WSL2 单核）：
   TPS = 0.7 (target 20.0)
   per-system µs/tick（top 10）:
@@ -179,7 +180,7 @@ P0 决策门必须先录基线：
 
 NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每个热点 system fn 入口/出口，每 200 tick `tracing::info!` 一次：
 
-```
+```text
 [npc-perf] tick 200: faction_hostile=12450µs (62 calls) social_scorer=8230µs (200 calls) navigator=15600µs (1 spike) ...
 ```
 
