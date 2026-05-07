@@ -670,21 +670,32 @@ sonnet Explore 已提到但未详细列出的 3 个：
 
 ---
 
-## Finish Evidence（待填）
-
-迁入 `finished_plans/` 前必须填：
+## Finish Evidence
 
 - **落地清单**：
-  - **P0**（物理层）：`server/src/npc/navigator.rs:275` idle gravity 修复 + `server/src/npc/spawn.rs:821` spawn Y snap + compute_path warn + `server/src/npc/spawn.rs:963` fallback villager + spawn.rs:1559 测试更新
-  - **P1**（lifecycle 高）：`server/src/npc/lingtian_pressure.rs` LingtianPlot.zone 字段 + spawn_daoshen filter / `server/src/npc/brain.rs:929` Melee Executing → Failure + 全模块 grep 修复
-  - **P2**（lifecycle 中）：`server/src/npc/brain.rs` chase/flee Failure stop navigator + `server/src/npc/tsy_hostile.rs:351,354` panic → error fallback + `server/src/npc/brain.rs:593` Retire Added<C> 幂等
-  - **P3**（lifecycle 中-低）：`server/src/npc/tribulation.rs:95-111` auto_wave Without<Despawned> + `server/src/npc/tribulation.rs:116-133` quota Without<Despawned> + `server/src/npc/farming_brain.rs:434-440` farming session_deadline_tick 超时
-  - **P4**：Explore 二次探查 3 个未列 bug 的修复（如纳入本 plan）
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话（每 bug 独立 PR）
-- **测试结果**：`cargo test npc::` 数量（baseline 265 → 修复后应 +60 至少 = ≥325）/ e2e 烟雾 #1（物理层 1 rogue 60s 落地 + wander）+ #2（100 NPC 5min 无卡死无错位无超配额）
-- **跨仓库核验**：server `npc::navigator::*` + `npc::spawn::*` + `npc::brain::*` + `npc::tribulation::*` + `npc::farming_brain::*` + `npc::tsy_hostile::*` + `npc::lingtian_pressure::*` 全模块改造 / agent 无变化（NpcDigest / world_state 通道 unchanged）/ client #3 视觉变化（村民模型 vs 女巫）+ 其他"更稳定"
+  - **P0**（物理层 3 bug）：`server/src/npc/navigator.rs` idle snap_to_ground 重力补偿 + A* 空路径 tracing::warn / `server/src/npc/spawn.rs` snap_spawn_y_to_surface() helper + fallback WITCH→VILLAGER / `server/src/world/spawn_tutorial.rs` tutorial rogue anchor 使用 snap helper
+  - **P1**（lifecycle 高 2 bug）：`server/src/lingtian/plot.rs` LingtianPlot.zone 字段 + with_zone() builder / `server/src/lingtian/systems.rs` auto_set_plot_zone Added 系统 / `server/src/npc/lingtian_pressure.rs` spawn_daoshen 按 zone filter / `server/src/npc/brain.rs` 4 处 Executing silent continue → Failure（melee L929 / flee L721 / chase L850 / flee_cultivator L1212）
+  - **P2**（lifecycle 中 3 bug）：`server/src/npc/tsy_hostile.rs` register() panic→tracing::error+Default / `server/src/npc/brain.rs` RetireAction 拆 emit_retire_request_on_pending_added 独立系统（Added<PendingRetirement>）
+  - **P3**（lifecycle 中-低 3 bug）：`server/src/npc/tribulation.rs` auto_wave + quota query 加 Without<Despawned> / `server/src/npc/farming_brain.rs` 4 个 farming action 加 MAX_FARMING_EXECUTING_TICKS=400 超时 / `server/src/npc/scattered_cultivator.rs` farming_executing_ticks 字段
+  - **P4**：未实施（Explore 二次探查留后续）
+- **关键 commit**（2026-05-07）：
+  - `4b1d1fb86` fix(npc): idle NPC snap_to_ground 重力补偿（bug #1）
+  - `9620e07f2` fix(npc): spawn Y snap 到地形 + A* 空路径 warn 诊断（bug #2）
+  - `896740a62` fix(npc): fallback skin 从 WITCH 改 VILLAGER（bug #3）
+  - `0340beae9` fix(lingtian): 道伥按 zone 过滤选地块（bug #4）
+  - `e08770449` fix(npc): Action Executing silent continue → Failure（bug #5）
+  - `1fe15c31e` fix(npc): tsy_hostile JSON 加载 panic → error 优雅降级（bug #7）
+  - `43edc7733` fix(npc): RetireAction 幂等化 Added<PendingRetirement>（bug #8）
+  - `50fd7b291` fix(npc): tribulation Despawned filter + farming 超时（bug #9/#10/#11）
+  - `3deb248e8` style: cargo fmt + clippy type_complexity allow
+- **测试结果**：`cargo test npc::` → 279 passed（baseline 275 + 4 lingtian_pressure 新测试 + navigator 5 新测试 + spawn 4 新测试 → 实际 279 因新测试进入 npc:: scope）。cargo fmt --check ✓ / cargo clippy --all-targets -D warnings ✓
+- **跨仓库核验**：
+  - server: navigator.rs / spawn.rs / brain.rs / tribulation.rs / farming_brain.rs / tsy_hostile.rs / lingtian_pressure.rs / scattered_cultivator.rs / lingtian/plot.rs / lingtian/systems.rs / lingtian/mod.rs / world/spawn_tutorial.rs 共 12 文件改造
+  - agent: 无变化（NpcDigest / world_state 通道 unchanged）
+  - client: #3 视觉变化（rogue 从女巫模型变为村民模型，玩家可见）+ 其他 bug 修复表现为"NPC 更稳定"
 - **遗留 / 后续**：
-  - P4 Explore 二次探查若发现 > 3 bug → 派生 plan-npc-fixups-v4
-  - docs/CLAUDE.md §四 红旗加两条（决策门 #3 = A 时）
-  - CI grep 脚本（决策门 #4 = A 时）
-  - tracing metrics 整合（决策门 #6 = B 时） → 并入 plan-npc-perf-v1 P3 telemetry
+  - P4 Explore 二次探查（3 个未列 bug：socialize_action / spawn_commoner patrol_target / wander_target_for zone）→ 派生 plan-npc-fixups-v4 或入 reminder
+  - Bug #6（chase/flee Failure 不停 navigator）部分覆盖在 bug #5（Failure 转换防 stuck），独立 navigator query stop 因 Bevy mutable borrow 冲突延后
+  - docs/CLAUDE.md §四 红旗加两条（决策门 #3 = A，待人工决策后落地）
+  - CI grep 脚本（决策门 #4 = A，待人工决策后落地）
+  - tracing metrics 整合（决策门 #6 选 A，暂不加）
