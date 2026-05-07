@@ -382,6 +382,7 @@ pub struct PressureSensor {
 - **P4 天道 agent 接入**：`server/src/network/rat_phase_bridge.rs` 与 `server/src/network/redis_bridge.rs` 推送 `bong:rat_phase_event`；`agent/packages/schema/src/rat-phase-event.ts`、`agent/packages/schema/src/world-state.ts`、generated schema/sample 同步；`agent/packages/tiandao/src/locust-swarm-narration.ts`、`query-rat-density` tool、`calamity.md` 决策说明接入。
 - **P5 客户端警示**：`agent/packages/schema/src/client-payload.ts` 新增 `locust_swarm_warning` payload；`server/src/network/mod.rs` 发 `bong:locust_swarm_warning` 与 `locust_swarm_warning` audio recipe；`client/src/main/java/com/bong/client/network/LocustSwarmWarningHandler.java` 与 `BongNetworkHandler` 接收 HUD/event alert。
 - **测试指令**：`server/src/cmd/dev/rat.rs` 新增 `/summon rat` 与 `/rat activate`，前者复用 `spawn_rat_npc_at` 生成 silverfish 噬元鼠，后者强制最近 RatGroup 进入 `Transitioning` 并发出 `RatPhaseChangeEvent`。
+- **PR review 修复补充**：`LocustSwarmWarningHandler` 对缺失 `v` 字段 no-op，避免自动拆箱 NPE；`LocustSwarmNarrationTracker` 以相变源 zone 作为 `spawn_event.target`，目标区保留在 `params.target_zone`；`processLocustSwarmEvents` 同批事件只接受第一条灵蝗潮升级；`apply_rat_phase_change_system` 只推进仍处于 `event.from` 的鼠；`tick_active_events` 用 live NPC 集合刷新 `LocustSwarmState.group_alive`，让鼠群折损低于阈值时可解散。
 
 ### 关键 commit
 
@@ -391,10 +392,13 @@ pub struct PressureSensor {
 
 ### 测试结果
 
-- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅，`cargo test` 2507 passed。
+- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅，`cargo test` 2509 passed。
 - `server/`: `cargo test cmd::dev::rat` ✅，2 passed；`cargo test command_registry` ✅，5 passed（验证 `/summon rat` 与 `/rat activate` 命令树）。
-- `agent/`: `npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅，schema 283 passed，tiandao 253 passed。
+- `server/`: `cargo test locust_swarm_disperses_when_live_group_drops_below_threshold` ✅，1 passed；`cargo test apply_rat_phase_change_keeps_rats_that_already_left_source_phase` ✅，1 passed（PR review 回归）。
+- `agent/`: `npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅，schema 283 passed，tiandao 255 passed。
+- `agent/packages/tiandao`: `npm test -- locust-swarm-narration.test.ts runtime.test.ts` ✅，84 passed（PR review 回归）。
 - `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅。
+- `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test --tests "com.bong.client.network.LocustSwarmWarningHandlerTest"` ✅。
 - repo hygiene: `git diff --check` ✅。
 
 ### 跨仓库核验

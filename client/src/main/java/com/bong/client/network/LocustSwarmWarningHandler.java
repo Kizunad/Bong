@@ -36,7 +36,8 @@ public final class LocustSwarmWarningHandler {
             return ServerDataDispatch.noOp(ROUTE_TYPE, "Ignoring malformed locust_swarm_warning payload");
         }
 
-        if (readOptionalInt(payload, "v") != 1 || !"locust_swarm_warning".equals(readOptionalString(payload, "type"))) {
+        Integer version = readOptionalInt(payload, "v");
+        if (version == null || version != 1 || !"locust_swarm_warning".equals(readOptionalString(payload, "type"))) {
             return ServerDataDispatch.noOp(ROUTE_TYPE, "Ignoring locust_swarm_warning payload: invalid version or type");
         }
 

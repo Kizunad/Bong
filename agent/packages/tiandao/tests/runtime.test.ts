@@ -12,6 +12,7 @@ import {
   resolveRuntimeConfig,
   runTick,
   runRuntime,
+  processLocustSwarmEvents,
   type RuntimeModelOverrides,
   type CommandPublishRequest,
   type NarrationPublishRequest,
@@ -21,7 +22,7 @@ import { LlmBackoffError, LlmTimeoutError, type LlmClient } from "../src/llm.js"
 import type { TelemetrySink } from "../src/telemetry.js";
 import { WorldModel, type WorldModelSnapshot } from "../src/world-model.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration } from "@bong/schema";
+import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, RatPhaseChangeEventV1 } from "@bong/schema";
 
 function createStructuredChatResult(content: string, model: string) {
   return {
@@ -753,6 +754,68 @@ describe("runTick", () => {
     expect(result.metrics.errorBreakdown.parseFail).toBe(0);
     expect(result.metrics.errorBreakdown.reconnect).toBe(0);
     expect(result.metrics.errorBreakdown.dedupeDrop).toBe(0);
+  });
+});
+
+describe("processLocustSwarmEvents", () => {
+  it("publishes_only_the_first_accepted_locust_escalation_per_batch", async () => {
+    const state = createTestWorldState();
+    const event: RatPhaseChangeEventV1 = {
+      chunk: [0, 0],
+      zone: "starter_zone",
+      group_id: 1,
+      from: "solitary",
+      to: { transitioning: { progress: 0 } },
+      rat_count: 12,
+      local_qi: 0.7,
+      qi_gradient: 0.3,
+      tick: state.tick,
+    };
+    const redis = {
+      drainRatPhaseEvents: vi.fn(() => [
+        event,
+        { ...event, group_id: 2, zone: "green_cloud_peak" },
+      ]),
+      publishCommands: vi.fn(async (_request: CommandPublishRequest) => {}),
+      publishNarrations: vi.fn(async (_request: NarrationPublishRequest) => {}),
+    } as unknown as RuntimeRedis;
+    const tracker = {
+      ingest: vi.fn(() => ({
+        commands: [
+          {
+            type: "spawn_event",
+            target: "starter_zone",
+            params: {
+              event: "beast_tide",
+              tide_kind: "locust_swarm",
+              target_zone: "green_cloud_peak",
+            },
+          },
+        ],
+        narrations: [],
+        reasoning: "accepted",
+      })),
+    } as unknown as Parameters<typeof processLocustSwarmEvents>[0]["tracker"];
+
+    await processLocustSwarmEvents({
+      redis,
+      state,
+      tracker,
+      logger: { warn: vi.fn() },
+    });
+
+    expect(tracker.ingest).toHaveBeenCalledTimes(1);
+    expect(redis.publishCommands).toHaveBeenCalledTimes(1);
+    expect(redis.publishCommands).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: [
+          expect.objectContaining({
+            type: "spawn_event",
+            target: "starter_zone",
+          }),
+        ],
+      }),
+    );
   });
 });
 

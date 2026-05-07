@@ -7,7 +7,7 @@ use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, BlockPos, ChunkPos, Client, Commands, DVec3, Despawned, Entity, EntityKind,
     EntityLayerId, Event, EventWriter, Events, IntoSystemConfigs, Position, Query, Res, ResMut,
-    Resource, Update, Username, With,
+    Resource, Update, Username, With, Without,
 };
 
 use super::zone::ZoneRegistry;
@@ -226,6 +226,15 @@ impl BeastTideRuntimeState {
             }
         }
     }
+
+    fn refresh_locust_live_rats(&mut self, live_npcs: &HashSet<Entity>) {
+        if let Self::LocustSwarm(state) = self {
+            state
+                .spawned_rats
+                .retain(|entity| live_npcs.contains(entity));
+            state.group_alive = state.spawned_rats.len().min(u32::MAX as usize) as u32;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -249,6 +258,13 @@ struct ZoneOccupantPosition {
     dimension: DimensionKind,
     position: DVec3,
 }
+
+type LiveNpcPositionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Position, Option<&'static CurrentDimension>),
+    (With<NpcMarker>, Without<Despawned>),
+>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MajorEventAlert {
@@ -1199,6 +1215,14 @@ impl ActiveEventsResource {
                 BeastTideKind::LocustSwarm => "locust_swarm",
             })
     }
+
+    fn refresh_locust_live_rats(&mut self, live_npcs: &HashSet<Entity>) {
+        for event in &mut self.active_events {
+            if event.event_name == EVENT_BEAST_TIDE {
+                event.beast_tide.refresh_locust_live_rats(live_npcs);
+            }
+        }
+    }
 }
 
 pub fn register(app: &mut App) {
@@ -1262,7 +1286,7 @@ fn tick_active_events(
     mut collapsed_events: EventWriter<ZoneCollapsedEvent>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     players: Query<(Entity, &Username, &Position, Option<&CurrentDimension>), With<Client>>,
-    npcs: Query<(Entity, &Position, Option<&CurrentDimension>), With<NpcMarker>>,
+    npcs: LiveNpcPositionQuery<'_, '_>,
     cultivators: Query<(Entity, &Position, Option<&CurrentDimension>), With<Cultivation>>,
 ) {
     let layer_entity = layers.iter().next();
@@ -1273,13 +1297,16 @@ fn tick_active_events(
         player_positions.push((canonical_player_id(username.0.as_str()), pos));
         collapse_targets.push((entity, dimension.map(|dim| dim.0).unwrap_or_default(), pos));
     }
+    let mut live_npc_entities = HashSet::new();
     for (entity, position, dimension) in &npcs {
+        live_npc_entities.insert(entity);
         collapse_targets.push((
             entity,
             dimension.map(|dim| dim.0).unwrap_or_default(),
             position.get(),
         ));
     }
+    active_events.refresh_locust_live_rats(&live_npc_entities);
     let cultivator_positions = cultivators
         .iter()
         .map(|(entity, position, dimension)| {
@@ -2243,8 +2270,8 @@ mod events_tests {
     use serde_json::Value;
     use valence::entity::lightning::LightningEntity;
     use valence::prelude::{
-        bevy_ecs, App, BlockPos, DVec3, Entity, EntityKind, Events, IntoSystemConfigs, Position,
-        Update, With,
+        bevy_ecs, App, BlockPos, DVec3, Despawned, Entity, EntityKind, Events, IntoSystemConfigs,
+        Position, Update, With,
     };
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
@@ -2252,10 +2279,10 @@ mod events_tests {
         persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
         ActiveEventsResource, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
         COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
-        EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
-        REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
-        REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
-        TARGETED_LIGHTNING_VFX_EVENT_ID,
+        EVENT_THUNDER_TRIBULATION, LOCUST_SWARM_DISBAND_THRESHOLD,
+        REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID, REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS,
+        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS,
+        REALM_COLLAPSE_LOW_QI_THRESHOLD, TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
     use crate::combat::rat_bite::RatBiteEvent;
@@ -2879,6 +2906,60 @@ mod events_tests {
                 .iter_current_update_events()
                 .any(|event| event.target == cultivator && event.qi_steal == 1),
             "locust front should pressure nearby cultivators through RatBiteEvent"
+        );
+    }
+
+    #[test]
+    fn locust_swarm_disperses_when_live_group_drops_below_threshold() {
+        let (mut app, _layer) = setup_events_app();
+
+        {
+            let world = app.world_mut();
+            let mut command =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 20, 0.2, None);
+            command
+                .params
+                .insert("tide_kind".to_string(), json!("locust_swarm"));
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                assert!(world
+                    .resource_mut::<ActiveEventsResource>()
+                    .enqueue_from_spawn_command(&command, Some(&mut zones)));
+            });
+        }
+
+        app.update();
+        let spawned = app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .beast_spawned_entities_for_zone("spawn");
+        assert!(
+            spawned.len() > LOCUST_SWARM_DISBAND_THRESHOLD as usize,
+            "test setup should start above the locust disband threshold"
+        );
+
+        for entity in spawned
+            .iter()
+            .skip(LOCUST_SWARM_DISBAND_THRESHOLD.saturating_sub(1) as usize)
+        {
+            app.world_mut().entity_mut(*entity).insert(Despawned);
+        }
+
+        app.update();
+
+        let deaths = app.world().resource::<Events<DeathEvent>>();
+        assert_eq!(
+            deaths
+                .iter_current_update_events()
+                .filter(|event| event.cause == "locust_swarm_dispersed")
+                .count(),
+            LOCUST_SWARM_DISBAND_THRESHOLD.saturating_sub(1) as usize,
+            "remaining live rats below threshold should receive dispersal death events"
+        );
+        assert!(
+            !app.world()
+                .resource::<ActiveEventsResource>()
+                .contains("spawn", EVENT_BEAST_TIDE),
+            "depleted locust swarm should leave the scheduler"
         );
     }
 

@@ -272,7 +272,10 @@ pub fn apply_rat_phase_change_system(
     for event in events.read() {
         let chunk = ChunkPos::new(event.chunk[0], event.chunk[1]);
         for (position, group_id, mut phase) in &mut rats {
-            if group_id.0 == event.group_id && chunk_pos_from_world(position.get()) == chunk {
+            if group_id.0 == event.group_id
+                && chunk_pos_from_world(position.get()) == chunk
+                && *phase == event.from
+            {
                 *phase = event.to;
             }
         }
@@ -611,6 +614,54 @@ mod tests {
         assert_eq!(
             app.world().get::<RatPhase>(other_group),
             Some(&RatPhase::Solitary)
+        );
+    }
+
+    #[test]
+    fn apply_rat_phase_change_keeps_rats_that_already_left_source_phase() {
+        let mut app = App::new();
+        app.add_event::<RatPhaseChangeEvent>();
+        app.add_systems(Update, apply_rat_phase_change_system);
+        let solitary = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([1.0, 64.0, 1.0]),
+                RatGroupId(7),
+                RatPhase::Solitary,
+            ))
+            .id();
+        let gregarious = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([2.0, 64.0, 2.0]),
+                RatGroupId(7),
+                RatPhase::Gregarious,
+            ))
+            .id();
+
+        app.world_mut().send_event(RatPhaseChangeEvent {
+            chunk: [0, 0],
+            zone: "spawn".to_string(),
+            group_id: 7,
+            from: RatPhase::Solitary,
+            to: RatPhase::Transitioning { progress: 0 },
+            rat_count: 2,
+            local_qi: 0.6,
+            qi_gradient: 0.4,
+            tick: 9,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<RatPhase>(solitary),
+            Some(&RatPhase::Transitioning { progress: 0 })
+        );
+        assert_eq!(
+            app.world().get::<RatPhase>(gregarious),
+            Some(&RatPhase::Gregarious),
+            "later phases must not regress when another solitary rat emits a transition event"
         );
     }
 

@@ -82,6 +82,49 @@ describe("LocustSwarmNarrationTracker", () => {
     ]);
   });
 
+  it("uses_phase_zone_as_spawn_event_origin_when_target_zone_differs", () => {
+    const decision = new LocustSwarmNarrationTracker().ingest(
+      ratPhaseEvent({ zone: "starter_zone" }),
+      worldState({
+        zones: [
+          {
+            name: "starter_zone",
+            spirit_qi: 0.2,
+            danger_level: 1,
+            active_events: [],
+            player_count: 1,
+          },
+          {
+            name: "green_cloud_peak",
+            spirit_qi: 0.9,
+            danger_level: 2,
+            active_events: [],
+            player_count: 0,
+          },
+        ],
+      }),
+    );
+
+    expect(decision.commands).toEqual([
+      expect.objectContaining({
+        type: "spawn_event",
+        target: "starter_zone",
+        params: expect.objectContaining({
+          event: "beast_tide",
+          tide_kind: "locust_swarm",
+          origin_zone: "starter_zone",
+          target_zone: "green_cloud_peak",
+        }),
+      }),
+    ]);
+    expect(decision.narrations[0]).toEqual(
+      expect.objectContaining({
+        scope: "zone",
+        target: "green_cloud_peak",
+      }),
+    );
+  });
+
   it("skips_escalation_when_calamity_in_progress", () => {
     const decision = new LocustSwarmNarrationTracker().ingest(
       ratPhaseEvent(),

@@ -744,7 +744,17 @@ export async function processLocustSwarmEvents(args: {
     return;
   }
 
-  const decisions: LocustSwarmDecision[] = events.map((event) => tracker.ingest(event, state));
+  const decisions: LocustSwarmDecision[] = [];
+  let acceptedLocustEscalation = false;
+  for (const event of events) {
+    if (acceptedLocustEscalation) {
+      continue;
+    }
+
+    const decision = tracker.ingest(event, state);
+    decisions.push(decision);
+    acceptedLocustEscalation = decision.commands.some(isLocustSwarmSpawnCommand);
+  }
   const commands = decisions.flatMap((decision) => decision.commands);
   const narrations = decisions.flatMap((decision) => decision.narrations);
   if (commands.length === 0 && narrations.length === 0) {
@@ -777,6 +787,12 @@ export async function processLocustSwarmEvents(args: {
   } catch (error) {
     logger.warn("[tiandao] failed to publish locust swarm decision:", error);
   }
+}
+
+function isLocustSwarmSpawnCommand(command: Command): boolean {
+  return command.type === "spawn_event"
+    && command.params.event === "beast_tide"
+    && command.params.tide_kind === "locust_swarm";
 }
 
 export async function runRuntime(

@@ -36,4 +36,15 @@ class LocustSwarmWarningHandlerTest {
         assertTrue(dispatch.alertToast().isEmpty());
         assertTrue(dispatch.visualEffectState().isEmpty());
     }
+
+    @Test
+    void missingVersionFieldIsNoOp() {
+        ServerDataDispatch dispatch = new LocustSwarmWarningHandler(() -> 0L).handle("""
+            {"type":"locust_swarm_warning","zone":"spirit_marsh","message":"灵蝗潮逼近"}
+            """);
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.alertToast().isEmpty());
+        assertTrue(dispatch.visualEffectState().isEmpty());
+    }
 }

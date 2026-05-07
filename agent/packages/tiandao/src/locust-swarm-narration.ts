@@ -76,7 +76,7 @@ export class LocustSwarmNarrationTracker {
       commands: [
         {
           type: "spawn_event",
-          target: targetZone.name,
+          target: event.zone,
           params: {
             event: "beast_tide",
             tide_kind: "locust_swarm",
