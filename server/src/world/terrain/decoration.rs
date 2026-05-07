@@ -2,6 +2,11 @@ use valence::prelude::{BlockState, Chunk, ChunkPos, PropName, PropValue, Unloade
 
 use super::{column, raster::TerrainProvider};
 
+/// Decorate a chunk's geological features (cave vines / amethyst /
+/// dripstone / kelp / lily_pad / magma vents). Vegetation (grass / flowers /
+/// trees / boulders) is now driven by `flora.rs` from raster
+/// `flora_variant_id` + `ground_cover_id` rather than hard-coded biome
+/// branches here. Mega-scale trees still belong to `mega_tree.rs`.
 pub fn decorate_chunk(
     chunk: &mut UnloadedChunk,
     pos: ChunkPos,
@@ -14,53 +19,15 @@ pub fn decorate_chunk(
             let world_x = pos.x * 16 + local_x as i32;
             let world_z = pos.z * 16 + local_z as i32;
             let sample = terrain.sample(world_x, world_z);
-            let plant_y = top_y + 1;
             let density = decoration_hash(world_x, world_z, 17) % 1000;
 
             decorate_cave_column(chunk, local_x, local_z, min_y, world_x, world_z, &sample);
 
-            if decorate_water_column(
+            // water_column 处理 lily_pad / kelp / seagrass / 沼泽水生植物 / 裂谷岩浆
+            // —— 依然属于"地质 / 水文特征"范畴而非地表植被覆盖，留在这里
+            let _ = decorate_water_column(
                 chunk, local_x, local_z, min_y, world_x, world_z, top_y, density, &sample,
-            ) {
-                continue;
-            }
-
-            if !can_place_above_surface(chunk, local_x as u32, plant_y, local_z as u32, min_y) {
-                continue;
-            }
-
-            // 簇生 gate：把 8x8 与 16x16 两层 cell hash 平均，让花草成片而非均匀撒。
-            // 双层 0–99 取平均 → 三角分布峰在 50；阈值 61 → P(score >= 61) ≈ 30% bare cell。
-            // bare 标志下沉到各 helper：草/花/蕨/枯灌木分支按 bare skip，但树/竹保留按
-            // 原 density 摆放（避免簇生 gate 误伤大型植被分布）。
-            let cluster_a =
-                decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
-            let cluster_b =
-                decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
-            let bare_cell = (cluster_a + cluster_b) / 2 >= 61;
-
-            if sample.is_wilderness_biome() {
-                place_wilderness_vegetation(
-                    chunk, local_x, local_z, plant_y, min_y, density, bare_cell,
-                );
-            } else if sample.is_peaks_biome() {
-                place_peaks_vegetation(
-                    chunk, local_x, local_z, plant_y, min_y, top_y, density, bare_cell,
-                );
-            } else if sample.is_marsh_biome() {
-                place_marsh_vegetation(
-                    chunk, local_x, local_z, plant_y, min_y, density, bare_cell,
-                );
-            } else if sample.is_spawn_biome() {
-                place_spawn_vegetation(
-                    chunk, local_x, local_z, plant_y, top_y, density, world_x, world_z, min_y,
-                    bare_cell,
-                );
-            } else if sample.is_wastes_biome() {
-                place_wastes_vegetation(
-                    chunk, local_x, local_z, plant_y, min_y, density, bare_cell,
-                );
-            }
+            );
         }
     }
 
@@ -251,68 +218,6 @@ fn decorate_cave_column(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn place_wilderness_vegetation(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    plant_y: i32,
-    min_y: i32,
-    density: u32,
-    bare_cell: bool,
-) {
-    // wilderness 仅花草蕨，bare 直接 return
-    if bare_cell {
-        return;
-    }
-    if density < 28 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
-    } else if density < 55 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn place_peaks_vegetation(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    plant_y: i32,
-    min_y: i32,
-    top_y: i32,
-    density: u32,
-    bare_cell: bool,
-) {
-    // peaks 仅蕨，bare 直接 return
-    if bare_cell {
-        return;
-    }
-    if top_y < 200 && density < 20 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn place_marsh_vegetation(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    plant_y: i32,
-    min_y: i32,
-    density: u32,
-    bare_cell: bool,
-) {
-    // bare cell 跳过 grass/fern，但保留 marsh_tree（避免簇生 gate 削沼泽树分布）
-    if !bare_cell && density < 80 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
-    } else if !bare_cell && density < 120 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
-    } else if (120..130).contains(&density) {
-        // 显式 lower bound 防止 bare cell 时 density < 120 落入此分支误摆树
-        place_marsh_tree(chunk, local_x, local_z, plant_y, min_y, density);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 fn place_marsh_water_plants(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -455,227 +360,6 @@ fn place_kelp_column(
             block,
         );
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn place_spawn_vegetation(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    plant_y: i32,
-    top_y: i32,
-    density: u32,
-    world_x: i32,
-    world_z: i32,
-    min_y: i32,
-    bare_cell: bool,
-) {
-    // bare cell 跳过 dandelion/poppy/grass/fern 花草分支，但保留 oak/bamboo 大型植被
-    if !bare_cell && density < 30 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::DANDELION);
-    } else if !bare_cell && density < 60 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::POPPY);
-    } else if !bare_cell && density < 110 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
-    } else if !bare_cell && density < 132 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
-    } else if (132..144).contains(&density) {
-        // 显式 lower bound 防止 bare cell 时 density < 132 落入此分支误摆橡树
-        place_simple_oak(
-            chunk,
-            local_x,
-            local_z,
-            top_y + 1,
-            min_y,
-            decoration_hash(world_x, world_z, 91),
-        );
-    } else if (144..162).contains(&density) {
-        place_bamboo_cluster(chunk, local_x, local_z, plant_y, min_y, world_x, world_z);
-    }
-}
-
-fn place_marsh_tree(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    trunk_base_y: i32,
-    min_y: i32,
-    hash: u32,
-) {
-    let trunk_height = 3 + (hash % 3) as i32;
-    let top_y = trunk_base_y + trunk_height;
-
-    for dy in -2..0 {
-        let root_y = trunk_base_y + dy;
-        for (rdx, rdz) in [(1_i32, 0_i32), (-1, 0), (0, 1), (0, -1)] {
-            if hash
-                .wrapping_mul((rdx.wrapping_add(7)) as u32)
-                .is_multiple_of(3)
-            {
-                continue;
-            }
-            let rx = local_x as i32 + rdx;
-            let rz = local_z as i32 + rdz;
-            if (0..16).contains(&rx) && (0..16).contains(&rz) {
-                let local_y = root_y - min_y;
-                if local_y >= 0 && local_y < chunk.height() as i32 {
-                    chunk.set_block_state(
-                        rx as u32,
-                        local_y as u32,
-                        rz as u32,
-                        BlockState::DARK_OAK_LOG,
-                    );
-                }
-            }
-        }
-    }
-
-    for y in trunk_base_y..top_y {
-        set_block_at_world(chunk, local_x, y, local_z, min_y, BlockState::DARK_OAK_LOG);
-    }
-
-    for canopy_y in (top_y - 1)..=(top_y + 1) {
-        let radius: i32 = if canopy_y == top_y + 1 { 1 } else { 2 };
-        for dz in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx.abs() == radius && dz.abs() == radius {
-                    continue;
-                }
-                let x = local_x as i32 + dx;
-                let z = local_z as i32 + dz;
-                if !(0..16).contains(&x) || !(0..16).contains(&z) {
-                    continue;
-                }
-                let local_y = canopy_y - min_y;
-                if local_y < 0 || local_y >= chunk.height() as i32 {
-                    continue;
-                }
-                if chunk
-                    .block_state(x as u32, local_y as u32, z as u32)
-                    .is_air()
-                {
-                    chunk.set_block_state(
-                        x as u32,
-                        local_y as u32,
-                        z as u32,
-                        BlockState::DARK_OAK_LEAVES,
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn place_bamboo_cluster(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    base_y: i32,
-    min_y: i32,
-    world_x: i32,
-    world_z: i32,
-) {
-    let hash = decoration_hash(world_x, world_z, 401);
-    let height = 3 + (hash % 5) as i32;
-    for dy in 0..height {
-        let leaves = if dy == 0 {
-            PropValue::None
-        } else if dy < height - 1 {
-            PropValue::Small
-        } else {
-            PropValue::Large
-        };
-        set_block_if_air(
-            chunk,
-            local_x,
-            base_y + dy,
-            local_z,
-            min_y,
-            BlockState::BAMBOO
-                .set(PropName::Age, PropValue::_0)
-                .set(PropName::Leaves, leaves)
-                .set(PropName::Stage, PropValue::_0),
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn place_wastes_vegetation(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    plant_y: i32,
-    min_y: i32,
-    density: u32,
-    bare_cell: bool,
-) {
-    // wastes 仅 dead_bush，bare 直接 return
-    if bare_cell {
-        return;
-    }
-    if density < 8 {
-        set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::DEAD_BUSH);
-    }
-}
-
-fn place_simple_oak(
-    chunk: &mut UnloadedChunk,
-    local_x: usize,
-    local_z: usize,
-    trunk_base_y: i32,
-    min_y: i32,
-    hash: u32,
-) {
-    let trunk_height = 4 + (hash % 3) as i32;
-    let top_y = trunk_base_y + trunk_height;
-
-    for y in trunk_base_y..top_y {
-        set_block_at_world(chunk, local_x, y, local_z, min_y, BlockState::OAK_LOG);
-    }
-
-    for canopy_y in (top_y - 2)..=top_y {
-        for dz in -2_i32..=2_i32 {
-            for dx in -2_i32..=2_i32 {
-                if dx.abs() == 2 && dz.abs() == 2 {
-                    continue;
-                }
-                let x = local_x as i32 + dx;
-                let z = local_z as i32 + dz;
-                if !(0..16).contains(&x) || !(0..16).contains(&z) {
-                    continue;
-                }
-                let local_y = canopy_y - min_y;
-                if local_y < 0 || local_y >= chunk.height() as i32 {
-                    continue;
-                }
-                if chunk
-                    .block_state(x as u32, local_y as u32, z as u32)
-                    .is_air()
-                {
-                    chunk.set_block_state(
-                        x as u32,
-                        local_y as u32,
-                        z as u32,
-                        BlockState::OAK_LEAVES,
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn can_place_above_surface(
-    chunk: &UnloadedChunk,
-    local_x: u32,
-    world_y: i32,
-    local_z: u32,
-    min_y: i32,
-) -> bool {
-    let local_y = world_y - min_y;
-    if local_y < 0 || local_y >= chunk.height() as i32 {
-        return false;
-    }
-    chunk.block_state(local_x, local_y as u32, local_z).is_air()
 }
 
 fn place_dripstone_column(

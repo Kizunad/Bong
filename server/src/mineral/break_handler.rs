@@ -480,16 +480,19 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client("Creative");
         let player = app.world_mut().spawn(client_bundle).id();
         // 覆盖 GameMode（默认 Survival）+ 挂 CurrentDimension（query 用得到）。
-        app.world_mut()
-            .entity_mut(player)
-            .insert((GameMode::Creative, CurrentDimension(DimensionKind::Overworld)));
+        app.world_mut().entity_mut(player).insert((
+            GameMode::Creative,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
         let pos = BlockPos::new(10, 64, 10);
         let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
         node.remaining_units = 3;
         let ore_entity = app.world_mut().spawn(node).id();
-        app.world_mut()
-            .resource_mut::<MineralOreIndex>()
-            .insert(DimensionKind::Overworld, pos, ore_entity);
+        app.world_mut().resource_mut::<MineralOreIndex>().insert(
+            DimensionKind::Overworld,
+            pos,
+            ore_entity,
+        );
 
         app.world_mut().send_event(DiggingEvent {
             client: player,
@@ -546,16 +549,19 @@ mod tests {
 
         let (client_bundle, _helper) = create_mock_client("Creative");
         let player = app.world_mut().spawn(client_bundle).id();
-        app.world_mut()
-            .entity_mut(player)
-            .insert((GameMode::Creative, CurrentDimension(DimensionKind::Overworld)));
+        app.world_mut().entity_mut(player).insert((
+            GameMode::Creative,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
         let pos = BlockPos::new(10, 64, 10);
         let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
         node.remaining_units = 1; // 最后一颗
         let ore_entity = app.world_mut().spawn(node).id();
-        app.world_mut()
-            .resource_mut::<MineralOreIndex>()
-            .insert(DimensionKind::Overworld, pos, ore_entity);
+        app.world_mut().resource_mut::<MineralOreIndex>().insert(
+            DimensionKind::Overworld,
+            pos,
+            ore_entity,
+        );
 
         app.world_mut().send_event(DiggingEvent {
             client: player,
@@ -603,16 +609,19 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client("Survivor");
         let player = app.world_mut().spawn(client_bundle).id();
         // GameMode 默认就是 Survival，仍显式设一遍防 valence 默认值漂移。
-        app.world_mut()
-            .entity_mut(player)
-            .insert((GameMode::Survival, CurrentDimension(DimensionKind::Overworld)));
+        app.world_mut().entity_mut(player).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
         let pos = BlockPos::new(10, 64, 10);
         let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
         node.remaining_units = 3;
         let ore_entity = app.world_mut().spawn(node).id();
-        app.world_mut()
-            .resource_mut::<MineralOreIndex>()
-            .insert(DimensionKind::Overworld, pos, ore_entity);
+        app.world_mut().resource_mut::<MineralOreIndex>().insert(
+            DimensionKind::Overworld,
+            pos,
+            ore_entity,
+        );
 
         app.world_mut().send_event(DiggingEvent {
             client: player,
@@ -627,6 +636,9 @@ mod tests {
         let drops = app.world().resource::<Events<MineralDropEvent>>();
         assert_eq!(drops.get_reader().read(drops).count(), 0);
         let node_after = app.world().get::<MineralOreNode>(ore_entity).unwrap();
-        assert_eq!(node_after.remaining_units, 3, "units must not change on Survival Start");
+        assert_eq!(
+            node_after.remaining_units, 3,
+            "units must not change on Survival Start"
+        );
     }
 }

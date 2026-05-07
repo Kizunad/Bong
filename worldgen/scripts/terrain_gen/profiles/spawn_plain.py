@@ -38,10 +38,11 @@ SPAWN_PLAIN_DECORATIONS = (
     DecorationSpec(
         name="starter_shrub",
         kind="shrub",
-        blocks=("sweet_berry_bush", "grass_block", "fern"),
+        blocks=("sweet_berry_bush", "grass", "fern"),
         size_range=(1, 2),
-        rarity=0.70,
-        notes="野浆灌：可采食浆果，对初入世者友好。",
+        rarity=0.05,
+        notes="野浆灌：可采食浆果。rarity 0.05 ≈ 净 1% 命中（× density × cluster gate）。"
+              "accent 是矮草（曾错为 grass_block 实体方块导致地表凸起）。",
     ),
     DecorationSpec(
         name="wayfarer_rock",
@@ -50,6 +51,50 @@ SPAWN_PLAIN_DECORATIONS = (
         size_range=(2, 4),
         rarity=0.40,
         notes="行者石：长满苔藓的路边巨石，曾被旅人坐过。",
+    ),
+    # Ground cover specs（kind="flower"，由 ground_cover_id 引用而非 flora_variant_id）
+    DecorationSpec(
+        name="meadow_grass",
+        kind="flower",
+        blocks=("grass",),
+        size_range=(1, 1),
+        rarity=0.75,
+        notes="草甸短草：spawn 平原最常见的地表覆盖。",
+    ),
+    DecorationSpec(
+        name="meadow_dandelion",
+        kind="flower",
+        blocks=("dandelion",),
+        size_range=(1, 1),
+        rarity=0.30,
+        notes="蒲公英：草甸点缀。",
+    ),
+    DecorationSpec(
+        name="meadow_poppy",
+        kind="flower",
+        blocks=("poppy",),
+        size_range=(1, 1),
+        rarity=0.25,
+        notes="虞美人：花林群系点缀。",
+    ),
+    # Fallen log + grave mound — 半成品视觉装饰，用 ground_cover_id 引用
+    DecorationSpec(
+        name="fallen_oak_log",
+        kind="fallen_log",
+        blocks=("oak_log",),
+        size_range=(3, 5),
+        rarity=0.05,
+        notes="倒木：随机 N/S/E/W 横躺的橡木原木 3-5 段。",
+    ),
+    DecorationSpec(
+        name="wayfarer_grave",
+        kind="grave_mound",
+        blocks=("cobblestone", "mossy_cobblestone", "oak_sign"),
+        size_range=(4, 5),
+        rarity=0.03,
+        notes="路人坟：半圆苔石堆（半径 4-5）+中央立碑（修仙荒野感）。"
+              "blocks[0] cobblestone 主体, [1] mossy_cobblestone 表层苔藓, [2] oak_sign 碑"
+              "（碑文待 NBT 实现，先放空牌）。",
     ),
 )
 
@@ -181,7 +226,14 @@ def spawn_tutorial_pois_for_zone(zone: BlueprintZone) -> tuple[PoiSpec, ...]:
 
 class SpawnPlainGenerator(TerrainProfileGenerator):
     profile_name = "spawn_plain"
-    extra_layers = ("qi_density", "mofa_decay", "flora_density", "flora_variant_id")
+    extra_layers = (
+        "qi_density",
+        "mofa_decay",
+        "flora_density",
+        "flora_variant_id",
+        "ground_cover_density",
+        "ground_cover_id",
+    )
     ecology = EcologySpec(
         decorations=SPAWN_PLAIN_DECORATIONS,
         ambient_effects=("morning_mist", "distant_bird_call"),
@@ -217,6 +269,8 @@ def fill_spawn_plain_tile(
             "mofa_decay",
             "flora_density",
             "flora_variant_id",
+            "ground_cover_density",
+            "ground_cover_id",
         ),
     )
     grass_id = palette.ensure("grass_block")
@@ -307,15 +361,63 @@ def fill_spawn_plain_tile(
     flora_density = np.clip(heartland * 0.55 + inner_meadow * 0.15, 0.0, 1.0)
     flora_density = np.where(lingquan_bump > 0.0, np.maximum(flora_density, 0.35), flora_density)
     flora_variant = np.zeros_like(height, dtype=np.int32)
-    # Default shrub
-    flora_variant = np.where(flora_density > 0.20, 3, flora_variant)
-    # Trees on heartland
+    # Fallen oak logs / grave mounds：用**两层 noise** 防止"成堆"——
+    # 大尺度 fbm 选"哪几片区域允许出现"（即"林子"或"路边"），
+    # 小尺度高频 fbm 在区域内打孔，让单格散点而非连片 blob。
+    # 不这样做的话 fbm 平滑场会让一整片 cell 都标记 variant，server 端
+    # 对每 cell 独立 roll 概率会变成"一片林子里到处都是倒木"。
+    fallen_select = fbm_2d(wx, wz, scale=200.0, octaves=2, seed=8811)
+    fallen_pick = fbm_2d(wx, wz, scale=10.0, octaves=1, seed=8812)
+    fallen_band = (heartland > 0.30) & (fallen_select > 0.42) & (fallen_pick > 0.55)
+    flora_variant = np.where(fallen_band, 8, flora_variant)
+    flora_density = np.where(fallen_band, np.maximum(flora_density, 0.35), flora_density)
+    grave_select = fbm_2d(wx, wz, scale=320.0, octaves=2, seed=8821)
+    grave_pick = fbm_2d(wx, wz, scale=12.0, octaves=1, seed=8822)
+    grave_band = (
+        (heartland > 0.20)
+        & (grave_select > 0.55)
+        & (grave_pick > 0.65)
+        & (flora_variant == 0)
+    )
+    flora_variant = np.where(grave_band, 9, flora_variant)
+    flora_density = np.where(grave_band, np.maximum(flora_density, 0.30), flora_density)
+    # Default shrub on remaining columns
+    flora_variant = np.where((flora_variant == 0) & (flora_density > 0.20), 3, flora_variant)
+    # Trees on heartland (覆盖 default shrub OR fallen/grave 让森林感更强)
     flora_variant = np.where((inner_meadow > 0.5) & (rolling > 0.3), 1, flora_variant)
     flora_variant = np.where((inner_meadow > 0.5) & (rolling < -0.2), 2, flora_variant)
-    # Boulders on path-like ridges
+    # Boulders on path-like ridges (同样可覆盖)
     flora_variant = np.where(path > 0.5, 4, flora_variant)
     buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
     buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
+
+    # --- Ground cover (草甸短草 + 蒲公英 + 虞美人) ---
+    # spawn_plain local_id 5=meadow_grass, 6=meadow_dandelion, 7=meadow_poppy。
+    from . import global_decoration_id
+
+    gc_grass = global_decoration_id("spawn_plain", 5)
+    gc_dandelion = global_decoration_id("spawn_plain", 6)
+    gc_poppy = global_decoration_id("spawn_plain", 7)
+
+    # 草甸密度中（0.30 + 0.20·heartland）。配合 server 端 cluster gate 与
+    # rarity 0.75，最终 visible 密度约 25–35%，足以"看着是草甸"但不刺眼。
+    # 水塘 / 非土质表面（podzol/gravel/coarse_dirt）上不长。
+    gc_density = np.clip(0.30 + heartland * 0.20 + inner_meadow * 0.05, 0.0, 0.55)
+    gc_density = np.where(lingquan_bump > 0.0, np.maximum(gc_density, 0.45), gc_density)
+    on_grass = (surface_id == grass_id) | (surface_id == podzol_id)
+    gc_density = np.where(on_grass, gc_density, 0.0)
+    gc_density = np.where(water_level >= 0.0, 0.0, gc_density)
+    buffer.layers["ground_cover_density"] = np.round(gc_density, 3).ravel()
+
+    # 主体短草，flower_forest 区域多花，两种花用 large-scale fbm 区分
+    # （而不是 path 高频 noise，避免邻列变种乱跳）
+    gc_variant = np.full_like(height, gc_grass, dtype=np.int32)
+    flower_zone = biome_id == flower_forest_biome_id
+    flower_select = fbm_2d(wx, wz, scale=70.0, octaves=2, seed=4423)
+    gc_variant = np.where(flower_zone & (flower_select > 0.18), gc_dandelion, gc_variant)
+    gc_variant = np.where(flower_zone & (flower_select < -0.18), gc_poppy, gc_variant)
+    gc_variant = np.where(gc_density <= 0.0, 0, gc_variant)
+    buffer.layers["ground_cover_id"] = gc_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

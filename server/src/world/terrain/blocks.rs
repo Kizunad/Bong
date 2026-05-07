@@ -141,6 +141,12 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "sweet_berry_bush" => BlockState::SWEET_BERRY_BUSH,
         "prismarine" => BlockState::PRISMARINE,
 
+        // --- signs (碑) ---
+        "oak_sign" => BlockState::OAK_SIGN,
+        "spruce_sign" => BlockState::SPRUCE_SIGN,
+        "birch_sign" => BlockState::BIRCH_SIGN,
+        "dark_oak_sign" => BlockState::DARK_OAK_SIGN,
+
         _ => return None,
     })
 }

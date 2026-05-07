@@ -3,7 +3,7 @@ from __future__ import annotations
 from .ash_dead_zone import AshDeadZoneGenerator
 from .abyssal_maze import AbyssalMazeGenerator
 from .ancient_battlefield import AncientBattlefieldGenerator
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import DecorationSpec, ProfileContext, TerrainProfileGenerator
 from .broken_peaks import BrokenPeaksGenerator
 from .cave_network import CaveNetworkGenerator
 from .jiu_zong_ruin import JiuzongRuinGenerator
@@ -66,12 +66,63 @@ def list_profile_generators() -> tuple[str, ...]:
 # raster manifest so Rust can look up block recipes by global id directly.
 
 
+# Wilderness ground cover fallback —— wilderness 不是 TerrainProfileGenerator 子类
+# （它是全局 fallback 区域），但 flora 系统需要 spec 才能放置地表植被。
+# 这些 spec 占据 palette 开头的 wilderness 段，wilderness.py 通过
+# global_decoration_id("wilderness", local_id) 引用它们写入 ground_cover_id。
+WILDERNESS_GROUND_COVER: tuple[DecorationSpec, ...] = (
+    DecorationSpec(
+        name="wild_grass",
+        kind="flower",
+        blocks=("grass",),
+        size_range=(1, 1),
+        rarity=0.65,
+        notes="野草：荒野最常见的地表覆盖。",
+    ),
+    DecorationSpec(
+        name="wild_fern",
+        kind="flower",
+        blocks=("fern",),
+        size_range=(1, 1),
+        rarity=0.45,
+        notes="野蕨：林下与潮湿洼地常见。",
+    ),
+    DecorationSpec(
+        name="wild_dandelion",
+        kind="flower",
+        blocks=("dandelion",),
+        size_range=(1, 1),
+        rarity=0.20,
+        notes="野蒲公英：开阔草地点缀。",
+    ),
+)
+
+
 def _build_global_decoration_palette() -> tuple[
     tuple[dict[str, object], ...], dict[str, int]
 ]:
     palette: list[dict[str, object]] = []
     offsets: dict[str, int] = {}
     next_id = 1  # 0 reserved for "no decoration"
+
+    # Emit wilderness fallback段 first so其 global_id 稳定 (1..N)。
+    offsets["wilderness"] = next_id
+    for local_idx, deco in enumerate(WILDERNESS_GROUND_COVER):
+        palette.append(
+            {
+                "global_id": next_id + local_idx,
+                "profile": "wilderness",
+                "local_id": local_idx + 1,
+                "name": deco.name,
+                "kind": deco.kind,
+                "blocks": list(deco.blocks),
+                "size_range": list(deco.size_range),
+                "rarity": deco.rarity,
+                "notes": deco.notes,
+            }
+        )
+    next_id += len(WILDERNESS_GROUND_COVER)
+
     for profile_name in sorted(_GENERATORS):
         gen = _GENERATORS[profile_name]
         offsets[profile_name] = next_id

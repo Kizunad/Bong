@@ -64,6 +64,13 @@ pub struct ColumnSample {
     pub flora_density: f32,
     /// Global decoration id (0 = none; lookup via TerrainProvider::decoration).
     pub flora_variant_id: u8,
+    /// 0..1 ground-cover (短草/花/枯木) placement probability. Independent
+    /// from flora_density so a column can host both a feature decoration AND
+    /// dense ground cover (e.g. elder_oak + meadow_grass).
+    pub ground_cover_density: f32,
+    /// Global decoration id for ground cover (0 = none). Same palette as
+    /// flora_variant_id; convention is to point at kind="flower" specs.
+    pub ground_cover_id: u8,
     /// 0 none, 1 whalefall outer ribs/periphery, 2 mineral-rich core.
     pub fossil_bbox: u8,
     // --- event / anomaly layers ---
@@ -84,10 +91,6 @@ pub struct ColumnSample {
 }
 
 impl ColumnSample {
-    pub fn is_wilderness_biome(&self) -> bool {
-        matches!(self.biome_id, 0 | 7 | 8)
-    }
-
     pub fn is_peaks_biome(&self) -> bool {
         matches!(self.biome_id, 1 | 9)
     }
@@ -195,6 +198,8 @@ struct TileFields {
     cavern_floor_y: Option<Mmap>,
     flora_density: Option<Mmap>,
     flora_variant_id: Option<Mmap>,
+    ground_cover_density: Option<Mmap>,
+    ground_cover_id: Option<Mmap>,
     fossil_bbox: Option<Mmap>,
     anomaly_intensity: Option<Mmap>,
     anomaly_kind: Option<Mmap>,
@@ -619,6 +624,8 @@ impl TerrainProvider {
             cavern_floor_y: read_optional_f32(&tile.cavern_floor_y, index, 9999.0),
             flora_density: read_optional_f32(&tile.flora_density, index, 0.0),
             flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
+            ground_cover_density: read_optional_f32(&tile.ground_cover_density, index, 0.0),
+            ground_cover_id: read_optional_u8(&tile.ground_cover_id, index, 0),
             fossil_bbox: read_optional_u8(&tile.fossil_bbox, index, 0),
             anomaly_intensity: read_optional_f32(&tile.anomaly_intensity, index, 0.0),
             anomaly_kind: read_optional_u8(&tile.anomaly_kind, index, 0),
@@ -657,6 +664,10 @@ impl TerrainProvider {
             "flora_density" => read_optional_f32_strict(&tile.flora_density, index),
             "flora_variant_id" => {
                 read_optional_u8_strict(&tile.flora_variant_id, index).map(f32::from)
+            }
+            "ground_cover_density" => read_optional_f32_strict(&tile.ground_cover_density, index),
+            "ground_cover_id" => {
+                read_optional_u8_strict(&tile.ground_cover_id, index).map(f32::from)
             }
             "fossil_bbox" => read_optional_u8_strict(&tile.fossil_bbox, index).map(f32::from),
             "anomaly_intensity" => read_optional_f32_strict(&tile.anomaly_intensity, index),
@@ -714,6 +725,13 @@ impl TileFields {
             cavern_floor_y: map_optional_layer(tile_dir, layers, "cavern_floor_y", area4)?,
             flora_density: map_optional_layer(tile_dir, layers, "flora_density", area4)?,
             flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
+            ground_cover_density: map_optional_layer(
+                tile_dir,
+                layers,
+                "ground_cover_density",
+                area4,
+            )?,
+            ground_cover_id: map_optional_layer(tile_dir, layers, "ground_cover_id", tile_area)?,
             fossil_bbox: map_optional_layer(tile_dir, layers, "fossil_bbox", tile_area)?,
             anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
             anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,

@@ -50,6 +50,23 @@ BROKEN_PEAKS_DECORATIONS = (
         rarity=0.50,
         notes="冰棘：密集的冰刺灌丛，划手而含灵气。",
     ),
+    # Ground cover specs
+    DecorationSpec(
+        name="peak_fern",
+        kind="flower",
+        blocks=("fern",),
+        size_range=(1, 1),
+        rarity=0.55,
+        notes="高山蕨：山腰针叶林下的稀疏蕨叶。",
+    ),
+    DecorationSpec(
+        name="peak_grass",
+        kind="flower",
+        blocks=("grass",),
+        size_range=(1, 1),
+        rarity=0.40,
+        notes="峰野草：低海拔山坡覆盖。",
+    ),
 )
 
 
@@ -62,6 +79,8 @@ class BrokenPeaksGenerator(TerrainProfileGenerator):
         "spirit_eye_candidates",
         "flora_density",
         "flora_variant_id",
+        "ground_cover_density",
+        "ground_cover_id",
     )
     ecology = EcologySpec(
         decorations=BROKEN_PEAKS_DECORATIONS,
@@ -100,6 +119,8 @@ def fill_broken_peaks_tile(
             "spirit_eye_candidates",
             "flora_density",
             "flora_variant_id",
+            "ground_cover_density",
+            "ground_cover_id",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -271,6 +292,24 @@ def fill_broken_peaks_tile(
     flora_density = np.clip(flora_density, 0.0, 1.0)
     buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
     buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
+
+    # --- Ground cover (高山蕨/野草) ---
+    # broken_peaks local_id 5=peak_fern, 6=peak_grass。
+    from . import global_decoration_id
+
+    gc_fern = global_decoration_id("broken_peaks", 5)
+    gc_grass = global_decoration_id("broken_peaks", 6)
+
+    # 中海拔铺草，林带（mid_band）多蕨；雪线以上不长（被冰雪压住）
+    gc_density = np.where(mid_band, 0.50 + massif * 0.15, 0.0)
+    gc_density = np.where(high_band, gc_density * 0.3, gc_density)
+    gc_density = np.clip(gc_density, 0.0, 0.85)
+    buffer.layers["ground_cover_density"] = np.round(gc_density, 3).ravel()
+
+    gc_variant = np.where(mid_band, gc_grass, 0).astype(np.int32)
+    gc_variant = np.where(mid_band & (detail > -0.05), gc_fern, gc_variant)
+    gc_variant = np.where(gc_density <= 0.0, 0, gc_variant)
+    buffer.layers["ground_cover_id"] = gc_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

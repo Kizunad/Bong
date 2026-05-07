@@ -88,6 +88,11 @@ pub fn sample(
         cavern_floor_y: 9999.0,
         flora_density: 0.0,
         flora_variant_id: 0,
+        // Wilderness fallback path (no raster loaded) — flora 系统不会撒任何
+        // 东西。要让 fallback 也长草需要给 flora.rs 喂一个内置 wilderness palette
+        // 镜像，目前不做。
+        ground_cover_density: 0.0,
+        ground_cover_id: 0,
         fossil_bbox: 0,
         anomaly_intensity: 0.0,
         anomaly_kind: 0,

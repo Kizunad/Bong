@@ -17,7 +17,8 @@ fi
 
 source .venv/bin/activate
 pip install --quiet --upgrade pip
-echo "[✓] terrain_gen 当前不依赖额外第三方 Python 包"
+pip install --quiet numpy
+echo "[✓] 安装 numpy（terrain_gen.fields 依赖）"
 
 echo ""
 echo "完成。后续用法："
