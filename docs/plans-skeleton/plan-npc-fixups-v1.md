@@ -233,20 +233,18 @@ pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
 
 ---
 
-## §4 P3 阶段：Explore 异步探查（待补）
+## §4 P3 阶段：Explore 异步探查（已派生 → plan-npc-fixups-v2）
 
-**2026-05-07 sonnet Explore 派出**，找剩余 NPC 正确性 bug。回来后按以下格式追加 §2.4 / §2.5 / ...：
+**2026-05-07 sonnet Explore（agentId a0ae9880b26f1815d，1147s 跑完）报告**：发现 8 个 ECS lifecycle / state machine race / silent stuck / register panic 类 bug + 3 个未列待二次探查。性质独立且数量多（共 ≥ 8） → 按 v1 §0「数量多 → 派生 v2」决策 → **已派生 `plan-npc-fixups-v2`**（同目录 plan-npc-fixups-v2.md）。
 
-```
-### §2.X bug #N 简述（→ P3）
-file:line
-根因
-症状
-修法
-回归测试
-```
+v2 范围摘要：
 
-如果 Explore 发现的 bug 性质独立 / 数量多 → 派生 plan-npc-fixups-v2 而非堆本 plan。
+- **高 P0**：lingtian_pressure 多 zone 选错地块 / MeleeAction Executing query miss 卡死
+- **中 P1**：chase/flee Failure 不停 navigator / tsy_hostile JSON panic / RetireAction double-send
+- **中 P2**：tribulation auto_wave 软删 race / Farming Action 无超时 / AscensionQuota 软删
+- **P3** 待补：socialize_action / spawn_commoner patrol_target / wander_target_for zone 缺失 + 二次探查
+
+跟本 plan（v1）关系：**v1 修 navigator/spawn 物理层 → v2 修 ECS lifecycle / state machine 层**，互不阻塞，各自独立 PR fastlane。
 
 ---
 
