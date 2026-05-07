@@ -273,7 +273,15 @@ pub fn navigator_tick_system(
         }
 
         let Some(goal) = nav.current_goal else {
-            continue; // idle
+            if let Some(layer_ref) = layer {
+                let current = position.get();
+                let snapped = snap_to_ground(current, Some(layer_ref));
+                if (snapped.y - current.y).abs() > 1e-4 {
+                    position.set(snapped);
+                    transform.translation.y = snapped.y as f32;
+                }
+            }
+            continue;
         };
 
         let current_pos = position.get();
@@ -790,6 +798,8 @@ fn rotate_y(dir: DVec3, angle: f64) -> DVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::Entity;
+
     use crate::world::terrain::{SurfaceInfo, SurfaceProvider};
 
     #[allow(dead_code)]
@@ -896,5 +906,149 @@ mod tests {
         let b = PathNode { x: 3, y: 1, z: 4 };
         // Y is ignored — ground mob heuristic.
         assert_eq!(a.heuristic_xz(b), 3 + 4);
+    }
+
+    // -- Bug #1: idle NPC gravity regression tests -------------------------
+
+    fn make_navigator_app_with_ground(ground_y: i32) -> (App, Entity) {
+        use valence::prelude::{BlockState, Chunk, UnloadedChunk};
+        use valence::testing::ScenarioSingleClient;
+
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        let layer_entity = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<ChunkLayer>>();
+            q.iter(world).next().unwrap()
+        };
+        {
+            let mut layer = app
+                .world_mut()
+                .get_mut::<ChunkLayer>(layer_entity)
+                .unwrap();
+            let mut chunk = UnloadedChunk::with_height(384);
+            let min_y = layer.min_y();
+            let local_y = (ground_y - min_y) as u32;
+            for lx in 0..16u32 {
+                for lz in 0..16u32 {
+                    chunk.set_block_state(lx, local_y, lz, BlockState::STONE);
+                }
+            }
+            layer.insert_chunk([0, 0], chunk);
+        }
+        app.add_systems(Update, navigator_tick_system);
+        (app, layer_entity)
+    }
+
+    fn spawn_idle_npc(app: &mut App, y: f64) -> Entity {
+        app.world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, y, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                Navigator::new(),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn idle_npc_in_air_falls_to_ground() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let npc = spawn_idle_npc(&mut app, 80.0);
+
+        app.update();
+
+        let pos = app.world().get::<Position>(npc).unwrap();
+        assert!(
+            (pos.get().y - 67.0).abs() < 0.01,
+            "idle NPC at Y=80 should snap to ground_y+1=67, got Y={}",
+            pos.get().y,
+        );
+    }
+
+    #[test]
+    fn idle_npc_already_on_ground_does_not_move() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let npc = spawn_idle_npc(&mut app, 67.0);
+
+        app.update();
+
+        let pos = app.world().get::<Position>(npc).unwrap();
+        assert!(
+            (pos.get().y - 67.0).abs() < 0.01,
+            "idle NPC already at ground should stay at Y=67, got Y={}",
+            pos.get().y,
+        );
+    }
+
+    #[test]
+    fn idle_npc_no_chunk_layer_does_not_panic() {
+        let mut app = App::new();
+        app.add_systems(Update, navigator_tick_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, 80.0, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                Navigator::new(),
+            ))
+            .id();
+
+        app.update();
+
+        let pos = app.world().get::<Position>(npc).unwrap();
+        assert!(
+            (pos.get().y - 80.0).abs() < 0.01,
+            "idle NPC without chunk layer should stay at original Y=80, got Y={}",
+            pos.get().y,
+        );
+    }
+
+    #[test]
+    fn idle_npc_transform_y_syncs_with_position() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let npc = spawn_idle_npc(&mut app, 80.0);
+
+        app.update();
+
+        let tf = app.world().get::<Transform>(npc).unwrap();
+        assert!(
+            (f64::from(tf.translation.y) - 67.0).abs() < 0.1,
+            "idle gravity should also update Transform.translation.y, got {}",
+            tf.translation.y,
+        );
+    }
+
+    #[test]
+    fn idle_to_active_transition_no_jitter() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let npc = spawn_idle_npc(&mut app, 80.0);
+
+        app.update();
+        let y_after_gravity = app.world().get::<Position>(npc).unwrap().get().y;
+        assert!(
+            (y_after_gravity - 67.0).abs() < 0.01,
+            "first tick: idle gravity should snap to 67, got {}",
+            y_after_gravity,
+        );
+
+        {
+            let mut nav = app.world_mut().get_mut::<Navigator>(npc).unwrap();
+            nav.set_goal(DVec3::new(5.0, 67.0, 0.5), 1.0);
+        }
+        app.update();
+
+        let y_after_goal = app.world().get::<Position>(npc).unwrap().get().y;
+        assert!(
+            (y_after_goal - 67.0).abs() < 2.0,
+            "second tick after set_goal: NPC should stay near ground, not jitter back to 80; got Y={}",
+            y_after_goal,
+        );
     }
 }
