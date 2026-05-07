@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, Res, ResMut, Resource, With, Without,
+    Position, PreUpdate, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::events::{AttackIntent, AttackSource};
@@ -540,7 +540,8 @@ pub fn register(app: &mut App) {
                 seclusion_action_system,
             )
                 .in_set(BigBrainSet::Actions),
-        );
+        )
+        .add_systems(Update, emit_retire_request_on_pending_added);
 }
 
 fn ageing_scorer_system(
@@ -580,7 +581,6 @@ fn ageing_scorer_system(
 fn retire_action_system(
     mut commands: Commands,
     npcs: Query<(Option<&PendingRetirement>, &NpcLifespan), With<NpcMarker>>,
-    mut retire_requests: EventWriter<NpcRetireRequest>,
     mut actions: Query<(&Actor, &mut ActionState), With<RetireAction>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
@@ -593,7 +593,6 @@ fn retire_action_system(
             ActionState::Requested => {
                 if pending_retirement.is_none() {
                     commands.entity(*actor).insert(PendingRetirement);
-                    retire_requests.send(NpcRetireRequest { entity: *actor });
                 }
                 *state = ActionState::Executing;
             }
@@ -609,6 +608,15 @@ fn retire_action_system(
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
+    }
+}
+
+pub fn emit_retire_request_on_pending_added(
+    query: Query<Entity, (bevy_ecs::query::Added<PendingRetirement>, With<NpcMarker>)>,
+    mut requests: EventWriter<NpcRetireRequest>,
+) {
+    for entity in &query {
+        requests.send(NpcRetireRequest { entity });
     }
 }
 
