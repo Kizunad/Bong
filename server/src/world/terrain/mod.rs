@@ -225,25 +225,29 @@ fn generate_chunks_around_players(
         return;
     };
 
-    // 每 tick 最多新生成的 chunk 数 —— 防止首次连接 / 远程传送时一帧内
-    // 同步装填整个 view（200+ chunk）冻住 server tick，让玩家所有交互
-    // 包括 drop/pickup/chat/cmd 都卡几秒。每 chunk 装填实测约 30-50ms
+    // 每 client 每 tick 最多新生成的 chunk 数 —— 防止首次连接 / 远程传送
+    // 时一帧内同步装填整个 view（200+ chunk）冻住 server tick，让玩家所有
+    // 交互包括 drop/pickup/chat/cmd 都卡几秒。每 chunk 装填实测约 30-50ms
     // （column resolve + flora 双 loop + decoration + structures + mineral
     // overlay），4/tick 会让 tick 实际 ~150ms（5 TPS）依然卡 packet。
     // 降到 1/tick：tick budget 50ms 内尽量留给 packet 处理；view 256 chunk
     // 满载需 13 秒，期间 server tick 维持 20 TPS、操作即时响应。
     // 1/tick：每 chunk 装填 ~30ms，剩余 tick budget 给 packet/system；
     // NPC=0 + 这个值实测 TPS ≈ 20。NPC > 30 时再降到 0 + 加 LOD。
-    const MAX_NEW_CHUNKS_PER_TICK: usize = 1;
-    let mut budget = MAX_NEW_CHUNKS_PER_TICK;
+    //
+    // 用 per-client budget 而非全局 budget：多人时全局 budget 会让靠前迭代
+    // 的玩家持续吃光配额（移动中总有未见 chunk），后面玩家被无限饿死。
+    // per-client 1/tick → N 玩家时总量 N/tick，但每个玩家都向前推进。
+    const MAX_NEW_CHUNKS_PER_CLIENT_PER_TICK: usize = 1;
 
-    'outer: for (view, visible_chunk_layer) in &clients {
+    for (view, visible_chunk_layer) in &clients {
         if visible_chunk_layer.0 != overworld_layer_entity {
             continue;
         }
+        let mut client_budget = MAX_NEW_CHUNKS_PER_CLIENT_PER_TICK;
         for pos in view.get().iter() {
-            if budget == 0 {
-                break 'outer;
+            if client_budget == 0 {
+                break;
             }
             // 已生成的列直接 return（也快），不消耗 budget；只对真正新生成
             // 的列收 budget。
@@ -258,7 +262,7 @@ fn generate_chunks_around_players(
                 harvested_spiritwood.as_deref(),
             );
             if !already {
-                budget -= 1;
+                client_budget -= 1;
             }
         }
     }

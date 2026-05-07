@@ -292,9 +292,11 @@ fn positions_for_anchor(anchor: &MineralAnchor, terrain: &TerrainProvider) -> Ve
 
     candidates.sort_by_key(|(hash, _)| *hash);
     let mut seen = HashSet::new();
+    // snap → dedup → take(max_units)：浅 anchor 多个上半 candidate 会塌到同
+    // 一格，先 dedup 保证 max_units 真的拿到 N 个独立位置，再裁剪。否则
+    // .take() 在 dedup 前会让重复条目吃掉配额，最终少于 max_units。
     candidates
         .into_iter()
-        .take(anchor.max_units as usize)
         .filter_map(|(_, pos)| {
             // 把矿石压到地表或地下 —— 防止 anchor 球体上半部漂浮在 air 里。
             // 用每列 height 作为 surface_y；矿石 y = min(原 y, surface_y)，
@@ -304,14 +306,10 @@ fn positions_for_anchor(anchor: &MineralAnchor, terrain: &TerrainProvider) -> Ve
             if snapped_y < MIN_WORLD_Y {
                 return None;
             }
-            let snapped = BlockPos::new(pos.x, snapped_y, pos.z);
-            // snap 后可能多个 candidate 落在同一格 —— 去重保第一个（hash 序最稳）
-            if seen.insert((snapped.x, snapped.y, snapped.z)) {
-                Some(snapped)
-            } else {
-                None
-            }
+            Some(BlockPos::new(pos.x, snapped_y, pos.z))
         })
+        .filter(|snapped| seen.insert((snapped.x, snapped.y, snapped.z)))
+        .take(anchor.max_units as usize)
         .collect()
 }
 
@@ -386,6 +384,37 @@ mod tests {
             let dy = pos.y - anchor.center.y;
             let dz = pos.z - anchor.center.z;
             assert!(dx * dx + dy * dy + dz * dz <= anchor.radius * anchor.radius);
+        }
+    }
+
+    #[test]
+    fn shallow_anchor_dedups_before_max_units_cut() {
+        // Regression: 浅 anchor 上半 candidate snap 到同一 surface_y 会塌成
+        // 重复 (x, y, z)。dedup 必须在 take(max_units) 之前，否则重复条目
+        // 吃掉配额，最终少于 max_units。本测试触发 bug 的关键：anchor
+        // center.y 远高于 wilderness 高度（~111），radius 大、max_units 大，
+        // 整个上半球都会 snap 到同一 y，多个 dy 落入同一 (x, z) → 重复。
+        let anchor = MineralAnchor {
+            zone: "test".into(),
+            mineral_id: MineralId::FanTie,
+            center: BlockPos::new(0, 200, 0),
+            radius: 8,
+            max_units: 30,
+        };
+        let terrain = TerrainProvider::empty_for_tests();
+        let positions = positions_for_anchor(&anchor, &terrain);
+
+        assert_eq!(
+            positions.len(),
+            30,
+            "max_units 必须真的拿到 30 个（修复前 dedup 在 take 后会少于 30）"
+        );
+        let mut seen = HashSet::new();
+        for pos in &positions {
+            assert!(
+                seen.insert((pos.x, pos.y, pos.z)),
+                "返回的 positions 不应有重复 (x,y,z)"
+            );
         }
     }
 

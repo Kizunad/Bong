@@ -90,19 +90,35 @@ pub fn decorate_chunk(
                         placement_base_y(deco, &sample, top_y, min_y, world_height)
                     {
                         // Sky-isle bottom hangs from above; everything else needs
-                        // a solid block under base_y (carve / mega_tree / water
-                        // can leave top_y empty otherwise → 浮空草/灌).
+                        // a block under base_y (carve / mega_tree / water can
+                        // leave top_y empty otherwise → 浮空树/石/灌).
+                        // Plant-like kinds (tree/shrub) want soil whitelist；
+                        // 岩石/结构/菌类（boulder/crystal/mushroom/fallen_log/
+                        // grave_mound）能落在 stone/deepslate/andesite 等任意
+                        // 实心方块上，否则 broken_peaks / waste_plateau 整片
+                        // feature 装饰会消失。
                         let needs_below_support = !is_sky_isle_bottom_flora(deco);
-                        if needs_below_support
-                            && !has_plant_support_below(
-                                chunk,
-                                local_x as i32,
-                                base_y,
-                                local_z as i32,
-                                min_y,
-                            )
-                        {
-                            continue;
+                        if needs_below_support {
+                            let supported = if requires_plant_soil(deco) {
+                                has_plant_support_below(
+                                    chunk,
+                                    local_x as i32,
+                                    base_y,
+                                    local_z as i32,
+                                    min_y,
+                                )
+                            } else {
+                                has_solid_support_below(
+                                    chunk,
+                                    local_x as i32,
+                                    base_y,
+                                    local_z as i32,
+                                    min_y,
+                                )
+                            };
+                            if !supported {
+                                continue;
+                            }
                         }
                         let roll = decoration_hash(world_x, world_z, 997) % DENSITY_PRECISION;
                         let target = (sample.flora_density
@@ -187,6 +203,36 @@ pub fn decorate_chunk(
 /// Whether the block immediately under `base_y` is a vanilla "可放草本"
 /// support: dirt 家族 / 砂 / 砂岩 / 苔藓 / clay / mud / gravel。
 /// 排除 leaves / log / water / air / 矿物 等不该长草的。
+/// 草本类（kind="tree" / "shrub"）需要 vanilla 草本支撑（土质 / 沙质 /
+/// 苔藓）。其余 kind（boulder/crystal/mushroom/fallen_log/grave_mound/
+/// flower）走 solid 通用支撑。flower 在 ground-cover loop 单独严格检查，
+/// 这里不会走到。
+fn requires_plant_soil(deco: &Decoration) -> bool {
+    matches!(deco.kind.as_str(), "tree" | "shrub")
+}
+
+/// Generic solid-support check: 任何非空气、非液体的方块都算支撑，给
+/// boulder / crystal / mushroom / fallen_log / grave_mound 用 —— 它们
+/// 在石质 / 深板岩 / 安山岩等地形上也要能放，不能走 plant 白名单。
+fn has_solid_support_below(
+    chunk: &UnloadedChunk,
+    local_x: i32,
+    base_y: i32,
+    local_z: i32,
+    min_y: i32,
+) -> bool {
+    if !(0..CHUNK_SIZE).contains(&local_x) || !(0..CHUNK_SIZE).contains(&local_z) {
+        return false;
+    }
+    let support_y = base_y - 1;
+    let local_y = support_y - min_y;
+    if local_y < 0 || local_y >= chunk.height() as i32 {
+        return false;
+    }
+    let state = chunk.block_state(local_x as u32, local_y as u32, local_z as u32);
+    !state.is_air() && !state.is_liquid()
+}
+
 fn has_plant_support_below(
     chunk: &UnloadedChunk,
     local_x: i32,
