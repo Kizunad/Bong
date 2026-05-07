@@ -12,6 +12,7 @@ use crate::fauna::rat_phase::{
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const QI_SOURCE_SCAN_RANGE: f64 = 32.0;
 const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 0.8;
@@ -23,6 +24,39 @@ const MEDITATING_QI_SOURCE_WEIGHT: f32 = 3.0;
 
 type RegroupReadQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Position, &'static RatGroupId), With<NpcMarker>>;
+type QiSourceRatQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        Option<&'static CurrentDimension>,
+        &'static RatBlackboard,
+    ),
+    With<NpcMarker>,
+>;
+type QiSourceTargetQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Position,
+        Option<&'static CurrentDimension>,
+        &'static Cultivation,
+        Option<&'static MeditatingState>,
+    ),
+    Without<NpcMarker>,
+>;
+type SeekRatQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        Option<&'static CurrentDimension>,
+        &'static mut RatBlackboard,
+        &'static mut Navigator,
+    ),
+    With<NpcMarker>,
+>;
 type RegroupNavigateQuery<'w, 's> = Query<
     'w,
     's,
@@ -117,12 +151,12 @@ pub fn register(app: &mut App) {
 }
 
 fn qi_source_proximity_scorer_system(
-    rats: Query<(&Position, &RatBlackboard), With<NpcMarker>>,
-    targets: Query<(Entity, &Position, &Cultivation, Option<&MeditatingState>), Without<NpcMarker>>,
+    rats: QiSourceRatQuery<'_, '_>,
+    targets: QiSourceTargetQuery<'_, '_>,
     mut scorers: Query<(&Actor, &mut Score), With<QiSourceProximityScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((position, blackboard)) = rats.get(*actor) else {
+        let Ok((position, dimension, blackboard)) = rats.get(*actor) else {
             score.set(0.0);
             continue;
         };
@@ -131,7 +165,7 @@ fn qi_source_proximity_scorer_system(
             score.set(0.0);
             continue;
         }
-        let value = nearest_qi_source_entity(position.get(), &targets)
+        let value = nearest_qi_source_entity(position.get(), dimension_kind(dimension), &targets)
             .map(|source| qi_source_score(position.get(), source.position, source.weight))
             .unwrap_or(0.0);
         score.set(value);
@@ -176,13 +210,13 @@ fn drained_chunk_avoid_scorer_system(
 }
 
 fn seek_qi_source_action_system(
-    mut rats: Query<(&Position, &mut RatBlackboard, &mut Navigator), With<NpcMarker>>,
-    targets: Query<(Entity, &Position, &Cultivation, Option<&MeditatingState>), Without<NpcMarker>>,
+    mut rats: SeekRatQuery<'_, '_>,
+    targets: QiSourceTargetQuery<'_, '_>,
     mut bites: EventWriter<RatBiteEvent>,
     mut actions: Query<(&Actor, &mut ActionState), With<SeekQiSourceAction>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, mut blackboard, mut navigator)) = rats.get_mut(*actor) else {
+        let Ok((position, dimension, mut blackboard, mut navigator)) = rats.get_mut(*actor) else {
             *state = ActionState::Failure;
             continue;
         };
@@ -190,7 +224,9 @@ fn seek_qi_source_action_system(
         match *state {
             ActionState::Requested => *state = ActionState::Executing,
             ActionState::Executing => {
-                let Some(source) = nearest_qi_source_entity(position.get(), &targets) else {
+                let Some(source) =
+                    nearest_qi_source_entity(position.get(), dimension_kind(dimension), &targets)
+                else {
                     navigator.stop();
                     *state = ActionState::Success;
                     continue;
@@ -273,15 +309,15 @@ struct QiSource {
 
 fn nearest_qi_source_entity(
     origin: DVec3,
-    targets: &Query<
-        (Entity, &Position, &Cultivation, Option<&MeditatingState>),
-        Without<NpcMarker>,
-    >,
+    origin_dimension: DimensionKind,
+    targets: &QiSourceTargetQuery<'_, '_>,
 ) -> Option<QiSource> {
     targets
         .iter()
-        .filter(|(_, _, cultivation, _)| cultivation.qi_current > 0.0)
-        .map(|(entity, position, _, meditating)| QiSource {
+        .filter(|(_, _, dimension, cultivation, _)| {
+            cultivation.qi_current > 0.0 && dimension_kind(*dimension) == origin_dimension
+        })
+        .map(|(entity, position, _, _, meditating)| QiSource {
             entity,
             position: position.get(),
             weight: if meditating.is_some() {
@@ -298,6 +334,10 @@ fn nearest_qi_source_entity(
                 right.weight,
             ))
         })
+}
+
+fn dimension_kind(dimension: Option<&CurrentDimension>) -> DimensionKind {
+    dimension.map(|dim| dim.0).unwrap_or_default()
 }
 
 fn qi_source_score(origin: DVec3, source: DVec3, weight: f32) -> f32 {
@@ -431,5 +471,61 @@ mod tests {
         assert_eq!(event.rat, rat);
         assert_eq!(event.target, target);
         assert_eq!(event.qi_steal, 1);
+    }
+
+    #[test]
+    fn seek_qi_source_action_filters_targets_by_dimension() {
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                RatBlackboard {
+                    home_chunk: crate::fauna::rat_phase::chunk_pos_from_world(DVec3::ZERO),
+                    home_zone: "spawn".to_string(),
+                    group_id: RatGroupId(7),
+                    last_pressure_target: None,
+                    recently_drained: Vec::new(),
+                    drained_qi: 0.0,
+                },
+                Navigator::new(),
+            ))
+            .id();
+        let cross_dimension_target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.1, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                cultivation(5.0),
+            ))
+            .id();
+        let same_dimension_target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.3, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                cultivation(5.0),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        let bites = app.world().resource::<Events<RatBiteEvent>>();
+        let event = bites
+            .iter_current_update_events()
+            .next()
+            .expect("same-dimension qi source in bite range should be selected");
+        assert_eq!(event.rat, rat);
+        assert_eq!(event.target, same_dimension_target);
+        assert_ne!(
+            event.target, cross_dimension_target,
+            "rats must not bite qi targets from another dimension"
+        );
     }
 }

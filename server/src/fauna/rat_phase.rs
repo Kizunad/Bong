@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use valence::entity::entity::{CustomName, NameVisible};
@@ -222,6 +222,7 @@ pub fn pressure_sensor_tick_system(
             .or_default() += 1;
     }
 
+    let mut emitted_transitions = HashSet::new();
     for (_, position, dimension, group_id, blackboard, mut sensor, phase) in rats.p1().iter_mut() {
         let chunk = chunk_pos_from_world(position.get());
         let rat_count = counts.get(&(group_id.0, chunk)).copied().unwrap_or(0);
@@ -241,6 +242,7 @@ pub fn pressure_sensor_tick_system(
         if matches!(phase, RatPhase::Solitary)
             && sensor.surge_intensity >= SURGE_TRIGGER_THRESHOLD
             && !is_drained_chunk(blackboard, chunk)
+            && emitted_transitions.insert((group_id.0, chunk.x, chunk.z))
         {
             phase_events.send(RatPhaseChangeEvent {
                 chunk: [chunk.x, chunk.z],
@@ -437,9 +439,14 @@ mod tests {
         app.update();
 
         let events = app.world().resource::<Events<RatPhaseChangeEvent>>();
-        let event = events
-            .iter_current_update_events()
-            .next()
+        let emitted = events.iter_current_update_events().collect::<Vec<_>>();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "one dense group chunk should emit exactly one phase-change event"
+        );
+        let event = emitted
+            .first()
             .expect("dense rat chunk with qi gradient should emit transition");
         assert_eq!(event.chunk, [0, 0]);
         assert_eq!(event.from, RatPhase::Solitary);
