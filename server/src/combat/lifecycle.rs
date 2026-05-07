@@ -74,6 +74,16 @@ const EXHAUSTED_RECOVER_RATIO: f32 = 0.5;
 const EXHAUSTED_EXIT_FRACTION: f32 = 0.3;
 const DEATH_INSIGHT_RECENT_BIO_N: usize = 16;
 
+/// 死亡 cause 列表：触发后跳过 `determine_revival_decision`，直接走终结流水。
+///
+/// plan-tsy-raceout-v1 §4 Q-RC3 (A+C 复合)：race-out 慢一秒玩家不可走运数 / 渡虚劫
+/// 重生路径——副本随塌缩化为死域，肉身留在里面 = 真死。寿元 -5%（Void -100 年，
+/// worldview §十二）由 `apply_death_lifespan_penalty` 在标准管线里照常扣，但终结
+/// 由本 const 强制（绕过 fortune / tribulation 重生 roll）。
+fn is_terminal_death_cause(cause: &str) -> bool {
+    matches!(cause, "tsy_collapsed")
+}
+
 type NearDeathQueryItem<'a> = (
     Entity,
     &'a mut Lifecycle,
@@ -308,7 +318,10 @@ pub fn death_arbiter_tick(
         }
         let lifespan_exhausted =
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
-        let revival_decision = if lifespan_exhausted {
+        // plan-tsy-raceout-v1 §4 Q-RC3：terminal cause（如 race-out 塌缩死亡）禁止走
+        // fortune / tribulation 重生 roll —— 副本化死域 = 真死。
+        let force_terminate = is_terminal_death_cause(event.cause.as_str());
+        let revival_decision = if lifespan_exhausted || force_terminate {
             None
         } else {
             determine_revival_decision(
@@ -327,6 +340,7 @@ pub fn death_arbiter_tick(
             DeathInsightCategoryV1::Combat,
             revival_decision,
         );
+        let will_terminate_now = lifespan_exhausted || force_terminate;
         let insight_payload = build_death_insight_request(DeathInsightBuildInput {
             lifecycle: &lifecycle,
             life_record: life_record.as_deref(),
@@ -339,7 +353,7 @@ pub fn death_arbiter_tick(
             category,
             zone_kind: death_zone,
             rebirth_chance,
-            will_terminate: lifespan_exhausted,
+            will_terminate: will_terminate_now,
             known_spirit_eyes: known_spirit_eyes_for_death_insight(
                 life_record.as_deref(),
                 &lifecycle,
@@ -347,7 +361,7 @@ pub fn death_arbiter_tick(
             ),
         });
 
-        if lifespan_exhausted {
+        if will_terminate_now {
             let lifespan_event =
                 death_penalty_lifespan_event(cultivation, now_tick, event.cause.as_str());
             let lifespan_event_char_id = lifespan_event
@@ -2199,6 +2213,171 @@ mod tests {
                 ..
             }
         )));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tsy_collapsed_cause_terminates_immediately_despite_remaining_fortune() {
+        // plan-tsy-raceout-v1 §4 Q-RC3 (A+C 复合)：race-out 慢一秒玩家不可走运数 / 渡虚劫
+        // 重生路径——副本随塌缩化为死域 = 真死。fortune_remaining > 0 也不能救。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("tsy-raceout-terminal");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Doomed".to_string(),
+                    fortune_remaining: 3,
+                    spawn_anchor: Some([0.0, 64.0, 0.0]),
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Doomed"),
+                DeathRegistry::new("offline:Doomed"),
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: 30.0,
+                    cap_by_realm: LifespanCapTable::AWAKEN,
+                    offline_pause_tick: None,
+                },
+                Position::new([4.0, 64.0, 4.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "tsy_collapsed".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 100,
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(
+            lifecycle.state,
+            LifecycleState::Terminated,
+            "tsy_collapsed must skip near-death/revival, terminate immediately"
+        );
+        assert_eq!(lifecycle.death_count, 1);
+
+        let terminated = app.world().resource::<Events<PlayerTerminated>>();
+        let mut term_reader = terminated.get_reader();
+        let term_events: Vec<_> = term_reader.read(terminated).cloned().collect();
+        assert_eq!(
+            term_events.len(),
+            1,
+            "PlayerTerminated should fire exactly once"
+        );
+
+        // 寿元仍正常扣（worldview §十二），race-out 不豁免寿元损失。
+        let lifespan = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .expect("lifespan component should remain attached");
+        assert!(
+            lifespan.years_lived > 30.0,
+            "lifespan penalty should still apply on tsy_collapsed (years_lived > 30.0), got {}",
+            lifespan.years_lived
+        );
+
+        // 不应触发重生事件
+        let revived = app.world().resource::<Events<PlayerRevived>>();
+        assert_eq!(
+            revived.len(),
+            0,
+            "tsy_collapsed must not trigger PlayerRevived"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tsy_collapsed_void_realm_loses_one_hundred_years() {
+        // plan-tsy-raceout-v1 §4 Q-RC3：化虚级 race-out 死亡寿元 -100 年（worldview §十二
+        // death_penalty_years_for_realm(Void) = 2000/20 = 100）。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("tsy-raceout-void-penalty");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Voidwalker".to_string(),
+                    fortune_remaining: 5,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Void,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Voidwalker"),
+                DeathRegistry::new("offline:Voidwalker"),
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: 500.0,
+                    cap_by_realm: LifespanCapTable::VOID,
+                    offline_pause_tick: None,
+                },
+                Position::new([4.0, 64.0, 4.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "tsy_collapsed".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 100,
+        });
+        app.update();
+
+        let lifespan = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .expect("lifespan component should remain attached");
+        let lost = lifespan.years_lived - 500.0;
+        assert!(
+            (lost - 100.0).abs() < f64::EPSILON,
+            "化虚 race-out 应扣 100 年寿元（worldview §十二），实际扣 {lost}",
+        );
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
 
         let _ = fs::remove_dir_all(root);
     }
