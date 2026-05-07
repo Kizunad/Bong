@@ -57,6 +57,10 @@
         {
           "const": "cannot_exit",
           "type": "string"
+        },
+        {
+          "const": "portal_occupied",
+          "type": "string"
         }
       ]
     }

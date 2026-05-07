@@ -352,6 +352,7 @@ fn reject_reason_wire(reason: ExtractRejectionReason) -> ExtractAbortedReasonV1 
             ExtractAbortedReasonV1::PortalExpired
         }
         ExtractRejectionReason::CannotExit => ExtractAbortedReasonV1::CannotExit,
+        ExtractRejectionReason::PortalOccupied => ExtractAbortedReasonV1::PortalOccupied,
     }
 }
 

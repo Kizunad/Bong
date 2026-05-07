@@ -83,6 +83,8 @@ export const ExtractAbortedReasonV1 = Type.Union([
   Type.Literal("not_in_tsy"),
   Type.Literal("already_busy"),
   Type.Literal("cannot_exit"),
+  // plan-tsy-raceout-v1 §4 Q-RC4 — race-out 单裂口 1 人，后到撞墙。
+  Type.Literal("portal_occupied"),
 ]);
 export type ExtractAbortedReasonV1 = Static<typeof ExtractAbortedReasonV1>;
 

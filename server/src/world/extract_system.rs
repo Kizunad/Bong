@@ -65,6 +65,9 @@ pub enum ExtractRejectionReason {
     PortalExpired,
     CannotExit,
     PortalCollapsed,
+    /// plan-tsy-raceout-v1 §4 Q-RC4：race-out 阶段单裂口同时只允许 1 人。
+    /// 后到的撞墙，必须找下一个裂口。
+    PortalOccupied,
 }
 
 #[derive(Event, Debug, Clone)]
@@ -149,6 +152,7 @@ pub fn start_extract_request(
         &Wounds,
         Option<&ExtractProgress>,
     )>,
+    occupants: Query<(Entity, &ExtractProgress)>,
     mut commands: Commands,
     clock: Res<CombatClock>,
     lifecycle_registry: Option<Res<TsyZoneStateRegistry>>,
@@ -175,8 +179,17 @@ pub fn start_extract_request(
             continue;
         };
 
+        // plan-tsy-raceout-v1 §4 Q-RC4 — 单裂口 1 人。仅对 CollapseTear 启用：
+        // 标准 MainRift / DeepRift 仍允许多人同时撤离仪式，此约束只针对 race-out。
+        let collapse_tear_occupied = portal.kind == RiftKind::CollapseTear
+            && occupants
+                .iter()
+                .any(|(other, prog)| other != req.player && prog.portal == req.portal);
+
         let rejection = if existing_progress.is_some() {
             Some(ExtractRejectionReason::AlreadyBusy)
+        } else if collapse_tear_occupied {
+            Some(ExtractRejectionReason::PortalOccupied)
         } else if is_in_combat(combat, clock.tick) {
             Some(ExtractRejectionReason::InCombat)
         } else if player_pos.0.distance(portal_pos.0) > portal.trigger_radius {
@@ -795,6 +808,87 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn collapse_tear_rejects_second_extractor_with_portal_occupied() {
+        // plan-tsy-raceout-v1 §4 Q-RC4 — race-out 单裂口 1 人。已被占的 CollapseTear
+        // 拒绝后到的玩家，原因是 PortalOccupied，必须换下一个裂口。
+        let mut app = app_with_extract_system(start_extract_request);
+        let portal_entity = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        app.world_mut().entity_mut(first).insert(ExtractProgress {
+            portal: portal_entity,
+            required_ticks: 60,
+            elapsed_ticks: 5,
+            started_at_tick: 0,
+            started_pos: [0.0, 0.0, 0.0],
+            wound_count_at_start: 0,
+        });
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: second,
+                portal: portal_entity,
+            });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        assert!(
+            matches!(
+                collected.first(),
+                Some(StartExtractResult::Rejected {
+                    reason: ExtractRejectionReason::PortalOccupied,
+                    ..
+                })
+            ),
+            "second extractor on same CollapseTear should hit PortalOccupied, got {collected:?}"
+        );
+        assert!(
+            app.world().entity(second).get::<ExtractProgress>().is_none(),
+            "rejected request should not insert ExtractProgress"
+        );
+    }
+
+    #[test]
+    fn main_rift_allows_second_extractor_despite_existing_occupant() {
+        // 单裂口约束只对 race-out (CollapseTear) 生效；标准 MainRift 仍允许并发。
+        let mut app = app_with_extract_system(start_extract_request);
+        let portal_entity = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::MainRift, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        app.world_mut().entity_mut(first).insert(ExtractProgress {
+            portal: portal_entity,
+            required_ticks: 160,
+            elapsed_ticks: 10,
+            started_at_tick: 0,
+            started_pos: [0.0, 0.0, 0.0],
+            wound_count_at_start: 0,
+        });
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: second,
+                portal: portal_entity,
+            });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        assert!(
+            matches!(collected.first(), Some(StartExtractResult::Started { .. })),
+            "MainRift should remain shareable, got {collected:?}"
+        );
     }
 
     #[test]

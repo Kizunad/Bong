@@ -1088,6 +1088,8 @@ pub enum ExtractAbortedReasonV1 {
     NotInTsy,
     AlreadyBusy,
     CannotExit,
+    /// plan-tsy-raceout-v1 §4 Q-RC4 — race-out 阶段单裂口 1 人，后到撞墙。
+    PortalOccupied,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
