@@ -152,11 +152,8 @@ mod tests {
         let mut lc = fresh_lifecycle();
         lc.fortune_remaining = 1;
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
 
         assert_eq!(
             outcome,
@@ -173,11 +170,8 @@ mod tests {
         let mut lc = fresh_lifecycle();
         lc.fortune_remaining = 0;
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
 
         assert_eq!(
             outcome,
@@ -198,11 +192,8 @@ mod tests {
         lifespan.years_lived = lifespan.cap_by_realm as f64;
         let lc = fresh_lifecycle(); // fortune=3 完整
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
 
         assert_eq!(
             outcome,
@@ -220,11 +211,8 @@ mod tests {
         lifespan.years_lived = lifespan.cap_by_realm as f64 - 1.0;
         let lc = fresh_lifecycle();
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
 
         assert!(
             outcome.is_revive(),
@@ -240,11 +228,7 @@ mod tests {
         let lifespan = fresh_lifespan();
         let lc = fresh_lifecycle(); // fortune=3 满
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NaturalAging,
-        );
+        let outcome = regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NaturalAging);
 
         assert_eq!(
             outcome,
@@ -262,11 +246,7 @@ mod tests {
         let mut lc = fresh_lifecycle();
         lc.fortune_remaining = 0;
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NaturalAging,
-        );
+        let outcome = regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NaturalAging);
 
         assert_eq!(
             outcome,
@@ -308,11 +288,7 @@ mod tests {
         lifespan.years_lived = lifespan.cap_by_realm as f64;
         let lc = fresh_lifecycle();
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NaturalAging,
-        );
+        let outcome = regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NaturalAging);
 
         assert_eq!(
             outcome,
@@ -331,11 +307,8 @@ mod tests {
         let mut lc = fresh_lifecycle();
         lc.fortune_remaining = 0;
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
 
         assert_eq!(
             outcome,
@@ -397,11 +370,8 @@ mod tests {
         let lc = fresh_lifecycle();
 
         // 第 1 步：决策器报终结 (LifespanExhausted)
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
         assert_eq!(
             outcome,
             LifeOutcome::Terminate {
@@ -442,11 +412,7 @@ mod tests {
         let lifespan = fresh_lifespan(); // 寿元未归零
         let lc = fresh_lifecycle(); // fortune=3 满
 
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NaturalAging,
-        );
+        let outcome = regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NaturalAging);
         assert!(matches!(
             outcome,
             LifeOutcome::Terminate {
@@ -472,11 +438,8 @@ mod tests {
         lc.fortune_remaining = 0;
 
         // 决策：终结，原因 FortuneExhausted
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
         assert!(matches!(
             outcome,
             LifeOutcome::Terminate {
@@ -496,11 +459,8 @@ mod tests {
         // （spec 是"开新角色"用的，重生只 spend_fortune，不动 cultivation/realm）
         let lifespan = fresh_lifespan();
         let lc = fresh_lifecycle();
-        let outcome = regenerate_or_terminate(
-            &lifespan,
-            &lc,
-            CultivationDeathCause::NegativeZoneDrain,
-        );
+        let outcome =
+            regenerate_or_terminate(&lifespan, &lc, CultivationDeathCause::NegativeZoneDrain);
         assert!(outcome.is_revive());
         // is_terminate 为 false：调用方据此跳过 spec 应用
         assert!(!outcome.is_terminate());
@@ -518,7 +478,11 @@ mod tests {
 
         // NaturalAging
         assert!(matches!(
-            regenerate_or_terminate(&lifespan_full, &lc_full, CultivationDeathCause::NaturalAging),
+            regenerate_or_terminate(
+                &lifespan_full,
+                &lc_full,
+                CultivationDeathCause::NaturalAging
+            ),
             LifeOutcome::Terminate {
                 reason: TerminateReason::NaturalAging
             }
