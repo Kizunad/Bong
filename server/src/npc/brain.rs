@@ -719,6 +719,7 @@ fn flee_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -847,6 +848,7 @@ fn chase_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -927,6 +929,7 @@ fn melee_attack_action_system(
             }
             ActionState::Executing => {
                 let Ok((_npc_pos, mut bb, profile, _)) = npcs.get_mut(*actor) else {
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -1207,6 +1210,7 @@ fn flee_cultivator_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    *state = ActionState::Failure;
                     continue;
                 };
 
