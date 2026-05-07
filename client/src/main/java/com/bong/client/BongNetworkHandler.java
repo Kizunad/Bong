@@ -6,6 +6,7 @@ import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.network.AudioEventRouter;
+import com.bong.client.network.LocustSwarmWarningHandler;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
@@ -35,6 +36,7 @@ public class BongNetworkHandler {
     private static final VfxEventRouter VFX_ROUTER =
         new VfxEventRouter(new ClientAnimationBridge(), new BongVfxParticleBridge());
     private static final AudioEventRouter AUDIO_ROUTER = new AudioEventRouter(SoundRecipePlayer.instance());
+    private static final LocustSwarmWarningHandler LOCUST_SWARM_WARNING_HANDLER = new LocustSwarmWarningHandler();
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
     private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
     private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
@@ -47,6 +49,7 @@ public class BongNetworkHandler {
 
     public static void register() {
         registerServerDataChannel();
+        registerLocustSwarmWarningChannel();
         registerVfxEventChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
@@ -90,6 +93,24 @@ public class BongNetworkHandler {
                 || dispatch.uiOpenState().isPresent()) {
                 client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
             }
+        });
+    }
+
+    private static void registerLocustSwarmWarningChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "locust_swarm_warning"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            ServerDataDispatch dispatch = LOCUST_SWARM_WARNING_HANDLER.handle(jsonPayload);
+            if (!dispatch.handled()) {
+                BongClient.LOGGER.warn("Ignoring bong:locust_swarm_warning payload: {}", dispatch.logMessage());
+                return;
+            }
+
+            BongClient.LOGGER.info("Processed bong:locust_swarm_warning payload: {}", dispatch.logMessage());
+            client.execute(() -> applyDispatch(client, dispatch, "locust_swarm_warning"));
         });
     }
 
