@@ -38,6 +38,11 @@ public final class ExtractProgressHudPlanner {
             out.add(HudRenderCommand.screenTint(HudRenderLayer.TSY_EXTRACT, safe.screenFlashColor()));
         }
         appendCollapse(out, safe, screenWidth, nowMs);
+        if (safe.collapseActive(nowMs)) {
+            // plan-tsy-raceout-v1 P1 / Q-RC2 — race-out 期间向所有玩家展示塌缩裂口列表，
+            // 让远处也能"看见"裂口位置（不保证近，玩家自己跑）。
+            appendCollapseRiftList(out, safe, widthMeasurer, screenWidth, screenHeight);
+        }
         if (safe.extracting()) {
             appendExtractBar(out, safe, widthMeasurer, screenWidth, screenHeight);
         } else {
@@ -91,14 +96,101 @@ public final class ExtractProgressHudPlanner {
         out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, "移动 / 战斗 / 受击会归零", x + 8, y + 26, MUTED));
     }
 
+    private static void appendCollapseRiftList(
+        List<HudRenderCommand> out,
+        ExtractState state,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int screenWidth,
+        int screenHeight
+    ) {
+        // 收集本族 collapse_tear 端口（exit 方向）+ 玩家位置距离，按距离升序最多列 5 个。
+        net.minecraft.client.MinecraftClient client = MinecraftClient.getInstance();
+        net.minecraft.entity.player.PlayerEntity player = client == null ? null : client.player;
+        if (player == null) {
+            return;
+        }
+        appendCollapseRiftListWithPlayerPos(out, state, widthMeasurer, screenWidth, screenHeight, player.getPos());
+    }
+
+    /// 测试入口：直接传入玩家位置，绕过 MinecraftClient.getInstance()。
+    static void appendCollapseRiftListWithPlayerPos(
+        List<HudRenderCommand> out,
+        ExtractState state,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int screenWidth,
+        int screenHeight,
+        net.minecraft.util.math.Vec3d ppos
+    ) {
+        if (ppos == null || state.portals().isEmpty()) {
+            return;
+        }
+        java.util.List<RiftPortalView> rifts = new ArrayList<>();
+        for (RiftPortalView portal : state.portals()) {
+            if (!"collapse_tear".equals(portal.kind())) {
+                continue;
+            }
+            if (!"exit".equals(portal.direction())) {
+                continue;
+            }
+            if (state.collapsingFamilyId() != null
+                && !state.collapsingFamilyId().isBlank()
+                && !state.collapsingFamilyId().equals(portal.familyId())) {
+                continue;
+            }
+            rifts.add(portal);
+        }
+        if (rifts.isEmpty()) {
+            return;
+        }
+        rifts.sort((a, b) -> Double.compare(distSq(a, ppos), distSq(b, ppos)));
+        int max = Math.min(5, rifts.size());
+
+        int panelW = 200;
+        int panelH = 18 + 12 * max;
+        int x = screenWidth - panelW - 12;
+        int y = 60;
+        out.add(HudRenderCommand.rect(HudRenderLayer.TSY_EXTRACT, x + 2, y + 2, panelW, panelH, 0x88000000));
+        out.add(HudRenderCommand.rect(HudRenderLayer.TSY_EXTRACT, x, y, panelW, panelH, BG));
+        out.add(HudRenderCommand.rect(HudRenderLayer.TSY_EXTRACT, x, y, panelW, 1, DANGER));
+        out.add(HudRenderCommand.rect(HudRenderLayer.TSY_EXTRACT, x, y + panelH - 1, panelW, 1, DANGER));
+        out.add(HudRenderCommand.rect(HudRenderLayer.TSY_EXTRACT, x, y, 1, panelH, DANGER));
+        out.add(HudRenderCommand.rect(HudRenderLayer.TSY_EXTRACT, x + panelW - 1, y, 1, panelH, DANGER));
+        out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, "塌缩裂口（race-out）", x + 8, y + 4, DANGER));
+        for (int i = 0; i < max; i++) {
+            RiftPortalView rift = rifts.get(i);
+            double d = Math.sqrt(distSq(rift, ppos));
+            String line = String.format(java.util.Locale.ROOT, "#%d  %.0fm", i + 1, d);
+            out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT,
+                clip(line, panelW - 16, widthMeasurer), x + 8, y + 16 + 12 * i, TEXT));
+        }
+    }
+
+    private static double distSq(RiftPortalView portal, net.minecraft.util.math.Vec3d pos) {
+        double dx = portal.x() - pos.x;
+        double dy = portal.y() - pos.y;
+        double dz = portal.z() - pos.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
     private static void appendCollapse(List<HudRenderCommand> out, ExtractState state, int screenWidth, long nowMs) {
         if (!state.collapseActive(nowMs)) {
             return;
         }
+        // plan-tsy-raceout-v1 P0 — 大屏红色 3 秒 race-out 倒计时。
+        // 全屏红色 tint + 顶部 "RACE-OUT" 大标签 + 中央大号秒数。
         int remaining = state.collapseRemainingTicks(nowMs);
-        out.add(HudRenderCommand.screenTint(HudRenderLayer.TSY_EXTRACT, 0x22FF0000));
-        String label = "坍缩倒计时 " + secondsLabel(remaining);
-        out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, label, Math.max(8, screenWidth / 2 - 48), 24, DANGER));
+        out.add(HudRenderCommand.screenTint(HudRenderLayer.TSY_EXTRACT, 0x33FF0000));
+
+        String banner = "塌缩 RACE-OUT";
+        int bannerX = Math.max(8, screenWidth / 2 - banner.length() * 4);
+        out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, banner, bannerX, 24, DANGER));
+
+        // 中央倒计时（向上取整到 1s 粒度，让玩家看到 "3 → 2 → 1"）
+        double secondsExact = Math.max(0, remaining) / 20.0;
+        int wholeSeconds = (int) Math.ceil(secondsExact);
+        String big = wholeSeconds + "s";
+        int bigX = Math.max(8, screenWidth / 2 - big.length() * 4);
+        out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, big, bigX, 38, DANGER));
     }
 
     private static void appendMessage(
