@@ -1,0 +1,236 @@
+---
+import Base from "../../layouts/Base.astro";
+import fs from "node:fs";
+import path from "node:path";
+
+// plan-multi-life-v1 §3 数据契约第 6 条：
+//   `library-web/src/pages/lives/[player_id].astro` 历代生平统计
+//   （按 player_id，不按家族 Q-ML1）
+//
+// 数据源：`library-web/public/deceased/_index.json` 由 server 终结角色时
+// 写入；entry 形如 `{ char_id: "offline:Alice:char_1", died_at_tick, path }`。
+// 玩家 player_id 取 char_id 的"前两段"（`offline:Alice`），再用此聚合
+// 同玩家的多代角色生平。getStaticPaths 在 build 时枚举所有 player_id。
+//
+// Astro `output: "static"` 模式下 [player_id] 动态路由必须给 getStaticPaths
+// 提供完整的预生成参数列表；如果 _index.json 不存在或为空，返回单个占位
+// player_id="empty" 路由，避免 build 失败。
+
+export async function getStaticPaths() {
+  const indexPath = path.resolve(
+    "./public/deceased/_index.json",
+  );
+
+  let entries: Array<{ char_id?: string }> = [];
+  try {
+    if (fs.existsSync(indexPath)) {
+      const raw = fs.readFileSync(indexPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        entries = parsed;
+      }
+    }
+  } catch (_err) {
+    entries = [];
+  }
+
+  const playerIds = new Set<string>();
+  for (const entry of entries) {
+    const charId = String(entry?.char_id ?? "").trim();
+    if (!charId) continue;
+    // char_id 格式：`offline:<username>` 或 `offline:<username>:<char_n>`
+    // player_id = "offline:<username>"（前两段，舍去 character 后缀）
+    const parts = charId.split(":");
+    if (parts.length < 2) continue;
+    playerIds.add(`${parts[0]}:${parts[1]}`);
+  }
+
+  // Astro 路由参数不允许 `:`，把 `offline:Alice` 编码为 URL-safe 的
+  // `offline-Alice`，客户端再反向还原。
+  const encodePlayerIdForUrl = (playerId: string): string =>
+    playerId.replace(/:/g, "-");
+
+  const params = Array.from(playerIds).map((player_id) => ({
+    params: { player_id: encodePlayerIdForUrl(player_id) },
+    props: { player_id_raw: player_id },
+  }));
+
+  // 防 build 失败：空数据时给一个 placeholder 页面
+  if (params.length === 0) {
+    params.push({
+      params: { player_id: "empty" },
+      props: { player_id_raw: "empty" },
+    });
+  }
+
+  return params;
+}
+
+const { player_id_raw } = Astro.props as { player_id_raw: string };
+const isPlaceholder = player_id_raw === "empty";
+const displayPlayerId = isPlaceholder ? "" : player_id_raw;
+const username = isPlaceholder
+  ? ""
+  : displayPlayerId.replace(/^offline:/, "");
+---
+
+<Base
+  title={isPlaceholder
+    ? "历代生平 — 暂无亡者"
+    : `${username || displayPlayerId} 历代生平 — 末法残土图书馆`}
+  description="按 player_id 聚合的同玩家历代角色卷宗（plan-multi-life-v1 §3）"
+>
+  <article class="museum-article max-w-4xl mx-auto">
+    <div class="museum-breadcrumb ink-reveal">
+      <a href="/" class="back-link font-kai">图书馆总目</a>
+      <span>/</span>
+      <a href="/deceased/" class="back-link font-kai">亡者博物馆</a>
+      <span>/</span>
+      <span class="font-kai">历代生平</span>
+    </div>
+
+    {isPlaceholder ? (
+      <section class="museum-status ink-reveal" id="lives-empty-state">
+        <p class="museum-empty-title">尚无亡者入馆。</p>
+        <p class="museum-empty-note font-kai">
+          待 server 终结角色后，会写入 <code>public/deceased/_index.json</code>，本页将自动列出该玩家历代生平。
+        </p>
+      </section>
+    ) : (
+      <>
+        <header class="mb-12 ink-reveal">
+          <div class="museum-kicker font-kai">同玩家 · 历代生平卷</div>
+          <h1 class="article-title mb-6 ink-brush">
+            {username || displayPlayerId}
+          </h1>
+          <p class="article-quote font-kai" data-player-id={displayPlayerId}>
+            一身一世，俱归此卷；不录家族，不传姓氏。
+          </p>
+        </header>
+
+        <section class="lives-section ink-reveal">
+          <h2 class="deceased-section-title">
+            <span data-fill="generation-count">…</span> 世卷宗
+          </h2>
+          <div class="museum-status font-kai" id="lives-status">
+            正在翻检历代残卷……
+          </div>
+          <div
+            class="museum-empty-note font-kai"
+            id="lives-empty"
+            style="display:none;"
+          >
+            此玩家尚未在亡者博物馆留下卷宗。
+          </div>
+          <ol class="lives-list" id="lives-list" aria-live="polite"></ol>
+        </section>
+      </>
+    )}
+  </article>
+
+  <script is:inline define:vars={{ targetPlayerId: displayPlayerId }}>
+    (function () {
+      // 占位页（empty）不需要客户端逻辑
+      if (!targetPlayerId) return;
+
+      var status = document.getElementById("lives-status");
+      var emptyNote = document.getElementById("lives-empty");
+      var list = document.getElementById("lives-list");
+      var genCountEl = document.querySelector(
+        '[data-fill="generation-count"]',
+      );
+      if (!status || !emptyNote || !list || !genCountEl) return;
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function playerIdOf(charId) {
+        var parts = String(charId || "").split(":");
+        if (parts.length < 2) return "";
+        return parts[0] + ":" + parts[1];
+      }
+
+      function generationOf(charId) {
+        // char_id `offline:Alice:char_3` → 第 3 世；旧格式 `offline:Alice`
+        // 视为第 1 世。返回值仅供显示，不参与游戏逻辑。
+        var parts = String(charId || "").split(":");
+        if (parts.length < 3) return 1;
+        var tail = parts[parts.length - 1];
+        var match = tail.match(/(\d+)/);
+        return match ? Number(match[1]) : 1;
+      }
+
+      fetch("/deceased/_index.json", { cache: "no-store" })
+        .then(function (response) {
+          if (!response.ok) throw new Error("missing deceased index");
+          return response.json();
+        })
+        .then(function (data) {
+          var entries = Array.isArray(data) ? data : [];
+          var matches = entries.filter(function (entry) {
+            return playerIdOf(entry && entry.char_id) === targetPlayerId;
+          });
+
+          // 按 died_at_tick 升序（最早 → 最新），方便阅读"几世"先后顺序
+          matches.sort(function (left, right) {
+            return (
+              Number(left.died_at_tick || 0) - Number(right.died_at_tick || 0)
+            );
+          });
+
+          genCountEl.textContent = String(matches.length);
+          status.style.display = "none";
+
+          if (matches.length === 0) {
+            emptyNote.style.display = "block";
+            return;
+          }
+
+          list.innerHTML = matches
+            .map(function (entry, idx) {
+              var charId = entry.char_id || "";
+              var path = entry.path || "";
+              var detailHref = path
+                ? "/deceased/view?path=" +
+                  encodeURIComponent(path.replace(/^\/+/, ""))
+                : "#";
+              var generation = generationOf(charId);
+              var diedAt = entry.died_at_tick || 0;
+              return (
+                '<li class="lives-card ink-reveal visible">' +
+                '<div class="lives-card-row">' +
+                '<span class="lives-gen-badge">第 ' +
+                escapeHtml(generation) +
+                " 世</span>" +
+                '<span class="lives-card-id">' +
+                escapeHtml(charId) +
+                "</span>" +
+                "</div>" +
+                '<p class="lives-card-meta font-kai">' +
+                "终于第 " +
+                escapeHtml(diedAt) +
+                " tick · 第 " +
+                escapeHtml(idx + 1) +
+                " 卷" +
+                "</p>" +
+                '<a class="lives-detail-link font-kai" href="' +
+                escapeHtml(detailHref) +
+                '">展开生平卷</a>' +
+                "</li>"
+              );
+            })
+            .join("");
+        })
+        .catch(function () {
+          status.style.display = "none";
+          emptyNote.style.display = "block";
+        });
+    })();
+  </script>
+</Base>
