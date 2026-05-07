@@ -305,9 +305,17 @@ def _blend_tile_layers(
             # Smooth interpolation — overlay can raise OR lower base by `weight`.
             # Use float ops even if arrays came in as other dtypes.
             blended = base_arr + (overlay_arr - base_arr) * weight
+        elif blend == "swap":
+            # Discrete-id layers (flora_variant_id / ground_cover_id /
+            # mineral_kind / anomaly_kind / *_origin_id 等). Hard pick overlay
+            # vs base via the same dithered `swap` mask used for surface_id —
+            # never multiply or maximum integer ids (would corrupt the global
+            # palette index by mixing zones together).
+            blended = np.where(swap, overlay_arr, base_arr).astype(base_arr.dtype)
         else:  # "maximum" (default for extra layers)
             blended = np.maximum(base_arr, overlay_arr * weight)
-        np.round(blended, 3, out=blended)
+        if blend != "swap":
+            np.round(blended, 3, out=blended)
         base_tile.layers[extra_layer] = blended
 
     if zone.name not in base_tile.contributing_zones:

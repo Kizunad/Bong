@@ -55,6 +55,23 @@ SPRING_MARSH_DECORATIONS = (
         rarity=0.35,
         notes="翠苔石：水边苔石，偶含微弱夜光。",
     ),
+    # Ground cover specs
+    DecorationSpec(
+        name="marsh_grass",
+        kind="flower",
+        blocks=("grass",),
+        size_range=(1, 1),
+        rarity=0.65,
+        notes="湿地草：岛上常见地表覆盖。",
+    ),
+    DecorationSpec(
+        name="marsh_fern",
+        kind="flower",
+        blocks=("fern",),
+        size_range=(1, 1),
+        rarity=0.50,
+        notes="水边蕨：阴湿地表覆盖。",
+    ),
 )
 
 
@@ -67,6 +84,8 @@ class SpringMarshGenerator(TerrainProfileGenerator):
         "spirit_eye_candidates",
         "flora_density",
         "flora_variant_id",
+        "ground_cover_density",
+        "ground_cover_id",
     )
     ecology = EcologySpec(
         decorations=SPRING_MARSH_DECORATIONS,
@@ -105,6 +124,8 @@ def fill_spring_marsh_tile(
             "spirit_eye_candidates",
             "flora_density",
             "flora_variant_id",
+            "ground_cover_density",
+            "ground_cover_id",
         ),
     )
     mud_id = palette.ensure("mud")
@@ -264,6 +285,24 @@ def fill_spring_marsh_tile(
     flora_density = np.clip(flora_density, 0.0, 1.0)
     buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
     buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
+
+    # --- Ground cover (湿地草/蕨) ---
+    # spring_marsh local_id 6=marsh_grass, 7=marsh_fern。
+    from . import global_decoration_id
+
+    gc_grass = global_decoration_id("spring_marsh", 6)
+    gc_fern = global_decoration_id("spring_marsh", 7)
+
+    # 岛上铺草，shoreline / 水里不长（水里走 lotus_cluster）
+    on_dry_island = (island_low | island_high) & (waterline < 0.0)
+    on_grass_surface = (surface_id == grass_id) | (surface_id == moss_id)
+    gc_density = np.where(on_dry_island & on_grass_surface, 0.55 + basin * 0.15, 0.0)
+    gc_density = np.clip(gc_density, 0.0, 0.85)
+    buffer.layers["ground_cover_density"] = np.round(gc_density, 3).ravel()
+
+    gc_variant = np.where(gc_density > 0.0, gc_grass, 0).astype(np.int32)
+    gc_variant = np.where((surface_id == moss_id) & (gc_density > 0.0), gc_fern, gc_variant)
+    buffer.layers["ground_cover_id"] = gc_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

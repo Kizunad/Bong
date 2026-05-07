@@ -26,7 +26,13 @@ def build_wilderness_base_plan(bounds_xz: Bounds2D) -> WildernessFieldPlan:
     return WildernessFieldPlan(
         profile_name="wilderness",
         bounds_xz=bounds_xz,
-        required_layers=DEFAULT_FIELD_LAYERS + ("flora_density", "flora_variant_id"),
+        required_layers=DEFAULT_FIELD_LAYERS
+        + (
+            "flora_density",
+            "flora_variant_id",
+            "ground_cover_density",
+            "ground_cover_id",
+        ),
         notes=(
             "Acts as the global fallback outside named zones.",
             "First-pass stitching targets zone-to-wilderness blending only.",
@@ -197,5 +203,34 @@ def fill_wilderness_tile(
         flora_density = np.where(scar > 0.82, flora_density * 0.3, flora_density)
         flora_density = np.where(drainage < 0.09, flora_density * 0.5, flora_density)
         buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+
+    # --- Wilderness ground cover (草/蕨/蒲公英) ---
+    # 与 flora 平行的地表植被层。density 高（0.4–0.75）让草甸"看着是
+    # 草甸"，但在 gravel/scar 上压到 0。variant_id 引用 GLOBAL palette 的
+    # wilderness 段：1=wild_grass, 2=wild_fern, 3=wild_dandelion（见
+    # profiles/__init__.py WILDERNESS_GROUND_COVER 顺序）。
+    if "ground_cover_density" in buffer.layers:
+        from . import global_decoration_id
+
+        gc_grass = global_decoration_id("wilderness", 1)
+        gc_fern = global_decoration_id("wilderness", 2)
+        gc_dandelion = global_decoration_id("wilderness", 3)
+
+        gc_cloud = fbm_2d(wx, wz, scale=140.0, octaves=3, seed=911)
+        gc_density = np.clip(0.55 + gc_cloud * 0.20, 0.0, 0.85)
+        gc_density = np.where(scar > 0.82, 0.0, gc_density)
+        gc_density = np.where(drainage < 0.09, gc_density * 0.4, gc_density)
+        # 只在 grass/coarse 表面铺，gravel/stone 表面不长（surface_id 已经定）
+        on_soft = (surface_id == grass_id) | (surface_id == coarse_dirt_id)
+        gc_density = np.where(on_soft, gc_density, 0.0)
+        buffer.layers["ground_cover_density"] = np.round(gc_density, 3).ravel()
+
+        # Variant 选取：默认 grass，feature 高的地方掺 fern，零星 dandelion
+        variant_cloud = fbm_2d(wx, wz, scale=80.0, octaves=2, seed=917)
+        gc_variant = np.full_like(height, gc_grass, dtype=np.int32)
+        gc_variant = np.where((feature_mask > 0.18) & (variant_cloud > 0.05), gc_fern, gc_variant)
+        gc_variant = np.where(variant_cloud > 0.55, gc_dandelion, gc_variant)
+        gc_variant = np.where(gc_density <= 0.0, 0, gc_variant)
+        buffer.layers["ground_cover_id"] = gc_variant.ravel().astype(np.uint8)
 
     return buffer

@@ -380,6 +380,8 @@ mod tests {
             cavern_floor_y: 9999.0,
             flora_density: 0.0,
             flora_variant_id: 0,
+            ground_cover_density: 0.0,
+            ground_cover_id: 0,
             fossil_bbox: 0,
             anomaly_intensity: 0.0,
             anomaly_kind: 0,

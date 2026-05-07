@@ -26,10 +26,10 @@ WASTE_PLATEAU_DECORATIONS = (
     DecorationSpec(
         name="dust_thorn",
         kind="shrub",
-        blocks=("dead_bush", "sand", "sandstone"),
-        size_range=(1, 3),
-        rarity=0.70,
-        notes="尘棘：半埋沙中的枯枝，划人而无汁。遍布平原。",
+        blocks=("dead_bush",),
+        size_range=(1, 2),
+        rarity=0.50,
+        notes="尘棘：半埋沙中的枯枝。accent 删掉（曾用 sand/sandstone 实体方块导致地表凸起一圈）；改靠周围的 wastes_dead_bush ground cover 自然铺就。",
     ),
     DecorationSpec(
         name="null_pressure_rock",
@@ -47,6 +47,15 @@ WASTE_PLATEAU_DECORATIONS = (
         rarity=0.25,
         notes="古废片：雕刻石砖的断柱残基，诉说消逝的王朝。",
     ),
+    # Ground cover spec
+    DecorationSpec(
+        name="wastes_dead_bush",
+        kind="flower",
+        blocks=("dead_bush",),
+        size_range=(1, 1),
+        rarity=0.30,
+        notes="枯灌：北荒标志地表植被，几无生机。",
+    ),
 )
 
 
@@ -59,6 +68,8 @@ class WastePlateauGenerator(TerrainProfileGenerator):
         "mofa_decay",
         "flora_density",
         "flora_variant_id",
+        "ground_cover_density",
+        "ground_cover_id",
         "fossil_bbox",
     )
     ecology = EcologySpec(
@@ -98,6 +109,8 @@ def fill_waste_plateau_tile(
             "mofa_decay",
             "flora_density",
             "flora_variant_id",
+            "ground_cover_density",
+            "ground_cover_id",
             "fossil_bbox",
         ),
     )
@@ -233,6 +246,21 @@ def fill_waste_plateau_tile(
     flora_density = np.clip(flora_density, 0.0, 1.0)
     buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
     buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
+
+    # --- Ground cover (枯灌) ---
+    # waste_plateau local_id 5=wastes_dead_bush。
+    from . import global_decoration_id
+
+    gc_dead_bush = global_decoration_id("waste_plateau", 5)
+
+    # 北荒地表稀疏，密度低；neg_pressure 区域更稀疏
+    gc_density = np.where(plateau > 0.2, 0.25 + plateau * 0.10, 0.0)
+    gc_density = np.where(null_band, gc_density * 0.4, gc_density)
+    gc_density = np.clip(gc_density, 0.0, 0.40)
+    buffer.layers["ground_cover_density"] = np.round(gc_density, 3).ravel()
+
+    gc_variant = np.where(gc_density > 0.0, gc_dead_bush, 0).astype(np.int32)
+    buffer.layers["ground_cover_id"] = gc_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

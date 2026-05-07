@@ -1,23 +1,35 @@
 //! Per-column flora decoration placement.
 //!
-//! Reads `flora_density` + `flora_variant_id` from the raster (see
-//! `raster::ColumnSample`) and realizes the referenced `Decoration` (see
-//! `raster::TerrainProvider::decoration`) as an actual block structure in the
-//! chunk. Each `DecorationSpec.kind` maps to a small procedural geometry:
+//! Two parallel layers, both reading from the same global decoration palette
+//! but driven by independent raster channels:
+//!
+//! - **flora_variant_id** (`flora_density`) — sparse feature decorations
+//!   (tree / shrub / boulder / crystal / mushroom). One per column max.
+//! - **ground_cover_id** (`ground_cover_density`) — dense ground cover
+//!   (kind="flower" specs: short grass / dandelion / fern / dead_bush). Also
+//!   one per column max, but independent from flora — a column can host both
+//!   a tree AND meadow grass.
+//!
+//! Each `DecorationSpec.kind` maps to a small procedural geometry:
 //!
 //!   tree      — trunk column of blocks[0] with blocks[1] canopy sphere at top
 //!   shrub     — 1..3 block tall cluster, blocks[0] primary, blocks[1] accent
 //!   boulder   — half-dome of blocks[0] with blocks[1] flecks
 //!   crystal   — vertical pillar of blocks[0] tipped with blocks[1], blocks[2] stubs
 //!   mushroom  — blocks[1] stem + blocks[0] cap disc, blocks[2] accent
-//!   flower    — single blocks[0] plant
+//!   flower    — single blocks[0] plant (typical ground-cover form)
+//!
+//! Both layers share an 8×8 + 16×16 cluster gate so flora and ground cover
+//! cluster naturally instead of dusting uniformly across the world. Feature
+//! decorations gate harder (≥70 ⇒ skip, 30% bald patches), ground cover
+//! gates lighter (≥85, 15% bald patches) so meadows feel continuous while
+//! tree groves still feel grouped.
 //!
 //! Placements are chunk-local (no cross-chunk book-keeping): anything poking
 //! out of the current chunk simply gets clipped. Mega-scale trees remain the
-//! domain of `mega_tree.rs`; this module handles the dense, smaller
-//! decorations that make each biome feel distinct.
+//! domain of `mega_tree.rs`.
 
-use valence::prelude::{BlockState, Chunk, ChunkPos, UnloadedChunk};
+use valence::prelude::{BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
 
 use super::blocks::block_from_name;
 use super::column;
@@ -33,6 +45,14 @@ const DENSITY_PRECISION: u32 = 10_000;
 /// masks make the generic tree primitive crowd the surface too quickly.
 const TREE_DENSITY_SCALE: f32 = 0.4;
 
+/// Cluster gate threshold for feature decorations (flora_variant_id). Cells
+/// scoring ≥ this value skip the feature loop entirely → ~30% of 8×8 patches
+/// are bald, so groves cluster instead of dusting uniformly.
+const FEATURE_CLUSTER_MAX: u32 = 70;
+/// Cluster gate threshold for ground cover. Looser than feature gate so
+/// meadows feel continuous (~15% bald patches).
+const GROUND_COVER_CLUSTER_MAX: u32 = 85;
+
 pub fn decorate_chunk(
     chunk: &mut UnloadedChunk,
     pos: ChunkPos,
@@ -40,36 +60,116 @@ pub fn decorate_chunk(
     terrain: &TerrainProvider,
     top_y_by_column: &[[i32; 16]; 16],
 ) {
+    let world_height = chunk.height() as i32;
+    // Track which columns took a feature decoration so the ground-cover loop
+    // can skip them — otherwise a boulder's lower rim sits on top of the
+    // ground-cover flower we just placed (visible "sand on dead bush").
+    let mut feature_occupied = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+
     for (local_z, row) in top_y_by_column.iter().enumerate() {
         for (local_x, &top_y) in row.iter().enumerate() {
             let world_x = pos.x * CHUNK_SIZE + local_x as i32;
             let world_z = pos.z * CHUNK_SIZE + local_z as i32;
             let sample = terrain.sample(world_x, world_z);
 
-            if sample.flora_density < MIN_DENSITY || sample.flora_variant_id == 0 {
+            // Cluster score combines 8×8 and 16×16 cell hashes. Averaging
+            // softens the hard 8×8 cell edges while keeping the macro
+            // bald-patch distribution from the 16×16 layer.
+            let cluster_a = decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
+            let cluster_b =
+                decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
+            let cluster_score = (cluster_a + cluster_b) / 2;
+
+            // --- Layer 1: feature decoration (trees / shrubs / boulders) ---
+            if cluster_score < FEATURE_CLUSTER_MAX
+                && sample.flora_density >= MIN_DENSITY
+                && sample.flora_variant_id != 0
+            {
+                if let Some(deco) = terrain.decoration(sample.flora_variant_id) {
+                    if let Some(base_y) =
+                        placement_base_y(deco, &sample, top_y, min_y, world_height)
+                    {
+                        // Sky-isle bottom hangs from above; everything else needs
+                        // a solid block under base_y (carve / mega_tree / water
+                        // can leave top_y empty otherwise → 浮空草/灌).
+                        let needs_below_support = !is_sky_isle_bottom_flora(deco);
+                        if needs_below_support
+                            && !has_plant_support_below(
+                                chunk,
+                                local_x as i32,
+                                base_y,
+                                local_z as i32,
+                                min_y,
+                            )
+                        {
+                            continue;
+                        }
+                        let roll = decoration_hash(world_x, world_z, 997) % DENSITY_PRECISION;
+                        let target = (sample.flora_density
+                            * deco.rarity.max(0.05)
+                            * placement_density_scale(deco)
+                            * DENSITY_PRECISION as f32) as u32;
+                        if roll < target {
+                            place_decoration(
+                                chunk,
+                                local_x as i32,
+                                base_y,
+                                local_z as i32,
+                                min_y,
+                                deco,
+                                world_x,
+                                world_z,
+                            );
+                            feature_occupied[local_z][local_x] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Layer 2: ground cover (草/花/枯木) ---
+    // 单独一遍循环，跳过被特征装饰占用的列；同时检查 base_y-1 是不是真正能
+    // 承载植被的方块（防止 carve / mega_tree / 水位异常导致草浮空）。
+    // Independent salt (1009 vs 997) so feature roll and ground-cover roll
+    // don't lock-step — same column can win one and lose the other.
+    for (local_z, row) in top_y_by_column.iter().enumerate() {
+        for (local_x, &top_y) in row.iter().enumerate() {
+            if feature_occupied[local_z][local_x] {
                 continue;
             }
-            let Some(deco) = terrain.decoration(sample.flora_variant_id) else {
-                continue;
-            };
-            let Some(base_y) = placement_base_y(deco, &sample, top_y, min_y, chunk.height() as i32)
-            else {
-                continue;
-            };
+            let world_x = pos.x * CHUNK_SIZE + local_x as i32;
+            let world_z = pos.z * CHUNK_SIZE + local_z as i32;
+            let sample = terrain.sample(world_x, world_z);
 
-            // Probability: density and rarity compound — dense regions fill up,
-            // rare variants still feel sparse.
-            let roll = decoration_hash(world_x, world_z, 997) % DENSITY_PRECISION;
-            let target = (sample.flora_density
+            let cluster_a = decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
+            let cluster_b =
+                decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
+            let cluster_score = (cluster_a + cluster_b) / 2;
+
+            if cluster_score >= GROUND_COVER_CLUSTER_MAX
+                || sample.ground_cover_density < MIN_DENSITY
+                || sample.ground_cover_id == 0
+            {
+                continue;
+            }
+
+            let base_y = top_y + 1;
+            // 下方支撑白名单：vanilla 草本类植物只在土质 / 沙质 / 苔藓类方块上稳定
+            if !has_plant_support_below(chunk, local_x as i32, base_y, local_z as i32, min_y) {
+                continue;
+            }
+
+            let Some(deco) = terrain.decoration(sample.ground_cover_id) else {
+                continue;
+            };
+            let roll = decoration_hash(world_x, world_z, 1009) % DENSITY_PRECISION;
+            let target = (sample.ground_cover_density
                 * deco.rarity.max(0.05)
-                * placement_density_scale(deco)
                 * DENSITY_PRECISION as f32) as u32;
             if roll >= target {
                 continue;
             }
-
-            // Keep the top block underneath as support (don't overwrite with
-            // air-only checks inside the geometry functions).
             place_decoration(
                 chunk,
                 local_x as i32,
@@ -82,6 +182,48 @@ pub fn decorate_chunk(
             );
         }
     }
+}
+
+/// Whether the block immediately under `base_y` is a vanilla "可放草本"
+/// support: dirt 家族 / 砂 / 砂岩 / 苔藓 / clay / mud / gravel。
+/// 排除 leaves / log / water / air / 矿物 等不该长草的。
+fn has_plant_support_below(
+    chunk: &UnloadedChunk,
+    local_x: i32,
+    base_y: i32,
+    local_z: i32,
+    min_y: i32,
+) -> bool {
+    if !(0..CHUNK_SIZE).contains(&local_x) || !(0..CHUNK_SIZE).contains(&local_z) {
+        return false;
+    }
+    let support_y = base_y - 1;
+    let local_y = support_y - min_y;
+    if local_y < 0 || local_y >= chunk.height() as i32 {
+        return false;
+    }
+    let state = chunk.block_state(local_x as u32, local_y as u32, local_z as u32);
+    matches!(
+        state,
+        BlockState::GRASS_BLOCK
+            | BlockState::PODZOL
+            | BlockState::MYCELIUM
+            | BlockState::DIRT
+            | BlockState::COARSE_DIRT
+            | BlockState::ROOTED_DIRT
+            | BlockState::DIRT_PATH
+            | BlockState::FARMLAND
+            | BlockState::MOSS_BLOCK
+            | BlockState::MUD
+            | BlockState::MUDDY_MANGROVE_ROOTS
+            | BlockState::CLAY
+            | BlockState::GRAVEL
+            | BlockState::SAND
+            | BlockState::RED_SAND
+            | BlockState::SANDSTONE
+            | BlockState::RED_SANDSTONE
+            | BlockState::TERRACOTTA
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -129,6 +271,12 @@ fn place_decoration(
             chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
         ),
         "flower" => place_flower(chunk, local_x, base_y, local_z, min_y, &blocks),
+        "fallen_log" => place_fallen_log(
+            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+        ),
+        "grave_mound" => place_grave_mound(
+            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+        ),
         // Unknown kind → primary block stump so something visible still appears.
         _ => {
             set_block_if_air(chunk, local_x, base_y, local_z, min_y, blocks[0]);
@@ -258,6 +406,124 @@ fn place_tree(
             );
         }
     }
+
+    // Oak-only vine drape: 35% per candidate cell on the canopy rim, then
+    // hang 1–3 blocks down with diminishing odds (60% / 42% / 24%).
+    if trunk == BlockState::OAK_LOG {
+        drape_oak_vines(
+            chunk, local_x, base_y, local_z, min_y, trunk_h, radius, world_x, world_z,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drape_oak_vines(
+    chunk: &mut UnloadedChunk,
+    trunk_lx: i32,
+    trunk_base_y: i32,
+    trunk_lz: i32,
+    min_y: i32,
+    trunk_h: i32,
+    radius: i32,
+    world_x: i32,
+    world_z: i32,
+) {
+    let canopy_top = trunk_base_y + trunk_h;
+    let scan_y_start = canopy_top - 1;
+    let scan_y_end = canopy_top + radius;
+    let scan_r = radius + 1;
+
+    for y in scan_y_start..=scan_y_end {
+        for dx in -scan_r..=scan_r {
+            for dz in -scan_r..=scan_r {
+                let cx = trunk_lx + dx;
+                let cz = trunk_lz + dz;
+                if !(0..CHUNK_SIZE).contains(&cx) || !(0..CHUNK_SIZE).contains(&cz) {
+                    continue;
+                }
+                let local_y = y - min_y;
+                if local_y < 0 || local_y >= chunk.height() as i32 {
+                    continue;
+                }
+                if !chunk
+                    .block_state(cx as u32, local_y as u32, cz as u32)
+                    .is_air()
+                {
+                    continue;
+                }
+
+                // 4 邻居方向：vine 把"该方向上有 oak 块"的面 set 为 True
+                let n = is_oak_at(chunk, cx, y, cz - 1, min_y);
+                let e = is_oak_at(chunk, cx + 1, y, cz, min_y);
+                let s = is_oak_at(chunk, cx, y, cz + 1, min_y);
+                let w = is_oak_at(chunk, cx - 1, y, cz, min_y);
+                if !(n || e || s || w) {
+                    continue;
+                }
+
+                let h = decoration_hash(world_x + dx, world_z + dz, 281)
+                    .wrapping_add((y - min_y) as u32);
+                if h % 100 >= 35 {
+                    continue;
+                }
+
+                let mut vine = BlockState::VINE;
+                if n {
+                    vine = vine.set(PropName::North, PropValue::True);
+                }
+                if e {
+                    vine = vine.set(PropName::East, PropValue::True);
+                }
+                if s {
+                    vine = vine.set(PropName::South, PropValue::True);
+                }
+                if w {
+                    vine = vine.set(PropName::West, PropValue::True);
+                }
+                set_block_if_air(chunk, cx, y, cz, min_y, vine);
+
+                // 下垂藤：每格概率 60% / 42% / 24% 衰减
+                let drape_state = vine;
+                for ddy in 1..=3i32 {
+                    let dy_world = y - ddy;
+                    let dlocal = dy_world - min_y;
+                    if dlocal < 0 || dlocal >= chunk.height() as i32 {
+                        break;
+                    }
+                    if !chunk
+                        .block_state(cx as u32, dlocal as u32, cz as u32)
+                        .is_air()
+                    {
+                        break;
+                    }
+                    let dh = decoration_hash(world_x + dx, world_z + dz, 283 + ddy as u32);
+                    let chance = match ddy {
+                        1 => 60,
+                        2 => 42,
+                        _ => 24,
+                    };
+                    if dh % 100 >= chance {
+                        break;
+                    }
+                    set_block_if_air(chunk, cx, dy_world, cz, min_y, drape_state);
+                }
+            }
+        }
+    }
+}
+
+fn is_oak_at(chunk: &UnloadedChunk, local_x: i32, world_y: i32, local_z: i32, min_y: i32) -> bool {
+    if !(0..CHUNK_SIZE).contains(&local_x) || !(0..CHUNK_SIZE).contains(&local_z) {
+        return false;
+    }
+    let local_y = world_y - min_y;
+    if local_y < 0 || local_y >= chunk.height() as i32 {
+        return false;
+    }
+    matches!(
+        chunk.block_state(local_x as u32, local_y as u32, local_z as u32),
+        BlockState::OAK_LOG | BlockState::OAK_LEAVES
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -479,6 +745,115 @@ fn place_flower(
     set_block_if_air(chunk, local_x, base_y, local_z, min_y, blocks[0]);
 }
 
+/// Fallen log: 横躺的 log（带 axis 属性），随机 N/S/E/W 方向延伸 size 段。
+#[allow(clippy::too_many_arguments)]
+fn place_fallen_log(
+    chunk: &mut UnloadedChunk,
+    local_x: i32,
+    base_y: i32,
+    local_z: i32,
+    min_y: i32,
+    blocks: &[BlockState],
+    size: i32,
+    world_x: i32,
+    world_z: i32,
+) {
+    let direction = decoration_hash(world_x, world_z, 591) % 4;
+    let (dx, dz, axis) = match direction {
+        0 => (1_i32, 0_i32, PropValue::X),
+        1 => (-1, 0, PropValue::X),
+        2 => (0, 1, PropValue::Z),
+        _ => (0, -1, PropValue::Z),
+    };
+    let log = blocks[0].set(PropName::Axis, axis);
+    let length = size.clamp(3, 6);
+    for i in 0..length {
+        let cx = local_x + dx * i;
+        let cz = local_z + dz * i;
+        set_block_if_air(chunk, cx, base_y, cz, min_y, log);
+    }
+}
+
+/// Grave mound: 半圆苔石 dome + 中央顶上立 sign 当碑。
+/// blocks[0]=主体, [1]=表层苔石, [2]=sign（先放空牌，碑文 NBT 待后续阶段实现）。
+/// 整体下沉 1 格（base_y - 1 起算，比地表低一格半埋），强制替换地表方块
+/// 以制造"半埋古坟"质感，不是"地上叠石"。跨 chunk 时只有半个 dome ——
+/// 因为 chunk-local 写入限制；要根治需要 anchor 系统跨 chunk 同步。
+#[allow(clippy::too_many_arguments)]
+fn place_grave_mound(
+    chunk: &mut UnloadedChunk,
+    local_x: i32,
+    base_y: i32,
+    local_z: i32,
+    min_y: i32,
+    blocks: &[BlockState],
+    size: i32,
+    world_x: i32,
+    world_z: i32,
+) {
+    let body = blocks[0];
+    let crust = blocks.get(1).copied().unwrap_or(body);
+    let sign_block = blocks.get(2).copied();
+
+    // 下沉 1 格：dome 起点比地表低一格，半埋
+    let dome_base = base_y - 1;
+    let radius = size.clamp(2, 5);
+    let mound_h = radius - 1; // 半径=2 → 1 高，半径=5 → 4 高
+    for dy in 0..=mound_h {
+        let layer_r = radius - dy;
+        let layer_r_sq = layer_r * layer_r;
+        for dx in -layer_r..=layer_r {
+            for dz in -layer_r..=layer_r {
+                let d2 = dx * dx + dz * dz;
+                if d2 > layer_r_sq {
+                    continue;
+                }
+                // 顶层 + 外缘用 mossy_cobblestone（crust），内部用 cobblestone（body）
+                let block = if dy == mound_h || d2 == layer_r_sq {
+                    crust
+                } else {
+                    body
+                };
+                // 强制替换（不用 if_air）—— 制造半埋下沉的视觉，让 dome 切掉
+                // 下方 dirt/grass_block 等。
+                set_block_at_world(
+                    chunk,
+                    local_x + dx,
+                    dome_base + dy,
+                    local_z + dz,
+                    min_y,
+                    block,
+                );
+            }
+        }
+    }
+
+    // 中央顶上立碑（sign 立在土堆顶面方块之上一格）
+    if let Some(sign) = sign_block {
+        let sign_y = dome_base + mound_h + 1;
+        let rot = match decoration_hash(world_x, world_z, 597) % 16 {
+            0 => PropValue::_0,
+            1 => PropValue::_1,
+            2 => PropValue::_2,
+            3 => PropValue::_3,
+            4 => PropValue::_4,
+            5 => PropValue::_5,
+            6 => PropValue::_6,
+            7 => PropValue::_7,
+            8 => PropValue::_8,
+            9 => PropValue::_9,
+            10 => PropValue::_10,
+            11 => PropValue::_11,
+            12 => PropValue::_12,
+            13 => PropValue::_13,
+            14 => PropValue::_14,
+            _ => PropValue::_15,
+        };
+        let sign_state = sign.set(PropName::Rotation, rot);
+        set_block_if_air(chunk, local_x, sign_y, local_z, min_y, sign_state);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Local helpers (self-contained — decoration.rs's equivalents are module-private)
 // ---------------------------------------------------------------------------
@@ -500,6 +875,26 @@ fn set_block_if_air(
     }
     let state = chunk.block_state(local_x as u32, local_y as u32, local_z as u32);
     if !state.is_air() {
+        return;
+    }
+    chunk.set_block_state(local_x as u32, local_y as u32, local_z as u32, block);
+}
+
+/// 无条件覆盖（不检查 air）—— 用于 grave_mound 这种要"切下去 / 半埋"的几何，
+/// 让 dome 强制替换地表 grass_block / dirt 制造下沉视觉。
+fn set_block_at_world(
+    chunk: &mut UnloadedChunk,
+    local_x: i32,
+    world_y: i32,
+    local_z: i32,
+    min_y: i32,
+    block: BlockState,
+) {
+    if !(0..CHUNK_SIZE).contains(&local_x) || !(0..CHUNK_SIZE).contains(&local_z) {
+        return;
+    }
+    let local_y = world_y - min_y;
+    if local_y < 0 || local_y >= chunk.height() as i32 {
         return;
     }
     chunk.set_block_state(local_x as u32, local_y as u32, local_z as u32, block);

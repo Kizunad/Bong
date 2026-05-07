@@ -101,7 +101,7 @@ pub fn spawn_mineral_anchor_nodes(
 
     let mut spawned = 0usize;
     for anchor in &anchors {
-        for pos in positions_for_anchor(anchor) {
+        for pos in positions_for_anchor(anchor, &providers.overworld) {
             if exhausted_positions.contains(&(anchor.mineral_id, pos))
                 || index.lookup(DimensionKind::Overworld, pos).is_some()
             {
@@ -268,7 +268,7 @@ fn parse_anchor(
     })
 }
 
-fn positions_for_anchor(anchor: &MineralAnchor) -> Vec<BlockPos> {
+fn positions_for_anchor(anchor: &MineralAnchor, terrain: &TerrainProvider) -> Vec<BlockPos> {
     let radius = anchor.radius;
     let radius_sq = radius * radius;
     let mut candidates = Vec::new();
@@ -291,10 +291,27 @@ fn positions_for_anchor(anchor: &MineralAnchor) -> Vec<BlockPos> {
     }
 
     candidates.sort_by_key(|(hash, _)| *hash);
+    let mut seen = HashSet::new();
     candidates
         .into_iter()
         .take(anchor.max_units as usize)
-        .map(|(_, pos)| pos)
+        .filter_map(|(_, pos)| {
+            // 把矿石压到地表或地下 —— 防止 anchor 球体上半部漂浮在 air 里。
+            // 用每列 height 作为 surface_y；矿石 y = min(原 y, surface_y)，
+            // 这样深矿脉保持地下分布，浅 anchor 自然贴地形成"露头"。
+            let surface_y = terrain.sample(pos.x, pos.z).height.round() as i32;
+            let snapped_y = pos.y.min(surface_y);
+            if snapped_y < MIN_WORLD_Y {
+                return None;
+            }
+            let snapped = BlockPos::new(pos.x, snapped_y, pos.z);
+            // snap 后可能多个 candidate 落在同一格 —— 去重保第一个（hash 序最稳）
+            if seen.insert((snapped.x, snapped.y, snapped.z)) {
+                Some(snapped)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -361,7 +378,8 @@ mod tests {
             max_units: 12,
         };
 
-        let positions = positions_for_anchor(&anchor);
+        let terrain = TerrainProvider::empty_for_tests();
+        let positions = positions_for_anchor(&anchor, &terrain);
         assert_eq!(positions.len(), 12);
         for pos in positions {
             let dx = pos.x - anchor.center.x;
@@ -430,7 +448,8 @@ mod tests {
             radius: 1,
             max_units: 7,
         };
-        let exhausted_pos = positions_for_anchor(&anchor)[0];
+        let terrain = TerrainProvider::empty_for_tests();
+        let exhausted_pos = positions_for_anchor(&anchor, &terrain)[0];
         let mut exhausted = ExhaustedMineralsLog::default();
         exhausted.record(ExhaustedEntry {
             mineral_id: "fan_tie".into(),

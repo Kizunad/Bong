@@ -79,8 +79,45 @@ impl Resource for GeneratedChunks {}
 
 pub fn register(app: &mut App) {
     app.insert_resource(GeneratedChunks::default())
+        .insert_resource(TickRateProbe::default())
         .add_systems(Update, generate_chunks_around_players)
-        .add_systems(Update, remove_unviewed_chunks);
+        .add_systems(Update, remove_unviewed_chunks)
+        .add_systems(Update, log_tick_rate);
+}
+
+struct TickRateProbe {
+    last_log_tick: i64,
+    last_log_instant: std::time::Instant,
+}
+
+impl Default for TickRateProbe {
+    fn default() -> Self {
+        Self {
+            last_log_tick: 0,
+            last_log_instant: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Resource for TickRateProbe {}
+
+/// 每 200 tick 输出一次实测 TPS。理想 20.0；明显低于（如 5–10）说明某 system
+/// 单 tick 跑超 50ms，所有 packet 处理（drop/pickup/cmd/chat）会按比例延迟。
+fn log_tick_rate(server: Res<Server>, mut probe: ResMut<TickRateProbe>) {
+    let tick = server.current_tick();
+    let delta_ticks = tick - probe.last_log_tick;
+    if delta_ticks < 200 {
+        return;
+    }
+    let now = std::time::Instant::now();
+    let elapsed = now.duration_since(probe.last_log_instant);
+    let actual_tps = delta_ticks as f64 / elapsed.as_secs_f64();
+    tracing::info!(
+        target: "bong::tick",
+        "tick {tick}: actual TPS = {actual_tps:.1} (target 20.0; below 15 means systems overrun)"
+    );
+    probe.last_log_tick = tick;
+    probe.last_log_instant = now;
 }
 
 pub fn spawn_raster_world(
@@ -188,11 +225,29 @@ fn generate_chunks_around_players(
         return;
     };
 
-    for (view, visible_chunk_layer) in &clients {
+    // 每 tick 最多新生成的 chunk 数 —— 防止首次连接 / 远程传送时一帧内
+    // 同步装填整个 view（200+ chunk）冻住 server tick，让玩家所有交互
+    // 包括 drop/pickup/chat/cmd 都卡几秒。每 chunk 装填实测约 30-50ms
+    // （column resolve + flora 双 loop + decoration + structures + mineral
+    // overlay），4/tick 会让 tick 实际 ~150ms（5 TPS）依然卡 packet。
+    // 降到 1/tick：tick budget 50ms 内尽量留给 packet 处理；view 256 chunk
+    // 满载需 13 秒，期间 server tick 维持 20 TPS、操作即时响应。
+    // 1/tick：每 chunk 装填 ~30ms，剩余 tick budget 给 packet/system；
+    // NPC=0 + 这个值实测 TPS ≈ 20。NPC > 30 时再降到 0 + 加 LOD。
+    const MAX_NEW_CHUNKS_PER_TICK: usize = 1;
+    let mut budget = MAX_NEW_CHUNKS_PER_TICK;
+
+    'outer: for (view, visible_chunk_layer) in &clients {
         if visible_chunk_layer.0 != overworld_layer_entity {
             continue;
         }
         for pos in view.get().iter() {
+            if budget == 0 {
+                break 'outer;
+            }
+            // 已生成的列直接 return（也快），不消耗 budget；只对真正新生成
+            // 的列收 budget。
+            let already = generated.loaded.contains(&pos) || layer.chunk(pos).is_some();
             ensure_chunk_generated(
                 &mut layer,
                 pos,
@@ -202,6 +257,9 @@ fn generate_chunks_around_players(
                 &mineral_nodes,
                 harvested_spiritwood.as_deref(),
             );
+            if !already {
+                budget -= 1;
+            }
         }
     }
 }
@@ -339,6 +397,53 @@ fn set_mineral_block(
         local_z,
         mineral_block_state(mineral_id),
     );
+
+    // 矿脉露头装饰：当矿石上方是 air（地表露头）时，在 4 邻方向 air 位上 50%
+    // 概率堆 cobblestone，形成"石堆+矿石"的地表露头观感（用户明确要求）。
+    // 地下深矿（上方仍是石头/矿石）不触发，保持原 vanilla 风格。
+    let above_y = local_y + 1;
+    if above_y >= WORLD_HEIGHT as i32 {
+        return;
+    }
+    if !chunk.block_state(local_x, above_y as u32, local_z).is_air() {
+        return;
+    }
+    for (i, (dx, dz)) in [(1_i32, 0_i32), (-1, 0), (0, 1), (0, -1)]
+        .iter()
+        .enumerate()
+    {
+        let nx = local_x as i32 + dx;
+        let nz = local_z as i32 + dz;
+        if !(0..16).contains(&nx) || !(0..16).contains(&nz) {
+            continue;
+        }
+        let h = ore_outcrop_hash(block_pos.x + dx, block_pos.z + dz, 401 + i as u32);
+        if h % 100 >= 50 {
+            continue;
+        }
+        if !chunk
+            .block_state(nx as u32, above_y as u32, nz as u32)
+            .is_air()
+        {
+            continue;
+        }
+        chunk.set_block_state(
+            nx as u32,
+            above_y as u32,
+            nz as u32,
+            BlockState::COBBLESTONE,
+        );
+    }
+}
+
+fn ore_outcrop_hash(world_x: i32, world_z: i32, salt: u32) -> u32 {
+    let mut value = (world_x as u32).wrapping_mul(0x85EB_CA6B);
+    value = value.wrapping_add((world_z as u32).wrapping_mul(0xC2B2_AE35));
+    value ^= salt.wrapping_mul(0x9E37_79B1);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value
 }
 
 fn mineral_block_state(mineral_id: crate::mineral::MineralId) -> BlockState {
