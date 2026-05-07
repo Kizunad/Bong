@@ -306,7 +306,8 @@ fn place_marsh_vegetation(
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
     } else if !bare_cell && density < 120 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
-    } else if density < 130 {
+    } else if (120..130).contains(&density) {
+        // 显式 lower bound 防止 bare cell 时 density < 120 落入此分支误摆树
         place_marsh_tree(chunk, local_x, local_z, plant_y, min_y, density);
     }
 }
@@ -457,7 +458,6 @@ fn place_kelp_column(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn place_spawn_vegetation(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -479,7 +479,8 @@ fn place_spawn_vegetation(
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
     } else if !bare_cell && density < 132 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
-    } else if density < 144 {
+    } else if (132..144).contains(&density) {
+        // 显式 lower bound 防止 bare cell 时 density < 132 落入此分支误摆橡树
         place_simple_oak(
             chunk,
             local_x,
@@ -488,7 +489,7 @@ fn place_spawn_vegetation(
             min_y,
             decoration_hash(world_x, world_z, 91),
         );
-    } else if density < 162 {
+    } else if (144..162).contains(&density) {
         place_bamboo_cluster(chunk, local_x, local_z, plant_y, min_y, world_x, world_z);
     }
 }
