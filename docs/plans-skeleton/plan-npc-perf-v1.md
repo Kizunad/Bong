@@ -11,6 +11,8 @@ NPC 系统性能恢复专项 —— 100 rogue seed 让单核 WSL2 TPS 跌至 **0
 **前置依赖**：
 
 - `plan-npc-ai-v1` ✅ → NpcLodTier / NpcLodConfig / `should_skip_scorer_tick` gate / 6 archetype Bundle / 13 Scorer + 15 Action 注册 / NpcRegistry / FactionStore / `bong:npc/spawn,death` Redis 通道 / `BONG_ROGUE_SEED_COUNT` env 占位
+- `plan-npc-fixups-v1` ⏳ → P0 重力 idle / P1 A\* 空路径 / P2 fallback 视觉 修完是本 plan P0 baseline 录档前提（避免"NPC 不动 / 悬空"污染 µs/tick 性能数据）
+- `plan-npc-fixups-v2` ⏳ → P0 lingtian 多 zone / MeleeAction Executing 卡死 + P2 tribulation auto_wave 软删 race / AscensionQuota 软删 修完是本 plan baseline 前提（避免 ECS lifecycle 错乱 + NPC 卡死污染基线）
 - `plan-server.md` ✅ → ScheduleRunnerPlugin / Bevy 0.14 Update + FixedUpdate 调度 / Position↔Transform sync 桥
 - `plan-agent-v2.md` ✅ → NpcDigest 远方压缩 / publish_world_state_to_redis 每 200 tick
 
@@ -33,7 +35,7 @@ NPC 系统性能恢复专项 —— 100 rogue seed 让单核 WSL2 TPS 跌至 **0
 - **出料**：
   - `NpcSpatialIndex` Resource（按 32 格 cell 散列 NPC entity，每 tick 重建一次或增量更新；O(N) 重建 / O(k) 邻居查询）
   - 改造后的 `assign_hostile_encounters` / `socialize_scorer_system` / `territory_intruder_scorer_system` / `relic::guard*` 全部走 SpatialIndex 邻居查询
-  - `navigator_tick_system` 分桶逻辑：`if (entity_index + tick) % BUCKET_COUNT == 0 { repath }`，BUCKET_COUNT = 20
+  - `navigator_tick_system` 分桶逻辑：`if (entity_index + tick) % BUCKET_COUNT == 0 { repath }`，BUCKET_COUNT = 10（与决策门 #4 默认值一致）
   - `qi_regen_and_zone_drain_tick` / `patrol_npcs` / `update_npc_blackboard` 迁 `FixedUpdate`（5-10Hz）
   - 已遗漏 LOD gate 的 scorer（ChaseTargetScorer / MeleeRangeScorer / DashScorer / CultivationDriveScorer / TribulationReadyScorer）补 `should_skip_scorer_tick` 接入
   - `sync_position_to_transform` 冗余写删除（navigator 已写 Transform，无需 PostUpdate 再覆盖）
@@ -122,7 +124,7 @@ pub fn should_skip_scorer_tick(
 
 **FixedUpdate 频率**：暂定 5Hz（200ms / 跨 4 个 Update tick）。P0 决策门可调到 10Hz。
 
-**navigator BUCKET_COUNT**：暂定 20（同 `REPATH_INTERVAL_TICKS`，每 tick 5 NPC repath，平均延迟 10 tick = 0.5s）。P0 决策门可调。
+**navigator BUCKET_COUNT**：暂定 10（决策门 #4 默认值；每 tick 10 NPC repath，平均延迟 5 tick = 0.25s 玩家几乎不感知）。P0 决策门可调到 20 / 30 看实测 jitter。
 
 ---
 

@@ -208,7 +208,7 @@ pub fn dormant_global_tick(
 ### 强约束规则
 
 1. **所有 dormant cultivation.qi_current 写入必须有对应 ledger 项**。直接 `snapshot.cultivation.qi_current += X` = 红旗
-2. **所有 dormant 老死 / 渡劫失败 / 战斗死亡必须 release 灵气回 zone**（worldview §二「修炼消耗 = 别人少掉」+ §十「真元守恒」）。死亡时 `qi_physics::release::release_to_zone(snapshot.cultivation.qi_current, snapshot.zone, ledger)` → 内部 emit `QiTransfer { from: npc, to: zone, amount }`
+2. **所有 dormant 老死 / 渡劫失败 / 战斗死亡必须 release 灵气回 zone**（worldview §二「修炼消耗 = 别人少掉」+ §十「真元守恒」）。死亡时先 `let zone = zones.find(&snapshot.position)?;` 经 ZoneRegistry 由 position 反查（NpcDormantSnapshot 不含 zone 字段），再 `qi_physics::release::release_to_zone(snapshot.cultivation.qi_current, zone, ledger)` → 内部 emit `QiTransfer { from: npc, to: zone, amount }`
 3. **所有 dormant 修炼吸收必须走 zone EnvField 边界**：dormant NPC 距 zone 中心 > 64 格（zone EnvField 边界，对应 worldview §二「真元极易挥发」）→ 不可吸收（`excretion::container_intake` 自动 clamp 到 0）
 4. **多 dormant NPC 同 zone 必须走 collision::repulsion**（worldview §P 异体排斥 ρ 矩阵）：3 个散修同时在 spirit_marsh 修炼，每人吸收量按 ρ 矩阵衰减
 5. **不允许 dormant 内部"自循环"灵气**（如 dormant NPC A 给 B 传功）：必须先 hydrate 双方走正常战斗 / 社交链。dormant 期 SoA 状态全员独立
@@ -338,18 +338,28 @@ if check_tribulation_ready(&snapshot) {
 ### 5.1 hydrate（dormant → ECS）
 
 ```rust
-// FixedUpdate(1Hz)
+// FixedUpdate(1Hz) — 两阶段处理（避免边迭代边删 + Res 不可 mut）
 fn hydrate_dormant_near_players(
     players: Query<&Position, With<Player>>,
-    store: Res<NpcDormantStore>,
+    mut store: ResMut<NpcDormantStore>,
+    mut commands: Commands,
+    mut spatial: ResMut<NpcSpatialIndex>,
 ) {
-    for snapshot in store.snapshots.values() {
-        for player_pos in players.iter() {
-            if (snapshot.position - player_pos).length() <= HYDRATE_RADIUS_64 {
-                hydrate_npc(snapshot.clone(), &mut commands, &mut spatial);
-                store.snapshots.remove(&snapshot.char_id);
-                break;
-            }
+    // 阶段 1：collect 待 hydrate 的 char_ids（不可变借用 store 仅读 snapshots.iter）
+    let to_hydrate: Vec<CharId> = store
+        .snapshots
+        .iter()
+        .filter(|(_, snapshot)| {
+            players.iter().any(|player_pos| {
+                (snapshot.position - player_pos.get()).length() <= HYDRATE_RADIUS_64
+            })
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    // 阶段 2：处理（可变借用 store 做 remove + spawn ECS entity）
+    for char_id in to_hydrate {
+        if let Some(snapshot) = store.snapshots.remove(&char_id) {
+            hydrate_npc(snapshot, &mut commands, &mut spatial);
         }
     }
 }
