@@ -1,6 +1,6 @@
 # Bong · plan-npc-fixups-v2 · 骨架
 
-NPC 第二批正确性 bug fastlane（plan-npc-fixups-v1 ✅ 三 bug 后续），承接 sonnet Explore 异步探查（2026-05-07）输出 **8 个 ECS query miss / Valence Despawned 软删 race / Action Executing 无超时 / 多 zone plot 选择错乱** 类 bug + 提到 3 个未列待二次探查（→ P3 / 可能 v3）。延续 v1 「每 bug 独立 PR + 饱和回归测试 pin 行为」节奏。**主题统一为 ECS lifecycle 与状态机正确性**——大多数 bug 共性是 query 缺 `Without<Despawned>` filter + Action `Executing` 状态分支没有超时 / 没有 silent fallback → Failure 转换 → silent stuck。
+NPC 第二批正确性 bug fastlane（plan-npc-fixups-v1 ⏳ 三 bug 后续，**v1 仍在骨架阶段未实施**），承接 sonnet Explore 异步探查（2026-05-07）输出 **8 个 ECS query miss / Valence Despawned 软删 race / Action Executing 无超时 / 多 zone plot 选择错乱** 类 bug + 提到 3 个未列待二次探查（→ P3 / 可能 v3）。延续 v1 「每 bug 独立 PR + 饱和回归测试 pin 行为」节奏。**主题统一为 ECS lifecycle 与状态机正确性**——大多数 bug 共性是 query 缺 `Without<Despawned>` filter + Action `Executing` 状态分支没有超时 / 没有 silent fallback → Failure 转换 → silent stuck。
 
 **交叉引用**：`plan-npc-fixups-v1.md` ⏳（前置三 bug + Explore 探查派生本 plan）· `plan-npc-ai-v1.md` ✅（基础 NPC 系统 + big-brain Action 状态机框架 + AscensionQuotaStore + AutoWavePacing）· `plan-npc-perf-v1.md` ⏳（perf P0 baseline 录档前应已修本 plan #1 #2，否则"NPC 卡死/错位"会污染性能基线）· `plan-tribulation-v1.md`（化虚名额 + 渡劫波次状态机，本 plan #6 #8 修其 ECS lifecycle race）· `plan-lingtian-npc-v1.md`（道伥召唤来源 zone，本 plan #1 修多 zone 选错地块）
 
