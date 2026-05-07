@@ -30,30 +30,36 @@ pub fn decorate_chunk(
             }
 
             // 簇生 gate：把 8x8 与 16x16 两层 cell hash 平均，让花草成片而非均匀撒。
-            // 双层 0–99 取平均 → 三角分布峰在 50；阈值 61 → P(score >= 61) ≈ 30%
-            // 是光秃片（之前用 70 阈值实际仅 ~17.7% 跳过率，跟 commit 注释 30% 目标不一致，
-            // coderabbit review 校正）
+            // 双层 0–99 取平均 → 三角分布峰在 50；阈值 61 → P(score >= 61) ≈ 30% bare cell。
+            // bare 标志下沉到各 helper：草/花/蕨/枯灌木分支按 bare skip，但树/竹保留按
+            // 原 density 摆放（避免簇生 gate 误伤大型植被分布）。
             let cluster_a =
                 decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
             let cluster_b =
                 decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
-            let cluster_score = (cluster_a + cluster_b) / 2;
-            if cluster_score >= 61 {
-                continue;
-            }
+            let bare_cell = (cluster_a + cluster_b) / 2 >= 61;
 
             if sample.is_wilderness_biome() {
-                place_wilderness_vegetation(chunk, local_x, local_z, plant_y, min_y, density);
+                place_wilderness_vegetation(
+                    chunk, local_x, local_z, plant_y, min_y, density, bare_cell,
+                );
             } else if sample.is_peaks_biome() {
-                place_peaks_vegetation(chunk, local_x, local_z, plant_y, min_y, top_y, density);
+                place_peaks_vegetation(
+                    chunk, local_x, local_z, plant_y, min_y, top_y, density, bare_cell,
+                );
             } else if sample.is_marsh_biome() {
-                place_marsh_vegetation(chunk, local_x, local_z, plant_y, min_y, density);
+                place_marsh_vegetation(
+                    chunk, local_x, local_z, plant_y, min_y, density, bare_cell,
+                );
             } else if sample.is_spawn_biome() {
                 place_spawn_vegetation(
                     chunk, local_x, local_z, plant_y, top_y, density, world_x, world_z, min_y,
+                    bare_cell,
                 );
             } else if sample.is_wastes_biome() {
-                place_wastes_vegetation(chunk, local_x, local_z, plant_y, min_y, density);
+                place_wastes_vegetation(
+                    chunk, local_x, local_z, plant_y, min_y, density, bare_cell,
+                );
             }
         }
     }
@@ -244,6 +250,7 @@ fn decorate_cave_column(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn place_wilderness_vegetation(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -251,7 +258,12 @@ fn place_wilderness_vegetation(
     plant_y: i32,
     min_y: i32,
     density: u32,
+    bare_cell: bool,
 ) {
+    // wilderness 仅花草蕨，bare 直接 return
+    if bare_cell {
+        return;
+    }
     if density < 28 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
     } else if density < 55 {
@@ -259,6 +271,7 @@ fn place_wilderness_vegetation(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn place_peaks_vegetation(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -267,12 +280,18 @@ fn place_peaks_vegetation(
     min_y: i32,
     top_y: i32,
     density: u32,
+    bare_cell: bool,
 ) {
+    // peaks 仅蕨，bare 直接 return
+    if bare_cell {
+        return;
+    }
     if top_y < 200 && density < 20 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn place_marsh_vegetation(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -280,10 +299,12 @@ fn place_marsh_vegetation(
     plant_y: i32,
     min_y: i32,
     density: u32,
+    bare_cell: bool,
 ) {
-    if density < 80 {
+    // bare cell 跳过 grass/fern，但保留 marsh_tree（避免簇生 gate 削沼泽树分布）
+    if !bare_cell && density < 80 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
-    } else if density < 120 {
+    } else if !bare_cell && density < 120 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
     } else if density < 130 {
         place_marsh_tree(chunk, local_x, local_z, plant_y, min_y, density);
@@ -436,6 +457,7 @@ fn place_kelp_column(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn place_spawn_vegetation(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -446,14 +468,16 @@ fn place_spawn_vegetation(
     world_x: i32,
     world_z: i32,
     min_y: i32,
+    bare_cell: bool,
 ) {
-    if density < 30 {
+    // bare cell 跳过 dandelion/poppy/grass/fern 花草分支，但保留 oak/bamboo 大型植被
+    if !bare_cell && density < 30 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::DANDELION);
-    } else if density < 60 {
+    } else if !bare_cell && density < 60 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::POPPY);
-    } else if density < 110 {
+    } else if !bare_cell && density < 110 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::GRASS);
-    } else if density < 132 {
+    } else if !bare_cell && density < 132 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::FERN);
     } else if density < 144 {
         place_simple_oak(
@@ -574,6 +598,7 @@ fn place_bamboo_cluster(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn place_wastes_vegetation(
     chunk: &mut UnloadedChunk,
     local_x: usize,
@@ -581,7 +606,12 @@ fn place_wastes_vegetation(
     plant_y: i32,
     min_y: i32,
     density: u32,
+    bare_cell: bool,
 ) {
+    // wastes 仅 dead_bush，bare 直接 return
+    if bare_cell {
+        return;
+    }
     if density < 8 {
         set_block_if_air(chunk, local_x, plant_y, local_z, min_y, BlockState::DEAD_BUSH);
     }
