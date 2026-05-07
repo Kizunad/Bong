@@ -61,6 +61,15 @@ OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
 OPENAI_MODEL = "gpt-image-1.5"
 
 
+class CliproxyConfigMissing(RuntimeError):
+    """cliproxy 配置缺失（CLIPROXY_API_KEY / CLIPROXY_BASE_URL 未填）。
+
+    auto 模式遇到此错误不 fallback openai——配置缺失是 dev 错误，应在
+    .env 修，不应被静默掩盖（见 scripts/images/.env.example）。仅
+    `urllib.error.URLError`（网络/连接失败）才允许 fallback。
+    """
+
+
 # -------- env helper ---------------------------------------------------------
 
 
@@ -371,7 +380,7 @@ def dispatch(
         base = (_env(env, "CLIPROXY_BASE_URL", CLIPROXY_DEFAULT_BASE) or "").rstrip("/")
         model = _env(env, "CLIPROXY_MODEL", CLIPROXY_DEFAULT_MODEL)
         if not key or not base:
-            raise RuntimeError(
+            raise CliproxyConfigMissing(
                 "CLIPROXY_API_KEY / CLIPROXY_BASE_URL 未配置（见 scripts/images/.env.example）"
             )
         print(
@@ -420,9 +429,10 @@ def dispatch(
             print("[auto] cliproxy 返回 0 张，fallback → openai", file=sys.stderr)
             return _try_openai()
         return images
-    except (urllib.error.URLError, RuntimeError) as e:
+    except urllib.error.URLError as e:
+        # 仅网络/连接失败允许 fallback；CliproxyConfigMissing 不 catch，让配置错误显式抛出
         if has_openai:
-            print(f"[auto] cliproxy 失败 ({e})，fallback → openai", file=sys.stderr)
+            print(f"[auto] cliproxy 网络失败 ({e})，fallback → openai", file=sys.stderr)
             return _try_openai()
         raise
 

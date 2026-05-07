@@ -29,14 +29,16 @@ pub fn decorate_chunk(
                 continue;
             }
 
-            // 簇生 gate：把 8x8 与 16x16 两层 cell hash 平均，让花草成片而非均匀撒
-            // cluster_score 0–99，平均后偏中段，硬边减少；阈值 70 → 约 30% cell 是光秃片
+            // 簇生 gate：把 8x8 与 16x16 两层 cell hash 平均，让花草成片而非均匀撒。
+            // 双层 0–99 取平均 → 三角分布峰在 50；阈值 61 → P(score >= 61) ≈ 30%
+            // 是光秃片（之前用 70 阈值实际仅 ~17.7% 跳过率，跟 commit 注释 30% 目标不一致，
+            // coderabbit review 校正）
             let cluster_a =
                 decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
             let cluster_b =
                 decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
             let cluster_score = (cluster_a + cluster_b) / 2;
-            if cluster_score >= 70 {
+            if cluster_score >= 61 {
                 continue;
             }
 
