@@ -210,7 +210,7 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
 | `LOD gate 补漏` | 5 个新接入 scorer 的 Far/Dormant 跳过行为 | 6 |
 | **e2e 压测** | `BONG_ROGUE_SEED_COUNT=100` + 1 player 5min，TPS ≥ 18 / 操作（drop/pickup/cmd/chat）延迟 < 200ms | 1（重） |
 
-**P1 验收**：`grep -rcE '#\[test\]' server/src/npc/spatial.rs server/src/npc/faction.rs server/src/npc/social.rs server/src/npc/territory.rs server/src/npc/relic.rs` ≥ 38。
+**P1 验收**：`grep -hroE '#\[test\]' server/src/npc/spatial.rs server/src/npc/faction.rs server/src/npc/social.rs server/src/npc/territory.rs server/src/npc/relic.rs | wc -l` ≥ 38（`-h` 抑制文件名 / `-o` 仅输出匹配 / `wc -l` 算总数，避免 `-rcE` 多文件每文件计数歧义）。
 
 **P4 验收**：CI e2e 跑 100 NPC 30s，TPS ≥ 15，否则 PR 阻塞。
 
@@ -263,7 +263,7 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
 
 - **2026-05-07** 骨架立项。源自 100 rogue seed 让 TPS 跌至 0.7 的实测（用户操作如 drop/pickup/cmd/chat 全部延迟数秒）+ 5 路 sonnet agent 并行探查（big-brain 拓扑 / pathfinding / social-faction O(N²) / cultivation-lifespan / redis bridge）输出热点清单：
   - 4 个真 O(N²)：faction::assign_hostile_encounters / socialize_scorer / territory_intruder_scorer / relic::guardian_duty_scorer
-  - 1 个 navigator A* 风暴：共享 repath_countdown=20 → 同 tick 100 A*
+  - 1 个 navigator A\* 风暴：共享 repath_countdown=20 → 同 tick 100 A\*
   - 5+ 个 per-NPC tick lookup：qi_regen / patrol / blackboard / tribulation_ready / lifespan_aging
   - 1 个冗余 sync：sync_position_to_transform PostUpdate 重写 navigator 已写过的 Transform
   - 已洗清非瓶颈：Redis bridge（独立 OS 线程 + crossbeam channel，主线程零 IO）/ big-brain 调度本身（FirstToScore 短路 2-5ms）/ lifecycle 多数 system / contamination / overload / tribulation auto wave

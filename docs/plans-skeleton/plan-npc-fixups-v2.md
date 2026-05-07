@@ -64,7 +64,7 @@ NPC 第二批正确性 bug fastlane（plan-npc-fixups-v1 ⏳ 三 bug 后续，**
 - [ ] **状态机 silent `continue` 必须改 Failure**：big-brain Action `Executing` 状态分支若 query miss 用 `continue` → 下次 tick 仍 Executing → silent 死锁。**强制规则**：所有 Action `Executing` 内 `let Ok(...) else { continue }` 必须改 `let Ok(...) else { *state = ActionState::Failure; continue }`，让 picker 能切别的 action
 - [ ] **Despawned filter 是 ECS query 的卫生**：任何 query 涉及 NPC entity 的 Component 修改 / event 发送 → 必须加 `Without<Despawned>`（除非显式处理软删窗口）。**这是 §3 强约束源头**，违反 = 隐式 race
 - [ ] **Action Executing 必须有超时**：所有 Executing 等外部条件（session 完成 / event 接收 / state 转换）的 Action 必须有 `deadline_tick` / `tick_count`，超时 → Failure。否则一个 stuck = 永久占 NPC slot
-- [ ] **panic 是部署灾难，warning + Default 是优雅降级**：register / load 路径的 panic 在 CI / 生产 = 服务无法启动。改 warn + Default 让用户至少能跑（功能降级 != 服务崩溃）
+- [ ] **panic 是部署灾难，`tracing::error!` + `Default::default()` 是优雅降级**：register / load 路径的 panic 在 CI / 生产 = 服务无法启动。改 error log + Default 让用户至少能跑（功能降级 != 服务崩溃）。统一日志级别为 `error`（同 §2.4 修法 line 414-417 实现一致）
 - [ ] **deferred commands 跟同 tick 多次调用不安全**：`commands.entity().insert(C)` 是 deferred，同一 tick 内 `query.contains(C)` 仍返回 false。**幂等触发用 `Added<C>` event reader 而非 action system 内 send**
 
 ---
