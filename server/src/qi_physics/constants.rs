@@ -12,8 +12,12 @@ pub const QI_ACOUSTIC_THRESHOLD: f64 = 0.40;
 pub const QI_NEGATIVE_FIELD_K: f64 = 1.0;
 /// worldview §四：涡流反向获利上限。
 pub const QI_DRAIN_CLAMP: f64 = 0.50;
+/// plan-woliu-v1：旧涡流线性抽吸归一阈值；1/r^2 迁移留给 P2-1。
+pub const QI_WOLIU_VORTEX_THEORETICAL_LIMIT_DELTA: f32 = 0.8;
 /// worldview §九：骨币半衰参考，约 13 天。
 pub const QI_HALFLIFE_REFERENCE_DAYS: f64 = 13.0;
+/// plan-shelflife-v1：死域保质期衰减倍率，保持旧曲线三倍加速。
+pub const QI_SHELFLIFE_DEAD_ZONE_MULTIPLIER: f32 = 3.0;
 /// worldview §四：防御维持基线。
 pub const QI_MAINTENANCE_IDLE: f64 = 1.0;
 /// worldview §十六：末法残土抽真元强度。

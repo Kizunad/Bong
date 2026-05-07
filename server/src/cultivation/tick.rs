@@ -273,6 +273,26 @@ mod tests {
         assert!(leaked.abs() < 1e-6);
     }
 
+    #[test]
+    fn regen_migration_preserves_spirit_qi_total_budget() {
+        let zone_before = 0.5;
+        let player_before = 10.0;
+        let reserve_qi = crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL
+            - player_before
+            - zone_before * zone_unit_qi();
+        assert!(reserve_qi > 0.0);
+
+        let (gain, drain) = compute_regen(zone_before, 1.0, 1.0, 100.0);
+        let before_total = player_before + zone_before * zone_unit_qi() + reserve_qi;
+        let after_total =
+            (player_before + gain) + (zone_before - drain) * zone_unit_qi() + reserve_qi;
+
+        assert!(
+            (before_total - crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL).abs() < 1e-9
+        );
+        assert!((before_total - after_total).abs() < 1e-6);
+    }
+
     fn zone_unit_qi() -> f64 {
         crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY
     }

@@ -515,6 +515,40 @@ mod tests {
     }
 
     #[test]
+    fn gather_reward_preserves_spirit_qi_total_budget() {
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi = 0.5;
+        let zone_before = 0.5;
+        let mut cultivation = Cultivation {
+            qi_current: 20.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+        let reserve_qi = crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL
+            - cultivation.qi_current
+            - zone_before * QI_ZONE_UNIT_CAPACITY;
+        assert!(reserve_qi > 0.0);
+
+        let gained =
+            gather_qi_from_zone(Some(&mut zones), DEFAULT_SPAWN_ZONE_NAME, &mut cultivation);
+
+        let zone_after = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        let before_total = 20.0 + zone_before * QI_ZONE_UNIT_CAPACITY + reserve_qi;
+        let after_total = cultivation.qi_current + zone_after * QI_ZONE_UNIT_CAPACITY + reserve_qi;
+        assert_eq!(gained, QI_GATHER_REWARD);
+        assert!(
+            (before_total - crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL).abs() < 1e-9
+        );
+        assert!((before_total - after_total).abs() < 1e-6);
+    }
+
+    #[test]
     fn gather_reward_caps_to_available_zone_qi() {
         let mut zones = ZoneRegistry::fallback();
         zones
