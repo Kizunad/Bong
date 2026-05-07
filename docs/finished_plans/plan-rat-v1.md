@@ -370,3 +370,38 @@ pub struct PressureSensor {
 
 - **2026-05-04 立项**：骨架立项。来源：用户灵感 = locust phase polyphenism 映射噬元鼠。调研：worldview §七 §八 §十 + 馆藏《异兽三形考》（藏荒散修九年观鼠）+ plan-fauna-v1（已归档，drop 链路完备）+ 现有 EVENT_BEAST_TIDE 框架（`world/events.rs:40,684-730`）+ G 拾取链路（`InteractionKeybindings.G` + `DroppedLootRegistry`）已成熟。**关键缺口**：FaunaTag::Rat 仅用于 drop loot table，没有任何 Rat 专属 entity 本体 / AI / 行为。本 plan 从零落地。
 - **2026-05-04 决议闭环**：§9 9 条开放问题一次性 [x]：Q-RT-1 EntityKind 走 ResourcePack 重 silverfish texture（不走 npc-skin PlayerEntity） · Q-RT-2 加 `MeditatingState` component（P0 代理触发 + P5 V 键显式） · Q-RT-3 滚动 spawn `active_window_size=80` 不 pre-warm chunk · Q-RT-4 蝗潮三档互动（NPC 当 qi 源 / HybridBeast 强避让 / 散居 Rat 群被卷入升相） · Q-RT-5 PressureSensor 仅纳入 MeditatingState + freshness 散逸态 + zone qi argmax，**bone_coin 不构成压差源** · Q-RT-6 加 `CultivationDeathCause::SwarmQiDrain` variant 走 plan-multi-life-v1 既有 lifecycle · Q-RT-7 不新建 calamity skill，改 `calamity.md` 加 tide_kind 字段 + 反向流走 `locust-swarm-narration.ts` event handler · Q-RT-8 双层 cooldown（server `LocustSwarmCooldownStore` 24 game-hour 硬阻 + agent calamity.md 软自律） · Q-RT-9 不改全局 NpcRegistry budget，蝗潮窗口 budget 不足时临时降 window size + 锋速 ×0.7。本 plan 无未拍开放问题，P0 可起。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 / P1 Rat 本体与散居 AI**：`server/src/npc/spawn_rat.rs` 新增 `spawn_rat_npc_at` / `RatBlackboard` / silverfish entity；`server/src/npc/brain_rat.rs` 新增 `QiSourceProximityScorer`、`GroupCohesionScorer`、`DrainedChunkAvoidScorer`、`SeekQiSourceAction`、`RegroupAction`；`server/src/world/spawn_tutorial.rs` 的教学鼠群改为复用 `spawn_rat_npc_at` + `RatBiteEvent`。
+- **P1 真元扣减与掉落拾取闭环**：`server/src/combat/rat_bite.rs` 新增 `RatBiteEvent` / `apply_rat_bite_qi_drain`；`server/src/fauna/drop.rs` 保持 `shu_gu` 掉落并补 `rat_kill_to_g_pickup_round_trip_creates_inventory_shu_gu`。
+- **P2 RatPhase 相变**：`server/src/fauna/rat_phase.rs` 新增 `RatPhase`、`RatGroupId`、`PressureSensor`、`MeditatingState`、`RatPhaseChangeEvent`、相变推进/可视命名/密度聚合系统。
+- **P3 灵蝗潮天灾**：`server/src/world/events.rs` 扩展 `BeastTideRuntimeState::{Wandering, LocustSwarm}`、`LocustSwarmState`、`tide_kind` 参数、`LocustSwarmCooldownStore` 硬阻、蝗锋推进、路径 qi/loot/cultivator drain、disperse death event；`server/src/fauna/rat_phase.rs` 新增 `release_drained_qi_on_death_system`。
+- **P4 天道 agent 接入**：`server/src/network/rat_phase_bridge.rs` 与 `server/src/network/redis_bridge.rs` 推送 `bong:rat_phase_event`；`agent/packages/schema/src/rat-phase-event.ts`、`agent/packages/schema/src/world-state.ts`、generated schema/sample 同步；`agent/packages/tiandao/src/locust-swarm-narration.ts`、`query-rat-density` tool、`calamity.md` 决策说明接入。
+- **P5 客户端警示**：`agent/packages/schema/src/client-payload.ts` 新增 `locust_swarm_warning` payload；`server/src/network/mod.rs` 发 `bong:locust_swarm_warning` 与 `locust_swarm_warning` audio recipe；`client/src/main/java/com/bong/client/network/LocustSwarmWarningHandler.java` 与 `BongNetworkHandler` 接收 HUD/event alert。
+
+### 关键 commit
+
+- `53ba8522`（2026-05-07）`plan-rat-v1: 落地噬元鼠服务端行为`
+- `e005f27a`（2026-05-07）`plan-rat-v1: 接入灵蝗潮 schema 与天道决策`
+- `05db61f4`（2026-05-07）`plan-rat-v1: 接入客户端灵蝗潮警示`
+
+### 测试结果
+
+- `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅，`cargo test` 2505 passed。
+- `agent/`: `npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅，schema 283 passed，tiandao 253 passed。
+- `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅。
+- repo hygiene: `git diff --check` ✅。
+
+### 跨仓库核验
+
+- **server**：`spawn_rat_npc_at`、`RatPhase`、`PressureSensor`、`RatBiteEvent`、`LocustSwarmState`、`LocustSwarmCooldownStore`、`bong:rat_phase_event`、`bong:locust_swarm_warning`。
+- **agent/schema**：`RatPhaseChangeEventV1`、`rat_density_heatmap`、`LocustSwarmWarningPayloadV1`、`LocustSwarmNarrationTracker`、`query-rat-density`、`calamity.md` locust swarm policy。
+- **client**：`LocustSwarmWarningHandler`、`BongNetworkHandler.registerLocustSwarmWarningChannel`、`LocustSwarmWarningHandlerTest`。
+
+### 遗留 / 后续
+
+- 本 plan 采用 silverfish + custom name / HUD warning 的轻量表现闭环；ResourcePack 重贴图、ScoreboardTeam 染色和更细粒度粒子/FPS 压测留给后续视觉/性能专项。
+- `tutorial_rat_qi_drain_tick` 已收敛为 `RatBiteEvent` 事件桥，不再直接改 `Cultivation.qi_current`；教学强制目标逻辑仍保留在 tutorial 域内，避免把新手引导策略塞进通用 Rat AI。
