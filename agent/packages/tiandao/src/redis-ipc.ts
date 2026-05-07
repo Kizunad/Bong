@@ -10,6 +10,7 @@ import {
   validateNpcDeathV1Contract,
   validateNpcSpawnedV1Contract,
   validatePoiSpawnedEventV1Contract,
+  validateRatPhaseChangeEventV1Contract,
   validateTrespassEventV1Contract,
   validateTsyNpcSpawnedV1Contract,
   validateTsySentinelPhaseChangedV1Contract,
@@ -27,6 +28,7 @@ import type {
   NpcDeathV1,
   NpcSpawnedV1,
   PoiSpawnedEventV1,
+  RatPhaseChangeEventV1,
   ChatMessageV1,
   TrespassEventV1,
   TsyNpcSpawnedV1,
@@ -51,6 +53,7 @@ const {
   ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
   ZONE_PRESSURE_CROSSED,
+  RAT_PHASE_EVENT,
   AGING,
   LIFESPAN_EVENT,
   DUO_SHE_EVENT,
@@ -201,6 +204,7 @@ export class RedisIpc {
   private latestNpcEvents: NpcRuntimeEventV1[] = [];
   private latestAlchemyEvents: AlchemyRuntimeEventV1[] = [];
   private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
+  private latestRatPhaseEvents: RatPhaseChangeEventV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
@@ -209,6 +213,7 @@ export class RedisIpc {
   private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
   private alchemyEventCallbacks: Array<(event: AlchemyRuntimeEventV1) => void> = [];
   private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
+  private ratPhaseEventCallbacks: Array<(event: RatPhaseChangeEventV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
   private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
@@ -247,6 +252,11 @@ export class RedisIpc {
 
     if (channel === ZONE_PRESSURE_CROSSED) {
       this.handleZonePressureCrossedMessage(message);
+      return;
+    }
+
+    if (channel === RAT_PHASE_EVENT) {
+      this.handleRatPhaseEventMessage(message);
       return;
     }
 
@@ -457,6 +467,30 @@ export class RedisIpc {
     }
   }
 
+  private handleRatPhaseEventMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateRatPhaseChangeEventV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid rat phase event:", result.errors.join("; "));
+        return;
+      }
+      this.recordRatPhaseEvent(data as RatPhaseChangeEventV1);
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse rat phase event:", e);
+    }
+  }
+
+  private recordRatPhaseEvent(event: RatPhaseChangeEventV1): void {
+    this.latestRatPhaseEvents.push(event);
+    if (this.latestRatPhaseEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
+      this.latestRatPhaseEvents = this.latestRatPhaseEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.ratPhaseEventCallbacks) {
+      cb(event);
+    }
+  }
+
   private handleCrossSystemEventMessage(channel: ChannelName, message: string): void {
     try {
       this.recordCrossSystemEvent({ channel, payload: JSON.parse(message) as unknown });
@@ -497,6 +531,7 @@ export class RedisIpc {
     await this.sub.subscribe(ALCHEMY_SESSION_END);
     await this.sub.subscribe(ALCHEMY_INSIGHT);
     await this.sub.subscribe(POI_NOVICE_EVENT);
+    await this.sub.subscribe(RAT_PHASE_EVENT);
     for (const channel of CROSS_SYSTEM_EVENT_CHANNELS) {
       await this.sub.subscribe(channel);
     }
@@ -504,7 +539,7 @@ export class RedisIpc {
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(
-      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, ALCHEMY_INSIGHT, POI_NOVICE_EVENT, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
+      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, ALCHEMY_INSIGHT, POI_NOVICE_EVENT, RAT_PHASE_EVENT, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
     );
   }
 
@@ -546,6 +581,16 @@ export class RedisIpc {
 
   onPoiNoviceEvent(cb: (event: PoiNoviceRuntimeEventV1) => void): void {
     this.poiNoviceEventCallbacks.push(cb);
+  }
+
+  drainRatPhaseEvents(): RatPhaseChangeEventV1[] {
+    const events = [...this.latestRatPhaseEvents];
+    this.latestRatPhaseEvents = [];
+    return events;
+  }
+
+  onRatPhaseEvent(cb: (event: RatPhaseChangeEventV1) => void): void {
+    this.ratPhaseEventCallbacks.push(cb);
   }
 
   getLatestCrossSystemEvents(): CrossSystemRuntimeEventV1[] {

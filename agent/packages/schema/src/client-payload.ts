@@ -13,6 +13,7 @@ export const ClientPayloadType = Type.Union([
   Type.Literal("narration"),
   Type.Literal("zone_info"),
   Type.Literal("event_alert"),
+  Type.Literal("locust_swarm_warning"),
   Type.Literal("player_state"),
 ]);
 export type ClientPayloadType = Static<typeof ClientPayloadType>;
@@ -76,6 +77,19 @@ export const EventAlertPayloadV1 = Type.Object({
 });
 export type EventAlertPayloadV1 = Static<typeof EventAlertPayloadV1>;
 
+export const LocustSwarmWarningPayloadV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("locust_swarm_warning"),
+    zone: ZoneName,
+    message: Type.String({ minLength: 1, maxLength: 500 }),
+    duration_ticks: Type.Optional(Type.Integer({ minimum: 0 })),
+    direction: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  },
+  { additionalProperties: false },
+);
+export type LocustSwarmWarningPayloadV1 = Static<typeof LocustSwarmWarningPayloadV1>;
+
 export const PlayerStatePayload = Type.Object({
   realm: Type.String({ minLength: 1, maxLength: 64 }),
   spirit_qi: Type.Number({ minimum: 0 }),
@@ -99,6 +113,7 @@ export const ClientPayloadV1 = Type.Union([
   ClientNarrationPayloadV1,
   ZoneInfoPayloadV1,
   EventAlertPayloadV1,
+  LocustSwarmWarningPayloadV1,
   PlayerStatePayloadV1,
 ]);
 export type ClientPayloadV1 = Static<typeof ClientPayloadV1>;

@@ -30,6 +30,7 @@ import {
   ClientPayloadV1,
   EventAlertPayloadV1,
   HeartbeatPayloadV1,
+  LocustSwarmWarningPayloadV1,
   PlayerStatePayloadV1,
   WelcomePayloadV1,
   ZoneInfoPayloadV1,
@@ -182,6 +183,7 @@ import {
   PseudoVeinSeasonV1,
   PseudoVeinSnapshotV1,
 } from "./pseudo-vein.js";
+import { RatPhaseChangeEventV1, RatPhaseV1 } from "./rat-phase-event.js";
 import {
   ZongCoreActivationV1,
   ZongmenOriginIdV1,
@@ -354,6 +356,8 @@ export const SCHEMA_REGISTRY = {
   narrationV1: NarrationV1,
   zonePressureLevelV1: ZonePressureLevelV1,
   zonePressureCrossedV1: ZonePressureCrossedV1,
+  ratPhaseV1: RatPhaseV1,
+  ratPhaseChangeEventV1: RatPhaseChangeEventV1,
   npcArchetypeV1: NpcArchetypeV1,
   npcSpawnSourceV1: NpcSpawnSourceV1,
   npcDeathCauseV1: NpcDeathCauseV1,
@@ -381,6 +385,7 @@ export const SCHEMA_REGISTRY = {
   clientPayloadNarrationV1: ClientNarrationPayloadV1,
   clientPayloadZoneInfoV1: ZoneInfoPayloadV1,
   clientPayloadEventAlertV1: EventAlertPayloadV1,
+  clientPayloadLocustSwarmWarningV1: LocustSwarmWarningPayloadV1,
   clientPayloadPlayerStateV1: PlayerStatePayloadV1,
   insightRequestV1: InsightRequestV1,
   insightOfferV1: InsightOfferV1,
@@ -662,6 +667,8 @@ export const GENERATED_SCHEMA_FILES = {
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
   "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
+  "rat-phase-v1.json": SCHEMA_REGISTRY.ratPhaseV1,
+  "rat-phase-change-event-v1.json": SCHEMA_REGISTRY.ratPhaseChangeEventV1,
   "npc-archetype-v1.json": SCHEMA_REGISTRY.npcArchetypeV1,
   "npc-spawn-source-v1.json": SCHEMA_REGISTRY.npcSpawnSourceV1,
   "npc-death-cause-v1.json": SCHEMA_REGISTRY.npcDeathCauseV1,
@@ -690,6 +697,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-payload-narration-v1.json": SCHEMA_REGISTRY.clientPayloadNarrationV1,
   "client-payload-zone-info-v1.json": SCHEMA_REGISTRY.clientPayloadZoneInfoV1,
   "client-payload-event-alert-v1.json": SCHEMA_REGISTRY.clientPayloadEventAlertV1,
+  "client-payload-locust-swarm-warning-v1.json":
+    SCHEMA_REGISTRY.clientPayloadLocustSwarmWarningV1,
   "client-payload-player-state-v1.json": SCHEMA_REGISTRY.clientPayloadPlayerStateV1,
   "insight-request-v1.json": SCHEMA_REGISTRY.insightRequestV1,
   "insight-offer-v1.json": SCHEMA_REGISTRY.insightOfferV1,

@@ -16,6 +16,7 @@ pub fn register(app: &mut App) {
 mod tests {
     use super::*;
     use crate::combat::events::DebugCombatCommand;
+    use crate::fauna::rat_phase::RatPhaseChangeEvent;
     use crate::npc::scenario::PendingScenario;
     use crate::player::gameplay::GameplayActionQueue;
     use crate::world::tsy_dev_command::TsySpawnRequested;
@@ -29,6 +30,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(valence::command::manager::CommandPlugin);
         app.add_event::<DebugCombatCommand>();
+        app.add_event::<RatPhaseChangeEvent>();
         app.add_event::<TsySpawnRequested>();
         app.insert_resource(PendingScenario::default());
         app.insert_resource(GameplayActionQueue::default());

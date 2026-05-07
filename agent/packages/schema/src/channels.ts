@@ -95,6 +95,9 @@ export const CHANNELS = {
   /** Server → Agent: 灵田 zone pressure 跨档事件（plan-lingtian-npc-v1 P5） */
   ZONE_PRESSURE_CROSSED: "bong:zone/pressure_crossed",
 
+  /** Server → Agent: 噬元鼠局部相变事件（plan-rat-v1 P4） */
+  RAT_PHASE_EVENT: "bong:rat_phase_event",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -236,6 +239,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.SOCIAL_NICHE_INTRUSION,
   CHANNELS.ZONE_PRESSURE_CROSSED,
+  CHANNELS.RAT_PHASE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.STYLE_BALANCE_TELEMETRY,

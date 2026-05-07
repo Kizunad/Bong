@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "locust_swarm_warning",
+  "zone": "spirit_marsh",
+  "message": "灵蝗潮逼近 · 朝灵泉泽推进",
+  "duration_ticks": 24000,
+  "direction": "east"
+}

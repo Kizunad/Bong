@@ -5,19 +5,24 @@ use std::collections::{HashMap, HashSet};
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayerId, Event,
-    EventWriter, Events, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update,
-    Username, With,
+    bevy_ecs, App, BlockPos, ChunkPos, Client, Commands, DVec3, Despawned, Entity, EntityKind,
+    EntityLayerId, Event, EventWriter, Events, IntoSystemConfigs, Position, Query, Res, ResMut,
+    Resource, Update, Username, With, Without,
 };
 
 use super::zone::ZoneRegistry;
 use crate::combat::events::DeathEvent;
-use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
+use crate::combat::rat_bite::RatBiteEvent;
+use crate::cultivation::components::Cultivation;
+use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn, BeastKind, FaunaTag};
+use crate::fauna::rat_phase::{chunk_pos_from_world, LocustSwarmCooldownStore, RatPhase};
+use crate::inventory::DroppedLootRegistry;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
+use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::persistence::{
     load_zone_overlays, persist_zone_overlays, PersistenceSettings, ZoneOverlayRecord,
     ZONE_OVERLAY_PAYLOAD_VERSION,
@@ -34,8 +39,8 @@ use crate::schema::world_state::GameEvent;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{
     targeted_calamity_event_hit, targeted_calamity_roll_with_season, KarmaWeightStore,
-    QiDensityHeatmap, TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
-    TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD,
+    QiDensityHeatmap, QI_DENSITY_CELL_SIZE, TARGETED_CALAMITY_BASE_PROBABILITY,
+    TARGETED_CALAMITY_MAX_PROBABILITY, TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD,
 };
 use crate::world::season::Season;
 use crate::world::zone::Zone;
@@ -53,6 +58,15 @@ const DEFAULT_EVENT_INTENSITY: f64 = 0.5;
 const THUNDER_TARGET_BIAS_RADIUS: f64 = 5.0;
 const THUNDER_DEFAULT_Y_OFFSET: f64 = 1.0;
 const BEAST_TIDE_BEASTS_PER_INTENSITY: f64 = 10.0;
+const LOCUST_SWARM_SPAWN_MULTIPLIER: usize = 5;
+const LOCUST_SWARM_FRONT_SPEED_BLOCKS_PER_TICK: f64 = 0.35;
+const LOCUST_SWARM_ACTIVE_WINDOW_SIZE: u32 = 80;
+const LOCUST_QI_DRAIN_PER_CHUNK: f32 = 0.05;
+const LOCUST_ZONE_QI_DRAIN_PER_CHUNK: f64 = 0.05;
+const LOCUST_CULTIVATOR_BITE_RADIUS: f64 = 6.0;
+const LOCUST_BITE_QI_STEAL: u32 = 1;
+const LOCUST_SWARM_DISBAND_THRESHOLD: u32 = 5;
+const LOCUST_TARGET_LOW_QI_THRESHOLD: f64 = 0.05;
 const KARMA_BACKLASH_EVENT_DURATION_TICKS: u64 = 1;
 const TARGETED_LIGHTNING_VFX_EVENT_ID: &str = "bong:tribulation_lightning";
 const TARGETED_LIGHTNING_VFX_COLOR: &str = "#D0C8FF";
@@ -91,10 +105,136 @@ struct ThunderRuntimeState {
     emitted_strikes: Vec<DVec3>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeastTideKind {
+    Wandering,
+    LocustSwarm,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum BeastTideRuntimeState {
+    Wandering(WanderingTideState),
+    LocustSwarm(LocustSwarmState),
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
-struct BeastTideRuntimeState {
+struct WanderingTideState {
     spawned_beasts: Vec<Entity>,
     spawn_points: Vec<DVec3>,
+    beast_kind: Option<BeastKind>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct LocustSwarmState {
+    spawned_rats: Vec<Entity>,
+    spawn_points: Vec<DVec3>,
+    origin_zone: String,
+    target_zone: String,
+    front_position: DVec3,
+    front_velocity: DVec3,
+    drained_chunks: HashSet<ChunkPos>,
+    group_alive: u32,
+    active_window_size: u32,
+}
+
+impl Default for BeastTideRuntimeState {
+    fn default() -> Self {
+        Self::Wandering(WanderingTideState::default())
+    }
+}
+
+impl BeastTideRuntimeState {
+    fn from_command(command: &Command, event_name: &str) -> Self {
+        if event_name != EVENT_BEAST_TIDE {
+            return Self::default();
+        }
+
+        match beast_tide_kind_from_command(command) {
+            BeastTideKind::Wandering => Self::Wandering(WanderingTideState {
+                beast_kind: beast_kind_from_command(command),
+                ..Default::default()
+            }),
+            BeastTideKind::LocustSwarm => Self::LocustSwarm(LocustSwarmState {
+                spawned_rats: Vec::new(),
+                spawn_points: Vec::new(),
+                origin_zone: command.target.clone(),
+                target_zone: command
+                    .params
+                    .get("target_zone")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(command.target.as_str())
+                    .to_string(),
+                front_position: DVec3::ZERO,
+                front_velocity: DVec3::ZERO,
+                drained_chunks: HashSet::new(),
+                group_alive: 0,
+                active_window_size: LOCUST_SWARM_ACTIVE_WINDOW_SIZE,
+            }),
+        }
+    }
+
+    fn kind(&self) -> BeastTideKind {
+        match self {
+            Self::Wandering(_) => BeastTideKind::Wandering,
+            Self::LocustSwarm(_) => BeastTideKind::LocustSwarm,
+        }
+    }
+
+    fn spawned_entities(&self) -> &[Entity] {
+        match self {
+            Self::Wandering(state) => state.spawned_beasts.as_slice(),
+            Self::LocustSwarm(state) => state.spawned_rats.as_slice(),
+        }
+    }
+
+    #[cfg(test)]
+    fn spawn_points(&self) -> &[DVec3] {
+        match self {
+            Self::Wandering(state) => state.spawn_points.as_slice(),
+            Self::LocustSwarm(state) => state.spawn_points.as_slice(),
+        }
+    }
+
+    fn desired_count(&self, intensity: f64) -> usize {
+        let base = beast_count_for_intensity(intensity);
+        match self {
+            Self::Wandering(_) => base,
+            Self::LocustSwarm(state) => {
+                let window = state.active_window_size.max(1) as usize;
+                base.saturating_mul(LOCUST_SWARM_SPAWN_MULTIPLIER)
+                    .min(window)
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.spawned_entities().is_empty()
+    }
+
+    fn push_spawned(&mut self, entity: Entity, spawn_position: DVec3) {
+        match self {
+            Self::Wandering(state) => {
+                state.spawned_beasts.push(entity);
+                state.spawn_points.push(spawn_position);
+            }
+            Self::LocustSwarm(state) => {
+                state.spawned_rats.push(entity);
+                state.spawn_points.push(spawn_position);
+                state.group_alive = state.spawned_rats.len().min(u32::MAX as usize) as u32;
+            }
+        }
+    }
+
+    fn refresh_locust_live_rats(&mut self, live_npcs: &HashSet<Entity>) {
+        if let Self::LocustSwarm(state) = self {
+            state
+                .spawned_rats
+                .retain(|entity| live_npcs.contains(entity));
+            state.group_alive = state.spawned_rats.len().min(u32::MAX as usize) as u32;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -118,6 +258,13 @@ struct ZoneOccupantPosition {
     dimension: DimensionKind,
     position: DVec3,
 }
+
+type LiveNpcPositionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Position, Option<&'static CurrentDimension>),
+    (With<NpcMarker>, Without<Despawned>),
+>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MajorEventAlert {
@@ -160,7 +307,7 @@ impl ActiveEvent {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
             thunder: ThunderRuntimeState::default(),
-            beast_tide: BeastTideRuntimeState::default(),
+            beast_tide: BeastTideRuntimeState::from_command(command, event_name),
             collapse: RealmCollapseRuntimeState::default(),
         })
     }
@@ -179,6 +326,7 @@ pub struct ActiveEventsResource {
     pending_lightning_strikes: Vec<DVec3>,
     pending_daoxiang_spawns: Vec<TargetedDaoxiangSpawn>,
     recent_game_events: Vec<GameEvent>,
+    locust_cooldown: LocustSwarmCooldownStore,
 }
 
 #[derive(Default)]
@@ -288,6 +436,25 @@ impl ActiveEventsResource {
         qi_heatmap: Option<&QiDensityHeatmap>,
         season: Season,
     ) -> bool {
+        self.enqueue_from_spawn_command_with_karma_and_season_at_tick(
+            command,
+            zone_registry,
+            karma_weights,
+            qi_heatmap,
+            season,
+            0,
+        )
+    }
+
+    pub fn enqueue_from_spawn_command_with_karma_and_season_at_tick(
+        &mut self,
+        command: &Command,
+        zone_registry: Option<&mut ZoneRegistry>,
+        karma_weights: Option<&KarmaWeightStore>,
+        qi_heatmap: Option<&QiDensityHeatmap>,
+        season: Season,
+        tick: u64,
+    ) -> bool {
         let Some(event) = ActiveEvent::from_spawn_command(command) else {
             let event_name = command
                 .params
@@ -317,6 +484,18 @@ impl ActiveEventsResource {
             tracing::warn!(
                 "[bong][world] {} target zone `{}` was not found",
                 event.event_name,
+                event.zone_name
+            );
+            return false;
+        }
+
+        if event.beast_tide.kind() == BeastTideKind::LocustSwarm
+            && !self
+                .locust_cooldown
+                .ready_at(event.zone_name.as_str(), tick)
+        {
+            tracing::info!(
+                "[bong][world] ignored locust_swarm for zone `{}` because cooldown is active",
                 event.zone_name
             );
             return false;
@@ -523,11 +702,24 @@ impl ActiveEventsResource {
             event.duration_ticks
         );
 
+        let alert_message = if event.beast_tide.kind() == BeastTideKind::LocustSwarm {
+            Some(format!(
+                "灵蝗潮逼近区域 {}，噬元鼠群将沿灵气压差推进，预计持续 {} tick。",
+                event.zone_name, event.duration_ticks
+            ))
+        } else {
+            None
+        };
+
+        if event.beast_tide.kind() == BeastTideKind::LocustSwarm {
+            self.locust_cooldown.mark(event.zone_name.clone(), tick);
+        }
+
         self.pending_major_alerts.push(MajorEventAlert {
             event_name: event.event_name.clone(),
             zone_name: event.zone_name.clone(),
             duration_ticks: event.duration_ticks,
-            message: None,
+            message: alert_message,
         });
 
         if event.event_name == EVENT_REALM_COLLAPSE {
@@ -614,8 +806,12 @@ impl ActiveEventsResource {
         mut commands: Option<&mut Commands>,
         player_positions: Option<&[(String, DVec3)]>,
         collapse_targets: Option<&[(Entity, DimensionKind, DVec3)]>,
+        cultivator_positions: Option<&[(Entity, DimensionKind, DVec3)]>,
+        mut rat_bites: Option<&mut EventWriter<RatBiteEvent>>,
         mut death_events: Option<&mut EventWriter<DeathEvent>>,
         mut collapsed_events: Option<&mut EventWriter<ZoneCollapsedEvent>>,
+        mut qi_heatmap: Option<&mut QiDensityHeatmap>,
+        mut dropped_loot: Option<&mut DroppedLootRegistry>,
         mut npc_spawn_budget_by_zone: Option<HashMap<String, usize>>,
     ) -> Option<HashMap<String, usize>> {
         let Some(zone_registry) = zone_registry else {
@@ -735,7 +931,7 @@ impl ActiveEventsResource {
                     }
                 }
                 EVENT_BEAST_TIDE => {
-                    if event.elapsed_ticks == 0 && event.beast_tide.spawned_beasts.is_empty() {
+                    if event.elapsed_ticks == 0 && event.beast_tide.is_empty() {
                         let Some(layer_entity) = layer_entity else {
                             tracing::warn!(
                                 "[bong][world] beast_tide runtime for zone `{}` skipped: missing entity layer",
@@ -752,7 +948,7 @@ impl ActiveEventsResource {
                             continue;
                         };
 
-                        let desired_beast_count = beast_count_for_intensity(event.intensity);
+                        let desired_beast_count = event.beast_tide.desired_count(event.intensity);
                         let beast_count = npc_spawn_budget_by_zone
                             .as_ref()
                             .and_then(|budget| budget.get(event.zone_name.as_str()).copied())
@@ -773,15 +969,32 @@ impl ActiveEventsResource {
                         for beast_index in 0..beast_count {
                             let spawn_position =
                                 beast_spawn_position_on_zone_edge(&zone, beast_index, beast_count);
-                            let beast = spawn_beast_tide_zombie(
+                            let beast = spawn_beast_tide_entity(
                                 commands,
                                 layer_entity,
                                 event.zone_name.as_str(),
                                 spawn_position,
                                 zone.center(),
+                                &mut event.beast_tide,
                             );
-                            event.beast_tide.spawned_beasts.push(beast);
-                            event.beast_tide.spawn_points.push(spawn_position);
+                            event.beast_tide.push_spawned(beast, spawn_position);
+                        }
+                    }
+
+                    if let BeastTideRuntimeState::LocustSwarm(state) = &mut event.beast_tide {
+                        let disbanded = advance_locust_swarm(
+                            state,
+                            &zone,
+                            zone_registry,
+                            qi_heatmap.as_deref_mut(),
+                            dropped_loot.as_deref_mut(),
+                            cultivator_positions.unwrap_or(&[]),
+                            rat_bites.as_deref_mut(),
+                            death_events.as_deref_mut(),
+                            event.elapsed_ticks.saturating_add(1),
+                        );
+                        if disbanded {
+                            event.duration_ticks = event.elapsed_ticks.saturating_add(1);
                         }
                     }
                 }
@@ -907,7 +1120,7 @@ impl ActiveEventsResource {
             }
 
             if event.event_name == EVENT_BEAST_TIDE {
-                expired_beasts.extend(event.beast_tide.spawned_beasts.iter().copied());
+                expired_beasts.extend(event.beast_tide.spawned_entities().iter().copied());
             }
 
             tracing::info!(
@@ -979,7 +1192,7 @@ impl ActiveEventsResource {
         self.active_events
             .iter()
             .filter(|event| event.zone_name == zone_name && event.event_name == EVENT_BEAST_TIDE)
-            .flat_map(|event| event.beast_tide.spawned_beasts.iter().copied())
+            .flat_map(|event| event.beast_tide.spawned_entities().iter().copied())
             .collect()
     }
 
@@ -988,8 +1201,27 @@ impl ActiveEventsResource {
         self.active_events
             .iter()
             .filter(|event| event.zone_name == zone_name && event.event_name == EVENT_BEAST_TIDE)
-            .flat_map(|event| event.beast_tide.spawn_points.iter().copied())
+            .flat_map(|event| event.beast_tide.spawn_points().iter().copied())
             .collect()
+    }
+
+    #[cfg(test)]
+    pub fn beast_tide_kind_for_zone(&self, zone_name: &str) -> Option<&'static str> {
+        self.active_events
+            .iter()
+            .find(|event| event.zone_name == zone_name && event.event_name == EVENT_BEAST_TIDE)
+            .map(|event| match event.beast_tide.kind() {
+                BeastTideKind::Wandering => "wandering",
+                BeastTideKind::LocustSwarm => "locust_swarm",
+            })
+    }
+
+    fn refresh_locust_live_rats(&mut self, live_npcs: &HashSet<Entity>) {
+        for event in &mut self.active_events {
+            if event.event_name == EVENT_BEAST_TIDE {
+                event.beast_tide.refresh_locust_live_rats(live_npcs);
+            }
+        }
     }
 }
 
@@ -1047,11 +1279,15 @@ fn tick_active_events(
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     redis: Option<Res<crate::network::RedisBridgeResource>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut qi_heatmap: Option<ResMut<QiDensityHeatmap>>,
+    mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
+    mut rat_bites: EventWriter<RatBiteEvent>,
     mut death_events: EventWriter<DeathEvent>,
     mut collapsed_events: EventWriter<ZoneCollapsedEvent>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     players: Query<(Entity, &Username, &Position, Option<&CurrentDimension>), With<Client>>,
-    npcs: Query<(Entity, &Position, Option<&CurrentDimension>), With<NpcMarker>>,
+    npcs: LiveNpcPositionQuery<'_, '_>,
+    cultivators: Query<(Entity, &Position, Option<&CurrentDimension>), With<Cultivation>>,
 ) {
     let layer_entity = layers.iter().next();
     let mut player_positions = Vec::new();
@@ -1061,13 +1297,26 @@ fn tick_active_events(
         player_positions.push((canonical_player_id(username.0.as_str()), pos));
         collapse_targets.push((entity, dimension.map(|dim| dim.0).unwrap_or_default(), pos));
     }
+    let mut live_npc_entities = HashSet::new();
     for (entity, position, dimension) in &npcs {
+        live_npc_entities.insert(entity);
         collapse_targets.push((
             entity,
             dimension.map(|dim| dim.0).unwrap_or_default(),
             position.get(),
         ));
     }
+    active_events.refresh_locust_live_rats(&live_npc_entities);
+    let cultivator_positions = cultivators
+        .iter()
+        .map(|(entity, position, dimension)| {
+            (
+                entity,
+                dimension.map(|dim| dim.0).unwrap_or_default(),
+                position.get(),
+            )
+        })
+        .collect::<Vec<_>>();
 
     let npc_spawn_budget = if let Some(registry) = npc_registry.as_deref_mut() {
         let mut reserved_by_zone = HashMap::new();
@@ -1076,7 +1325,7 @@ fn tick_active_events(
             .iter()
             .filter(|event| event.event_name == EVENT_BEAST_TIDE && event.elapsed_ticks == 0)
         {
-            let desired = beast_count_for_intensity(event.intensity);
+            let desired = event.beast_tide.desired_count(event.intensity);
             let reserved = registry.reserve_zone_batch(event.zone_name.as_str(), desired);
             if reserved < desired {
                 tracing::info!(
@@ -1105,8 +1354,12 @@ fn tick_active_events(
         Some(&mut commands),
         Some(player_positions.as_slice()),
         Some(collapse_targets.as_slice()),
+        Some(cultivator_positions.as_slice()),
+        Some(&mut rat_bites),
         Some(&mut death_events),
         Some(&mut collapsed_events),
+        qi_heatmap.as_deref_mut(),
+        dropped_loot.as_deref_mut(),
         npc_spawn_budget,
     );
 
@@ -1159,6 +1412,35 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
     }
 
     value.as_i64().map(|v| v as f64)
+}
+
+fn beast_tide_kind_from_command(command: &Command) -> BeastTideKind {
+    match command
+        .params
+        .get("tide_kind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
+        Some("locust_swarm") => BeastTideKind::LocustSwarm,
+        _ => BeastTideKind::Wandering,
+    }
+}
+
+fn beast_kind_from_command(command: &Command) -> Option<BeastKind> {
+    let value = command
+        .params
+        .get("beast_kind")
+        .or_else(|| command.params.get("kind"))
+        .and_then(Value::as_str)?
+        .trim();
+
+    match value {
+        "rat" => Some(BeastKind::Rat),
+        "spider" => Some(BeastKind::Spider),
+        "hybrid_beast" => Some(BeastKind::HybridBeast),
+        "void_distorted" => Some(BeastKind::VoidDistorted),
+        _ => None,
+    }
 }
 
 fn realm_collapse_monitor_command(zone_name: &str) -> Command {
@@ -1668,12 +1950,53 @@ fn spawn_lightning(commands: &mut Commands, layer_entity: Entity, position: DVec
         .id()
 }
 
+fn spawn_beast_tide_entity(
+    commands: &mut Commands,
+    layer_entity: Entity,
+    zone_name: &str,
+    spawn_position: DVec3,
+    zone_center: DVec3,
+    runtime: &mut BeastTideRuntimeState,
+) -> Entity {
+    match runtime {
+        BeastTideRuntimeState::LocustSwarm(_) => {
+            let entity = spawn_rat_npc_at(
+                commands,
+                layer_entity,
+                zone_name,
+                spawn_position,
+                zone_center,
+            );
+            commands.entity(entity).insert(RatPhase::Gregarious);
+            entity
+        }
+        BeastTideRuntimeState::Wandering(state) if state.beast_kind == Some(BeastKind::Rat) => {
+            spawn_rat_npc_at(
+                commands,
+                layer_entity,
+                zone_name,
+                spawn_position,
+                zone_center,
+            )
+        }
+        BeastTideRuntimeState::Wandering(state) => spawn_beast_tide_zombie(
+            commands,
+            layer_entity,
+            zone_name,
+            spawn_position,
+            zone_center,
+            state.beast_kind,
+        ),
+    }
+}
+
 fn spawn_beast_tide_zombie(
     commands: &mut Commands,
     layer_entity: Entity,
     zone_name: &str,
     spawn_position: DVec3,
     zone_center: DVec3,
+    beast_kind: Option<BeastKind>,
 ) -> Entity {
     let fauna_seed = fauna_spawn_seed(zone_name, spawn_position.x, spawn_position.z);
     let entity = commands
@@ -1693,7 +2016,9 @@ fn spawn_beast_tide_zombie(
             NpcMarker,
             NpcBlackboard::default(),
             NpcArchetype::Beast,
-            fauna_tag_for_beast_spawn(zone_name, fauna_seed),
+            beast_kind
+                .map(FaunaTag::new)
+                .unwrap_or_else(|| fauna_tag_for_beast_spawn(zone_name, fauna_seed)),
             NpcPatrol::new(zone_name, zone_center),
             Thinker::build()
                 .picker(FirstToScore {
@@ -1708,6 +2033,148 @@ fn spawn_beast_tide_zombie(
         .insert(npc_runtime_bundle(entity, NpcArchetype::Beast));
 
     entity
+}
+
+#[allow(clippy::too_many_arguments)]
+fn advance_locust_swarm(
+    state: &mut LocustSwarmState,
+    origin_zone: &Zone,
+    zone_registry: &mut ZoneRegistry,
+    qi_heatmap: Option<&mut QiDensityHeatmap>,
+    dropped_loot: Option<&mut DroppedLootRegistry>,
+    cultivators: &[(Entity, DimensionKind, DVec3)],
+    rat_bites: Option<&mut EventWriter<RatBiteEvent>>,
+    death_events: Option<&mut EventWriter<DeathEvent>>,
+    tick: u64,
+) -> bool {
+    if state.spawned_rats.is_empty() {
+        return true;
+    }
+
+    if state.front_velocity == DVec3::ZERO {
+        state.origin_zone = origin_zone.name.clone();
+        state.target_zone =
+            resolve_locust_target_zone_name(zone_registry, origin_zone, state.target_zone.as_str());
+        state.front_position = origin_zone.center();
+        let target_center = zone_registry
+            .find_zone_by_name(state.target_zone.as_str())
+            .map(Zone::center)
+            .unwrap_or_else(|| origin_zone.center() + DVec3::X);
+        let direction = (target_center - state.front_position)
+            .try_normalize()
+            .unwrap_or(DVec3::X);
+        state.front_velocity = direction * LOCUST_SWARM_FRONT_SPEED_BLOCKS_PER_TICK;
+    }
+
+    state.front_position += state.front_velocity;
+    let current_chunk = chunk_pos_from_world(state.front_position);
+    if state.drained_chunks.insert(current_chunk) {
+        if let Some(heatmap) = qi_heatmap {
+            heatmap.drain_heat(
+                origin_zone.dimension,
+                locust_chunk_block_pos(current_chunk),
+                LOCUST_QI_DRAIN_PER_CHUNK,
+            );
+        }
+        let current_zone_name = zone_registry
+            .find_zone(origin_zone.dimension, state.front_position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = current_zone_name {
+            if let Some(zone) = zone_registry.find_zone_mut(zone_name.as_str()) {
+                zone.spirit_qi = (zone.spirit_qi - LOCUST_ZONE_QI_DRAIN_PER_CHUNK).clamp(-1.0, 1.0);
+            }
+        }
+        if let Some(dropped_loot) = dropped_loot {
+            drain_locust_consumable_loot(dropped_loot, origin_zone.dimension, current_chunk);
+        }
+    }
+
+    if let (Some(rat), Some(rat_bites)) = (state.spawned_rats.first().copied(), rat_bites) {
+        let bite_radius_sq = LOCUST_CULTIVATOR_BITE_RADIUS * LOCUST_CULTIVATOR_BITE_RADIUS;
+        for (entity, dimension, position) in cultivators {
+            if *dimension != origin_zone.dimension {
+                continue;
+            }
+            if state.front_position.distance_squared(*position) <= bite_radius_sq {
+                rat_bites.send(RatBiteEvent {
+                    rat,
+                    target: *entity,
+                    qi_steal: LOCUST_BITE_QI_STEAL,
+                });
+            }
+        }
+    }
+
+    let target_zone_low_qi = zone_registry
+        .find_zone_by_name(state.target_zone.as_str())
+        .map(|zone| zone.spirit_qi < LOCUST_TARGET_LOW_QI_THRESHOLD)
+        .unwrap_or(false);
+    if state.group_alive < LOCUST_SWARM_DISBAND_THRESHOLD || target_zone_low_qi {
+        if let Some(death_events) = death_events {
+            for rat in &state.spawned_rats {
+                death_events.send(DeathEvent {
+                    target: *rat,
+                    cause: "locust_swarm_dispersed".to_string(),
+                    attacker: None,
+                    attacker_player_id: None,
+                    at_tick: tick,
+                });
+            }
+        }
+        return true;
+    }
+
+    false
+}
+
+fn resolve_locust_target_zone_name(
+    zone_registry: &ZoneRegistry,
+    origin_zone: &Zone,
+    requested_target_zone: &str,
+) -> String {
+    if requested_target_zone != origin_zone.name
+        && zone_registry
+            .find_zone_by_name(requested_target_zone)
+            .is_some_and(|zone| zone.dimension == origin_zone.dimension)
+    {
+        return requested_target_zone.to_string();
+    }
+
+    zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == origin_zone.dimension && zone.name != origin_zone.name)
+        .max_by(|left, right| left.spirit_qi.total_cmp(&right.spirit_qi))
+        .map(|zone| zone.name.clone())
+        .unwrap_or_else(|| origin_zone.name.clone())
+}
+
+fn drain_locust_consumable_loot(
+    registry: &mut DroppedLootRegistry,
+    dimension: DimensionKind,
+    chunk: ChunkPos,
+) {
+    registry.entries.retain(|_, entry| {
+        let pos = DVec3::new(entry.world_pos[0], entry.world_pos[1], entry.world_pos[2]);
+        entry.dimension != dimension
+            || chunk_pos_from_world(pos) != chunk
+            || !locust_consumes_template(entry.item.template_id.as_str())
+    });
+}
+
+fn locust_consumes_template(template_id: &str) -> bool {
+    template_id == "shu_gu"
+        || template_id == "ling_cao"
+        || template_id.starts_with("bone_coin")
+        || template_id.contains("ling_cao")
+}
+
+fn locust_chunk_block_pos(chunk: ChunkPos) -> BlockPos {
+    BlockPos::new(
+        chunk.x * QI_DENSITY_CELL_SIZE,
+        64,
+        chunk.z * QI_DENSITY_CELL_SIZE,
+    )
 }
 
 fn spawn_targeted_daoxiang(
@@ -1808,7 +2275,8 @@ mod events_tests {
     use serde_json::Value;
     use valence::entity::lightning::LightningEntity;
     use valence::prelude::{
-        bevy_ecs, App, DVec3, Entity, EntityKind, Events, IntoSystemConfigs, Position, Update, With,
+        bevy_ecs, App, BlockPos, DVec3, Despawned, Entity, EntityKind, Events, IntoSystemConfigs,
+        Position, Update, With,
     };
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
@@ -1816,12 +2284,17 @@ mod events_tests {
         persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
         ActiveEventsResource, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
         COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
-        EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
-        REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
-        REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
-        TARGETED_LIGHTNING_VFX_EVENT_ID,
+        EVENT_THUNDER_TRIBULATION, LOCUST_SWARM_DISBAND_THRESHOLD,
+        REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID, REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS,
+        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS,
+        REALM_COLLAPSE_LOW_QI_THRESHOLD, TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
+    use crate::combat::rat_bite::RatBiteEvent;
+    use crate::cultivation::components::{Cultivation, Realm};
+    use crate::fauna::components::{BeastKind, FaunaTag};
+    use crate::fauna::rat_phase::RatPhase;
+    use crate::inventory::{DroppedLootEntry, DroppedLootRegistry, ItemInstance, ItemRarity};
     use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
@@ -1881,6 +2354,7 @@ mod events_tests {
             .insert(crate::world::dimension::OverworldLayer);
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
+        app.add_event::<RatBiteEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<ZoneCollapsedEvent>();
         app.add_systems(Update, tick_active_events);
@@ -1916,6 +2390,31 @@ mod events_tests {
         ZoneOccupantPosition {
             dimension: DimensionKind::Overworld,
             position: DVec3::new(position[0], position[1], position[2]),
+        }
+    }
+
+    fn test_item(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -2233,6 +2732,261 @@ mod events_tests {
     }
 
     #[test]
+    fn beast_tide_event_spawns_rats_via_spawn_rat_when_kind_is_rat() {
+        let (mut app, _layer) = setup_events_app();
+
+        {
+            let world = app.world_mut();
+            let mut command =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 3, 0.2, None);
+            command
+                .params
+                .insert("beast_kind".to_string(), json!("rat"));
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command(&command, Some(&mut zones)));
+                assert_eq!(events.beast_tide_kind_for_zone("spawn"), Some("wandering"));
+            });
+        }
+
+        app.update();
+
+        let world = app.world_mut();
+        let spawned_beasts = world
+            .resource::<ActiveEventsResource>()
+            .beast_spawned_entities_for_zone("spawn");
+        assert!(
+            !spawned_beasts.is_empty(),
+            "rat beast_tide should spawn concrete rat entities"
+        );
+        for entity in spawned_beasts {
+            assert_eq!(
+                world.get::<EntityKind>(entity),
+                Some(&EntityKind::SILVERFISH)
+            );
+            assert_eq!(
+                world.get::<FaunaTag>(entity).map(|tag| tag.beast_kind),
+                Some(BeastKind::Rat)
+            );
+            assert_eq!(world.get::<RatPhase>(entity), Some(&RatPhase::Solitary));
+        }
+    }
+
+    #[test]
+    fn beast_tide_default_tide_kind_is_wandering_for_backward_compat() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut events = ActiveEventsResource::default();
+        let command = spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 3, 0.2, None);
+
+        assert!(events.enqueue_from_spawn_command(&command, Some(&mut zones)));
+
+        assert_eq!(events.beast_tide_kind_for_zone("spawn"), Some("wandering"));
+    }
+
+    #[test]
+    fn beast_tide_with_tide_kind_locust_swarm_uses_locust_state() {
+        let (mut app, _layer) = setup_events_app();
+
+        {
+            let world = app.world_mut();
+            let mut command =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 5, 0.2, None);
+            command
+                .params
+                .insert("tide_kind".to_string(), json!("locust_swarm"));
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command(&command, Some(&mut zones)));
+                assert_eq!(
+                    events.beast_tide_kind_for_zone("spawn"),
+                    Some("locust_swarm")
+                );
+                let alert = events
+                    .drain_major_event_alerts()
+                    .pop()
+                    .expect("locust swarm should emit a major alert");
+                assert!(alert
+                    .message
+                    .as_deref()
+                    .is_some_and(|message| message.contains("灵蝗潮逼近")));
+            });
+        }
+
+        app.update();
+
+        let world = app.world_mut();
+        let spawned_beasts = world
+            .resource::<ActiveEventsResource>()
+            .beast_spawned_entities_for_zone("spawn");
+        assert!(
+            !spawned_beasts.is_empty(),
+            "locust swarm should maintain live rat entities in its active window"
+        );
+        for entity in spawned_beasts {
+            assert_eq!(
+                world.get::<EntityKind>(entity),
+                Some(&EntityKind::SILVERFISH)
+            );
+            assert_eq!(world.get::<RatPhase>(entity), Some(&RatPhase::Gregarious));
+        }
+    }
+
+    #[test]
+    fn locust_swarm_advance_drains_qi_loot_and_cultivator_qi_pressure() {
+        let (mut app, _layer) = setup_events_app();
+        let zone_center = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .center();
+        let heat_block = BlockPos::new(
+            zone_center.x.floor() as i32,
+            zone_center.y.floor() as i32,
+            zone_center.z.floor() as i32,
+        );
+        let mut heatmap = QiDensityHeatmap::default();
+        heatmap.add_heat(DimensionKind::Overworld, heat_block, 0.9);
+        app.insert_resource(heatmap);
+        app.insert_resource(DroppedLootRegistry {
+            entries: HashMap::from([
+                (
+                    41,
+                    DroppedLootEntry {
+                        instance_id: 41,
+                        source_container_id: "test".to_string(),
+                        source_row: 0,
+                        source_col: 0,
+                        world_pos: [zone_center.x, zone_center.y, zone_center.z],
+                        dimension: DimensionKind::Overworld,
+                        item: test_item(41, "bone_coin_5"),
+                    },
+                ),
+                (
+                    42,
+                    DroppedLootEntry {
+                        instance_id: 42,
+                        source_container_id: "test".to_string(),
+                        source_row: 0,
+                        source_col: 0,
+                        world_pos: [zone_center.x, zone_center.y, zone_center.z],
+                        dimension: DimensionKind::Tsy,
+                        item: test_item(42, "bone_coin_5"),
+                    },
+                ),
+            ]),
+        });
+        let cultivator = app
+            .world_mut()
+            .spawn((
+                Position::new([zone_center.x, zone_center.y, zone_center.z]),
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 5.0,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        {
+            let world = app.world_mut();
+            let mut command =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 5, 0.2, None);
+            command
+                .params
+                .insert("tide_kind".to_string(), json!("locust_swarm"));
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                assert!(world
+                    .resource_mut::<ActiveEventsResource>()
+                    .enqueue_from_spawn_command(&command, Some(&mut zones)));
+            });
+        }
+
+        app.update();
+
+        let heat_after = app
+            .world()
+            .resource::<QiDensityHeatmap>()
+            .heat_at(DimensionKind::Overworld, heat_block);
+        assert!(
+            heat_after < 0.9,
+            "locust front should drain qi density heat from the traversed chunk"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![42],
+            "locust front should consume same-dimension loot without deleting matching drops in another dimension"
+        );
+        let bites = app.world().resource::<Events<RatBiteEvent>>();
+        assert!(
+            bites
+                .iter_current_update_events()
+                .any(|event| event.target == cultivator && event.qi_steal == 1),
+            "locust front should pressure nearby cultivators through RatBiteEvent"
+        );
+    }
+
+    #[test]
+    fn locust_swarm_disperses_when_live_group_drops_below_threshold() {
+        let (mut app, _layer) = setup_events_app();
+
+        {
+            let world = app.world_mut();
+            let mut command =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 20, 0.2, None);
+            command
+                .params
+                .insert("tide_kind".to_string(), json!("locust_swarm"));
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                assert!(world
+                    .resource_mut::<ActiveEventsResource>()
+                    .enqueue_from_spawn_command(&command, Some(&mut zones)));
+            });
+        }
+
+        app.update();
+        let spawned = app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .beast_spawned_entities_for_zone("spawn");
+        assert!(
+            spawned.len() > LOCUST_SWARM_DISBAND_THRESHOLD as usize,
+            "test setup should start above the locust disband threshold"
+        );
+
+        for entity in spawned
+            .iter()
+            .skip(LOCUST_SWARM_DISBAND_THRESHOLD.saturating_sub(1) as usize)
+        {
+            app.world_mut().entity_mut(*entity).insert(Despawned);
+        }
+
+        app.update();
+
+        let deaths = app.world().resource::<Events<DeathEvent>>();
+        assert_eq!(
+            deaths
+                .iter_current_update_events()
+                .filter(|event| event.cause == "locust_swarm_dispersed")
+                .count(),
+            LOCUST_SWARM_DISBAND_THRESHOLD.saturating_sub(1) as usize,
+            "remaining live rats below threshold should receive dispersal death events"
+        );
+        assert!(
+            !app.world()
+                .resource::<ActiveEventsResource>()
+                .contains("spawn", EVENT_BEAST_TIDE),
+            "depleted locust swarm should leave the scheduler"
+        );
+    }
+
+    #[test]
     fn spawn_event_only_enters_scheduler_once() {
         let (mut app, _layer) = setup_events_app();
         let command = spawn_event_command("spawn", EVENT_THUNDER_TRIBULATION, 3);
@@ -2464,12 +3218,38 @@ mod events_tests {
             other => panic!("unexpected realm collapse vfx payload: {other:?}"),
         }
 
-        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let _ = events.tick(
+            Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(events.drain_major_event_alerts().is_empty());
         assert!(events.drain_tribulation_events().is_empty());
         assert!(events.drain_vfx_events().is_empty());
 
-        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let _ = events.tick(
+            Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         let evacuation_alerts = events.drain_major_event_alerts();
         assert_eq!(evacuation_alerts.len(), 1);
         assert_eq!(
@@ -2496,7 +3276,20 @@ mod events_tests {
             other => panic!("unexpected realm collapse lock vfx payload: {other:?}"),
         }
 
-        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let _ = events.tick(
+            Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(events.drain_major_event_alerts().is_empty());
         assert!(events.drain_tribulation_events().is_empty());
         assert!(events.drain_vfx_events().is_empty());
@@ -2518,7 +3311,20 @@ mod events_tests {
         let _ = events.drain_tribulation_events();
         let _ = events.drain_vfx_events();
 
-        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let _ = events.tick(
+            Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         let evacuation_alerts = events.drain_major_event_alerts();
         assert_eq!(evacuation_alerts.len(), 1);
         assert!(evacuation_alerts[0]
@@ -2533,14 +3339,40 @@ mod events_tests {
         let _ = events.drain_vfx_events();
 
         for _ in 0..REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS - 1 {
-            let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+            let _ = events.tick(
+                Some(&mut zones),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
             assert!(
                 events.drain_major_event_alerts().is_empty(),
                 "same minute bucket should not spam evacuation reminders"
             );
         }
 
-        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let _ = events.tick(
+            Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         let reminders = events.drain_major_event_alerts();
         assert_eq!(reminders.len(), 1);
         assert_eq!(
@@ -2923,6 +3755,10 @@ mod events_tests {
         // 不传 layer / commands，模拟"事件已 enqueue 但 chunk layer 尚未就位"。
         let leftover = events.tick(
             Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,

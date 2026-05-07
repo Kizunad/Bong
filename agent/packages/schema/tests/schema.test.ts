@@ -53,6 +53,10 @@ import {
   PseudoVeinDissipateEventV1,
   PseudoVeinSnapshotV1,
 } from "../src/pseudo-vein.js";
+import {
+  RatPhaseChangeEventV1,
+  validateRatPhaseChangeEventV1Contract,
+} from "../src/rat-phase-event.js";
 import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
@@ -193,10 +197,35 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONE_PRESSURE_CROSSED);
   });
 
+  it("declares rat phase Redis channel", () => {
+    expect(CHANNELS.RAT_PHASE_EVENT).toBe("bong:rat_phase_event");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.RAT_PHASE_EVENT);
+  });
+
   it("world-state.sample.json", () => {
     const data = loadSample("world-state.sample.json");
     const result = validate(WorldStateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("rat phase event contract", () => {
+    const data = {
+      chunk: [8, 8],
+      zone: "spawn",
+      group_id: 7,
+      from: "solitary",
+      to: { transitioning: { progress: 0 } },
+      rat_count: 12,
+      local_qi: 0.42,
+      qi_gradient: 0.31,
+      tick: 12345,
+    };
+    expect(validate(RatPhaseChangeEventV1, data).ok).toBe(true);
+    expectContractAccepts(
+      "RatPhaseChangeEventV1",
+      validateRatPhaseChangeEventV1Contract,
+      data,
+    );
   });
 
   it("agent-command.sample.json", () => {

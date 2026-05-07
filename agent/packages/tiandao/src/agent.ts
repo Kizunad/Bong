@@ -16,6 +16,7 @@ import { queryPlayerTool } from "./tools/query-player.js";
 import { queryPlayerSkillMilestonesTool } from "./tools/query-player-skill-milestones.js";
 import { queryZoneHistoryTool } from "./tools/query-zone-history.js";
 import { listActiveEventsTool } from "./tools/list-active-events.js";
+import { queryRatDensityTool } from "./tools/query-rat-density.js";
 import type { WorldModel } from "./world-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,7 +24,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export function resolveAgentTools(skillFile: string): readonly AgentTool[] {
   switch (skillFile) {
     case "calamity.md":
-      return [queryPlayerTool, queryPlayerSkillMilestonesTool, listActiveEventsTool];
+      return [
+        queryPlayerTool,
+        queryPlayerSkillMilestonesTool,
+        listActiveEventsTool,
+        queryRatDensityTool,
+      ];
     case "mutation.md":
       return [queryZoneHistoryTool];
     case "era.md":

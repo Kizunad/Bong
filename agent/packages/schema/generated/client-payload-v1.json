@@ -281,6 +281,45 @@
       }
     },
     {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "zone",
+        "message"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "locust_swarm_warning",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 500,
+          "type": "string"
+        },
+        "duration_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "direction": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        }
+      }
+    },
+    {
       "type": "object",
       "required": [
         "v",

@@ -1,4 +1,5 @@
 pub mod brain;
+pub mod brain_rat;
 pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
@@ -17,6 +18,7 @@ pub mod scattered_cultivator;
 pub mod scenario;
 pub mod social;
 pub mod spawn;
+pub mod spawn_rat;
 pub mod sync;
 pub mod territory;
 pub mod tribulation;
@@ -38,6 +40,7 @@ pub fn register(app: &mut App) {
     patrol::register(app);
     sync::register(app);
     brain::register(app);
+    brain_rat::register(app);
     farming_brain::register(app);
     tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator

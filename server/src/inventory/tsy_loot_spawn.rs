@@ -27,6 +27,7 @@ use super::ancient_relics::seed_ancient_relics;
 use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator};
 use crate::combat::CombatClock;
+use crate::world::dimension::DimensionKind;
 use crate::world::tsy_lifecycle::{on_first_enter, TsyZoneStateRegistry};
 use crate::world::tsy_portal::TsyEnterEmit;
 use crate::world::zone::{TsyDepth, ZoneRegistry};
@@ -248,6 +249,7 @@ fn spawn_for_layer(
             source_row: 0,
             source_col: 0,
             world_pos: [pos.x, pos.y, pos.z],
+            dimension: DimensionKind::Tsy,
             item: instance,
         };
         placed_ids.push(entry.instance_id);

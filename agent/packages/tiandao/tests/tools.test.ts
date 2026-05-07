@@ -5,6 +5,7 @@ import { queryPlayerTool } from "../src/tools/query-player.js";
 import { queryPlayerSkillMilestonesTool } from "../src/tools/query-player-skill-milestones.js";
 import { queryZoneHistoryTool } from "../src/tools/query-zone-history.js";
 import { listActiveEventsTool } from "../src/tools/list-active-events.js";
+import { queryRatDensityTool } from "../src/tools/query-rat-density.js";
 import { WorldModel } from "../src/world-model.js";
 
 function expectOkResult(value: unknown): asserts value is { ok: true; [key: string]: unknown } {
@@ -75,6 +76,9 @@ function createState(args: {
     },
     players,
     npcs: [],
+    rat_density_heatmap: {
+      zones: {},
+    },
     zones,
     recent_events: args.recentEvents ?? [],
   };
@@ -386,6 +390,55 @@ describe("readonly tools", () => {
           },
         ],
         summary: "Veteran@blood_valley recent skill milestones 1",
+      });
+    });
+  });
+
+  describe("query-rat-density", () => {
+    it("returns rat phase counts for a known zone", async () => {
+      const latestState = createState({
+        tick: 12,
+        zones: [createZone("blood_valley", 0.71)],
+      });
+      latestState.rat_density_heatmap.zones.blood_valley = {
+        total: 13,
+        solitary: 2,
+        transitioning: 3,
+        gregarious: 8,
+      };
+      const ctx = createToolContext({
+        latestState,
+        worldModel: WorldModel.fromState(latestState),
+      });
+
+      const result = await queryRatDensityTool.execute({ zone: "blood_valley" }, ctx);
+
+      expect(validateToolSchema(queryRatDensityTool.result, result).ok).toBe(true);
+      expect(result).toMatchObject({
+        ok: true,
+        zone: "blood_valley",
+        total: 13,
+        dominantPhase: "gregarious",
+        phases: {
+          solitary: 2,
+          transitioning: 3,
+          gregarious: 8,
+        },
+      });
+    });
+
+    it("returns structured not-found payload for missing rat density", async () => {
+      const ctx = createContextForTools();
+      const result = await queryRatDensityTool.execute({ zone: "missing_zone" }, ctx);
+
+      expect(validateToolSchema(queryRatDensityTool.result, result).ok).toBe(true);
+      expect(result).toEqual({
+        ok: false,
+        zone: "missing_zone",
+        error: {
+          code: "ZONE_NOT_FOUND",
+          message: "rat density for zone 'missing_zone' not found",
+        },
       });
     });
   });

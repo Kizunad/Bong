@@ -26,6 +26,7 @@ pub enum CultivationDeathCause {
     NegativeZoneDrain,
     ContaminationOverflow,
     NaturalAging,
+    SwarmQiDrain,
 }
 
 #[derive(Debug, Clone, Event)]

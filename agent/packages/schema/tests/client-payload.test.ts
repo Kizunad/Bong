@@ -9,6 +9,7 @@ import {
   ClientPayloadV1,
   EventAlertPayloadV1,
   HeartbeatPayloadV1,
+  LocustSwarmWarningPayloadV1,
   PlayerStatePayloadV1,
   WelcomePayloadV1,
   ZoneInfoPayloadV1,
@@ -21,6 +22,7 @@ import {
   ClientPayloadV1 as RootClientPayloadV1,
   EventAlertPayloadV1 as RootEventAlertPayloadV1,
   HeartbeatPayloadV1 as RootHeartbeatPayloadV1,
+  LocustSwarmWarningPayloadV1 as RootLocustSwarmWarningPayloadV1,
   PlayerStatePayloadV1 as RootPlayerStatePayloadV1,
   WelcomePayloadV1 as RootWelcomePayloadV1,
   ZoneInfoPayloadV1 as RootZoneInfoPayloadV1,
@@ -105,6 +107,13 @@ describe("client payload samples pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-payload-locust-swarm-warning.sample.json", () => {
+    const data = loadSample("client-payload-locust-swarm-warning.sample.json");
+    const result = rootValidateClientPayloadV1(data);
+
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-payload-player-state.sample.json", () => {
     const data = loadSample("client-payload-player-state.sample.json");
     const result = rootValidateClientPayloadV1(data);
@@ -124,6 +133,7 @@ describe("client payload root exports stay aligned", () => {
     expect(RootClientNarrationPayloadV1).toBe(ClientNarrationPayloadV1);
     expect(RootZoneInfoPayloadV1).toBe(ZoneInfoPayloadV1);
     expect(RootEventAlertPayloadV1).toBe(EventAlertPayloadV1);
+    expect(RootLocustSwarmWarningPayloadV1).toBe(LocustSwarmWarningPayloadV1);
     expect(RootPlayerStatePayloadV1).toBe(PlayerStatePayloadV1);
     expect(rootValidateClientPayloadV1).toBe(validateClientPayloadV1);
     expect(rootGetClientPayloadByteLength).toBe(getClientPayloadByteLength);
@@ -189,6 +199,14 @@ describe("client payload schema rejects invalid data", () => {
     expectInvalidClientPayload(data);
   });
 
+  it("rejects locust_swarm_warning payload without zone", () => {
+    const data = loadSampleObject("client-payload-locust-swarm-warning.sample.json");
+
+    delete data.zone;
+
+    expectInvalidClientPayload(data);
+  });
+
   it("rejects payloads whose serialized form exceeds the shared byte budget", () => {
     const data = loadSampleObject("client-payload-event-alert.sample.json");
     const eventAlert = expectObject(data.event_alert);
@@ -228,6 +246,7 @@ describe("client payload schema rejects invalid data", () => {
       "client-payload-narration.sample.json",
       "client-payload-zone-info.sample.json",
       "client-payload-event-alert.sample.json",
+      "client-payload-locust-swarm-warning.sample.json",
       "client-payload-player-state.sample.json",
     ];
 

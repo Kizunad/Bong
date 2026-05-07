@@ -452,6 +452,7 @@ pub fn death_arbiter_tick(
         let cause = format!("cultivation:{:?}", event.cause);
         let death_zone = match event.cause {
             CultivationDeathCause::NegativeZoneDrain => ZoneDeathKind::Negative,
+            CultivationDeathCause::SwarmQiDrain => ZoneDeathKind::Ordinary,
             _ => death_zone_from_context(cause.as_str(), position, zones.as_deref()),
         };
         if let Some(registry) = death_registry.as_deref_mut() {
@@ -1018,7 +1019,8 @@ fn death_insight_category_from_cultivation_cause(
         CultivationDeathCause::BreakthroughBackfire
         | CultivationDeathCause::MeridianCollapse
         | CultivationDeathCause::NegativeZoneDrain
-        | CultivationDeathCause::ContaminationOverflow => DeathInsightCategoryV1::Cultivation,
+        | CultivationDeathCause::ContaminationOverflow
+        | CultivationDeathCause::SwarmQiDrain => DeathInsightCategoryV1::Cultivation,
     }
 }
 

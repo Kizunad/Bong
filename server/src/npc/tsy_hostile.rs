@@ -36,6 +36,7 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{
     NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype, NpcMeleeProfile,
 };
+use crate::world::dimension::DimensionKind;
 use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::world::tsy_origin::TsyOrigin;
 use crate::world::zone::{TsyDepth, Zone, ZoneRegistry};
@@ -1472,6 +1473,7 @@ pub fn handle_npc_death_drop(
                     source_row: 0,
                     source_col: 0,
                     world_pos,
+                    dimension: DimensionKind::Tsy,
                     item,
                 },
             );

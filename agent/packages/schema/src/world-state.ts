@@ -173,6 +173,25 @@ export const GameEvent = Type.Object(
 );
 export type GameEvent = Static<typeof GameEvent>;
 
+export const RatDensitySnapshotV1 = Type.Object(
+  {
+    total: Type.Integer({ minimum: 0 }),
+    solitary: Type.Integer({ minimum: 0 }),
+    transitioning: Type.Integer({ minimum: 0 }),
+    gregarious: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type RatDensitySnapshotV1 = Static<typeof RatDensitySnapshotV1>;
+
+export const RatDensityHeatmapV1 = Type.Object(
+  {
+    zones: Type.Record(Type.String(), RatDensitySnapshotV1),
+  },
+  { additionalProperties: false },
+);
+export type RatDensityHeatmapV1 = Static<typeof RatDensityHeatmapV1>;
+
 // ─── 顶层消息 ──────────────────────────────────────────
 
 export const WorldStateV1 = Type.Object(
@@ -184,6 +203,7 @@ export const WorldStateV1 = Type.Object(
     players: Type.Array(PlayerProfile),
     npcs: Type.Array(NpcSnapshot),
     factions: Type.Optional(Type.Array(FactionSummaryV1)),
+    rat_density_heatmap: RatDensityHeatmapV1,
     zones: Type.Array(ZoneSnapshot),
     recent_events: Type.Array(GameEvent),
   },

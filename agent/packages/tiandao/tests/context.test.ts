@@ -73,6 +73,9 @@ function createState(args: {
     },
     players,
     npcs: [],
+    rat_density_heatmap: {
+      zones: {},
+    },
     zones:
       args.zones ?? [createZone("starter_zone", 0.5, { player_count: players.length })],
     recent_events: [],

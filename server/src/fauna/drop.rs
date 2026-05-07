@@ -13,6 +13,7 @@ use crate::inventory::{
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::shelflife::{DecayProfileRegistry, Freshness};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 use super::components::{BeastKind, FaunaDropIssued, FaunaTag};
 
@@ -23,6 +24,7 @@ type FaunaDropNpcQuery<'w, 's> = Query<
         Option<&'static FaunaTag>,
         Option<&'static NpcArchetype>,
         &'static Position,
+        Option<&'static CurrentDimension>,
         Option<&'static FaunaDropIssued>,
     ),
     With<NpcMarker>,
@@ -163,7 +165,7 @@ pub fn fauna_drop_system(
     let decay_profiles = decay_profiles.as_deref();
 
     for event in deaths.read() {
-        let Ok((tag, archetype, pos, issued)) = npcs.get(event.target) else {
+        let Ok((tag, archetype, pos, dimension, issued)) = npcs.get(event.target) else {
             continue;
         };
         if issued.is_some() {
@@ -201,6 +203,9 @@ pub fn fauna_drop_system(
                     source_row: 0,
                     source_col: 0,
                     world_pos,
+                    dimension: dimension
+                        .map(|dim| dim.0)
+                        .unwrap_or(DimensionKind::Overworld),
                     item,
                 },
             );
@@ -327,7 +332,10 @@ mod tests {
 
     use super::super::components::BeastVariant;
     use super::*;
-    use crate::inventory::{ItemCategory, ItemRarity, ItemTemplate};
+    use crate::inventory::{
+        dropped_loot_snapshot, pickup_dropped_loot_instance, ContainerState, InventoryRevision,
+        ItemCategory, ItemRarity, ItemTemplate, PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    };
     use crate::npc::spawn::NpcMarker;
 
     fn template(id: &str) -> ItemTemplate {
@@ -378,6 +386,23 @@ mod tests {
                 .map(|id| (id.to_string(), template(id)))
                 .collect::<HashMap<_, _>>(),
         )
+    }
+
+    fn empty_player_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
     }
 
     #[test]
@@ -483,6 +508,74 @@ mod tests {
         assert!(
             app.world().get::<FaunaDropIssued>(beast).is_some(),
             "processed beast should be marked to prevent duplicate drops"
+        );
+    }
+
+    #[test]
+    fn rat_kill_to_g_pickup_round_trip_creates_inventory_shu_gu() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(fauna_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::new(10));
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, fauna_drop_system);
+
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                FaunaTag::new(BeastKind::Rat),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+        app.world_mut().send_event(DeathEvent {
+            target: rat,
+            cause: "player_kill".to_string(),
+            attacker: None,
+            attacker_player_id: Some("offline:test-player".to_string()),
+            at_tick: 55,
+        });
+
+        app.update();
+
+        let (shu_gu_id, pickup_pos) = {
+            let drops = app.world().resource::<DroppedLootRegistry>();
+            let entry = drops
+                .entries
+                .values()
+                .find(|entry| entry.item.template_id == SHU_GU)
+                .expect("rat death should create a dropped shu_gu entry");
+            (entry.instance_id, entry.world_pos)
+        };
+        let mut inventory = empty_player_inventory();
+        {
+            let mut registry = app.world_mut().resource_mut::<DroppedLootRegistry>();
+            pickup_dropped_loot_instance(&mut inventory, &mut registry, pickup_pos, shu_gu_id)
+                .expect("G pickup should move dropped shu_gu into inventory");
+        }
+
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .flat_map(|container| container.items.iter())
+                .any(|placed| {
+                    placed.instance.template_id == SHU_GU && placed.instance.stack_count >= 1
+                }),
+            "picked-up player inventory should contain shu_gu"
+        );
+        let drops = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            !drops.entries.contains_key(&shu_gu_id),
+            "G pickup should remove the shu_gu drop from DroppedLootRegistry"
+        );
+        assert!(
+            dropped_loot_snapshot(drops)
+                .iter()
+                .all(|entry| entry.instance_id != shu_gu_id),
+            "post-pickup dropped loot snapshot should no longer contain shu_gu"
         );
     }
 

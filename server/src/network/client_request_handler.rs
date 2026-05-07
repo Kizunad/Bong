@@ -959,6 +959,7 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
+                    &skill_scroll_params.dimensions,
                 );
             }
             ClientRequestV1::DropWeaponIntent {
@@ -974,6 +975,7 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
+                    &skill_scroll_params.dimensions,
                 );
             }
             ClientRequestV1::RepairWeaponIntent {
@@ -5495,8 +5497,10 @@ fn handle_inventory_discard(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
 ) {
     let player_pos = client_position(positions, entity);
+    let player_dimension = dimensions.get(entity).map(|dim| dim.0).unwrap_or_default();
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
         Err(_) => {
@@ -5511,6 +5515,7 @@ fn handle_inventory_discard(
         &mut inventory,
         dropped_loot_registry,
         player_pos,
+        player_dimension,
         instance_id,
         &from,
     ) {

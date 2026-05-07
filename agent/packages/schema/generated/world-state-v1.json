@@ -8,6 +8,7 @@
     "season_state",
     "players",
     "npcs",
+    "rat_density_heatmap",
     "zones",
     "recent_events"
   ],
@@ -799,6 +800,48 @@
               },
               "top_mission_id": {
                 "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "rat_density_heatmap": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "zones"
+      ],
+      "properties": {
+        "zones": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "total",
+                "solitary",
+                "transitioning",
+                "gregarious"
+              ],
+              "properties": {
+                "total": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "solitary": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "transitioning": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "gregarious": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
               }
             }
           }
