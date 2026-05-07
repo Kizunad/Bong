@@ -6,96 +6,37 @@
 
 ## plan-tribulation-v1
 
-- [ ] **半步化虚 buff 强度**：当前 +10% 真元上限 / +200 年寿元是占位。Phase 1-3 已上线，可观察"卡在半步化虚"的玩家比例后调整；名额空出时可重渡的升级机制也待确认（已在 plan-tribulation-v1 §8 标注）
+- [ ] **半步化虚 buff 强度**：当前 +10% 真元上限 / +200 年寿元是占位（已在 plan-tribulation-v1 §8 line 277 标注"延后决定"）。Phase 1-3 已上线，可观察"卡在半步化虚"的玩家比例后调整；名额空出时可重渡的升级机制也待确认（已在 plan-tribulation-v1 §8 标注）。**无需新 plan，直接在 tribulation-v1 §8 补决定**
 
 ---
 
-## plan-npc-virtualize-v1
+## 通用机制备忘：v2 流派 熟练度生长二维划分
 
-- [ ] **Drowsy 中间态（v2 候补）**：v1 是二态 MVP（Hydrated ECS ↔ Dormant SoA），跳过 Drowsy 64-256 格中间态（ECS entity 但仅核心 system 1Hz tick + 远视野可见）。**触发派生 v2 的条件**：v1 P3 实测后出现以下任一情况 → 启动 plan-npc-virtualize-v2：
-  - hydrate / dehydrate 单次开销 > 5 ms / NPC（频繁穿越边界时撕裂感强）
-  - 玩家移动快（飞行 / 灵兽坐骑）频繁穿越 64-256 格阈值，反复 spawn/despawn 抖动
-  - 玩家反馈"远视野空旷无 NPC"违和（256 格外看不到任何 NPC 影响沉浸感）
-  - 三态成本权衡：多一套转换矩阵（H↔Dr / H↔D / Dr↔D 共 6 边 vs 二态 2 边）+ LOD gate 配置 + FixedUpdate 调度（3 套并行：Update 20Hz / FixedUpdate 1Hz / GlobalTick 1/min）
-  - 已在 plan-npc-virtualize-v1 §0 / §1 P0 决策门 #1 / §8 标注
+适用所有 v2 流派 plan 的 P0 决策门。首发 plan-zhenmai-v2。
+
+- **境界 = 威力上限**（K_drain / 反震点数 / 紊流半径 / 自蕴乘数等"大小"维度）
+- **熟练度 = 响应速率**（冷却 cooldown / 弹反窗口 window / cast time / cast 充能时间）
+- 公式：`cooldown(lv) = base + (min - base) × clamp(lv/100, 0, 1)`，线性递减
+- 哲学：worldview §五:537 流派由组合涌现 + §五:506 末土后招原则物理化身——醒灵苦修 lv 100 弹反窗口 250ms / 化虚老怪 lv 0 仅 100ms（练得多胜过境界高）
+- **各 plan P0 需决定**：(a) 公式 vs plan-skill-v1 lv 映射区间；(b) 各自招式 base/min 值；(c) 是否派生 plan-skill-proficiency-v1 通用 plan 提取 cooldown/window curve helper
+- **应回填 v2 plan**（各自 P0 决策门统一处理）：plan-woliu-v2（瞬涡 5s / 涡口 8s / 涡引 30s 改为按熟练度）/ plan-dugu-v2（蚀针 3s / 侵染 8s 改）/ plan-tuike-v2（蜕一层 8s / 转移污染 30s 改）— 早立骨架时未含熟练度机制，需 P0 补入
+
+---
+
+## 依赖链关键路径（仍 active）
+
+```
+plan-qi-physics-v1 P0 红线决议 → P1 算子 ship
+  → plan-qi-physics-patch-v1 P0/P1/P2/P3 逐 PR 迁移
+    → plan-economy-v1 / plan-style-balance-v1 / 其他 ~9 个 plan 解阻
+```
 
 ---
 
 > **约定**：每解决一条就从这里删。新增延后事项请直接追加到对应 plan 段，保持扁平。
 >
-> **已转为独立骨架（2026-04-27）**：
-> - `plan-alchemy-client-v1`（炼丹系统 Fabric 客户端接入）
-> - `plan-niche-defense-v1`（灵龛主动防御）
-> - `plan-fauna-v1`（妖兽骨系材料）
-> - `plan-spiritwood-v1`（灵木材料体系）
-> - `plan-spirit-eye-v1`（灵眼系统）
-> - `plan-botany-agent-v1`（植物生态快照接入天道 agent）
->
-> **已转为独立骨架（2026-05-01）**：
-> - `plan-lifespan-v1`（寿元精细化 / 风烛 / 续命路径 / 老死分类）— 源自 plan-death-lifecycle-v1 §4a/§4c reminder
-> - `plan-anticheat-v1`（AntiCheatCounter / CHANNEL_ANTICHEAT）— 源自 plan-combat-no_ui §1.5.6 reminder
-> - `plan-alchemy-v2`（side_effect_pool 映射 / 丹方残卷 / 品阶铭文开光 / AutoProfile / 丹心识别）— 源自 plan-alchemy-v1 reminder
-> - `plan-inventory-v2`（Tarkov grid placement / stacking 合并）— 源自 plan-inventory-v1 reminder
->
-> **已转为独立骨架（2026-05-05）—— qi_physics 底盘**：
-> - `plan-qi-physics-v1`（修仙物理底盘：守恒律 + 压强法则 + 唯一物理实现入口）— **关键路径**。源自 plan-economy-v1 §1.5 衰变曲线裁决无解，上钻发现 worldview §二「真元极易挥发」是 9+ plan 同源现象（骨币/食材/距离/异体排斥/吸力/节律/末法残土/灵田漏液/搜刮磨损），各 plan 拍数才是问题根源。本 plan 立公理 + 算子 + 全局账本 WorldQiAccount，P1 完成 = 底盘 API 冻结
-> - `plan-qi-physics-patch-v1`（qi-physics 迁移收口）— 承接 qi-physics-v1 P1 后的迁移工作；P0 红线 3 PR（combat/decay 0.06 vs 正典 0.03 翻倍 / tsy_drain×dead_zone 协调 / WorldQiAccount 合账）；P1 shelflife / P2 战斗+守恒释放 / P3 新机制（坍缩渊 redistribute / 7 流派异体排斥 ρ / 时代衰减 / 阈值灾劫）
->
-> **已转为独立骨架（2026-05-05）—— 流派功法**：
-> - `plan-woliu-v2`（涡流功法五招完整包：持涡 / 瞬涡 / 涡口 / 涡引 / 涡心）— 承接 plan-woliu-v1 ✅ finished。引入**搅拌器物理**（99% 紊流甩出 + 1% 入池 × 经脉流量 cap）+ **紊流场**（动态漩涡非可吸收浓度，是涡流流派专属 EnvField 边界，其他玩家在场内不可修炼 / 战斗精度 ×0.5 / shelflife ×3）+ 反噬阶梯 4 级（微感 / MICRO_TEAR / TORN / SEVERED）+ **无境界 gate 只有威力门坎**（worldview §五:537 流派由组合涌现）+ 化虚双场模型（致命场 ≤10 格 + 影响场 zone 量级）+ 化虚被动场可关。前置依赖 plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P2 完成。反向被依赖：plan-style-balance-v1（W/β/K_drain 矩阵）/ plan-color-v1（缜密色加成 hook）/ plan-tribulation-v1（化虚绝壁劫触发链）/ plan-zhenfa-v1（紊流场 vs 阵法冲突仲裁，留 zhenfa vN+1）。化虚涡心叙事意象 = worldview §四:380「化虚老怪走过新人来不及看清袍角」物理依据（整个山谷瞬间进入紊流死区）。骨架 §5 七个开放问题待 P0 决策门收口（化虚被动场默认开关 / 紊流场对 caster 自身影响 / 紊流 vs 阵法仲裁 / 99/1 比例 telemetry / 干尸涡引 / 被动场 qi 消耗 / 防御招精度衰减）
-> - `plan-dugu-v2`（毒蛊功法五招完整包：蚀针 / 自蕴 / 侵染 / 神识遮蔽 / 倒蚀）— 承接 plan-dugu-v1 ✅ finished（PR #126）。引入**脏真元 ρ=0.05**（worldview §五:425 寄生虫机制）+ **永久阈值分三档**（worldview §三:368 越级原则物理化身——醒灵/引气/凝脉仅 HP+qi / 固元 24h 短期可恢复 / 通灵+ 永久 qi_max 衰减）+ **自蕴**（自身经脉养成毒源，非养虫，worldview §六:621）+ **暴露概率系统**（每招 roll，化虚 0.2%，被识破 → DuguRevealedEvent → plan-identity-v1）+ **阴诡色形貌异化永久不可洗**（worldview §六:618-621 + §五:531 社会代价）+ **化虚倒蚀触发绝壁劫**（同涡心化虚一致格调）。**严守 worldview §五 + §六 正典，去除"蛊母/蛊虫/虫卵"等偏离虫子叙事**，"蛊"仅作汉字"诡毒"意。前置依赖：plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P3（7 流派 ρ 矩阵）+ plan-identity-v1（暴露 consumer）+ plan-botany-v2（自蕴毒草）+ **plan-craft-v1**（蚀针手搓 + 自蕴煎汤通过通用手搓 tab 注册配方）。反向被依赖：plan-style-balance-v1 / plan-color-v1（永久不可洗染色接口）/ plan-tribulation-v1（化虚倒蚀绝壁劫）/ plan-narrative-political-v1（暴露后江湖传闻）。骨架 §5 七个开放问题待 P0 决策门收口（化虚倒蚀绝壁劫去留 / 暴露概率公式三选 / 自蕴时间曲线 / 痕迹三种统一接口 / 自蕴毒草复用 vs 新建 / 阴诡色 plan-color-v1 接口 / TaintMark 跨周目持久化）
-
-> **已转为独立骨架（2026-05-06）—— 通用手搓底盘**：
-> - `plan-craft-v1`（通用手搓面 / inventory 内「手搓」标签）— 源自 plan-dugu-v2 起草中发现"蚀针 / 自蕴煎汤手搓 UI 缺失"，上钻发现是通用问题（蚀针 / 自蕴煎汤 / 伪皮 / 阵法预埋件 / 凡器都需要"轻度仪式化"合成）。**inventory 标签集成（无方块）**+ **单任务无并发** + **in-game 时间推进（在线累积下线暂停）**+ **配方解锁三渠道**（残卷 / 师承 / 顿悟，**无流派自动解锁** —— worldview §九 信息比装备值钱物理化身）+ **首版不实装磨损税和装备加速**（留 v2）。区别于 forge（4 步状态机）/ alchemy（火候）/ vanilla（3x3 摆放）。配方分类 6 类：AnqiCarrier / DuguPotion / TuikeSkin / ZhenfaTrap / Tool / Misc。前置依赖 plan-skill-v1 ✅ + plan-inventory-v2 ✅ + plan-input-binding-v1 ✅ + plan-HUD-v1 ✅。反向被依赖：plan-dugu-v2 / plan-tuike-v2 / plan-zhenfa-v2 / plan-anqi-v1 vN+1 / plan-tools-v1 各自注册自家配方。qi_cost 必须走 qi_physics::ledger::QiTransfer 守恒（不允许直接扣 cultivation.qi_current）。骨架 §5 六个开放问题待 P0 决策门收口（配方分类是否补 / 排序方式 / 取消返还比例 / 死亡时任务处理 / 跟 vanilla 工作台边界 / 软硬 gate）
-> - `plan-tuike-v2`（替尸·蜕壳功法**三招完整包**：着壳 / 蜕一层 / 转移污染）— 承接 plan-tuike-v1 ✅ finished（PR #124）。引入**影论假影承伤**（worldview §P 定律 6 + cultivation-0002 §影论）+ **物资派纯粹定调**（worldview §五:471 钱包代价不绑身体，永不 SEVERED）+ **三档伪皮 + 化虚上古级**（轻 50 / 中 150 / 重 400 / 上古 1000+ 伤吸收）+ 多层叠穿（醒灵 1 → 化虚 3 层）+ **专克毒蛊 + 化虚 hard counter**（化虚替尸者上古伪皮可吸 dugu 永久 qi_max 衰减标记 → 蜕落带走，物资派最纯粹极限化身）+ 制壳走 plan-craft-v1 通用手搓（不在战斗 plan）。**不做化虚专属新招式**（区别于涡流化虚紊流死区 + 毒蛊化虚倒蚀）—— 化虚级仅钱包更深，无身体质变。**不做死蛹假死**（worldview §十二 死亡机制冲突 + 物资派应纯粹）。前置依赖 plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P3（β=1.2）+ plan-spiritwood-v1 + plan-fauna-v1 + plan-craft-v1（4 档伪皮配方）+ plan-multi-style-v1（凝实色 PracticeLog）。反向被依赖：plan-style-balance-v1（W=0.7 / β=1.2 矩阵）/ plan-tribulation-v1（化虚 hard counter PVP 渡劫干扰）/ plan-narrative-political-v1（化虚一战烧上古伪皮的江湖传闻）/ plan-tsy-loot-v1（上古级伪皮材料源）。当前游戏伤害基线已确认 ATTACK_QI_DAMAGE_FACTOR=1.0（worldview §五:336 对齐实装），伪皮档位锚定"挡一次该境界全力一击"。骨架 §5 五开放问题待 P0 决策门收口（化虚级吸永久标记比例 / 蜕落物腐烂时间 / 多层叠穿维持 qi cost 是否线性 / 上古级伪皮材料源 / 凝实色 hook 实装位置）
-> - `plan-baomai-v3`（体修·爆脉功法**五招完整包**：崩拳 v1 + 全力一击 v2 双 skill + 撼山 / 焚血 / **散功 化虚专属** v3 新增）— 承接 plan-baomai-v1 ✅ finished（PR #76 崩拳 P0）+ plan-baomai-v2 ✅ active（全力一击双 skill + Exhausted + 完整 UI）。引入**爆脉物理**（worldview §五:402 过载撕裂 + §P ρ=0.65 异体排斥率最高）+ **破产狂战士定调**（不依赖外物，所有代价在自身肉体经脉，区别物资派/载体派）+ **经脉密集依赖**（手三阳全 + 任督，7 流派最密集，单条 SEVERED 影响 2-3 招）+ **化虚专属散功**（worldview §三:187 ×5 凡躯重铸 + §四:354 过载撕裂反向物理化身：烧 qi_max 50% 换 5s 内所有经脉 flow_rate ×10 过载不撕裂窗口；**不是 MMO 式免疫**，敌方攻击仍正常命中（伤害走 §P 矩阵），化虚体修是赌 5s 极限连击拼掉对方）+ **经脉龟裂尾迹**（永久身体记录"履历感"，inspect 他人可见）。**反制化虚 dugu 倒蚀第三路径**（与 tuike ③ 上古伪皮 / zhenmai ⑤ 绝脉断链并列）：化虚 baomai ⑤ 散功 = **烧池子换 5s 极限连击窗口**（永久 -50% qi_max，dugu 倒蚀永久标记仍生效）。前置依赖：plan-qi-physics-v1 + patch P0/P3（ρ=0.65 + W 矩阵）+ plan-meridian-severed-v1 🆕（经脉依赖强约束 + OverloadTear/BackfireOverload 来源）+ plan-baomai-v1/v2 复用。反向被依赖：plan-style-balance-v1 / plan-tribulation-v1（化虚散功触发绝壁劫）/ plan-multi-life-v1（qi_max -50% 跨周目处理）/ plan-narrative-political-v1。骨架 §5 五开放问题待 P0 决策门收口。**2026-05-06 修订**：用户拍 "免伤无物理逻辑"，撤销 "5s 全免疫" 改为 flow_rate ×10 过载不撕裂窗口。
-
-> - `plan-anqi-v2`（器修·暗器流功法**五招完整包**：单射狙击 / 多发齐射 / 凝魂注射 / 破甲注射 / **诱饵分形 化虚专属**）— 承接 plan-anqi-v1 ✅ finished（2026-05-04 commit；P0 单射狙击 + 异变兽骨单档载体 + hand-slot 已实装）。引入**6 档载体全开**（残骨 → 异变兽骨 → 灵木 → 凝实色染色骨 → 封灵匣骨 → 上古残骨）+ **物资派定调**（钱包代价换战场远射，区别于 baomai 体修血肉派 / dugu 脏真元派 / tuike 物理免疫一次性）+ **多容器**（hand-slot / 箭袋 12 槽 / 裤袋 4 槽 / 封灵匣 6 槽，入囊 ↔ 出囊磨损税 0%/5%/8%/0% — worldview §十一:1416 封灵匣不入箱使用 + library ecology-0004 磨损笔记）+ **凝魂注射 / 破甲注射 / 诱饵战术** 三类新功法（凝魂走 §六:480 凝实色匹配 ×1.3 / 破甲走 75-90% 防御穿透）+ **化虚专属诱饵分形**（worldview §P 真元浓度场扰动 + §三:187 化虚 ×5 凡躯：一根载体在化虚境真元场分裂为 30+ echo，每个 echo 都是真实 raycast 实体，可被范围伤害挡住任意一支；**不是 MMO 式分身无敌**，是真实 N 弹道，30 echo 全脱靶就浪费）+ **超载注射触发战后虚脱**（v1 Q44 留待问题落地：>30% qi_max 注射 → §四:354 过载撕裂反向）+ **熟练度生长二维划分**（境界=威力上限 / mastery=响应速率：准星 / 散射 / 蓄力 / echo 数 / 凝实色匹配阈值 五维生长）+ **专克体修 W=0.7 / 完全失效 vs 截脉 W=0.0**（worldview §P 矩阵：单点封存暗器 vs 截脉接触面音论高频反震完全克制）。前置依赖：plan-anqi-v1 ✅ + plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P3（ρ=0.30 + W 矩阵 + cone_dispersion / high_density_inject / armor_penetrate / density_echo / abrasion_loss 算子）+ plan-craft-v1 🟡（6 档载体 + 3 容器配方）+ plan-meridian-severed-v1 🆕（5 经脉依赖：手三阴之一 `Lung`/`Heart`/`Pericardium` ① · 心包经 `Pericardium` ② · 脾经 `Spleen` ③ · 大肠经 `LargeIntestine` ④ · 督脉 `Du` ⑤；2026-05-07 编造名修订）+ plan-tsy-loot-v1 ✅（载体素材掉率，v1 Q42 留待落地）。反向被依赖：plan-style-balance-v1 / plan-tribulation-v1（化虚 echo ≥30 触发天道注视，与 zhenmai-v2 / baomai-v3 化虚级同列）/ plan-narrative-political-v1（"一支骨刺裂出三十支" 江湖传闻）/ plan-yidao-v1（凝魂 / 破甲注射 = 暗器派 hard counter 医道补脉时段）/ plan-multi-life-v1（督脉 `Du` SEVERED 跨周目处理）。骨架 §7 七开放问题待 P0 决策门收口（化虚 echo 上限 90 vs 60 / 凝实色匹配阈值放宽 / 破甲载体碎裂概率 buff / 多容器切换暴露窗口 mastery 减免 / vs 替尸上古伪皮 echo 挡数 / vs 截脉局部中和单点高密度博弈 / 督脉跨周目继承）。
-
-> - `plan-zhenmai-v2`（截脉·震爆功法**五招完整包**：极限弹反 / 局部中和 / 多点反震 / 护脉 / **绝脉断链 化虚专属**）— 承接 plan-zhenmai-v1 ✅ finished（PR #122；P0 极限弹反已实装）。引入**音论物理**（worldview §P 定律 5 + cultivation-0002 §音论：单点 C_contact 高反震集中 / 多点 C 低分布广）+ **血肉派定调**（worldview §五:432-436 用 HP 经脉换 qi 免伤）+ **化虚专属绝脉断链**（worldview §四:319 主动 SEVERED 一条经脉，60s 内对选定攻击类型反震效率 ×3 + 自身受伤减半，K_drain 破例 0.5 → 1.5；**不是 MMO 式免疫**，受击仍正常命中但反震高效消耗攻方真元；4 类攻击 真元/物理载体/脏真元/阵法 选 1）+ 反噬阶梯含 SEVERED + **瞬时痕迹**（5-10s 散尽，区别于涡流紊流 5min / 毒蛊残留 30min / 替尸蜕落物 30min 的长期场）+ **熟练度生长二维划分（v2 通用机制首发）**：境界决定威力上限（K_drain / 反震点数 / 硬化抗性 / 中和兑换率）/ 熟练度决定响应速率（冷却 30→5s / 弹反窗口 100→250ms 跟 skill_lv 线性递变）。**反制化虚毒蛊师的关键路径之二**（与替尸 ③ 上古伪皮 + 体修 ⑤ 散功 三选一并列）：化虚截脉 ⑤ 选"脏真元类"反震 ×3 60s 烧身体（永久 SEVERED 一条经脉）vs 化虚替尸烧物资 vs 化虚体修烧池子。**专克器修 W=0.7 / 完全失效 vs 毒蛊 W=0.0**（worldview §P 矩阵）。前置依赖：plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P3（β=0.6 + W 矩阵 + SEVERED 写入 MeridianSystem）+ plan-cultivation-canonical-align-v1（经脉拓扑选择）+ plan-skill-v1（熟练度系统）。反向被依赖：plan-style-balance-v1 / plan-tribulation-v1（化虚断脉触发天道注视）/ plan-narrative-political-v1（化虚断脉求生江湖传闻）/ plan-multi-life-v1（SEVERED 跨周目不继承）。骨架 §5 七开放问题待 P0 决策门收口。**2026-05-06 修订**：用户拍 "免伤无物理逻辑"，撤销 "60s 选择性免疫" 改为 §P 音论 K_drain 破例反震 ×3（受击仍命中）。
-
-> **已转为独立骨架（2026-05-06）—— 经脉永久 SEVERED 通用底盘**：
-> - `plan-meridian-severed-v1`（经脉永久 SEVERED 通用底盘 + 招式依赖经脉强约束）— 源自 plan-zhenmai-v2 ⑤ 绝脉断链私有 component `MeridianSeveredVoluntary` 的提取需求 + 用户拍"SEVERED 应是通用受伤类型"。底盘机制：MeridianSeveredPermanent component（永久 + 跨 server restart 持久化 + 跨周目重置）+ MeridianSeveredEvent 通用 event（7 类来源：VoluntarySever / BackfireOverload / OverloadTear / CombatWound / TribulationFail / DuguDistortion / Other）+ Skill::dependencies 接口（招式注册声明依赖经脉）+ cast 前统一检查（任一依赖经脉 SEVERED → Reject + HUD 灰显 + tooltip）+ inspect 经脉图 SEVERED 黑色可视化。**§3 招式依赖经脉强约束（CLAUDE.md 风格规则）**：所有 SkillRegistry 注册必须 `.with_dependencies(meridian_ids)`，漏写 = 红旗。已锁定 7 流派粗粒度依赖清单（体修手三阳+任督 / 暗器手三阴 / 阵法任督+KI / 毒蛊足三阴+LU / 截脉 LU+LI / 替尸手三阴 / 涡流任督+HT），细粒度由各 v2 plan P0 决定。接经术主路径 = 医者 NPC 服务（plan-yidao-v1 🆕 实装），备选 PvE = 上古接经术残卷（plan-tsy-loot-v1）。**反向被依赖**：所有 v2 流派 plan（含已立 woliu/dugu/tuike/zhenmai 私有 SEVERED component 应迁出为通用）+ plan-yidao-v1 🆕 + plan-multi-life-v1（跨周目重置）+ plan-narrative-political-v1（化虚断脉江湖传闻）。骨架 §8 四开放问题待 P0 决策门收口。
-
-> **已转为独立骨架（2026-05-06 续）—— 阵法 v2 + 医道首立**：
-> **已转为独立骨架（2026-05-07）—— NPC 四 plan 套装**：
-> - `plan-npc-fixups-v2`（NPC 第二批正确性 bug fastlane，承接 v1 P3 sonnet Explore 异步探查输出）— 8 个 ECS lifecycle / state machine race / silent stuck / register panic 类 bug + 3 个未列待二次探查（→ P3 / 可能 v3）。**主题：ECS query 缺 Without<Despawned> filter + Action Executing 状态 silent continue 死锁 + Executing 无超时永久卡死**。**高 P0**：① `lingtian_pressure.rs:30` 多 zone 时 `plots.iter().next()` 选错地块（道伥召唤打错 zone）② `brain.rs:929-930` MeleeAttackAction Executing query miss 用 continue 而非 Failure（beast/disciple 战斗中击杀对手时永久冻僵）。**中 P1**：③ chase/flee Failure 时拿不到 navigator 不能 stop（NPC 鬼走抖动）④ `tsy_hostile.rs:351,354` JSON 加载 unwrap_or_else panic（CI 缺文件服务器崩溃）⑤ retire_action_system NpcRetireRequest 不幂等（commoner 双胞胎超配额）。**中 P2**：⑥ `tribulation.rs:95-111` npc_tribulation_auto_wave_tick 缺 Without<Despawned>（NPC 渡劫中被击杀偶发误升 realm）⑦ farming_brain 4 个 Action Executing 无超时（NPC 灵田卡死直到 server 重启）⑧ AscensionQuotaStore release 缺 Without<Despawned>（化虚名额 1 tick 泄漏）。**§3 强约束新立**：6 条 ECS lifecycle 卫生规则（query 必加 Without<Despawned> / Action Executing 必转 Failure / 必有 deadline 超时 / deferred commands 不可信用 Added<C> / register 不允许 panic / 多 zone 必按 zone filter）。前置依赖：plan-npc-fixups-v1 ⏳ + plan-npc-ai-v1 ✅。反向被依赖：plan-npc-perf-v1（baseline 前应已修 #1 #2 #6 #8）+ plan-npc-virtualize-v1（dormant hydrate-on-tribulation 前应修 #6 #8 quota race）+ plan-tribulation-v1 ✅（本 plan #6 #8 是其 ECS lifecycle 缺失补强）+ plan-lingtian-npc-v1 ✅（本 plan #1 是其多 zone 部署的隐式前提）。worldview / qi_physics 无锚点。骨架 §5 三开放问题待 P0 决策门收口（CI grep 脚本 / Action 超时 default 值粒度 / docs/CLAUDE.md §四 红旗升级与否）
-> - `plan-npc-fixups-v1`（NPC 系统三个独立正确性 bug 集中修复 fastlane plan）— 源自 plan-npc-perf-v1 5 路探查 + 主链路源码读取，三个 bug：① **重力 idle 失效**（navigator.rs:275 nav.is_idle() 直接 continue 跳过 snap_to_ground，所有 idle NPC 永远悬空在 spawn Y）② **A\* 路径返回空时永远 idle**（POI `pos_xyz` 的 Y 跟 worldgen heightmap 不对齐 → A\* 起点无 walkable block / chunk 没 load → ChunkLayer 任何 block 查询返回 None / goal 距离超 MAX_PATH_ITERS=400 节点上限；compute_path 返回空 Vec → navigator 永远 idle 但不挪）③ **MineSkin fallback 退化女巫 entity**（spawn.rs:963 fallback_rogue_commoner_kind 在 fallback skin 时返回 WITCH，MINESKIN_API_KEY 未配置时 100% rogue 退化为女巫，破坏修仙观感）。**每个 bug 独立 PR 不打包 + 配饱和化回归测试 pin 行为**（CLAUDE.md Testing 节）。**P3 阶段预留 sonnet Explore 异步探查输出的剩余 bug**（结果回来后评估纳入本 plan / 派生 v2 / 入 reminder）。前置依赖：plan-npc-ai-v1 ✅。反向被依赖：plan-npc-perf-v1（baseline 录档前应已修 #1 #2，否则"NPC 不动"污染性能基线）+ plan-npc-virtualize-v1（hydrate spawn ECS entity 后 NPC 必须直接落地，#1 是 hydrate 路径的隐式前提）。worldview / qi_physics 无锚点（纯 fix plan）。骨架 §5 三开放问题待 P0 决策门收口（WITCH match 分支保留 vs 删除 / 修法是否扩展全 archetype / warn log 是否升级 metric）
-> - `plan-npc-perf-v1`（NPC 系统性能恢复：spatial index + navigator A* 分桶 + per-NPC FixedUpdate 节流 + LOD gate 补漏）— 源自 100 rogue seed 让单核 WSL2 TPS 跌至 0.7 的实测（用户操作 drop/pickup/cmd/chat 全部延迟数秒），5 路 sonnet agent 探查输出 4 个真 O(N²) 热点（faction::assign_hostile_encounters / socialize_scorer / territory_intruder / relic::guardian_duty）+ navigator A* 风暴（共享 repath_countdown=20 同 tick 100 A*）+ 5+ 个 per-NPC tick lookup（qi_regen / patrol / blackboard / tribulation_ready / lifespan_aging）+ 1 个冗余 sync。Redis bridge 已洗清非瓶颈（独立 OS 线程 + crossbeam channel）。验收 = 100 NPC 18+ TPS 恢复 + scripts/start.sh 默认 100 + CI e2e green。前置依赖：plan-npc-ai-v1 ✅（NpcLodTier / 6 archetype Bundle / 13 Scorer 注册）+ plan-server.md ✅（Bevy 0.14 Update / FixedUpdate / Position↔Transform sync）+ plan-agent-v2.md ✅（NpcDigest 已实装）。反向被依赖：plan-npc-ai-v1 §3.3 1000 NPC stretch goal / plan-fauna-v1 / plan-lingtian-npc-v1 / 任何后续派系师承玩法 plan。骨架 §8 五开放问题待 P0 决策门收口（cell_size 16/32/64 / 是否泛型化 SpatialIndex / FixedUpdate 频率 5Hz vs 10Hz / navigator BUCKET_COUNT 10/20/30 / docs/CLAUDE.md §四 是否加「scorer 内 npcs.iter() 全扫」红旗）
-> - `plan-npc-virtualize-v1`（NPC 隐式更新框架**二态 MVP**：Hydrated ECS ↔ Dormant SoA + qi_physics 守恒推演 + dormant 全局批量 tick）— 派生自 plan-npc-perf-v1 5 路探查后用户提议「隐式更新框架」+ qi_physics 模块（constants/env/excretion/release/ledger/distance/collision/tiandao）已实装为底盘 API。引入**dormant 三大守恒律**（worldview §二 真元守恒物理化身）：① 所有 dormant cultivation.qi_current 写入必须有对应 `qi_physics::ledger::QiTransfer` 项 ② dormant 老死 / 渡劫失败必须 release 灵气回 zone ③ 多 dormant 同 zone 走 collision::repulsion ρ 矩阵 + **dormant 渡虚劫强制 hydrate**（叙事关键事件必须可见 + plan-tribulation 截胡依赖 ECS）+ **dormant NPC 间互动 v1 极简**（全权交天道 agent 推演）+ **Hysteresis 防抖** 64/256 不对称阈值 + **持久化** Redis HASH `bong:npc/dormant`。**v1 跳过 Drowsy 中间态留 v2**（reminder.md 已登记，触发派生条件：v1 P3 实测撕裂感强或 hydrate 开销 > 5ms/NPC）。验收 = 100 hydrated + 1000 dormant 5min 18+ TPS / 5000 dormant 1h in-game qi 守恒 e2e。worldview 锚点：§二 守恒律 + §三:124-187 NPC 与玩家平等不豁免 + §十一:947-970 散修江湖人来人往（5000+ NPC 是物理基础）+ §十二:1043 寿元代际 + §P 真元浓度场（distance 衰减 + collision 排斥）。qi_physics 锚点：ledger::QiTransfer / excretion::container_intake / release::release_to_zone / distance::attenuation / collision::repulsion / env::EnvField。前置依赖：plan-npc-ai-v1 ✅ + plan-npc-perf-v1 ⏳（hydrated 100 跑通是前提）+ plan-qi-physics-v1 P1 ✅ + plan-qi-physics-patch-v1 P0/P1/P2 ✅ + plan-agent-v2 ✅。反向被依赖：plan-npc-ai-v1 §3.3 1000 NPC stretch / plan-tribulation-v1 NPC 化虚名额 / plan-narrative-political-v1 5000+ NPC 叙事丰度 / plan-quest-v1 占位（dormant 派任务 hydrate-on-demand）/ plan-multi-life-v1（dormant 老死走 plan-death §4b）。骨架 §8 七开放问题待 P0 决策门收口（二态 vs 三态 / Hysteresis 阈值 / dormant tick 频率 in-game 60s / 视觉过渡 / 持久化路径 / dormant↔dormant 互动边界 / docs/CLAUDE.md §四 是否加「dormant 灵气未走 ledger」红旗）。**派生 plan-npc-virtualize-v2 占位**（Drowsy 三态扩展，见本 reminder 顶部 plan-npc-virtualize-v1 段）+ **plan-npc-virtualize-v3 占位**（dormant↔dormant 战争批量推演，决策门 #6 选 C 时启动）
-
-> - `plan-zhenfa-v2`（地师·阵法流**5 类阵补全包**：护龛 / 聚灵 / 欺天 / 幻阵 / **跨位面阵 化虚专属**）— 承接 plan-zhenfa-v1 ✅ finished（commit b82b02a0；P0/P1 诡雷 + 警戒场已实装，14 测试通过）。引入 v1 已搁置 3 类（Q14/Q15 拍板）+ 幻阵（4 大类隐蔽变体附属）+ **化虚专属跨位面阵**（worldview §三:187 + §十三 末法无传送：化虚阵法师真元投影到子位面，**不是物质传送**——仅信号传递；带宽随 mastery 0 单向 / 50 双向 / 100 多位面同步）+ **欺天阵物理推导**（worldview §八:614-618 气运劫持："凡人畏天命，我们伪天命"——向天道广播假劫期权重，**不是无敌护盾**，是真元场扰动天道感应器，被识破反噬 ×3；化虚级 0.2%/tick 识破，期望劫期 ×1.015 = 长期统计劫期不变小只是延后）+ **聚灵阵天道阈值落地**（v1 Q14 留待问题）+ **5 阵完整规格** + **熟练度生长二维划分**（境界=阵威 / mastery=布阵速度 / 朽坏延缓 / 逆逸散效率 / 跨位面带宽）+ **不走 hotbar**（v1 已正典化：阵法全部物品交互 packet）+ **坐标派 / 信息派定调**（与暗器单点 / 截脉接触面 / 毒蛊渗透 / 替尸钱包 / 体修肉体 / 涡流环境改造区分——阵法是"地形坐标 + 信号广播 + 长期场"）。前置依赖：plan-zhenfa-v1 ✅ + plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P3（ρ=0.40 + W 矩阵 + inverse_diffusion / cross_dimension_projection / density_amplifier / tiandao_signal_distort 算子）+ plan-craft-v1 🟡（5 阵预埋件 + 4 档阵旗）+ plan-meridian-severed-v1 🆕（4 经脉依赖：任脉 `Ren` ①②③⑤ · 督脉 `Du` ①②③⑤化虚级跨位面广播 · 肾经 `Kidney` ②④⑤ · 心经 `Heart` ③；2026-05-07 化虚通脉合并入督脉）+ plan-tsy-dimension-v1 ✅（化虚跨位面阵投射目标）+ plan-tribulation-v1（聚灵阵 / 欺天阵 / 跨位面阵天道注视累积）+ plan-social-v1 ✅（灵龛归属，护龛阵主人认证）。反向被依赖：plan-style-balance-v1 / plan-tribulation-v1 / plan-multi-life-v1 / plan-yidao-v1 🆕。骨架 §6 七开放问题待 P0 决策门收口（化虚跨位面 mastery 100 多位面同步过强 / 欺天识破概率动态 / 聚灵阵天道阈值实测调参 / 多聚灵阵叠加 / 幻阵被扫感知 / 跨位面阵跨周目 / 欺天嫁祸感知反制）。
-
-> **派生新流派 v1 立项（2026-05-06）—— 医道功法**：
-> - `plan-yidao-v1`（医道功法，**跟 7 战斗流派平行的支援流派**）— worldview §六:617 已锚定「医道 / 平和色 / 针灸通经络效率+ / 疗他人时排异成本-」。引入**支援流派身份认知**（PvP 中可被招募 / 雇佣 / 结契，区别于战斗流派"独行 / 对抗"模式："靠互相依赖活下去"）+ **医者 NPC 行为 AI**（big-brain Utility AI 节点 6 Scorer + 6 Action）+ **医患信誉度系统**（4 状态机 Stranger / Patient / Long-term / Bonded，结契仪式走灵龛见证 worldview §十一）+ **接经术统一接入**（plan-meridian-severed-v1 主路径，备选 PvE = 上古接经术残卷）+ **续命术物理推导**（worldview §十二:1043-1048 续命存在但有代价：medic +5 业力 / -10% qi_max / patient 50% 概率境界 -1 / -10% qi_max；**不是无限复活**——业障劫 ≥10 触发；续命窗口 30s + 必须有第二个医者）+ **5 招完整规格**（接经术 / 排异加速 / 急救 / 续命术 / 化虚群体接经）+ **化虚专属群体接经**（worldview §三:187 化虚 ×5 + §六:617 平和色物理化身：化虚医者真元封存场内 N 患者一次接经，N=18~45 跟 mastery，每患者 -2% qi_max + 0.1 业力；**不是 MMO 式 AOE 治疗**，是真实 N 个独立手术，业力 + qi_max 代价按 N 累加；化虚医道一次群体接经永久 -36% qi_max + 1.8 业力）+ **熟练度生长二维划分**（境界=治疗上限 / mastery=cast time / 排异效率 / 业力减免 / N 倍率）+ **平和色养成**（PracticeLog vector peace_dim 0-100，"治疗"action 累积；接经 +50 / 排异 +30 / 急救 +10 / 续命 +200 / 群体接经 +100×N）+ **专属物理边界 = 患者目标 + 真元守恒**（无对空 cast，所有招式 patient 必须 5 格内）+ **真元几乎无杀伤性**（worldview §六:617，医道 cast 不能直接攻击敌人，PvP 中信息战政治战）。前置依赖：plan-meridian-severed-v1 🆕（接经术目标）+ plan-alchemy-v1 ✅（续命丹）+ plan-social-v1 ✅（医者信誉度 + 灵龛见证）+ plan-multi-style-v1 ✅（平和色 PracticeLog）+ plan-npc-ai-v1 ✅（big-brain Utility AI 框架）+ plan-qi-physics-v1 P1 + plan-qi-physics-patch-v1 P0/P3（ρ=0.05 最低排斥率 + W 矩阵 + meridian_repair / contam_purge / emergency_stabilize / life_extend / mass_meridian_repair 算子）+ plan-tribulation-v1（业障劫触发 + 续命业力累积）。反向被依赖：plan-meridian-severed-v1 🆕（主接经术服务路径）+ plan-style-balance-v1 / plan-narrative-political-v1（医患关系 + 化虚医者业力江湖传闻）+ plan-multi-life-v1（跨周目业力 / 平和色继承）+ plan-anqi-v2 🆕（凝魂 / 破甲注射 hard counter 医道补脉时段）+ plan-yidao-v2 占位（亚流派扩展：毒手医 / 兽医 / 道伥医）。骨架 §7 九开放问题待 P0 决策门收口（化虚 N 上限 / 续命境界倒退概率 / 业障劫医道减免 / 医者拒绝治疗机制 / 结契仪式中断 / 跨周目继承 / 亚流派优先级 / 续命丹叠加 / 急救中断阈值）。
-
-> **v2 流派 plan 通用机制：熟练度生长二维划分**（2026-05-06 zhenmai-v2 首发）
-> - **境界 = 威力上限**（K_drain / 反震点数 / 硬化抗性 / 中和兑换率 / 紊流半径 / 自蕴乘数等"大小"维度）
-> - **熟练度 = 响应速率**（冷却 cooldown / 弹反窗口 window / cast time / cast 充能时间）
-> - 公式：`cooldown(lv) = base + (min - base) × clamp(lv/100, 0, 1)`，线性递减
-> - 哲学：worldview §五:537 流派由组合涌现 + §五:506 末土后招原则物理化身——醒灵苦修 lv 100 弹反窗口 250ms / 化虚老怪 lv 0 仅 100ms（练得多胜过境界高）
-> - **应回填的 v2 plan**（各自 P0 决策门统一处理）：plan-woliu-v2（瞬涡 5s / 涡口 8s / 涡引 30s 改为按熟练度）/ plan-dugu-v2（蚀针 3s / 侵染 8s 改）/ plan-tuike-v2（蜕一层 8s / 转移污染 30s 改）— 早立未含。**已含首发**：plan-zhenmai-v2（首发 v2 通用机制） / plan-baomai-v3 / plan-anqi-v2 / plan-zhenfa-v2 / plan-yidao-v1。**全 7 战斗流派 v2 + 医道支援 v1 已立完**（2026-05-06，待 qi-physics-v1 P1 ship 后逐 P0 决策门启动）
-> - 前置依赖：plan-skill-v1 ✅（SkillSet.skill_lv + SkillXpGain event 已实装）
-> - 各 plan P0 需决定：(a) 公式 vs plan-skill-v1 lv 映射区间；(b) 各自招式 base/min 值；(c) 是否需要派生 plan-skill-proficiency-v1 通用 plan 提取 cooldown/window curve helper
->
-> **依赖链关键路径（plan-economy / plan-style-balance / 等等都在等）**：
-> ```
-> plan-qi-physics-v1 P0 红线决议 → P1 算子 ship
->   → plan-qi-physics-patch-v1 P0/P1/P2/P3 逐 PR 迁移
->     → plan-economy-v1 / plan-style-balance-v1 / 其他 ~9 个 plan 解阻
-> ```
->
-> **同步动作（2026-05-05）**：
-> - `docs/CLAUDE.md §二 接入面 / §四 红旗` 各加 qi_physics 锚点条目，约束新 plan 不再自己拍真元常数
-> - `plan-economy-v1` §1.5 三选一裁决整体废弃；§0 持有=贬值补地点制约推导；§4 收口 2 条原悬而未决
-> - `plan-style-balance-v1` 现状对齐：7 流派 plan 全 finished（`docs/finished_plans/`）；P1 telemetry 已在 PR #129 顺手实装混元色维度，但 spec 5 维未对齐
->
-> **已核实可删除（2026-05-01）**：
-> - plan-tribulation-v1：预兆窗口 60s ✅（已在 plan §2.1 定义）；域崩阈值 spirit_qi<0.1 持续 1h ✅（已在 plan §4.1 定义）；欺天阵接口 → 已归 plan-zhenfa-v1 tracking
-> - plan-zhenfa-v1 两条开放问题 → 已在 active plan §10 tracking
-> - plan-lingtian-v1 两条 → 已在 active plan tracking
-> - plan-combat-no_ui 遗念 deathInsight → 已实装（`server/src/schema/death_insight.rs` / `combat/lifecycle.rs`）
-> - plan-alchemy-v1 测试 JSON 占位 → 仅提示注释，不需要 plan tracking
-> - plan-alchemy-v1 SVG 草图尺寸差异 → 仅草图，不影响实装
-> - 通用 "开放问题节 review pass" → meta-task，太宽泛；直接推进各 plan
-> - plan-tools-v1 采药工具系统 → ✅ 已完成（2026-04-29 立项，已有骨架）
+> **2026-05-07 清理记录**：
+> - `plan-tribulation-v1` Drowsy / `plan-npc-virtualize-v1` Drowsy 中间态 → 已拆为独立骨架 `plan-npc-virtualize-v2`
+> - `plan-npc-virtualize-v3` 占位 → 已拆为独立骨架
+> - `plan-yidao-v2` 占位 → 已拆为独立骨架
+> - 2026-04-27 / 2026-05-01 / 2026-05-05 / 2026-05-06 各批次"已转为独立骨架"记录 → 核实均存在（finished_plans 或 plans-skeleton），已清除
