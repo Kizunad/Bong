@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use session::{WoodSession, WoodSessionStore, MOVEMENT_BREAK_DISTANCE_SQ};
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, DiggingEvent, DiggingState, Entity,
-    Event, EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource,
-    Update, Username, With,
+    Event, EventReader, EventWriter, GameMode, IntoSystemConfigs, Position, Query, Res, ResMut,
+    Resource, Update, Username, With,
 };
 
 use crate::combat::events::CombatEvent;
@@ -104,11 +104,20 @@ fn start_spiritwood_sessions(
     positions: Query<&Position, With<Client>>,
     usernames: Query<&Username, With<Client>>,
     inventories: Query<&PlayerInventory, With<Client>>,
+    game_modes: Query<&GameMode, With<Client>>,
     harvested_logs: Res<SpiritWoodHarvestedLogs>,
 ) {
     let now_tick = gameplay_tick.map(|tick| tick.current_tick()).unwrap_or(0);
     for event in digs.read() {
         if event.state != DiggingState::Start {
+            continue;
+        }
+        // Creative 下默认 block_break 系统已立刻把 log 抹成 AIR，再开 MiningSession
+        // 等于在虚空里跑——白白产 ling_mu_gun 给 dev。Creative 不应得到掉落，跳过。
+        if matches!(
+            game_modes.get(event.client).copied().unwrap_or_default(),
+            GameMode::Creative
+        ) {
             continue;
         }
         if store.session_for(event.client).is_some() {
@@ -635,5 +644,41 @@ mod tests {
         ));
         assert!(!durability_tick_allowed_in_ling_xia(Some(&box_item)));
         assert!(durability_tick_allowed_in_ling_xia(None));
+    }
+
+    /// Creative 玩家发 Start 时 spiritwood 必须跳过 session 创建——默认 block_break
+    /// 已立刻把 log 抹成 AIR，再开 MiningSession 等于在虚空里跑出 ling_mu_gun 给 dev。
+    /// Vanilla Creative 不掉物，本系统也不该破例。
+    #[test]
+    fn creative_player_does_not_start_wood_session() {
+        use valence::prelude::{App, BlockPos, GameMode, Update};
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<DiggingEvent>();
+        app.insert_resource(WoodSessionStore::default());
+        app.insert_resource(SpiritWoodHarvestedLogs::default());
+        app.add_systems(Update, start_spiritwood_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Creative");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(GameMode::Creative);
+
+        app.world_mut().send_event(DiggingEvent {
+            client: player,
+            position: BlockPos::new(8, 80, 8),
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Start,
+        });
+
+        app.update();
+
+        let store = app.world().resource::<WoodSessionStore>();
+        assert!(
+            store.session_for(player).is_none(),
+            "Creative Start must not create a WoodSession (would yield ling_mu_gun for free)"
+        );
     }
 }
