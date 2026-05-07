@@ -26,10 +26,9 @@ pub fn spawn_daoshen_on_pressure_high(
         if !matches!(e.level, PressureLevel::High) {
             continue;
         }
-        // 当前简化：取第一个 plot 作为道伥围殴目标（plot ↔ zone 1:1 假设）
-        let Some(target_plot) = plots.iter().next() else {
+        let Some(target_plot) = plots.iter().find(|p| p.zone == e.zone) else {
             tracing::warn!(
-                "[bong][npc][daoshen] zone `{}` HIGH triggered but no LingtianPlot found",
+                "[bong][npc][daoshen] zone `{}` HIGH triggered but no LingtianPlot found for that zone",
                 e.zone
             );
             continue;
@@ -63,4 +62,132 @@ pub fn spawn_daoshen_on_pressure_high(
 
 pub fn register(app: &mut App) {
     app.add_systems(Update, spawn_daoshen_on_pressure_high.chain());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lingtian::pressure::PressureLevel;
+    use crate::lingtian::LingtianPlot;
+    use crate::npc::spawn::NpcMarker;
+    use valence::prelude::{App, BlockPos, Update};
+
+    fn make_app() -> App {
+        let mut app = App::new();
+        app.add_event::<ZonePressureCrossed>();
+        app.add_systems(Update, spawn_daoshen_on_pressure_high);
+        app
+    }
+
+    #[test]
+    fn multi_zone_picks_correct_plot() {
+        let mut app = make_app();
+        let layer = app
+            .world_mut()
+            .spawn(crate::world::dimension::OverworldLayer)
+            .id();
+        app.world_mut().spawn(
+            LingtianPlot::new(BlockPos::new(100, 64, 100), None).with_zone("zone_a"),
+        );
+        app.world_mut().spawn(
+            LingtianPlot::new(BlockPos::new(900, 64, 900), None).with_zone("zone_b"),
+        );
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: "zone_b".to_string(),
+            level: PressureLevel::High,
+            raw_pressure: 1.0,
+        });
+        app.update();
+
+        let mut positions = Vec::new();
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<&valence::prelude::Position, With<NpcMarker>>();
+        for pos in query.iter(world) {
+            positions.push(pos.get());
+        }
+        assert!(
+            !positions.is_empty(),
+            "should have spawned daoshen for zone_b"
+        );
+        for pos in &positions {
+            assert!(
+                (pos.x - 900.0).abs() < 5.0,
+                "daoshen should spawn near zone_b plot (x=900), got x={}",
+                pos.x,
+            );
+        }
+        let _ = layer;
+    }
+
+    #[test]
+    fn single_zone_works_unchanged() {
+        let mut app = make_app();
+        app.world_mut()
+            .spawn(crate::world::dimension::OverworldLayer);
+        app.world_mut().spawn(
+            LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"),
+        );
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: "spawn".to_string(),
+            level: PressureLevel::High,
+            raw_pressure: 1.0,
+        });
+        app.update();
+
+        let count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(count, 9, "should spawn 3×3=9 daoshen for single zone");
+    }
+
+    #[test]
+    fn event_zone_no_match_warns_and_skips() {
+        let mut app = make_app();
+        app.world_mut()
+            .spawn(crate::world::dimension::OverworldLayer);
+        app.world_mut().spawn(
+            LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("other"),
+        );
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: "nonexistent".to_string(),
+            level: PressureLevel::High,
+            raw_pressure: 1.0,
+        });
+        app.update();
+
+        let count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            count, 0,
+            "no daoshen should spawn when zone doesn't match any plot"
+        );
+    }
+
+    #[test]
+    fn low_pressure_does_not_trigger() {
+        let mut app = make_app();
+        app.world_mut()
+            .spawn(crate::world::dimension::OverworldLayer);
+        app.world_mut().spawn(
+            LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"),
+        );
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: "spawn".to_string(),
+            level: PressureLevel::Low,
+            raw_pressure: 0.2,
+        });
+        app.update();
+
+        let count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(count, 0, "low pressure should not trigger daoshen spawn");
+    }
 }

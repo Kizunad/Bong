@@ -772,6 +772,7 @@ mod tests {
 
         let ripe = LingtianPlot {
             pos: BlockPos::new(1, 64, 1),
+            zone: String::new(),
             owner: Some(Entity::from_raw(7)),
             crop: Some(crate::lingtian::plot::CropInstance {
                 kind: "ci_she_hao".to_string(),

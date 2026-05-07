@@ -16,6 +16,7 @@ use crate::botany::PlantId;
 #[derive(Debug, Clone, Component)]
 pub struct LingtianPlot {
     pub pos: BlockPos,
+    pub zone: String,
     pub owner: Option<Entity>,
     pub crop: Option<CropInstance>,
     pub plot_qi: f32,
@@ -41,6 +42,7 @@ impl LingtianPlot {
     pub fn new(pos: BlockPos, owner: Option<Entity>) -> Self {
         Self {
             pos,
+            zone: String::new(),
             owner,
             crop: None,
             plot_qi: 0.0,
@@ -49,6 +51,11 @@ impl LingtianPlot {
             last_replenish_at: 0,
             dye_contamination: 0.0,
         }
+    }
+
+    pub fn with_zone(mut self, zone: impl Into<String>) -> Self {
+        self.zone = zone.into();
+        self
     }
 
     pub fn is_empty(&self) -> bool {

@@ -765,6 +765,25 @@ pub fn release_lingtian_plot_owner_on_npc_death(
     }
 }
 
+pub fn auto_set_plot_zone(
+    mut plots: Query<&mut LingtianPlot, bevy_ecs::query::Added<LingtianPlot>>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+) {
+    let Some(zr) = zone_registry.as_deref() else {
+        return;
+    };
+    for mut plot in &mut plots {
+        if plot.zone.is_empty() {
+            let pos = DVec3::new(plot.pos.x as f64, plot.pos.y as f64, plot.pos.z as f64);
+            if let Some(zone) =
+                zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
+            {
+                plot.zone = zone.name.clone();
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_planting_completion(
     actor: Entity,
