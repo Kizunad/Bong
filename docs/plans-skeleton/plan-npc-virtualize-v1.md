@@ -59,7 +59,7 @@ NPC 隐式更新框架 **二态 MVP** —— 把"远方 NPC"完全移出 ECS 改
   - **`dormant_global_tick_system`**（FixedUpdate 自定义频率：每 in-game 60s 跑一次，对所有 dormant NPC 推演移动 / 灵气 / 寿元 / 突破）
   - **`DormantBehaviorIntent` enum**（每 dormant NPC 当前意图：Wander / PatrolToward(BlockPos) / FleeFrom(BlockPos)）
   - 复用 `bong:npc/death`（dormant 老死同通道）
-  - 扩展 `bong:npc/spawn` 标注 `from_dormant: bool`（hydrate 复活）
+  - **schema 版本化** 路径：扩展 `bong:npc/spawn` 加 `from_dormant: bool` 必须走 schema v2（`agent/packages/schema/samples/spawn_v2.json`），V1 path 保持不变（无字段，不破契约）。hydrate 复活时 server 按 schema 版本协商发布。**P0 决策门**：(a) 拆独立 channel `bong:npc/hydrate_spawn`（更干净）vs (b) 复用 `bong:npc/spawn` v2 schema（按 plan-ipc-schema-v1 版本协议），二选一收口。**禁止直接加字段 break V1 schema**——前文「agent: 无 schema 变化」是指 NpcDigest 通道，spawn 通道走版本化扩展
 - **共享类型 / event**：
   - 复用 `NpcArchetype` / `Cultivation` / `Lifespan` / `FactionMembership` / `Lineage` / `Reputation`（不另造 dormant 专属）
   - 复用 `NpcDigest` 给天道 agent 推演（dormant NPC 直接出 NpcDigest）
@@ -245,25 +245,40 @@ pub fn dormant_global_tick(
 ### 4.2 灵气消耗（**走 qi_physics**）
 
 ```rust
-for snapshot in store.snapshots.values_mut() {
-    let zone = zones.find(&snapshot.position);
-    if zone.is_none() { continue; } // 远 zone 中心 > 64 格不可吸收
+// 必须按 char_id 排序后 sequential（§3 强约束 #4：worldview §P 压强法则的
+// dormant 化身——前面 NPC 拿走部分 → 后面 NPC 输入更小 zone_qi 自然衰减；
+// HashMap.values_mut() 顺序不保证 → 跨 tick 不稳定 + 测试 flake）
+let sorted_ids: Vec<CharId> = {
+    let mut ids: Vec<_> = store.snapshots.keys().cloned().collect();
+    ids.sort();
+    ids
+};
+for char_id in sorted_ids {
+    let snapshot = store.snapshots.get_mut(&char_id).expect("char_id from sorted_ids");
+    let Some(zone_ref) = zones.find_mut(&snapshot.position) else {
+        continue; // 远 zone 中心 > 64 格不可吸收
+    };
 
-    let intake = qi_physics::excretion::container_intake(
-        &snapshot.cultivation,
-        zone.unwrap(),
-        Duration::from_secs(60), // in-game 60s
+    // P0 实装时按 regen_from_zone(zone_qi, rate, integrity, room) -> (gain, drain) 实际签名
+    let room = (snapshot.cultivation.qi_max - snapshot.cultivation.qi_current).max(0.0);
+    let (gain, drain) = qi_physics::regen_from_zone(
+        zone_ref.spirit_qi,
+        snapshot.cultivation.regen_rate(),
+        snapshot.meridian_system.integrity(),
+        room,
     );
-    if intake > 0.0 {
-        // emit ledger 转移
-        ledger.emit(QiTransfer {
-            from: QiSource::Zone(zone.unwrap().id),
-            to: QiSource::Npc(snapshot.char_id),
-            amount: intake,
-        });
-        snapshot.cultivation.qi_current += intake;
-        snapshot.qi_ledger_net += intake;
-        zone.spirit_qi -= intake; // ledger 同步扣减
+    if gain > 0.0 {
+        // emit ledger 转移（QiTransfer::new(from, to, amount, reason) 真实签名 → Result）
+        let transfer = QiTransfer::new(
+            QiAccountId::Zone(zone_ref.id),
+            QiAccountId::Npc(snapshot.char_id),
+            gain,
+            QiTransferReason::CultivationRegen,
+        )?;
+        ledger.record(transfer);
+        snapshot.cultivation.qi_current += gain;
+        snapshot.qi_ledger_net += gain;
+        zone_ref.spirit_qi -= drain; // regen_from_zone 已 cap drain 到 zone_qi
     }
 }
 ```
