@@ -13,7 +13,7 @@
 - `plan-qi-physics-patch-v1` P0/P3 → 7 流派 ρ/W/β 矩阵（暗器 ρ=0.30 / W vs 4 攻 [0.4, 0.5, 0.3, 0.7]）+ overload-tear 算子（凝魂注射 >30% qi_max 触发）+ density-echo 算子（化虚诱饵分形 echo 数公式）
 - `plan-skill-v1` ✅ + `plan-hotbar-modify-v1` ✅ + `plan-multi-style-v1` ✅
 - `plan-craft-v1` 🟡 → AnqiCarrier 类目（6 档载体 + 3 容器配方）—— v2 P0 必须先用此底盘
-- `plan-meridian-severed-v1` 🆕 active → 暗器流派依赖经脉清单（手三阴脉 / 中冲脉 / 精微脉 / 阳明脉 / 化虚通脉）+ SEVERED 招式失效路径
+- `plan-meridian-severed-v1` 🆕 active → 暗器流派依赖经脉清单（手三阴之一 / 心包经 Pericardium / 脾经 Spleen / 大肠经 LargeIntestine / 督脉 Du）+ SEVERED 招式失效路径
 - `plan-color-v1`：**已被替代**（plan-anqi-v1 vN+1 留待 Q41 已注），染色系统归到 `cultivation::QiColor` 自身扩展 —— v2 凝魂注射的 "凝实色匹配" 直接读 `Cultivation.qi_color`
 - `plan-input-binding-v1` ✅ + `plan-HUD-v1` ✅
 - `plan-cultivation-canonical-align-v1` ✅ → Realm + 经脉拓扑选择
@@ -100,6 +100,14 @@
   - 5 招各自有 `mastery: u8` 字段（0-100），cast 一次 +0.5（mastery <50）/ +0.2（50-80）/ +0.05（80-100），上限 100
   - 数值表见 §1 各招规格
 
+- [ ] **通用 cast 触发模型（接 plan-hotbar-modify-v1 ✅ + `combat::Casting` 标准路径）**：5 招全部走"InspectScreen (I) 拖到 1-9 SkillBar 槽 → 战斗时按数字键 cast"统一路径，**不走右键左键鼠标键位**。
+  - **触发**：按数字键 → server 创建 `Casting { duration_ticks, start_position }` component → cast bar 显示进度
+  - **释放方向**：cast 完成瞬间读取玩家 look 作为弹道方向（不是 cast 开始时锁定）—— mastery 高时 HUD 准星收紧动画反馈"瞄得稳"，物理上方向仍以释放瞬间为准
+  - **中断**：移动超 `Casting.start_position` 阈值 / 受击伤害超阈值 → server 移除 `Casting` 组件，载体不消耗、冷却走中断短冷却（plan-hotbar-modify-v1 §3.3）
+  - **载体消耗**：cast 完成时按 `bound_instance_id` 扣 hand-slot 持骨 / 容器活跃槽载体；中断 → 不扣
+  - **持骨前置**：① ② ③ ④ ⑤ cast 前 server 端校验 hand-slot 是否持有匹配档位载体（无载体 → cast 失败 + HUD 红字提示），不需玩家手动"持骨 → 瞄准"两步
+  - 各招"操作"段只写**差异**（duration / HUD 反馈 / release 是 raycast 还是多弹道），通用部分不重复
+
 ---
 
 ## §1 五招完整规格
@@ -117,14 +125,14 @@
 - 醒灵 + 档 1 残骨：5-12（30 格脱靶）
 - 化虚 + 档 6 上古残骨：80-180（150 格保留 90%）
 
-**操作**：v1 已实装，hand-slot 持骨 → 右键瞄准准星 → 左键释放 → 飞行衰减 → 命中注射
+**操作**（差异）：cast time 短（瞬发型，duration 0.3s → 0.1s 跟 mastery）→ cast 完成单弹道 raycast → 飞行衰减 → 命中注射；HUD 准星收紧动画跟 mastery 缩紧速度。v1 已实装的 hand-slot 持骨在 cast 前 server 端自动校验
 
 **mastery 生长**：
 - 准星收紧速度 +50%（mastery 0→100）
 - 飞行轨迹扰动幅度 -50%（直线度提升）
 - 命中暴击概率 0% → 15%（mastery 100）
 
-**经脉依赖**（接 plan-meridian-severed-v1）：手三阴脉之一（封元基础），SEVERED → ① 失效
+**经脉依赖**（接 plan-meridian-severed-v1）：手三阴之一 `Lung` / `Heart` / `Pericardium`（worldview §593 手三阴偏气、利远程；封元基础），SEVERED 任一 → ① 失效
 
 **测试饱和**：保留 v1 已写测试 + 添加 mastery 增长 / 暴击 5 单测
 
@@ -143,7 +151,7 @@
 - 单弹道：3-7（档 3 灵木箭半凝色 ρ=0.5）
 - 暴击 / 命中数随 mastery：mastery 0 命中 1-2 / mastery 100 命中 3-5
 
-**操作**：右键蓄力 1.5s（HUD 显示扇形预览） → 左键齐射 → 5 弹道独立 raycast
+**操作**（差异）：duration 1.5s → 0.6s（mastery 0→100）；cast 期间 HUD 显示扇形预览（散射角度收敛动画跟 mastery）+ 准星收紧；cast 完成自动 release 5 弹道独立 raycast（释放瞬间 look 决定中心方向）
 
 **mastery 生长**：
 - 散射角度 60° → 30°（更聚拢，命中率↑）
@@ -151,7 +159,7 @@
 - 蓄力时间 1.5s → 0.6s
 - 命中数上限 +1（顶 5）
 
-**经脉依赖**：中冲脉（多源同步控制），SEVERED → ② 失效
+**经脉依赖**：手厥阴心包经 `Pericardium`（worldview §593 手三阴之一，统血协调多源同步——5 弹道齐发需要心包经统协气血输出），SEVERED → ② 失效
 
 **测试饱和**：cone_dispersion 算子 5 单测（角度 / 距离 / 命中数）+ 5 弹道独立 raycast 5 单测 + mastery 增长 5 单测
 
@@ -172,7 +180,7 @@
 - 凝实色匹配（攻方 `Cultivation.qi_color` ≈ 载体 `qi_color`）→ 伤害 ×1.3
 - 不匹配 → 伤害 ×0.6
 
-**操作**：右键长按 1.0s（凝魂封存 HUD 圈缩小） → 准星瞄准 → 左键释放
+**操作**（差异）：duration 1.0s → 0.4s（mastery 0→100）；cast 期间 HUD 凝魂封存圈缩小动画（凝实色光晕逐步聚拢） + 准星收紧；cast 完成单弹道 raycast 注射高密度真元
 
 **mastery 生长**：
 - 凝魂封存时间 1.0s → 0.4s
@@ -180,7 +188,7 @@
 - 注射 wound 增益 1.5 → 1.8
 - 战后虚脱减免：>30% qi_max 注射，mastery 100 时虚脱 ticks 砍半
 
-**经脉依赖**：精微脉（高密度真元控制），SEVERED → ③ 失效
+**经脉依赖**：足太阴脾经 `Spleen`（worldview §595 足三阴偏韧；中医"水谷精微"由脾运化，凝实色高密度封存依赖脾经精微输布），SEVERED → ③ 失效
 
 **测试饱和**：high_density_inject 算子 5 单测（density 阈值 / wound 公式 / contam 转化）+ 凝实色匹配 / 不匹配 5 单测 + 战后虚脱触发 / 减免 3 单测
 
@@ -200,7 +208,7 @@
 - 载体即时碎裂（mastery 0：50% / mastery 100：15%）→ 真元浪费但伤害仍命中
 - 化虚级 + 档 5 封灵匣骨：穿透 90% 防御 + base × 2.5
 
-**操作**：右键蓄力 2.0s（HUD 显示载体共振警告） → 左键释放（如载体碎裂飞溅特效）
+**操作**（差异）：duration 2.0s → 0.8s（mastery 0→100）；cast 期间 HUD 显示载体共振警告（裂纹动画 + 准星红色震动）；cast 完成单弹道 raycast，载体即时碎裂 50%→15%（mastery）→ 飞溅特效；mastery 100 受击中断阈值放宽（允许受 10+ 真元损伤仍持续 cast）
 
 **mastery 生长**：
 - 蓄力时间 2.0s → 0.8s
@@ -208,7 +216,7 @@
 - 穿透防御 75% → 90%（仅 mastery 100 + 化虚级）
 - 蓄力中断条件放宽（mastery 100 允许受 10+ 真元损伤仍蓄力）
 
-**经脉依赖**：阳明脉（高功率推送），SEVERED → ④ 失效
+**经脉依赖**：手阳明大肠经 `LargeIntestine`（worldview §594 手三阳偏力、利近战爆发；超功率封存推送依赖大肠经的"力"属性），SEVERED → ④ 失效
 
 **测试饱和**：armor_penetrate 算子 5 单测（穿透防御 / 化虚级特殊路径）+ 载体碎裂概率 / 概率分布 5 单测 + 蓄力中断 5 单测
 
@@ -230,7 +238,7 @@
 
 **物理推导**：见 §0 化虚级诱饵分形段，echo 数 = floor(local_qi_density / threshold)
 
-**操作**：右键蓄力 3.0s（HUD 显示分形场预热）→ 左键释放（30+ 弹道扇形飞出）
+**操作**（差异）：duration 3.0s → 1.2s（mastery 0→100）；cast 期间 HUD 显示分形场预热动画（化虚境真元浓度场涟漪 ripple + echo 数预测计数从 0 累加 + 准星收紧）；cast 完成 release 30+ 弹道扇形飞出（释放瞬间 look 决定中心方向，每 echo 独立 raycast）
 
 **mastery 生长**：
 - 分形场阈值 0.3 → 0.1（mastery 100 echo 数 ×3）
@@ -238,7 +246,7 @@
 - 蓄力时间 3.0s → 1.2s
 - echo 飞行扰动幅度 ±15° → ±5°（更聚拢）
 
-**经脉依赖**：化虚通脉（化虚专属真元感应器官），SEVERED → ⑤ 失效（化虚通脉 SEVERED = 跨周目永久残废）
+**经脉依赖**：督脉 `Du`（worldview §597 任督=统御，化虚境奇经全通后激活的"阳脉之海"，作为化虚 echo 分形的真元感应+广播枢纽——worldview §201 "化虚后 20 经脉全开"明示无第 21 条特殊脉，化虚专属能力归到督脉），SEVERED → ⑤ 失效（督脉 SEVERED = 化虚境退化为通灵级，跨周目永久残废）
 
 **反 MMO 红线**：每个 echo 是真实碰撞实体，**不是无敌分身**：
 - 涡流涡心紊流场覆盖区可挡 echo
@@ -256,13 +264,13 @@
 
 暗器流派依赖经脉清单：
 
-| 经脉 | 招式依赖 | SEVERED 来源 | SEVERED 后果 |
+| 经脉（代码 enum） | 招式依赖 | SEVERED 来源 | SEVERED 后果 |
 |---|---|---|---|
-| 手三阴脉之一 | ① 单射狙击 | CombatWound（贴脸近战）/ DuguDistortion / Other | 暗器流派几乎全废 |
-| 中冲脉 | ② 多发齐射 | OverloadTear（多源同步过载）/ CombatWound | 仅剩单发能力 |
-| 精微脉 | ③ 凝魂注射 | OverloadTear（>30% 注射触发）/ DuguDistortion / TribulationFail | 凝实色匹配机制失效 |
-| 阳明脉 | ④ 破甲注射 | OverloadTear（>40% 注射）/ CombatWound | 穿甲能力丧失 |
-| 化虚通脉 | ⑤ 诱饵分形 | TribulationFail（化虚雷劫炸）/ DuguDistortion / VoluntarySever | 化虚境暗器师退化为通灵级 |
+| 手三阴之一 `Lung` / `Heart` / `Pericardium` | ① 单射狙击 | CombatWound（贴脸近战）/ DuguDistortion / Other | 三条全断 → 暗器流派几乎全废；断一条 → 单射衰减 |
+| 手厥阴心包经 `Pericardium` | ② 多发齐射 | OverloadTear（多源同步过载）/ CombatWound | ② 失效（仅剩单发）；玩家未通 `Pericardium` 也无法 cast ② |
+| 足太阴脾经 `Spleen` | ③ 凝魂注射 | OverloadTear（>30% 注射触发）/ DuguDistortion / TribulationFail | 凝实色匹配机制失效 |
+| 手阳明大肠经 `LargeIntestine` | ④ 破甲注射 | OverloadTear（>40% 注射）/ CombatWound | 穿甲能力丧失 |
+| 督脉 `Du` | ⑤ 诱饵分形 | TribulationFail（化虚雷劫炸）/ DuguDistortion / VoluntarySever | 化虚境暗器师退化为通灵级（跨周目永久残废） |
 
 **v2 实装**：在 plan-meridian-severed-v1 的 7 流派经脉依赖表中追加暗器条目；P3 阶段交付。
 
@@ -330,6 +338,20 @@ HUD 组件（plan-HUD-v1 接入）：
 - **诱饵 marker**：诱饵布设位置 ground marker（v2 P2 ④ 破甲注射相关）
 - **echo 计数**：化虚分形释放时显示当前 echo 数 + 命中数实时累积
 - **磨损 tooltip**：hover 容器栏时显示入 / 出囊预计 qi 损失
+- **准星收紧动画**：cast 期间准星跟 mastery 缩紧速度（mastery 0 缓慢 / mastery 100 极快），cast 完成准星收最紧 → 释放瞬间读 look 决定弹道方向
+
+**Dev 测试指令（client side，跟 `BongVfxCommand` / `BongAnimCommand` / `BongSpawnParticleCommand` 同模式）**：
+
+新增 `client/src/main/java/com/bong/client/debug/BongHudCommand.java` —— 注册 `ClientCommandManager` `/bonghud <subcommand>`，独立测试 HUD 动画**不依赖真实 cast 流程**：
+
+- `/bonghud aim_enclose <progress 0.0-1.0> [duration_ms]` —— 模拟准星收紧到指定进度（progress 1.0 = 收最紧；duration_ms 缺省 1000）
+- `/bonghud aim_enclose mastery <0-100>` —— 用 mastery 反推收紧速度跑一次完整动画
+- `/bonghud charge_ring <progress 0.0-1.0> [duration_ms]` —— 模拟蓄力进度环（凝魂条 / 破甲共振 / 分形场预热复用）
+- `/bonghud echo_count <n>` —— 模拟化虚分形 echo 计数 HUD（n=30 / 60 / 90）
+- `/bonghud abrasion_tooltip <container> <qi_payload>` —— 模拟磨损 tooltip 显示
+- `/bonghud clear` —— 清掉所有 dev 触发的 HUD 模拟态
+
+不发任何 server payload，纯 client side 渲染，便于美术 / dev 迭代 HUD 动画曲线（Bezier 缓动 / 弹性回弹 / linear 等）独立调参。
 
 **v2 实装**：P4 阶段交付。
 
@@ -381,8 +403,9 @@ HUD 组件（plan-HUD-v1 接入）：
 - [ ] 5 招动画（②③④⑤ 新动画 + ① 优化）
 - [ ] 4 粒子（齐射扇形 / 凝魂光团 / 破甲冲波 / 分形 ripple）
 - [ ] 5 音效 recipe
-- [ ] 6 HUD 组件（载体格栅 / 容器栏 / 凝魂条 / 诱饵 marker / echo 计数 / 磨损 tooltip）
-- [ ] 测试：客户端 client/test 5 招视觉回归 + HUD 集成测试
+- [ ] 7 HUD 组件（载体格栅 / 容器栏 / 凝魂条 / 诱饵 marker / echo 计数 / 磨损 tooltip / 准星收紧动画）
+- [ ] `BongHudCommand` 客户端 dev 命令（`/bonghud aim_enclose | charge_ring | echo_count | abrasion_tooltip | clear`，跟 `BongVfxCommand` 同模式，独立测试 HUD 动画）
+- [ ] 测试：客户端 client/test 5 招视觉回归 + HUD 集成测试 + `/bonghud` 各子命令 dev smoke 测试
 
 ### P5 — v2 收口（饱和测试 + agent narration + e2e 联调）（2-3 周）
 
@@ -403,10 +426,11 @@ HUD 组件（plan-HUD-v1 接入）：
 - [ ] **Q4** 多容器战斗中切换暴露窗口 0.5s：是否给 mastery 减免 → P2 拍板
 - [ ] **Q5** 诱饵分形与替尸三档伪皮的交互：上古伪皮（plan-tuike-v2）能挡 30 echo 吗？还是只挡 1 个 → P3 拍板（与 tuike-v2 联动）
 - [ ] **Q6** 凝魂注射 vs 截脉局部中和（plan-zhenmai-v2 ②）：单点高密度注射在血肉派接触面分布前会被中和多少？→ P1 拍板（与 zhenmai-v2 联动）
-- [ ] **Q7** 化虚级跨周目（plan-multi-life-v1）：化虚通脉 SEVERED 是否跨周目继承？→ P3 与 multi-life 联动
+- [ ] **Q7** 化虚级跨周目（plan-multi-life-v1）：督脉 `Du` SEVERED 是否跨周目继承？→ P3 与 multi-life 联动
 
 ---
 
 ## §8 进度日志
 
 - 2026-05-06：骨架创建。承接 plan-anqi-v1 ✅ finished（PR + commit 2026-05-04）。v2 范围明确：6 档载体 + 多发齐射 + 凝魂 / 破甲注射 + 化虚诱饵分形 + 多容器 + 磨损税 + 经脉依赖 + 熟练度生长。化虚专属诱饵分形走 worldview §P 真元浓度场扰动物理推导（**不是无敌分身**，30 echo 真实碰撞可被范围伤害挡住）。物资派定调（钱包代价换战场远射），与体修血肉派 / 毒蛊脏真元 / 替尸物理免疫一次性区分。
+- 2026-05-07：经脉依赖正名。原"中冲脉 / 精微脉 / 阳明脉 / 化虚通脉"四条编造名核查后**全部不在 `MeridianId` enum 标准 20 条经脉里**（`server/src/cultivation/components.rs:49-72` = 12 正经 + 8 奇经）。修订映射：② 中冲脉→`Pericardium`（中冲是心包经井穴非脉）/ ③ 精微脉→`Spleen`（水谷精微由脾运化）/ ④ 阳明脉→`LargeIntestine`（手三阳偏力）/ ⑤ 化虚通脉→`Du`（worldview §201 "化虚后 20 经脉全开"明示无第 21 条特殊脉，§597 任督=统御 → 化虚专属能力归督脉）。① 单射狙击的"手三阴之一"为 worldview §593 原话，保留。

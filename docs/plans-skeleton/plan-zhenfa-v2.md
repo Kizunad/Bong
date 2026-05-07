@@ -256,13 +256,13 @@
 
 **朽坏期**：12h - 24h（载体载体材质决定，跟 anqi-v2 6 档载体共享 carrier_grade）
 
-**经脉依赖**：化虚通脉（化虚专属真元感应器官，跟 anqi-v2 化虚级同源），SEVERED → ⑤ 失效（化虚通脉 SEVERED = 跨周目永久残废）
+**经脉依赖**：督脉 `Du`（worldview §201 "化虚后 20 经脉全开"明示无第 21 条特殊脉，§597 任督=统御；督脉是化虚境扩展信号广播带宽到跨位面的载体——跟 anqi-v2 ⑤ / yidao-v1 ⑤ 化虚级同源，督脉同时承担 ①②③ 阵眼广播与 ⑤ 跨位面投射），SEVERED → ⑤ 失效（同时 ①②③ 信号广播功能受损；跨周目永久残废）
 
 **触发天道注视**（接 plan-tribulation-v1）：跨位面投射 +tribulation_weight × 2.0（化虚级最重的注视累积）
 
 **反 MMO 红线**：跨位面阵眼**不传送物质**（worldview §十三）—— 仅信号投射，不允许物质 / 玩家 / 物品跨位面移动
 
-**测试饱和**：跨位面阵 32 单测（信号衰减 / mastery 带宽 / 多位面同步 / 主阵眼朽坏连锁 / 化虚通脉依赖 / 天道注视触发）
+**测试饱和**：跨位面阵 32 单测（信号衰减 / mastery 带宽 / 多位面同步 / 主阵眼朽坏连锁 / 督脉 `Du` 依赖 / 天道注视触发）
 
 ---
 
@@ -272,11 +272,10 @@
 
 | 经脉 | 阵依赖 | SEVERED 来源 | SEVERED 后果 |
 |---|---|---|---|
-| 任脉 | ①②③⑤ 阵眼维持 | OverloadTear（聚灵阵超浓度过载）/ TribulationFail / DuguDistortion | 阵法流派几乎全废 |
-| 督脉 | ①②③ 真元广播 | OverloadTear / TribulationFail | 信号广播能力丧失 |
-| KI 足少阴肾经 | ②④⑤ 真元逆逸散调控 | DuguDistortion（脏真元蚀脉）/ CombatWound | 聚灵 / 幻阵 / 跨位面阵失效 |
-| 心经 | ③ 高级真元广播 | OverloadTear（欺天阵被识破反噬）/ TribulationFail | 欺天阵失效 |
-| 化虚通脉 | ⑤ 跨位面阵 | TribulationFail（化虚雷劫炸）/ DuguDistortion / VoluntarySever | 化虚境阵法师退化为通灵级 |
+| 任脉 `Ren` | ①②③⑤ 阵眼维持 | OverloadTear（聚灵阵超浓度过载）/ TribulationFail / DuguDistortion | 阵法流派几乎全废 |
+| 督脉 `Du` | ①②③⑤ 真元广播（化虚级⑤扩展为跨位面带宽） | OverloadTear / TribulationFail（化虚雷劫炸）/ DuguDistortion / VoluntarySever | 信号广播能力丧失；化虚境阵法师退化为通灵级（跨周目永久残废） |
+| 足少阴肾经 `Kidney` | ②④⑤ 真元逆逸散调控 | DuguDistortion（脏真元蚀脉）/ CombatWound | 聚灵 / 幻阵 / 跨位面阵失效 |
+| 手少阴心经 `Heart` | ③ 高级真元广播 | OverloadTear（欺天阵被识破反噬）/ TribulationFail | 欺天阵失效 |
 
 **v2 实装**：在 plan-meridian-severed-v1 7 流派经脉表追加阵法条目；P3 阶段交付。
 

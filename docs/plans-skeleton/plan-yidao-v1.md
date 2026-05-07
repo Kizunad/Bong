@@ -97,6 +97,14 @@
     - **续命窗口**：仅在 Lifecycle 进入 "Dying" 状态后 30s 内可施展（worldview §十二:1043 续命窗口）
   - 续命术不能自我施展（医者用续命术救自己 = 死循环）—— **必须有第二个医者或医者 NPC**
 
+- [ ] **通用 cast 触发模型（接 plan-hotbar-modify-v1 ✅ + `combat::Casting` 标准路径）**：5 招全部走"InspectScreen (I) 拖到 1-9 SkillBar 槽 → 战斗时按数字键 cast"统一路径，**不走右键弹窗菜单**。
+  - **目标锁定**：① ② ③ ④ 单目标——玩家先 look 到 5 格（① ②）/ 1 格（③ ④）内目标实体（HUD 高亮患者轮廓 + 距离指示）→ 按数字键 cast；server 在 cast 完成瞬间重新检测距离阈值（**不是 cast 开始时锁定**），中途患者跑出 → 中断走标准路径
+  - **群体目标**（⑤ 群体接经）：cast 开始瞬间扫 5 格内全部 SEVERED 患者作为候选 N（cast 时显示 N 计数 HUD），cast 完成瞬间重新结算谁还在 5 格内（跑出去的患者不计入）
+  - **触发**：按数字键 → server 创建 `Casting { duration_ticks, start_position }` component → cast bar 显示进度 + 患者 HP / 真元 / SEVERED 经脉图同步 HUD 显示
+  - **中断**：① ② ④ ⑤ 不可中断（业力 / 续命 / 群体接经类）—— 但移动超阈值仍中断（医者动了不能继续手术），受击不中断；③ 急救可被中断（5s 短 cast，对应 worldview "急救"语义）
+  - **中断后果**：业力 / qi_max 代价不扣（cast 未完成 = 没真正施展）；冷却走中断短冷却
+  - 各招"操作"段只写**差异**（cast time / 距离阈值 / 是否可中断 / HUD 反馈细节），通用部分不重复
+
 - [ ] **熟练度生长二维划分（v2 通用机制）**：
   - **境界**：决定治疗上限（接经成功率 / 续命业力减免 / 群体接经 N 上限）
   - **熟练度 mastery (0-100)**：决定接经速度（cast time）/ 排异效率 / 业力减免（mastery 100 续命业力 -50%）/ 群体接经 N 倍率
@@ -137,7 +145,7 @@
 - 失败：medic 真元浪费 + patient SEVERED 不变 + 双方 +业力 1（接经手术伤害积累）
 - 成功：medic 真元转入 patient + patient SEVERED 恢复 + medic 平和色 PracticeLog +50 + medic 信誉度 +1
 
-**操作**：右键患者 → 选"接经术"（医患 5 格内 cast time 60s 不可中断 → 完成）
+**操作**（差异）：look 锁定 5 格内患者（HUD 高亮）→ 按数字键 cast，duration 60s（不可中断；移动超阈值中断）；cast 完成瞬间重检 5 格 + SEVERED 经脉图，目标走开 → 中断业力/qi_max 代价不扣
 
 **mastery 生长**：
 - cast time 60s → 20s
@@ -168,7 +176,7 @@
   - 救污染真元过载患者（涡流紊流场受害者）
   - 救自身（自疗）
 
-**操作**：右键患者 → 选"排异加速"（医患 5 格内 cast time 30s 不可中断 → 完成）
+**操作**（差异）：look 锁定 5 格内患者（HUD 高亮 + contam 进度条）→ 按数字键 cast，duration 30s（不可中断；移动超阈值中断）；cast 完成瞬间重检 5 格
 
 **mastery 生长**：
 - cast time 30s → 10s
@@ -197,7 +205,7 @@
 - Lifecycle "Dying" → "Wounded"（救濒死患者，必须在 Dying 60s 内 cast）
 - 不消除 Wounds（伤口仍存在，需后续接经术 + 排异加速治愈）
 
-**操作**：右键患者 → 选"急救"（医患 1 格内 cast time 5s 可被中断）
+**操作**（差异）：look 锁定 1 格内患者（HUD 高亮 + HP / Lifecycle 状态）→ 按数字键 cast，duration 5s（**可中断**——移动 / 受击均中断，对应"急救"语义）；cast 完成瞬间重检 1 格
 
 **mastery 生长**：
 - cast time 5s → 1.5s
@@ -232,7 +240,7 @@
   - patient -10% qi_max（永久不可恢复）
 - **续命窗口**：Lifecycle "Dying" 后 30s 内（worldview §十二:1043）
 
-**操作**：右键患者 → 选"续命术"（医患 1 格内 cast time 30s 不可中断 → 完成）
+**操作**（差异）：look 锁定 1 格内进入 Dying 状态的患者（30s 续命窗口内）→ 按数字键 cast，duration 30s（不可中断；移动超阈值中断）；cast 完成瞬间重检 1 格 + Dying 状态有效，目标已 Terminated → 中断业力 / qi_max 代价不扣
 
 **mastery 生长**：
 - cast time 30s → 12s
@@ -268,7 +276,7 @@
 - 代价：medic -2% qi_max / 每患者，N=18 → 一次群体接经 -36% qi_max
 - 业力：medic +0.1 业力 / 每患者，N=18 → +1.8 业力
 
-**操作**：右键群体（化虚医者 5 格内所有 SEVERED 患者自动加入候选）→ 确认 N → cast time 60s 不可中断 → 完成
+**操作**（差异）：按数字键 cast 瞬间扫 5 格内全部 SEVERED 患者作为候选 N（HUD 显示 N 计数 + 每患者高亮）→ duration 60s（不可中断；移动超阈值中断）；cast 完成瞬间重新结算 5 格内有效患者数 N'（跑出去的不计入），按 N' 累加业力 / qi_max 代价（不是 cast 开始时的 N）
 
 **mastery 生长**：
 - cast time 60s → 20s
@@ -276,13 +284,13 @@
 - 业力代价 +0.1 → +0.05 / 每患者
 - qi_max 减损 -2% → -1% / 每患者
 
-**经脉依赖**：化虚通脉 + 心经 + LU + LI + KI 全套（化虚级最严格依赖），SEVERED 任一 → ⑤ 失效
+**经脉依赖**：督脉 `Du` + 心经 `Heart` + 肺经 `Lung` + 大肠经 `LargeIntestine` + 肾经 `Kidney` 全套（化虚级最严格依赖；督脉同 anqi-v2 ⑤ / zhenfa-v2 ⑤ 化虚级共享——worldview §201 化虚 20 经脉全开无第 21 脉，§597 任督=统御），SEVERED 任一 → ⑤ 失效（督脉 SEVERED = 跨周目永久残废）
 
 **触发天道注视**（接 plan-tribulation-v1）：群体接经 N≥10 触发天道注视累积，跟 zhenmai-v2 / baomai-v3 / anqi-v2 / zhenfa-v2 化虚级同列
 
 **反 MMO 红线**：见 §0 第 3 条 — **不是 MMO 式 AOE 治疗**，是真实 N 个独立接经手术，业力 + qi_max 代价按 N 累加；患者经脉拓扑差异决定接经成功率
 
-**测试饱和**：群体接经 32 单测（N 上限 / 独立手术 raycast / 业力累积 / qi_max 减损 / 化虚通脉依赖 / 天道注视触发 / 患者经脉拓扑差异 / mastery 增长）
+**测试饱和**：群体接经 32 单测（N 上限 / 独立手术 raycast / 业力累积 / qi_max 减损 / 督脉 `Du` + 心 / 肺 / 大肠 / 肾全套依赖 / 天道注视触发 / 患者经脉拓扑差异 / mastery 增长）
 
 ---
 
