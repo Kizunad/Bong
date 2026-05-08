@@ -138,13 +138,14 @@ K 值校准（运维 config）:
 - `e522a871c`（2026-05-08）`server(void-quota): 收紧化虚名额竞态`
 - `35c3dbf8d`（2026-05-08）`fix(void-quota): 收紧名额持久化边界`
 - `49fbc0f79`（2026-05-08）`fix(void-quota): 收紧跨端契约和检视刷新`
+- `d16df3f50`（2026-05-08）`fix(void-quota): 起劫 active row 持久化失败时关闭`
 
 ### 测试结果
 
 - `cd server && cargo test void_quota -- --nocapture` → 5 passed
 - `cd server && cargo test start_tribulation_system_counts_in_flight_void_tribulations_across_ticks -- --nocapture` → 1 passed
 - `cd server && cargo test quota -- --nocapture` → 30 passed
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2964 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2965 passed
 - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 324 passed；tiandao 281 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL
 
