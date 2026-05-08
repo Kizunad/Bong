@@ -16,6 +16,8 @@ pub mod command;
 pub mod dugu_consumer;
 pub mod events;
 pub mod precondition;
+pub mod reaction;
+pub mod scorer;
 
 use std::collections::HashMap;
 
@@ -261,6 +263,8 @@ pub fn register(app: &mut App) {
     );
     command::register(app);
     dugu_consumer::register(app);
+    reaction::register(app);
+    scorer::register(app);
 }
 
 /// 玩家加入时附挂 [`PlayerIdentities`] Component。
