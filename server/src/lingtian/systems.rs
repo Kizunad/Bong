@@ -1110,15 +1110,11 @@ fn apply_drain_qi_completion(
 
     let player_account = qi_player_account_id(player, life_records);
     // 注入操作者 cultivation.qi_current（cap at qi_max）；未入账份额回流 zone。
-    let actual_to_player = if player_account.is_some() {
-        if let Ok(mut cult) = cultivations.get_mut(player) {
-            let room = (cult.qi_max - cult.qi_current).max(0.0);
-            let credited = (to_player as f64).min(room);
-            cult.qi_current += credited;
-            credited as f32
-        } else {
-            0.0
-        }
+    let actual_to_player = if let Ok(mut cult) = cultivations.get_mut(player) {
+        let room = (cult.qi_max - cult.qi_current).max(0.0);
+        let credited = (to_player as f64).min(room);
+        cult.qi_current += credited;
+        credited as f32
     } else {
         0.0
     };
@@ -3870,8 +3866,54 @@ mod tests {
         assert_eq!(qi_transfers.len(), 2);
         assert_eq!(qi_transfers[0].to, QiAccountId::player("p"));
         assert!((qi_transfers[0].amount - 1.0).abs() < 1e-6);
+        assert_eq!(qi_transfers[0].reason, QiTransferReason::Channeling);
         assert_eq!(qi_transfers[1].to, QiAccountId::zone(DEFAULT_ZONE));
         assert!((qi_transfers[1].amount - 4.0).abs() < 1e-6);
+        assert_eq!(qi_transfers[1].reason, QiTransferReason::ReleaseToZone);
+    }
+
+    #[test]
+    fn drain_qi_without_life_record_still_credits_cultivation_but_skips_player_ledger() {
+        use crate::cultivation::components::Cultivation;
+        use crate::lingtian::session::DRAIN_QI_TICKS;
+        let mut app = build_app();
+        let pos = BlockPos::new(0, 64, 0);
+        let mut plot = LingtianPlot::new(pos, None);
+        plot.plot_qi = 0.5;
+        app.world_mut().spawn(plot);
+        let player = app
+            .world_mut()
+            .spawn((
+                empty_inventory_8x8(),
+                Cultivation {
+                    qi_current: 0.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player, pos });
+        for _ in 0..DRAIN_QI_TICKS {
+            app.update();
+        }
+
+        let cult = app.world().get::<Cultivation>(player).unwrap();
+        assert!(
+            (cult.qi_current - 0.4).abs() < 1e-5,
+            "缺 LifeRecord 不应阻止 Cultivation 实际增长, got {}",
+            cult.qi_current
+        );
+        let qi_transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(qi_transfers.len(), 1, "缺稳定玩家账户时只写 zone 回流账");
+        assert_eq!(qi_transfers[0].to, QiAccountId::zone(DEFAULT_ZONE));
+        assert!((qi_transfers[0].amount - 0.1).abs() < 1e-6);
+        assert_eq!(qi_transfers[0].reason, QiTransferReason::ReleaseToZone);
     }
 
     #[test]
