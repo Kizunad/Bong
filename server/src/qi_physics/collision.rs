@@ -1,4 +1,9 @@
-use super::constants::{QI_ACOUSTIC_THRESHOLD, QI_DRAIN_CLAMP, QI_EXCRETION_BASE};
+use crate::cultivation::components::Realm;
+
+use super::constants::{
+    QI_ACOUSTIC_THRESHOLD, QI_DRAIN_CLAMP, QI_EXCRETION_BASE, QI_NEGATIVE_FIELD_K,
+    QI_NEGATIVE_FIELD_MIN_RADIUS_BLOCKS,
+};
 use super::distance::qi_distance_atten;
 use super::env::EnvField;
 use super::ledger::{QiAccountId, QiTransfer, QiTransferReason};
@@ -12,6 +17,31 @@ pub struct CollisionOutcome {
     pub defender_lost: f64,
     pub defender_absorbed: f64,
     pub transfers: Vec<QiTransfer>,
+}
+
+pub fn qi_woliu_vortex_field_strength_for_realm(realm: Realm) -> f64 {
+    match realm {
+        Realm::Awaken => 0.0,
+        Realm::Induce => 0.10,
+        Realm::Condense => 0.25,
+        Realm::Solidify => 0.45,
+        Realm::Spirit => 0.65,
+        Realm::Void => 0.80,
+    }
+}
+
+/// Returns the fraction of the current payload drained by a negative qi field.
+/// The value is always clamped to `[0, 1]`.
+pub fn qi_negative_field_drain_ratio(field_intensity: f64, distance_blocks: f64) -> f64 {
+    if !field_intensity.is_finite() || field_intensity <= 0.0 {
+        return 0.0;
+    }
+    if !distance_blocks.is_finite() {
+        return 0.0;
+    }
+
+    let effective_radius = distance_blocks.max(QI_NEGATIVE_FIELD_MIN_RADIUS_BLOCKS);
+    (field_intensity * QI_NEGATIVE_FIELD_K / effective_radius.powi(2)).clamp(0.0, 1.0)
 }
 
 pub fn qi_collision(
@@ -240,5 +270,45 @@ mod tests {
             &EnvField::default(),
         );
         assert_eq!(outcome.defender_lost, 0.0);
+    }
+
+    #[test]
+    fn negative_field_drain_uses_inverse_square_distance() {
+        let near = qi_negative_field_drain_ratio(0.8, 1.0);
+        let far = qi_negative_field_drain_ratio(0.8, 2.0);
+        assert!((near - 0.8).abs() < 1e-9);
+        assert!((far - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn negative_field_drain_clamps_invalid_and_overstrong_fields() {
+        assert_eq!(qi_negative_field_drain_ratio(0.0, 1.0), 0.0);
+        assert_eq!(qi_negative_field_drain_ratio(-0.1, 1.0), 0.0);
+        assert_eq!(qi_negative_field_drain_ratio(f64::INFINITY, 1.0), 0.0);
+        assert_eq!(qi_negative_field_drain_ratio(0.8, -1.0), 0.8);
+        assert_eq!(qi_negative_field_drain_ratio(0.8, f64::NAN), 0.0);
+        assert_eq!(qi_negative_field_drain_ratio(2.0, 0.0), 1.0);
+    }
+
+    #[test]
+    fn woliu_vortex_strength_keeps_realm_progression_in_qi_physics() {
+        assert_eq!(qi_woliu_vortex_field_strength_for_realm(Realm::Awaken), 0.0);
+        assert_eq!(
+            qi_woliu_vortex_field_strength_for_realm(Realm::Induce),
+            0.10
+        );
+        assert_eq!(
+            qi_woliu_vortex_field_strength_for_realm(Realm::Condense),
+            0.25
+        );
+        assert_eq!(
+            qi_woliu_vortex_field_strength_for_realm(Realm::Solidify),
+            0.45
+        );
+        assert_eq!(
+            qi_woliu_vortex_field_strength_for_realm(Realm::Spirit),
+            0.65
+        );
+        assert_eq!(qi_woliu_vortex_field_strength_for_realm(Realm::Void), 0.80);
     }
 }
