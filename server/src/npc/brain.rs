@@ -633,15 +633,26 @@ pub(crate) fn emit_retire_request_on_pending_added(
     }
 }
 
+type BlackboardNpcQueryItem<'a> = (
+    &'a Position,
+    &'a mut NpcBlackboard,
+    Option<&'a DuelTarget>,
+    Option<&'a NpcLodTier>,
+);
+
 pub fn update_npc_blackboard(
-    mut npc_query: Query<(&Position, &mut NpcBlackboard, Option<&DuelTarget>), With<NpcMarker>>,
+    mut npc_query: Query<BlackboardNpcQueryItem<'_>, With<NpcMarker>>,
     player_query: Query<(Entity, &Position), With<ClientMarker>>,
     all_positions: Query<&Position>,
     game_tick: Option<Res<GameTick>>,
     mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
     let started_at = Instant::now();
-    for (npc_position, mut blackboard, duel_target) in &mut npc_query {
+    for (npc_position, mut blackboard, duel_target, lod_tier) in &mut npc_query {
+        if matches!(lod_tier, Some(NpcLodTier::Dormant)) {
+            continue;
+        }
+
         let npc_pos = npc_position.get();
 
         // Duel override: target a specific entity instead of nearest player.
@@ -2198,6 +2209,40 @@ mod tests {
             blackboard.player_distance.is_infinite(),
             "without players, distance must remain infinity"
         );
+    }
+
+    #[test]
+    fn dormant_blackboard_update_preserves_last_target_snapshot() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, update_npc_blackboard);
+
+        let previous_target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([4.0, 66.0, 4.0])))
+            .id();
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([1.0, 66.0, 1.0])));
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcLodTier::Dormant,
+                NpcBlackboard {
+                    nearest_player: Some(previous_target),
+                    player_distance: 4.0,
+                    target_position: Some(DVec3::new(4.0, 66.0, 4.0)),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let blackboard = app.world().get::<NpcBlackboard>(npc).unwrap();
+        assert_eq!(blackboard.nearest_player, Some(previous_target));
+        assert_eq!(blackboard.player_distance, 4.0);
+        assert_eq!(blackboard.target_position, Some(DVec3::new(4.0, 66.0, 4.0)));
     }
 
     #[test]

@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
     bevy_ecs, Added, App, Bundle, Commands, Component, DVec3, Despawned, Entity, Event,
-    EventReader, EventWriter, FixedUpdate, IntoSystemConfigs, Position, Query, Res, ResMut,
-    Resource, Update, With, Without,
+    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update,
+    With, Without,
 };
 
 use crate::combat::components::{
@@ -397,10 +397,11 @@ pub fn register(app: &mut App) {
         .add_event::<NpcReproductionRequest>()
         .add_event::<NpcSpawnNotice>()
         .add_event::<NpcDeathNotice>()
-        .add_systems(FixedUpdate, (update_npc_registry, age_npcs))
         .add_systems(
             Update,
             (
+                update_npc_registry,
+                age_npcs,
                 process_npc_retire_requests,
                 handle_npc_terminated,
                 emit_npc_despawn_notices.after(handle_npc_terminated),
@@ -908,6 +909,30 @@ mod tests {
 
         let lifespan = app.world().get::<NpcLifespan>(entity).unwrap();
         assert_eq!(lifespan.age_ticks, 0.0);
+    }
+
+    #[test]
+    fn register_ages_lifespan_once_per_update_tick() {
+        let mut app = App::new();
+        register(&mut app);
+
+        let entity = app
+            .world_mut()
+            .spawn((NpcMarker, NpcArchetype::Rogue, NpcLifespan::new(0.0, 100.0)))
+            .id();
+        let rate = NpcAgingConfig::default().rate_multiplier;
+
+        app.update();
+        assert_eq!(
+            app.world().get::<NpcLifespan>(entity).unwrap().age_ticks,
+            rate
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().get::<NpcLifespan>(entity).unwrap().age_ticks,
+            rate * 2.0
+        );
     }
 
     /// 端到端：致命 AttackIntent → resolve → DeathEvent → death_arbiter
