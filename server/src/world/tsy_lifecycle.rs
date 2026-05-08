@@ -48,7 +48,6 @@ use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::npc::tsy_hostile::TsyHostileMarker;
-use crate::qi_physics::collapse_redistribute_qi;
 use crate::world::dimension::{DimensionKind, DimensionLayers, TsyLayer};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::tsy::{DimensionAnchor, TsyPresence};
@@ -398,29 +397,16 @@ fn apply_tsy_spirit_qi_conserved(state: &TsyZoneState, zones: &mut ZoneRegistry)
     if let Some(dimension) = dimension {
         let qi_to_redistribute = (current_sum - target_sum).max(0.0);
         if qi_to_redistribute > f64::EPSILON {
-            let surrounding_zones: Vec<(String, f64)> = zones
-                .zones
-                .iter()
-                .filter(|zone| {
-                    zone.dimension == dimension
-                        && !targets
-                            .iter()
-                            .any(|(target_name, _)| target_name == &zone.name)
-                })
-                .map(|zone| (zone.name.clone(), zone.spirit_qi))
-                .collect();
-            if let Ok(redistributed) =
-                collapse_redistribute_qi(qi_to_redistribute, &surrounding_zones)
-            {
-                for (zone_name, amount) in redistributed {
-                    if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-                        zone.spirit_qi = (zone.spirit_qi + amount).clamp(-1.0, 1.0);
-                    }
-                }
+            if let Some(distributed) = redistribute_qi_to_surrounding_zone_capacity(
+                zones,
+                dimension,
+                &targets,
+                qi_to_redistribute,
+            ) {
+                target_scale = (distributed / qi_to_redistribute).clamp(0.0, 1.0);
             }
-        }
-        let qi_to_draw = (target_sum - current_sum).max(0.0);
-        if qi_to_draw > f64::EPSILON {
+        } else if (target_sum - current_sum) > f64::EPSILON {
+            let qi_to_draw = target_sum - current_sum;
             let drawn = draw_qi_from_surrounding_zones(zones, dimension, &targets, qi_to_draw);
             target_scale = (drawn / qi_to_draw).clamp(0.0, 1.0);
         }
@@ -431,6 +417,67 @@ fn apply_tsy_spirit_qi_conserved(state: &TsyZoneState, zones: &mut ZoneRegistry)
             zone.spirit_qi = current_qi + (target_qi - current_qi) * target_scale;
         }
     }
+}
+
+fn redistribute_qi_to_surrounding_zone_capacity(
+    zones: &mut ZoneRegistry,
+    dimension: DimensionKind,
+    targets: &[(String, f64)],
+    amount: f64,
+) -> Option<f64> {
+    if amount <= f64::EPSILON {
+        return Some(0.0);
+    }
+    let target_names: std::collections::HashSet<&str> =
+        targets.iter().map(|(name, _)| name.as_str()).collect();
+    let has_surrounding_zone = zones
+        .zones
+        .iter()
+        .any(|zone| zone.dimension == dimension && !target_names.contains(zone.name.as_str()));
+    if !has_surrounding_zone {
+        return None;
+    }
+    let mut candidates: Vec<(usize, f64, f64)> = zones
+        .zones
+        .iter()
+        .enumerate()
+        .filter(|(_, zone)| {
+            zone.dimension == dimension && !target_names.contains(zone.name.as_str())
+        })
+        .filter_map(|(index, zone)| {
+            let capacity = (1.0 - zone.spirit_qi).max(0.0);
+            if capacity <= f64::EPSILON {
+                return None;
+            }
+            let weight = (1.0 - zone.spirit_qi.clamp(0.0, 1.0)).max(0.01);
+            Some((index, weight, capacity))
+        })
+        .collect();
+    let mut distributed = 0.0;
+    while amount - distributed > f64::EPSILON && !candidates.is_empty() {
+        let remaining = amount - distributed;
+        let total_weight: f64 = candidates.iter().map(|(_, weight, _)| *weight).sum();
+        if total_weight <= f64::EPSILON {
+            break;
+        }
+        let mut progressed = false;
+        for (index, weight, capacity) in candidates.iter_mut() {
+            let planned = remaining * *weight / total_weight;
+            let applied = planned.min(*capacity);
+            if applied <= f64::EPSILON {
+                continue;
+            }
+            zones.zones[*index].spirit_qi += applied;
+            *capacity -= applied;
+            distributed += applied;
+            progressed = true;
+        }
+        candidates.retain(|(_, _, capacity)| *capacity > f64::EPSILON);
+        if !progressed {
+            break;
+        }
+    }
+    Some(distributed)
 }
 
 fn draw_qi_from_surrounding_zones(
@@ -1186,6 +1233,53 @@ mod tests {
             "TSY lifecycle spirit_qi rewrite must conserve surrounding zone sum"
         );
         assert!(zones.find_zone_by_name("safe").unwrap().spirit_qi > 0.0);
+    }
+
+    #[test]
+    fn apply_spirit_qi_scales_collapse_delta_when_surrounding_capacity_is_full() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_deep", DimensionKind::Tsy, -0.9),
+                mk("nearly_full", DimensionKind::Tsy, 0.95),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Collapsing,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::new(),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: Some(0),
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        assert!((before_sum - after_sum).abs() < 1e-9);
+        assert!((zones.find_zone_by_name("nearly_full").unwrap().spirit_qi - 1.0).abs() < 1e-9);
+        assert!(
+            zones.find_zone_by_name("tsy_a_shallow").unwrap().spirit_qi > -1.0,
+            "TSY layer should only move as far as surrounding capacity can absorb"
+        );
     }
 
     #[test]

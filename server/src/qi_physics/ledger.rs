@@ -64,6 +64,7 @@ pub enum QiAccountKind {
     Container,
     Rift,
     Tiandao,
+    Overflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -98,6 +99,10 @@ impl QiAccountId {
 
     pub fn tiandao() -> Self {
         Self::new(QiAccountKind::Tiandao, "tiandao")
+    }
+
+    pub fn overflow(id: impl Into<String>) -> Self {
+        Self::new(QiAccountKind::Overflow, id)
     }
 }
 

@@ -73,22 +73,31 @@ impl Default for EraDecayClock {
 
 impl EraDecayClock {
     pub fn factor(self) -> f64 {
+        self.factor_for_tick(self.tick)
+    }
+
+    pub fn factor_for_tick(self, tick: u64) -> f64 {
         if self.interval_ticks == 0 {
             return 1.0;
         }
-        (self.tick % self.interval_ticks) as f64 / self.interval_ticks as f64
+        if tick > 0 && tick % self.interval_ticks == 0 {
+            return 1.0;
+        }
+        (tick % self.interval_ticks) as f64 / self.interval_ticks as f64
     }
 }
 
 pub fn era_decay_tick(mut clock: ResMut<EraDecayClock>, mut budget: ResMut<WorldQiBudget>) {
-    clock.tick = clock.tick.wrapping_add(1);
-    if clock.interval_ticks == 0 || clock.tick % clock.interval_ticks != 0 {
+    let next_tick = clock.tick.wrapping_add(1);
+    if clock.interval_ticks == 0 || next_tick % clock.interval_ticks != 0 {
+        clock.tick = next_tick;
         return;
     }
-    let factor = clock.factor();
+    let factor = clock.factor_for_tick(next_tick);
     if let Err(error) = era_decay_step(&mut budget, factor) {
         tracing::warn!(?error, "[bong][qi_physics] failed to apply era decay");
     }
+    clock.tick = next_tick;
 }
 
 #[cfg(test)]
@@ -153,7 +162,7 @@ mod tests {
 
         app.update();
         let budget = app.world().resource::<WorldQiBudget>();
-        assert_eq!(budget.current_total, 99.0);
-        assert_eq!(budget.era_decay_accum, 1.0);
+        assert_eq!(budget.current_total, 97.0);
+        assert_eq!(budget.era_decay_accum, 3.0);
     }
 }

@@ -2017,7 +2017,7 @@ mod tests {
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
     use crate::persistence::{bootstrap_sqlite, load_active_tribulation};
-    use crate::qi_physics::{QiTransfer, QiTransferReason};
+    use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use std::fs;
     use std::path::PathBuf;
@@ -4740,8 +4740,14 @@ mod tests {
             zone_after > zone_before,
             "tribulation failure should release cleared qi back to the current zone"
         );
-        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers.len(), 2);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert_eq!(
+            transfers[1].to,
+            QiAccountId::overflow(format!("tribulation_failure:{entity:?}"))
+        );
+        assert_eq!(transfers[1].reason, QiTransferReason::ReleaseToZone);
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")

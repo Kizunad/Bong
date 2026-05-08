@@ -14,6 +14,7 @@ use super::components::Cultivation;
 use super::death_hooks::{
     release_qi_amount_to_zone, CultivationDeathCause, CultivationDeathTrigger,
 };
+use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::QiTransfer;
 
 pub const SIPHON_FACTOR: f64 = 0.001;
@@ -27,6 +28,7 @@ pub fn siphon_amount(zone_qi: f64, qi_max: f64) -> f64 {
     pressure * qi_max * SIPHON_FACTOR
 }
 
+#[allow(clippy::type_complexity)]
 pub fn negative_zone_siphon_tick(
     zones: Option<ResMut<ZoneRegistry>>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
@@ -35,13 +37,14 @@ pub fn negative_zone_siphon_tick(
         Entity,
         &Position,
         Option<&CurrentDimension>,
+        Option<&LifeRecord>,
         &mut Cultivation,
     )>,
 ) {
     let Some(mut zones) = zones else {
         return;
     };
-    for (entity, pos, current_dimension, mut cultivation) in players.iter_mut() {
+    for (entity, pos, current_dimension, life_record, mut cultivation) in players.iter_mut() {
         let dimension = current_dimension
             .map(|current| current.0)
             .unwrap_or(DimensionKind::Overworld);
@@ -62,7 +65,7 @@ pub fn negative_zone_siphon_tick(
                 siphon,
                 Some(pos),
                 current_dimension,
-                None,
+                life_record,
                 Some(&mut *zones),
                 qi_transfers.as_deref_mut(),
                 "negative_zone_siphon",
@@ -78,7 +81,7 @@ pub fn negative_zone_siphon_tick(
             drained,
             Some(pos),
             current_dimension,
-            None,
+            life_record,
             Some(&mut *zones),
             qi_transfers.as_deref_mut(),
             "negative_zone_siphon",
@@ -97,6 +100,8 @@ pub fn negative_zone_siphon_tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::player::state::canonical_player_id;
+    use crate::qi_physics::QiAccountId;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, Events, Update};
 
@@ -133,6 +138,7 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
+                LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
 
@@ -166,6 +172,7 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
+                LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
 
@@ -179,5 +186,9 @@ mod tests {
             .drain()
             .collect();
         assert_eq!(transfers.len(), 1);
+        assert_eq!(
+            transfers[0].from,
+            QiAccountId::player(canonical_player_id("Azure"))
+        );
     }
 }

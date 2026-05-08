@@ -17,11 +17,14 @@ use super::breakthrough::skill_cap_for_realm;
 use super::components::{Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer};
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::qi_physics::constants::QI_EPSILON;
+use crate::qi_physics::QiTransfer;
+use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 use valence::prelude::Res;
+
+use super::death_hooks::release_qi_amount_to_zone;
+use super::life_record::LifeRecord;
 
 /// plan §0-3 10:15 排异亏损比。
 pub const DRAIN_RATIO: f64 = 1.5;
@@ -73,6 +76,7 @@ pub fn contamination_tick(
         Entity,
         Option<&Position>,
         Option<&CurrentDimension>,
+        Option<&LifeRecord>,
         &mut Cultivation,
         &mut Contamination,
         &mut MeridianSystem,
@@ -84,6 +88,7 @@ pub fn contamination_tick(
         entity,
         position,
         current_dimension,
+        life_record,
         mut cultivation,
         mut contam,
         mut meridians,
@@ -116,13 +121,15 @@ pub fn contamination_tick(
             let budget = cultivation.qi_current.max(0.0);
             let (_purge, planned_cost, _cleared) =
                 preview_purge_step(entry.amount, budget, purge_rate);
-            let accepted_cost = release_contamination_cost_to_zone(
+            let accepted_cost = release_qi_amount_to_zone(
                 entity,
                 planned_cost,
                 position,
                 current_dimension,
+                life_record,
                 zones.as_deref_mut(),
                 qi_transfers.as_deref_mut(),
+                "contamination_purge",
             );
             if accepted_cost <= QI_EPSILON {
                 continue;
@@ -162,52 +169,13 @@ pub fn contamination_tick(
     }
 }
 
-fn release_contamination_cost_to_zone(
-    entity: Entity,
-    amount: f64,
-    position: Option<&Position>,
-    current_dimension: Option<&CurrentDimension>,
-    zones: Option<&mut ZoneRegistry>,
-    qi_transfers: Option<&mut Events<QiTransfer>>,
-) -> f64 {
-    if amount <= QI_EPSILON {
-        return 0.0;
-    }
-    let (Some(position), Some(zones)) = (position, zones) else {
-        return 0.0;
-    };
-    let dimension = current_dimension
-        .map(|current| current.0)
-        .unwrap_or(DimensionKind::Overworld);
-    let Some(zone_name) = zones
-        .find_zone(dimension, position.0)
-        .map(|zone| zone.name.clone())
-    else {
-        return 0.0;
-    };
-    let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
-        return 0.0;
-    };
-    let from = QiAccountId::player(format!("entity:{entity:?}:contamination"));
-    let to = QiAccountId::zone(zone.name.clone());
-    let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-    let Ok(outcome) = qi_release_to_zone(amount, from, to, zone_current, QI_ZONE_UNIT_CAPACITY)
-    else {
-        return 0.0;
-    };
-    zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
-    if let (Some(transfer), Some(qi_transfers)) = (outcome.transfer, qi_transfers) {
-        qi_transfers.send(transfer);
-    }
-    outcome.accepted
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cultivation::components::{ColorKind, ContamSource};
     use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
     use crate::cultivation::death_hooks::CultivationDeathTrigger;
+    use crate::qi_physics::{QiAccountId, QiTransferReason};
     use crate::skill::components::{SkillEntry, SkillSet};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::prelude::{App, Events, Position, Update};
@@ -410,5 +378,52 @@ mod tests {
         let contamination = app.world().get::<Contamination>(entity).unwrap();
         assert_eq!(cultivation.qi_current, 10.0);
         assert_eq!(contamination.entries[0].amount, 1.0);
+    }
+
+    #[test]
+    fn contamination_purge_without_zone_routes_to_overflow_when_event_available() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, contamination_tick);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+                Contamination {
+                    entries: vec![ContamSource {
+                        amount: 1.0,
+                        color: ColorKind::Mellow,
+                        attacker_id: None,
+                        introduced_at: 1,
+                    }],
+                },
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let contamination = app.world().get::<Contamination>(entity).unwrap();
+        assert!(cultivation.qi_current < 10.0);
+        assert!(contamination.entries[0].amount < 1.0);
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(
+            transfers[0].to,
+            QiAccountId::overflow(format!("contamination_purge:{entity:?}"))
+        );
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
     }
 }

@@ -19,7 +19,7 @@ use crate::inventory::{
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::{MediumKind, StyleAttack, StyleDefense};
+use crate::qi_physics::{CarrierGrade, MediumKind, StyleAttack, StyleDefense};
 use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
 
@@ -50,6 +50,16 @@ pub enum ZhenfaCarrierKind {
 impl Default for ZhenfaCarrierKind {
     fn default() -> Self {
         Self::CommonStone
+    }
+}
+
+impl ZhenfaCarrierKind {
+    fn carrier_grade(self) -> CarrierGrade {
+        match self {
+            Self::CommonStone | Self::NightWitheredVine => CarrierGrade::PhysicalWeapon,
+            Self::LingqiBlock => CarrierGrade::SpiritWeapon,
+            Self::BeastCoreInlaid => CarrierGrade::AncientRelic,
+        }
     }
 }
 
@@ -135,7 +145,10 @@ impl StyleAttack for ZhenfaInstance {
     }
 
     fn medium(&self) -> MediumKind {
-        MediumKind::bare(self.color_main)
+        MediumKind {
+            color: self.color_main,
+            carrier: self.carrier.carrier_grade(),
+        }
     }
 }
 
@@ -1751,6 +1764,7 @@ mod tests {
 
         assert_eq!(instance.style_color(), ColorKind::Intricate);
         assert_eq!(instance.injected_qi(), 25.0);
+        assert_eq!(instance.medium().carrier, CarrierGrade::SpiritWeapon);
         assert_eq!(instance.defense_color(), ColorKind::Solid);
         assert_eq!(instance.resistance(), 0.5);
     }
