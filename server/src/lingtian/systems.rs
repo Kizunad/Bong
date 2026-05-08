@@ -1115,7 +1115,8 @@ fn apply_drain_qi_completion(
     }
     // 散逸 zone qi
     *zone_qi.get_mut(DEFAULT_ZONE) += to_zone;
-    emit_drain_qi_transfers(player, pos, to_player, to_zone, qi_transfers);
+    let player_account = qi_player_account_id(player, life_records);
+    emit_drain_qi_transfers(player_account, pos, to_player, to_zone, qi_transfers);
 
     // 双方 LifeRecord 记账（仅 owner != player）
     if let Some(owner) = plot_owner {
@@ -1148,7 +1149,7 @@ fn apply_drain_qi_completion(
 }
 
 fn emit_drain_qi_transfers(
-    player: Entity,
+    player_account: QiAccountId,
     pos: &valence::prelude::BlockPos,
     to_player: f32,
     to_zone: f32,
@@ -1157,23 +1158,50 @@ fn emit_drain_qi_transfers(
     let plot_account =
         QiAccountId::container(format!("lingtian_plot:{},{},{}", pos.x, pos.y, pos.z));
     if to_player > 0.0 {
-        if let Ok(transfer) = QiTransfer::new(
+        send_qi_transfer(
+            qi_transfers,
             plot_account.clone(),
-            QiAccountId::player(format!("{player:?}")),
+            player_account,
             to_player as f64,
             QiTransferReason::Channeling,
-        ) {
-            qi_transfers.send(transfer);
-        }
+        );
     }
     if to_zone > 0.0 {
-        if let Ok(transfer) = QiTransfer::new(
+        send_qi_transfer(
+            qi_transfers,
             plot_account,
             QiAccountId::zone(DEFAULT_ZONE),
             to_zone as f64,
             QiTransferReason::ReleaseToZone,
-        ) {
+        );
+    }
+}
+
+fn qi_player_account_id(player: Entity, life_records: &Query<&mut LifeRecord>) -> QiAccountId {
+    if let Ok(life_record) = life_records.get(player) {
+        if !life_record.character_id.trim().is_empty() {
+            return QiAccountId::player(life_record.character_id.clone());
+        }
+    }
+    tracing::warn!(
+        "[bong][lingtian] DrainQiSession ledger fallback uses transient entity account for {player:?}"
+    );
+    QiAccountId::player(format!("entity:{player:?}"))
+}
+
+fn send_qi_transfer(
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    from: QiAccountId,
+    to: QiAccountId,
+    amount: f64,
+    reason: QiTransferReason,
+) {
+    match QiTransfer::new(from, to, amount, reason) {
+        Ok(transfer) => {
             qi_transfers.send(transfer);
+        }
+        Err(error) => {
+            tracing::warn!(?error, "[bong][lingtian] drop invalid qi transfer");
         }
     }
 }
@@ -3749,10 +3777,7 @@ mod tests {
             2,
             "偷灵应写 player + zone 两笔 ledger event"
         );
-        assert_eq!(
-            qi_transfers[0].to.kind,
-            crate::qi_physics::QiAccountKind::Player
-        );
+        assert_eq!(qi_transfers[0].to, QiAccountId::player("bob"));
         assert!((qi_transfers[0].amount - 0.4).abs() < 1e-6);
         assert_eq!(qi_transfers[0].reason, QiTransferReason::Channeling);
         assert_eq!(qi_transfers[1].to, QiAccountId::zone(DEFAULT_ZONE));
