@@ -1,4 +1,4 @@
-# Bong · plan-craft-v1 · 骨架
+# Bong · plan-craft-v1 · active（P0+P1 ✅，P2/P3 待）
 
 通用手搓面 —— inventory 内集成「手搓」标签，列表式合成 UI（左配方列表 + 右详情面板 + 进度条）。服务多个流派的"轻度仪式化"合成需求（蚀针 / 自蕴煎汤 / 伪皮 / 阵法预埋件 / 凡器等），区别于 forge 的 4 步状态机 + alchemy 的火候模式 + vanilla 的摆放式合成。**无方块、无站**——纯 inventory 标签实装。**单任务**（同时只能 1 个手搓在跑，简化决策成本）。**in-game 时间推进**（玩家在线累积，下线暂停）。**配方解锁三渠道**（残卷 / 师承 / 顿悟，无流派自动解锁——worldview §九 信息差就是优势的物理化身）。**首版不实装磨损税 + 装备加速**（留 v2）。
 
@@ -240,7 +240,9 @@ pub enum UnlockSource {
 | `unlock_via_mentor` | NPC dialog 解锁 + Renown / qi 成本扣除 + 多重师承可选 | 3 |
 | `unlock_via_insight` | InsightTrigger 触发选项弹窗 + 玩家选定后解锁 + 永久不可重选 | 2 |
 
-**P1 验收**：`grep -rcE '#\[test\]' server/src/craft/` ≥ 30。守恒断言：所有 `qi_cost` 必须走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`，不允许 `cultivation.qi_current -= cost` 直接扣。
+**P1 验收**：`grep -rcE '#\[test\]' server/src/craft/` ≥ 30。守恒断言：所有 `qi_cost` 必须走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`——**禁止绕过 ledger 单独扣 state view**。允许的语义：`WorldQiAccount::transfer` 成功后把 `cultivation.qi_current` 同步扣减（state view 镜像 ledger，不脱离账本独立维护）。`start_craft` 在 ledger / state view 失同步时 fail-fast `LedgerOutOfSync`（详见 §6 进度日志）。
+
+**P1 已知简化（待 plan-qi-physics-v2 解锁）**：`qi_color_min: Option<(ColorKind, f32)>` 当前 `cultivation::QiColor` 是 single-main 形态（`{ main, secondary, is_chaotic, is_hunyuan }`，无显式 share 字段），P1 阶段把 `share` 阈值视为"main 命中即满足任意 share"——`Some((Insidious, 0.05))` 与 `Some((Insidious, 0.95))` 行为等价（main 等于 100% 主色占比）。待 `plan-qi-physics-v2` 在 QiColor 上加 `main_share: f64` 或多色 weights 后，`start_craft` 内 `qi_color_min` 校验切换到真实 share 比对，并新增 `StartCraftError::QiColorShareTooLow` variant 区分"主色对了但占比不足"与"主色错"。`recipe::validate` 已校验 share ∈ [0.0, 1.0]，配方契约可向前兼容。
 
 ---
 
