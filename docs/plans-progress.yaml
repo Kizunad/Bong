@@ -17,7 +17,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/）
 #   - finished            已归档（在 finished_plans/）
 
-generated_at: "2026-05-06"
+generated_at: "2026-05-08"
 project: Bong
 
 groups:
@@ -651,14 +651,14 @@ plans:
     summary: "骨架；化虚后不再以突破为驱动，改为参与天道运维博弈，对应 worldview §三 / §八 / §十六 / §十二。"
 
   - file: plan-void-quota-v1.md
-    group: skeleton
+    group: cultivation-economy
     title: "化虚名额按世界灵气总量动态调控"
-    state: skeleton
-    percent: 5
-    last_updated: ""
+    state: active-design
+    percent: 15
+    last_updated: "2026-05-08"
     pr_refs: []
     blocking_on: []
-    summary: "骨架；化虚名额上限 = floor(世界灵气总量 / K)，超额起绝壁劫，对应 worldview §三 / §八。"
+    summary: "Active（2026-05-08 实地核验后由 skeleton 升级）；覆盖 plan-tribulation-v1 已落地的 player_count/50 + hard cap 3 + half_step_on_success 旧规则。现有 AscensionQuota 持久化 / server-data / client store 可复用；P0 改为 WorldQiBudget.current_total / BONG_VOID_QUOTA_K 公式，P1 补绝壁劫死亡语义与 agent narration，P2 release hook 已部分落地，P3 inspect UI 未落。"
 
   # ============================================================
   # Group: finished
