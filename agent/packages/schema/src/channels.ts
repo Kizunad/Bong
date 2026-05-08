@@ -95,6 +95,12 @@ export const CHANNELS = {
   /** Server → Agent: 灵田 zone pressure 跨档事件（plan-lingtian-npc-v1 P5） */
   ZONE_PRESSURE_CROSSED: "bong:zone/pressure_crossed",
 
+  /** Server → Agent / Client: 天气事件起 / 落（plan-lingtian-weather-v1 §3 / §4.4）
+   *
+   * payload 形态：`WeatherEventUpdateV1`（kind: started / expired / cleared）。
+   * 单 zone MVP 用 zone_id="default"，未来扩展时按 zone 分发。 */
+  WEATHER_EVENT_UPDATE: "bong:weather_event_update",
+
   /** Server → Agent: 噬元鼠局部相变事件（plan-rat-v1 P4） */
   RAT_PHASE_EVENT: "bong:rat_phase_event",
 
@@ -243,6 +249,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.SOCIAL_NICHE_INTRUSION,
   CHANNELS.ZONE_PRESSURE_CROSSED,
+  CHANNELS.WEATHER_EVENT_UPDATE,
   CHANNELS.RAT_PHASE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,

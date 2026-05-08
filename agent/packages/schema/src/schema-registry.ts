@@ -149,6 +149,11 @@ import {
   WantedPlayerEventV1,
 } from "./identity.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
+import {
+  WeatherEventDataV1,
+  WeatherEventKindV1,
+  WeatherEventUpdateV1,
+} from "./lingtian-weather.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
 import {
@@ -385,6 +390,9 @@ export const SCHEMA_REGISTRY = {
   chatSignal: ChatSignal,
   inventorySnapshotV1: InventorySnapshotV1,
   inventoryEventV1: InventoryEventV1,
+  weatherEventKindV1: WeatherEventKindV1,
+  weatherEventDataV1: WeatherEventDataV1,
+  weatherEventUpdateV1: WeatherEventUpdateV1,
   serverDataV1: ServerDataV1,
   clientPayloadV1: ClientPayloadV1,
   clientPayloadWelcomeV1: WelcomePayloadV1,
@@ -701,6 +709,9 @@ export const GENERATED_SCHEMA_FILES = {
   "zong-core-activation-v1.json": SCHEMA_REGISTRY.zongCoreActivationV1,
   "chat-message-v1.json": SCHEMA_REGISTRY.chatMessageV1,
   "chat-signal.json": SCHEMA_REGISTRY.chatSignal,
+  "weather-event-kind-v1.json": SCHEMA_REGISTRY.weatherEventKindV1,
+  "weather-event-data-v1.json": SCHEMA_REGISTRY.weatherEventDataV1,
+  "weather-event-update-v1.json": SCHEMA_REGISTRY.weatherEventUpdateV1,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,
   "inventory-event-v1.json": SCHEMA_REGISTRY.inventoryEventV1,
   "server-data-v1.json": SCHEMA_REGISTRY.serverDataV1,

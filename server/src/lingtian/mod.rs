@@ -51,7 +51,7 @@ pub use pressure::{
 #[allow(unused_imports)]
 pub use weather::{
     try_roll_weather_for_zone, weather_apply_to_plot_system, weather_generator_system,
-    ActiveWeather, ActiveWeatherEntry, WeatherEvent, WeatherRng,
+    ActiveWeather, ActiveWeatherEntry, WeatherEvent, WeatherLifecycleEvent, WeatherRng,
 };
 
 #[allow(unused_imports)]
@@ -148,6 +148,8 @@ pub fn register(app: &mut App) {
     app.add_event::<StartDrainQiRequest>();
     app.add_event::<DrainQiCompleted>();
     app.add_event::<ZonePressureCrossed>();
+    // plan-lingtian-weather-v1 §3 — 天气事件生命周期 (started / expired)
+    app.add_event::<WeatherLifecycleEvent>();
     // 11 systems — 用两段 .chain() 避开 Bevy IntoSystemConfigs 的 tuple 上限
     app.add_systems(
         Update,

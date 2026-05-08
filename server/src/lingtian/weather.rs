@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, Event, EventWriter, Res, ResMut, Resource};
 
 use crate::world::season::{Season, WorldSeasonState};
 
@@ -257,6 +257,23 @@ impl ActiveWeather {
     }
 }
 
+/// plan §3 / §4.4 — 天气事件生命周期 Bevy event（generator → redis bridge）。
+///
+/// `Started`：generator 刚成功 roll 出一个新事件（active 已写入）。
+/// `Expired`：weather_apply_to_plot_system 检测到事件自然过期（active 已清除）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Event)]
+pub enum WeatherLifecycleEvent {
+    Started {
+        event: WeatherEvent,
+        started_at_lingtian_tick: u64,
+        expires_at_lingtian_tick: u64,
+    },
+    Expired {
+        event: WeatherEvent,
+        expired_at_lingtian_tick: u64,
+    },
+}
+
 /// plan §3 — 天气专用 RNG 资源（独立于 LingtianHarvestRng，避免 RNG 状态串扰）。
 /// xorshift64 + f32 fraction，与 LingtianHarvestRng 同算法保证测试可重现。
 #[derive(Debug, Resource)]
@@ -346,6 +363,7 @@ pub fn weather_generator_system(
     season_state: Option<Res<WorldSeasonState>>,
     mut active: ResMut<ActiveWeather>,
     mut rng: ResMut<WeatherRng>,
+    mut lifecycle: EventWriter<WeatherLifecycleEvent>,
 ) {
     if accumulator.raw() != 0 {
         return;
@@ -357,15 +375,30 @@ pub fn weather_generator_system(
     }
     active.set_last_rolled_day(current_day);
 
-    // 先清过期事件，再 roll 新事件。
-    let _expired = active.prune_expired(now);
+    // 先清过期事件（emit Expired），再 roll 新事件。
+    for (_zone, event) in active.prune_expired(now) {
+        lifecycle.send(WeatherLifecycleEvent::Expired {
+            event,
+            expired_at_lingtian_tick: now,
+        });
+    }
 
     let season = season_state
         .as_deref()
         .map(|s| s.current.season)
         .unwrap_or_default();
     // 单 zone MVP：默认 zone 使用全局季节状态。
-    try_roll_weather_for_zone(DEFAULT_ZONE, season, now, &mut active, &mut rng);
+    if let Some(event) = try_roll_weather_for_zone(DEFAULT_ZONE, season, now, &mut active, &mut rng)
+    {
+        let entry = active
+            .current_entry(DEFAULT_ZONE)
+            .expect("just inserted by try_roll_weather_for_zone");
+        lifecycle.send(WeatherLifecycleEvent::Started {
+            event,
+            started_at_lingtian_tick: now,
+            expires_at_lingtian_tick: entry.expires_at_lingtian_tick,
+        });
+    }
 }
 
 /// plan §3 / §4.1 — 每 lingtian-tick 跑一次：清过期事件 + 发广播 hook。
@@ -377,11 +410,18 @@ pub fn weather_apply_to_plot_system(
     accumulator: Res<LingtianTickAccumulator>,
     clock: Res<LingtianClock>,
     mut active: ResMut<ActiveWeather>,
+    mut lifecycle: EventWriter<WeatherLifecycleEvent>,
 ) {
     if accumulator.raw() != 0 {
         return;
     }
-    let _expired = active.prune_expired(clock.lingtian_tick);
+    let now = clock.lingtian_tick;
+    for (_zone, event) in active.prune_expired(now) {
+        lifecycle.send(WeatherLifecycleEvent::Expired {
+            event,
+            expired_at_lingtian_tick: now,
+        });
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "zone_id": "default",
+  "kind": "thunderstorm",
+  "started_at_lingtian_tick": 1440,
+  "expires_at_lingtian_tick": 1620,
+  "remaining_ticks": 180
+}
