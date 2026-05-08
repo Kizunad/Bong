@@ -105,6 +105,10 @@ use self::lifespan::{
     AgingEventEmitted, DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted,
     LifespanExtensionIntent, LifespanExtensionLedger,
 };
+use self::meridian::severed::{
+    apply_severed_event_system, MeridianSeveredEvent, MeridianSeveredPermanent,
+    SkillMeridianDependencies,
+};
 use self::meridian_open::meridian_open_tick;
 use self::neg_pressure::tick_neg_pressure;
 use self::negative_zone::negative_zone_siphon_tick;
@@ -161,6 +165,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
+    app.insert_resource(SkillMeridianDependencies::default());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());
@@ -200,6 +205,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianOverloadEvent>();
     app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
+    app.add_event::<MeridianSeveredEvent>();
     app.add_event::<CultivationSessionPracticeEvent>();
     app.add_event::<InfuseDuguPoisonIntent>();
     app.add_event::<DuguObfuscationDisruptedEvent>();
@@ -239,6 +245,9 @@ pub fn register(app: &mut App) {
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
         ),
     );
+    // plan-meridian-severed-v1 §1 P1：SEVERED 事件 → 写入 component（独立 add_systems
+    // 避免上面 tuple 超过 Bevy 20 元素上限）
+    app.add_systems(Update, apply_severed_event_system);
     app.add_systems(
         Update,
         record_cultivation_session_practice_events
@@ -500,6 +509,18 @@ fn attach_cultivation_to_joined_clients(
         let default_lifespan =
             LifespanComponent::new(LifespanCapTable::for_realm(cultivation.realm));
 
+        let mut severed_permanent = MeridianSeveredPermanent::default();
+        if let Some(persisted_bundle) = persisted_bundle.as_ref() {
+            if let Some(value) = persisted_bundle.get("meridian_severed") {
+                match serde_json::from_value::<MeridianSeveredPermanent>(value.clone()) {
+                    Ok(decoded) => severed_permanent = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "meridian_severed", error)
+                    }
+                }
+            }
+        }
+
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
@@ -515,6 +536,7 @@ fn attach_cultivation_to_joined_clients(
             unlocked_perceptions,
             insight_modifiers,
             DuguPractice::default(),
+            severed_permanent,
         ));
         if restored_lifespan.is_none() {
             entity_commands.insert(default_lifespan);

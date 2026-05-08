@@ -176,6 +176,8 @@ pub fn on_player_terminated(
             e.remove::<Contamination>();
             e.remove::<PracticeLog>();
             e.remove::<QiColor>();
+            // 决策门 #1 = B：跨周目（新角色）SEVERED 全重置 INTACT
+            e.remove::<crate::cultivation::meridian::severed::MeridianSeveredPermanent>();
             tracing::info!(
                 "[bong][cultivation] terminated entity {:?} — removed cultivation components",
                 ev.entity
