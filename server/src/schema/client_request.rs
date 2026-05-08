@@ -4,6 +4,8 @@
 //! 由 Fabric 客户端通过 Minecraft CustomPayload 发送，服务端反序列化为对应
 //! Bevy Event（MeridianTarget Component 更新 / BreakthroughRequest / ForgeRequest）。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::alchemy::AlchemyInterventionV1;
@@ -315,6 +317,12 @@ pub enum ClientRequestV1 {
         #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         binding: Option<SkillBarBindingV1>,
+    },
+    /// plan-hotbar-modify-v2 §2.3：保存某个招式的配置 JSON object。
+    SkillConfigIntent {
+        v: u8,
+        skill_id: String,
+        config: BTreeMap<String, serde_json::Value>,
     },
     CombatReincarnate {
         v: u8,
@@ -744,6 +752,32 @@ mod tests {
                 .expect_err("slot 9 should be rejected by schema");
             assert!(error.to_string().contains("slot must be between 0 and 8"));
         }
+    }
+
+    #[test]
+    fn skill_config_intent_roundtrip_preserves_json_object() {
+        let json = r#"{"type":"skill_config_intent","v":1,"skill_id":"zhenmai.sever_chain","config":{"meridian_id":"Pericardium","backfire_kind":"tainted_yuan"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SkillConfigIntent {
+                v,
+                skill_id,
+                config,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(skill_id, "zhenmai.sever_chain");
+                assert_eq!(
+                    config.get("meridian_id"),
+                    Some(&serde_json::json!("Pericardium"))
+                );
+            }
+            other => panic!("expected SkillConfigIntent, got {other:?}"),
+        }
+
+        assert!(serde_json::from_str::<ClientRequestV1>(
+            r#"{"type":"skill_config_intent","v":1,"skill_id":"x","config":{},"extra":1}"#
+        )
+        .is_err());
     }
 
     #[test]

@@ -105,6 +105,9 @@ use crate::shelflife::{
     SpoilCheckOutcome, SpoilConsumeWarning, SpoilSeverity,
 };
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
+use crate::skill::config::{
+    handle_config_intent, skill_config_snapshot_for_cast, SkillConfigSchemas, SkillConfigStore,
+};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
     SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
@@ -147,6 +150,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
+    pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
+    pub skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
     pub entity_manager: Option<Res<'w, EntityManager>>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub decay_profiles: Option<Res<'w, DecayProfileRegistry>>,
@@ -355,6 +360,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::QuickSlotBind { v, .. }
             | ClientRequestV1::SkillBarCast { v, .. }
             | ClientRequestV1::SkillBarBind { v, .. }
+            | ClientRequestV1::SkillConfigIntent { v, .. }
             | ClientRequestV1::CombatReincarnate { v }
             | ClientRequestV1::CombatTerminate { v }
             | ClientRequestV1::CombatCreateNewCharacter { v }
@@ -1192,6 +1198,18 @@ pub fn handle_client_request_payloads(
                     &inventories,
                     &clients,
                     persistence.as_deref(),
+                );
+            }
+            ClientRequestV1::SkillConfigIntent {
+                skill_id, config, ..
+            } => {
+                handle_skill_config_intent_request(
+                    ev.client,
+                    skill_id,
+                    config,
+                    &mut clients,
+                    persistence.as_deref(),
+                    &mut combat_params,
                 );
             }
             ClientRequestV1::CombatReincarnate { .. } => {
@@ -2440,6 +2458,8 @@ mod tests {
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.insert_resource(ZoneRegistry::fallback());
+        app.init_resource::<SkillConfigStore>();
+        app.insert_resource(SkillConfigSchemas::default());
         app.add_event::<CustomPayloadEvent>();
         app.add_event::<crate::combat::events::AttackIntent>();
         app.add_event::<crate::cultivation::burst_meridian::BurstMeridianEvent>();
@@ -4257,6 +4277,16 @@ mod tests {
     fn skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path() {
         let mut app = App::new();
         register_request_app(&mut app);
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "burst_meridian.tie_shan_kao",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
+                    "stance".to_string(),
+                    serde_json::json!("short"),
+                )])),
+            );
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let mut skill_bar = SkillBarBindings::default();
@@ -4297,6 +4327,13 @@ mod tests {
         assert_eq!(
             casting.skill_id.as_deref(),
             Some("burst_meridian.tie_shan_kao")
+        );
+        assert_eq!(
+            casting
+                .skill_config
+                .as_ref()
+                .and_then(|config| config.fields.get("stance")),
+            Some(&serde_json::json!("short"))
         );
     }
 
@@ -4560,6 +4597,7 @@ fn handle_use_quick_slot(
         start_position,
         complete_cooldown_ticks,
         skill_id: None,
+        skill_config: None,
     });
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         push_cast_sync(
@@ -4793,6 +4831,14 @@ fn start_generic_skillbar_cast(
         .get(entity)
         .map(|position| position.get())
         .unwrap_or(valence::prelude::DVec3::ZERO);
+    let skill_config = clients.get_mut(entity).ok().and_then(|(username, _)| {
+        let player_id = canonical_player_id(username.0.as_str());
+        skill_config_snapshot_for_cast(
+            combat_params.skill_config_store.as_deref(),
+            player_id.as_str(),
+            skill_id,
+        )
+    });
     commands.entity(entity).insert(Casting {
         source: CastSource::SkillBar,
         slot,
@@ -4804,6 +4850,7 @@ fn start_generic_skillbar_cast(
         start_position,
         complete_cooldown_ticks,
         skill_id: Some(skill_id.to_string()),
+        skill_config,
     });
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         push_cast_sync(
@@ -5015,6 +5062,69 @@ impl From<&Casting> for CastCancelSnapshot {
             started_at_ms: casting.started_at_ms,
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_skill_config_intent_request(
+    entity: valence::prelude::Entity,
+    skill_id: String,
+    config: std::collections::BTreeMap<String, serde_json::Value>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    persistence: Option<&PlayerStatePersistence>,
+    combat_params: &mut CombatRequestParams,
+) {
+    let Ok((username, _)) = clients.get_mut(entity) else {
+        tracing::warn!(
+            "[bong][network] skill_config_intent entity={entity:?} rejected: missing client username"
+        );
+        return;
+    };
+    let username = username.0.clone();
+    let player_id = canonical_player_id(username.as_str());
+    let current_casting = combat_params.casting_q.get(entity).ok().cloned();
+    let Some(schemas) = combat_params.skill_config_schemas.as_deref() else {
+        tracing::warn!(
+            "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: schema resource missing"
+        );
+        return;
+    };
+    let Some(store) = combat_params.skill_config_store.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: store resource missing"
+        );
+        return;
+    };
+    let snapshot = match handle_config_intent(
+        player_id.as_str(),
+        skill_id.as_str(),
+        config,
+        current_casting.as_ref(),
+        store,
+        schemas,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: {reason:?}"
+            );
+            return;
+        }
+    };
+
+    if let Some(persistence) = persistence {
+        if let Err(error) = update_player_ui_prefs(persistence, username.as_str(), |prefs| {
+            prefs.skill_configs = snapshot.configs.clone();
+        }) {
+            tracing::warn!(
+                "[bong][network] failed to persist skill_config_intent for `{}` skill={skill_id}: {error}",
+                username
+            );
+        }
+    }
+    tracing::info!(
+        "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} configs={}",
+        snapshot.configs.len()
+    );
 }
 
 fn handle_skill_bar_bind(

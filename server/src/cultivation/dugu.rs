@@ -633,6 +633,7 @@ fn insert_instant_cast(
             start_position,
             complete_cooldown_ticks: cooldown_ticks,
             skill_id: Some(skill_id.to_string()),
+            skill_config: None,
         });
 }
 

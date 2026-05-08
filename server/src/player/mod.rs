@@ -2,7 +2,7 @@ pub mod gameplay;
 pub mod state;
 
 use self::state::{
-    load_player_slices, save_player_core_slice, save_player_inventory_slice,
+    canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
     save_player_lifespan_slice, save_player_skill_slice, save_player_slices,
     save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
@@ -18,6 +18,7 @@ use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::persistence::persist_player_cultivation_bundle;
 use crate::persistence::PersistenceSettings;
 use crate::skill::components::SkillSet;
+use crate::skill::config::SkillConfigStore;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
 use valence::message::SendMessage;
@@ -163,6 +164,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     dimension_layers: Option<Res<DimensionLayers>>,
+    mut skill_config_store: Option<ResMut<SkillConfigStore>>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -196,6 +198,12 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let skill_bar_bindings = persisted
             .ui_prefs
             .skill_bar_bindings(persisted.inventory.as_ref());
+        if let Some(store) = skill_config_store.as_deref_mut() {
+            store.replace_player_configs(
+                canonical_player_id(username.0.as_str()).as_str(),
+                persisted.ui_prefs.skill_configs.clone(),
+            );
+        }
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             persisted.state,

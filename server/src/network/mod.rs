@@ -35,6 +35,7 @@ pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
 pub mod resourcepack;
+pub mod skill_config_emit;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
@@ -484,6 +485,12 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         client_request_handler::handle_client_request_payloads,
+    );
+    app.add_systems(
+        Update,
+        skill_config_emit::emit_skill_config_snapshots
+            .after(crate::player::attach_player_state_to_joined_clients)
+            .after(client_request_handler::handle_client_request_payloads),
     );
     app.add_systems(
         Update,

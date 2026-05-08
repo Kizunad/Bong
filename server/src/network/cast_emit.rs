@@ -675,6 +675,7 @@ mod tests {
                 start_position: DVec3::ZERO,
                 complete_cooldown_ticks: 20,
                 skill_id: Some("xue_beng_bu".to_string()),
+                skill_config: None,
             };
             emit_cast_interrupt_audio(&mut audio, entity, DVec3::new(1.0, 64.0, 1.0), &casting);
         }

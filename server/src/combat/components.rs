@@ -332,6 +332,9 @@ pub struct Casting {
     pub complete_cooldown_ticks: u64,
     /// SkillBar 技能 id。QuickSlot/物品 cast 为 None。
     pub skill_id: Option<String>,
+    /// SkillBar cast 开始时的配置快照；cast 中修改不影响本次结算。
+    #[allow(dead_code)]
+    pub skill_config: Option<crate::skill::config::SkillConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

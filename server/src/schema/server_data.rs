@@ -35,6 +35,7 @@ use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
 use crate::cultivation::components::ColorKind;
+use crate::skill::config::SkillConfigSnapshot;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
@@ -102,6 +103,7 @@ pub enum ServerDataType {
     QuickSlotConfig,
     SkillBarConfig,
     TechniquesSnapshot,
+    SkillConfigSnapshot,
     UnlocksSync,
     DerivedAttrsSync,
     EventStreamPush,
@@ -277,6 +279,7 @@ pub enum ServerDataPayloadV1 {
     QuickSlotConfig(QuickSlotConfigV1),
     SkillBarConfig(SkillBarConfigV1),
     TechniquesSnapshot(TechniquesSnapshotV1),
+    SkillConfigSnapshot(SkillConfigSnapshot),
     UnlocksSync(UnlocksSyncV1),
     DerivedAttrsSync(DerivedAttrsSyncV1),
     EventStreamPush(EventStreamPushV1),
@@ -720,6 +723,10 @@ enum ServerDataPayloadWireV1 {
     TechniquesSnapshot {
         #[serde(flatten)]
         snapshot: TechniquesSnapshotV1,
+    },
+    SkillConfigSnapshot {
+        #[serde(flatten)]
+        snapshot: SkillConfigSnapshot,
     },
     UnlocksSync {
         #[serde(flatten)]
@@ -1485,6 +1492,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TechniquesSnapshot { snapshot } => {
                 Ok(Self::TechniquesSnapshot(snapshot))
             }
+            ServerDataPayloadWireV1::SkillConfigSnapshot { snapshot } => {
+                Ok(Self::SkillConfigSnapshot(snapshot))
+            }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
             ServerDataPayloadWireV1::DerivedAttrsSync { attrs } => {
                 Ok(Self::DerivedAttrsSync(attrs))
@@ -1932,6 +1942,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TechniquesSnapshot(snapshot) => Self::TechniquesSnapshot {
                 snapshot: snapshot.clone(),
             },
+            ServerDataPayloadV1::SkillConfigSnapshot(snapshot) => Self::SkillConfigSnapshot {
+                snapshot: snapshot.clone(),
+            },
             ServerDataPayloadV1::UnlocksSync(unlocks) => Self::UnlocksSync { unlocks: *unlocks },
             ServerDataPayloadV1::DerivedAttrsSync(attrs) => Self::DerivedAttrsSync {
                 attrs: attrs.clone(),
@@ -2270,6 +2283,7 @@ impl ServerDataPayloadV1 {
             Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
             Self::SkillBarConfig(..) => ServerDataType::SkillBarConfig,
             Self::TechniquesSnapshot(..) => ServerDataType::TechniquesSnapshot,
+            Self::SkillConfigSnapshot(..) => ServerDataType::SkillConfigSnapshot,
             Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
             Self::DerivedAttrsSync(..) => ServerDataType::DerivedAttrsSync,
             Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
@@ -2365,6 +2379,9 @@ mod tests {
                 cooldown_until_ms: vec![0; 9],
             }),
             ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 { entries: vec![] }),
+            ServerDataPayloadV1::SkillConfigSnapshot(SkillConfigSnapshot {
+                configs: Default::default(),
+            }),
             ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
             ServerDataPayloadV1::DerivedAttrsSync(DerivedAttrsSyncV1 {
                 flying: false,
