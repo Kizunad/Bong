@@ -1,4 +1,4 @@
-# Bong · plan-qi-physics-patch-v1 · Active
+# Bong · plan-qi-physics-patch-v1 · Finished
 
 把 audit 出的全部散常数 / 衰减函数 / 释放路径切到 `plan-qi-physics-v1` 提供的算子；删除原模块各自的物理常量；让所有真元/灵气流动都经 `qi_physics::ledger::QiTransfer` 守恒检查。**这是迁移收口 plan，不引入新物理**。
 
@@ -177,10 +177,11 @@
 
 ### 落地清单
 
-- **P0/P1 收口**：`server/src/shelflife/compute.rs` / `server/src/shelflife/mod.rs` 将保质期 Exponential/Age post-peak 路径迁到 `qi_excretion` + `ContainerKind` facade；`server/src/lingtian/qi_account.rs` 增加 `ZoneQiAccount::sync_world_qi_account`，把灵田 facade 镜像到底盘 `WorldQiAccount`。
+- **P0/P1 收口**：`server/src/shelflife/compute.rs` / `server/src/shelflife/mod.rs` 将保质期 Exponential/Age post-peak 路径迁到 `qi_excretion` + `ContainerKind` facade；`server/src/lingtian/qi_account.rs` 增加 `ZoneQiAccount::sync_world_qi_account`，并通过 `sync_zone_qi_account_to_world_qi_account` system 在 lingtian runtime 中镜像到底盘 `WorldQiAccount`。
 - **P2 战斗/杂项收口**：`server/src/combat/{projectile,jiemai,tuike,woliu}.rs`、`server/src/cultivation/{dugu,burst_meridian}.rs`、`server/src/zhenfa/mod.rs` 接入 `StyleAttack` / `StyleDefense`；`server/src/network/client_request_handler.rs` 的跨界磨损常量迁到 `server/src/qi_physics/{constants,wear}.rs`。
-- **P2/P3 守恒路径**：`server/src/cultivation/{death_hooks,contamination,negative_zone,tribulation}.rs` 将重生 penalty、污染排异、负灵域 siphon、渡劫失败/逃跑清零接到 `qi_release_to_zone` 并发 `QiTransferReason::ReleaseToZone`。
-- **P3 天道/TSY 收口**：`server/src/world/tsy_lifecycle.rs` 在汐转 TSY 周期改写时把正向 delta 通过 `collapse_redistribute_qi` 回流周边 zone；`server/src/qi_physics/tiandao.rs` / `server/src/qi_physics/mod.rs` 注册 `EraDecayClock` + `era_decay_tick`。
+- **P2/P3 守恒路径**：`server/src/cultivation/{death_hooks,contamination,negative_zone,tribulation}.rs` 将重生 penalty、污染排异、负灵域 siphon、渡劫失败/逃跑清零接到 `qi_release_to_zone` 并发 `QiTransferReason::ReleaseToZone`；污染排异现在只有 zone release 被接受后才扣玩家 qi / 减污染，避免无 zone / 无 position 时漏账。
+- **P3 天道/TSY 收口**：`server/src/world/tsy_lifecycle.rs` 在汐转 TSY 周期改写时把正向 delta 通过 `collapse_redistribute_qi` 回流周边 zone，并在反向 delta 时从同维度周边正 qi zone 抽取后按比例应用目标层变化；`server/src/qi_physics/tiandao.rs` / `server/src/qi_physics/mod.rs` 注册 `EraDecayClock` + `era_decay_tick`。
+- **全局观测门**：`server/src/qi_physics/ledger.rs` 保留 `WorldQiSnapshot` / `summarize_world_qi` / `assert_conservation`，并新增 ledger transfer 经 snapshot 守恒的集成断言。
 - **旧符号核验**：`BASE_LOSS_PER_BLOCK|VORTEX_THEORETICAL_LIMIT_DELTA|JIEMAI_|QI_REGEN_COEF|ZONE_LEAK_RATIO|SEARCH_DRAIN_MULTIPLIER|GATHER_SPIRIT_QI_REWARD|TODO.*WorldQiAccount|future.*WorldQiAccount|未来接.*WorldQiAccount` 在 `server/src/**/*.rs` 中为 0；跨界磨损只保留 `QI_TARGETED_ITEM_WEAR_*` canonical 常量。
 
 ### 关键 commit
@@ -192,6 +193,7 @@
 | `e99c74aaf` | 2026-05-09 | server: 补齐清零释放路径守恒 |
 | `2f1cf8ac8` | 2026-05-09 | server: 补 qi physics patch clippy 约束 |
 | `aa1c7438e` | 2026-05-09 | server: 收口跨界磨损 qi 物理常量 |
+| `35ff81315` | 2026-05-09 | server: 修复 qi 物理 review 守恒缺口 |
 
 ### 测试结果
 
@@ -199,7 +201,11 @@
 |---|---|
 | `cd server && cargo fmt --check` | 通过 |
 | `cd server && cargo clippy --all-targets -- -D warnings` | 通过 |
-| `cd server && cargo test` | 3031 passed / 0 failed |
+| `cd server && cargo test` | 3035 passed / 0 failed |
+| `cd server && cargo test qi_physics` | 71 passed / 0 failed |
+| `cd server && cargo test contamination` | 20 passed / 0 failed |
+| `cd server && cargo test tsy_lifecycle` | 29 passed / 0 failed |
+| `cd server && cargo test lingtian::qi_account` | 6 passed / 0 failed |
 | `cd server && cargo test tribulation` | 99 passed / 0 failed |
 | `cd server && cargo test targeted_item_wear` | 1 passed / 0 failed |
 | `cd server && cargo test inventory_move_applies_hidden_targeted_wear_to_spiritual_item` | 1 passed / 0 failed |
@@ -217,4 +223,6 @@
 
 ### 遗留 / 后续
 
-- 本 plan 范围内无阻塞项。`EnvField.rhythm_multiplier` 的真实天气/季节输入由已归档的 `plan-lingtian-weather-v1` 和后续 plot weather 通路负责继续扩展；本 plan 已保留 neutral/default 与 qi_physics 运算入口。
+- 非阻塞遗留：`StyleAttack` / `StyleDefense` 已完成 trait facade、参数映射与模块侧回归，但通用业务对打中的 `qi_collision` 编排仍应由后续 behavior PR 接入，避免在迁移收口 PR 中改变既有战斗结算语义。
+- 非阻塞遗留：24h / 100h 长程模拟 harness 仍留给后续 v2 验收；本轮已补 `WorldQiSnapshot` + ledger transfer 守恒断言、TSY 正反向 delta 守恒测试、污染排异 release 失败不扣账测试，覆盖本 PR 触达路径。
+- 非阻塞遗留：`EnvField.rhythm_multiplier` 的真实天气/季节输入由已归档的 `plan-lingtian-weather-v1` 和后续 plot weather 通路继续扩展；本 plan 已保留 neutral/default 与 qi_physics 运算入口。
