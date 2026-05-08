@@ -51,15 +51,15 @@ tmux new-session -d -s "$SESSION" -n main
 tmux send-keys -t "$SESSION:main" "if redis-cli ping >/dev/null 2>&1; then printf '[bong] redis already running on :6379\n'; else redis-server --loglevel warning; fi" Enter
 
 # Pane 1: Server
-# BONG_ROGUE_SEED_COUNT 默认 0：100 NPC 在单核 WSL2 跑不动（37 个 per-NPC system
-# × 100 entity → TPS 实测 0.7，所有玩家 packet 卡几秒）。需要 LOD 优化才能恢复
-# 100 seed。可手动覆盖：BONG_ROGUE_SEED_COUNT=10 bash start.sh
+# BONG_ROGUE_SEED_COUNT 默认 100：NPC perf 底盘已接入空间索引、LOD 补漏与
+# navigator 分桶。需要低负载本地调试时可手动覆盖：
+# BONG_ROGUE_SEED_COUNT=10 bash start.sh
 tmux split-window -h -t "$SESSION:main"
 tmux send-keys -t "$SESSION:main.1" \
   "export PATH='${RUNTIME_PATH}' && \
    export CARGO_TARGET_DIR='${CARGO_TARGET_DIR}' && \
    export BONG_TERRAIN_RASTER_PATH='${BONG_TERRAIN_RASTER_PATH}' && \
-   export BONG_ROGUE_SEED_COUNT='${BONG_ROGUE_SEED_COUNT:-0}' && \
+   export BONG_ROGUE_SEED_COUNT='${BONG_ROGUE_SEED_COUNT:-100}' && \
    cd '$ROOT/server' && \
    echo '[bong] starting server (rogue seed='\$BONG_ROGUE_SEED_COUNT')...' && \
    cargo run --release 2>&1" Enter

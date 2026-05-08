@@ -17,6 +17,7 @@ use crate::npc::brain_rat::{
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -99,6 +100,7 @@ pub fn spawn_rat_npc_at(
             loadout.melee_profile(),
             NpcArchetype::Beast,
             FaunaTag::new(BeastKind::Rat),
+            NpcLodTier::Dormant,
             initial_phase,
             group_id,
             PressureSensor::default(),
