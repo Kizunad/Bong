@@ -10,6 +10,7 @@ import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narr
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
+import { VoidActionNarrationRuntime } from "./void-actions-runtime.js";
 import { WoliuNarrationRuntime } from "./woliu-narration.js";
 import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
@@ -148,6 +149,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const tribulationCleanup = await startTribulationRuntime({
     ...runtimeOpts,
   });
+  const voidActionCleanup = await startVoidActionRuntime({
+    ...runtimeOpts,
+  });
   const woliuCleanup = await startWoliuRuntime({
     ...runtimeOpts,
   });
@@ -183,6 +187,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     duguCleanup,
     scatteredCultivatorCleanup,
     woliuCleanup,
+    voidActionCleanup,
     tribulationCleanup,
     skillLvUpCleanup,
     deathInsightCleanup,
@@ -549,6 +554,44 @@ async function startTribulationRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] tribulation runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startVoidActionRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof VoidActionNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof VoidActionNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new VoidActionNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] void action runtime online"))
+    .catch((error) => console.warn("[tiandao] void action runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] void action runtime disconnect error:", error);
     }
   };
 }

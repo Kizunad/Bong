@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "actor_id",
+    "cooldowns"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "actor_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "cooldowns": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "ready_at_tick"
+        ],
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "const": "suppress_tsy",
+                "type": "string"
+              },
+              {
+                "const": "explode_zone",
+                "type": "string"
+              },
+              {
+                "const": "barrier",
+                "type": "string"
+              },
+              {
+                "const": "legacy_assign",
+                "type": "string"
+              }
+            ]
+          },
+          "ready_at_tick": {
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

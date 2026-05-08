@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "suppress_tsy",
+      "type": "string"
+    },
+    {
+      "const": "explode_zone",
+      "type": "string"
+    },
+    {
+      "const": "barrier",
+      "type": "string"
+    },
+    {
+      "const": "legacy_assign",
+      "type": "string"
+    }
+  ]
+}

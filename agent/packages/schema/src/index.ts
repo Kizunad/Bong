@@ -39,6 +39,7 @@ export * from "./style-balance.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)
 export * from "./vfx-event.js";
 export * from "./tuike.js";
+export * from "./void-actions.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
 export * from "./zone-pressure.js";

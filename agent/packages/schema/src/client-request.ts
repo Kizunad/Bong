@@ -22,6 +22,7 @@ import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
 import { GuardianKindV1 } from "./social.js";
 import { FalseSkinKindV1 } from "./tuike.js";
+import { VoidActionRequestV1 } from "./void-actions.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 const HOTBAR_SLOT_COUNT = 9;
@@ -53,6 +54,16 @@ export const StartDuXuRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type StartDuXuRequestV1 = Static<typeof StartDuXuRequestV1>;
+
+export const VoidActionClientRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("void_action"),
+    request: VoidActionRequestV1,
+  },
+  { additionalProperties: false },
+);
+export type VoidActionClientRequestV1 = Static<typeof VoidActionClientRequestV1>;
 
 export const AbortTribulationRequestV1 = Type.Object(
   {
@@ -833,6 +844,7 @@ export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
   StartDuXuRequestV1,
+  VoidActionClientRequestV1,
   AbortTribulationRequestV1,
   HeartDemonDecisionRequestV1,
   ForgeRequestV1,

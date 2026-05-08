@@ -1,0 +1,79 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "actor_id",
+    "actor_name",
+    "target",
+    "at_tick",
+    "qi_cost",
+    "lifespan_cost_years",
+    "scope",
+    "public_text"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "suppress_tsy",
+          "type": "string"
+        },
+        {
+          "const": "explode_zone",
+          "type": "string"
+        },
+        {
+          "const": "barrier",
+          "type": "string"
+        },
+        {
+          "const": "legacy_assign",
+          "type": "string"
+        }
+      ]
+    },
+    "actor_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "actor_name": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "qi_cost": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "lifespan_cost_years": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "scope": {
+      "const": "broadcast",
+      "type": "string"
+    },
+    "public_text": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}
