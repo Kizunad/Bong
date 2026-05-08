@@ -125,6 +125,7 @@ K 值校准（运维 config）:
 - **P1 绝壁劫死亡语义**：`server/src/cultivation/death_hooks.rs` 新增 `CultivationDeathCause::VoidQuotaExceeded`，`server/src/combat/lifecycle.rs` 将其作为终局死亡处理；`DuXuResultV1.reason = "void_quota_exceeded"`；`agent/packages/tiandao/src/tribulation-runtime.ts` 输出"天地装不下你了。"。
 - **P2 名额回流**：保留 `release_ascension_quota_slot` 的重生 / 死透 / 降境 hook，`AscensionQuotaOpened` 继续驱动新的 quota snapshot。
 - **P3 client inspect 展示**：`AscensionQuotaStore` / `AscensionQuotaHandler` 保存扩展字段；`StatusPanelExtension` + `InspectScreen` 在通灵/化虚检视状态条展示当前世界化虚名额、来源和 tooltip 数据。
+- **Review 收口**：移除 `TribulationState.half_step_on_success` 的死分支；起劫 quota 检查把活跃渡虚劫计入占位，跨 tick 抢位也会被绝壁劫拒绝；旧 IPC 字段保持 `false` 输出以兼容现有 client/schema。
 
 ### 关键 commit
 
@@ -133,17 +134,19 @@ K 值校准（运维 config）:
 - `55f07b314`（2026-05-08）`agent(void-quota): 扩展名额契约和绝壁劫叙事`
 - `e2183fe00`（2026-05-08）`client(void-quota): 在检视面板展示化虚名额`
 - `9d67a6303`（2026-05-08）`docs(plan-void-quota-v1): finish evidence 并归档`
+- `36ccd5c69`（2026-05-08）`server(void-quota): 收紧化虚名额竞态`
 
 ### 测试结果
 
-- `cd server && cargo test void_quota -- --nocapture` → 4 passed
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2938 passed
+- `cd server && cargo test void_quota -- --nocapture` → 5 passed
+- `cd server && cargo test start_tribulation_system_counts_in_flight_void_tribulations_across_ticks -- --nocapture` → 1 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2940 passed
 - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 305 passed；tiandao 271 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL
 
 ### 跨仓库核验
 
-- **server**：`WorldQiBudget` / `VoidQuotaConfig` / `check_void_quota` / `CultivationDeathCause::VoidQuotaExceeded` / `VOID_QUOTA_EXCEEDED_REASON`
+- **server**：`WorldQiBudget` / `VoidQuotaConfig` / `check_void_quota` / `CultivationDeathCause::VoidQuotaExceeded` / `VOID_QUOTA_EXCEEDED_REASON` / 活跃渡虚劫占位
 - **agent/schema**：`AscensionQuotaV1.total_world_qi` / `quota_k` / `quota_basis`，`DuXuResultV1.reason`
 - **agent runtime**：`tribulation-runtime.ts` 对 `reason === "void_quota_exceeded"` 返回"天地装不下你了。"
 - **client**：`AscensionQuotaStore.State(totalWorldQi, quotaK, quotaBasis)`，`StatusPanelExtension.ascensionQuotaLine`，`InspectScreen` store listener
