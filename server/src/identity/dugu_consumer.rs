@@ -1,77 +1,37 @@
 //! [`DuguRevealedEvent`] consumer：把"毒蛊师暴露"写为 `RevealedTag::DuguRevealed`
 //! 落到玩家当前 active identity（plan-identity-v1 P2）。
 //!
-//! 设计要点：
-//!
-//! - **dedup by kind**：同一 active identity 内 `DuguRevealed` 只保留一份，重复事件
-//!   不重复扣 -50（worldview §十一 毒蛊师 -50 baseline 是单值锚点）。
-//! - **永久 tag**：[`RevealedTag::permanent = true`]；切身份冻结旧 identity 仍带 tag，
-//!   未来切回再触发 -50（plan §0 设计轴心 + §4 切身份消除段）。
-//! - **active identity 写入**：事件命中的是当前外貌身份；旧 frozen identity 不被改。
-//! - **persistence**：写完同步保存，避免 server 崩了 tag 丢失。
+//! P4 后本模块的 system 改用 [`super::revealed::consume_revealed_event`] 泛型版本
+//! 注册，但仍保留 [`write_dugu_tag_if_absent`] 作为面向 dugu 单一 tag 的 helper /
+//! 测试 fixture。dedup / persistence 行为完全一致（worldview §十一 -50 单值锚点）。
 
-use valence::prelude::{App, EventReader, Query, Res, Update, With};
+use valence::prelude::App;
 
-use super::{PlayerIdentities, RevealedTag, RevealedTagKind};
-use crate::combat::components::Lifecycle;
-use crate::cultivation::dugu::DuguRevealedEvent;
-use crate::persistence::identity as identity_db;
-use crate::persistence::PersistenceSettings;
+use super::PlayerIdentities;
 
-/// 注册 dugu consumer system（在 cultivation::dugu emit 后跑）。
-pub fn register(app: &mut App) {
-    app.add_systems(Update, consume_dugu_revealed_to_identity_tag);
+/// 注册 dugu consumer：实质上是 [`super::revealed::consume_revealed_event`] 的
+/// `DuguRevealedEvent` 单态化（在 `revealed::register` 里一次性注册了；本函数保留
+/// 为 P3 之前调用方的 no-op，避免回归改 main.rs 注册顺序）。
+pub fn register(_app: &mut App) {
+    // 实际系统在 revealed::register 注册（consume_revealed_event::<DuguRevealedEvent>）。
 }
 
-pub fn consume_dugu_revealed_to_identity_tag(
-    mut events: EventReader<DuguRevealedEvent>,
-    mut players: Query<(&mut PlayerIdentities, &Lifecycle), With<valence::prelude::Client>>,
-    persistence: Option<Res<PersistenceSettings>>,
-) {
-    for event in events.read() {
-        let Ok((mut identities, lifecycle)) = players.get_mut(event.revealed_player) else {
-            continue;
-        };
-        let char_id = lifecycle.character_id.clone();
-        let written = write_dugu_tag_if_absent(&mut identities, event.witness_realm, event.at_tick);
-        if written {
-            if let Some(settings) = persistence.as_deref() {
-                if let Err(error) =
-                    identity_db::save_player_identities(settings, &char_id, &identities)
-                {
-                    tracing::warn!(
-                        ?error,
-                        char_id,
-                        "[bong][identity] dugu consumer persistence save failed"
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// 把 DuguRevealed tag 写到 active identity，dedup by kind。
+/// 写 DuguRevealed tag 的便捷 helper（dedup by kind + permanent=true）。
 ///
-/// 返回 `true` 表示**确实新增了一条 tag**（首次触发）；`false` 表示已经有该 tag，
-/// 调用方据此决定是否触发持久化 / 下游事件。
+/// 仅 dugu 一个 RevealedTagKind 永久；通用 helper 见
+/// [`super::revealed::write_revealed_tag_if_absent`]。
 pub fn write_dugu_tag_if_absent(
     identities: &mut PlayerIdentities,
     witness_realm: crate::cultivation::components::Realm,
     at_tick: u64,
 ) -> bool {
-    let Some(active) = identities.active_mut() else {
-        return false;
-    };
-    if active.has_tag(RevealedTagKind::DuguRevealed) {
-        return false;
-    }
-    active.revealed_tags.push(RevealedTag {
-        kind: RevealedTagKind::DuguRevealed,
-        witnessed_at_tick: at_tick,
+    super::revealed::write_revealed_tag_if_absent(
+        identities,
+        super::RevealedTagKind::DuguRevealed,
         witness_realm,
-        permanent: true,
-    });
-    true
+        true,
+        at_tick,
+    )
 }
 
 #[cfg(test)]
@@ -79,7 +39,7 @@ mod tests {
     use super::*;
     use crate::cultivation::components::Realm;
     use crate::identity::reputation_score;
-    use crate::identity::{IdentityId, IdentityProfile};
+    use crate::identity::{IdentityId, IdentityProfile, RevealedTagKind};
 
     #[test]
     fn write_dugu_tag_first_call_returns_true() {

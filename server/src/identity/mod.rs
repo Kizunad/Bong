@@ -17,6 +17,7 @@ pub mod dugu_consumer;
 pub mod events;
 pub mod precondition;
 pub mod reaction;
+pub mod revealed;
 pub mod scorer;
 
 use std::collections::HashMap;
@@ -265,6 +266,12 @@ pub fn register(app: &mut App) {
     dugu_consumer::register(app);
     reaction::register(app);
     scorer::register(app);
+    // 通用 RevealedEvent 路径：把 DuguRevealedEvent 用 trait 版 consumer 接住
+    // （6 流派 vN+1 各自仿照 add_systems(Update, consume_revealed_event::<XxxEvent>)）。
+    app.add_systems(
+        Update,
+        revealed::consume_revealed_event::<crate::cultivation::dugu::DuguRevealedEvent>,
+    );
 }
 
 /// 玩家加入时附挂 [`PlayerIdentities`] Component。
