@@ -129,7 +129,6 @@ pub fn apply_craft_intents(
     mut cancel_intents: EventReader<CraftCancelIntent>,
     mut started_tx: EventWriter<CraftStartedEvent>,
     mut failed_tx: EventWriter<CraftFailedEvent>,
-    mut completed_tx: EventWriter<CraftCompletedEvent>,
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
     mut ledger: ResMut<WorldQiAccount>,
@@ -283,7 +282,6 @@ pub fn apply_craft_intents(
             .remove::<CraftSession>()
             .insert(CraftSessionStateDirty);
         // 完成事件不发，cancel 走 Failed 通道（reason=PlayerCancelled）
-        let _ = &mut completed_tx; // 静态借用，避免 unused 警告
     }
 }
 
@@ -297,6 +295,7 @@ pub fn tick_craft_sessions(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut completed_tx: EventWriter<CraftCompletedEvent>,
+    mut failed_tx: EventWriter<CraftFailedEvent>,
     mut sessions: Query<(Entity, &mut CraftSession, &mut PlayerInventory), With<Client>>,
 ) {
     for (entity, mut session, mut inventory) in sessions.iter_mut() {
@@ -307,6 +306,13 @@ pub fn tick_craft_sessions(
                     "[bong][craft] tick finalize: recipe `{}` missing in registry",
                     session.recipe_id
                 );
+                failed_tx.send(CraftFailedEvent {
+                    caster: entity,
+                    recipe_id: session.recipe_id.clone(),
+                    reason: CraftFailureReason::InternalError,
+                    material_returned: 0,
+                    qi_refunded: 0.0,
+                });
                 commands
                     .entity(entity)
                     .remove::<CraftSession>()
@@ -318,22 +324,37 @@ pub fn tick_craft_sessions(
                 output_manifest,
             } = finalize_craft(&session, recipe, entity, clock.tick);
             let (template, count) = output_manifest;
-            if let Err(err) = add_item_to_player_inventory(
+            // review fix (Codex P1)：产物入背包失败时不能静默——qi 已扣材料已耗，
+            // 玩家必须知道任务失败而不是显示一条假"出炉成功"。改 emit Failed
+            // (InternalError)，让 client 渲染失败 toast；不送 Completed 事件。
+            match add_item_to_player_inventory(
                 &mut inventory,
                 &item_registry,
                 &mut allocator,
                 &template,
                 count,
             ) {
-                tracing::warn!(
-                    "[bong][craft] finalize: failed to grant {template} x{count}: {err}"
-                );
+                Ok(_) => {
+                    tracing::info!(
+                        "[bong][craft] finalize caster={entity:?} recipe={} output={template} x{count}",
+                        event.recipe_id
+                    );
+                    completed_tx.send(event);
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "[bong][craft] finalize FAILED: recipe={} output={template} x{count} grant_err={err} — qi & 材料已扣，对玩家显示 InternalError 失败",
+                        event.recipe_id
+                    );
+                    failed_tx.send(CraftFailedEvent {
+                        caster: entity,
+                        recipe_id: event.recipe_id,
+                        reason: CraftFailureReason::InternalError,
+                        material_returned: 0,
+                        qi_refunded: 0.0,
+                    });
+                }
             }
-            tracing::info!(
-                "[bong][craft] finalize caster={entity:?} recipe={} output={template} x{count}",
-                event.recipe_id
-            );
-            completed_tx.send(event);
             commands
                 .entity(entity)
                 .remove::<CraftSession>()

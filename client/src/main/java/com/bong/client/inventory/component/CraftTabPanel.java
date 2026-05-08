@@ -4,6 +4,9 @@ import com.bong.client.craft.CraftCategory;
 import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftSessionStateView;
 import com.bong.client.craft.CraftStore;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
 import io.wispforest.owo.ui.component.ButtonComponent;
 import io.wispforest.owo.ui.component.Components;
@@ -59,10 +62,14 @@ public final class CraftTabPanel {
     private final ButtonComponent cancelButton;
     private final LabelComponent progressLabel;
 
-    private CraftRecipe selected;
+    /** review fix (CodeRabbit/Codex P2): 仅存 id；每次 rebuild 都从 CraftStore.recipe(id) 拿当前快照，
+     * 解锁后右侧详情会跟随刷新（旧实现持有 CraftRecipe 引用 → unlock 后右栏永远 🔒 + Start 灰）。 */
+    private String selectedId;
     private final Consumer<List<CraftRecipe>> recipeListener = recipes -> rebuildAll();
     private final Consumer<CraftSessionStateView> sessionListener = state -> refreshTaskBar();
     private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event -> refreshTaskBar();
+    /** review fix (Claude / plan §1 P2 acceptance "材料缺料红字")：inventory 变更时刷右栏材料颜色。 */
+    private final Consumer<InventoryModel> inventoryListener = inv -> rebuildDetail();
 
     public CraftTabPanel() {
         root = Containers.verticalFlow(Sizing.fill(100), Sizing.fill(100));
@@ -119,12 +126,20 @@ public final class CraftTabPanel {
         CraftStore.removeRecipeListener(recipeListener);
         CraftStore.removeSessionListener(sessionListener);
         CraftStore.removeOutcomeListener(outcomeListener);
+        InventoryStateStore.removeListener(inventoryListener);
     }
 
     private void attachListeners() {
         CraftStore.addRecipeListener(recipeListener);
         CraftStore.addSessionListener(sessionListener);
         CraftStore.addOutcomeListener(outcomeListener);
+        InventoryStateStore.addListener(inventoryListener);
+    }
+
+    /** review fix: 始终从 CraftStore 拿当前快照而不是持引用，避免 unlock 后陷在旧对象。 */
+    private CraftRecipe currentSelected() {
+        if (selectedId == null) return null;
+        return CraftStore.recipe(selectedId).orElse(null);
     }
 
     // ─── 左 list ────────────────────────────────────────────────
@@ -155,7 +170,7 @@ public final class CraftTabPanel {
         FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         row.padding(Insets.of(1, 1, 4, 4));
         row.verticalAlignment(VerticalAlignment.CENTER);
-        boolean isSelected = selected != null && selected.id().equals(recipe.id());
+        boolean isSelected = recipe.id().equals(selectedId);
         if (isSelected) {
             row.surface(Surface.flat(0x40FFFFFF));
         }
@@ -163,9 +178,10 @@ public final class CraftTabPanel {
         int color = recipe.unlocked() ? COLOR_TEXT_PRIMARY : COLOR_LOCKED;
         LabelComponent labelText = label(marker + " " + recipe.displayName(), color);
         row.child(labelText);
+        final String rowId = recipe.id();
         row.mouseDown().subscribe((mouseX, mouseY, button) -> {
             if (button == 0) {
-                setSelected(recipe);
+                setSelected(rowId);
                 return true;
             }
             return false;
@@ -173,9 +189,9 @@ public final class CraftTabPanel {
         return row;
     }
 
-    private void setSelected(CraftRecipe recipe) {
-        if (Objects.equals(this.selected, recipe)) return;
-        this.selected = recipe;
+    private void setSelected(String recipeId) {
+        if (Objects.equals(this.selectedId, recipeId)) return;
+        this.selectedId = recipeId;
         rebuildList();
         rebuildDetail();
         refreshTaskBar();
@@ -185,42 +201,78 @@ public final class CraftTabPanel {
 
     private void rebuildDetail() {
         detailColumn.clearChildren();
-        if (selected == null) {
+        CraftRecipe recipe = currentSelected();
+        if (recipe == null) {
             detailColumn.child(label("← 选一个配方查看详情", COLOR_TEXT_DIM));
             return;
         }
-        detailColumn.child(label("选中：" + selected.displayName(), COLOR_TEXT_PRIMARY));
+        detailColumn.child(label("选中：" + recipe.displayName(), COLOR_TEXT_PRIMARY));
         detailColumn.child(label("──────────────────", COLOR_TEXT_DIM));
-        detailColumn.child(label("类别：" + selected.category().displayName(), COLOR_TEXT_DIM));
-        if (!selected.unlocked()) {
+        detailColumn.child(label("类别：" + recipe.category().displayName(), COLOR_TEXT_DIM));
+        if (!recipe.unlocked()) {
             detailColumn.child(label("🔒 未解锁（残卷 / 师承 / 顿悟）", COLOR_LOCKED));
         }
 
-        // 材料清单（缺料标红 ✗，足够标 ✓ 暂按需求侧只展示需要量）
+        // review fix (Claude / plan §1 P2 acceptance "材料检查实时高亮（缺料红字）"):
+        // 用 InventoryStateStore 当前快照对每条材料 have/need 比对：足绿、缺红。
+        // qi 用 InventoryModel.qiCurrent() vs recipe.qiCost() 对比。
+        InventoryModel inv = InventoryStateStore.snapshot();
         detailColumn.child(label("材料：", COLOR_TEXT_DIM));
-        for (CraftRecipe.MaterialEntry mat : selected.materials()) {
+        for (CraftRecipe.MaterialEntry mat : recipe.materials()) {
+            int have = countTemplateInInventory(inv, mat.templateId());
+            boolean ok = have >= mat.count();
+            int color = ok ? COLOR_SUFFICIENT : COLOR_INSUFFICIENT;
+            String mark = ok ? "✓" : "✗";
             detailColumn.child(label(
-                "  " + mat.templateId() + " ×" + mat.count(),
-                COLOR_TEXT_PRIMARY));
+                String.format("  %s %s ×%d  [已有 %d]", mark, mat.templateId(), mat.count(), have),
+                color));
         }
-        if (selected.qiCost() > 0) {
+        if (recipe.qiCost() > 0) {
+            double qiCur = inv.qiCurrent();
+            boolean qiOk = qiCur >= recipe.qiCost();
+            int color = qiOk ? COLOR_SUFFICIENT : COLOR_INSUFFICIENT;
+            String mark = qiOk ? "✓" : "✗";
             detailColumn.child(label(
-                String.format("  自身真元 ×%.0f", selected.qiCost()),
-                COLOR_TEXT_PRIMARY));
+                String.format("  %s 自身真元 ×%.0f  [当前 %.0f]", mark, recipe.qiCost(), qiCur),
+                color));
         }
 
         // requirements
-        for (String reqLine : selected.requirements().humanLines()) {
+        for (String reqLine : recipe.requirements().humanLines()) {
             detailColumn.child(label("门槛：" + reqLine, COLOR_TEXT_DIM));
         }
 
-        long timeSec = (selected.timeTicks() + 19L) / 20L;
+        long timeSec = (recipe.timeTicks() + 19L) / 20L;
         detailColumn.child(label(
             String.format("耗时：%d 秒（in-game）", timeSec),
             COLOR_TEXT_DIM));
         detailColumn.child(label(
-            "产出：" + selected.outputTemplate() + " ×" + selected.outputCount(),
+            "产出：" + recipe.outputTemplate() + " ×" + recipe.outputCount(),
             COLOR_TEXT_PRIMARY));
+    }
+
+    /** 在 inventory 所有 grid + equipped + hotbar 里聚合 templateId 的 stack count。 */
+    private static int countTemplateInInventory(InventoryModel inv, String templateId) {
+        if (inv == null || templateId == null || templateId.isEmpty()) return 0;
+        long total = 0;
+        for (InventoryModel.GridEntry entry : inv.gridItems()) {
+            InventoryItem item = entry.item();
+            if (item != null && templateId.equals(item.itemId())) {
+                total += item.stackCount();
+            }
+        }
+        for (InventoryItem item : inv.equipped().values()) {
+            if (item != null && templateId.equals(item.itemId())) {
+                total += item.stackCount();
+            }
+        }
+        for (InventoryItem item : inv.hotbar()) {
+            if (item != null && templateId.equals(item.itemId())) {
+                total += item.stackCount();
+            }
+        }
+        // clamp 到 int 上限以兼容材料 count 字段
+        return total > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) total;
     }
 
     // ─── 底 current task bar ──────────────────────────────────────
@@ -244,26 +296,38 @@ public final class CraftTabPanel {
                 String text = switch (outcome.kind()) {
                     case COMPLETED -> "✓ 出炉：" + outcome.outputTemplate() + " ×" + outcome.outputCount();
                     case FAILED -> "✗ " + (outcome.failureReason().equals("player_cancelled")
-                        ? "取消（返还材料 ×" + outcome.materialReturned() + "，真元不退）"
+                        ? buildCancelText(outcome)
                         : "失败：" + outcome.failureReason());
                 };
                 progressLabel.text(Text.literal(text));
             }, () -> progressLabel.text(Text.literal("当前任务：（无）")));
-            startButton.active(selected != null && selected.unlocked());
+            CraftRecipe sel = currentSelected();
+            startButton.active(sel != null && sel.unlocked());
             cancelButton.active(false);
-            startButton.tooltip(selected == null
+            startButton.tooltip(sel == null
                 ? Text.literal("先在左列选一个配方")
-                : (selected.unlocked()
-                    ? Text.literal("起手搓 " + selected.displayName())
+                : (sel.unlocked()
+                    ? Text.literal("起手搓 " + sel.displayName())
                     : Text.literal("配方未解锁")));
         }
     }
 
+    /** review fix (CodeRabbit): 根据 outcome.qiRefunded() 而不是硬编码"真元不退"。 */
+    private static String buildCancelText(CraftStore.CraftOutcomeEvent outcome) {
+        if (outcome.qiRefunded() > 0) {
+            return String.format(
+                "取消（返还材料 ×%d，退还真元 %.0f）",
+                outcome.materialReturned(), outcome.qiRefunded());
+        }
+        return "取消（返还材料 ×" + outcome.materialReturned() + "，真元不退）";
+    }
+
     private void onStartClicked() {
-        if (selected == null || !selected.unlocked()) return;
+        CraftRecipe sel = currentSelected();
+        if (sel == null || !sel.unlocked()) return;
         CraftSessionStateView state = CraftStore.sessionState();
         if (state.active()) return;
-        ClientRequestSender.sendCraftStart(selected.id());
+        ClientRequestSender.sendCraftStart(sel.id());
     }
 
     private void onCancelClicked() {
@@ -293,10 +357,9 @@ public final class CraftTabPanel {
 
     @SuppressWarnings("unused")
     private static void touchUnusedColors() {
-        // 静默 lint：保留 BAR 颜色常量供未来 owo-lib 进度条 component 升级使用
+        // review fix: 保留 BAR 颜色常量供未来 owo-lib 进度条 component 升级使用；
+        // SUFFICIENT/INSUFFICIENT 已在 rebuildDetail 接入材料高亮，无需在此手动 reference。
         int _f = COLOR_BAR_FULL;
         int _e = COLOR_BAR_EMPTY;
-        int _s = COLOR_SUFFICIENT;
-        int _i = COLOR_INSUFFICIENT;
     }
 }
