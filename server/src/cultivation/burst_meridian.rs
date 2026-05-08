@@ -225,12 +225,6 @@ fn realm_rank(realm: Realm) -> u8 {
     }
 }
 
-fn has_usable_right_arm_meridian(meridians: &MeridianSystem) -> bool {
-    RIGHT_ARM_MERIDIANS
-        .iter()
-        .any(|id| meridians.get(*id).integrity > f64::EPSILON)
-}
-
 fn right_arm_integrity_snapshot(meridians: &MeridianSystem) -> f64 {
     RIGHT_ARM_MERIDIANS
         .iter()

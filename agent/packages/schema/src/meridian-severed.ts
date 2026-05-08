@@ -6,8 +6,10 @@
  * 通道发布，由 agent 端 narration runtime 订阅 → 渲染叙事 → 发布到 AGENT_NARRATE。
  *
  * server 端 component 是 `cultivation::meridian::severed::MeridianSeveredPermanent`，
- * 与本 schema 字段一一对应；`source` 字段在两侧序列化形态保持一致以便双端校验
- * （`agent/packages/schema/samples/meridian_severed_*.json`）。
+ * 与本 schema 字段一一对应；`source` 字段在两侧序列化形态保持一致以便双端校验。
+ * 双端 sample 文件（`samples/meridian-severed-event.sample.json`）+ schema-registry
+ * 注册留给首个 runtime 调用方（plan-yidao-v1 / 各 v2 流派 plan）接入时一起补，
+ * 避免本 plan 独建 sample 但下游零调用方。
  */
 
 import { Type, type Static } from "@sinclair/typebox";

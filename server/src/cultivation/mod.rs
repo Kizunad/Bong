@@ -249,11 +249,21 @@ pub fn register(app: &mut App) {
     // SEVERED event）+ apply（event → write component）。两步顺序保证同 tick 内
     // detection 写入 event，apply 后续读取并落 component；独立 add_systems 避开
     // 上面 tuple 超 Bevy 20 元素上限。
+    //
+    // codex P1（PR #157 review）：apply 必须 .after 所有 SEVERED 发射方，否则
+    // tribulation 失败/逃跑路径与 despawn_disconnected_clients 在同 tick 触发时
+    // 可能丢 SEVERED event（事件队列在玩家被 despawn 后才被消费，event 落到
+    // missing entity 直接 drop）。所有当前 emitter（detection / 三 tribulation
+    // 系统）显式 .after 锁定。未来新 emitter 接入时也必须加这条 ordering edge。
     app.add_systems(
         Update,
         (
             meridian_severed_detection_tick,
-            apply_severed_event_system.after(meridian_severed_detection_tick),
+            apply_severed_event_system
+                .after(meridian_severed_detection_tick)
+                .after(tribulation_failure_system)
+                .after(abort_du_xu_on_client_removed)
+                .after(tribulation_escape_boundary_system),
         ),
     );
     app.add_systems(
