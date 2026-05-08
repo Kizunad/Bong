@@ -179,7 +179,7 @@
 
 - **P0/P1 收口**：`server/src/shelflife/compute.rs` / `server/src/shelflife/mod.rs` 将保质期 Exponential/Age post-peak 路径迁到 `qi_excretion` + `ContainerKind` facade；`server/src/lingtian/qi_account.rs` 增加 `ZoneQiAccount::sync_world_qi_account`，并通过 `sync_zone_qi_account_to_world_qi_account` system 在 lingtian runtime 中镜像到底盘 `WorldQiAccount`；`ZoneQiAccount::remove` 会清掉该 facade 删除过的 stale zone 镜像。
 - **P2 战斗/杂项收口**：`server/src/combat/{projectile,jiemai,tuike,woliu}.rs`、`server/src/cultivation/{dugu,burst_meridian}.rs`、`server/src/zhenfa/mod.rs` 接入 `StyleAttack` / `StyleDefense`；`server/src/network/client_request_handler.rs` 的跨界磨损常量迁到 `server/src/qi_physics/{constants,wear}.rs`。
-- **P2/P3 守恒路径**：`server/src/cultivation/{death_hooks,contamination,negative_zone,tribulation}.rs` 将重生 penalty、污染排异、负灵域 siphon、渡劫失败/逃跑清零接到共享释放路径；真实 zone 可接收时走 `qi_release_to_zone`，缺 position / dimension / zone / 满区溢出时发 `QiAccountId::overflow` 的 `QiTransferReason::ReleaseToZone`，避免源头已扣后静默丢量；污染排异现在只有 release 被接受或被 overflow 记录后才扣玩家 qi / 减污染。
+- **P2/P3 守恒路径**：`server/src/cultivation/{death_hooks,contamination,negative_zone,tribulation}.rs` 将重生 penalty、污染排异、负灵域 siphon、渡劫失败/逃跑清零接到共享释放路径；真实 zone 可接收时走 `qi_release_to_zone`，缺 position / dimension / zone / 满区溢出时发 `QiAccountId::overflow` 的 `QiTransferReason::ReleaseToZone`，避免源头已扣后静默丢量；污染排异现在只有 release 被接受或被 overflow 记录后才扣玩家 qi / 减污染，负灵域 siphon 在缺 `CurrentDimension` 时跳过本 tick，避免默认 Overworld 误判。
 - **P3 天道/TSY 收口**：`server/src/world/tsy_lifecycle.rs` 在汐转 TSY 周期改写时把正向 delta 按周边 zone 剩余容量分发，容量不足时按可吸收量缩放层变化，没有同维接收区时不推进层值；反向 delta 从同维度周边正 qi zone 抽取后按比例应用目标层变化；`server/src/qi_physics/tiandao.rs` / `server/src/qi_physics/mod.rs` 注册 `EraDecayClock` + `era_decay_tick`，并修正 era 边界 tick 使用最大衰减因子。
 - **全局观测门**：`server/src/qi_physics/ledger.rs` 保留 `WorldQiSnapshot` / `summarize_world_qi` / `assert_conservation`，并新增 ledger transfer 经 snapshot 守恒的集成断言。
 - **旧符号核验**：`BASE_LOSS_PER_BLOCK|VORTEX_THEORETICAL_LIMIT_DELTA|JIEMAI_|QI_REGEN_COEF|ZONE_LEAK_RATIO|SEARCH_DRAIN_MULTIPLIER|GATHER_SPIRIT_QI_REWARD|TODO.*WorldQiAccount|future.*WorldQiAccount|未来接.*WorldQiAccount` 在 `server/src/**/*.rs` 中为 0；跨界磨损只保留 `QI_TARGETED_ITEM_WEAR_*` canonical 常量。
@@ -196,6 +196,7 @@
 | `35ff81315` | 2026-05-08 | server: 修复 qi 物理 review 守恒缺口 |
 | `139c9e0a3` | 2026-05-08 | server: 处理 qi physics review 兜底路径 |
 | `009db8769` | 2026-05-08 | server: 补齐 qi physics review 收口 |
+| `3b6ea457a` | 2026-05-08 | server: 收紧负灵域维度判定 |
 
 ### 测试结果
 
@@ -203,11 +204,11 @@
 |---|---|
 | `cd server && cargo fmt --check` | 通过 |
 | `cd server && cargo clippy --all-targets -- -D warnings` | 通过 |
-| `cd server && cargo test` | 3040 passed / 0 failed |
+| `cd server && cargo test` | 3041 passed / 0 failed |
 | `cd server && cargo test qi_physics` | 71 passed / 0 failed |
 | `cd server && cargo test contamination` | 21 passed / 0 failed |
 | `cd server && cargo test death_hooks` | 11 passed / 0 failed |
-| `cd server && cargo test negative_zone` | 13 passed / 0 failed |
+| `cd server && cargo test negative_zone` | 14 passed / 0 failed |
 | `cd server && cargo test tsy_lifecycle` | 31 passed / 0 failed |
 | `cd server && cargo test zhenfa` | 16 passed / 0 failed |
 | `cd server && cargo test lingtian::qi_account` | 7 passed / 0 failed |
