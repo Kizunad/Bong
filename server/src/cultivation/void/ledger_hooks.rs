@@ -105,20 +105,47 @@ pub fn borrow_explode_zone_qi(
 
 pub fn apply_due_qi_returns(
     budget: &mut WorldQiBudget,
+    accounts: &mut WorldQiAccount,
     zones: &mut [Zone],
     due: Vec<ScheduledQiReturn>,
 ) -> usize {
     let mut applied = 0;
+    let mut zones = Some(zones);
     for entry in due {
-        budget.current_total += entry.amount;
-        if entry.kind == VoidActionKind::ExplodeZone {
-            if let Some(zone) = zones.iter_mut().find(|zone| zone.name == entry.zone_id) {
-                zone.spirit_qi = 0.0;
-            }
-        }
+        apply_due_qi_return(budget, accounts, zones.as_deref_mut(), entry);
         applied += 1;
     }
     applied
+}
+
+fn apply_due_qi_return(
+    budget: &mut WorldQiBudget,
+    accounts: &mut WorldQiAccount,
+    zones: Option<&mut [Zone]>,
+    entry: ScheduledQiReturn,
+) {
+    match entry.kind {
+        VoidActionKind::ExplodeZone => {
+            budget.current_total += entry.amount;
+            if let Some(zones) = zones {
+                if let Some(zone) = zones.iter_mut().find(|zone| zone.name == entry.zone_id) {
+                    zone.spirit_qi = 0.0;
+                }
+            }
+        }
+        VoidActionKind::Barrier => {
+            let from = QiAccountId::zone(format!("barrier:{}", entry.zone_id));
+            let to = QiAccountId::zone(entry.zone_id.clone());
+            let transfer = QiTransfer::new(from, to, entry.amount, QiTransferReason::VoidAction);
+            if let Err(error) = transfer.and_then(|transfer| accounts.transfer(transfer)) {
+                tracing::warn!(
+                    "[bong][void-action] failed to return barrier qi for zone {}: {error}",
+                    entry.zone_id
+                );
+            }
+        }
+        VoidActionKind::SuppressTsy | VoidActionKind::LegacyAssign => {}
+    }
 }
 
 pub fn schedule_barrier_return(
@@ -139,6 +166,7 @@ pub fn schedule_barrier_return(
 pub fn apply_due_void_qi_returns_system(
     clock: Res<CultivationClock>,
     mut budget: ResMut<WorldQiBudget>,
+    mut accounts: ResMut<WorldQiAccount>,
     mut schedule: ResMut<VoidQiReturnSchedule>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -147,10 +175,10 @@ pub fn apply_due_void_qi_returns_system(
         return;
     }
     if let Some(zones) = zones.as_deref_mut() {
-        apply_due_qi_returns(&mut budget, zones.zones.as_mut_slice(), due);
+        apply_due_qi_returns(&mut budget, &mut accounts, zones.zones.as_mut_slice(), due);
     } else {
         for entry in due {
-            budget.current_total += entry.amount;
+            apply_due_qi_return(&mut budget, &mut accounts, None, entry);
         }
     }
 }
@@ -318,10 +346,12 @@ mod tests {
     #[test]
     fn due_explode_return_refunds_budget() {
         let mut budget = WorldQiBudget::from_total(1_000.0);
+        let mut accounts = WorldQiAccount::default();
         budget.current_total = 700.0;
         let mut zones = vec![zone("spawn", 1.0)];
         let applied = apply_due_qi_returns(
             &mut budget,
+            &mut accounts,
             &mut zones,
             vec![ScheduledQiReturn {
                 kind: VoidActionKind::ExplodeZone,
@@ -338,9 +368,11 @@ mod tests {
     #[test]
     fn due_explode_return_sets_zone_to_zero() {
         let mut budget = WorldQiBudget::from_total(1_000.0);
+        let mut accounts = WorldQiAccount::default();
         let mut zones = vec![zone("spawn", 1.0)];
         apply_due_qi_returns(
             &mut budget,
+            &mut accounts,
             &mut zones,
             vec![ScheduledQiReturn {
                 kind: VoidActionKind::ExplodeZone,
@@ -351,6 +383,38 @@ mod tests {
             }],
         );
         assert_eq!(zones[0].spirit_qi, 0.0);
+    }
+
+    #[test]
+    fn due_barrier_return_does_not_mint_world_budget() {
+        let mut budget = WorldQiBudget::from_total(1_000.0);
+        let mut accounts = WorldQiAccount::default();
+        accounts
+            .set_balance(QiAccountId::zone("barrier:spawn"), BARRIER_QI_COST)
+            .unwrap();
+        let mut zones = vec![zone("spawn", 0.5)];
+
+        let applied = apply_due_qi_returns(
+            &mut budget,
+            &mut accounts,
+            &mut zones,
+            vec![ScheduledQiReturn {
+                kind: VoidActionKind::Barrier,
+                owner_id: "a".to_string(),
+                zone_id: "spawn".to_string(),
+                amount: BARRIER_QI_COST,
+                due_tick: 20,
+            }],
+        );
+
+        assert_eq!(applied, 1);
+        assert_eq!(budget.current_total, 1_000.0);
+        assert_eq!(accounts.balance(&QiAccountId::zone("barrier:spawn")), 0.0);
+        assert_eq!(
+            accounts.balance(&QiAccountId::zone("spawn")),
+            BARRIER_QI_COST
+        );
+        assert_eq!(zones[0].spirit_qi, 0.5);
     }
 
     #[test]
