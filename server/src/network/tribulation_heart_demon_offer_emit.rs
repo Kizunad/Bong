@@ -194,7 +194,6 @@ mod tests {
                 next_wave_tick: 1_500,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             });
         app.world_mut().send_event(TribulationWaveCleared {
             entity: tribulator,
@@ -235,7 +234,6 @@ mod tests {
                 next_wave_tick: 1_500,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             });
         app.world_mut().send_event(TribulationWaveCleared {
             entity: tribulator,
@@ -266,7 +264,6 @@ mod tests {
             next_wave_tick: 1_500,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         };
 
         let offer = default_heart_demon_offer(Entity::PLACEHOLDER, &state);
@@ -290,7 +287,6 @@ mod tests {
             next_wave_tick: 1_500,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         };
         let pregen = PendingHeartDemonOffer {
             trigger_id: format!("heart_demon:{}:1000", entity.index()),
@@ -352,7 +348,6 @@ mod tests {
             next_wave_tick: 1_500,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         };
         let pregen = PendingHeartDemonOffer {
             trigger_id: format!("heart_demon:{}:1000", entity.index()),

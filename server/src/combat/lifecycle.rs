@@ -2497,6 +2497,98 @@ mod tests {
     }
 
     #[test]
+    fn void_quota_exceeded_cultivation_death_terminates_without_lifespan_penalty() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("void-quota-exceeded");
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 300 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Spirit,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                DeathRegistry::new("offline:Azure"),
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: 80.0,
+                    cap_by_realm: LifespanCapTable::SPIRIT,
+                    offline_pause_tick: None,
+                },
+                Position::new([0.0, 66.0, 0.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(CultivationDeathTrigger {
+            entity,
+            cause: CultivationDeathCause::VoidQuotaExceeded,
+            context: serde_json::json!({"reason": "void_quota_exceeded"}),
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(lifecycle.death_count, 1);
+        assert_eq!(lifecycle.last_death_tick, Some(300));
+        let lifespan = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .expect("lifespan should remain attached");
+        assert_eq!(lifespan.years_lived, 80.0);
+        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 1);
+
+        let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
+        let mut insight_reader = insight_events.get_reader();
+        let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
+        assert_eq!(insights.len(), 1);
+        let payload = &insights[0].payload;
+        assert_eq!(payload.character_id, "offline:Azure");
+        assert_eq!(payload.cause, "cultivation:VoidQuotaExceeded");
+        assert_eq!(payload.category, DeathInsightCategoryV1::Cultivation);
+        assert_eq!(payload.context["will_terminate"], true);
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let death_registry: (i64, i64, String) = connection
+            .query_row(
+                "SELECT death_count, last_death_tick, last_death_cause FROM death_registry WHERE char_id = ?1",
+                params!["offline:Azure"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("void-quota death should persist death registry");
+        let lifespan_events: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM lifespan_events WHERE char_id = ?1 AND event_type = 'death_penalty'",
+                params!["offline:Azure"],
+                |row| row.get(0),
+            )
+            .expect("lifespan event count should be readable");
+        assert_eq!(
+            death_registry,
+            (1, 300, "cultivation:VoidQuotaExceeded".to_string())
+        );
+        assert_eq!(lifespan_events, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn negative_zone_death_insight_is_classified_as_tribulation_before_fourth_death() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("negative-zone-tribulation-insight");

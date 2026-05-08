@@ -137,7 +137,7 @@ fn snapshot_from_state(
         phase_started_tick: state.phase_started_tick,
         next_wave_tick: state.next_wave_tick,
         failed: state.failed,
-        half_step_on_success: state.half_step_on_success,
+        half_step_on_success: false,
         participants: state.participants.clone(),
         result: None,
     }
@@ -258,7 +258,6 @@ mod tests {
                     next_wave_tick: 600,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: true,
                 },
             ))
             .id();
@@ -277,7 +276,7 @@ mod tests {
         assert_eq!(payloads[0].phase, "wave");
         assert_eq!(payloads[0].wave_current, 2);
         assert_eq!(payloads[0].wave_total, 5);
-        assert!(payloads[0].half_step_on_success);
+        assert!(!payloads[0].half_step_on_success);
     }
 
     #[test]

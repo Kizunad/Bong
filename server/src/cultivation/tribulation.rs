@@ -164,7 +164,6 @@ pub struct TribulationState {
     pub next_wave_tick: u64,
     pub participants: Vec<String>,
     pub failed: bool,
-    pub half_step_on_success: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -247,7 +246,6 @@ impl TribulationState {
             next_wave_tick: started_tick,
             participants: Vec::new(),
             failed: false,
-            half_step_on_success: false,
         }
     }
 
@@ -430,9 +428,15 @@ pub fn start_tribulation_system(
     )>,
     mut commands: Commands,
     positions: Query<&Position>,
+    active_tribulations: Query<&TribulationState>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let mut accepted_this_tick = HashSet::new();
+    let active_du_xu_slots = active_tribulations
+        .iter()
+        .filter(|state| state.kind == TribulationKind::DuXu && !state.failed)
+        .count()
+        .min(u32::MAX as usize) as u32;
     let mut reserved_occupied_slots = None;
     for ev in events.read() {
         if let Ok((c, meridians, lifecycle, username, active, current_dimension)) =
@@ -475,7 +479,8 @@ pub fn start_tribulation_system(
                                 ev.entity,
                             );
                             0
-                        });
+                        })
+                        .saturating_add(active_du_xu_slots);
                     reserved_occupied_slots = Some(slots);
                     slots
                 }
@@ -540,7 +545,6 @@ pub fn start_tribulation_system(
                     .saturating_add(DUXU_OMEN_TICKS + DUXU_LOCK_TICKS),
                 participants: vec![lifecycle.character_id.clone()],
                 failed: false,
-                half_step_on_success: false,
             };
             if let Err(error) = persist_active_tribulation(
                 &settings,
@@ -1235,7 +1239,6 @@ pub fn tribulation_wave_system(
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut settled: EventWriter<TribulationSettled>,
     mut quota_occupied: EventWriter<AscensionQuotaOccupied>,
-    mut death_triggers: EventWriter<CultivationDeathTrigger>,
 ) {
     for ev in cleared.read() {
         if let Ok((mut c, mut state, _, lifecycle, lifespan)) = players.get_mut(ev.entity) {
@@ -1245,64 +1248,41 @@ pub fn tribulation_wave_system(
             state.wave_current = state.wave_current.max(ev.wave);
             if state.wave_current >= state.waves_total {
                 // 渡劫成功
-                let void_quota_exceeded = state.half_step_on_success;
-                let outcome = if void_quota_exceeded {
-                    if let Err(error) =
-                        delete_active_tribulation(&settings, lifecycle.character_id.as_str())
-                    {
+                c.realm = Realm::Void;
+                c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+                if let Some(mut lifespan) = lifespan {
+                    lifespan.apply_cap(LifespanCapTable::VOID);
+                }
+                match complete_tribulation_ascension(&settings, lifecycle.character_id.as_str()) {
+                    Ok(quota) => {
+                        quota_occupied.send(AscensionQuotaOccupied {
+                            occupied_slots: quota.occupied_slots,
+                        });
+                    }
+                    Err(error) => {
                         tracing::warn!(
-                            "[bong][cultivation] failed to clear void-quota tribulation for {:?}: {error}",
+                            "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
                             ev.entity,
                         );
                     }
-                    death_triggers.send(CultivationDeathTrigger {
-                        entity: ev.entity,
-                        cause: CultivationDeathCause::VoidQuotaExceeded,
-                        context: serde_json::json!({
-                            "reason": VOID_QUOTA_EXCEEDED_REASON,
-                            "waves_survived": state.waves_total,
-                        }),
+                }
+                // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
+                let new_cap = skill_cap_for_realm(Realm::Void);
+                for skill in SkillId::ALL {
+                    skill_cap_events.send(SkillCapChanged {
+                        char_entity: ev.entity,
+                        skill,
+                        new_cap,
                     });
-                    DuXuOutcomeV1::Killed
-                } else {
-                    c.realm = Realm::Void;
-                    c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
-                    if let Some(mut lifespan) = lifespan {
-                        lifespan.apply_cap(LifespanCapTable::VOID);
-                    }
-                    match complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
-                    {
-                        Ok(quota) => {
-                            quota_occupied.send(AscensionQuotaOccupied {
-                                occupied_slots: quota.occupied_slots,
-                            });
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
-                                ev.entity,
-                            );
-                        }
-                    }
-                    // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
-                    let new_cap = skill_cap_for_realm(Realm::Void);
-                    for skill in SkillId::ALL {
-                        skill_cap_events.send(SkillCapChanged {
-                            char_entity: ev.entity,
-                            skill,
-                            new_cap,
-                        });
-                    }
-                    DuXuOutcomeV1::Ascended
-                };
+                }
                 settled.send(TribulationSettled {
                     entity: ev.entity,
                     result: DuXuResultV1 {
                         char_id: lifecycle.character_id.clone(),
-                        outcome,
+                        outcome: DuXuOutcomeV1::Ascended,
                         killer: None,
                         waves_survived: state.waves_total,
-                        reason: void_quota_exceeded.then(|| VOID_QUOTA_EXCEEDED_REASON.to_string()),
+                        reason: None,
                     },
                 });
                 state.phase = TribulationPhase::Settle;
@@ -1315,7 +1295,7 @@ pub fn tribulation_wave_system(
                 tracing::info!(
                     "[bong][cultivation] {:?} settled DuXu as {:?} after {} waves",
                     ev.entity,
-                    outcome,
+                    DuXuOutcomeV1::Ascended,
                     state.waves_total
                 );
             } else if let Err(error) = persist_active_tribulation(
@@ -2133,7 +2113,6 @@ mod tests {
                     next_wave_tick: DUXU_OMEN_TICKS + DUXU_LOCK_TICKS,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -2287,7 +2266,7 @@ mod tests {
             .world()
             .get::<TribulationState>(first)
             .expect("first tribulation should start");
-        assert!(!first_state.half_step_on_success);
+        assert_eq!(first_state.kind, TribulationKind::DuXu);
         assert!(
             app.world().get::<TribulationState>(second).is_none(),
             "second over-quota tribulation should not enter the regular wave loop"
@@ -2311,6 +2290,90 @@ mod tests {
         assert_eq!(deaths.len(), 1);
         assert_eq!(deaths[0].entity, second);
         assert_eq!(deaths[0].cause, CultivationDeathCause::VoidQuotaExceeded);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn start_tribulation_system_counts_in_flight_void_tribulations_across_ticks() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("start-tribulation-quota-cross-tick");
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(50.0));
+        app.insert_resource(VoidQuotaConfig { quota_k: 50.0 });
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, start_tribulation_system);
+
+        let first = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Position::new([12.0, 66.0, -8.0]),
+            ))
+            .id();
+        let second = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Beryl".to_string(),
+                    ..Default::default()
+                },
+                Position::new([16.0, 66.0, -8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity: first,
+            waves_total: 3,
+            started_tick: 100,
+        });
+        app.update();
+        assert!(
+            app.world().get::<TribulationState>(first).is_some(),
+            "first in-flight tribulation should reserve the only void slot"
+        );
+
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity: second,
+            waves_total: 3,
+            started_tick: 200,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(second).is_none(),
+            "later tick starter should see the in-flight reservation"
+        );
+        let settled = app.world().resource::<Events<TribulationSettled>>();
+        let settled_events: Vec<_> = settled.get_reader().read(settled).cloned().collect();
+        assert_eq!(settled_events.len(), 1);
+        assert_eq!(settled_events[0].entity, second);
+        assert_eq!(settled_events[0].result.outcome, DuXuOutcomeV1::Killed);
+        assert_eq!(
+            settled_events[0].result.reason.as_deref(),
+            Some(VOID_QUOTA_EXCEEDED_REASON)
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2408,7 +2471,6 @@ mod tests {
                 next_wave_tick: DUXU_OMEN_TICKS + DUXU_LOCK_TICKS,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             })
             .id();
         app.world_mut().send_event(TribulationAnnounce {
@@ -2479,7 +2541,6 @@ mod tests {
             next_wave_tick: DUXU_OMEN_TICKS + DUXU_LOCK_TICKS,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         });
 
         app.update();
@@ -2518,7 +2579,6 @@ mod tests {
                 next_wave_tick: 1200,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             })
             .id();
         app.world_mut().send_event(TribulationLocked {
@@ -2684,7 +2744,6 @@ mod tests {
                     next_wave_tick: 0,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -2779,7 +2838,6 @@ mod tests {
                     next_wave_tick: 2100,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -2826,7 +2884,6 @@ mod tests {
                     next_wave_tick: 1500,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 PendingHeartDemonOffer {
                     trigger_id: String::new(),
@@ -2888,7 +2945,6 @@ mod tests {
                 next_wave_tick: 2100,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             })
             .id();
 
@@ -2927,7 +2983,6 @@ mod tests {
                     next_wave_tick: 1800,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 HeartDemonResolution {
                     outcome: HeartDemonOutcome::Steadfast,
@@ -2973,7 +3028,6 @@ mod tests {
                     next_wave_tick: 2100,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 HeartDemonResolution {
                     outcome: HeartDemonOutcome::Steadfast,
@@ -3018,7 +3072,6 @@ mod tests {
                 next_wave_tick: 2400,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             })
             .id();
 
@@ -3071,7 +3124,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -3139,7 +3191,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -3189,7 +3240,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -3249,7 +3299,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 HeartDemonResolution {
                     outcome: HeartDemonOutcome::Obsession,
@@ -3311,7 +3360,6 @@ mod tests {
                     next_wave_tick: 2700,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 HeartDemonResolution {
                     outcome: HeartDemonOutcome::Obsession,
@@ -3418,7 +3466,6 @@ mod tests {
                     next_wave_tick: 1500,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -3631,7 +3678,6 @@ mod tests {
                 next_wave_tick: 0,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             })
             .id();
 
@@ -3672,7 +3718,6 @@ mod tests {
                 next_wave_tick: 1200,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             })
             .id();
 
@@ -3710,7 +3755,6 @@ mod tests {
             next_wave_tick: 1500,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         });
         let target = app
             .world_mut()
@@ -3785,7 +3829,6 @@ mod tests {
             next_wave_tick: 1500,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         });
         let near = spawn_tribulation_spectator(&mut app, "Near", [3.0, 66.0, 0.0]);
         let far_inside = spawn_tribulation_spectator(
@@ -3850,7 +3893,6 @@ mod tests {
                 next_wave_tick: 1500,
                 participants: vec!["offline:Azure".to_string()],
                 failed: false,
-                half_step_on_success: false,
             },
         ));
         let target = app
@@ -3910,7 +3952,6 @@ mod tests {
             next_wave_tick: 1800,
             participants: vec!["offline:Azure".to_string()],
             failed: false,
-            half_step_on_success: false,
         });
         let target = app
             .world_mut()
@@ -3994,7 +4035,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -4053,7 +4093,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -4111,7 +4150,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Azure".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -4133,39 +4171,22 @@ mod tests {
     }
 
     #[test]
-    fn void_quota_exceeded_success_kills_and_does_not_occupy_quota() {
+    fn void_quota_exceeded_start_emits_terminal_death_and_does_not_occupy_quota() {
         let mut app = App::new();
-        let (settings, root) = persistence_settings("void-quota-exceeded-success");
+        let (settings, root) = persistence_settings("void-quota-exceeded-start");
         let char_id = "offline:Azure";
-        persist_active_tribulation(
-            &settings,
-            &ActiveTribulationRecord {
-                char_id: char_id.to_string(),
-                wave_current: 4,
-                waves_total: 5,
-                started_tick: 120,
-            },
-        )
-        .expect("active tribulation should persist before half-step success");
+        let mut depleted_budget = WorldQiBudget::from_total(100.0);
+        depleted_budget.current_total = 0.0;
 
         app.insert_resource(settings.clone());
-        app.insert_resource(CombatClock { tick: 300 });
-        app.add_event::<DeathEvent>();
-        app.add_event::<TribulationWaveCleared>();
+        app.insert_resource(depleted_budget);
+        app.insert_resource(VoidQuotaConfig { quota_k: 50.0 });
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationSettled>();
-        app.add_event::<AscensionQuotaOccupied>();
-        app.add_event::<SkillCapChanged>();
         app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<DeathInsightRequested>();
-        app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
-        app.add_systems(
-            Update,
-            (
-                tribulation_wave_system,
-                death_arbiter_tick.after(tribulation_wave_system),
-            ),
-        );
+        app.add_systems(Update, start_tribulation_system);
 
         let entity = app
             .world_mut()
@@ -4196,51 +4217,48 @@ mod tests {
                     cap_by_realm: LifespanCapTable::SPIRIT,
                     offline_pause_tick: None,
                 },
-                TribulationState {
-                    kind: TribulationKind::DuXu,
-                    phase: TribulationPhase::Wave(5),
-                    epicenter: [0.0, 66.0, 0.0],
-                    wave_current: 4,
-                    waves_total: 5,
-                    started_tick: 120,
-                    phase_started_tick: 2100,
-                    next_wave_tick: 2400,
-                    participants: vec![char_id.to_string()],
-                    failed: false,
-                    half_step_on_success: true,
-                },
+                Position::new([0.0, 66.0, 0.0]),
             ))
             .id();
-        app.world_mut()
-            .resource_mut::<Events<TribulationWaveCleared>>()
-            .send(TribulationWaveCleared { entity, wave: 5 });
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity,
+            waves_total: 5,
+            started_tick: 120,
+        });
 
         app.update();
 
         let entity_ref = app.world().entity(entity);
-        let lifecycle = entity_ref
-            .get::<Lifecycle>()
-            .expect("lifecycle should remain attached");
-        assert_eq!(lifecycle.state, LifecycleState::Terminated);
-        assert_eq!(lifecycle.last_death_tick, Some(300));
         assert!(entity_ref.get::<TribulationState>().is_none());
+
+        let death_triggers = app.world().resource::<Events<CultivationDeathTrigger>>();
+        let deaths: Vec<_> = death_triggers
+            .get_reader()
+            .read(death_triggers)
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].entity, entity);
+        assert_eq!(deaths[0].cause, CultivationDeathCause::VoidQuotaExceeded);
+        assert_eq!(
+            deaths[0].context["reason"].as_str(),
+            Some(VOID_QUOTA_EXCEEDED_REASON)
+        );
 
         let settled = app.world().resource::<Events<TribulationSettled>>();
         let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
-        assert_eq!(emitted[0].result.waves_survived, 5);
+        assert_eq!(emitted[0].result.waves_survived, 0);
         assert_eq!(
             emitted[0].result.reason.as_deref(),
             Some(VOID_QUOTA_EXCEEDED_REASON)
         );
-        assert_eq!(app.world().resource::<Events<SkillCapChanged>>().len(), 0);
-        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 1);
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")
                 .is_none(),
-            "void quota death should clear active row"
+            "void quota death should not create an active row"
         );
         let quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(quota.occupied_slots, 0);
@@ -4417,7 +4435,6 @@ mod tests {
                     next_wave_tick: 0,
                     participants: vec!["offline:Victim".to_string(), "offline:Killer".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 test_inventory(vec![test_item(101), test_item(102)], 7),
             ))
@@ -4514,7 +4531,6 @@ mod tests {
                     next_wave_tick: 0,
                     participants: vec!["offline:Victim".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
                 test_inventory(vec![test_item(101)], 7),
             ))
@@ -4575,7 +4591,6 @@ mod tests {
                     next_wave_tick: 0,
                     participants: vec!["offline:Victim".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -4644,7 +4659,6 @@ mod tests {
                     next_wave_tick: 2400,
                     participants: vec!["offline:Victim".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -4712,7 +4726,6 @@ mod tests {
                     next_wave_tick: 300,
                     participants: vec!["offline:Victim".to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -4843,7 +4856,6 @@ mod tests {
                 next_wave_tick: 300,
                 participants: vec!["offline:Victim".to_string(), "offline:Killer".to_string()],
                 failed: false,
-                half_step_on_success: false,
             },
         ));
         let interceptor = app
@@ -4928,7 +4940,6 @@ mod tests {
                 next_wave_tick: 300,
                 participants: vec!["offline:Victim".to_string()],
                 failed: false,
-                half_step_on_success: false,
             },
         ));
         let spectator = app
@@ -5037,7 +5048,6 @@ mod tests {
                     next_wave_tick: 320,
                     participants: vec![char_id.to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -5142,7 +5152,6 @@ mod tests {
                     next_wave_tick: 360,
                     participants: vec![char_id.to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
@@ -5240,7 +5249,6 @@ mod tests {
                     next_wave_tick: 360,
                     participants: vec![char_id.to_string()],
                     failed: false,
-                    half_step_on_success: false,
                 },
             ))
             .id();
