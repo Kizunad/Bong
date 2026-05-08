@@ -17,9 +17,12 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Entity, Event, EventReader, Query, Resource};
+use valence::prelude::{
+    bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Query, Res, Resource,
+};
 
-use crate::cultivation::components::{Meridian, MeridianId, MeridianSystem};
+use crate::cultivation::components::{CrackCause, Meridian, MeridianId, MeridianSystem};
+use crate::cultivation::tick::CultivationClock;
 
 /// 永久断脉登记：玩家 SEVERED 经脉集合 + 断脉时戳与来源。
 ///
@@ -202,6 +205,57 @@ pub fn try_acupoint_repair(
     }
 }
 
+/// crack cause 派生 SEVERED 来源：用于 detection system 把已落 cracks 的经脉 SEVERED
+/// 时正确归因。`Backfire`/`Overload` 都映射到 BackfireOverload —— overload 在
+/// worldview §四:354 与反噬同源（强行调动超流量真元）。
+pub fn severed_source_from_crack(cause: CrackCause) -> SeveredSource {
+    match cause {
+        CrackCause::Attack => SeveredSource::CombatWound,
+        CrackCause::Overload => SeveredSource::BackfireOverload,
+        CrackCause::Backfire => SeveredSource::BackfireOverload,
+        CrackCause::ForgeFailure => SeveredSource::Other("forge_failure".to_string()),
+        CrackCause::VoluntarySever => SeveredSource::VoluntarySever,
+        CrackCause::TribulationFail => SeveredSource::TribulationFail,
+        CrackCause::DuguDistortion => SeveredSource::DuguDistortion,
+    }
+}
+
+/// SEVERED 检测系统：watch `Meridian.integrity ≤ ε` 的过渡，对**未在
+/// `MeridianSeveredPermanent.severed_meridians` 里**且**有 cracks 历史**的经脉发
+/// `MeridianSeveredEvent`。来源由最新 crack 的 `CrackCause` 派生。
+///
+/// 这是 7 类来源里 CombatWound / OverloadTear / BackfireOverload 的统一捕获点（cracks
+/// 已落）；VoluntarySever / TribulationFail / DuguDistortion 由各自路径**显式 send
+/// event**（不需要先落 crack），detection system 看到 SEVERED component 已 set 就跳过。
+pub fn meridian_severed_detection_tick(
+    clock: Res<CultivationClock>,
+    targets: Query<(Entity, &MeridianSystem, &MeridianSeveredPermanent)>,
+    mut severed_events: EventWriter<MeridianSeveredEvent>,
+) {
+    let now = clock.tick;
+    for (entity, meridians, permanent) in targets.iter() {
+        for m in meridians.iter() {
+            if m.integrity > f64::EPSILON {
+                continue;
+            }
+            if permanent.is_severed(m.id) {
+                continue;
+            }
+            let Some(latest_crack) = m.cracks.iter().max_by_key(|c| c.created_at) else {
+                // 经脉 integrity ≤ ε 但无 crack 历史 —— 不写 SEVERED（可能是出生 default
+                // 或被显式 close_meridian 调用过；那种情况由调用方决定是否 emit）
+                continue;
+            };
+            severed_events.send(MeridianSeveredEvent {
+                entity,
+                meridian_id: m.id,
+                source: severed_source_from_crack(latest_crack.cause),
+                at_tick: now,
+            });
+        }
+    }
+}
+
 /// `MeridianSeveredEvent` 写入 component 的运行时系统。读取 event → 写
 /// `MeridianSeveredPermanent` + 把 `Meridian.integrity / opened` 钳到 SEVERED。
 pub fn apply_severed_event_system(
@@ -275,7 +329,7 @@ impl SkillMeridianDependencies {
 mod tests {
     use super::*;
     use serde_json::{from_str, to_string};
-    use valence::prelude::App;
+    use valence::prelude::{App, IntoSystemConfigs};
 
     // --- MeridianSeveredPermanent: 写入 / 重复 / 持久化 / 跨周目重置 (8 tests) ---
 
@@ -837,5 +891,235 @@ mod tests {
             check_meridian_dependencies(&deps, Some(&p)),
             Err(MeridianId::Lung)
         );
+    }
+
+    // --- severed_source_from_crack: 7 CrackCause → SeveredSource 映射 (7 tests) ---
+
+    #[test]
+    fn severed_source_from_attack_is_combat_wound() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::Attack),
+            SeveredSource::CombatWound
+        );
+    }
+
+    #[test]
+    fn severed_source_from_overload_is_backfire_overload() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::Overload),
+            SeveredSource::BackfireOverload
+        );
+    }
+
+    #[test]
+    fn severed_source_from_backfire_is_backfire_overload() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::Backfire),
+            SeveredSource::BackfireOverload
+        );
+    }
+
+    #[test]
+    fn severed_source_from_forge_failure_is_other() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::ForgeFailure),
+            SeveredSource::Other("forge_failure".to_string())
+        );
+    }
+
+    #[test]
+    fn severed_source_from_voluntary_sever_is_voluntary() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::VoluntarySever),
+            SeveredSource::VoluntarySever
+        );
+    }
+
+    #[test]
+    fn severed_source_from_tribulation_fail_is_tribulation() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::TribulationFail),
+            SeveredSource::TribulationFail
+        );
+    }
+
+    #[test]
+    fn severed_source_from_dugu_distortion_is_dugu() {
+        assert_eq!(
+            severed_source_from_crack(CrackCause::DuguDistortion),
+            SeveredSource::DuguDistortion
+        );
+    }
+
+    // --- meridian_severed_detection_tick: 端到端 detection + apply 链路 (6 tests) ---
+
+    fn run_detection_chain(
+        meridian: MeridianId,
+        integrity: f64,
+        cracks: Vec<CrackCause>,
+        tick: u64,
+    ) -> MeridianSeveredPermanent {
+        use crate::cultivation::components::MeridianCrack;
+        use crate::cultivation::tick::CultivationClock;
+
+        let mut app = App::new();
+        app.add_event::<MeridianSeveredEvent>();
+        app.insert_resource(CultivationClock { tick });
+
+        let mut ms = MeridianSystem::default();
+        let m = ms.get_mut(meridian);
+        m.integrity = integrity;
+        m.opened = integrity > f64::EPSILON;
+        for cause in cracks {
+            m.cracks.push(MeridianCrack {
+                severity: 0.5,
+                healing_progress: 0.0,
+                cause,
+                created_at: tick,
+            });
+        }
+        let entity = app
+            .world_mut()
+            .spawn((ms, MeridianSeveredPermanent::default()))
+            .id();
+
+        app.add_systems(
+            valence::prelude::Update,
+            (
+                meridian_severed_detection_tick,
+                apply_severed_event_system.after(meridian_severed_detection_tick),
+            ),
+        );
+        app.update();
+
+        app.world()
+            .entity(entity)
+            .get::<MeridianSeveredPermanent>()
+            .expect("component exists")
+            .clone()
+    }
+
+    #[test]
+    fn detection_emits_combat_wound_for_attack_crack_when_integrity_zero() {
+        let p = run_detection_chain(MeridianId::Lung, 0.0, vec![CrackCause::Attack], 100);
+        assert!(p.is_severed(MeridianId::Lung));
+        assert_eq!(
+            p.record_for(MeridianId::Lung).unwrap().source,
+            SeveredSource::CombatWound
+        );
+        assert_eq!(p.record_for(MeridianId::Lung).unwrap().at_tick, 100);
+    }
+
+    #[test]
+    fn detection_emits_backfire_overload_for_overload_crack() {
+        let p = run_detection_chain(MeridianId::Heart, 0.0, vec![CrackCause::Overload], 50);
+        assert_eq!(
+            p.record_for(MeridianId::Heart).unwrap().source,
+            SeveredSource::BackfireOverload
+        );
+    }
+
+    #[test]
+    fn detection_uses_latest_crack_cause_when_multiple_present() {
+        // Attack first, then Overload (later tick) → SEVERED 应取 Overload→BackfireOverload
+        use crate::cultivation::components::MeridianCrack;
+        use crate::cultivation::tick::CultivationClock;
+        let mut app = App::new();
+        app.add_event::<MeridianSeveredEvent>();
+        app.insert_resource(CultivationClock { tick: 200 });
+        let mut ms = MeridianSystem::default();
+        let m = ms.get_mut(MeridianId::Du);
+        m.integrity = 0.0;
+        m.opened = false;
+        m.cracks.push(MeridianCrack {
+            severity: 0.3,
+            healing_progress: 0.0,
+            cause: CrackCause::Attack,
+            created_at: 100,
+        });
+        m.cracks.push(MeridianCrack {
+            severity: 0.7,
+            healing_progress: 0.0,
+            cause: CrackCause::Overload,
+            created_at: 150,
+        });
+        let entity = app
+            .world_mut()
+            .spawn((ms, MeridianSeveredPermanent::default()))
+            .id();
+        app.add_systems(
+            valence::prelude::Update,
+            (
+                meridian_severed_detection_tick,
+                apply_severed_event_system.after(meridian_severed_detection_tick),
+            ),
+        );
+        app.update();
+        let p = app
+            .world()
+            .entity(entity)
+            .get::<MeridianSeveredPermanent>()
+            .unwrap();
+        assert_eq!(
+            p.record_for(MeridianId::Du).unwrap().source,
+            SeveredSource::BackfireOverload,
+            "最新 crack(Overload @ 150) 决定来源，而非更早的 Attack"
+        );
+    }
+
+    #[test]
+    fn detection_skips_when_integrity_above_epsilon() {
+        let p = run_detection_chain(MeridianId::Lung, 0.5, vec![CrackCause::Attack], 100);
+        assert!(
+            !p.is_severed(MeridianId::Lung),
+            "integrity > ε 不应触发 SEVERED"
+        );
+    }
+
+    #[test]
+    fn detection_skips_when_no_cracks() {
+        // integrity = 0 但无 cracks（出生 default 或被 close_meridian 直接置零）
+        // → detection 不主动 SEVERED；调用方应显式 emit event
+        let p = run_detection_chain(MeridianId::Lung, 0.0, vec![], 100);
+        assert!(!p.is_severed(MeridianId::Lung));
+    }
+
+    #[test]
+    fn detection_skips_already_severed_no_double_record() {
+        use crate::cultivation::components::MeridianCrack;
+        use crate::cultivation::tick::CultivationClock;
+        let mut app = App::new();
+        app.add_event::<MeridianSeveredEvent>();
+        app.insert_resource(CultivationClock { tick: 500 });
+        let mut ms = MeridianSystem::default();
+        let m = ms.get_mut(MeridianId::Lung);
+        m.integrity = 0.0;
+        m.opened = false;
+        m.cracks.push(MeridianCrack {
+            severity: 0.5,
+            healing_progress: 0.0,
+            cause: CrackCause::Attack,
+            created_at: 500,
+        });
+        let mut perm = MeridianSeveredPermanent::default();
+        perm.insert(MeridianId::Lung, SeveredSource::TribulationFail, 100);
+        let entity = app.world_mut().spawn((ms, perm)).id();
+        app.add_systems(
+            valence::prelude::Update,
+            (
+                meridian_severed_detection_tick,
+                apply_severed_event_system.after(meridian_severed_detection_tick),
+            ),
+        );
+        app.update();
+        let p = app
+            .world()
+            .entity(entity)
+            .get::<MeridianSeveredPermanent>()
+            .unwrap();
+        // 首次记录（TribulationFail @ 100）保留，detection 看到已 SEVERED 直接跳过
+        let r = p.record_for(MeridianId::Lung).unwrap();
+        assert_eq!(r.source, SeveredSource::TribulationFail);
+        assert_eq!(r.at_tick, 100);
     }
 }

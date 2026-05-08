@@ -106,8 +106,8 @@ use self::lifespan::{
     LifespanExtensionIntent, LifespanExtensionLedger,
 };
 use self::meridian::severed::{
-    apply_severed_event_system, MeridianSeveredEvent, MeridianSeveredPermanent,
-    SkillMeridianDependencies,
+    apply_severed_event_system, meridian_severed_detection_tick, MeridianSeveredEvent,
+    MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use self::meridian_open::meridian_open_tick;
 use self::neg_pressure::tick_neg_pressure;
@@ -245,9 +245,17 @@ pub fn register(app: &mut App) {
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
         ),
     );
-    // plan-meridian-severed-v1 §1 P1：SEVERED 事件 → 写入 component（独立 add_systems
-    // 避免上面 tuple 超过 Bevy 20 元素上限）
-    app.add_systems(Update, apply_severed_event_system);
+    // plan-meridian-severed-v1 §1 P1：detection（cracks → integrity ≤ ε → emit
+    // SEVERED event）+ apply（event → write component）。两步顺序保证同 tick 内
+    // detection 写入 event，apply 后续读取并落 component；独立 add_systems 避开
+    // 上面 tuple 超 Bevy 20 元素上限。
+    app.add_systems(
+        Update,
+        (
+            meridian_severed_detection_tick,
+            apply_severed_event_system.after(meridian_severed_detection_tick),
+        ),
+    );
     app.add_systems(
         Update,
         record_cultivation_session_practice_events
