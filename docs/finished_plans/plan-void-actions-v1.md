@@ -153,7 +153,7 @@
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **P0** ✅ 2026-05-09 | 决策门：§4 八问题收口（K 值校准 / action 冷却 / 寿元上限 / Barrier 地理边界粒度 / 继承人 UI 归属 / library-web 页面归属 / Explode 衰退路径 / 化虚 PVP 推迟 v2） + 数值表锁定（4 类 action 真元/寿元/冷却 + 4 类 broadcast narration template） + 与 plan-void-quota-v1 同步 quota 不冲突 | 数值矩阵进 §2 / 决策记 §4 / 与 quota-v1 维护者拍板"action 不消耗 slot 但反噬走 release"边界 |
-| **P1** ✅ 2026-05-09 | server `cultivation::void::*` 主实装：4 类 action handler（`cast_suppress_tsy` / `cast_explode_zone` / `cast_barrier` / `cast_legacy_assign`） + `BarrierField` component + `LifeRecord` 扩 inheritor/letterbox 字段 + `qi_physics::ledger` 接入 + `lifespan::deduct` 接入 + `release_ascension_quota_slot` 死亡 hook + IPC schema + ≥60 单测 | `cargo test cultivation::void` 全过 / `grep -rcE '#\[test\]' server/src/cultivation/void/` = 67 / 守恒断言（每 action 真元流向 ledger + zone 还原路径完整） |
+| **P1** ✅ 2026-05-09 | server `cultivation::void::*` 主实装：4 类 action handler（`cast_suppress_tsy` / `cast_explode_zone` / `cast_barrier` / `cast_legacy_assign`） + `BarrierField` component + `LifeRecord` 扩 inheritor/letterbox 字段 + `qi_physics::ledger` 接入 + `lifespan::deduct` 接入 + `release_ascension_quota_slot` 死亡 hook + IPC schema + ≥60 单测 | `cargo test cultivation::void` 全过 / `grep -rcE '#\[test\]' server/src/cultivation/void/` = 68 / 守恒断言（每 action 真元流向 ledger + zone 还原路径完整） |
 | **P2** ✅ 2026-05-09 | agent `void-actions-runtime.ts` 4 类 broadcast narration（"某化虚者镇压了 X 坍缩渊" / "X 引爆 Y 区域，灵气尽失六月" / "X 在 Y 设阻断，道伥退散" / "X 临终遗令，传 Y 继承"） + tiandao 评论钩子（运维博弈：累积 action 数量 → 天道注意力增量） + IPC schema 双端 | tiandao runtime 单测 + schema generated artifacts 全过；4 类 fanout channel 独立订阅 |
 | **P3** ✅ 2026-05-09 | client 化虚专属 UI：`VoidActionScreen.java`（4 action 列表 + 代价显示 + 冷却计时 + 真元 / 寿元预览） + `VoidActionStore.java` + `VoidActionHandler.java` + 道统继承人选择 UI（决策门 #4：独立模块 or 并入 niche-defense） + library-web 化虚者一生页面（决策门 #5） | Java 17 `./gradlew test build` 通过；library-web 复用 `deceased/?role=void` |
 | **P4** ✅ 2026-05-09 | 化虚 action 历史记录写入 `LifeRecord` + library-web 公开页面 + telemetry 校准（4 类 action 触发频次 / 反噬死亡比例 / 继承人接受率） + 与 plan-niche-defense-v1 联调（如选择并入路径） | LifeRecord 写入 `void_actions` / biography；亡者页面渲染化虚行事与道统字段；telemetry 留后续运营校准 |
@@ -349,9 +349,10 @@ pub struct LifeRecord {
   - `381691326`（2026-05-09）`plan-void-actions-v1: 落地 server 化虚 action`：4 类 action handler、ledger 回流、LegacyLetterbox、LifeRecord 扩字段、SQLite `legacy_letterbox` 迁移、Redis fanout。
   - `bb15e3d10`（2026-05-09）`plan-void-actions-v1: 接入 agent 化虚叙事`：TypeBox schema / generated artifacts、4 channel narration runtime、tiandao bootstrap 与单测。
   - `530d606e2`（2026-05-09）`plan-void-actions-v1: 补化虚 client 与亡者页面`：client 协议 / store / screen / 继承面板、亡者博物馆 `?role=void` 与化虚行事渲染。
+  - `eb552861e`（2026-05-09）`fix(void-actions): 修正 barrier 到期灵气回流`：review 修复 Barrier 到期不再给 `WorldQiBudget` 铸造 150，改为 `barrier:<zone>` ledger 账户转回真实 zone 账户并补回归。
 - **测试结果**：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3093 passed。
-  - `cd server && cargo test cultivation::void` → 67 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 67。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3094 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test cultivation::void` → 68 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 68。
   - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 284 passed；schema 327 passed。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
   - `cd library-web && LOCAL_LIBRARY_PATH=/home/kiz/Code/Bong/.worktree/plan-void-actions-v1/docs/library npm run build` → 41 pages built。
@@ -363,3 +364,4 @@ pub struct LifeRecord {
 - **遗留 / 后续**：
   - v1 采用 circle barrier；polygon / rect 边界、化虚 vs 化虚 PVP、ExplodeZone 分月资源曲线、以及 zone 灵气归零后的玩家行为 telemetry 留 v2/运营校准。
   - `LegacyLetterbox` 已记录 24h 拒绝窗口和状态；继承人 NPC dialog / 实物领取结算可在后续 niche-defense 或 legacy follow-up 中接 UI 流程。
+  - `debit_caster_qi_to_account` 仍沿用当前 `WorldQiAccount` / `Cultivation.qi_current` 同步桥接模式；后续若接入 craft 注释中的全局 sync system，应统一改成 `LedgerOutOfSync` fail-fast，避免各 action 自行 seed ledger。
