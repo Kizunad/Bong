@@ -6,11 +6,13 @@
 
 #![allow(dead_code)]
 
+use std::time::Instant;
+
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, With, Without,
+    Position, PreUpdate, Query, Res, ResMut, With, Without,
 };
 
 use crate::combat::events::{AttackIntent, AttackSource};
@@ -18,6 +20,8 @@ use crate::cultivation::components::{Cultivation, Realm};
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::movement::GameTick;
 use crate::npc::navigator::Navigator;
+use crate::npc::perf::NpcPerfProbe;
+use crate::npc::spatial::NpcSpatialIndex;
 use crate::npc::spawn::{NpcMarker, NpcMeleeProfile};
 
 /// 守护范围默认值（格）。
@@ -178,13 +182,16 @@ fn guardian_duty_scorer_system(
     players: PlayerPositionQuery<'_, '_>,
     npcs: NpcPosArchQuery<'_, '_>,
     mut scorers: Query<(&Actor, &mut Score), With<GuardianDutyScorer>>,
+    spatial_index: Option<Res<NpcSpatialIndex>>,
+    game_tick: Option<Res<GameTick>>,
+    mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
+    let started_at = Instant::now();
+    let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut score) in &mut scorers {
         let value = if let Ok(duty) = self_q.get(*actor) {
             let has_player = players.iter().any(|p| duty.contains(p.get()));
-            let has_intruder_npc = npcs.iter().any(|(ent, p, arch)| {
-                ent != *actor && *arch != NpcArchetype::GuardianRelic && duty.contains(p.get())
-            });
+            let has_intruder_npc = has_guardian_intruder_npc(*actor, duty, &npcs, spatial_index);
             if has_player || has_intruder_npc {
                 1.0
             } else {
@@ -195,6 +202,34 @@ fn guardian_duty_scorer_system(
         };
         score.set(value);
     }
+
+    if let Some(probe) = perf_probe.as_deref_mut() {
+        probe.record_elapsed("guardian_duty_scorer", started_at);
+        probe.flush_if_due(game_tick.as_deref().map(|tick| tick.0).unwrap_or(0));
+    }
+}
+
+fn has_guardian_intruder_npc(
+    actor: Entity,
+    duty: &GuardianDuty,
+    npcs: &NpcPosArchQuery<'_, '_>,
+    spatial_index: Option<&NpcSpatialIndex>,
+) -> bool {
+    if let Some(index) = spatial_index {
+        return index
+            .neighbors_within(duty.alarm_center, duty.alarm_radius)
+            .into_iter()
+            .any(|ent| {
+                ent != actor
+                    && npcs.get(ent).ok().is_some_and(|(_, p, arch)| {
+                        *arch != NpcArchetype::GuardianRelic && duty.contains(p.get())
+                    })
+            });
+    }
+
+    npcs.iter().any(|(ent, p, arch)| {
+        ent != actor && *arch != NpcArchetype::GuardianRelic && duty.contains(p.get())
+    })
 }
 
 type TrialSelfQuery<'w, 's> =

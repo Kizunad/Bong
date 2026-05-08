@@ -34,16 +34,19 @@
 //! - Zone bounds clamping from our zone system
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use bevy_transform::components::Transform;
 use pathfinding::prelude::astar;
 use valence::entity::{HeadYaw, Look};
 use valence::prelude::{
     bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Component, DVec3, Entity,
-    EntityLayerId, Position, Query, Res, Update, With,
+    EntityLayerId, Position, Query, Res, ResMut, Update, With,
 };
 
-use crate::npc::movement::MovementController;
+use crate::npc::lod::NpcLodTier;
+use crate::npc::movement::{GameTick, MovementController};
+use crate::npc::perf::NpcPerfProbe;
 use crate::npc::spawn::NpcMarker;
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
 
@@ -80,6 +83,7 @@ const STUCK_CHECK_INTERVAL: u32 = 60;
 
 /// How often to recompute the path if the target moved.
 const REPATH_INTERVAL_TICKS: u32 = 20;
+pub const NAVIGATOR_REPATH_BUCKET_COUNT: u32 = 10;
 
 /// Fallback surface Y when no terrain is loaded.
 const FALLBACK_SURFACE_Y: f64 = 66.0;
@@ -165,6 +169,8 @@ pub struct Navigator {
     stuck_check_pos: DVec3,
     /// Tick counter for periodic stuck checks.
     stuck_check_ticks: u32,
+    /// Stuck recovery bypasses bucket throttling once.
+    force_next_repath: bool,
 
     /// Per-mob penalty overrides. E.g. an aquatic mob could set Water → 0.
     path_type_overrides: HashMap<PathType, f32>,
@@ -180,6 +186,7 @@ impl Default for Navigator {
             last_pathed_destination: None,
             stuck_check_pos: DVec3::ZERO,
             stuck_check_ticks: 0,
+            force_next_repath: false,
             path_type_overrides: HashMap::new(),
         }
     }
@@ -206,6 +213,7 @@ impl Navigator {
         self.current_goal = None;
         self.path.clear();
         self.path_index = 0;
+        self.force_next_repath = false;
     }
 
     /// Whether the navigator is currently idle (no goal).
@@ -249,6 +257,7 @@ pub fn register(app: &mut App) {
 pub fn navigator_tick_system(
     mut npcs: Query<
         (
+            Entity,
             &mut Position,
             &mut Transform,
             &mut Look,
@@ -256,12 +265,17 @@ pub fn navigator_tick_system(
             &mut Navigator,
             Option<&MovementController>,
             Option<&EntityLayerId>,
+            Option<&NpcLodTier>,
         ),
         With<NpcMarker>,
     >,
     providers: Option<Res<TerrainProviders>>,
     layers: Query<(Entity, &ChunkLayer), With<crate::world::dimension::OverworldLayer>>,
+    game_tick: Option<Res<GameTick>>,
+    mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
+    let started_at = Instant::now();
+    let tick = game_tick.as_deref().map(|tick| tick.0).unwrap_or(0);
     // The overworld layer entity is what we compare an NPC's `EntityLayerId`
     // against to decide if it's safe to apply overworld terrain. Other-dim
     // NPCs (e.g. TSY hostiles in `tsy_hostile.rs`) also carry NpcMarker +
@@ -272,8 +286,17 @@ pub fn navigator_tick_system(
     let layer = overworld.map(|(_, l)| l);
     let terrain = providers.as_deref().map(|p| &p.overworld);
 
-    for (mut position, mut transform, mut look, mut head_yaw, mut nav, movement_ctrl, npc_layer) in
-        &mut npcs
+    for (
+        entity,
+        mut position,
+        mut transform,
+        mut look,
+        mut head_yaw,
+        mut nav,
+        movement_ctrl,
+        npc_layer,
+        lod_tier,
+    ) in &mut npcs
     {
         // If an Override ability (Dash, Leap, etc.) is active, it owns Position
         // this tick. Navigator must not interfere.
@@ -292,6 +315,11 @@ pub fn navigator_tick_system(
             // assume the NPC belongs here so existing tests keep working.
             (Some(_), None) | (None, _) => true,
         };
+
+        if matches!(lod_tier, Some(NpcLodTier::Dormant)) {
+            nav.stop();
+            continue;
+        }
 
         let Some(goal) = nav.current_goal else {
             if !in_overworld {
@@ -320,7 +348,9 @@ pub fn navigator_tick_system(
             .map(|d| d.distance_squared(goal.destination) > 4.0)
             .unwrap_or(true);
 
-        if nav.repath_countdown == 0 || destination_moved || nav.path_index >= nav.path.len() {
+        let needs_repath =
+            nav.repath_countdown == 0 || destination_moved || nav.path_index >= nav.path.len();
+        if needs_repath && should_repath_in_bucket(entity, tick, nav.force_next_repath) {
             let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
             // Empty path is normal when the NPC is already within
             // GOAL_REACH_XZ of the destination (compute_path early-returns).
@@ -345,6 +375,7 @@ pub fn navigator_tick_system(
             nav.last_pathed_destination = Some(goal.destination);
             nav.stuck_check_pos = current_pos;
             nav.stuck_check_ticks = 0;
+            nav.force_next_repath = false;
         } else {
             nav.repath_countdown = nav.repath_countdown.saturating_sub(1);
         }
@@ -358,6 +389,7 @@ pub fn navigator_tick_system(
                 nav.path.clear();
                 nav.path_index = 0;
                 nav.repath_countdown = 0;
+                nav.force_next_repath = true;
             }
             nav.stuck_check_pos = current_pos;
             nav.stuck_check_ticks = 0;
@@ -404,6 +436,15 @@ pub fn navigator_tick_system(
         transform.translation.y = next_pos.y as f32;
         transform.translation.z = next_pos.z as f32;
     }
+
+    if let Some(probe) = perf_probe.as_deref_mut() {
+        probe.record_elapsed("navigator", started_at);
+        probe.flush_if_due(tick);
+    }
+}
+
+pub(crate) fn should_repath_in_bucket(entity: Entity, tick: u32, force: bool) -> bool {
+    force || (entity.index().wrapping_add(tick) % NAVIGATOR_REPATH_BUCKET_COUNT == 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1322,6 +1363,30 @@ mod tests {
             (snapped.y - 67.0).abs() < 1e-6,
             "open plains: NPC must drop to natural ground+1 (Y=67); got Y={}",
             snapped.y,
+        );
+    }
+
+    #[test]
+    fn repath_bucket_spreads_entities_across_ticks() {
+        let e0 = Entity::from_raw(0);
+        let e1 = Entity::from_raw(1);
+
+        assert!(should_repath_in_bucket(e0, 0, false));
+        assert!(!should_repath_in_bucket(e1, 0, false));
+        assert!(should_repath_in_bucket(
+            e1,
+            NAVIGATOR_REPATH_BUCKET_COUNT - 1,
+            false
+        ));
+    }
+
+    #[test]
+    fn repath_bucket_force_bypasses_bucket() {
+        let entity = Entity::from_raw(1);
+
+        assert!(
+            should_repath_in_bucket(entity, 0, true),
+            "stuck recovery must not wait for the next bucket slot"
         );
     }
 }

@@ -11,12 +11,14 @@ pub mod loot;
 pub mod movement;
 pub mod navigator;
 pub mod patrol;
+pub mod perf;
 pub mod poi_rogue_village;
 pub mod possession;
 pub mod relic;
 pub mod scattered_cultivator;
 pub mod scenario;
 pub mod social;
+pub mod spatial;
 pub mod spawn;
 pub mod spawn_rat;
 pub mod sync;
@@ -29,8 +31,10 @@ use valence::prelude::App;
 
 pub fn register(app: &mut App) {
     tracing::info!(
-        "[bong][npc] registering faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/farming/movement/navigator/scenario/lingtian_pressure/territory systems"
+        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/farming/movement/navigator/scenario/lingtian_pressure/territory systems"
     );
+    perf::register(app);
+    spatial::register(app);
     faction::register(app);
     spawn::register(app);
     lifecycle::register(app);

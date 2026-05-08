@@ -1,16 +1,24 @@
+#[cfg(test)]
 use crate::npc::spawn::NpcMarker;
+#[cfg(test)]
 use bevy_transform::components::Transform;
-use valence::prelude::{App, Position, PostUpdate, Query, With};
+use valence::prelude::App;
+#[cfg(test)]
+use valence::prelude::{Position, Query, With};
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering sync system");
-    app.add_systems(PostUpdate, sync_position_to_transform);
+    let _ = app;
+    tracing::info!(
+        "[bong][npc] sync_position_to_transform is not scheduled; navigator owns NPC Transform writes"
+    );
 }
 
 /// One-way sync: Position → Transform.
 ///
 /// Facing (Look / HeadYaw) is now managed by the Navigator system,
 /// which sets them directly when advancing along a path.
+#[cfg(test)]
 fn sync_position_to_transform(mut npc_query: Query<(&Position, &mut Transform), With<NpcMarker>>) {
     for (position, mut transform) in &mut npc_query {
         let pos = position.get();
@@ -25,7 +33,7 @@ mod tests {
     use super::*;
     use crate::npc::spawn::NpcMarker;
     use bevy_transform::components::Transform;
-    use valence::prelude::{App, DVec3, Position};
+    use valence::prelude::{App, DVec3, Position, PostUpdate};
 
     #[test]
     fn position_to_transform_sync_is_one_way() {

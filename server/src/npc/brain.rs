@@ -2,6 +2,7 @@ use big_brain::prelude::{
     ActionBuilder, ActionState, Actor, BigBrainPlugin, BigBrainSet, Score, ScorerBuilder,
 };
 use std::collections::HashMap;
+use std::time::Instant;
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
@@ -20,13 +21,16 @@ use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{
     NpcAgingConfig, NpcArchetype, NpcLifespan, NpcRegistry, NpcRetireRequest, PendingRetirement,
 };
-use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
+use crate::npc::lod::{
+    lod_gated_score, lod_gated_score_by_kind, NpcLodConfig, NpcLodTick, NpcLodTier, ScorerKind,
+};
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
     MovementCooldowns, MovementMode,
 };
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
+use crate::npc::perf::NpcPerfProbe;
 use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker, NpcMeleeProfile};
 use crate::npc::tribulation::{AscensionQuotaStore, NpcTribulationPacing};
 use crate::world::zone::{Zone, ZoneRegistry};
@@ -633,7 +637,10 @@ pub fn update_npc_blackboard(
     mut npc_query: Query<(&Position, &mut NpcBlackboard, Option<&DuelTarget>), With<NpcMarker>>,
     player_query: Query<(Entity, &Position), With<ClientMarker>>,
     all_positions: Query<&Position>,
+    game_tick: Option<Res<GameTick>>,
+    mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
+    let started_at = Instant::now();
     for (npc_position, mut blackboard, duel_target) in &mut npc_query {
         let npc_pos = npc_position.get();
 
@@ -664,6 +671,11 @@ pub fn update_npc_blackboard(
         blackboard.nearest_player = nearest_player;
         blackboard.player_distance = nearest_distance as f32;
         blackboard.target_position = nearest_pos;
+    }
+
+    if let Some(probe) = perf_probe.as_deref_mut() {
+        probe.record_elapsed("blackboard_update", started_at);
+        probe.flush_if_due(game_tick.as_deref().map(|tick| tick.0).unwrap_or(0));
     }
 }
 
@@ -808,12 +820,21 @@ fn should_flee_from_score(score: f32) -> bool {
 // ---------------------------------------------------------------------------
 
 fn chase_target_scorer_system(
-    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile), With<NpcMarker>>,
+    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<ChaseTargetScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, profile)) = npcs.get(*actor) {
-            chase_score(bb.player_distance, profile)
+        let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
+            match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                chase_score(bb.player_distance, profile)
+            }) {
+                Some(value) => value,
+                None => continue,
+            }
         } else {
             0.0
         };
@@ -905,15 +926,24 @@ fn chase_action_system(
 // ---------------------------------------------------------------------------
 
 fn melee_range_scorer_system(
-    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile), With<NpcMarker>>,
+    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<MeleeRangeScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, profile)) = npcs.get(*actor) {
-            if bb.player_distance <= profile.reach.max {
-                1.0
-            } else {
-                0.0
+        let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
+            match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                if bb.player_distance <= profile.reach.max {
+                    1.0
+                } else {
+                    0.0
+                }
+            }) {
+                Some(value) => value,
+                None => continue,
             }
         } else {
             0.0
@@ -993,6 +1023,7 @@ fn melee_attack_action_system(
 // Dash — short-range burst toward the player (Override movement)
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 fn dash_scorer_system(
     npcs: Query<
         (
@@ -1000,17 +1031,27 @@ fn dash_scorer_system(
             &MovementCapabilities,
             &MovementCooldowns,
             &MovementController,
+            Option<&NpcLodTier>,
         ),
         With<NpcMarker>,
     >,
     mut scorers: Query<(&Actor, &mut Score), With<DashScorer>>,
     game_tick: Option<Res<GameTick>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
     let tick = game_tick.map(|t| t.0).unwrap_or(0);
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let lod_tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, caps, cooldowns, ctrl)) = npcs.get(*actor) {
-            dash_score(bb, caps, cooldowns, ctrl, tick)
+        let value = if let Ok((bb, caps, cooldowns, ctrl, tier)) = npcs.get(*actor) {
+            match lod_gated_score_by_kind(tier, lod_tick, &cfg, ScorerKind::Cosmetic, || {
+                dash_score(bb, caps, cooldowns, ctrl, tick)
+            }) {
+                Some(value) => value,
+                None => continue,
+            }
         } else {
             0.0
         };
@@ -1458,33 +1499,43 @@ fn cultivation_drive_scorer_system(
             &NpcPatrol,
             Option<&PendingRetirement>,
             Option<&mut CultivationDriveHistory>,
+            Option<&NpcLodTier>,
         ),
         With<NpcMarker>,
     >,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut scorers: Query<(&Actor, &mut Score), With<CultivationDriveScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get_mut(*actor) {
-            Ok((cultivation, meridians, patrol, pending, history)) => {
-                let raw = if pending.is_some() || matches!(cultivation.realm, Realm::Void) {
-                    0.0
-                } else {
-                    let zone_qi = zone_registry
-                        .as_deref()
-                        .and_then(|r| r.find_zone_by_name(&patrol.home_zone))
-                        .map(|z| z.spirit_qi)
-                        .unwrap_or(0.0);
-                    cultivation_drive_score(cultivation, meridians, zone_qi)
-                };
-                if let Some(mut h) = history {
-                    if raw >= TRIBULATION_READY_DRIVE_THRESHOLD {
-                        h.above_threshold_ticks = h.above_threshold_ticks.saturating_add(1);
+            Ok((cultivation, meridians, patrol, pending, history, tier)) => {
+                match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                    let raw = if pending.is_some() || matches!(cultivation.realm, Realm::Void) {
+                        0.0
                     } else {
-                        h.above_threshold_ticks = 0;
+                        let zone_qi = zone_registry
+                            .as_deref()
+                            .and_then(|r| r.find_zone_by_name(&patrol.home_zone))
+                            .map(|z| z.spirit_qi)
+                            .unwrap_or(0.0);
+                        cultivation_drive_score(cultivation, meridians, zone_qi)
+                    };
+                    if let Some(mut h) = history {
+                        if raw >= TRIBULATION_READY_DRIVE_THRESHOLD {
+                            h.above_threshold_ticks = h.above_threshold_ticks.saturating_add(1);
+                        } else {
+                            h.above_threshold_ticks = 0;
+                        }
                     }
+                    raw
+                }) {
+                    Some(value) => value,
+                    None => continue,
                 }
-                raw
             }
             Err(_) => 0.0,
         };
@@ -1493,16 +1544,30 @@ fn cultivation_drive_scorer_system(
 }
 
 fn curiosity_scorer_system(
-    npcs: Query<Option<&PendingRetirement>, With<NpcMarker>>,
+    npcs: Query<(Option<&PendingRetirement>, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<CuriosityScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let pending = npcs.get(*actor).ok().flatten().is_some();
-        score.set(if pending {
-            0.0
-        } else {
-            CURIOSITY_BASELINE_SCORE
-        });
+        let value = match npcs.get(*actor) {
+            Ok((pending, tier)) => {
+                match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                    if pending.is_some() {
+                        0.0
+                    } else {
+                        CURIOSITY_BASELINE_SCORE
+                    }
+                }) {
+                    Some(value) => value,
+                    None => continue,
+                }
+            }
+            Err(_) => 0.0,
+        };
+        score.set(value);
     }
 }
 
@@ -1739,29 +1804,41 @@ fn tribulation_ready_scorer_system(
             &CultivationDriveHistory,
             Option<&PendingRetirement>,
             Option<&TribulationState>,
+            Option<&NpcLodTier>,
         ),
         With<NpcMarker>,
     >,
     players: Query<&Position, With<ClientMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<TribulationReadyScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
     let player_positions: Vec<DVec3> = players.iter().map(|p| p.get()).collect();
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
-            Ok((position, cultivation, meridians, history, pending, in_tribulation)) => {
-                if pending.is_some()
-                    || in_tribulation.is_some()
-                    || !tribulation_prereqs_met(cultivation, meridians, history)
-                {
-                    0.0
-                } else {
-                    let nearest =
-                        nearest_hostile_distance(position.get(), player_positions.iter().copied());
-                    match nearest {
-                        Some(dist) if dist <= TRIBULATION_HOSTILE_RADIUS => 0.0,
-                        _ => 1.0,
+            Ok((position, cultivation, meridians, history, pending, in_tribulation, tier)) => {
+                match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                    if pending.is_some()
+                        || in_tribulation.is_some()
+                        || !tribulation_prereqs_met(cultivation, meridians, history)
+                    {
+                        0.0
+                    } else {
+                        let nearest = nearest_hostile_distance(
+                            position.get(),
+                            player_positions.iter().copied(),
+                        );
+                        match nearest {
+                            Some(dist) if dist <= TRIBULATION_HOSTILE_RADIUS => 0.0,
+                            _ => 1.0,
+                        }
                     }
+                }) {
+                    Some(value) => value,
+                    None => continue,
                 }
             }
             Err(_) => 0.0,
@@ -2805,6 +2882,22 @@ mod tests {
             curiosity_scorer_system.in_set(BigBrainSet::Scorers),
         );
         let npc = app.world_mut().spawn((NpcMarker, PendingRetirement)).id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), CuriosityScorer))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn curiosity_scorer_is_zero_when_dormant() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            curiosity_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+        let npc = app.world_mut().spawn((NpcMarker, NpcLodTier::Dormant)).id();
         let scorer = app
             .world_mut()
             .spawn((Actor(npc), Score::default(), CuriosityScorer))

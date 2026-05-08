@@ -7,8 +7,10 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
+use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EventWriter, IntoSystemConfigs,
     Position, PreUpdate, Query, Res, ResMut, Resource, With, Without,
@@ -25,6 +27,8 @@ use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::movement::GameTick;
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
+use crate::npc::perf::NpcPerfProbe;
+use crate::npc::spatial::NpcSpatialIndex;
 use crate::npc::spawn::{NpcMarker, NpcMeleeProfile};
 use crate::social::{position_is_within_registered_active_spirit_niche, SpiritNicheRegistry};
 
@@ -413,27 +417,35 @@ type TerritoryOwnerQuery<'w, 's> = Query<
     (With<NpcMarker>, Without<Despawned>),
 >;
 
+#[allow(clippy::too_many_arguments)]
 fn territory_intruder_scorer_system(
     beasts: TerritoryOwnerQuery<'_, '_>,
     candidates: HuntCandidateQuery<'_, '_>,
+    players: HuntPlayerCandidateQuery<'_, '_>,
     npc_arch: Query<&NpcArchetype, With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<TerritoryIntruderScorer>>,
+    spatial_index: Option<Res<NpcSpatialIndex>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
     spirit_niches: Option<Res<SpiritNicheRegistry>>,
+    mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
+    let started_at = Instant::now();
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut score) in &mut scorers {
         let value = if let Ok((pos, territory, tier)) = beasts.get(*actor) {
             match lod_gated_score(tier, tick, &cfg, || {
-                if pick_hunt_target(
+                if pick_hunt_target_with_spatial(
                     pos.get(),
                     territory,
                     &candidates,
+                    &players,
                     &npc_arch,
                     spirit_niches.as_deref(),
                     *actor,
+                    spatial_index,
                 )
                 .is_some()
                 {
@@ -449,6 +461,11 @@ fn territory_intruder_scorer_system(
             0.0
         };
         score.set(value);
+    }
+
+    if let Some(probe) = perf_probe.as_deref_mut() {
+        probe.record_elapsed("territory_intruder_scorer", started_at);
+        probe.flush_if_due(tick);
     }
 }
 
@@ -588,6 +605,14 @@ type HuntCandidateQuery<'w, 's> = Query<
     (Without<Despawned>, Without<NpcYoung>),
 >;
 
+type HuntPlayerCandidateQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Position, &'static Cultivation),
+    (With<ClientMarker>, Without<Despawned>),
+>;
+
+#[allow(clippy::too_many_arguments)]
 fn hunt_action_system(
     mut beasts: Query<
         (
@@ -600,13 +625,16 @@ fn hunt_action_system(
         With<NpcMarker>,
     >,
     candidates: HuntCandidateQuery<'_, '_>,
+    players: HuntPlayerCandidateQuery<'_, '_>,
     npc_arch: Query<&NpcArchetype, With<NpcMarker>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HuntAction>>,
     mut attack_intents: EventWriter<AttackIntent>,
     game_tick: Option<Res<GameTick>>,
     spirit_niches: Option<Res<SpiritNicheRegistry>>,
+    spatial_index: Option<Res<NpcSpatialIndex>>,
 ) {
     let tick = game_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut state) in &mut actions {
         let Ok((pos, territory, profile, mut navigator, mut hunt)) = beasts.get_mut(*actor) else {
             *state = ActionState::Failure;
@@ -614,13 +642,15 @@ fn hunt_action_system(
         };
         match *state {
             ActionState::Requested => {
-                let picked = pick_hunt_target(
+                let picked = pick_hunt_target_with_spatial(
                     pos.get(),
                     territory,
                     &candidates,
+                    &players,
                     &npc_arch,
                     spirit_niches.as_deref(),
                     *actor,
+                    spatial_index,
                 );
                 match picked {
                     Some((ent, tpos)) => {
@@ -695,36 +725,133 @@ pub(crate) fn pick_hunt_target(
     spirit_niches: Option<&SpiritNicheRegistry>,
     self_entity: Entity,
 ) -> Option<(Entity, DVec3)> {
+    pick_hunt_target_bruteforce(
+        pos,
+        territory,
+        candidates,
+        npc_arch,
+        spirit_niches,
+        self_entity,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pick_hunt_target_with_spatial(
+    pos: DVec3,
+    territory: &Territory,
+    candidates: &HuntCandidateQuery<'_, '_>,
+    players: &HuntPlayerCandidateQuery<'_, '_>,
+    npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
+    spirit_niches: Option<&SpiritNicheRegistry>,
+    self_entity: Entity,
+    spatial_index: Option<&NpcSpatialIndex>,
+) -> Option<(Entity, DVec3)> {
+    let Some(index) = spatial_index else {
+        return pick_hunt_target_bruteforce(
+            pos,
+            territory,
+            candidates,
+            npc_arch,
+            spirit_niches,
+            self_entity,
+        );
+    };
+
     let mut best: Option<(Entity, DVec3, f64)> = None;
-    for (entity, tpos, cult) in candidates.iter() {
-        if entity == self_entity {
-            continue;
-        }
-        let tposv = tpos.get();
-        if !territory.contains(tposv) {
-            continue;
-        }
-        if (cult.realm as u32) > (HUNT_MAX_TARGET_REALM as u32) {
-            continue;
-        }
-        if spirit_niches.is_some_and(|registry| {
-            position_is_within_registered_active_spirit_niche(tposv, registry)
-        }) {
-            continue;
-        }
-        // NPC 侧过滤：Beast 不猎 Beast。Client（玩家）无 NpcMarker，arch 查询会返回 Err 视为"非 Beast"。
-        if npc_arch.get(entity).ok().copied() == Some(NpcArchetype::Beast) {
-            continue;
-        }
-        let d = pos.distance(tposv);
-        if d > HUNT_SEARCH_RADIUS {
-            continue;
-        }
-        if best.as_ref().map(|(_, _, bd)| d < *bd).unwrap_or(true) {
-            best = Some((entity, tposv, d));
+    for entity in index.neighbors_within(pos, HUNT_SEARCH_RADIUS) {
+        if let Ok((entity, tpos, cult)) = candidates.get(entity) {
+            consider_hunt_candidate(
+                pos,
+                territory,
+                npc_arch,
+                spirit_niches,
+                self_entity,
+                &mut best,
+                entity,
+                tpos.get(),
+                cult,
+            );
         }
     }
+    for (entity, tpos, cult) in players.iter() {
+        consider_hunt_candidate(
+            pos,
+            territory,
+            npc_arch,
+            spirit_niches,
+            self_entity,
+            &mut best,
+            entity,
+            tpos.get(),
+            cult,
+        );
+    }
+
     best.map(|(e, p, _)| (e, p))
+}
+
+fn pick_hunt_target_bruteforce(
+    pos: DVec3,
+    territory: &Territory,
+    candidates: &HuntCandidateQuery<'_, '_>,
+    npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
+    spirit_niches: Option<&SpiritNicheRegistry>,
+    self_entity: Entity,
+) -> Option<(Entity, DVec3)> {
+    let mut best: Option<(Entity, DVec3, f64)> = None;
+    for (entity, tpos, cult) in candidates.iter() {
+        consider_hunt_candidate(
+            pos,
+            territory,
+            npc_arch,
+            spirit_niches,
+            self_entity,
+            &mut best,
+            entity,
+            tpos.get(),
+            cult,
+        );
+    }
+    best.map(|(e, p, _)| (e, p))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn consider_hunt_candidate(
+    pos: DVec3,
+    territory: &Territory,
+    npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
+    spirit_niches: Option<&SpiritNicheRegistry>,
+    self_entity: Entity,
+    best: &mut Option<(Entity, DVec3, f64)>,
+    entity: Entity,
+    target_pos: DVec3,
+    cultivation: &Cultivation,
+) {
+    if entity == self_entity {
+        return;
+    }
+    if !territory.contains(target_pos) {
+        return;
+    }
+    if (cultivation.realm as u32) > (HUNT_MAX_TARGET_REALM as u32) {
+        return;
+    }
+    if spirit_niches.is_some_and(|registry| {
+        position_is_within_registered_active_spirit_niche(target_pos, registry)
+    }) {
+        return;
+    }
+    // NPC 侧过滤：Beast 不猎 Beast。Client（玩家）无 NpcMarker，arch 查询会返回 Err 视为"非 Beast"。
+    if npc_arch.get(entity).ok().copied() == Some(NpcArchetype::Beast) {
+        return;
+    }
+    let d = pos.distance(target_pos);
+    if d > HUNT_SEARCH_RADIUS {
+        return;
+    }
+    if best.as_ref().is_none_or(|(_, _, best_d)| d < *best_d) {
+        *best = Some((entity, target_pos, d));
+    }
 }
 
 type ProtectYoungMutQuery<'w, 's> = Query<

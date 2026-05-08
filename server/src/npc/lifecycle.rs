@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
     bevy_ecs, Added, App, Bundle, Commands, Component, DVec3, Despawned, Entity, Event,
-    EventReader, EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource,
-    Update, With, Without,
+    EventReader, EventWriter, FixedUpdate, IntoSystemConfigs, Position, Query, Res, ResMut,
+    Resource, Update, With, Without,
 };
 
 use crate::combat::components::{
@@ -397,10 +397,7 @@ pub fn register(app: &mut App) {
         .add_event::<NpcReproductionRequest>()
         .add_event::<NpcSpawnNotice>()
         .add_event::<NpcDeathNotice>()
-        .add_systems(
-            PreUpdate,
-            (update_npc_registry, age_npcs).before(big_brain::prelude::BigBrainSet::Scorers),
-        )
+        .add_systems(FixedUpdate, (update_npc_registry, age_npcs))
         .add_systems(
             Update,
             (

@@ -7,10 +7,12 @@
 
 #![allow(dead_code)]
 
+use std::time::Instant;
+
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, Entity, EventReader, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, Res, Update, With,
+    Position, PreUpdate, Query, Res, ResMut, Update, With,
 };
 
 use crate::combat::components::Lifecycle;
@@ -20,6 +22,8 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::FactionMembership;
 use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
+use crate::npc::perf::NpcPerfProbe;
+use crate::npc::spatial::NpcSpatialIndex;
 use crate::npc::spawn::{DuelTarget, NpcMarker};
 use crate::schema::social::RelationshipKindV1;
 use crate::social::events::SocialRelationshipEvent;
@@ -151,11 +155,15 @@ fn socialize_scorer_system(
     self_q: SocializeSelfQuery<'_, '_>,
     peers: SocializeNpcQuery<'_, '_>,
     mut scorers: Query<(&Actor, &mut Score), With<SocializeScorer>>,
+    spatial_index: Option<Res<NpcSpatialIndex>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
+    mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
+    let started_at = Instant::now();
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut score) in &mut scorers {
         let value = match self_q.get(*actor) {
             Ok((pos, membership, duel, tier)) => {
@@ -165,11 +173,8 @@ fn socialize_scorer_system(
                         0.0
                     } else {
                         let p = pos.get();
-                        let has_same_faction_peer = peers.iter().any(|(ent, ppos, pmem)| {
-                            ent != *actor
-                                && pmem.faction_id == membership.faction_id
-                                && p.distance(ppos.get()) <= SOCIALIZE_RANGE
-                        });
+                        let has_same_faction_peer =
+                            has_same_faction_peer(*actor, p, membership, &peers, spatial_index);
                         if has_same_faction_peer {
                             SOCIALIZE_BASELINE_SCORE
                         } else {
@@ -185,6 +190,38 @@ fn socialize_scorer_system(
         };
         score.set(value);
     }
+
+    if let Some(probe) = perf_probe.as_deref_mut() {
+        probe.record_elapsed("social_scorer", started_at);
+        probe.flush_if_due(tick);
+    }
+}
+
+fn has_same_faction_peer(
+    actor: Entity,
+    actor_pos: valence::prelude::DVec3,
+    membership: &FactionMembership,
+    peers: &SocializeNpcQuery<'_, '_>,
+    spatial_index: Option<&NpcSpatialIndex>,
+) -> bool {
+    if let Some(index) = spatial_index {
+        return index
+            .neighbors_within(actor_pos, SOCIALIZE_RANGE)
+            .into_iter()
+            .any(|ent| {
+                ent != actor
+                    && peers.get(ent).ok().is_some_and(|(_, ppos, pmem)| {
+                        pmem.faction_id == membership.faction_id
+                            && actor_pos.distance(ppos.get()) <= SOCIALIZE_RANGE
+                    })
+            });
+    }
+
+    peers.iter().any(|(ent, ppos, pmem)| {
+        ent != actor
+            && pmem.faction_id == membership.faction_id
+            && actor_pos.distance(ppos.get()) <= SOCIALIZE_RANGE
+    })
 }
 
 fn faction_duel_scorer_system(
@@ -207,7 +244,9 @@ fn socialize_action_system(
     peers: SocializeNpcQuery<'_, '_>,
     mut mutables: Query<(&mut Navigator, &mut SocializeState), With<NpcMarker>>,
     mut actions: Query<(&Actor, &mut ActionState), With<SocializeAction>>,
+    spatial_index: Option<Res<NpcSpatialIndex>>,
 ) {
+    let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut state) in &mut actions {
         let Ok((pos, membership, _, _)) = self_q.get(*actor) else {
             *state = ActionState::Failure;
@@ -220,25 +259,10 @@ fn socialize_action_system(
 
         match *state {
             ActionState::Requested => {
-                let partner = peers
-                    .iter()
-                    .filter_map(|(ent, ppos, pmem)| {
-                        if ent == *actor {
-                            return None;
-                        }
-                        if pmem.faction_id != membership.faction_id {
-                            return None;
-                        }
-                        let d = pos.get().distance(ppos.get());
-                        if d <= SOCIALIZE_RANGE {
-                            Some((ent, d))
-                        } else {
-                            None
-                        }
-                    })
-                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                let partner =
+                    nearest_socialize_partner(*actor, pos.get(), membership, &peers, spatial_index);
                 match partner {
-                    Some((ent, _)) => {
+                    Some(ent) => {
                         navigator.stop();
                         sstate.partner = Some(ent);
                         sstate.elapsed_ticks = 0;
@@ -263,6 +287,39 @@ fn socialize_action_system(
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
     }
+}
+
+fn nearest_socialize_partner(
+    actor: Entity,
+    actor_pos: valence::prelude::DVec3,
+    membership: &FactionMembership,
+    peers: &SocializeNpcQuery<'_, '_>,
+    spatial_index: Option<&NpcSpatialIndex>,
+) -> Option<Entity> {
+    let mut best: Option<(Entity, f64)> = None;
+    let mut consider = |ent: Entity, ppos: valence::prelude::DVec3, pmem: &FactionMembership| {
+        if ent == actor || pmem.faction_id != membership.faction_id {
+            return;
+        }
+        let d = actor_pos.distance(ppos);
+        if d <= SOCIALIZE_RANGE && best.as_ref().is_none_or(|(_, best_d)| d < *best_d) {
+            best = Some((ent, d));
+        }
+    };
+
+    if let Some(index) = spatial_index {
+        for ent in index.neighbors_within(actor_pos, SOCIALIZE_RANGE) {
+            if let Ok((_, ppos, pmem)) = peers.get(ent) {
+                consider(ent, ppos.get(), pmem);
+            }
+        }
+    } else {
+        for (ent, ppos, pmem) in peers.iter() {
+            consider(ent, ppos.get(), pmem);
+        }
+    }
+
+    best.map(|(ent, _)| ent)
 }
 
 // ---------------------------------------------------------------------------

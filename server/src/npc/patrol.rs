@@ -1,5 +1,6 @@
 use valence::prelude::{
-    bevy_ecs, App, Component, DVec3, Entity, Position, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, App, Component, DVec3, Entity, FixedUpdate, Position, Query, Res, ResMut, Resource,
+    With,
 };
 
 use crate::npc::navigator::Navigator;
@@ -53,7 +54,7 @@ impl NpcPatrol {
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering patrol system");
     app.insert_resource(PatrolWarningsResource::default());
-    app.add_systems(Update, patrol_npcs);
+    app.add_systems(FixedUpdate, patrol_npcs);
 }
 
 /// Patrol system: for each NPC whose Navigator is idle, set the next patrol
@@ -174,6 +175,7 @@ mod patrol_tests {
     use super::*;
     use crate::npc::navigator::Navigator;
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::Update;
 
     fn small_zone() -> Zone {
         Zone {
