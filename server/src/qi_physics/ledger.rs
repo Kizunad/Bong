@@ -116,6 +116,8 @@ pub enum QiTransferReason {
     Channeling,
     RiftCollapse,
     EraDecay,
+    /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）
+    Crafting,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

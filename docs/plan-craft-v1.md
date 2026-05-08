@@ -1,4 +1,4 @@
-# Bong · plan-craft-v1 · 骨架
+# Bong · plan-craft-v1 · active（P0+P1 ✅，P2/P3 ⬜）
 
 通用手搓面 —— inventory 内集成「手搓」标签，列表式合成 UI（左配方列表 + 右详情面板 + 进度条）。服务多个流派的"轻度仪式化"合成需求（蚀针 / 自蕴煎汤 / 伪皮 / 阵法预埋件 / 凡器等），区别于 forge 的 4 步状态机 + alchemy 的火候模式 + vanilla 的摆放式合成。**无方块、无站**——纯 inventory 标签实装。**单任务**（同时只能 1 个手搓在跑，简化决策成本）。**in-game 时间推进**（玩家在线累积，下线暂停）。**配方解锁三渠道**（残卷 / 师承 / 顿悟，无流派自动解锁——worldview §九 信息差就是优势的物理化身）。**首版不实装磨损税 + 装备加速**（留 v2）。
 
@@ -92,8 +92,8 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | 决策门：UI mockup 锁定 / 配方 schema 定稿 / 各流派 plan 配方分发协议（流派 plan P0 阶段必须列出注册的配方清单）/ 三渠道解锁机制 design / §5 六决策门收口 | schema + UI mockup + 协议落 plan §2-§4 |
-| **P1** ⬜ | server `craft::*` 主模块 + `CraftRegistry` resource + `CraftSession` component + tick 推进 + qi 扣除走 qi_physics::ledger + 5 个示例配方注册（dugu 蚀针 + 自蕴煎汤 + tuike 伪灵皮 + tools 采药刀 + zhenfa 真元诡雷）+ ≥30 单测 | `cargo test craft::` 全过 / 5 个示例配方完整流程 / 守恒断言（qi_cost 走 ledger） |
+| **P0** ✅ 2026-05-08 | 决策门：UI mockup 锁定（§2）/ 配方 schema 定稿（§3 + `server/src/schema/craft.rs` 5 sample）/ 各流派 plan 配方分发协议（`CraftRegistry::register` API + 命名空间约定）/ 三渠道解锁机制 design（§3 `UnlockSource` enum + `unlock.rs` 三函数）/ §5 六决策门收口（见 §5.5） | schema + UI mockup + 协议落 plan §2-§4 ✅ |
+| **P1** ✅ 2026-05-08 | server `craft::*` 主模块（events / recipe / registry / session / unlock / mod）+ `CraftRegistry` resource + `CraftSession` component + tick 推进 + qi 扣除走 `qi_physics::ledger::Crafting`（reason variant 已扩）+ 5 个示例配方注册（蚀针 / 毒源煎汤 / 伪灵皮 / 真元诡雷 / 采药刀，覆盖 5/6 类）+ 98 单测（81 craft::* + 17 schema::craft，含 review fix 后新增 11 条覆盖 ledger sync / validate 边界路径） | `cargo test craft::` 98 passed / `cargo test` 全 2782 passed / `cargo clippy --all-targets -- -D warnings` 干净 / 守恒断言（qi_cost 走 ledger Crafting reason，参见 `start_craft_ledger_amount_matches_session_qi_paid` / `ledger_total_conservation_after_start_craft` / `start_craft_rejects_when_ledger_out_of_sync` 测试） |
 | **P2** ⬜ | client `inventory::CraftTab` UI（左 RecipeListPanel 含分组折叠 + 右 RecipeDetailPanel + 底 CurrentTaskBar 进度条）+ inventory tab 集成 + 配方解锁状态可视化（✅/🔒）+ 材料检查实时高亮（缺料红字） | WSLg 实跑 inventory 打开 → 切手搓 tab → 选配方 → 检查材料 → 开始 → 进度推进 → 出炉，全流程通顺 |
 | **P3** ⬜ | agent narration（首学配方 / 师承获取 / 顿悟解锁 / 出炉叙事）+ 三渠道解锁机制实装（残卷 ItemUse 触发 / 师承 NPC dialog 触发 / 顿悟 InsightTrigger 触发）+ schema 5 sample 完整 + 各流派 plan 注册自家配方（接 dugu-v2 / tuike-v2 / zhenfa-v2 / tools-v1） | narration-eval 4 类叙事过古意检测 / 5 流派 plan 配方注册 PR 完成 |
 
@@ -240,7 +240,9 @@ pub enum UnlockSource {
 | `unlock_via_mentor` | NPC dialog 解锁 + Renown / qi 成本扣除 + 多重师承可选 | 3 |
 | `unlock_via_insight` | InsightTrigger 触发选项弹窗 + 玩家选定后解锁 + 永久不可重选 | 2 |
 
-**P1 验收**：`grep -rcE '#\[test\]' server/src/craft/` ≥ 30。守恒断言：所有 `qi_cost` 必须走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`，不允许 `cultivation.qi_current -= cost` 直接扣。
+**P1 验收**：`grep -rcE '#\[test\]' server/src/craft/` ≥ 30。守恒断言：所有 `qi_cost` 必须走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`——**禁止绕过 ledger 单独扣 state view**。允许的语义：`WorldQiAccount::transfer` 成功后把 `cultivation.qi_current` 同步扣减（state view 镜像 ledger，不脱离账本独立维护）。`start_craft` 在 ledger / state view 失同步时 fail-fast `LedgerOutOfSync`（详见 §6 进度日志）。
+
+**P1 已知简化（待 plan-qi-physics-v2 解锁）**：`qi_color_min: Option<(ColorKind, f32)>` 当前 `cultivation::QiColor` 是 single-main 形态（`{ main, secondary, is_chaotic, is_hunyuan }`，无显式 share 字段），P1 阶段把 `share` 阈值视为"main 命中即满足任意 share"——`Some((Insidious, 0.05))` 与 `Some((Insidious, 0.95))` 行为等价（main 等于 100% 主色占比）。待 `plan-qi-physics-v2` 在 QiColor 上加 `main_share: f64` 或多色 weights 后，`start_craft` 内 `qi_color_min` 校验切换到真实 share 比对，并新增 `StartCraftError::QiColorShareTooLow` variant 区分"主色对了但占比不足"与"主色错"。`recipe::validate` 已校验 share ∈ [0.0, 1.0]，配方契约可向前兼容。
 
 ---
 
@@ -298,8 +300,30 @@ pub enum UnlockSource {
 
 ---
 
+## §5.5 决策门收口（2026-05-08，P0 验收）
+
+P0 决策门六条均按 plan 内"默认推 X"采纳，落代码处如下：
+
+| # | 选项 | 落地处 |
+|---|---|---|
+| 1 配方分类 6 类 | A：保留 6 类 | `craft::CraftCategory`（AnqiCarrier / DuguPotion / TuikeSkin / ZhenfaTrap / Tool / Misc）+ `CraftCategory::ALL` 固定排序 |
+| 2 配方界面排序 | A：按类别分组 + 类别内字母 | `CraftRegistry::grouped_for_ui()` 按 ALL 顺序 + `RecipeId::cmp` 字母升序 |
+| 3 取消返还比例 | B：70% 返还 30% 损耗 | `craft::session::CANCEL_REFUND_RATIO = 0.7` + `cancel_craft` floor 计算 |
+| 4 死亡进行中任务 | A：清空 | `CraftFailureReason::PlayerDied` reason 由 death-lifecycle 调用 `cancel_craft` 清 session |
+| 5 vanilla 边界 | A：手搓 tab 不收 vanilla，凡器破例 | 5 示例之一 `craft.example.herb_knife.iron`（CraftCategory::Tool, qi_cost = 0） |
+| 6 境界 / 颜色门槛 | B：软 gate（UI 灰显） | `CraftRequirements` 字段 + `start_craft` 内服务端硬校验防作弊 |
+
+---
+
 ## §6 进度日志
 
+- **2026-05-08** P0+P1 落地（P2/P3 暂未启动，plan 保留 active）：
+  - **P0 决策门收口**：六门均按默认推（见 §5.5）
+  - **P1 server 主体**：`server/src/craft/{events,recipe,registry,session,unlock,mod}.rs` 完整建立 + `server/src/schema/craft.rs` IPC 5 sample
+  - **5 示例配方**：`craft.example.{eclipse_needle.iron, poison_decoction.fan, fake_skin.light, zhenfa_trap.iron, herb_knife.iron}`，覆盖 5/6 类（Misc 兜底不举例）
+  - **守恒律**：`qi_physics::ledger::QiTransferReason::Crafting` variant 新增；`start_craft` 走 ledger-first（`WorldQiAccount::transfer` from=player to=zone amount=qi_cost），随后把 `cultivation.qi_current` 同步扣减（state view 镜像 ledger，避免双 source-of-truth）。**调用方必须先把 `cultivation.qi_current` sync 到 `ledger.balance(player)`** 才能起手手搓——`start_craft` 内**不**做 ad-hoc set_balance 注入（避免 inflate ledger 总数破坏全局守恒）；当 ledger 与 state view 失同步时返回 `StartCraftError::LedgerOutOfSync { player_balance, cultivation_qi_current, required }` fail-fast，待 `qi_physics::sync_player_qi_to_ledger` system 接入后由 ECS hook 自动同步。`ledger_total_conservation_after_start_craft` / `start_craft_with_synced_ledger_does_not_inflate_player_balance` / `start_craft_rejects_when_ledger_out_of_sync` 测试 pin 守恒律
+  - **测试**：`cargo test craft::` 98 passed（81 craft::* + 17 schema::craft；review fix 两轮共加 11 条），全栈 `cargo test` 2782 passed，`cargo clippy --all-targets -- -D warnings` 干净
+  - **接入留口**：P2 client UI 未动；P3 三渠道 hook（残卷 ItemUse / NPC dialog / BreakthroughEvent / 顿悟选项菜单）函数已暴露在 `craft::unlock` 但**未挂监听**——等流派 plan vN+1 各自接入时挂载
 - **2026-05-08** 升 active。实地核验 `inventory::ItemInstance` ✅ / `cultivation::QiColor`（独立 component）✅ / `qi_physics::ledger` ✅ / `botany::PlantKindRegistry`（实名修正）✅ / `alchemy::RecipeRegistry`（命名空间不冲突）✅ / `craft` 顶层模块未建（符合 plan 设计）/ `SkillSet` 缺 `learned_recipes` 字段（P1 扩或挂 `RecipeUnlockState` resource）。"现状对齐"段落锁定差异；接入面 Checklist 进料行已修正（`PlantKindRegistry` + `QiColor` 独立 component）。
 - **2026-05-06** 骨架立项。源自 plan-dugu-v2 起草过程中发现"蚀针 / 自蕴煎汤的手搓 UI 缺失"问题，上钻发现是通用问题（多个流派都有"轻度仪式化"合成需求），最终决定立通用 plan 而非各流派各自补 UI。
   - 设计轴心：inventory 标签集成（无方块）+ 单任务（无并发）+ in-game 时间推进（在线累积下线暂停）+ 三渠道解锁（残卷/师承/顿悟）+ 首版不实装磨损税和装备加速
