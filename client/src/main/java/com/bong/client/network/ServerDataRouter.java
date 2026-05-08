@@ -186,6 +186,11 @@ public final class ServerDataRouter {
         handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
         handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
         handlers.put("skill_snapshot", new SkillSnapshotHandler());
+        // plan-craft-v1 P2 — 通用手搓 IPC（4 类）
+        handlers.put("craft_recipe_list", new CraftRecipeListHandler());
+        handlers.put("craft_session_state", new CraftSessionStateHandler());
+        handlers.put("craft_outcome", new CraftOutcomeHandler());
+        handlers.put("recipe_unlocked", new RecipeUnlockedHandler());
         return new ServerDataRouter(handlers);
     }
 

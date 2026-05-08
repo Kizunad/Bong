@@ -4,6 +4,12 @@ mod audio;
 mod botany;
 mod cmd;
 mod combat;
+// craft：plan-craft-v1 P0+P1 通用手搓底盘。register() 注入 5 示例配方 + resources +
+// events；P2/P3（client UI + agent narration + 三渠道 hook）由 plan vN+1 接入。
+// 当前未在 Update systems 内消费 CraftStartedEvent / CraftCompletedEvent，
+// 等 P2/P3 接入前保留 #[allow(dead_code)]。
+#[allow(dead_code)]
+mod craft;
 #[allow(dead_code)]
 mod cultivation;
 #[allow(dead_code)]
@@ -111,6 +117,7 @@ fn run_server() {
     cultivation::register(&mut app);
     fauna::register(&mut app);
     alchemy::register(&mut app);
+    craft::register(&mut app);
     audio::register(&mut app);
     combat::register(&mut app);
     social::register(&mut app);

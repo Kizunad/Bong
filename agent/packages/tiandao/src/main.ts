@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import Redis from "ioredis";
 import type { Command, Narration } from "@bong/schema";
+import { CraftNarrationRuntime } from "./craft-runtime.js";
 import { DeathInsightRuntime } from "./death-insight-runtime.js";
 import { DuguNarrationRuntime } from "./dugu-narration.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
@@ -169,9 +170,13 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const heartDemonCleanup = await startHeartDemonRuntime({
     ...runtimeOpts,
   });
+  const craftCleanup = await startCraftRuntime({
+    ...runtimeOpts,
+  });
 
   return [
     heartDemonCleanup,
+    craftCleanup,
     anqiCleanup,
     zhenmaiCleanup,
     tuikeCleanup,
@@ -324,6 +329,44 @@ async function startDuguRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] dugu runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startCraftRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof CraftNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof CraftNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new CraftNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] craft runtime online"))
+    .catch((error) => console.warn("[tiandao] craft runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] craft runtime disconnect error:", error);
     }
   };
 }

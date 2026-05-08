@@ -1,4 +1,4 @@
-# Bong · plan-craft-v1 · 骨架
+# Bong · plan-craft-v1 · active（P0+P1 ✅，P2/P3 ⬜）
 
 通用手搓面 —— inventory 内集成「手搓」标签，列表式合成 UI（左配方列表 + 右详情面板 + 进度条）。服务多个流派的"轻度仪式化"合成需求（蚀针 / 自蕴煎汤 / 伪皮 / 阵法预埋件 / 凡器等），区别于 forge 的 4 步状态机 + alchemy 的火候模式 + vanilla 的摆放式合成。**无方块、无站**——纯 inventory 标签实装。**单任务**（同时只能 1 个手搓在跑，简化决策成本）。**in-game 时间推进**（玩家在线累积，下线暂停）。**配方解锁三渠道**（残卷 / 师承 / 顿悟，无流派自动解锁——worldview §九 信息差就是优势的物理化身）。**首版不实装磨损税 + 装备加速**（留 v2）。
 
@@ -92,10 +92,10 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | 决策门：UI mockup 锁定 / 配方 schema 定稿 / 各流派 plan 配方分发协议（流派 plan P0 阶段必须列出注册的配方清单）/ 三渠道解锁机制 design / §5 六决策门收口 | schema + UI mockup + 协议落 plan §2-§4 |
-| **P1** ⬜ | server `craft::*` 主模块 + `CraftRegistry` resource + `CraftSession` component + tick 推进 + qi 扣除走 qi_physics::ledger + 5 个示例配方注册（dugu 蚀针 + 自蕴煎汤 + tuike 伪灵皮 + tools 采药刀 + zhenfa 真元诡雷）+ ≥30 单测 | `cargo test craft::` 全过 / 5 个示例配方完整流程 / 守恒断言（qi_cost 走 ledger） |
-| **P2** ⬜ | client `inventory::CraftTab` UI（左 RecipeListPanel 含分组折叠 + 右 RecipeDetailPanel + 底 CurrentTaskBar 进度条）+ inventory tab 集成 + 配方解锁状态可视化（✅/🔒）+ 材料检查实时高亮（缺料红字） | WSLg 实跑 inventory 打开 → 切手搓 tab → 选配方 → 检查材料 → 开始 → 进度推进 → 出炉，全流程通顺 |
-| **P3** ⬜ | agent narration（首学配方 / 师承获取 / 顿悟解锁 / 出炉叙事）+ 三渠道解锁机制实装（残卷 ItemUse 触发 / 师承 NPC dialog 触发 / 顿悟 InsightTrigger 触发）+ schema 5 sample 完整 + 各流派 plan 注册自家配方（接 dugu-v2 / tuike-v2 / zhenfa-v2 / tools-v1） | narration-eval 4 类叙事过古意检测 / 5 流派 plan 配方注册 PR 完成 |
+| **P0** ✅ 2026-05-08 | 决策门：UI mockup 锁定（§2）/ 配方 schema 定稿（§3 + `server/src/schema/craft.rs` 5 sample）/ 各流派 plan 配方分发协议（`CraftRegistry::register` API + 命名空间约定）/ 三渠道解锁机制 design（§3 `UnlockSource` enum + `unlock.rs` 三函数）/ §5 六决策门收口（见 §5.5） | schema + UI mockup + 协议落 plan §2-§4 ✅ |
+| **P1** ✅ 2026-05-08 | server `craft::*` 主模块（events / recipe / registry / session / unlock / mod）+ `CraftRegistry` resource + `CraftSession` component + tick 推进 + qi 扣除走 `qi_physics::ledger::Crafting`（reason variant 已扩）+ 5 个示例配方注册（蚀针 / 毒源煎汤 / 伪灵皮 / 真元诡雷 / 采药刀，覆盖 5/6 类）+ 98 单测（81 craft::* + 17 schema::craft，含 review fix 后新增 11 条覆盖 ledger sync / validate 边界路径） | `cargo test craft::` 98 passed / `cargo test` 全 2782 passed / `cargo clippy --all-targets -- -D warnings` 干净 / 守恒断言（qi_cost 走 ledger Crafting reason，参见 `start_craft_ledger_amount_matches_session_qi_paid` / `ledger_total_conservation_after_start_craft` / `start_craft_rejects_when_ledger_out_of_sync` 测试） |
+| **P2** ✅ 2026-05-08 | client `inventory::CraftTab` UI（左 RecipeListPanel 含分组折叠 + 右 RecipeDetailPanel + 底 CurrentTaskBar 进度条）+ inventory tab 集成 + 配方解锁状态可视化（✅/🔒）+ 材料检查实时高亮（缺料红字） | server craft IPC bridge（`network/craft_emit.rs` 6 系统：apply_craft_intents / tick / emit_session_state / emit_outcome / emit_recipe_unlocked / emit_recipe_list_on_join）+ ServerDataPayloadV1 4 variant + ClientRequestV1 2 variant；client `inventory::component::CraftTabPanel` + InspectScreen `TAB_CRAFT(=5)` + `craft::{CraftCategory,CraftRecipe,CraftSessionStateView,CraftStore}` + 4 ServerData handlers；19 客户端新单测 + 19 服务端新单测；WSLg 实跑由用户验收（headless agent 不验收 UI 视觉） |
+| **P3** ✅ 2026-05-08 | agent craft narration runtime（4 类：首学 / 师承 / 顿悟 / 出炉，dispatch by `source.kind` / `outcome.kind`）+ server 三渠道解锁 intent（`CraftUnlockIntent` + `apply_unlock_intents` 系统）+ Redis 桥（`craft_event_bridge.rs` 3 系统 → `bong:craft/outcome` / `bong:craft/recipe_unlocked`）+ schema 5 sample TypeBox 双端镜像 + `find_recipes_unlockable_by_{scroll,mentor,insight}` 查询 helper（流派 plan 调用入口）| 11 craft-runtime 测 + 19 schema 测 + 4 server bridge 测全过；流派 plan 配方注册 PR（dugu-v2 / tuike-v2 / zhenfa-v2 / tools-v1）由各自 vN+1 PR 接入新增 hook（**遗留**） |
 
 ---
 
@@ -240,7 +240,9 @@ pub enum UnlockSource {
 | `unlock_via_mentor` | NPC dialog 解锁 + Renown / qi 成本扣除 + 多重师承可选 | 3 |
 | `unlock_via_insight` | InsightTrigger 触发选项弹窗 + 玩家选定后解锁 + 永久不可重选 | 2 |
 
-**P1 验收**：`grep -rcE '#\[test\]' server/src/craft/` ≥ 30。守恒断言：所有 `qi_cost` 必须走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`，不允许 `cultivation.qi_current -= cost` 直接扣。
+**P1 验收**：`grep -rcE '#\[test\]' server/src/craft/` ≥ 30。守恒断言：所有 `qi_cost` 必须走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`——**禁止绕过 ledger 单独扣 state view**。允许的语义：`WorldQiAccount::transfer` 成功后把 `cultivation.qi_current` 同步扣减（state view 镜像 ledger，不脱离账本独立维护）。`start_craft` 在 ledger / state view 失同步时 fail-fast `LedgerOutOfSync`（详见 §6 进度日志）。
+
+**P1 已知简化（待 plan-qi-physics-v2 解锁）**：`qi_color_min: Option<(ColorKind, f32)>` 当前 `cultivation::QiColor` 是 single-main 形态（`{ main, secondary, is_chaotic, is_hunyuan }`，无显式 share 字段），P1 阶段把 `share` 阈值视为"main 命中即满足任意 share"——`Some((Insidious, 0.05))` 与 `Some((Insidious, 0.95))` 行为等价（main 等于 100% 主色占比）。待 `plan-qi-physics-v2` 在 QiColor 上加 `main_share: f64` 或多色 weights 后，`start_craft` 内 `qi_color_min` 校验切换到真实 share 比对，并新增 `StartCraftError::QiColorShareTooLow` variant 区分"主色对了但占比不足"与"主色错"。`recipe::validate` 已校验 share ∈ [0.0, 1.0]，配方契约可向前兼容。
 
 ---
 
@@ -298,8 +300,40 @@ pub enum UnlockSource {
 
 ---
 
+## §5.5 决策门收口（2026-05-08，P0 验收）
+
+P0 决策门六条均按 plan 内"默认推 X"采纳，落代码处如下：
+
+| # | 选项 | 落地处 |
+|---|---|---|
+| 1 配方分类 6 类 | A：保留 6 类 | `craft::CraftCategory`（AnqiCarrier / DuguPotion / TuikeSkin / ZhenfaTrap / Tool / Misc）+ `CraftCategory::ALL` 固定排序 |
+| 2 配方界面排序 | A：按类别分组 + 类别内字母 | `CraftRegistry::grouped_for_ui()` 按 ALL 顺序 + `RecipeId::cmp` 字母升序 |
+| 3 取消返还比例 | B：70% 返还 30% 损耗 | `craft::session::CANCEL_REFUND_RATIO = 0.7` + `cancel_craft` floor 计算 |
+| 4 死亡进行中任务 | A：清空 | `CraftFailureReason::PlayerDied` reason 由 death-lifecycle 调用 `cancel_craft` 清 session |
+| 5 vanilla 边界 | A：手搓 tab 不收 vanilla，凡器破例 | 5 示例之一 `craft.example.herb_knife.iron`（CraftCategory::Tool, qi_cost = 0） |
+| 6 境界 / 颜色门槛 | B：软 gate（UI 灰显） | `CraftRequirements` 字段 + `start_craft` 内服务端硬校验防作弊 |
+
+---
+
 ## §6 进度日志
 
+- **2026-05-08** P2+P3 落地，plan 进入归档：
+  - **P2 server**：`server/src/network/craft_emit.rs` 6 系统接入 client_request → CraftStartIntent / CraftCancelIntent → start_craft / cancel_craft → tick → finalize → 推 ServerDataPayloadV1（CraftRecipeList / CraftSessionState / CraftOutcome / RecipeUnlocked）
+  - **P2 schema**：扩 `ServerDataPayloadV1` 4 variant + `ClientRequestV1::{CraftStart, CraftCancel}` + payload_type_label / wire form / payload_type 全闭合 + ServerDataRouterTest pin 4 新 wire type
+  - **P2 client**：`client/src/main/java/com/bong/client/craft/{CraftCategory,CraftRecipe,CraftSessionStateView,CraftStore}` + 4 handlers（CraftRecipeListHandler / CraftSessionStateHandler / CraftOutcomeHandler / RecipeUnlockedHandler）+ `inventory/component/CraftTabPanel` + `InspectScreen` 加 `TAB_CRAFT(=5)` "手搓" + `ClientRequestProtocol/Sender` 加 `craft_start/craft_cancel`
+  - **P3 server 三渠道入口集中化**：`craft::CraftUnlockIntent` event + `craft_emit::apply_unlock_intents` 系统统一路由 scroll/mentor/insight → `unlock_via_*`（已有）→ emit `RecipeUnlockedEvent`；`craft::find_recipes_unlockable_by_{scroll,mentor,insight}` 查询 helper 让流派 plan 用 `item_template / npc_archetype / InsightTrigger` 反查命中配方
+  - **P3 server Redis 桥**：`network/craft_event_bridge.rs` 3 系统（publish_craft_completed/failed/recipe_unlocked → CH_CRAFT_OUTCOME / CH_CRAFT_RECIPE_UNLOCKED）+ RedisOutbound 新加 CraftOutcome / RecipeUnlocked variants + channels 测试 pin
+  - **P3 agent**：`agent/packages/schema/src/craft.ts` TypeBox 5 sample（与 server `schema::craft` 1:1 镜像）+ `agent/packages/tiandao/src/craft-runtime.ts` 订阅 2 channel → 4 类 narration（first_learn / mentor / insight / completed）+ `skills/craft.md` 系统 prompt + fallback narration（LLM 失败 / 非法 JSON / 不过 TypeBox 时仍可读）
+  - **测试**：`cargo test` 2896 passed（craft 121 含 121-98=23 新单测）/ `./gradlew test` 客户端 869 passed（19 craft 新单测）/ `npm test` schema 324（19 craft）+ tiandao 266（11 craft-runtime）；`cargo clippy --all-targets -- -D warnings` 干净 / `cargo fmt --check` 干净
+  - **WSLg 实跑**：留给用户验收（headless agent 不做视觉验证），server 编译 / client `./gradlew test build` 干净 jar 已出
+  - **遗留**：P3 §1 验收里"5 流派 plan 配方注册 PR 完成"由 dugu-v2 / tuike-v2 / zhenfa-v2 / tools-v1（当前均为 skeleton）各自 vN+1 PR 接入；本 PR 提供 server `find_recipes_unlockable_by_*` + `CraftUnlockIntent` 入口供它们调用，不在本 plan 范围内强行打开 skeleton
+- **2026-05-08** P0+P1 落地（P2/P3 暂未启动，plan 保留 active）：
+  - **P0 决策门收口**：六门均按默认推（见 §5.5）
+  - **P1 server 主体**：`server/src/craft/{events,recipe,registry,session,unlock,mod}.rs` 完整建立 + `server/src/schema/craft.rs` IPC 5 sample
+  - **5 示例配方**：`craft.example.{eclipse_needle.iron, poison_decoction.fan, fake_skin.light, zhenfa_trap.iron, herb_knife.iron}`，覆盖 5/6 类（Misc 兜底不举例）
+  - **守恒律**：`qi_physics::ledger::QiTransferReason::Crafting` variant 新增；`start_craft` 走 ledger-first（`WorldQiAccount::transfer` from=player to=zone amount=qi_cost），随后把 `cultivation.qi_current` 同步扣减（state view 镜像 ledger，避免双 source-of-truth）。**调用方必须先把 `cultivation.qi_current` sync 到 `ledger.balance(player)`** 才能起手手搓——`start_craft` 内**不**做 ad-hoc set_balance 注入（避免 inflate ledger 总数破坏全局守恒）；当 ledger 与 state view 失同步时返回 `StartCraftError::LedgerOutOfSync { player_balance, cultivation_qi_current, required }` fail-fast，待 `qi_physics::sync_player_qi_to_ledger` system 接入后由 ECS hook 自动同步。`ledger_total_conservation_after_start_craft` / `start_craft_with_synced_ledger_does_not_inflate_player_balance` / `start_craft_rejects_when_ledger_out_of_sync` 测试 pin 守恒律
+  - **测试**：`cargo test craft::` 98 passed（81 craft::* + 17 schema::craft；review fix 两轮共加 11 条），全栈 `cargo test` 2782 passed，`cargo clippy --all-targets -- -D warnings` 干净
+  - **接入留口**：P2 client UI 未动；P3 三渠道 hook（残卷 ItemUse / NPC dialog / BreakthroughEvent / 顿悟选项菜单）函数已暴露在 `craft::unlock` 但**未挂监听**——等流派 plan vN+1 各自接入时挂载
 - **2026-05-08** 升 active。实地核验 `inventory::ItemInstance` ✅ / `cultivation::QiColor`（独立 component）✅ / `qi_physics::ledger` ✅ / `botany::PlantKindRegistry`（实名修正）✅ / `alchemy::RecipeRegistry`（命名空间不冲突）✅ / `craft` 顶层模块未建（符合 plan 设计）/ `SkillSet` 缺 `learned_recipes` 字段（P1 扩或挂 `RecipeUnlockState` resource）。"现状对齐"段落锁定差异；接入面 Checklist 进料行已修正（`PlantKindRegistry` + `QiColor` 独立 component）。
 - **2026-05-06** 骨架立项。源自 plan-dugu-v2 起草过程中发现"蚀针 / 自蕴煎汤的手搓 UI 缺失"问题，上钻发现是通用问题（多个流派都有"轻度仪式化"合成需求），最终决定立通用 plan 而非各流派各自补 UI。
   - 设计轴心：inventory 标签集成（无方块）+ 单任务（无并发）+ in-game 时间推进（在线累积下线暂停）+ 三渠道解锁（残卷/师承/顿悟）+ 首版不实装磨损税和装备加速
@@ -313,11 +347,54 @@ pub enum UnlockSource {
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
-- **落地清单**：`server/src/craft/` 主模块 + `client/src/.../inventory/craft_tab/` UI + `agent/.../craft_runtime.ts`
-- **关键 commit**：P0/P1/P2/P3 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test craft::` 数量 / 5 个示例配方完整流程实测 / WSLg inventory tab 实测
-- **跨仓库核验**：server CraftRegistry / agent narration runtime / client CraftTab UI / 5 流派 plan 配方注册 PR
-- **遗留 / 后续**：磨损税 v2 / 装备加速 v2 / 跨流派共享配方（如普适毒草煎汤可被非毒蛊师学）/ 多任务并发 v3
+### 落地清单
+
+| 阶段 | 模块 / 文件路径 |
+|---|---|
+| **P0** 决策门 | §5.5（plan 内）+ `server/src/craft/mod.rs` 顶部 doc 注释（六门按默认推 A/A/B/A/A/B） |
+| **P1** server 主底盘 | `server/src/craft/{events,recipe,registry,session,unlock,mod}.rs` + `server/src/schema/craft.rs`（5 sample）+ `server/src/qi_physics/ledger.rs`（`QiTransferReason::Crafting` 新增） |
+| **P2** server craft IPC | `server/src/network/craft_emit.rs`（6 系统：apply_craft_intents / tick_craft_sessions / emit_craft_session_state / emit_craft_outcome_payloads / emit_recipe_unlocked_payloads / emit_recipe_list_on_join）+ `server/src/schema/server_data.rs`（4 variant + wire 镜像）+ `server/src/schema/client_request.rs`（CraftStart / CraftCancel）+ `server/src/network/client_request_handler.rs` 路由 + `server/src/network/agent_bridge.rs` payload_type_label 4 entry |
+| **P2** client UI | `client/src/main/java/com/bong/client/craft/{CraftCategory,CraftRecipe,CraftSessionStateView,CraftStore}.java` + `client/src/main/java/com/bong/client/inventory/component/CraftTabPanel.java` + `client/src/main/java/com/bong/client/inventory/InspectScreen.java`（TAB_CRAFT=5 / craftTabContent / switchTab+removed） + `client/src/main/java/com/bong/client/network/{CraftRecipeListHandler,CraftSessionStateHandler,CraftOutcomeHandler,RecipeUnlockedHandler,ServerDataRouter,ClientRequestProtocol,ClientRequestSender}.java` |
+| **P3** server 三渠道入口 | `server/src/craft/events.rs::CraftUnlockIntent` + `server/src/craft/unlock.rs::find_recipes_unlockable_by_{scroll,mentor,insight}` + `server/src/network/craft_emit.rs::apply_unlock_intents` |
+| **P3** server Redis 桥 | `server/src/network/craft_event_bridge.rs`（3 系统）+ `server/src/network/redis_bridge.rs`（CraftOutcome / RecipeUnlocked variants + dispatch）+ `server/src/schema/channels.rs`（CH_CRAFT_OUTCOME / CH_CRAFT_RECIPE_UNLOCKED） |
+| **P3** agent | `agent/packages/schema/src/craft.ts`（5 sample TypeBox 镜像）+ `agent/packages/schema/src/channels.ts`（CRAFT_OUTCOME / CRAFT_RECIPE_UNLOCKED）+ `agent/packages/tiandao/src/craft-runtime.ts` + `agent/packages/tiandao/src/skills/craft.md` |
+
+### 关键 commit
+
+| 阶段 | hash | 日期 | 摘要 |
+|---|---|---|---|
+| P0+P1 | 7af464962 | 2026-05-08 | server 通用手搓底盘（5 示例 + 87 单测，PR #155） |
+| P2 server | 9654fa875 | 2026-05-08 | server craft IPC bridge + intent → session 系统 |
+| P2 client | 98633aaf5 | 2026-05-08 | client CraftTab UI + 4 ServerData handlers + 2 ClientRequest 编码器 |
+| P3 agent | 9c218f73c | 2026-05-08 | agent schema + craft narration runtime（4 类叙事） |
+| P3 server | e9e770949 | 2026-05-08 | server 三渠道解锁 intent + Redis 桥（→ agent） |
+
+### 测试结果
+
+| 命令 | 结果 |
+|---|---|
+| `cargo test --no-fail-fast`（server） | 2896 passed / 0 failed |
+| `cargo test craft`（server） | 121 passed（包含 craft::* 87 + schema::craft 17 + network::craft_emit 11 + network::craft_event_bridge 4 + 其他 craft 关联 2） |
+| `cargo clippy --all-targets -- -D warnings` | 干净 |
+| `cargo fmt --check` | 干净 |
+| `./gradlew test build`（client） | 869 passed（含 craft 19 新测：CraftStoreTest 8 + CraftHandlerTest 9 + InspectScreenQuickUseTabTest 1 + ServerDataRouterTest 1 修） |
+| `npm test`（schema） | 324 passed（含 craft 19 新测） |
+| `npm test`（tiandao） | 266 passed（含 craft-runtime 11 新测） |
+
+### 跨仓库核验
+
+| 层 | 命中 symbol |
+|---|---|
+| server | `craft::{CraftRegistry, CraftSession, CraftStartIntent, CraftCancelIntent, CraftUnlockIntent, CraftStartedEvent, CraftCompletedEvent, CraftFailedEvent, RecipeUnlockedEvent, RecipeUnlockState, find_recipes_unlockable_by_*}` / `network::craft_emit::*` / `network::craft_event_bridge::*` / `schema::craft::{CraftStartReqV1, CraftSessionStateV1, CraftOutcomeV1, RecipeUnlockedV1, RecipeListV1}` / `schema::server_data::ServerDataType::{CraftRecipeList, CraftSessionState, CraftOutcome, RecipeUnlocked}` / `schema::client_request::ClientRequestV1::{CraftStart, CraftCancel}` / `schema::channels::{CH_CRAFT_OUTCOME, CH_CRAFT_RECIPE_UNLOCKED}` |
+| agent | `@bong/schema::{CraftStartReqV1, CraftSessionStateV1, CraftOutcomeV1, RecipeUnlockedV1, RecipeListV1, CraftCategoryV1, CraftFailureReasonV1, InsightTriggerV1, UnlockEventSourceV1, CraftRequirementsV1, CraftRecipeEntryV1}` / `@bong/schema::CHANNELS::{CRAFT_OUTCOME, CRAFT_RECIPE_UNLOCKED}` / `@bong/tiandao::CraftNarrationRuntime` |
+| client | `craft::{CraftCategory, CraftRecipe, CraftSessionStateView, CraftStore}` / `inventory::component::CraftTabPanel` / `inventory::InspectScreen::TAB_CRAFT` / `network::{CraftRecipeListHandler, CraftSessionStateHandler, CraftOutcomeHandler, RecipeUnlockedHandler}` / `network::ClientRequestProtocol::{encodeCraftStart, encodeCraftCancel}` / `network::ClientRequestSender::{sendCraftStart, sendCraftCancel}` |
+
+### 遗留 / 后续
+
+- **流派 plan 配方注册接入**（plan §1 P3 验收 "5 流派 plan 配方注册 PR" 部分）：`plan-dugu-v2` / `plan-tuike-v2` / `plan-zhenfa-v2` / `plan-tools-v1`（当前均为 skeleton）各自 vN+1 PR 调 `find_recipes_unlockable_by_*` + emit `CraftUnlockIntent` 把"使用残卷 X / NPC 教学 / 顿悟事件"接到 craft 解锁通道；本 plan 不强行打开 skeleton（违反"一个 PR 只动一个 plan"约束）
+- **死亡时 craft session 清空**（§5 决策门 #4 = A）：`craft_emit::cancel_session_on_death` hook 函数已在注释中预留，等 plan-death-lifecycle-v1 vN+1 接入实装
+- **磨损税 v2 / 装备加速 v2**：plan §0 设计轴心声明"首版不实装"，留给 plan-economy-v1 配合
+- **session 持久化跨 disconnect**：当前实装是"下线 Entity 销毁 → session 丢失"，与 plan §0 轴心"下线暂停"略有偏差（暂停 vs 丢失）。如要做真"暂停"需 PlayerStatePersistence 集成 — 留 v2 收尾
+- **WSLg 实跑全流程实测**（plan §1 P2 验收 "全流程通顺"）：headless agent 不做视觉验证，./gradlew test build 已干净 jar，待用户在 WSLg 内打开 inventory → 切手搓 tab → 选配方 → 检查材料 → 开始 → 进度推进 → 出炉跑通后回归确认

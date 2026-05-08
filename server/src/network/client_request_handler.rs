@@ -241,6 +241,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
     pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
     pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
+    // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
+    pub craft_start_tx: Option<ResMut<'w, Events<crate::craft::CraftStartIntent>>>,
+    pub craft_cancel_tx: Option<ResMut<'w, Events<crate::craft::CraftCancelIntent>>>,
 }
 
 #[derive(SystemParam)]
@@ -385,7 +388,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeLearnBlueprint { v, .. }
             | ClientRequestV1::ForgeStationPlace { v, .. }
             | ClientRequestV1::ChargeCarrier { v, .. }
-            | ClientRequestV1::ThrowCarrier { v, .. } => *v,
+            | ClientRequestV1::ThrowCarrier { v, .. }
+            | ClientRequestV1::CraftStart { v, .. }
+            | ClientRequestV1::CraftCancel { v } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -1510,6 +1515,25 @@ pub fn handle_client_request_payloads(
                 tracing::debug!(
                     "[bong][forge][network] plan-forge-v1 client_request not yet wired"
                 );
+            }
+            // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
+            ClientRequestV1::CraftStart { recipe_id, .. } => {
+                tracing::info!(
+                    "[bong][network][craft] start entity={:?} recipe={recipe_id}",
+                    ev.client,
+                );
+                if let Some(craft_start_tx) = dispatch.craft_start_tx.as_deref_mut() {
+                    craft_start_tx.send(crate::craft::CraftStartIntent {
+                        caster: ev.client,
+                        recipe_id: crate::craft::RecipeId::new(recipe_id),
+                    });
+                }
+            }
+            ClientRequestV1::CraftCancel { .. } => {
+                tracing::info!("[bong][network][craft] cancel entity={:?}", ev.client);
+                if let Some(craft_cancel_tx) = dispatch.craft_cancel_tx.as_deref_mut() {
+                    craft_cancel_tx.send(crate::craft::CraftCancelIntent { caster: ev.client });
+                }
             }
         }
     }

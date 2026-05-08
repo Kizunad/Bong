@@ -54,6 +54,78 @@ NPC 系统性能恢复专项 —— 100 rogue seed 让单核 WSL2 TPS 跌至 **0
 
 ---
 
+## 代码库考察（2026-05-08）
+
+骨架引用的 13 个热点 system + LOD 接入面 + 4 个未挂 LOD 的 Scorer + 配置 / 启动 + 缺失模块全部逐项实地核验（grep + Read）。**主要发现**：行号大部分对得上，2 处偏移；plan 自报"LOD 已挂 4 个 scorer"实际为 6 个（多 SocializeScorer + TerritoryIntruderScorer）；TickRateProbe 存在但是 terrain context 专用，不复用。
+
+### §4 热点系统行号校正
+
+骨架 §4 表内 13 项：11 项行号对得上，2 项偏移：
+
+| plan 引用 | 实际行号 | 说明 |
+|---|---|---|
+| `npc/navigator.rs:237 navigator_tick_system` | **`:249`** 是系统主体；`:237` 是 register 入口 | §4 表 #5 已同步更新 |
+| `npc/brain.rs:615 update_npc_blackboard` | **`:632`** | §4 表 #9 已同步更新 |
+
+其余 11 项命中：`faction.rs:527` / `social.rs:150` / `territory.rs:416` / `relic.rs:176` / `sync.rs:7` / `cultivation/tick.rs:68-82`（plan 写 :70 是入口）/ `patrol.rs:64` / `brain.rs:1733`（plan 写 :1709 是入口附近）/ `lifespan.rs:388` / `lifecycle.rs:482` 全部 ✅。
+
+### LOD 已挂 scorer 列表（实地比 plan 自报多 2 个）
+
+骨架 §9 自报 4 个已挂（PlayerProximityScorer / FearCultivatorScorer / HungerScorer / WanderScorer）。实地核验**已挂 6 个**：
+
+| Scorer | 文件:行 | LOD gate 方式 |
+|---|---|---|
+| PlayerProximityScorer | `npc/brain.rs:672` | `lod_gated_score` ✅ |
+| FearCultivatorScorer | `npc/brain.rs:1149` | ✅ |
+| HungerScorer | `npc/brain.rs:1165` | ✅ |
+| WanderScorer | `npc/brain.rs:1185` | ✅ |
+| **SocializeScorer** | `npc/social.rs:150` | ✅（plan §9 漏报）|
+| **TerritoryIntruderScorer** | `npc/territory.rs:416` | ✅（plan §9 漏报）|
+
+**注**：SocializeScorer / TerritoryIntruderScorer 虽挂 LOD gate，但**内部仍 O(N²) 全扫**——LOD 控的是"是否跑"，不是"跑得多快"。本 plan §4 表 #2 / #3 仍需走 SpatialIndex 改造。
+
+### 4 个未挂 LOD 的 Scorer 实地行号
+
+骨架 §4 #13 主张这 4 个 P3 接入 LOD gate，行号补全：
+
+| Scorer | 文件:行 |
+|---|---|
+| ChaseTargetScorer | `npc/brain.rs:810-822` |
+| MeleeRangeScorer | `npc/brain.rs:907-923` |
+| DashScorer | `npc/brain.rs:996-1019` |
+| CultivationDriveScorer | `npc/brain.rs:1453-1497` |
+
+### LOD 基础（plan-npc-ai-v1 ✅ Phase 9 已 ship）
+
+- `NpcLodTier` enum @ `server/src/npc/lod.rs:26`（Near / Far / Dormant 三档）
+- `NpcLodConfig.reassess_interval` 默认 **20 ticks** @ `lod.rs:51`
+- `should_skip_scorer_tick(tier, tick, config) -> bool` @ `lod.rs:142`
+- `lod_gated_score` helper @ `lod.rs`（已封装统一 LOD gate 接口）
+
+### 配置 / 启动现状
+
+- `BONG_ROGUE_SEED_COUNT` 默认 **0** @ `scripts/start.sh:62`（注释声明 WSL2 单核不堪 —— 本 plan P4 验收 = 恢复默认 100）
+- `max_npc_count` 默认 **512** @ `server/src/npc/lifecycle.rs:197`
+
+### 缺失模块（确认 P1 必新建）
+
+- `server/src/npc/spatial.rs` —— 不存在
+- `server/src/npc/perf.rs` —— 不存在
+- `NpcSpatialIndex` Resource —— 不存在
+- `NpcPerfProbe` Resource —— 不存在
+
+### 既存但不复用的项
+
+- `TickRateProbe` @ `server/src/world/terrain/mod.rs:88` —— **terrain context 专用**，非 NPC perf telemetry。本 plan `NpcPerfProbe` 不复用 TickRateProbe，独立模块（`server/src/npc/perf.rs`）以避免跨域耦合。骨架 §0 写"跟现有 `TickRateProbe` 同节奏"指的是日志频率（每 200 tick），不是 telemetry 共用同一 Resource。
+
+### 最近 git 活动（npc 相关）
+
+- `7af464962` plan-craft-v1: P0+P1 server 通用手搓底盘（5 示例 + 87 单测）
+- `c25d10107` plan-npc-fixups-v3: NPC 正确性 11 bug 集中修复 (#147)
+- 没找到本 plan 相关的 npc-perf 主线 commit（骨架立项后未启动 P0）
+
+---
+
 ## §0 设计轴心
 
 - [ ] **本 plan 不引入新玩法 / 不改 NPC 行为表达**：所有 scorer / action 的语义保持不变。仅改"如何高效执行同一行为"。如果需要砍掉某个 scorer，**先回 plan-npc-ai-v1 改设计**，本 plan 不做行为侧裁剪
@@ -156,11 +228,11 @@ pub fn should_skip_scorer_tick(
 | 2 | `socialize_scorer_system` | npc/social.rs:150 | O(N²)，Near tier 仍全扫 peer | 走 SpatialIndex + Near tier 内仍仅查 16 格邻居 | P1 |
 | 3 | `territory_intruder_scorer_system` | npc/territory.rs:416 | O(N²)，Beast 扫所有候选 | 走 SpatialIndex + Territory.radius 上限 | P1 |
 | 4 | `relic::guardian_duty_scorer_system` | npc/relic.rs:176 | O(G×N)，G 小但仍全扫 NPC | 走 SpatialIndex + GuardianDuty.alarm_radius | P1 |
-| 5 | `navigator_tick_system` | npc/navigator.rs:237 | 共享 repath_countdown=20，同 tick 100 A* | `(entity_index + tick) % 20 == 0` 分桶 | P2 |
+| 5 | `navigator_tick_system` | `npc/navigator.rs:249`（主体；:237 register） | 共享 `REPATH_INTERVAL_TICKS = 20`，同 tick 100 A* | `(entity_index + tick) % 20 == 0` 分桶 | P2 |
 | 6 | `sync_position_to_transform` | npc/sync.rs:7 | navigator 已写 Transform，PostUpdate 冗余写 | 删除，navigator 内部直接写 | P2 |
 | 7 | `qi_regen_and_zone_drain_tick` | cultivation/tick.rs:70 | 每 NPC 双 zone hashmap lookup × 每 tick | 迁 FixedUpdate(5Hz)；逻辑乘 4 倍速 | P3 |
 | 8 | `patrol_npcs` | npc/patrol.rs:64 | 每 tick 无节流 + zone lookup × 100 | 迁 FixedUpdate(5Hz) | P3 |
-| 9 | `update_npc_blackboard` | npc/brain.rs:615 | O(NPC × Player) 双层嵌套，每 tick | 迁 FixedUpdate(10Hz)（blackboard 是 scorer 上游，不能太慢）| P3 |
+| 9 | `update_npc_blackboard` | npc/brain.rs:632 | O(NPC × Player) 双层嵌套，每 tick | 迁 FixedUpdate(10Hz)（blackboard 是 scorer 上游，不能太慢）| P3 |
 | 10 | `tribulation_ready_scorer_system` | npc/brain.rs:1709 | 6 组件 + 玩家迭代，无 LOD | 接 should_skip_scorer_tick + Far/Dormant 跳过 | P3 |
 | 11 | `lifespan_aging_tick` | cultivation/lifespan.rs:388 | 每 NPC zone lookup + 季节修正 + 死亡判断 | 迁 FixedUpdate(1Hz)（寿元秒级精度足够）| P3 |
 | 12 | `update_npc_registry` | npc/lifecycle.rs:482 | PreUpdate 全扫重建 HashMap | 迁 FixedUpdate(1Hz） | P3 |
@@ -271,6 +343,13 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
   - 已洗清非瓶颈：Redis bridge（独立 OS 线程 + crossbeam channel，主线程零 IO）/ big-brain 调度本身（FirstToScore 短路 2-5ms）/ lifecycle 多数 system / contamination / overload / tribulation auto wave
 - 现状对齐：plan-npc-ai-v1 ✅ Phase 9 LOD 已实装（reassess_interval=20 + 3 核 scorer gate + Dormant），但仅覆盖 PlayerProximityScorer / FearCultivatorScorer / HungerScorer / WanderScorer 4 个，且 faction/social/territory 的 O(N²) 完全在 LOD gate 外
 - 短期权宜：`scripts/start.sh` 默认 `BONG_ROGUE_SEED_COUNT=0`（CI e2e 同），本 plan 验收 = 恢复默认 100 + TPS ≥ 18
+- **2026-05-08** 实地核验完成（"## 代码库考察"章节）：
+  - §4 表行号校正 2 项：navigator_tick_system 主体 :249 / update_npc_blackboard :632
+  - LOD 已挂列表更新：实际 6 个（plan §9 自报 4 个，多 SocializeScorer + TerritoryIntruderScorer，但内部仍 O(N²) 全扫，§4 #2/#3 走 SpatialIndex 改造仍必要）
+  - 4 个未挂 LOD scorer 行号补全：ChaseTargetScorer :810 / MeleeRangeScorer :907 / DashScorer :996 / CultivationDriveScorer :1453
+  - 配置确认：BONG_ROGUE_SEED_COUNT=0 / max_npc_count=512 @ `lifecycle.rs:197`
+  - TickRateProbe @ `world/terrain/mod.rs:88` 是 terrain 专用，本 plan `NpcPerfProbe` 独立新建（仅日志频率同节奏）
+  - 缺失项确认：spatial.rs / perf.rs / NpcSpatialIndex / NpcPerfProbe 全空，P1 新建
 
 ---
 

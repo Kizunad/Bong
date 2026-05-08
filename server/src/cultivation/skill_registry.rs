@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use valence::prelude::{Entity, Resource};
 
+use crate::cultivation::components::MeridianId;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CastResult {
     Started {
@@ -17,11 +19,19 @@ pub enum CastResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastRejectReason {
     RealmTooLow,
-    MeridianSevered,
+    /// 招式依赖经脉永久 SEVERED 或当前 integrity 不可用。`Option<MeridianId>` 标
+    /// 出首条不满足的依赖经脉；旧调用点未携带具体 id 时为 `None`（plan-meridian-
+    /// severed-v1 上线后逐步收口）。
+    MeridianSevered(Option<MeridianId>),
     QiInsufficient,
     OnCooldown,
     InvalidTarget,
     InRecovery,
+}
+
+impl CastRejectReason {
+    /// 兼容旧调用点 —— 不带 meridian_id 的 `MeridianSevered`。
+    pub const MERIDIAN_SEVERED: CastRejectReason = CastRejectReason::MeridianSevered(None);
 }
 
 pub type SkillFn = fn(

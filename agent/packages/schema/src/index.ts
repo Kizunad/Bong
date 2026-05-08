@@ -58,6 +58,7 @@ export * from "./forge-event.js";
 export * from "./insight-offer.js";
 export * from "./insight-request.js";
 export * from "./heart-demon.js";
+export * from "./meridian-severed.js";
 export * from "./tribulation.js";
 
 // 炼丹 (plan-alchemy-v1 §4)
@@ -79,3 +80,6 @@ export * from "./container-interaction.js";
 
 // 活坍缩渊敌对 NPC 分层 (plan-tsy-hostile-v1 §6)
 export * from "./tsy-hostile-v1.js";
+
+// 通用手搓 (plan-craft-v1 §3)
+export * from "./craft.js";

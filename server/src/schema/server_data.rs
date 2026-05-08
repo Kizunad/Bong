@@ -13,6 +13,7 @@ use super::combat_hud::{
     WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
+use super::craft::{CraftOutcomeV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1};
 use super::cultivation::SkillMilestoneSnapshotV1;
 use super::dugu::DuguPoisonStateV1;
 use super::forge::{
@@ -156,6 +157,11 @@ pub enum ServerDataType {
     TradeOffer,
     RealmVisionParams,
     SpiritualSenseTargets,
+    // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
+    CraftRecipeList,
+    CraftSessionState,
+    CraftOutcome,
+    RecipeUnlocked,
 }
 
 #[derive(Debug, Clone)]
@@ -349,6 +355,15 @@ pub enum ServerDataPayloadV1 {
     TradeOffer(TradeOfferPayloadV1),
     RealmVisionParams(RealmVisionParamsV1),
     SpiritualSenseTargets(SpiritualSenseTargetsV1),
+    // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
+    /// inventory 打开时一次性推全配方表（含解锁状态）。
+    CraftRecipeList(Box<RecipeListV1>),
+    /// 当前 craft session 进度（每秒推 + 状态切换时推），`active=false` 表示无 session。
+    CraftSessionState(CraftSessionStateV1),
+    /// 出炉结果（成功 / 失败），客户端关闭进度条 + 出炉提示。
+    CraftOutcome(CraftOutcomeV1),
+    /// 三渠道解锁广播（残卷 / 师承 / 顿悟），客户端弹解锁通知。
+    RecipeUnlocked(RecipeUnlockedV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -976,6 +991,23 @@ enum ServerDataPayloadWireV1 {
     SpiritualSenseTargets {
         #[serde(flatten)]
         targets: SpiritualSenseTargetsV1,
+    },
+    // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
+    CraftRecipeList {
+        #[serde(flatten)]
+        list: Box<RecipeListV1>,
+    },
+    CraftSessionState {
+        #[serde(flatten)]
+        state: CraftSessionStateV1,
+    },
+    CraftOutcome {
+        #[serde(flatten)]
+        outcome: CraftOutcomeV1,
+    },
+    RecipeUnlocked {
+        #[serde(flatten)]
+        event: RecipeUnlockedV1,
     },
 }
 
@@ -1720,6 +1752,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::SpiritualSenseTargets { targets } => {
                 Ok(Self::SpiritualSenseTargets(targets))
             }
+            ServerDataPayloadWireV1::CraftRecipeList { list } => Ok(Self::CraftRecipeList(list)),
+            ServerDataPayloadWireV1::CraftSessionState { state } => {
+                Ok(Self::CraftSessionState(state))
+            }
+            ServerDataPayloadWireV1::CraftOutcome { outcome } => Ok(Self::CraftOutcome(outcome)),
+            ServerDataPayloadWireV1::RecipeUnlocked { event } => Ok(Self::RecipeUnlocked(event)),
         }
     }
 }
@@ -2149,6 +2187,18 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::SpiritualSenseTargets(targets) => Self::SpiritualSenseTargets {
                 targets: targets.clone(),
             },
+            ServerDataPayloadV1::CraftRecipeList(list) => {
+                Self::CraftRecipeList { list: list.clone() }
+            }
+            ServerDataPayloadV1::CraftSessionState(state) => Self::CraftSessionState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::CraftOutcome(outcome) => Self::CraftOutcome {
+                outcome: outcome.clone(),
+            },
+            ServerDataPayloadV1::RecipeUnlocked(event) => Self::RecipeUnlocked {
+                event: event.clone(),
+            },
         }
     }
 }
@@ -2336,6 +2386,10 @@ impl ServerDataPayloadV1 {
             Self::TradeOffer(..) => ServerDataType::TradeOffer,
             Self::RealmVisionParams(..) => ServerDataType::RealmVisionParams,
             Self::SpiritualSenseTargets(..) => ServerDataType::SpiritualSenseTargets,
+            Self::CraftRecipeList(..) => ServerDataType::CraftRecipeList,
+            Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
+            Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
+            Self::RecipeUnlocked(..) => ServerDataType::RecipeUnlocked,
         }
     }
 }
@@ -2589,6 +2643,41 @@ mod tests {
                     z: -4.0,
                     intensity: 0.75,
                 }],
+            }),
+            // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
+            ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {
+                v: 1,
+                player_id: "offline:Kiz".to_string(),
+                recipes: vec![],
+                ts: 1234567,
+            })),
+            ServerDataPayloadV1::CraftSessionState(CraftSessionStateV1 {
+                v: 1,
+                player_id: "offline:Kiz".to_string(),
+                active: false,
+                recipe_id: None,
+                elapsed_ticks: 0,
+                total_ticks: 0,
+                ts: 1234567,
+            }),
+            ServerDataPayloadV1::CraftOutcome(CraftOutcomeV1::Completed {
+                v: 1,
+                player_id: "offline:Kiz".to_string(),
+                recipe_id: "craft.example.eclipse_needle.iron".to_string(),
+                output_template: "eclipse_needle_iron".to_string(),
+                output_count: 3,
+                completed_at_tick: 5000,
+                ts: 1234567,
+            }),
+            ServerDataPayloadV1::RecipeUnlocked(RecipeUnlockedV1 {
+                v: 1,
+                player_id: "offline:Kiz".to_string(),
+                recipe_id: "craft.example.fake_skin.light".to_string(),
+                source: crate::schema::craft::UnlockEventSourceV1::Insight {
+                    trigger: crate::schema::craft::InsightTriggerV1::NearDeath,
+                },
+                unlocked_at_tick: 8000,
+                ts: 1234567,
             }),
         ];
 

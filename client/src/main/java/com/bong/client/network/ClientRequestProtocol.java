@@ -868,6 +868,23 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── 通用手搓 (plan-craft-v1 P2) ────────────────────────────────────────
+
+    /** plan-craft-v1 §2 — 玩家点 [开始手搓]。recipe_id 为 server `RecipeId.as_str()`。 */
+    public static String encodeCraftStart(String recipeId) {
+        if (recipeId == null || recipeId.isEmpty()) {
+            throw new IllegalArgumentException("recipeId must not be empty");
+        }
+        JsonObject obj = envelope("craft_start");
+        obj.addProperty("recipe_id", recipeId);
+        return obj.toString();
+    }
+
+    /** plan-craft-v1 §5 决策门 #3 — 取消进行中的 session（70% 材料返还，qi 不退）。 */
+    public static String encodeCraftCancel() {
+        return envelope("craft_cancel").toString();
+    }
+
     /** 通用请求编码（combat UI 系列使用）。payload 可为 {@code null}。 */
     public static String encodeGeneric(String type, JsonObject payload) {
         JsonObject obj = envelope(type);

@@ -94,6 +94,33 @@ public class CultivationDetailHandlerTest {
     }
 
     @Test
+    void integrityZeroMapsToSeveredForPlanMeridianSeveredV1() {
+        // plan-meridian-severed-v1 §6 P2 inspect 染色：服务端 enforce_severed_state
+        // 把永久 SEVERED 经脉的 integrity 钳到 0.0，客户端必须把 0.0 显示为 SEVERED
+        // 黑色（0xFF666666）。这是 worldview §四:286「断了肺经的飞剑手就废了」的物理
+        // 可见性化身——若回归到 INTACT/TORN 等级会让玩家误以为可恢复。
+        assertEquals(
+            ChannelState.DamageLevel.SEVERED,
+            CultivationDetailHandler.damageFromIntegrity(0.0),
+            "integrity == 0.0 必须映射为 SEVERED，server 永久 SEVERED 写入 0.0 后客户端染色保持一致"
+        );
+        assertEquals(
+            0xFF666666,
+            ChannelState.DamageLevel.SEVERED.color(),
+            "SEVERED 颜色锁定为 0xFF666666 黑色，与 plan §6 inspect 经脉图染色规则一致"
+        );
+    }
+
+    @Test
+    void integrityBoundaryAtThresholdIsSeveredNotTorn() {
+        // 0.10 边界：< 0.10 即 SEVERED（damageFromIntegrity 实装），刚好 0.10 进 TORN
+        assertEquals(ChannelState.DamageLevel.SEVERED,
+            CultivationDetailHandler.damageFromIntegrity(0.099));
+        assertEquals(ChannelState.DamageLevel.TORN,
+            CultivationDetailHandler.damageFromIntegrity(0.10));
+    }
+
+    @Test
     void rejectsMissingArray() {
         JsonObject bad = new JsonObject();
         bad.add("opened", new Gson().toJsonTree(twenty(true)));

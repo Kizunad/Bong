@@ -3347,6 +3347,7 @@ pub fn persist_player_cultivation_bundle(
     unlocked_perceptions: &crate::cultivation::insight_apply::UnlockedPerceptions,
     insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
     tutorial_state: Option<&crate::world::spawn_tutorial::TutorialState>,
+    meridian_severed: &crate::cultivation::meridian::severed::MeridianSeveredPermanent,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let bundle = serde_json::json!({
@@ -3362,6 +3363,7 @@ pub fn persist_player_cultivation_bundle(
         "unlocked_perceptions": unlocked_perceptions,
         "insight_modifiers": insight_modifiers,
         "tutorial_state": tutorial_state,
+        "meridian_severed": meridian_severed,
     });
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

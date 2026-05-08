@@ -126,6 +126,11 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TradeOffer => "trade_offer",
         ServerDataType::RealmVisionParams => "realm_vision_params",
         ServerDataType::SpiritualSenseTargets => "spiritual_sense_targets",
+        // ─── plan-craft-v1 P2/P3：通用手搓 ──────────────────────
+        ServerDataType::CraftRecipeList => "craft_recipe_list",
+        ServerDataType::CraftSessionState => "craft_session_state",
+        ServerDataType::CraftOutcome => "craft_outcome",
+        ServerDataType::RecipeUnlocked => "recipe_unlocked",
     }
 }
 

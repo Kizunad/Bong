@@ -74,6 +74,100 @@ NPC 隐式更新框架 **二态 MVP** —— 把"远方 NPC"完全移出 ECS 改
 
 ---
 
+## 代码库考察（2026-05-08）
+
+骨架引用的 8 个 qi_physics API + 13 个 NPC Component + Redis channel + ZoneRegistry API 已逐项实地核验（grep + Read）。**主要发现**：所有 qi_physics 函数签名 ✅ 完全匹配；2 处 ledger 命名差异（`QiAccountId` 实为 struct + 工厂方法、`QiLedger` 实名 `WorldQiAccount`）；ZoneRegistry API `find_zone(dim, pos)` 是两参数（plan 示例写单参数）；Redis `bong:tribulation/start` 不存在（实际是 6 子 channel）；NpcDigest 当前字段缺 dormant 推演必需的 realm / faction / position；13 个 NPC Component + MeridianSeveredPermanent 全部 ✅ ship。
+
+### qi_physics API 真实签名 vs plan 声明
+
+骨架 8/8 函数签名 ✅ 完全匹配，无需修正：
+
+| plan 声明 | 实际位置 | 状态 |
+|---|---|---|
+| `QiTransfer::new(from, to, amount, reason) -> Result<QiTransfer>` | `qi_physics/ledger.rs:132` | ✅ |
+| `regen_from_zone(zone_qi, rate, integrity, room) -> (f64, f64)` | `qi_physics/excretion.rs:42` | ✅ |
+| `qi_release_to_zone(amount, from, zone, zone_current, zone_cap) -> Result<ZoneReleaseOutcome>` | `qi_physics/release.rs:12` | ✅ |
+| `qi_distance_atten(initial, distance_blocks, medium) -> f64` | `qi_physics/distance.rs:4` | ✅ |
+| `qi_collision(...) -> CollisionOutcome` | `qi_physics/collision.rs:47` | ✅ |
+| `EnvField` | `qi_physics/env.rs:87` | ✅ |
+| `era_decay_step(budget, era_factor) -> Result<f64>` | `qi_physics/tiandao.rs:49` | ✅ |
+| `QiTransferReason` enum 含 `CultivationRegen` / `ReleaseToZone` / `Collision` / `Crafting` | `qi_physics/ledger.rs:111-121` | ✅ |
+
+### 命名差异（**P0 必修正示例代码**）
+
+骨架 §4 / §5 / §7 多处出现以下命名，实装时 P1 必须按真实 API 替换：
+
+| plan 声明 | 实际命名 / 签名 | 修正方向 |
+|---|---|---|
+| `QiAccountId::Zone(zone_id)` / `QiAccountId::Npc(char_id)` 枚举模式 | **`QiAccountId` 是 struct**（`kind` + `id` string）+ 工厂方法 `.player(...)` / `.zone(...)` / `.container(...)` / `.rift(...)` / `.tiandao()` | P1 实装写 `QiAccountId::zone(zone.name)` / `QiAccountId::npc(char_id)` 等工厂调用，**不能写枚举 variant 模式** |
+| `QiLedger` Resource，方法 `record(transfer)` | **实名 `WorldQiAccount`**（Resource） + 方法 `balance()` / `transfer()` | P1 实装时把 plan 内所有 `QiLedger` 字样统一替换为 `WorldQiAccount`；`ledger.record(transfer)` 调用改为 `world_qi.transfer(transfer)`（按 §4.2 节示例代码） |
+
+**plan 主体不修改示例代码**（避免改错 + 骨架是设计文档非可编译代码），P1 实装人员对照本节差异表对齐。
+
+### ZoneRegistry API 差异（**P0 数据模型补漏**）
+
+| plan 示例 | 实际 API | 修正方向 |
+|---|---|---|
+| `zones.find(&snapshot.position)?` | **`find_zone(dim, pos) -> Option<&Zone>`** @ `world/zone.rs:258` —— **两参数**（需 `dim` + `pos`）| 必须给 `NpcDormantSnapshot` 加 **`dimension: Identifier`** 字段（持久化 + dehydrate 时 collect / hydrate 时反向 spawn）|
+| `zones.find_mut(&snapshot.position)` | **`find_zone_mut(name: &str) -> Option<&mut Zone>`** @ `world/zone.rs:264` —— **按 zone 名查**（不是按 position）| dormant_global_tick 内先 `find_zone(dim, pos)` 取 zone ref 拿 `name`，再用 `find_zone_mut(name)` 取可变引用扣减 spirit_qi |
+
+**P1 数据模型必加字段**：`NpcDormantSnapshot.dimension: Identifier`（valence 标准 dim id），dehydrate / hydrate 双向 roundtrip 测试覆盖。
+
+### NPC Component 存在性（13/13 ✅ 全存）
+
+| Component | 路径 | 备注 |
+|---|---|---|
+| `NpcMarker` | `npc/spawn.rs:69` | ✅ |
+| `NpcArchetype` | `npc/lifecycle.rs:89` | ✅ **enum 类型**（plan §2 `archetype: ArchetypeId` 实装时按 enum 处理，不是 struct）|
+| `Cultivation` / `MeridianSystem` / `Contamination` | `cultivation/components.rs:198/205/...` | ✅ |
+| `LifespanComponent` / `NpcLifespan` | `cultivation/` + `npc/lifecycle.rs:141` | ✅ 双类型并存（玩家 LifespanComponent 通用 + NpcLifespan 私有，dormant 用 NpcLifespan）|
+| `FactionMembership` / `Lineage` / `Reputation` | `npc/faction.rs:339/55/69` | ✅ |
+| `NpcPatrol` / `NpcLootTable` / `NpcBlackboard` | `npc/patrol.rs:24` / `npc/loot.rs:44` / `npc/spawn.rs:87` | ✅ |
+| `MeridianSeveredPermanent` | `cultivation/meridian/severed.rs:32` | ✅ **plan-meridian-severed-v1 已 ship**——本 plan P1 直接 import |
+| `Position` | `valence::prelude::Position`（DVec3） | ✅ |
+
+### Redis channel 现状
+
+| plan 引用 | 实际命名 | 备注 |
+|---|---|---|
+| `bong:npc/spawn` | `CH_NPC_SPAWN` @ `schema/channels.rs` | ✅ |
+| `bong:npc/death` | `CH_NPC_DEATH` | ✅（dormant 老死复用此 channel）|
+| `bong:tribulation/start` | **不存在** —— 实际是 `CH_TRIBULATION + {/omen, /lock, /wave, /settle, /collapse}` 6 个子 channel | **修正方向**：dormant 渡虚劫强制 hydrate 时 emit `CH_TRIBULATION_OMEN`（非 `bong:tribulation/start`），具体走 plan-tribulation-v1 ✅ 已 ship 的 6 channel 哪一个 P0 决策门补一项 |
+| `bong:npc/dormant` | **不存在**（符合 P0 决策门 #5 选 A，本 plan 新建 Redis HASH）| ✅ |
+
+### NpcDigest 当前字段（plan-agent-v2 ✅）
+
+`NpcDigestV1` @ `schema/world_state.rs:108`：
+- `archetype: String` ✅
+- `age_band: String` ✅
+- `age_ratio: f64` ✅
+- `disciple: Option<DiscipleSummaryV1>` ✅
+
+**缺**：dormant 推演 NpcDigest 流时需要 `realm` / `faction` / `position`。本 plan **P3 必扩 NpcDigestV1 schema 加 3 字段**（按 plan-ipc-schema-v1 版本协议走 schema v2，不破 V1 契约）。已修正头部"agent: 无 schema 变化"理解——NpcDigest 通道走版本化扩展，**不是 unchanged**。
+
+### Zone.spirit_qi 类型与范围（plan §3 写对）
+
+- 类型：`f64` ✅
+- 范围：**[-1, 1]** ✅（多处 `.clamp(-1.0, 1.0)`，如 `botany/lifecycle.rs:157/391/454`）
+- 负值含义：死域（plan §3 强约束 #4 描述正确，无需修正）
+
+### 缺失模块（确认 P1 必新建）
+
+- `server/src/npc/dormant/` —— 不存在
+- `server/src/npc/hydrate/` —— 不存在
+- `NpcDormantStore` / `NpcDormantSnapshot` —— 不存在
+- `bong:npc/dormant` Redis HASH —— 不存在（P0 决策门 #5 选 A 时本 plan 新建）
+
+### 最近 git 活动（qi_physics + npc 相关）
+
+- `7af464962` plan-craft-v1: P0+P1 server 通用手搓底盘（craft 侧 qi_physics 用例）
+- `6c4af82da` plan-qi-physics-patch-v1: 涡流接入负灵域距离算子 (#152)
+- `19cce2bb3` plan-qi-physics-patch-v1: 首批旧真元物理迁移 (#142)
+- `5eb482f09` plan-qi-physics-patch-v1: P0 qi 守恒迁移首批 (#133)
+- `7e191505c` plan-qi-physics-v1: 建立真元物理底盘 (#132)
+
+---
+
 ## §0 设计轴心
 
 - [ ] **二态 MVP，跳过 Drowsy**：v1 仅 Hydrated（ECS）↔ Dormant（SoA），中间过渡态 Drowsy（ECS entity 但仅核心 system 1Hz tick）留 **plan-npc-virtualize-v2**。决策门 #1 验收：v1 完成后实测玩家穿越 64-256 格边界 hydrate/dehydrate 是否撕裂；如开销 > 5ms/NPC 或视觉撕裂明显 → v2 补 Drowsy
@@ -508,6 +602,15 @@ fn dehydrate_far_npcs(
   - dormant 渡虚劫强制 hydrate（叙事关键事件必须可见 + 截胡机制依赖 ECS）
   - dormant NPC 间互动 v1 极简（全权交天道 agent 推演）
   - 7 个开放决策门待 P0 收口
+- **2026-05-08** 实地核验完成（"## 代码库考察"章节）：
+  - 8 个 qi_physics API 函数签名 ✅ 完全匹配（QiTransfer / regen_from_zone / qi_release_to_zone / qi_distance_atten / qi_collision / EnvField / era_decay_step / QiTransferReason）
+  - **2 处 ledger 命名差异**：`QiAccountId` 实为 struct + 工厂方法（`.zone()/.npc()/...`），不是 enum；`QiLedger` 实名 `WorldQiAccount`（方法 `transfer()` 非 `record()`）。plan §4 / §5 / §7 示例代码 P1 实装时按真实 API 替换
+  - **ZoneRegistry API 差异**：`find_zone(dim, pos)` 是两参数；`find_zone_mut(name)` 是按 zone 名查。**P1 数据模型必加 `NpcDormantSnapshot.dimension: Identifier` 字段**
+  - **Redis channel 校正**：`bong:tribulation/start` 不存在，实际是 `CH_TRIBULATION + {/omen, /lock, /wave, /settle, /collapse}` 6 子 channel；本 plan P3 dormant 渡虚劫强制 hydrate 时走 `CH_TRIBULATION_OMEN`（具体哪个 P0 决策门补 #8）
+  - **NpcDigest 字段缺口**：当前仅 archetype / age_band / age_ratio / disciple，dormant 推演需要 realm / faction / position，**P3 必扩 schema v2**。修正头部"agent: 无 schema 变化"理解——是版本化扩展非 unchanged
+  - 13 个 NPC Component + MeridianSeveredPermanent ✅ 全 ship（`cultivation/meridian/severed.rs:32` 已实装）
+  - Zone.spirit_qi ∈ [-1, 1] f64 ✅ 与 plan §3 描述完全一致
+  - 缺失项确认：`npc/dormant/` / `npc/hydrate/` / `NpcDormantStore` / `NpcDormantSnapshot` / `bong:npc/dormant` Redis HASH 全空，P1 新建
 
 ---
 

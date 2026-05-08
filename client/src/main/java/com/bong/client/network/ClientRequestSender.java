@@ -357,6 +357,18 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeLingtianStartDrainQi(x, y, z));
     }
 
+    // ─── 通用手搓 (plan-craft-v1 P2) ────────────────────────────────────────
+
+    /** plan-craft-v1 §2 — 玩家点 [开始手搓]。 */
+    public static void sendCraftStart(String recipeId) {
+        dispatch(ClientRequestProtocol.encodeCraftStart(recipeId));
+    }
+
+    /** plan-craft-v1 §5 决策门 #3 — 取消进行中的 craft session（70% 材料返还，qi 不退）。 */
+    public static void sendCraftCancel() {
+        dispatch(ClientRequestProtocol.encodeCraftCancel());
+    }
+
     private static void dispatch(String json) {
         backend.send(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
     }
