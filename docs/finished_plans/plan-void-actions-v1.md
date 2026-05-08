@@ -350,18 +350,21 @@ pub struct LifeRecord {
   - `bb15e3d10`（2026-05-09）`plan-void-actions-v1: 接入 agent 化虚叙事`：TypeBox schema / generated artifacts、4 channel narration runtime、tiandao bootstrap 与单测。
   - `530d606e2`（2026-05-09）`plan-void-actions-v1: 补化虚 client 与亡者页面`：client 协议 / store / screen / 继承面板、亡者博物馆 `?role=void` 与化虚行事渲染。
   - `eb552861e`（2026-05-09）`fix(void-actions): 修正 barrier 到期灵气回流`：review 修复 Barrier 到期不再给 `WorldQiBudget` 铸造 150，改为 `barrier:<zone>` ledger 账户转回真实 zone 账户并补回归。
+  - `2426f62ad`（2026-05-09）`fix(void-actions): 收紧化虚账本与屏障结算`：review 修复 SuppressTsy 半提交、ExplodeZone 预算不足增发、Barrier 退款失败重试、稳定 character_id 冷却、BarrierField 实际驱散、v18 migration 结构断言与 `VoidActionBacklash` 专用终结 cause。
+  - `6fa464390`（2026-05-09）`fix(void-actions): 补客户端派发与天道背压`：review 修复 client 无世界 tick / 空 player 派发、`VoidActionStore` 原子更新、void_action 负向编码测试，以及 tiandao runtime 串行化 LLM payload 处理。
 - **测试结果**：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3094 passed。
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test cultivation::void` → 68 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 68。
-  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 284 passed；schema 327 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3103 passed。
+  - `cd server && cargo test cultivation::void` → 74 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 74。
+  - `cd server && cargo test void_action_backlash_records_dedicated_termination_cause` / `cargo test v18_migration_rejects_partial_legacy_letterbox_schema` / `cargo test serde_defaults_missing_void_action_fields_for_legacy_records` → all passed。
+  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 285 passed；schema 327 passed。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
   - `cd library-web && LOCAL_LIBRARY_PATH=/home/kiz/Code/Bong/.worktree/plan-void-actions-v1/docs/library npm run build` → 41 pages built。
   - `git diff --check` → clean。
 - **跨仓库核验**：
-  - server：`VoidActionIntent` 由 `ClientRequestV1::VoidAction` 入队，`resolve_void_action_intents` gate `Realm::Void` / qi / lifespan / cooldown；`QiTransferReason::VoidAction` 保留 ledger 轨迹；`VoidQiReturnSchedule` 到期回流 `ExplodeZone` / `Barrier`；`CultivationDeathCause::VoidActionBacklash` 走 death arbiter。
-  - agent：4 个 Redis fanout channel `bong:void_action/{suppress_tsy,explode_zone,barrier,legacy_assign}` 与 `VoidActionBroadcastV1` 对齐；runtime 输出 `scope: "broadcast"` narration。
-  - client/library：client 发 `void_action` C2S payload；亡者博物馆按 `life_record.void_actions` / `legacy_inheritor` 过滤与渲染化虚者。
+  - server：`VoidActionIntent` 由 `ClientRequestV1::VoidAction` 入队，`resolve_void_action_intents` gate `Realm::Void` / qi / lifespan / stable character cooldown；`QiTransferReason::VoidAction` 保留 ledger 轨迹；`VoidQiReturnSchedule` 到期回流 `ExplodeZone` / `Barrier` 且失败重试；`BarrierField` 对过线道伥执行一次性半气驱散；`CultivationDeathCause::VoidActionBacklash` 走 death arbiter 并写 `void_action_backlash` 终结 cause。
+  - agent：4 个 Redis fanout channel `bong:void_action/{suppress_tsy,explode_zone,barrier,legacy_assign}` 与 `VoidActionBroadcastV1` 对齐；runtime 串行处理 payload 并输出 `scope: "broadcast"` narration。
+  - client/library：client 仅在世界 tick 可用时发 `void_action` C2S payload，Barrier 不再 fallback 到世界原点；亡者博物馆按 `life_record.void_actions` / `legacy_inheritor` 过滤与渲染化虚者。
 - **遗留 / 后续**：
   - v1 采用 circle barrier；polygon / rect 边界、化虚 vs 化虚 PVP、ExplodeZone 分月资源曲线、以及 zone 灵气归零后的玩家行为 telemetry 留 v2/运营校准。
   - `LegacyLetterbox` 已记录 24h 拒绝窗口和状态；继承人 NPC dialog / 实物领取结算可在后续 niche-defense 或 legacy follow-up 中接 UI 流程。
-  - `debit_caster_qi_to_account` 仍沿用当前 `WorldQiAccount` / `Cultivation.qi_current` 同步桥接模式；后续若接入 craft 注释中的全局 sync system，应统一改成 `LedgerOutOfSync` fail-fast，避免各 action 自行 seed ledger。
+  - `debit_caster_qi_to_account` 仍允许 v1 初次缺失账户从 `Cultivation.qi_current` seed；已有账户与 cultivation 分歧时已经 fail-fast。后续若接入 craft 注释中的全局 sync system，应统一改成显式 `LedgerOutOfSync`，完全移除 action 内 seed。
