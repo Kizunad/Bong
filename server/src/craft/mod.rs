@@ -18,7 +18,7 @@
 //!   * `unlock_via_mentor` NPC dialog 选项 → social plan dialog 引擎
 //!   * `unlock_via_insight` BreakthroughEvent / DefeatStrongerEvent 监听 → cultivation/combat plan
 //!
-//! P0 决策门收口（详见 `docs/plan-craft-v1.md` §5）：
+//! P0 决策门收口（详见 `docs/finished_plans/plan-craft-v1.md` §5）：
 //!   * #1 = A：保留 6 类（AnqiCarrier / DuguPotion / TuikeSkin / ZhenfaTrap / Tool / Misc）
 //!   * #2 = A：UI 排序按类别分组 + 类别内字母（`registry::grouped_for_ui`）
 //!   * #3 = B：取消任务返还材料 70%（`session::CANCEL_REFUND_RATIO`），qi 不退
