@@ -1,4 +1,4 @@
-# Bong · plan-zone-environment-v1 · 骨架
+# Bong · plan-zone-environment-v1
 
 **zone-scoped 持续视觉 / 音效 / 局部物理 hook 协议**。把"龙卷风、漂灰、雷柱、雾笼、热浪、晶莹蒸汽"这类**长时间持续**且**空间分布**（柱形 / 球形 / AABB / SDF 切片）的环境效果，做成 zone 级别的**第一公民**。
 
@@ -258,6 +258,11 @@ public interface EmitterBehavior {
 - **2026-05-08**：骨架立项。起因：`plan-terrain-tribulation-scorch-v1` §8 "plan-weather-zone-override 未来再立"被 `plan-lingtian-weather-v1`（2026-05-08 finished）的 `ActiveWeather` zone-scoped 能力部分覆盖，但缺**视觉层** zone-scoped 协议（vfx-v1 是一次性事件）。本 plan 补齐第三类 VFX（zone 长时持续）；`plan-zone-weather-v1` 依赖之。
   - 不与现有任何 skeleton / active plan 同主题重叠（已查 docs/plans-skeleton/ + reminder.md，无 environment / vfx-zone / ambient-zone 类骨架）
   - 升 active 触发条件：（a）`plan-zone-weather-v1` 骨架立项并对齐数据契约；（b）`plan-terrain-tribulation-scorch-v1` 骨架同步更新 P2 视觉路径指向本 plan；（c）首批 emitter 形状完成评审（Cylinder + AABB 两形状是否够用）
+- **2026-05-09**：升 active（`git mv docs/plans-skeleton/plan-zone-environment-v1.md → docs/plan-zone-environment-v1.md`）。触发条件核验：
+  - (a) `plan-zone-weather-v1` 骨架立项并对齐数据契约 ✅（2026-05-08 立项，§3 已注明依赖本 plan §2 EnvironmentEffect enum）
+  - (b) `plan-terrain-tribulation-scorch-v1` P2 视觉路径同步指向本 plan ✅（line 160 / 273 / 314 三处已重定向）
+  - (c) emitter 形状评审 ✅（Cylinder 用于 Tornado / Lightning / DustDevil 三柱状；AABB 用于 AshFall / FogVeil / EmberDrift / HeatHaze / SnowDrift 五扁平区；Sphere 留 v2 给阵法力场，本 plan 不需要）
+  - 下一步：进 P0，落 `server/src/world/environment.rs` + 双端 schema 镜像
 - **2026-05-09**：完成 MC 现有龙卷风 mod 调研（subagent / Sonnet）。结论入骨架：
   - **Weather2 (Corosauce)** 1.20.1 是最直接借鉴对象，纯 CPU 粒子，零 shader，已在 1.12→1.20 验证；其 `TornadoFunnelSimple` 用 30-50 层环 × 每层 ~30 个大尺寸 cloud256 半透明 billboard ≈ 1500 粒子叠出"实心"
   - **风墙实心层路径调整**：从 demo 早期 "WallStreak ribbon 高速旋转" 改为 "cloud256 大 billboard 分层环"。单粒子从 16 quads（ribbon）降到 1 quad（sprite billboard），同视觉省 ~16x GPU。§1 表 `TornadoColumn` 实装路径已更新加注 Weather2 来源
