@@ -541,7 +541,16 @@ pub fn register(app: &mut App) {
             )
                 .in_set(BigBrainSet::Actions),
         )
-        .add_systems(Update, emit_retire_request_on_pending_added);
+        // Must run before `process_npc_retire_requests` (also in Update) so
+        // the request is consumed in the same tick it's emitted. Without this
+        // edge, the request can be deferred a tick, during which a cancelled
+        // RetireAction may have removed PendingRetirement — the consumer then
+        // processes a stale request and retires an NPC that should have stayed.
+        .add_systems(
+            Update,
+            emit_retire_request_on_pending_added
+                .before(crate::npc::lifecycle::process_npc_retire_requests),
+        );
 }
 
 fn ageing_scorer_system(

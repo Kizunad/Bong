@@ -6,9 +6,7 @@
 //! 道伥实体当前用 zombie archetype 兜底（与 spawn::spawn_zombie_npc_at 同档）。
 //! 后续如有专门的"道伥" archetype（异色 / 高伤），换 archetype 即可。
 
-use valence::prelude::{
-    App, Commands, DVec3, Entity, EventReader, IntoSystemConfigs, Query, Res, Update, With,
-};
+use valence::prelude::{App, Commands, DVec3, Entity, EventReader, Query, Res, Update, With};
 
 use crate::lingtian::pressure::PressureLevel;
 use crate::lingtian::{LingtianPlot, ZonePressureCrossed, DEFAULT_ZONE};
@@ -85,7 +83,7 @@ pub fn spawn_daoshen_on_pressure_high(
 }
 
 pub fn register(app: &mut App) {
-    app.add_systems(Update, spawn_daoshen_on_pressure_high.chain());
+    app.add_systems(Update, spawn_daoshen_on_pressure_high);
 }
 
 #[cfg(test)]

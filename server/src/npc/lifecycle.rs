@@ -522,7 +522,7 @@ fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: SharedAgingNpcQuery<'_, '_>) 
 }
 
 #[allow(clippy::type_complexity)]
-fn process_npc_retire_requests(
+pub(crate) fn process_npc_retire_requests(
     mut retire_requests: EventReader<NpcRetireRequest>,
     npcs: Query<
         (
