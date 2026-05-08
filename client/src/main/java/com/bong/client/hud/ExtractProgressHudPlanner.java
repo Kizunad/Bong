@@ -96,9 +96,20 @@ public final class ExtractProgressHudPlanner {
             return;
         }
         int remaining = state.collapseRemainingTicks(nowMs);
+        // plan-tsy-raceout-v1 P0：红色屏幕 tint + race-out 紧迫文案。
+        // "race-out" 来自 worldview §十六.六；"化死域" 提示后果（不撤出 = 死域化）；
+        // 副标题提示 Q-RC4 撞墙换裂口规则。
         out.add(HudRenderCommand.screenTint(HudRenderLayer.TSY_EXTRACT, 0x22FF0000));
-        String label = "坍缩倒计时 " + secondsLabel(remaining);
-        out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, label, Math.max(8, screenWidth / 2 - 48), 24, DANGER));
+        String label = "race-out · 化死域 " + secondsLabel(remaining);
+        int labelX = Math.max(8, screenWidth / 2 - 60);
+        out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, label, labelX, 24, DANGER));
+        out.add(HudRenderCommand.text(
+            HudRenderLayer.TSY_EXTRACT,
+            "→ 冲入塌缩裂口（已占即换下一个）",
+            labelX,
+            36,
+            MUTED
+        ));
     }
 
     private static void appendMessage(
