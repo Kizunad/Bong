@@ -70,10 +70,10 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ◐ | **红线 6 处**（3 公式正典化 + 3 守恒律违反 fix）: ① `combat/decay.rs` 已走 `qi_distance_atten` ② `world/tsy_drain.rs` 已接 `qi_excretion_loss` + ledger ③ `lingtian/qi_account.rs` 仍未与 `Zone.spirit_qi` 合账 ④ `player/gameplay.rs` 已加 zone 对冲 ⑤ TSY 抽取已有 `QiTransfer` 记账 ⑥ `world/events.rs` 已接部分 redistribution，但死亡/污染/渡劫清零路径仍待 ledger | 剩余 P0-3 / P0-6 类路径补完；每 PR 跨 24h 模拟守恒断言通过；旧符号 grep 保持 0 |
+| **P0** ⏳ | **红线 6 处**（3 公式正典化 + 3 守恒律违反 fix）: ① `combat/decay.rs` 已走 `qi_distance_atten` ② `world/tsy_drain.rs` 已接 `qi_excretion_loss` + ledger ③ `lingtian/qi_account.rs` 仍未与 `Zone.spirit_qi` 合账 ④ `player/gameplay.rs` 已加 zone 对冲 ⑤ TSY 抽取已有 `QiTransfer` 记账 ⑥ `world/events.rs` 已接部分 redistribution，但死亡/污染/渡劫清零路径仍待 ledger | 剩余 P0-3 / P0-6 类路径补完；每 PR 跨 24h 模拟守恒断言通过；旧符号 grep 保持 0 |
 | **P1** ⬜ | **shelflife 5 profile 全迁**: bone_coin_5/15/40_v1、ling_shi、yi_shou、chen_jiu、ling_mu_gun → 走 `qi_excretion(ContainerKind::*, env)` 统一表达；下限 clamp 到 zone qi（修复"归零到 0"违反压强法则）+ shelflife 3 公式（Linear/Exp/Stepwise）压成 `ContainerKind` 形态参数 | 5 物品类型 freshness 曲线在标准 zone 下与原行为±5% 内一致；死域 zone qi=0 时归零保持原行为 |
-| **P2** ◐ | **战斗侧 + lingtian + cultivation + 杂项**: woliu 已按 B 决议接入场强 + 1/r² drain；jiemai / cultivation / lingtian / TSY 搜索相关旧常量已迁到 `qi_physics::constants`；`PlayerTerminated` 死亡真元已接 `qi_release_to_zone` + `QiTransfer`；跨界磨损、灵龛注入、容器衰变与重生 penalty 回流仍需继续收口 | 全 server cargo test 过；旧常量 grep 保持 0；**SPIRIT_QI_TOTAL 全局守恒断言 24h 模拟通过** |
-| **P3** ◐ | **新机制接入**: ① `world/events.rs` 已有 `collapse_redistribute_qi` 接入点 ② `qi_physics` 已有 `StyleAttack` / `StyleDefense` trait 与 `era_decay_step` ③ 7 流派业务 impl、节律 EnvField、汐转 TSY 周期守恒、暴力清零事件 ledger 仍未闭合 | 坍缩渊塌缩前后周围 zone 总和恒等；汐转前后 sum 恒等；7 流派对打能区分 ρ；100h 模拟 SPIRIT_QI_TOTAL 衰减 ∈ [1%, 3%]；阈值灾劫可触发；暴力清零事件全部走 ledger |
+| **P2** ⏳ | **战斗侧 + lingtian + cultivation + 杂项**: woliu 已按 B 决议接入场强 + 1/r² drain；jiemai / cultivation / lingtian / TSY 搜索相关旧常量已迁到 `qi_physics::constants`；`PlayerTerminated` 死亡真元已接 `qi_release_to_zone` + `QiTransfer`；跨界磨损、灵龛注入、容器衰变与重生 penalty 回流仍需继续收口 | 全 server cargo test 过；旧常量 grep 保持 0；**SPIRIT_QI_TOTAL 全局守恒断言 24h 模拟通过** |
+| **P3** ⏳ | **新机制接入**: ① `world/events.rs` 已有 `collapse_redistribute_qi` 接入点 ② `qi_physics` 已有 `StyleAttack` / `StyleDefense` trait 与 `era_decay_step` ③ 7 流派业务 impl、节律 EnvField、汐转 TSY 周期守恒、暴力清零事件 ledger 仍未闭合 | 坍缩渊塌缩前后周围 zone 总和恒等；汐转前后 sum 恒等；7 流派对打能区分 ρ；100h 模拟 SPIRIT_QI_TOTAL 衰减 ∈ [1%, 3%]；阈值灾劫可触发；暴力清零事件全部走 ledger |
 
 ---
 

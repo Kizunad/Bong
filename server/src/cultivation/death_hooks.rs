@@ -164,13 +164,19 @@ pub fn on_player_terminated(
     mut zones: Option<ResMut<ZoneRegistry>>,
     players: Query<TerminatedPlayerQueryItem<'_>>,
 ) {
+    let mut processed_entities = std::collections::HashSet::new();
     for ev in events.read() {
-        let was_void = players
-            .get(ev.entity)
-            .map(|(cultivation, _, _, _)| cultivation.realm == Realm::Void)
-            .unwrap_or(false);
+        if !processed_entities.insert(ev.entity) {
+            tracing::warn!(
+                "[bong][cultivation] skip duplicate PlayerTerminated for {:?} in same update",
+                ev.entity,
+            );
+            continue;
+        }
+        let was_void;
         if let Ok((cultivation, position, current_dimension, life_record)) = players.get(ev.entity)
         {
+            was_void = cultivation.realm == Realm::Void;
             release_terminated_qi_to_zone(
                 ev.entity,
                 cultivation,
@@ -180,6 +186,8 @@ pub fn on_player_terminated(
                 zones.as_deref_mut(),
                 qi_transfers.as_deref_mut(),
             );
+        } else {
+            was_void = false;
         }
         if was_void {
             match release_ascension_quota_slot(&settings) {
@@ -608,6 +616,59 @@ mod tests {
         assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert!((transfers[0].amount - 10.0).abs() < 1e-9);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+    }
+
+    #[test]
+    fn duplicate_terminated_events_release_qi_once() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.2;
+        app.insert_resource(zones);
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: 10.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                LifeRecord::new(canonical_player_id("Azure")),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated { entity });
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_after - 0.4).abs() < 1e-9,
+            "duplicate termination events must not double release qi, got {zone_after}",
+        );
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(transfers.len(), 1);
+        assert!((transfers[0].amount - 10.0).abs() < 1e-9);
         assert!(app.world().get::<Cultivation>(entity).is_none());
     }
 
