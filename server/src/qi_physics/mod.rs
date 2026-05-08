@@ -15,6 +15,7 @@ pub mod ledger;
 pub mod release;
 pub mod tiandao;
 pub mod traits;
+pub mod wear;
 
 use valence::prelude::App;
 
@@ -37,6 +38,7 @@ pub use tiandao::{
     TribulationCause,
 };
 pub use traits::{Container, SimpleStyleAttack, SimpleStyleDefense, StyleAttack, StyleDefense};
+pub use wear::qi_targeted_item_wear_fraction;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QiPhysicsError {
