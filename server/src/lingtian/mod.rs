@@ -34,16 +34,22 @@ pub mod seed;
 pub mod session;
 pub mod systems;
 pub mod terrain;
+pub mod weather;
 
 #[allow(unused_imports)]
 pub use contamination::{apply_dye_contamination_on_replenish, dye_contamination_decay_tick};
 #[allow(unused_imports)]
-pub use environment::{compute_plot_qi_cap, PlotBiome, PlotEnvironment};
+pub use environment::{
+    apply_xizhuan_qi_cap_jitter, apply_xizhuan_supply_jitter, compute_plot_qi_cap,
+    compute_zone_flow_multiplier, PlotBiome, PlotEnvironment,
+};
 #[allow(unused_imports)]
 pub use pressure::{
     compute_zone_pressure, PressureLevel, ZonePressureState, ZonePressureTracker, PRESSURE_HIGH,
     PRESSURE_LOW, PRESSURE_MID, REPLENISH_WINDOW_LINGTIAN_TICKS,
 };
+#[allow(unused_imports)]
+pub use weather::WeatherEvent;
 
 #[allow(unused_imports)]
 pub use events::{

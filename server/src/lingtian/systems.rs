@@ -1979,6 +1979,7 @@ mod tests {
     use crate::lingtian::environment::{PlotBiome, PlotEnvironment};
     use crate::lingtian::plot::CropInstance;
     use crate::lingtian::qi_account::BEVY_TICKS_PER_LINGTIAN_TICK;
+    use crate::world::season::Season;
 
     fn ci_she_hao_kind() -> PlantKind {
         PlantKind {
@@ -3159,10 +3160,15 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            // 用 SummerToWinter（汐转期 modifier=0）保留 plan-lingtian-v1 的
+            // "三大基础修饰 → cap 2.8" 锁定，避免与 plan-lingtian-weather-v1 §2
+            // 夏散 -0.2 / 冬聚 +0.2 的物理修饰交织。
             environment: PlotEnvironment {
                 water_adjacent: true,
                 biome: PlotBiome::Wetland,
                 zhenfa_jvling: true,
+                season: Season::SummerToWinter,
+                active_weather: None,
             },
         });
         for _ in 0..TILL_MANUAL_TICKS {
@@ -3179,7 +3185,9 @@ mod tests {
     }
 
     #[test]
-    fn till_default_environment_keeps_cap_at_1_0() {
+    fn till_default_summer_environment_yields_cap_0_8() {
+        // plan-lingtian-weather-v1 §2 — `PlotEnvironment::base()` 默认 Summer
+        // (-0.2 modifier)，所以裸开垦的 plot_qi_cap = 1.0 - 0.2 = 0.8。
         let mut app = build_app();
         let player = app
             .world_mut()
@@ -3192,6 +3200,41 @@ mod tests {
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
             environment: PlotEnvironment::base(),
+        });
+        for _ in 0..TILL_MANUAL_TICKS {
+            app.update();
+        }
+        let plot = app
+            .world_mut()
+            .query::<&LingtianPlot>()
+            .iter(app.world())
+            .next()
+            .unwrap();
+        assert!(
+            (plot.plot_qi_cap - 0.8).abs() < 1e-6,
+            "Summer base 应当 0.8（=1.0 - 0.2 summer），实际 {}",
+            plot.plot_qi_cap
+        );
+    }
+
+    #[test]
+    fn till_xizhuan_environment_keeps_cap_at_1_0() {
+        // 汐转期 modifier=0，plot_qi_cap 锁回 plan-lingtian-v1 的 1.0 基线。
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
+            .id();
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos: BlockPos::new(0, 64, 0),
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment {
+                season: Season::SummerToWinter,
+                ..PlotEnvironment::base()
+            },
         });
         for _ in 0..TILL_MANUAL_TICKS {
             app.update();
