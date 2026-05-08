@@ -69,16 +69,8 @@ pub fn debit_caster_qi_to_account(
 ) -> Result<QiTransfer, QiPhysicsError> {
     let from = QiAccountId::player(actor_id);
     let cultivation_balance = cultivation.qi_current.max(0.0);
-    if accounts.has_account(&from) {
-        let account_balance = accounts.balance(&from);
-        if (account_balance - cultivation_balance).abs() > QI_EPSILON {
-            return Err(QiPhysicsError::ConservationDrift {
-                expected: cultivation_balance,
-                actual: account_balance,
-                tolerance: QI_EPSILON,
-            });
-        }
-    } else {
+    let account_balance = accounts.balance(&from);
+    if !accounts.has_account(&from) || (account_balance - cultivation_balance).abs() > QI_EPSILON {
         accounts.set_balance(from.clone(), cultivation_balance)?;
     }
     let transfer = QiTransfer::new(from.clone(), target, amount, QiTransferReason::VoidAction)?;
@@ -326,14 +318,14 @@ mod tests {
     }
 
     #[test]
-    fn debit_caster_qi_rejects_existing_account_drift() {
+    fn debit_caster_qi_resyncs_existing_account_from_cultivation_view() {
         let mut accounts = WorldQiAccount::default();
         let mut c = cultivation(500.0);
         accounts
             .set_balance(QiAccountId::player("offline:Void"), 700.0)
             .unwrap();
 
-        let error = debit_caster_qi_to_account(
+        debit_caster_qi_to_account(
             Entity::PLACEHOLDER,
             "offline:Void",
             QiAccountId::zone("spawn"),
@@ -342,14 +334,14 @@ mod tests {
             None,
             150.0,
         )
-        .expect_err("existing ledger/cultivation drift must reject");
+        .expect("void-action bridge should resync the player ledger before transfer");
 
-        assert!(matches!(error, QiPhysicsError::ConservationDrift { .. }));
-        assert_eq!(c.qi_current, 500.0);
+        assert_eq!(c.qi_current, 350.0);
         assert_eq!(
             accounts.balance(&QiAccountId::player("offline:Void")),
-            700.0
+            350.0
         );
+        assert_eq!(accounts.balance(&QiAccountId::zone("spawn")), 150.0);
     }
 
     #[test]
