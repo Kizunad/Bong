@@ -73,6 +73,10 @@ impl RecipeUnlockState {
 }
 
 /// 三渠道解锁尝试结果 — 调用方根据返回值决定是否广播 RecipeUnlockedEvent。
+///
+/// 当前 API 形态下 `unlock_via_*` 直接接收 `&CraftRecipe`，调用方负责
+/// registry 查找。所以本 enum 不含 `UnknownRecipe` variant —— 配方不存在时
+/// 调用方在 lookup 阶段就 reject，不会走到本路径。
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnlockOutcome {
     /// 实际新增解锁 — 调用方应广播 RecipeUnlockedEvent
@@ -81,8 +85,6 @@ pub enum UnlockOutcome {
     Already,
     /// 配方对此 source 不开放该路径（如该配方没注册 Mentor 但玩家走了 Mentor 流程）
     SourceMismatch,
-    /// recipe id 不存在
-    UnknownRecipe,
 }
 
 /// §3 渠道一：残卷解锁。

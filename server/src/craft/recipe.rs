@@ -204,6 +204,34 @@ impl CraftRecipe {
                 id: self.id.clone(),
             });
         }
+        // qi_color_min share 范围 [0.0, 1.0]，finite
+        if let Some((kind, share)) = self.requirements.qi_color_min {
+            if !share.is_finite() || !(0.0..=1.0).contains(&share) {
+                return Err(RecipeValidationError::InvalidQiColorMinShare {
+                    id: self.id.clone(),
+                    color: kind,
+                    share,
+                });
+            }
+        }
+        // unlock_sources 内每个 string payload 非空（避免"永远无法匹配"的源）
+        for src in &self.unlock_sources {
+            match src {
+                UnlockSource::Scroll { item_template } if item_template.is_empty() => {
+                    return Err(RecipeValidationError::EmptyUnlockSourceTemplate {
+                        id: self.id.clone(),
+                        kind: "scroll",
+                    });
+                }
+                UnlockSource::Mentor { npc_archetype } if npc_archetype.is_empty() => {
+                    return Err(RecipeValidationError::EmptyUnlockSourceTemplate {
+                        id: self.id.clone(),
+                        kind: "mentor",
+                    });
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 }
@@ -211,14 +239,41 @@ impl CraftRecipe {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecipeValidationError {
     EmptyId,
-    NoMaterials { id: RecipeId },
-    EmptyMaterialTemplate { id: RecipeId },
-    ZeroCount { id: RecipeId, template: String },
-    EmptyOutputTemplate { id: RecipeId },
-    ZeroOutputCount { id: RecipeId },
-    InvalidQiCost { id: RecipeId, qi_cost: f64 },
-    ZeroTimeTicks { id: RecipeId },
-    NoUnlockSources { id: RecipeId },
+    NoMaterials {
+        id: RecipeId,
+    },
+    EmptyMaterialTemplate {
+        id: RecipeId,
+    },
+    ZeroCount {
+        id: RecipeId,
+        template: String,
+    },
+    EmptyOutputTemplate {
+        id: RecipeId,
+    },
+    ZeroOutputCount {
+        id: RecipeId,
+    },
+    InvalidQiCost {
+        id: RecipeId,
+        qi_cost: f64,
+    },
+    ZeroTimeTicks {
+        id: RecipeId,
+    },
+    NoUnlockSources {
+        id: RecipeId,
+    },
+    InvalidQiColorMinShare {
+        id: RecipeId,
+        color: ColorKind,
+        share: f32,
+    },
+    EmptyUnlockSourceTemplate {
+        id: RecipeId,
+        kind: &'static str,
+    },
 }
 
 impl std::fmt::Display for RecipeValidationError {
@@ -246,6 +301,14 @@ impl std::fmt::Display for RecipeValidationError {
             Self::NoUnlockSources { id } => write!(
                 f,
                 "recipe `{id}` has no unlock_sources (would be permanently unlearnable)"
+            ),
+            Self::InvalidQiColorMinShare { id, color, share } => write!(
+                f,
+                "recipe `{id}` qi_color_min share for {color:?} is {share} (must be finite and in [0.0, 1.0])"
+            ),
+            Self::EmptyUnlockSourceTemplate { id, kind } => write!(
+                f,
+                "recipe `{id}` has empty {kind} unlock_source payload"
             ),
         }
     }
@@ -418,5 +481,70 @@ mod tests {
         let mut r = ok_recipe();
         r.qi_cost = 0.0;
         assert!(r.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_qi_color_min_share_above_one() {
+        let mut r = ok_recipe();
+        r.requirements.qi_color_min = Some((ColorKind::Insidious, 1.5));
+        assert!(matches!(
+            r.validate(),
+            Err(RecipeValidationError::InvalidQiColorMinShare { share, .. }) if (share - 1.5).abs() < 1e-6
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_qi_color_min_share_negative() {
+        let mut r = ok_recipe();
+        r.requirements.qi_color_min = Some((ColorKind::Insidious, -0.1));
+        assert!(matches!(
+            r.validate(),
+            Err(RecipeValidationError::InvalidQiColorMinShare { share, .. }) if share < 0.0
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_qi_color_min_share_nan() {
+        let mut r = ok_recipe();
+        r.requirements.qi_color_min = Some((ColorKind::Insidious, f32::NAN));
+        assert!(matches!(
+            r.validate(),
+            Err(RecipeValidationError::InvalidQiColorMinShare { share, .. }) if share.is_nan()
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_qi_color_min_share_at_bounds() {
+        let mut r = ok_recipe();
+        // 0.0 边界
+        r.requirements.qi_color_min = Some((ColorKind::Insidious, 0.0));
+        assert!(r.validate().is_ok());
+        // 1.0 边界
+        r.requirements.qi_color_min = Some((ColorKind::Insidious, 1.0));
+        assert!(r.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_scroll_unlock_payload() {
+        let mut r = ok_recipe();
+        r.unlock_sources = vec![UnlockSource::Scroll {
+            item_template: String::new(),
+        }];
+        assert!(matches!(
+            r.validate(),
+            Err(RecipeValidationError::EmptyUnlockSourceTemplate { kind: "scroll", .. })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_empty_mentor_unlock_payload() {
+        let mut r = ok_recipe();
+        r.unlock_sources = vec![UnlockSource::Mentor {
+            npc_archetype: String::new(),
+        }];
+        assert!(matches!(
+            r.validate(),
+            Err(RecipeValidationError::EmptyUnlockSourceTemplate { kind: "mentor", .. })
+        ));
     }
 }
