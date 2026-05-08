@@ -14,8 +14,13 @@
 //! - Linear 公式特意走 f64 内部算 — 骨币 real-year scale decay 精度关键。
 
 use super::types::{DecayFormula, DecayProfile, Freshness, TrackState};
-use crate::qi_physics::constants::QI_SHELFLIFE_DEAD_ZONE_MULTIPLIER;
+use crate::qi_physics::constants::{
+    QI_AMBIENT_EXCRETION_PER_SEC, QI_SHELFLIFE_DEAD_ZONE_MULTIPLIER,
+};
+use crate::qi_physics::{qi_excretion, ContainerKind, EnvField};
 use crate::world::season::Season;
+
+const TICKS_PER_SECOND: f64 = 20.0;
 
 pub fn zone_multiplier_lookup(zone_qi_density: f64) -> f32 {
     if (0.0..crate::cultivation::dead_zone::DEAD_ZONE_QI_THRESHOLD).contains(&zone_qi_density) {
@@ -112,11 +117,23 @@ pub fn compute_current_qi(
         DecayProfile::Decay {
             formula, floor_qi, ..
         } => {
-            let raw = apply_formula(freshness.initial_qi, effective_dt, formula, multiplier);
+            let raw = apply_formula(
+                freshness.initial_qi,
+                effective_dt,
+                formula,
+                multiplier,
+                profile_container_kind(profile),
+            );
             raw.max(*floor_qi)
         }
         DecayProfile::Spoil { formula, .. } => {
-            let raw = apply_formula(freshness.initial_qi, effective_dt, formula, multiplier);
+            let raw = apply_formula(
+                freshness.initial_qi,
+                effective_dt,
+                formula,
+                multiplier,
+                profile_container_kind(profile),
+            );
             raw.max(0.0)
         }
         DecayProfile::Age {
@@ -132,6 +149,19 @@ pub fn compute_current_qi(
             *post_peak_half_life_ticks,
         )
         .max(0.0),
+    }
+}
+
+pub fn profile_container_kind(profile: &DecayProfile) -> ContainerKind {
+    let id = profile.id().as_str();
+    if id.starts_with("bone_coin_") || id.starts_with("fauna_bone_") {
+        ContainerKind::SealedInBone
+    } else if id.starts_with("ling_shi_") || id == "chen_jiu_v1" || id == "chen_cu_v1" {
+        ContainerKind::SealedAncientRelic
+    } else if id == "ling_mu_gun_v1" {
+        ContainerKind::WieldedInWeapon
+    } else {
+        ContainerKind::LooseInPill
     }
 }
 
@@ -226,14 +256,16 @@ fn effective_dt_ticks(freshness: &Freshness, now_tick: u64, multiplier: f32) -> 
     ((non_frozen_dt as f64) * multiplier.max(0.0) as f64).round() as u64
 }
 
-fn apply_formula(initial: f32, effective_dt: u64, formula: &DecayFormula, multiplier: f32) -> f32 {
+fn apply_formula(
+    initial: f32,
+    effective_dt: u64,
+    formula: &DecayFormula,
+    multiplier: f32,
+    container: ContainerKind,
+) -> f32 {
     match formula {
         DecayFormula::Exponential { half_life_ticks } => {
-            if *half_life_ticks == 0 {
-                return initial;
-            }
-            let n = (effective_dt as f32) / (*half_life_ticks as f32);
-            initial * (0.5_f32).powf(n)
+            apply_exponential_qi_physics(initial, effective_dt, *half_life_ticks, container)
         }
         DecayFormula::Linear { decay_per_tick } => {
             // f64 内部算 — 骨币 ~1y 级 scale 时 f32 精度不够（见文件头精度注记）。
@@ -245,6 +277,32 @@ fn apply_formula(initial: f32, effective_dt: u64, formula: &DecayFormula, multip
             initial * multiplier
         }
     }
+}
+
+fn apply_exponential_qi_physics(
+    initial: f32,
+    effective_dt: u64,
+    half_life_ticks: u64,
+    container: ContainerKind,
+) -> f32 {
+    if half_life_ticks == 0 {
+        return initial;
+    }
+    if initial <= 0.0 || effective_dt == 0 {
+        return initial.max(0.0);
+    }
+
+    let half_life_secs = half_life_ticks as f64 / TICKS_PER_SECOND;
+    let elapsed_secs = effective_dt as f64 / TICKS_PER_SECOND;
+    let seal = container.seal_multiplier().max(f64::EPSILON);
+    let rhythm_multiplier =
+        std::f64::consts::LN_2 / (half_life_secs * QI_AMBIENT_EXCRETION_PER_SEC * seal);
+    let env = EnvField {
+        local_zone_qi: 0.0,
+        rhythm_multiplier,
+        ..EnvField::default()
+    };
+    qi_excretion(initial as f64, container, elapsed_secs, env) as f32
 }
 
 fn compute_age(
@@ -268,9 +326,13 @@ fn compute_age(
         if post_peak_half_life_ticks == 0 {
             return initial * (1.0 + peak_bonus);
         }
-        let post_peak_dt = (effective_dt - peak_at_ticks) as f32;
-        let n = post_peak_dt / (post_peak_half_life_ticks as f32);
-        initial * (1.0 + peak_bonus) * (0.5_f32).powf(n)
+        let post_peak_dt = effective_dt - peak_at_ticks;
+        apply_exponential_qi_physics(
+            initial * (1.0 + peak_bonus),
+            post_peak_dt,
+            post_peak_half_life_ticks,
+            ContainerKind::LooseInPill,
+        )
     }
 }
 
@@ -1012,5 +1074,53 @@ mod tests {
             floor_qi: f32::NAN,
         };
         assert!(nan_decay.validate().is_err());
+    }
+
+    #[test]
+    fn exponential_decay_uses_qi_physics_excretion_calibration() {
+        let p = decay_exp_profile(1000, 0.0);
+        let f = fresh_item(&p, 100.0, 0);
+
+        let current = compute_current_qi(&f, &p, 1000, 1.0);
+
+        assert!(
+            (current - 50.0).abs() < 1e-3,
+            "qi_excretion calibration must preserve existing half-life curves, got {current}"
+        );
+    }
+
+    #[test]
+    fn profile_container_kind_maps_production_families_to_qi_physics_containers() {
+        let ling_shi = DecayProfile::Decay {
+            id: DecayProfileId::new("ling_shi_fan_v1"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+        let bone = DecayProfile::Decay {
+            id: DecayProfileId::new("bone_coin_40_v1"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+        let wood = DecayProfile::Decay {
+            id: DecayProfileId::new("ling_mu_gun_v1"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+
+        assert_eq!(
+            profile_container_kind(&ling_shi),
+            ContainerKind::SealedAncientRelic
+        );
+        assert_eq!(profile_container_kind(&bone), ContainerKind::SealedInBone);
+        assert_eq!(
+            profile_container_kind(&wood),
+            ContainerKind::WieldedInWeapon
+        );
     }
 }

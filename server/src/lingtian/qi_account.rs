@@ -1,16 +1,16 @@
 //! plan-lingtian-v1 §1.3 / §1.4 — 灵气账本（区域级）+ lingtian-tick 计数器。
 //!
-//! `ZoneQiAccount` 是 lingtian 系统**自有**的区域灵气账本，与 `world::zone::Zone.spirit_qi`
-//! （归一化 -1..=1 用于 NPC AI / heal）暂时解耦。设计原因：
-//!   * plan §1.4 把"补灵 +0.5 / 抽吸 -0.5"作为绝对量记，与 -1..=1 归一化不兼容
-//!   * lingtian 是首个引入"灵气流出 / 流入区域"的系统，先在自家立账更安全
-//!   * 后续 plan-zhenfa-v1 / WorldQiAccount 落地时再合账（TODO 已记录）
+//! `ZoneQiAccount` 是 lingtian 系统的区域灵气 facade；本地 f32 账面继续服务
+//! plan-lingtian-v1 的"补灵 +0.5 / 抽吸 -0.5"绝对量语义，同时通过
+//! `sync_world_qi_account` 把 zone 余额镜像到底盘 `WorldQiAccount`。
 //!
 //! `LingtianTickAccumulator` 把 Bevy tick（1/20s）累计到 lingtian-tick（60s）。
 
 use std::collections::HashMap;
 
 use valence::prelude::{bevy_ecs, Resource};
+
+use crate::qi_physics::{QiAccountId, QiPhysicsError, WorldQiAccount};
 
 /// plan §4 — LingtianTick 周期 = 1 min = 1200 Bevy tick @ 20tps。
 pub const BEVY_TICKS_PER_LINGTIAN_TICK: u32 = 1200;
@@ -45,6 +45,16 @@ impl ZoneQiAccount {
 
     pub fn zones(&self) -> impl Iterator<Item = &String> {
         self.qi.keys()
+    }
+
+    pub fn sync_world_qi_account(
+        &self,
+        account: &mut WorldQiAccount,
+    ) -> Result<(), QiPhysicsError> {
+        for (zone, value) in &self.qi {
+            account.set_balance(QiAccountId::zone(zone.clone()), f64::from(value.max(0.0)))?;
+        }
+        Ok(())
     }
 }
 
@@ -101,6 +111,17 @@ mod tests {
         assert_eq!(*r, 0.0);
         *r = 7.0;
         assert_eq!(acct.get("new"), 7.0);
+    }
+
+    #[test]
+    fn zone_qi_account_syncs_to_world_qi_account_facade() {
+        let mut acct = ZoneQiAccount::new();
+        acct.set("field", 3.5);
+        let mut world = WorldQiAccount::default();
+
+        acct.sync_world_qi_account(&mut world).unwrap();
+
+        assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
     }
 
     #[test]
