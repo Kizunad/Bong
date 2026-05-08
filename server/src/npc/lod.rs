@@ -30,6 +30,17 @@ pub enum NpcLodTier {
     Dormant,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ScorerKind {
+    /// 必须保持实时响应的评分，例如会影响玩家近身安全的强制逻辑。
+    Critical,
+    /// 常规评分：Near 每 tick，Far 按 `far_skip_interval` 降频，Dormant 跳过。
+    #[default]
+    Standard,
+    /// 远处可延迟的评分：仅 Near 计算，Far / Dormant 跳过。
+    Cosmetic,
+}
+
 #[derive(Clone, Copy, Debug, Resource)]
 pub struct NpcLodConfig {
     pub near_radius: f64,
@@ -96,11 +107,14 @@ fn update_npc_lod_tier_system(
     npcs: NpcLodQuery<'_, '_>,
     players: PlayerPosQuery<'_, '_>,
 ) {
-    if counter.0 % config.reassess_interval.max(1) != 0 {
-        return;
-    }
+    let should_reassess_existing =
+        counter.0 == 1 || counter.0 % config.reassess_interval.max(1) == 0;
     let player_positions: Vec<DVec3> = players.iter().map(|p| p.get()).collect();
     for (entity, pos, current) in &npcs {
+        if current.is_some() && !should_reassess_existing {
+            continue;
+        }
+
         let desired = classify_tier(pos.get(), &player_positions, &config);
         match (current.copied(), desired) {
             (Some(c), d) if c == d => {}
@@ -140,9 +154,25 @@ pub fn classify_tier(npc_pos: DVec3, players: &[DVec3], config: &NpcLodConfig) -
 /// - Far 每 `far_skip_interval` tick 才算"非跳过"
 /// - Dormant 总是 true
 pub fn should_skip_scorer_tick(tier: NpcLodTier, tick: u32, config: &NpcLodConfig) -> bool {
+    should_skip_scorer_tick_for(tier, ScorerKind::Standard, tick, config)
+}
+
+pub fn should_skip_scorer_tick_for(
+    tier: NpcLodTier,
+    scorer_kind: ScorerKind,
+    tick: u32,
+    config: &NpcLodConfig,
+) -> bool {
+    if matches!(scorer_kind, ScorerKind::Critical) {
+        return false;
+    }
+
     match tier {
         NpcLodTier::Near => false,
-        NpcLodTier::Far => tick % config.far_skip_interval.max(1) != 0,
+        NpcLodTier::Far => {
+            matches!(scorer_kind, ScorerKind::Cosmetic)
+                || tick % config.far_skip_interval.max(1) != 0
+        }
         NpcLodTier::Dormant => true,
     }
 }
@@ -153,11 +183,21 @@ pub fn lod_gated_score(
     config: &NpcLodConfig,
     compute: impl FnOnce() -> f32,
 ) -> Option<f32> {
+    lod_gated_score_by_kind(tier, tick, config, ScorerKind::Standard, compute)
+}
+
+pub fn lod_gated_score_by_kind(
+    tier: Option<&NpcLodTier>,
+    tick: u32,
+    config: &NpcLodConfig,
+    scorer_kind: ScorerKind,
+    compute: impl FnOnce() -> f32,
+) -> Option<f32> {
     if is_dormant(tier) {
         Some(0.0)
     } else if tier
         .copied()
-        .map(|tier| should_skip_scorer_tick(tier, tick, config))
+        .map(|tier| should_skip_scorer_tick_for(tier, scorer_kind, tick, config))
         .unwrap_or(false)
     {
         None
@@ -318,6 +358,54 @@ mod tests {
     }
 
     #[test]
+    fn scorer_kind_cosmetic_skips_far_and_dormant() {
+        let cfg = NpcLodConfig::default();
+
+        assert!(!should_skip_scorer_tick_for(
+            NpcLodTier::Near,
+            ScorerKind::Cosmetic,
+            1,
+            &cfg
+        ));
+        assert!(should_skip_scorer_tick_for(
+            NpcLodTier::Far,
+            ScorerKind::Cosmetic,
+            0,
+            &cfg
+        ));
+        assert!(should_skip_scorer_tick_for(
+            NpcLodTier::Dormant,
+            ScorerKind::Cosmetic,
+            0,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn scorer_kind_critical_never_skips() {
+        let cfg = NpcLodConfig::default();
+
+        assert!(!should_skip_scorer_tick_for(
+            NpcLodTier::Near,
+            ScorerKind::Critical,
+            1,
+            &cfg
+        ));
+        assert!(!should_skip_scorer_tick_for(
+            NpcLodTier::Far,
+            ScorerKind::Critical,
+            1,
+            &cfg
+        ));
+        assert!(!should_skip_scorer_tick_for(
+            NpcLodTier::Dormant,
+            ScorerKind::Critical,
+            1,
+            &cfg
+        ));
+    }
+
+    #[test]
     fn update_npc_lod_tier_system_assigns_tier_from_player_distance() {
         let mut app = App::new();
         app.insert_resource(NpcLodConfig::default());
@@ -381,25 +469,75 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
+        let player = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<NpcLodTier>(npc).copied(),
+            Some(NpcLodTier::Near),
+            "首 tick 应先分类，避免无玩家 e2e 启动期等到 50 tick 才降载"
+        );
+
+        *app.world_mut().get_mut::<Position>(player).unwrap() = Position::new([1000.0, 64.0, 0.0]);
+
+        for _ in 0..48 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().get::<NpcLodTier>(npc).copied(),
+            Some(NpcLodTier::Near),
+            "未到 reassess_interval 不应重算 tier"
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().get::<NpcLodTier>(npc).copied(),
+            Some(NpcLodTier::Dormant)
+        );
+    }
+
+    #[test]
+    fn update_tier_classifies_new_npc_before_next_reassess() {
+        let mut app = App::new();
+        let cfg = NpcLodConfig {
+            reassess_interval: 50,
+            ..Default::default()
+        };
+        app.insert_resource(cfg);
+        app.insert_resource(NpcLodTick(0));
+        app.add_systems(
+            PreUpdate,
+            (tick_lod_counter, update_npc_lod_tier_system).chain(),
+        );
+
+        let existing = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
         let _ = app
             .world_mut()
             .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
 
-        // tick_lod_counter 加到 10 < 50，应未评估
-        for _ in 0..10 {
-            app.update();
-        }
-        assert!(
-            app.world().get::<NpcLodTier>(npc).is_none(),
-            "未到 reassess_interval 不应设 tier"
+        app.update();
+        assert_eq!(
+            app.world().get::<NpcLodTier>(existing).copied(),
+            Some(NpcLodTier::Near)
         );
 
-        // 继续推到 50
-        for _ in 0..45 {
-            app.update();
-        }
-        assert!(app.world().get::<NpcLodTier>(npc).is_some());
+        let new_npc = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1000.0, 64.0, 0.0])))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<NpcLodTier>(new_npc).copied(),
+            Some(NpcLodTier::Dormant)
+        );
     }
 
     #[test]

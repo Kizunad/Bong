@@ -25,7 +25,7 @@ mod tests {
     use super::*;
     use crate::npc::spawn::NpcMarker;
     use bevy_transform::components::Transform;
-    use valence::prelude::{App, DVec3, Position};
+    use valence::prelude::{App, DVec3, Position, PostUpdate};
 
     #[test]
     fn position_to_transform_sync_is_one_way() {

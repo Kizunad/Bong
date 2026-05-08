@@ -170,7 +170,8 @@ process.on("SIGTERM", shutdown);
 await sub.subscribe(...channels);
 console.log(`[task-13][redis-sub] subscribed ${channels.join(",")}`);
 sub.on("message", (channel, message) => {
-  console.log(`[task-13][redis-sub] channel=${channel} payload=${message}`);
+  const preview = message.length > 256 ? `${message.slice(0, 256)}...` : message;
+  console.log(`[task-13][redis-sub] channel=${channel} bytes=${Buffer.byteLength(message)} payload_preview=${preview}`);
 });
 
 setInterval(() => {}, 1000);
@@ -884,11 +885,9 @@ echo "=== [$TASK_ID][$SCRIPT_TAG][3/7] Server startup ==="
 (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  # e2e 只验 tiandao↔server Redis 闭环 — 100 rogue 种群在 CI 单核上吃完
-  # brain.rs scorer + navigator/movement/lifecycle 的 per-NPC 开销会把 TPS
-  # 从 20 拖到 ~6，tiandao 40×500ms 窗口错过所有 bong:world_state publish。
-  # 在此显式 seed=0，功能验证走单元测试（spawn.rs 覆盖 0/10/100 三档）。
-  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+  # NPC perf v1：e2e 默认恢复 100 rogue seed，并用 TickRateProbe 日志作为
+  # CI 回归门禁。低负载调试可手动覆盖 BONG_ROGUE_SEED_COUNT=0。
+  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-100}"
   cd "$ROOT/server"
   cargo run --release
 ) >"$SERVER_LOG" 2>&1 &
@@ -967,6 +966,14 @@ if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[network\\] command_anchor stage=
   pass "server execution anchor"
 else
   finalize_failure "anchors" "missing server execution anchor in $SERVER_LOG"
+fi
+
+TPS_LINE="$(grep -E "actual TPS = [0-9]+([.][0-9]+)?" "$SERVER_LOG" | tail -n 1 || true)"
+TPS_VALUE="$(printf '%s\n' "$TPS_LINE" | sed -nE 's/.*actual TPS = ([0-9]+([.][0-9]+)?).*/\1/p')"
+if [ -n "$TPS_VALUE" ] && awk -v tps="$TPS_VALUE" 'BEGIN { exit !(tps >= 15.0) }'; then
+  pass "100 NPC TPS gate (${TPS_VALUE} >= 15)"
+else
+  finalize_failure "anchors" "100 NPC TPS gate failed: ${TPS_LINE:-missing actual TPS line}; see $SERVER_LOG"
 fi
 
 if wait_for_pattern "$TIANDAO_LOG" "\\[redis-ipc\\] published [0-9]+ narrations to bong:agent_narrate" 45; then

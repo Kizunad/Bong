@@ -1,14 +1,19 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+use std::time::Instant;
+
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, Event, IntoSystemConfigs, Position,
-    PreUpdate, Query, Res, Resource, Update, With,
+    PreUpdate, Query, Res, ResMut, Resource, Update, With,
 };
 
 use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
+use crate::npc::perf::NpcPerfProbe;
+use crate::npc::spatial::NpcSpatialIndex;
 use crate::npc::spawn::{DuelTarget, NpcMarker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -523,12 +528,18 @@ type EncounterNpcQueryItem<'a> = (
     Option<&'a DuelTarget>,
 );
 
+const HOSTILE_ENCOUNTER_RADIUS: f64 = 16.0;
+
 #[allow(clippy::type_complexity)]
 fn assign_hostile_encounters(
     faction_store: Res<FactionStore>,
     npc_positions: Query<EncounterNpcQueryItem<'_>, With<NpcMarker>>,
+    spatial_index: Option<Res<NpcSpatialIndex>>,
+    mut perf_probe: Option<ResMut<NpcPerfProbe>>,
+    lod_tick: Option<Res<NpcLodTick>>,
     mut commands: valence::prelude::Commands,
 ) {
+    let started_at = Instant::now();
     let npcs = npc_positions
         .iter()
         .map(|(entity, position, membership, duel_target)| {
@@ -540,6 +551,13 @@ fn assign_hostile_encounters(
             )
         })
         .collect::<Vec<_>>();
+    let by_entity = npcs
+        .iter()
+        .map(|(entity, position, faction_id, duel_target)| {
+            (*entity, (*position, *faction_id, *duel_target))
+        })
+        .collect::<HashMap<_, _>>();
+    let spatial_index = spatial_index.as_deref();
 
     for (entity, position, faction_id, duel_target) in &npcs {
         let Some(faction_id) = faction_id else {
@@ -549,21 +567,42 @@ fn assign_hostile_encounters(
             continue;
         };
 
-        let nearest_hostile = npcs
-            .iter()
-            .filter_map(|(other_entity, other_position, other_faction_id, _)| {
-                let other_faction_id = (*other_faction_id)?;
-                if *other_entity == *entity
-                    || !faction_store.is_hostile_pair(*faction_id, other_faction_id)
-                {
-                    return None;
-                }
+        let mut nearest_hostile: Option<(Entity, f64)> = None;
+        let mut consider = |other_entity: Entity, other_position: DVec3, other_faction_id| {
+            let Some(other_faction_id) = other_faction_id else {
+                return;
+            };
+            if other_entity == *entity
+                || !faction_store.is_hostile_pair(*faction_id, other_faction_id)
+            {
+                return;
+            }
 
-                let distance_sq = planar_distance_sq(*position, *other_position);
-                (distance_sq <= 16.0 * 16.0).then_some((*other_entity, distance_sq))
-            })
-            .min_by(|left, right| left.1.total_cmp(&right.1))
-            .map(|(target, _)| target);
+            let distance_sq = planar_distance_sq(*position, other_position);
+            if distance_sq > HOSTILE_ENCOUNTER_RADIUS * HOSTILE_ENCOUNTER_RADIUS {
+                return;
+            }
+            if nearest_hostile
+                .as_ref()
+                .is_none_or(|(_, best_sq)| distance_sq < *best_sq)
+            {
+                nearest_hostile = Some((other_entity, distance_sq));
+            }
+        };
+
+        if let Some(index) = spatial_index {
+            for other_entity in index.neighbors_within(*position, HOSTILE_ENCOUNTER_RADIUS) {
+                if let Some((other_position, other_faction_id, _)) = by_entity.get(&other_entity) {
+                    consider(other_entity, *other_position, *other_faction_id);
+                }
+            }
+        } else {
+            for (other_entity, other_position, other_faction_id, _) in &npcs {
+                consider(*other_entity, *other_position, *other_faction_id);
+            }
+        }
+
+        let nearest_hostile = nearest_hostile.map(|(target, _)| target);
 
         match (duel_target, nearest_hostile) {
             (Some(current), Some(next)) if *current == next => {}
@@ -575,6 +614,11 @@ fn assign_hostile_encounters(
             }
             (None, None) => {}
         }
+    }
+
+    if let Some(probe) = perf_probe.as_deref_mut() {
+        probe.record_elapsed("faction_hostile", started_at);
+        probe.flush_if_due(lod_tick.as_deref().map(|tick| tick.0).unwrap_or(0));
     }
 }
 

@@ -104,6 +104,9 @@ pub(crate) struct PersistenceBootstrapSet;
 #[derive(Debug, Default, Component)]
 struct NpcArchivedPersistence;
 
+#[derive(Debug, Default, Component)]
+struct NpcLivePersistenceSnapshot;
+
 impl Default for PersistenceSettings {
     fn default() -> Self {
         Self {
@@ -2535,6 +2538,7 @@ type NpcPersistenceQueryItem<'a> = (
     &'a Lifecycle,
     Option<&'a Cultivation>,
     Option<&'a LifeRecord>,
+    Option<&'a NpcLivePersistenceSnapshot>,
     Option<&'a NpcArchivedPersistence>,
 );
 
@@ -2569,13 +2573,18 @@ fn persist_npc_runtime_state_system(
         lifecycle,
         cultivation,
         life_record,
+        live_snapshot,
         archived,
     ) in &npcs
     {
         let nearest_player_id = resolve_nearest_player_id(blackboard, &players);
         let effective_state = effective_npc_state(entity, lifecycle, &action_states);
-        let should_snapshot =
-            snapshot_due || archived.is_none() || lifecycle.state == LifecycleState::Terminated;
+        let is_terminated = lifecycle.state == LifecycleState::Terminated;
+        let should_snapshot = if is_terminated {
+            archived.is_none()
+        } else {
+            snapshot_due || live_snapshot.is_none()
+        };
         if !should_snapshot {
             continue;
         }
@@ -2623,8 +2632,10 @@ fn persist_npc_runtime_state_system(
             continue;
         }
 
-        if lifecycle.state == LifecycleState::Terminated && archived.is_none() {
+        if is_terminated && archived.is_none() {
             commands.entity(entity).insert(NpcArchivedPersistence);
+        } else if !is_terminated && live_snapshot.is_none() {
+            commands.entity(entity).insert(NpcLivePersistenceSnapshot);
         }
     }
 
@@ -4976,7 +4987,7 @@ mod persistence_tests {
     use crate::cultivation::components::{Cultivation, Realm};
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
-    use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMeleeArchetype};
+    use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
     use crate::player::state::{
         save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
     };
@@ -4986,7 +4997,7 @@ mod persistence_tests {
     use serde_json::Value;
     use std::sync::{Arc, Barrier};
     use std::time::Instant;
-    use valence::prelude::{App, DVec3, EntityKind, Position};
+    use valence::prelude::{App, DVec3, EntityKind, Position, Update};
 
     #[test]
     fn sanitize_deceased_snapshot_stem_replaces_windows_invalid_separators() {
@@ -5032,6 +5043,74 @@ mod persistence_tests {
             PersistenceSettings::with_paths(&db_path, &deceased_dir, format!("task3-{test_name}")),
             root,
         )
+    }
+
+    #[test]
+    fn runtime_system_throttles_live_npc_snapshots_between_intervals() {
+        let (settings, root) = persistence_settings("live-npc-runtime-throttle");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(NpcSnapshotTracker::default());
+        app.insert_resource(crate::npc::movement::GameTick(0));
+        app.add_systems(Update, persist_npc_runtime_state_system);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([1.0, 66.0, 1.0]),
+                EntityKind::ZOMBIE,
+                NpcBlackboard::default(),
+                NpcCombatLoadout::civilian(),
+                NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::new(4.0, 66.0, 4.0)),
+                MovementController::new(),
+                MovementCooldowns::default(),
+                Lifecycle {
+                    character_id: "npc:runtime-throttle".to_string(),
+                    state: LifecycleState::Alive,
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+        assert!(
+            app.world().get::<NpcLivePersistenceSnapshot>(npc).is_some(),
+            "first live snapshot should mark the NPC so subsequent ticks skip sqlite writes"
+        );
+        let first = load_npc_state(&settings, "npc:runtime-throttle")
+            .expect("npc state lookup should succeed")
+            .expect("first snapshot should persist live npc");
+        assert_eq!(first.pos, [1.0, 66.0, 1.0]);
+
+        *app.world_mut().get_mut::<Position>(npc).unwrap() = Position::new([9.0, 66.0, 9.0]);
+        app.world_mut()
+            .resource_mut::<crate::npc::movement::GameTick>()
+            .0 = 1;
+        app.update();
+        let before_interval = load_npc_state(&settings, "npc:runtime-throttle")
+            .expect("npc state lookup should succeed")
+            .expect("live npc row should still exist");
+        assert_eq!(
+            before_interval.pos,
+            [1.0, 66.0, 1.0],
+            "live NPC runtime persistence must not write every tick"
+        );
+
+        app.world_mut()
+            .resource_mut::<crate::npc::movement::GameTick>()
+            .0 = NPC_SNAPSHOT_INTERVAL_TICKS;
+        app.update();
+        let after_interval = load_npc_state(&settings, "npc:runtime-throttle")
+            .expect("npc state lookup should succeed")
+            .expect("interval snapshot should keep live npc row");
+        assert_eq!(after_interval.pos, [9.0, 66.0, 9.0]);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

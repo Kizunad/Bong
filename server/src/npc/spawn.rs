@@ -1,13 +1,13 @@
 use bevy_transform::components::{GlobalTransform, Transform};
-use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
+use big_brain::prelude::{BigBrainSet, FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::player::PlayerEntityBundle;
 use valence::entity::villager::VillagerEntityBundle;
 use valence::entity::witch::WitchEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Bundle, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId,
-    EventReader, EventWriter, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut,
-    Resource, UniqueId, Update, With,
+    EventReader, EventWriter, IntoSystemConfigs, Position, PostStartup, PreUpdate, Query, Res,
+    ResMut, Resource, UniqueId, Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -33,6 +33,7 @@ use crate::npc::lifecycle::{
     npc_runtime_bundle, npc_runtime_bundle_with_age, NpcArchetype, NpcRegistry,
     NpcReproductionRequest, NpcSpawnNotice, NpcSpawnSource,
 };
+use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -51,6 +52,7 @@ use crate::world::mob_spawn::{MobSpawnFilter, NaturalMobKind};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
+const ROGUE_SEED_BATCH_SIZE: u32 = 10;
 
 pub fn snap_spawn_y_to_surface(
     pos: DVec3,
@@ -80,6 +82,39 @@ impl NpcSkinSpawnContext<'_> {
     ) -> NpcSkinSpawnContext<'_> {
         NpcSkinSpawnContext { pool, policy }
     }
+}
+
+#[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
+enum DeferredNpcBrain {
+    ScatteredCultivator,
+}
+
+impl DeferredNpcBrain {
+    fn build(self) -> ThinkerBuilder {
+        match self {
+            Self::ScatteredCultivator => scattered_cultivator_thinker(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RogueSeedJob {
+    zone: Zone,
+    count: u32,
+}
+
+#[derive(Debug, Default)]
+struct RogueSeedProgress {
+    initialized: bool,
+    done: bool,
+    jobs: Vec<RogueSeedJob>,
+    job_index: usize,
+    spawned_in_job: u32,
+    spawned_total: u32,
+    resource_zone_count: usize,
+    resource_reserved: u32,
+    other_zone_count: usize,
+    other_reserved: u32,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
@@ -227,10 +262,8 @@ pub struct RoguePopulationSeedConfig {
 impl Default for RoguePopulationSeedConfig {
     fn default() -> Self {
         // 允许通过 `BONG_ROGUE_SEED_COUNT` 环境变量覆盖 target_count。
-        // 用途：CI e2e 无玩家闭环不需要 100 rogue 做负载（LOD gate 已把无玩家
-        // 场景降到 Dormant scorer skip，但 lifecycle / navigator / movement
-        // 等 per-NPC 系统仍是 O(N)）。e2e 只验证 tiandao ↔ server IPC 闭环，
-        // 把 seed 降到 0 让 CI 单核 ubuntu-latest 跑满 20 TPS。
+        // 用途：默认恢复 100 rogue seed；低负载本地调试或隔离 IPC 闭环时仍可
+        // 显式设置为 0/10。
         let target_count = std::env::var("BONG_ROGUE_SEED_COUNT")
             .ok()
             .and_then(|raw| raw.parse::<u32>().ok())
@@ -262,7 +295,26 @@ pub fn register(app: &mut App) {
                 // valence ScenarioSingleClient 下 layer 未必就绪，改到 Update 更稳。
                 seed_initial_rogue_population_on_startup,
             ),
+        )
+        .add_systems(
+            PreUpdate,
+            attach_deferred_npc_brain_system.before(BigBrainSet::Scorers),
         );
+}
+
+fn attach_deferred_npc_brain_system(
+    mut commands: Commands,
+    npcs: Query<(Entity, &DeferredNpcBrain, Option<&NpcLodTier>), With<NpcMarker>>,
+) {
+    for (entity, deferred, tier) in &npcs {
+        if matches!(tier, Some(NpcLodTier::Dormant) | None) {
+            continue;
+        }
+        commands
+            .entity(entity)
+            .remove::<DeferredNpcBrain>()
+            .insert(deferred.build());
+    }
 }
 
 pub(crate) fn classify_zones_by_qi(zones: &[Zone], threshold: f64) -> (Vec<&Zone>, Vec<&Zone>) {
@@ -319,18 +371,88 @@ fn seed_initial_rogue_population_on_startup(
     mut registry: Option<ResMut<NpcRegistry>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
-    mut already_seeded: valence::prelude::Local<bool>,
+    mut progress: valence::prelude::Local<RogueSeedProgress>,
 ) {
-    if *already_seeded {
+    if progress.done {
         return;
     }
     let Some(cfg) = config.as_deref() else {
         return;
     };
     if cfg.target_count == 0 {
-        *already_seeded = true;
+        progress.done = true;
         return;
     }
+    let Some(layer) = layers.iter().next() else {
+        // Layer 未 ready（常见于第一 tick），保留 `already_seeded=false` 等下一 tick。
+        return;
+    };
+
+    if !progress.initialized {
+        let Some(zones) = zone_registry.as_deref() else {
+            tracing::warn!("[bong][npc] rogue seed skipped — ZoneRegistry missing");
+            return;
+        };
+
+        // P2-5: 先 classify，确认 at least one zone 可 spawn 再 reserve —— 否则
+        // 空 ZoneRegistry 会让 reserve 留下 1-tick 暂态泄漏，误触发 spawn_paused。
+        let (resource_zones, other_zones) =
+            classify_zones_by_qi(&zones.zones, cfg.resource_spirit_qi_threshold);
+        if resource_zones.is_empty() && other_zones.is_empty() {
+            tracing::warn!("[bong][npc] rogue seed skipped — no spawnable zones");
+            progress.done = true;
+            return;
+        }
+
+        let (desired_resource_count, desired_other_count) =
+            match (resource_zones.is_empty(), other_zones.is_empty()) {
+                (true, true) => {
+                    return;
+                }
+                (true, false) => (0u32, cfg.target_count),
+                (false, true) => (cfg.target_count, 0u32),
+                (false, false) => {
+                    let r = ((cfg.target_count as f32) * cfg.resource_fraction).round() as u32;
+                    (
+                        r.min(cfg.target_count),
+                        cfg.target_count.saturating_sub(r.min(cfg.target_count)),
+                    )
+                }
+            };
+
+        let resource_dist = reserve_zone_distribution(
+            registry.as_deref_mut(),
+            &resource_zones,
+            desired_resource_count,
+        );
+        let other_dist =
+            reserve_zone_distribution(registry.as_deref_mut(), &other_zones, desired_other_count);
+        let reserved = resource_dist.iter().sum::<u32>() + other_dist.iter().sum::<u32>();
+        if reserved == 0 {
+            tracing::warn!(
+                "[bong][npc] rogue seed skipped — NpcRegistry budget exhausted (desired={})",
+                cfg.target_count
+            );
+            return;
+        }
+
+        progress.jobs = resource_zones
+            .iter()
+            .zip(resource_dist.iter().copied())
+            .chain(other_zones.iter().zip(other_dist.iter().copied()))
+            .filter(|(_, count)| *count > 0)
+            .map(|(zone, count)| RogueSeedJob {
+                zone: (*zone).clone(),
+                count,
+            })
+            .collect();
+        progress.resource_zone_count = resource_zones.len();
+        progress.resource_reserved = resource_dist.iter().sum::<u32>();
+        progress.other_zone_count = other_zones.len();
+        progress.other_reserved = other_dist.iter().sum::<u32>();
+        progress.initialized = true;
+    }
+
     let skin_policy = match skin_pool.as_deref_mut() {
         Some(pool) => {
             pool.drain_ready();
@@ -342,99 +464,59 @@ fn seed_initial_rogue_population_on_startup(
         }
         None => NpcSkinFallbackPolicy::AllowFallback,
     };
-    let Some(zones) = zone_registry.as_deref() else {
-        tracing::warn!("[bong][npc] rogue seed skipped — ZoneRegistry missing");
-        return;
-    };
-    let Some(layer) = layers.iter().next() else {
-        // Layer 未 ready（常见于第一 tick），保留 `already_seeded=false` 等下一 tick。
-        return;
-    };
-
-    // P2-5: 先 classify，确认 at least one zone 可 spawn 再 reserve —— 否则
-    // 空 ZoneRegistry 会让 reserve 留下 1-tick 暂态泄漏，误触发 spawn_paused。
-    let (resource_zones, other_zones) =
-        classify_zones_by_qi(&zones.zones, cfg.resource_spirit_qi_threshold);
-    if resource_zones.is_empty() && other_zones.is_empty() {
-        tracing::warn!("[bong][npc] rogue seed skipped — no spawnable zones");
-        *already_seeded = true;
-        return;
-    }
-
-    let (desired_resource_count, desired_other_count) =
-        match (resource_zones.is_empty(), other_zones.is_empty()) {
-            (true, true) => {
-                return;
-            }
-            (true, false) => (0u32, cfg.target_count),
-            (false, true) => (cfg.target_count, 0u32),
-            (false, false) => {
-                let r = ((cfg.target_count as f32) * cfg.resource_fraction).round() as u32;
-                (
-                    r.min(cfg.target_count),
-                    cfg.target_count.saturating_sub(r.min(cfg.target_count)),
-                )
-            }
-        };
-
-    let resource_dist = reserve_zone_distribution(
-        registry.as_deref_mut(),
-        &resource_zones,
-        desired_resource_count,
-    );
-    let other_dist =
-        reserve_zone_distribution(registry.as_deref_mut(), &other_zones, desired_other_count);
-    let reserved = resource_dist.iter().sum::<u32>() + other_dist.iter().sum::<u32>();
-    if reserved == 0 {
-        tracing::warn!(
-            "[bong][npc] rogue seed skipped — NpcRegistry budget exhausted (desired={})",
-            cfg.target_count
-        );
-        return;
-    }
-
     let max_age = NpcArchetype::Rogue.default_max_age_ticks();
-    let mut global_index: u32 = 0;
+    let mut spawned_this_tick = 0;
 
-    for (zone, count) in resource_zones
-        .iter()
-        .zip(resource_dist.iter().copied())
-        .chain(other_zones.iter().zip(other_dist.iter().copied()))
-    {
-        for _ in 0..count {
-            let (pos, patrol_target) = seed_position_for_zone(zone, global_index);
-            let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
-            let entity = spawn_scattered_cultivator_at(
-                &mut commands,
-                NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
-                layer,
-                zone.name.as_str(),
-                pos,
-                patrol_target,
-                zone.spirit_qi,
-                age,
-            );
-            notices.send(spawn_notice(
-                entity,
-                NpcArchetype::Rogue,
-                NpcSpawnSource::Seed,
-                zone.name.as_str(),
-                pos,
-                age,
-            ));
-            global_index += 1;
+    while spawned_this_tick < ROGUE_SEED_BATCH_SIZE && progress.job_index < progress.jobs.len() {
+        let job = &progress.jobs[progress.job_index];
+        if progress.spawned_in_job >= job.count {
+            progress.job_index += 1;
+            progress.spawned_in_job = 0;
+            continue;
         }
+
+        let global_index = progress.spawned_total;
+        let (pos, patrol_target) = seed_position_for_zone(&job.zone, global_index);
+        let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
+        let entity = spawn_scattered_cultivator_at(
+            &mut commands,
+            NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
+            layer,
+            job.zone.name.as_str(),
+            pos,
+            patrol_target,
+            job.zone.spirit_qi,
+            age,
+        );
+        commands
+            .entity(entity)
+            .remove::<ThinkerBuilder>()
+            .insert(DeferredNpcBrain::ScatteredCultivator);
+        notices.send(spawn_notice(
+            entity,
+            NpcArchetype::Rogue,
+            NpcSpawnSource::Seed,
+            job.zone.name.as_str(),
+            pos,
+            age,
+        ));
+
+        progress.spawned_in_job += 1;
+        progress.spawned_total += 1;
+        spawned_this_tick += 1;
     }
 
-    tracing::info!(
-        "[bong][npc] seeded {} rogue NPCs (resource_zones={} @ {} / other_zones={} @ {})",
-        global_index,
-        resource_zones.len(),
-        resource_dist.iter().sum::<u32>(),
-        other_zones.len(),
-        other_dist.iter().sum::<u32>(),
-    );
-    *already_seeded = true;
+    if progress.job_index >= progress.jobs.len() {
+        tracing::info!(
+            "[bong][npc] seeded {} rogue NPCs (resource_zones={} @ {} / other_zones={} @ {})",
+            progress.spawned_total,
+            progress.resource_zone_count,
+            progress.resource_reserved,
+            progress.other_zone_count,
+            progress.other_reserved,
+        );
+        progress.done = true;
+    }
 }
 
 fn process_npc_reproduction_requests(
@@ -883,6 +965,7 @@ fn spawn_rogue_commoner_base(
             loadout.melee_archetype,
             loadout.melee_profile(),
             archetype,
+            NpcLodTier::Dormant,
             Navigator::new(),
             MovementController::new(),
             loadout.movement_capabilities,
@@ -958,6 +1041,7 @@ pub fn spawn_beast_npc_at(
         .id();
 
     commands.entity(entity).insert((
+        NpcLodTier::Dormant,
         Hunger::default(),
         WanderState::default(),
         territory,
@@ -1018,6 +1102,7 @@ pub fn spawn_disciple_npc_at(
             loadout.melee_archetype,
             loadout.melee_profile(),
             NpcArchetype::Disciple,
+            NpcLodTier::Dormant,
             Navigator::new(),
             MovementController::new(),
             loadout.movement_capabilities,
@@ -1083,6 +1168,7 @@ pub fn spawn_relic_guard_npc_at(
             loadout.melee_archetype,
             loadout.melee_profile(),
             NpcArchetype::GuardianRelic,
+            NpcLodTier::Dormant,
             Navigator::new(),
             MovementController::new(),
             loadout.movement_capabilities,
@@ -1519,6 +1605,44 @@ mod tests {
     }
 
     #[test]
+    fn deferred_seed_brain_attaches_when_lod_wakes() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, attach_deferred_npc_brain_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcLodTier::Far,
+                DeferredNpcBrain::ScatteredCultivator,
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<ThinkerBuilder>(npc).is_some());
+        assert!(app.world().get::<DeferredNpcBrain>(npc).is_none());
+    }
+
+    #[test]
+    fn deferred_seed_brain_stays_detached_while_dormant() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, attach_deferred_npc_brain_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcLodTier::Dormant,
+                DeferredNpcBrain::ScatteredCultivator,
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<ThinkerBuilder>(npc).is_none());
+        assert!(app.world().get::<DeferredNpcBrain>(npc).is_some());
+    }
+
+    #[test]
     fn spawn_scattered_cultivator_at_attaches_farming_brain_components() {
         let mut app = App::new();
         app.add_systems(
@@ -1827,7 +1951,9 @@ mod tests {
         app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
-        app.update();
+        for _ in 0..(100 / ROGUE_SEED_BATCH_SIZE) {
+            app.update();
+        }
 
         let by_archetype = {
             let world = app.world_mut();
