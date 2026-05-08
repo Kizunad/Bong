@@ -95,6 +95,8 @@ pub fn apply_revive_penalty(
     released_qi
 }
 
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn on_player_revived(
     clock: Res<CultivationClock>,
     settings: Res<PersistenceSettings>,
@@ -262,6 +264,7 @@ fn release_terminated_qi_to_zone(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn release_qi_amount_to_zone(
     entity: Entity,
     amount: f64,

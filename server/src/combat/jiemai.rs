@@ -85,6 +85,7 @@ pub fn jiemai_qi_cost_for_realm(realm: Realm) -> Option<f64> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub struct ZhenmaiStyleDefense {
     pub realm: Realm,
     pub armor_weight: f64,

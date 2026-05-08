@@ -1327,6 +1327,7 @@ pub fn tribulation_wave_system(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn tribulation_failure_system(
     settings: Res<PersistenceSettings>,
     clock: Option<Res<CombatClock>>,

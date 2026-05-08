@@ -25,12 +25,14 @@ pub struct AnqiProjectileFlight {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub struct AnqiStyleAttack {
     pub color: ColorKind,
     pub qi_payload: f64,
     pub carrier_grade: CarrierGrade,
 }
 
+#[allow(dead_code)]
 impl AnqiStyleAttack {
     pub fn new(flight: &AnqiProjectileFlight, projectile: &QiProjectile) -> Self {
         Self {

@@ -47,6 +47,7 @@ pub fn purge_step(
     (actual_purge, actual_cost, cleared)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn contamination_tick(
     clock: Res<CultivationClock>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
