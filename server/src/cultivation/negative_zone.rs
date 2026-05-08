@@ -7,7 +7,7 @@
 
 use valence::prelude::{Entity, EventWriter, Events, Position, Query, ResMut};
 
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::Cultivation;
@@ -45,9 +45,9 @@ pub fn negative_zone_siphon_tick(
         return;
     };
     for (entity, pos, current_dimension, life_record, mut cultivation) in players.iter_mut() {
-        let dimension = current_dimension
-            .map(|current| current.0)
-            .unwrap_or(DimensionKind::Overworld);
+        let Some(dimension) = current_dimension.map(|current| current.0) else {
+            continue;
+        };
         let zone_name = zones
             .find_zone(dimension, pos.0)
             .map(|z| (z.name.clone(), z.spirit_qi));
@@ -152,6 +152,42 @@ mod tests {
             .drain()
             .collect();
         assert!(deaths.is_empty());
+    }
+
+    #[test]
+    fn negative_zone_siphon_skips_entity_without_current_dimension() {
+        let mut app = App::new();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
+        app.insert_resource(zones);
+        app.add_systems(Update, negative_zone_siphon_tick);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                LifeRecord::new(canonical_player_id("Azure")),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert_eq!(cultivation.qi_current, 1.0);
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
     }
 
     #[test]
