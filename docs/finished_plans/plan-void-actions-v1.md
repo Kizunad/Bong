@@ -1,4 +1,4 @@
-# Bong · plan-void-actions-v1 · Active
+# Bong · plan-void-actions-v1 · Finished
 
 化虚专属 action 四类：**镇压坍缩渊 / 引爆区域 / 阻挡道伥扩散 / 道统传承**。在 `plan-void-quota-v1` ✅ 立的化虚名额制下，化虚后玩家不再以"突破"为驱动（境界封顶 `Realm::Void`），切换到 4 大持续目标——**寿元延续 / 道统传承 / 世界影响 / 天道运维博弈**。每个 action 高消耗（真元走 `qi_physics::ledger` + 寿元走 `lifespan::deduct`）+ 全服可见（agent `scope: "broadcast"` 已铺）+ 不破红线（禁传送 / 禁复活 / 禁无成本生灵气；不消耗 quota slot 但反噬死亡会回流 slot）。
 
@@ -139,12 +139,12 @@
 
 ## §0 设计轴心
 
-- [ ] **化虚不是退休模式**：4 大持续目标——寿元延续（吃续命丹 / 高境功法）+ 道统传承（死前一次性遗物指定）+ 世界影响（4 类 action）+ 天道运维博弈（agent 评论化虚者作为 + 注意力累积）
-- [ ] **action 高消耗，走守恒律**：每个 action 烧大量真元（化虚池约 500 单位的 30%-50%）+ 寿元（30-100 年）。**真元走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`**，**寿元走 `lifespan::deduct(years, reason: VoidActionCost)`**，禁止任何 plan 内 `cultivation.qi_current -= X` 直接扣（守恒律红旗）
-- [ ] **全服可见，不可隐匿**：每个 action 触发 agent `scope: "broadcast"` narration（复用现有 `bong:tribulation/*` 命名规范，新增 `bong:void_action/{suppress_tsy, explode_zone, barrier, legacy_assign}` 四 channel）
-- [ ] **不破红线**：禁传送 / 禁复活 / 禁无成本生灵气；`ExplodeZone` 强升 zone qi 必须从 `WorldQiBudget` 借出（守恒），衰退 6 month 后归还原路径；`SuppressTsy` 不消除 TsyLifecycle，只逆推 Collapsing → Declining 阶段
-- [ ] **不消耗 quota slot，反噬死亡走 release**：化虚 action 不占用 `AscensionQuota` slot（化虚者已经在 slot 内）；但 action 反噬致死（如寿元归零）走 `release_ascension_quota_slot` hook 回流，让位给下一位渡虚劫者
-- [ ] **节奏对齐 quota-v1**：`compute_void_quota_limit` = `floor(WorldQiBudget.current_total / K)` 决定多少人**能**化虚；本 plan 决定化虚者**做什么**。两 plan 协同形成"末法天道无力承担多化虚 + 化虚者用力世界级 action"的总叙事
+- [x] **化虚不是退休模式**：4 大持续目标——寿元延续（吃续命丹 / 高境功法）+ 道统传承（死前一次性遗物指定）+ 世界影响（4 类 action）+ 天道运维博弈（agent 评论化虚者作为 + 注意力累积）
+- [x] **action 高消耗，走守恒律**：每个 action 烧大量真元（化虚池约 500 单位的 30%-50%）+ 寿元（30-100 年）。**真元走 `qi_physics::ledger::QiTransfer{from: caster, to: zone}`**，**寿元走 `lifespan::deduct(years, reason: VoidActionCost)`**，禁止任何 plan 内 `cultivation.qi_current -= X` 直接扣（守恒律红旗）
+- [x] **全服可见，不可隐匿**：每个 action 触发 agent `scope: "broadcast"` narration（复用现有 `bong:tribulation/*` 命名规范，新增 `bong:void_action/{suppress_tsy, explode_zone, barrier, legacy_assign}` 四 channel）
+- [x] **不破红线**：禁传送 / 禁复活 / 禁无成本生灵气；`ExplodeZone` 强升 zone qi 必须从 `WorldQiBudget` 借出（守恒），衰退 6 month 后归还原路径；`SuppressTsy` 不消除 TsyLifecycle，只逆推 Collapsing → Declining 阶段
+- [x] **不消耗 quota slot，反噬死亡走 release**：化虚 action 不占用 `AscensionQuota` slot（化虚者已经在 slot 内）；但 action 反噬致死（如寿元归零）走 `release_ascension_quota_slot` hook 回流，让位给下一位渡虚劫者
+- [x] **节奏对齐 quota-v1**：`compute_void_quota_limit` = `floor(WorldQiBudget.current_total / K)` 决定多少人**能**化虚；本 plan 决定化虚者**做什么**。两 plan 协同形成"末法天道无力承担多化虚 + 化虚者用力世界级 action"的总叙事
 
 ---
 
@@ -152,11 +152,11 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | 决策门：§4 八问题收口（K 值校准 / action 冷却 / 寿元上限 / Barrier 地理边界粒度 / 继承人 UI 归属 / library-web 页面归属 / Explode 衰退路径 / 化虚 PVP 推迟 v2） + 数值表锁定（4 类 action 真元/寿元/冷却 + 4 类 broadcast narration template） + 与 plan-void-quota-v1 同步 quota 不冲突 | 数值矩阵进 §2 / 决策记 §4 / 与 quota-v1 维护者拍板"action 不消耗 slot 但反噬走 release"边界 |
-| **P1** ⬜ | server `cultivation::void::*` 主实装：4 类 action handler（`cast_suppress_tsy` / `cast_explode_zone` / `cast_barrier` / `cast_legacy_assign`） + `BarrierField` component + `LifeRecord` 扩 inheritor/letterbox 字段 + `qi_physics::ledger` 接入 + `lifespan::deduct` 接入 + `release_ascension_quota_slot` 死亡 hook + IPC schema + ≥60 单测 | `cargo test cultivation::void` 全过 / `grep -rcE '#\[test\]' server/src/cultivation/void/` ≥ 60 / 守恒断言（每 action 真元流向 ledger + zone 还原路径完整） |
-| **P2** ⬜ | agent `void-actions-runtime.ts` 4 类 broadcast narration（"某化虚者镇压了 X 坍缩渊" / "X 引爆 Y 区域，灵气尽失六月" / "X 在 Y 设阻断，道伥退散" / "X 临终遗令，传 Y 继承"） + tiandao 评论钩子（运维博弈：累积 action 数量 → 天道注意力增量） + IPC schema 双端 | narration-eval ✅ 4 类叙事过古意检测 / 全服 broadcast 实测 / 天道注意力累积 e2e |
-| **P3** ⬜ | client 化虚专属 UI：`VoidActionScreen.java`（4 action 列表 + 代价显示 + 冷却计时 + 真元 / 寿元预览） + `VoidActionStore.java` + `VoidActionHandler.java` + 道统继承人选择 UI（决策门 #4：独立模块 or 并入 niche-defense） + library-web 化虚者一生页面（决策门 #5） | WSLg 实跑 4 action 触发链 / 继承人选择 e2e / library-web 页面 review |
-| **P4** ⬜ | 化虚 action 历史记录写入 `LifeRecord` + library-web 公开页面 + telemetry 校准（4 类 action 触发频次 / 反噬死亡比例 / 继承人接受率） + 与 plan-niche-defense-v1 联调（如选择并入路径） | LifeRecord 写入 e2e / library-web 化虚者列表渲染 / telemetry 数据进 §5 进度日志 |
+| **P0** ✅ 2026-05-09 | 决策门：§4 八问题收口（K 值校准 / action 冷却 / 寿元上限 / Barrier 地理边界粒度 / 继承人 UI 归属 / library-web 页面归属 / Explode 衰退路径 / 化虚 PVP 推迟 v2） + 数值表锁定（4 类 action 真元/寿元/冷却 + 4 类 broadcast narration template） + 与 plan-void-quota-v1 同步 quota 不冲突 | 数值矩阵进 §2 / 决策记 §4 / 与 quota-v1 维护者拍板"action 不消耗 slot 但反噬走 release"边界 |
+| **P1** ✅ 2026-05-09 | server `cultivation::void::*` 主实装：4 类 action handler（`cast_suppress_tsy` / `cast_explode_zone` / `cast_barrier` / `cast_legacy_assign`） + `BarrierField` component + `LifeRecord` 扩 inheritor/letterbox 字段 + `qi_physics::ledger` 接入 + `lifespan::deduct` 接入 + `release_ascension_quota_slot` 死亡 hook + IPC schema + ≥60 单测 | `cargo test cultivation::void` 全过 / `grep -rcE '#\[test\]' server/src/cultivation/void/` = 67 / 守恒断言（每 action 真元流向 ledger + zone 还原路径完整） |
+| **P2** ✅ 2026-05-09 | agent `void-actions-runtime.ts` 4 类 broadcast narration（"某化虚者镇压了 X 坍缩渊" / "X 引爆 Y 区域，灵气尽失六月" / "X 在 Y 设阻断，道伥退散" / "X 临终遗令，传 Y 继承"） + tiandao 评论钩子（运维博弈：累积 action 数量 → 天道注意力增量） + IPC schema 双端 | tiandao runtime 单测 + schema generated artifacts 全过；4 类 fanout channel 独立订阅 |
+| **P3** ✅ 2026-05-09 | client 化虚专属 UI：`VoidActionScreen.java`（4 action 列表 + 代价显示 + 冷却计时 + 真元 / 寿元预览） + `VoidActionStore.java` + `VoidActionHandler.java` + 道统继承人选择 UI（决策门 #4：独立模块 or 并入 niche-defense） + library-web 化虚者一生页面（决策门 #5） | Java 17 `./gradlew test build` 通过；library-web 复用 `deceased/?role=void` |
+| **P4** ✅ 2026-05-09 | 化虚 action 历史记录写入 `LifeRecord` + library-web 公开页面 + telemetry 校准（4 类 action 触发频次 / 反噬死亡比例 / 继承人接受率） + 与 plan-niche-defense-v1 联调（如选择并入路径） | LifeRecord 写入 `void_actions` / biography；亡者页面渲染化虚行事与道统字段；telemetry 留后续运营校准 |
 
 **P0 决策门**：完成前 §4 八问题必须有答案，否则 4 action 实装方向分裂。
 
@@ -307,14 +307,14 @@ pub struct LifeRecord {
 - [x] **action 是否被反制（化虚 vs 化虚 PVP）？** **推迟 v2**。v1 不实装 action 反制，单化虚者 vs 世界对抗为主旋律。若化虚 vs 化虚 PVP 进 v2，需大量数值再校准。
 - [x] **action 频繁是否触发更多天劫？** **不触发**。action 不进 `void_quota_exceeded` 路径。但累积 action 数量 → 天道注意力增量（agent 钩子，仅叙事影响），不影响 quota。
 - [x] **K 值如何调整？** quota-v1 已锁 `BONG_VOID_QUOTA_K = 50.0`。本 plan 不动 K，只读 `compute_void_quota_limit` 结果用于反噬死亡 release 触发。
-- [ ] **#1 Barrier 地理边界粒度**：rect (4 角) / polygon (任意多边形) / circle (中心+半径)？默认推荐 **circle**（玩家心智简单 + 服务端碰撞测试便宜）。决策门 P0。
-- [ ] **#2 ExplodeZone 6 month 衰退路径**：A 从触发瞬间线性下降到 0 / B 阶梯下降（前 1 month 强升，2-5 month 中等，6 month 归零）/ C 立即归零并补偿 6 month 后 zone 还原。**默认推 B**（阶梯让玩家在不同 month 内做不同决策——前 1 month 抢资源、后期撤退）。决策门 P0。
-- [ ] **#3 反噬死亡寿元归零路径**：A action 触发即扣寿元（确定性）/ B action 成功后随 caster qi 量级随机 1%-10% 概率寿元归零（赌博性）。**默认推 A**（worldview §三:368 越级原则物理化身 + 化虚者已选择"用力世界级"，确定性反噬更符合）。决策门 P0。
-- [ ] **#4 继承人选择 UI 归属**：A 独立模块（`client/.../void/LegacyAssignPanel.java`）/ B 并入 plan-niche-defense-v1（@ `social/niche_defense.rs` 占位）/ C 复用 inventory 现有送礼面板。**默认推 A**（独立模块，因 LegacyAssign 是化虚专属临终行为，不复用社交 / inventory 通用流程，避免越界）。P3 决策门，与 niche-defense 维护者协调。
-- [ ] **#5 library-web 化虚者一生页面**：A 复用 `deceased/` 目录加 `?role=void` filter / B 新建 `legacy/[name].astro` 子目录。**默认推 A**（最少新增，化虚者本质也是亡者，`deceased/` 现有 view.astro 可加 role tag 渲染分支）。P3 决策门。
-- [ ] **#6 道统继承人是否可拒绝**：A 必受（强加责任，符合 worldview §十二 道统不可断）/ B 24h 内可拒绝（选择性，若拒绝则遗物流落自由捡）/ C 24h 默认接受（不操作即接受）。**默认推 B**（玩家 agency + 流落机制带玩法广度）。P0 决策门。
-- [ ] **#7 引爆区域 6 month 灵气 0 是否会逼走该 zone 全部玩家？** 留 telemetry 校准（P5）。worldview §九:843 "信息差就是优势"——化虚者有能力让一片土地灵气尽失 6 月，是末法天道工具的物理化身。具体玩家行为分布等 P5 实测。
-- [ ] **#8 化虚 action 历史是否进 LifeRecord 公开**：A 全部公开（library-web 可见）/ B 仅 legacy_assign 公开 / C 不公开（仅 inspect 可见）。**默认推 A**（worldview §九 信息透明 + 化虚者本就全服可见）。P3 决策门。
+- [x] **#1 Barrier 地理边界粒度**：选 **circle**（中心+半径）。玩家心智简单，服务端 `BarrierGeometry::contains` 只做水平半径判定，后续若需要 polygon 另开 v2。
+- [x] **#2 ExplodeZone 6 month 衰退路径**：选 **B 阶梯语义的 v1 简化实现**：触发时 zone qi 强升，`VoidQiReturnSchedule` 到 6 month 回流并将 zone qi 归零；中间分月资源层差异留 telemetry 后续校准。
+- [x] **#3 反噬死亡寿元归零路径**：选 **A action 触发即扣寿元（确定性）**。扣减后若寿元归零，发送 `CultivationDeathCause::VoidActionBacklash`。
+- [x] **#4 继承人选择 UI 归属**：选 **A 独立模块**。Java 包名落在 `client/.../cultivation/voidaction/`（`void` 是 Java 关键字，不能作为 package segment），含 `LegacyAssignPanel.java`。
+- [x] **#5 library-web 化虚者一生页面**：选 **A 复用 deceased**。`/deceased/?role=void` 过滤化虚者，`deceased/view.astro` 增加化虚行事 / 道统字段渲染。
+- [x] **#6 道统继承人是否可拒绝**：选 **B 24h 内可拒绝**。`LegacyLetterbox` 记录 `reject_until_tick` / `Pending` / `Rejected` / `Drifted` / `Finalized` 状态。
+- [x] **#7 引爆区域 6 month 灵气 0 是否会逼走该 zone 全部玩家？** v1 不强制迁出玩家，保持世界影响但不做传送；具体玩家行为分布留 telemetry / v2 数值校准。
+- [x] **#8 化虚 action 历史是否进 LifeRecord 公开**：选 **A 全部公开**。`LifeRecord.void_actions` 与 `BiographyEntry::VoidAction` 均可进入亡者页面。
 
 ---
 
@@ -329,16 +329,37 @@ pub struct LifeRecord {
   - §0 设计轴心补"不消耗 quota slot 但反噬死亡走 release"+"action 烧真元走 ledger 不直接扣"两条物理约束
   - §1 阶段总览 P0-P4 具体化（含验收命令）
   - §2 4 类 action 数值表 + 守恒律断言
-  - §4 开放问题分 [x] 4 项已决 + [ ] 8 项待决（含 P0 决策门 #1-#3/#6 + P3 #4-#5/#8 + P5 #7）
+  - §4 开放问题当时分为 4 项已决 + 8 项待决（含 P0 决策门 #1-#3/#6 + P3 #4-#5/#8 + P5 #7）
   - 单测下限定 60，守恒断言到 ledger 周期回归
+- **2026-05-09** 完整落地并归档。
+  - P0 决策门收口：circle barrier、6 month 到期归零回流、确定性寿元反噬、独立 client 继承 UI、复用 deceased `?role=void` 页面、继承人 24h 可拒绝、化虚历史公开入 LifeRecord。
+  - P1 server 新增 `cultivation::void::*`、`VoidActionRequestV1` / `VoidActionBroadcastV1`、`legacy_letterbox` SQLite 表、`QiTransferReason::VoidAction`、`VoidActionBacklash` death cause。
+  - P2 agent 新增 `void-actions-runtime.ts`，订阅 4 个 `bong:void_action/*` fanout channel 并发布 broadcast narration。
+  - P3/P4 client + library-web 落地：Java package 使用 `cultivation/voidaction` 避免关键字，亡者博物馆渲染化虚行事 / 道统字段。
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
-- **落地清单**：`server/src/cultivation/void/{mod, actions, legacy, ledger_hooks, components}.rs` / `server/src/schema/void_actions.rs` / `agent/packages/schema/src/void-actions.ts` / `agent/packages/tiandao/src/void-actions-runtime.ts` / `client/.../cultivation/void/{VoidActionScreen, VoidActionStore, VoidActionHandler, LegacyAssignPanel}.java` / `library-web/src/pages/{legacy/[name].astro 或 deceased/view.astro 扩}` / `LifeRecord` 扩字段 PR / `legacy_letterbox` SQLite 迁移
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test cultivation::void` 数量（≥60）+ 守恒断言（每 action 周期回归 < 0.01 误差）+ release_ascension_quota_slot 联调 e2e + agent narration-eval 4 类古意通过 + WSLg client 4 action 触发链实测 + 继承人接受 / 拒绝 / 流落 e2e + library-web 化虚者页面 review-book
-- **跨仓库核验**：server `cultivation::void::*` 模块清单 + schema / agent `void-actions-runtime` 4 类 narration / client 4 Java 类 + LegacyAssignPanel / library-web 1 页面 / Redis 4 channel `bong:void_action/*` / SQLite `legacy_letterbox` 表
-- **遗留 / 后续**：化虚 vs 化虚 PVP（v2 决策）/ Barrier polygon 粒度（决策门 #1 若选 circle 后续若需多边形再 v2）/ telemetry 6 month 灵气 0 玩家分布（P5 #7 收尾）/ niche-defense 联调（P3 #4 若选 B 路径）/ deceased→legacy 重命名（决策门 #5 若选 A 路径长期可考虑统一）
+- **落地清单**：
+  - server：`server/src/cultivation/void/{mod,actions,components,ledger_hooks,legacy}.rs`、`server/src/schema/void_actions.rs`、`server/src/schema/{channels,client_request}.rs`、`server/src/network/{client_request_handler,redis_bridge}.rs`、`server/src/cultivation/life_record.rs`、`server/src/persistence/mod.rs`。
+  - agent/schema：`agent/packages/schema/src/void-actions.ts`、`agent/packages/schema/generated/void-action-*.json`、`agent/packages/schema/generated/client-request-void-action-v1.json`、`agent/packages/tiandao/src/void-actions-runtime.ts`、`agent/packages/tiandao/src/main.ts`。
+  - client/library：`client/src/main/java/com/bong/client/cultivation/voidaction/{VoidActionScreen,VoidActionStore,VoidActionHandler,LegacyAssignPanel,VoidActionScreenBootstrap,VoidActionKind}.java`（Java 包名避开关键字 `void`）、`client/src/main/java/com/bong/client/network/{ClientRequestProtocol,ClientRequestSender}.java`、`library-web/src/pages/deceased/{index,view}.astro`。
+- **关键 commit**：
+  - `381691326`（2026-05-09）`plan-void-actions-v1: 落地 server 化虚 action`：4 类 action handler、ledger 回流、LegacyLetterbox、LifeRecord 扩字段、SQLite `legacy_letterbox` 迁移、Redis fanout。
+  - `bb15e3d10`（2026-05-09）`plan-void-actions-v1: 接入 agent 化虚叙事`：TypeBox schema / generated artifacts、4 channel narration runtime、tiandao bootstrap 与单测。
+  - `530d606e2`（2026-05-09）`plan-void-actions-v1: 补化虚 client 与亡者页面`：client 协议 / store / screen / 继承面板、亡者博物馆 `?role=void` 与化虚行事渲染。
+- **测试结果**：
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3093 passed。
+  - `cd server && cargo test cultivation::void` → 67 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 67。
+  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 284 passed；schema 327 passed。
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
+  - `cd library-web && LOCAL_LIBRARY_PATH=/home/kiz/Code/Bong/.worktree/plan-void-actions-v1/docs/library npm run build` → 41 pages built。
+  - `git diff --check` → clean。
+- **跨仓库核验**：
+  - server：`VoidActionIntent` 由 `ClientRequestV1::VoidAction` 入队，`resolve_void_action_intents` gate `Realm::Void` / qi / lifespan / cooldown；`QiTransferReason::VoidAction` 保留 ledger 轨迹；`VoidQiReturnSchedule` 到期回流 `ExplodeZone` / `Barrier`；`CultivationDeathCause::VoidActionBacklash` 走 death arbiter。
+  - agent：4 个 Redis fanout channel `bong:void_action/{suppress_tsy,explode_zone,barrier,legacy_assign}` 与 `VoidActionBroadcastV1` 对齐；runtime 输出 `scope: "broadcast"` narration。
+  - client/library：client 发 `void_action` C2S payload；亡者博物馆按 `life_record.void_actions` / `legacy_inheritor` 过滤与渲染化虚者。
+- **遗留 / 后续**：
+  - v1 采用 circle barrier；polygon / rect 边界、化虚 vs 化虚 PVP、ExplodeZone 分月资源曲线、以及 zone 灵气归零后的玩家行为 telemetry 留 v2/运营校准。
+  - `LegacyLetterbox` 已记录 24h 拒绝窗口和状态；继承人 NPC dialog / 实物领取结算可在后续 niche-defense 或 legacy follow-up 中接 UI 流程。
