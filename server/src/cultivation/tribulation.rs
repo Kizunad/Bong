@@ -44,8 +44,8 @@ use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm}
 use super::meridian::severed::{MeridianSeveredEvent, SeveredSource};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
-    complete_tribulation_ascension, delete_active_tribulation, load_ascension_quota,
-    persist_active_tribulation, ActiveTribulationRecord, PersistenceSettings,
+    complete_tribulation_ascension, delete_active_tribulation, load_active_tribulation_count,
+    load_ascension_quota, persist_active_tribulation, ActiveTribulationRecord, PersistenceSettings,
 };
 
 pub const DUXU_OMEN_TICKS: u64 = 60 * 20;
@@ -428,15 +428,18 @@ pub fn start_tribulation_system(
     )>,
     mut commands: Commands,
     positions: Query<&Position>,
-    active_tribulations: Query<&TribulationState>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let mut accepted_this_tick = HashSet::new();
-    let active_du_xu_slots = active_tribulations
-        .iter()
-        .filter(|state| state.kind == TribulationKind::DuXu && !state.failed)
-        .count()
-        .min(u32::MAX as usize) as u32;
+    let active_du_xu_slots = match load_active_tribulation_count(&settings) {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::error!(
+                "[bong][cultivation] failed to load active tribulation count before start: {error}"
+            );
+            return;
+        }
+    };
     let mut reserved_occupied_slots = None;
     for ev in events.read() {
         if let Ok((c, meridians, lifecycle, username, active, current_dimension)) =
@@ -471,16 +474,17 @@ pub fn start_tribulation_system(
             let occupied_slots = match reserved_occupied_slots {
                 Some(slots) => slots,
                 None => {
-                    let slots = load_ascension_quota(&settings)
-                        .map(|quota| quota.occupied_slots)
-                        .unwrap_or_else(|error| {
-                            tracing::warn!(
+                    let persisted_occupied = match load_ascension_quota(&settings) {
+                        Ok(quota) => quota.occupied_slots,
+                        Err(error) => {
+                            tracing::error!(
                                 "[bong][cultivation] failed to load ascension quota before tribulation start for {:?}: {error}",
                                 ev.entity,
                             );
-                            0
-                        })
-                        .saturating_add(active_du_xu_slots);
+                            continue;
+                        }
+                    };
+                    let slots = persisted_occupied.saturating_add(active_du_xu_slots);
                     reserved_occupied_slots = Some(slots);
                     slots
                 }
@@ -1247,24 +1251,27 @@ pub fn tribulation_wave_system(
             }
             state.wave_current = state.wave_current.max(ev.wave);
             if state.wave_current >= state.waves_total {
-                // 渡劫成功
+                // 渡劫成功。先落库占用名额，再修改 ECS；否则 SQLite 失败会制造未持久化的化虚者。
+                let quota = match complete_tribulation_ascension(
+                    &settings,
+                    lifecycle.character_id.as_str(),
+                ) {
+                    Ok(quota) => quota,
+                    Err(error) => {
+                        tracing::error!(
+                                "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
+                                ev.entity,
+                            );
+                        continue;
+                    }
+                };
+                quota_occupied.send(AscensionQuotaOccupied {
+                    occupied_slots: quota.occupied_slots,
+                });
                 c.realm = Realm::Void;
                 c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
                 if let Some(mut lifespan) = lifespan {
                     lifespan.apply_cap(LifespanCapTable::VOID);
-                }
-                match complete_tribulation_ascension(&settings, lifecycle.character_id.as_str()) {
-                    Ok(quota) => {
-                        quota_occupied.send(AscensionQuotaOccupied {
-                            occupied_slots: quota.occupied_slots,
-                        });
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
-                            ev.entity,
-                        );
-                    }
                 }
                 // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
                 let new_cap = skill_cap_for_realm(Realm::Void);
@@ -1974,6 +1981,20 @@ mod tests {
         )
     }
 
+    fn unbootstrapped_persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
+        let root = unique_temp_dir(test_name);
+        let db_path = root.join("data").join("bong.db");
+        let deceased_dir = root.join("library-web").join("public").join("deceased");
+        (
+            PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                format!("tribulation-unbootstrapped-{test_name}"),
+            ),
+            root,
+        )
+    }
+
     fn all_meridians_open() -> MeridianSystem {
         let mut meridians = MeridianSystem::default();
         for (idx, id) in MeridianId::REGULAR
@@ -2373,6 +2394,146 @@ mod tests {
         assert_eq!(
             settled_events[0].result.reason.as_deref(),
             Some(VOID_QUOTA_EXCEEDED_REASON)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn start_tribulation_system_fails_closed_when_quota_store_unreadable() {
+        let mut app = App::new();
+        let (settings, root) =
+            unbootstrapped_persistence_settings("start-tribulation-quota-read-failure");
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, start_tribulation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Position::new([12.0, 66.0, -8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity,
+            waves_total: 3,
+            started_tick: 100,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "quota store read failure must not start or reserve an in-memory tribulation"
+        );
+        assert_eq!(
+            app.world().resource::<Events<TribulationAnnounce>>().len(),
+            0
+        );
+        assert_eq!(
+            app.world().resource::<Events<TribulationSettled>>().len(),
+            0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
+        );
+        assert_eq!(app.world().resource::<Events<VfxEventRequest>>().len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tribulation_wave_system_aborts_ascension_when_quota_write_fails() {
+        let mut app = App::new();
+        let (settings, root) =
+            unbootstrapped_persistence_settings("tribulation-ascension-quota-write-failure");
+        app.insert_resource(settings);
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_systems(Update, tribulation_wave_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                LifespanComponent::new(LifespanCapTable::SPIRIT),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(3),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 3,
+                    started_tick: 100,
+                    phase_started_tick: 200,
+                    next_wave_tick: 300,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(TribulationWaveCleared { entity, wave: 3 });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.realm, Realm::Spirit);
+        assert_eq!(cultivation.qi_max, 210.0);
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("lifespan should remain attached");
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::SPIRIT);
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("failed quota write should keep tribulation state for operator recovery");
+        assert_ne!(state.phase, TribulationPhase::Settle);
+        assert_eq!(
+            app.world()
+                .resource::<Events<AscensionQuotaOccupied>>()
+                .len(),
+            0
+        );
+        assert_eq!(app.world().resource::<Events<SkillCapChanged>>().len(), 0);
+        assert_eq!(
+            app.world().resource::<Events<TribulationSettled>>().len(),
+            0
         );
 
         let _ = fs::remove_dir_all(root);

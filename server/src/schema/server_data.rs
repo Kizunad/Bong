@@ -504,7 +504,7 @@ pub struct AscensionQuotaV1 {
 
 impl AscensionQuotaV1 {
     pub fn new(occupied_slots: u32, quota_limit: u32) -> Self {
-        Self::with_world_qi(occupied_slots, quota_limit, 0.0, 0.0, "unknown")
+        Self::with_world_qi(occupied_slots, quota_limit, 0.0, 0.0, "")
     }
 
     pub fn with_world_qi(

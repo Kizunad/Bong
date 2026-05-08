@@ -2546,6 +2546,13 @@ mod tests {
         assert_eq!(lifecycle.state, LifecycleState::Terminated);
         assert_eq!(lifecycle.death_count, 1);
         assert_eq!(lifecycle.last_death_tick, Some(300));
+        let life_record = app.world().entity(entity).get::<LifeRecord>().unwrap();
+        assert!(matches!(
+            life_record.biography.last(),
+            Some(BiographyEntry::Terminated { cause, tick })
+                if cause == crate::cultivation::tribulation::VOID_QUOTA_EXCEEDED_REASON
+                    && *tick == 300
+        ));
         let lifespan = app
             .world()
             .entity(entity)

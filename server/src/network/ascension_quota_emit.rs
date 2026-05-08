@@ -6,9 +6,17 @@ use crate::cultivation::tribulation::{
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::persistence::{load_ascension_quota, PersistenceSettings};
+use crate::persistence::{
+    load_active_tribulation_count, load_ascension_quota, PersistenceSettings,
+};
 use crate::qi_physics::WorldQiBudget;
 use crate::schema::server_data::{AscensionQuotaV1, ServerDataPayloadV1, ServerDataV1};
+
+#[derive(Default)]
+pub(crate) struct AscensionQuotaEmitState {
+    last_client_count: Option<usize>,
+    last_payload: Option<AscensionQuotaV1>,
+}
 
 pub fn emit_ascension_quota_payloads(
     settings: Res<PersistenceSettings>,
@@ -17,10 +25,10 @@ pub fn emit_ascension_quota_payloads(
     mut opened: EventReader<AscensionQuotaOpened>,
     mut occupied: EventReader<AscensionQuotaOccupied>,
     mut clients: Query<&mut Client, With<Client>>,
-    mut last_client_count: Local<Option<usize>>,
+    mut emit_state: Local<AscensionQuotaEmitState>,
 ) {
     let joined_count = clients.iter_mut().count();
-    let count_changed = last_client_count.replace(joined_count) != Some(joined_count);
+    let count_changed = emit_state.last_client_count.replace(joined_count) != Some(joined_count);
     let mut should_broadcast = false;
     let mut latest_occupied_slots = None;
 
@@ -33,16 +41,18 @@ pub fn emit_ascension_quota_payloads(
         latest_occupied_slots = Some(ev.occupied_slots);
     }
 
-    if !should_broadcast && !count_changed {
-        return;
-    }
-
     if joined_count == 0 {
         return;
     }
 
     let data =
         build_ascension_quota_payload(&settings, &budget, &void_quota, latest_occupied_slots);
+    let payload_changed = emit_state.last_payload.as_ref() != Some(&data);
+    if !should_broadcast && !count_changed && !payload_changed {
+        return;
+    }
+    emit_state.last_payload = Some(data.clone());
+
     for mut client in &mut clients {
         send_ascension_quota_to_client(&mut client, data.clone());
     }
@@ -62,7 +72,15 @@ fn build_ascension_quota_payload(
                 0
             })
     });
-    let quota = check_void_quota(occupied_slots, budget, void_quota);
+    let active_du_xu_slots = load_active_tribulation_count(settings).unwrap_or_else(|error| {
+        tracing::warn!("[bong][network] failed to load active tribulation count: {error}");
+        0
+    });
+    let quota = check_void_quota(
+        occupied_slots.saturating_add(active_du_xu_slots),
+        budget,
+        void_quota,
+    );
     AscensionQuotaV1::with_world_qi(
         quota.occupied_slots,
         quota.quota_limit,
@@ -90,7 +108,10 @@ mod tests {
     use super::*;
     use crate::cultivation::tribulation::DEFAULT_VOID_QUOTA_K;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
-    use crate::persistence::{bootstrap_sqlite, complete_tribulation_ascension};
+    use crate::persistence::{
+        bootstrap_sqlite, complete_tribulation_ascension, persist_active_tribulation,
+        ActiveTribulationRecord,
+    };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Events, Update};
@@ -180,6 +201,83 @@ mod tests {
         assert_eq!(
             payloads[0],
             AscensionQuotaV1::with_world_qi(1, 2, 100.0, DEFAULT_VOID_QUOTA_K, VOID_QUOTA_BASIS)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_client_snapshot_counts_in_flight_tribulation_slots() {
+        let (settings, root) = persistence_settings("join-in-flight");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: "offline:Azure".to_string(),
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 100,
+            },
+        )
+        .expect("active tribulation should persist");
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(50.0));
+        app.insert_resource(VoidQuotaConfig::default());
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_systems(Update, emit_ascension_quota_payloads);
+        let mut helper = spawn_mock_client(&mut app, "Beryl");
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_ascension_quota_payloads(&mut helper);
+        assert_eq!(
+            payloads,
+            vec![AscensionQuotaV1::with_world_qi(
+                1,
+                1,
+                50.0,
+                DEFAULT_VOID_QUOTA_K,
+                VOID_QUOTA_BASIS
+            )]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn world_qi_budget_change_broadcasts_quota_refresh() {
+        let (settings, root) = persistence_settings("budget-refresh");
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_systems(Update, emit_ascension_quota_payloads);
+        let mut helper = spawn_mock_client(&mut app, "Azure");
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let _ = collect_ascension_quota_payloads(&mut helper);
+
+        app.world_mut()
+            .resource_mut::<WorldQiBudget>()
+            .current_total = 50.0;
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_ascension_quota_payloads(&mut helper);
+        assert_eq!(
+            payloads,
+            vec![AscensionQuotaV1::with_world_qi(
+                0,
+                1,
+                50.0,
+                DEFAULT_VOID_QUOTA_K,
+                VOID_QUOTA_BASIS
+            )]
         );
 
         let _ = std::fs::remove_dir_all(root);
