@@ -45,19 +45,17 @@ export type WeatherEventDataV1 = Static<typeof WeatherEventDataV1>;
 /**
  * plan §4.4 — Redis pub channel `bong:weather_event_update` 的事件 envelope。
  *
- * 三种事件 kind：
+ * 两种事件 kind：
  * - `started`：新事件触发（server 写完 ActiveWeather 后立即发）
  * - `expired`：事件自然过期（weather_apply_to_plot_system 清理时发）
- * - `cleared`：人为清除（dev cmd / event cancel；当前未使用，留扩展）
+ *
+ * 历史上曾设计 `cleared` 用于 dev cmd / event cancel 路径，但本 plan 范围内
+ * 无 producer，已删除以避免 wire 漂移。需要时由后续 plan 重新加入。
  */
 export const WeatherEventUpdateV1 = Type.Object(
   {
     v: Type.Literal(1),
-    kind: Type.Union([
-      Type.Literal("started"),
-      Type.Literal("expired"),
-      Type.Literal("cleared"),
-    ]),
+    kind: Type.Union([Type.Literal("started"), Type.Literal("expired")]),
     data: WeatherEventDataV1,
   },
   { additionalProperties: false },

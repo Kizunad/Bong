@@ -33,13 +33,16 @@ pub fn publish_weather_lifecycle_events(
             }
             WeatherLifecycleEvent::Expired {
                 event,
+                started_at_lingtian_tick,
                 expired_at_lingtian_tick,
             } => {
-                // expired 时 remaining_ticks=0；started_at 用 expired_at（信息丢失，保留语义可读性）
+                // expired 时 remaining_ticks=0；started_at 由 ActiveWeatherEntry plumb
+                // 过来，保持 wire payload `started_at <= expires_at` 不变量
+                // （消费方据此区分"自然过期"与"刚开始就 expire"）。
                 let data = WeatherEventDataV1::new(
                     DEFAULT_ZONE,
                     event,
-                    expired_at_lingtian_tick,
+                    started_at_lingtian_tick,
                     expired_at_lingtian_tick,
                     expired_at_lingtian_tick,
                 );
@@ -113,6 +116,7 @@ mod tests {
         let (mut app, rx) = build_app();
         app.world_mut().send_event(WeatherLifecycleEvent::Expired {
             event: WeatherEvent::Blizzard,
+            started_at_lingtian_tick: 800,
             expired_at_lingtian_tick: 2000,
         });
         app.update();
@@ -129,9 +133,48 @@ mod tests {
                     crate::schema::lingtian_weather::WeatherEventKindV1::Blizzard
                 );
                 assert_eq!(env.data.remaining_ticks, 0);
+                // started_at < expires_at 不变量保留（自然过期可与"刚开始就 expire"区分）
+                assert_eq!(env.data.started_at_lingtian_tick, 800);
+                assert_eq!(env.data.expires_at_lingtian_tick, 2000);
+                assert!(env.data.started_at_lingtian_tick < env.data.expires_at_lingtian_tick);
             }
             other => panic!("expected WeatherEventUpdate, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn started_then_expired_pair_preserves_started_at_invariant() {
+        // Started → Expired 配对：expired payload 应保留原 started_at_lingtian_tick
+        let (mut app, rx) = build_app();
+        app.world_mut().send_event(WeatherLifecycleEvent::Started {
+            event: WeatherEvent::Thunderstorm,
+            started_at_lingtian_tick: 1000,
+            expires_at_lingtian_tick: 1200,
+        });
+        app.world_mut().send_event(WeatherLifecycleEvent::Expired {
+            event: WeatherEvent::Thunderstorm,
+            started_at_lingtian_tick: 1000,
+            expired_at_lingtian_tick: 1200,
+        });
+        app.update();
+
+        let mut started_at = None;
+        let mut expired_started_at = None;
+        while let Ok(o) = rx.try_recv() {
+            if let RedisOutbound::WeatherEventUpdate(env) = o {
+                use crate::schema::lingtian_weather::WeatherEventUpdateKindV1;
+                match env.kind {
+                    WeatherEventUpdateKindV1::Started => {
+                        started_at = Some(env.data.started_at_lingtian_tick);
+                    }
+                    WeatherEventUpdateKindV1::Expired => {
+                        expired_started_at = Some(env.data.started_at_lingtian_tick);
+                    }
+                }
+            }
+        }
+        assert_eq!(started_at, Some(1000));
+        assert_eq!(expired_started_at, Some(1000));
     }
 
     #[test]
@@ -151,6 +194,7 @@ mod tests {
         });
         app.world_mut().send_event(WeatherLifecycleEvent::Expired {
             event: WeatherEvent::Thunderstorm,
+            started_at_lingtian_tick: 50,
             expired_at_lingtian_tick: 150,
         });
         app.update();

@@ -1414,8 +1414,8 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("WeatherEventUpdateV1 接受 started/expired/cleared 三种 kind", () => {
-    for (const kind of ["started", "expired", "cleared"]) {
+  it("WeatherEventUpdateV1 接受 started/expired 两种 kind", () => {
+    for (const kind of ["started", "expired"]) {
       const data = {
         v: 1,
         kind,
@@ -1433,20 +1433,22 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
     }
   });
 
-  it("WeatherEventUpdateV1 拒绝未知 kind", () => {
-    const data = {
-      v: 1,
-      kind: "unknown",
-      data: {
+  it("WeatherEventUpdateV1 拒绝未知 kind（含原 cleared 历史变体）", () => {
+    for (const kind of ["unknown", "cleared"]) {
+      const data = {
         v: 1,
-        zone_id: "default",
-        kind: "thunderstorm",
-        started_at_lingtian_tick: 0,
-        expires_at_lingtian_tick: 200,
-        remaining_ticks: 100,
-      },
-    };
-    const result = validate(WeatherEventUpdateV1, data);
-    expect(result.ok).toBe(false);
+        kind,
+        data: {
+          v: 1,
+          zone_id: "default",
+          kind: "thunderstorm",
+          started_at_lingtian_tick: 0,
+          expires_at_lingtian_tick: 200,
+          remaining_ticks: 100,
+        },
+      };
+      const result = validate(WeatherEventUpdateV1, data);
+      expect(result.ok).toBe(false);
+    }
   });
 });

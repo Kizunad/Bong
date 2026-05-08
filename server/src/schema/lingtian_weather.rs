@@ -77,12 +77,14 @@ impl WeatherEventDataV1 {
 }
 
 /// plan §4.4 — Redis pub envelope（`bong:weather_event_update`）。
+///
+/// 历史上曾设计 `Cleared` 用于 dev cmd / event cancel 路径，但本 plan 范围内
+/// 无 producer，已删除以避免 wire 漂移。需要时由后续 plan 重新加入。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WeatherEventUpdateKindV1 {
     Started,
     Expired,
-    Cleared,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -183,24 +185,31 @@ mod tests {
 
     #[test]
     fn weather_event_update_v1_loads_sample_from_agent_packages_schema() {
-        // 与 agent/packages/schema/samples/weather-event-update.sample.json 双端对拍
-        let raw = r#"{
-            "v": 1,
-            "kind": "started",
-            "data": {
-                "v": 1,
-                "zone_id": "default",
-                "kind": "ling_mist",
-                "started_at_lingtian_tick": 5760,
-                "expires_at_lingtian_tick": 5820,
-                "remaining_ticks": 60
-            }
-        }"#;
+        // 与 agent/packages/schema/samples/weather-event-update.sample.json 双端对拍。
+        // 用 include_str!() 读真实 sample 文件，TS 端改 sample 时 Rust 端测试也会同步红
+        // （避免内联拷贝产生的 silent drift）。
+        let raw =
+            include_str!("../../../agent/packages/schema/samples/weather-event-update.sample.json");
         let parsed: WeatherEventUpdateV1 =
             serde_json::from_str(raw).expect("sample 应当通过 Rust serde");
         assert_eq!(parsed.kind, WeatherEventUpdateKindV1::Started);
         assert_eq!(parsed.data.kind, WeatherEventKindV1::LingMist);
         assert_eq!(parsed.data.zone_id, "default");
         assert_eq!(parsed.data.remaining_ticks, 60);
+    }
+
+    #[test]
+    fn weather_event_data_v1_loads_sample_from_agent_packages_schema() {
+        // 与 agent/packages/schema/samples/weather-event-data.sample.json 双端对拍。
+        let raw =
+            include_str!("../../../agent/packages/schema/samples/weather-event-data.sample.json");
+        let parsed: WeatherEventDataV1 =
+            serde_json::from_str(raw).expect("sample 应当通过 Rust serde");
+        assert_eq!(parsed.v, 1);
+        assert_eq!(parsed.zone_id, "default");
+        assert_eq!(parsed.kind, WeatherEventKindV1::Thunderstorm);
+        assert_eq!(parsed.started_at_lingtian_tick, 1440);
+        assert_eq!(parsed.expires_at_lingtian_tick, 1620);
+        assert_eq!(parsed.remaining_ticks, 180);
     }
 }

@@ -3484,7 +3484,8 @@ mod tests {
         active_weather.insert(
             DEFAULT_ZONE,
             crate::lingtian::weather::WeatherEvent::HeavyHaze,
-            10_000, // 远期过期，本测期间不清
+            0,      // started_at
+            10_000, // expires_at（远期，本测期间不清）
         );
         app.insert_resource(active_weather);
 

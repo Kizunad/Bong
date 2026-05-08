@@ -392,14 +392,23 @@ public interface WeatherRenderer {
 | `3db22b955` | 2026-05-08 | feat(lingtian-weather): P2 — WeatherEvent 生成器 + ActiveWeather Resource + 系统注册 |
 | `8b11ac761` | 2026-05-08 | feat(lingtian-weather): P3 — schema 双端镜像 + Redis pub + Bevy lifecycle event |
 | `cbf5de578` | 2026-05-08 | feat(lingtian-weather): P4 — 阴霾↔密度阈值耦合 + tribulation/narrative hook |
+| `70c4a6c06` | 2026-05-08 | docs(plan-lingtian-weather-v1): finish evidence 并归档至 finished_plans/ |
+| _(review fix)_ | 2026-05-08 | review 反馈处理：删 Cleared 孤变体 + Expired plumb started_at + sample include_str! 实文件加载 + try_roll doc 改"first-hit short-circuit" + apply_to_plot doc 与 gate 对齐 |
+
+> review 处理细节见 PR #154 评论：claude 标 3 个 Material（#1+#2 plot 侧通路扩写遗留；
+> #3 删 Cleared 变体）+ 6 个 Minor。本 PR 修了 #3 / #5 / #6 / #7 / #8 / #9 + 在
+> 遗留段扩写 #1+#2 的全通路状态；#4（apply_system 重命名）属下次 PR 范围
+> （需要先把 plot 侧 weather 通路真正接通，否则名字仍不副实）。
 
 ### 测试结果
 
 | 命令 | 通过数 | 备注 |
 |---|---|---|
-| `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` | **2643 passed / 0 failed** | 全工程跑过；本 plan 新增 ~70 单测 / 集成测 |
+| `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` | **2654 passed / 0 failed** | 全工程跑过；本 plan 新增 ~75 单测 / 集成测（含 review fix 后追加 5 测） |
 | `cd agent && npm run build` | OK | typebox 编译通过 |
 | `cd agent/packages/schema && npm test` | **292 passed / 0 failed** | 含 9 个新 weather schema tests + 4 generated-artifacts gate |
+
+> 数字注：实施时（review 前）2643 → 2651（rebase 拉入 main 8 测）→ 2654（review fix 加 3 测：prune_returns_started_at + bridge started_then_expired_pair + sample_data 加载）
 
 §6 Test 饱和清单（plan 要求 ≥30 条）已超额：
 - §6 P0 单测 12 条 → 实装 ~37 条（13 season + 11 weather + 14 environment）
@@ -447,10 +456,23 @@ public interface WeatherRenderer {
 - **plan-lingtian-weather-v1 自身待补**（依赖外部 plan）：
   - **client 粒子 / 天空效果**：等 plan-jiezeq-v1 P5 落地"间接表现规范"后协作开发；
     本 plan 已暴露 schema / Redis 通道 / Bevy event，client 可直接消费
-  - **plot_qi_cap weather 实时修饰**：plan §3 要求雷暴 -0.2 / 灵雾 +0.2 临时修饰
-    plot_qi_cap，本 plan 未在 plot 上动态 mutate（plot.plot_qi_cap 是 till 时
-    snapshot）。落地需求：plot 加 base_plot_qi_cap + active_weather_delta_cache
-    字段或在使用站调用 effective_plot_qi_cap_with_weather 派生。**留 P4+ polish**
+  - **plot 侧 weather 通路实时接通**（claude review #1+#2，承认范围更大）：
+    `compute_plot_qi_cap` / `qi_decay_multiplier` / `blocks_growth_tick` /
+    `shelflife_decay_multiplier` 这四条 plot 侧消费路径都走 `env.active_weather`
+    字段，但 `weather_apply_to_plot_system` 当前仅做 expire 清理 / 兜底，**没**
+    遍历 plot 把 `Res<ActiveWeather>` 当前事件注入 `env.active_weather`。
+    生产代码下这些字段恒为 None，相当于 dead code（pressure 路径除外，那条直接
+    `Res<ActiveWeather>::current()` 接通，**真正生效**）。
+    落地需求：weather_apply_to_plot_system 扩成"遍历 zone 内所有 plot，按当前
+    ActiveWeather 写 plot.environment.active_weather"；同时 plot 加 environment
+    字段或在使用站派生 effective env。**留 P4+ polish**——本 plan 的 schema /
+    bridge / hook 都到位，下一个 PR 可以就这一项展开
+  - **plot.plot_qi_cap 跨年漂移**（claude review #2）：till 时 snapshot 一次的
+    设计与 plan-lingtian-v1 P1 一致；plan-lingtian-weather-v1 §6 P1 e2e
+    `growth_curve_full_year_cycle_diff` 名字暗示"同 plot 跨年生长曲线对照"，但
+    实装等价于"开垦时的相位决定终身 cap"。当前测试只锁定 `effective_natural_supply`
+    的季节差，不验证 plot growth 跨年差异。如果改成 live cap 需要同上 plot.environment
+    字段化 + recompute hook
 
 - **下游 plan 接入**（hook 已暴露，等下游 PR 消费）：
   - **plan-tribulation-v1**（finished）：消费 `is_stable_tribulation_window` 决定

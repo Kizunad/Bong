@@ -182,10 +182,14 @@ impl WeatherEvent {
 // ActiveWeather Resource + WeatherRng
 // ============================================================================
 
-/// plan §3 — 单个 zone 上当前 active 的天气事件 + 过期 tick。
+/// plan §3 — 单个 zone 上当前 active 的天气事件 + 起始 / 过期 tick。
+///
+/// `started_at_lingtian_tick` 在事件 expired 后由 `prune_expired` 一并返回，
+/// 让下游 bridge 能在 wire payload 上保留"started_at < expires_at"不变量。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActiveWeatherEntry {
     pub event: WeatherEvent,
+    pub started_at_lingtian_tick: u64,
     pub expires_at_lingtian_tick: u64,
 }
 
@@ -215,23 +219,26 @@ impl ActiveWeather {
         &mut self,
         zone: impl Into<String>,
         event: WeatherEvent,
+        started_at_lingtian_tick: u64,
         expires_at_lingtian_tick: u64,
     ) {
         self.by_zone.insert(
             zone.into(),
             ActiveWeatherEntry {
                 event,
+                started_at_lingtian_tick,
                 expires_at_lingtian_tick,
             },
         );
     }
 
-    /// 移除已过期事件，返回被移除的 (zone, event) 列表（供下游 narration / log 用）。
-    pub fn prune_expired(&mut self, now_lingtian_tick: u64) -> Vec<(String, WeatherEvent)> {
+    /// 移除已过期事件，返回被移除的 (zone, entry) 列表（供下游 narration /
+    /// bridge 在 wire payload 上保留 `started_at` 用）。
+    pub fn prune_expired(&mut self, now_lingtian_tick: u64) -> Vec<(String, ActiveWeatherEntry)> {
         let mut expired = Vec::new();
         self.by_zone.retain(|zone, e| {
             if e.expires_at_lingtian_tick <= now_lingtian_tick {
-                expired.push((zone.clone(), e.event));
+                expired.push((zone.clone(), *e));
                 false
             } else {
                 true
@@ -260,7 +267,11 @@ impl ActiveWeather {
 /// plan §3 / §4.4 — 天气事件生命周期 Bevy event（generator → redis bridge）。
 ///
 /// `Started`：generator 刚成功 roll 出一个新事件（active 已写入）。
-/// `Expired`：weather_apply_to_plot_system 检测到事件自然过期（active 已清除）。
+/// `Expired`：weather generator / apply system 检测到事件自然过期（active 已清除）。
+///
+/// `Expired` 同时携带 `started_at_lingtian_tick` 与 `expired_at_lingtian_tick`，
+/// 让 bridge 派生的 wire payload 能保持 `started_at <= expires_at` 不变量
+/// （消费方据此区分"自然过期"与"刚开始就 expire"，避免信息丢失）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Event)]
 pub enum WeatherLifecycleEvent {
     Started {
@@ -270,6 +281,7 @@ pub enum WeatherLifecycleEvent {
     },
     Expired {
         event: WeatherEvent,
+        started_at_lingtian_tick: u64,
         expired_at_lingtian_tick: u64,
     },
 }
@@ -339,10 +351,16 @@ pub fn is_xizhuan_phase(season: Season) -> bool {
 
 /// plan §3 — 在指定 zone 上"试 roll"一次天气事件；命中 → 写入 `active`。
 ///
-/// 同 zone 已有事件 → 跳过（不覆盖正在进行中的 weather）。否则按 §3 表概率
-/// 在 5 个 valid 事件中按"概率独立检查（不归一化）"逐个测试，命中第一个就停。
+/// 同 zone 已有事件 → 跳过（不覆盖正在进行中的 weather）。否则按
+/// `WeatherEvent::all()` 的固定枚举顺序（雷暴 / 旱风 / 风雪 / 阴霾 / 灵雾）
+/// **first-hit short-circuit**：每个事件单独抽 RNG `next_f32()`，第一个
+/// `< daily_probability` 的命中即返回，后续不再 roll。
 ///
-/// 该函数与 system 解耦，方便单测。
+/// 这意味着排在前面的事件实测概率 ≈ plan §3 数表，排在后面（如 LingMist）的
+/// 实测概率略低于 plan 数（必须前 4 个全 miss 才能轮到）。如果未来需要严格
+/// uniform sampling，可改成累加 weight → 单次 unit float 二分。
+///
+/// 该函数与 system 解耦，方便单测注入 RNG / 季节。
 pub fn try_roll_weather_for_zone(
     zone: &str,
     season: Season,
@@ -362,7 +380,7 @@ pub fn try_roll_weather_for_zone(
             let (min_dur, max_dur) = ev.duration_range_lingtian_ticks();
             let dur = rng.next_u64_range(min_dur, max_dur);
             let expires_at = now_lingtian_tick.saturating_add(dur);
-            active.insert(zone.to_string(), ev, expires_at);
+            active.insert(zone.to_string(), ev, now_lingtian_tick, expires_at);
             return Some(ev);
         }
     }
@@ -394,9 +412,10 @@ pub fn weather_generator_system(
     active.set_last_rolled_day(current_day);
 
     // 先清过期事件（emit Expired），再 roll 新事件。
-    for (_zone, event) in active.prune_expired(now) {
+    for (_zone, entry) in active.prune_expired(now) {
         lifecycle.send(WeatherLifecycleEvent::Expired {
-            event,
+            event: entry.event,
+            started_at_lingtian_tick: entry.started_at_lingtian_tick,
             expired_at_lingtian_tick: now,
         });
     }
@@ -419,11 +438,20 @@ pub fn weather_generator_system(
     }
 }
 
-/// plan §3 / §4.1 — 每 lingtian-tick 跑一次：清过期事件 + 发广播 hook。
+/// plan §3 / §4.1 — game-day 边界跑一次：兜底 expire 清理（generator 已在
+/// 同 day 边界先 prune 一次，此处通常是 no-op，作为 generator 跳过本 day
+/// roll 时的二次防御）。
 ///
-/// 当前阶段（P2）只做 expire 清理；P4 在此处接 plot_qi_cap weather 修饰
-/// （遍历 zone 内所有 plot 应用 `weather.plot_qi_cap_delta()` 临时改 cap，
-/// 事件结束时回退）。
+/// gate 与 weather_generator_system 同节拍（`accumulator.raw() == 0` 即 day
+/// boundary），不在每 lingtian-tick 跑——避免 prune 重复扫描 + EventWriter
+/// 死分支。
+///
+/// **未来 polish（P4+ 范围外）**：把"plot.environment.active_weather 跟随
+/// `Res<ActiveWeather>` 的当前事件"合并到此 system，让
+/// `compute_plot_qi_cap` / `qi_decay_multiplier` / `blocks_growth_tick` /
+/// `shelflife_decay_multiplier` 真正在生产路径生效（当前仅 pressure 路径
+/// 直接 `Res<ActiveWeather>::current()` 接通；plot 端 env.active_weather
+/// 仍由测试构造，未由 system 写入）。
 pub fn weather_apply_to_plot_system(
     accumulator: Res<LingtianTickAccumulator>,
     clock: Res<LingtianClock>,
@@ -434,9 +462,10 @@ pub fn weather_apply_to_plot_system(
         return;
     }
     let now = clock.lingtian_tick;
-    for (_zone, event) in active.prune_expired(now) {
+    for (_zone, entry) in active.prune_expired(now) {
         lifecycle.send(WeatherLifecycleEvent::Expired {
-            event,
+            event: entry.event,
+            started_at_lingtian_tick: entry.started_at_lingtian_tick,
             expired_at_lingtian_tick: now,
         });
     }
@@ -684,7 +713,7 @@ mod tests {
     #[test]
     fn active_weather_insert_and_current_round_trip() {
         let mut active = ActiveWeather::new();
-        active.insert("zone_a", WeatherEvent::Thunderstorm, 200);
+        active.insert("zone_a", WeatherEvent::Thunderstorm, 0, 200);
         assert_eq!(active.current("zone_a"), Some(WeatherEvent::Thunderstorm));
         assert_eq!(active.current("zone_b"), None);
     }
@@ -693,9 +722,10 @@ mod tests {
     fn active_weather_event_remaining_ticks_decrements() {
         // event_remaining_ticks 直观语义：expires_at - now_tick 单调下降
         let mut active = ActiveWeather::new();
-        active.insert("z", WeatherEvent::Thunderstorm, 1000);
+        active.insert("z", WeatherEvent::Thunderstorm, 0, 1000);
         let entry = active.current_entry("z").expect("just inserted");
         assert_eq!(entry.expires_at_lingtian_tick, 1000);
+        assert_eq!(entry.started_at_lingtian_tick, 0);
         // remaining at tick=100 → 900；tick=500 → 500；tick=999 → 1
         for now in [100u64, 500, 999] {
             let remaining = entry.expires_at_lingtian_tick.saturating_sub(now);
@@ -706,12 +736,13 @@ mod tests {
     #[test]
     fn active_weather_event_expires_clears_active_weather() {
         let mut active = ActiveWeather::new();
-        active.insert("z", WeatherEvent::Thunderstorm, 100);
+        active.insert("z", WeatherEvent::Thunderstorm, 0, 100);
         assert!(active.current("z").is_some());
         // tick 100 → expires_at <= now → 清除
         let removed = active.prune_expired(100);
         assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].1, WeatherEvent::Thunderstorm);
+        assert_eq!(removed[0].1.event, WeatherEvent::Thunderstorm);
+        assert_eq!(removed[0].1.started_at_lingtian_tick, 0);
         assert!(active.current("z").is_none());
         // 二次 prune 应当无变化
         let removed2 = active.prune_expired(200);
@@ -721,12 +752,24 @@ mod tests {
     #[test]
     fn active_weather_prune_keeps_unexpired() {
         let mut active = ActiveWeather::new();
-        active.insert("z1", WeatherEvent::Thunderstorm, 200);
-        active.insert("z2", WeatherEvent::LingMist, 50);
+        active.insert("z1", WeatherEvent::Thunderstorm, 0, 200);
+        active.insert("z2", WeatherEvent::LingMist, 0, 50);
         active.prune_expired(100);
         // z2 expired (50 <= 100)，z1 still alive (200 > 100)
         assert_eq!(active.current("z1"), Some(WeatherEvent::Thunderstorm));
         assert_eq!(active.current("z2"), None);
+    }
+
+    #[test]
+    fn active_weather_prune_returns_started_at_for_bridge() {
+        // bridge 用 started_at 在 wire payload 上保留 `started_at < expires_at` 不变量
+        let mut active = ActiveWeather::new();
+        active.insert("z", WeatherEvent::Thunderstorm, 1000, 1200);
+        let removed = active.prune_expired(1200);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].1.event, WeatherEvent::Thunderstorm);
+        assert_eq!(removed[0].1.started_at_lingtian_tick, 1000);
+        assert_eq!(removed[0].1.expires_at_lingtian_tick, 1200);
     }
 
     // -------- WeatherRng --------
@@ -772,7 +815,7 @@ mod tests {
     #[test]
     fn try_roll_skips_when_zone_already_has_event() {
         let mut active = ActiveWeather::new();
-        active.insert("z", WeatherEvent::Thunderstorm, 500);
+        active.insert("z", WeatherEvent::Thunderstorm, 0, 500);
         let mut rng = WeatherRng::new(1);
         let res = try_roll_weather_for_zone("z", Season::Summer, 0, &mut active, &mut rng);
         assert_eq!(res, None, "已有 active 事件时不应再 roll");
