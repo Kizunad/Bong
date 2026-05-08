@@ -59,8 +59,15 @@ public class ExtractProgressHudPlannerTest {
 
         List<HudRenderCommand> commands = ExtractProgressHudPlanner.buildCommands(state, FIXED_WIDTH, 960, 540, 1000L);
 
-        assertTrue(commands.stream().anyMatch(HudRenderCommand::isScreenTint));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().contains("坍缩倒计时")));
+        // plan-tsy-raceout-v1 P0：红色屏幕 tint + race-out 紧迫文案 + 撞墙换裂口提示。
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isScreenTint),
+            "race-out 期间应有红色屏幕 tint 警告，实际 commands=" + commands);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().contains("race-out")),
+            "HUD 文案需含 race-out 关键词（worldview §十六.六），实际 commands=" + commands);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().contains("化死域")),
+            "HUD 应提示后果（化死域），实际 commands=" + commands);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().contains("已占即换")),
+            "HUD 应提示 Q-RC4 撞墙换裂口规则，实际 commands=" + commands);
     }
 
     @Test

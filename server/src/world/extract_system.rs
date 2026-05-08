@@ -65,6 +65,9 @@ pub enum ExtractRejectionReason {
     PortalExpired,
     CannotExit,
     PortalCollapsed,
+    /// plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 单 portal 同时只许 1 人。
+    /// 第二个玩家"撞墙"必须找下一个裂口；增加 race-out chicken-game 紧迫感。
+    PortalOccupied,
 }
 
 #[derive(Event, Debug, Clone)]
@@ -137,7 +140,7 @@ fn distance_from_started(pos: &Position, started: [f64; 3]) -> f64 {
     ))
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn start_extract_request(
     mut events: EventReader<StartExtractRequest>,
     mut results: EventWriter<StartExtractResult>,
@@ -149,10 +152,23 @@ pub fn start_extract_request(
         &Wounds,
         Option<&ExtractProgress>,
     )>,
+    portal_occupants: Query<&ExtractProgress>,
     mut commands: Commands,
     clock: Res<CombatClock>,
     lifecycle_registry: Option<Res<TsyZoneStateRegistry>>,
 ) {
+    // plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 单 portal 1 人。
+    //
+    // `Commands::insert` 是 deferred（system 结束才 ApplyDeferred），所以 `portal_occupants`
+    // 只能看到上一 tick 的 ExtractProgress。同一 tick 内若有两个 StartExtractRequest 命中
+    // 同一 CollapseTear，**两个都会通过 `portal_occupants.iter()` 检查并被 Started**——直接
+    // 违反 Q-RC4 单 portal 单 player 的契约（多 client 包同帧到达时常发生）。
+    //
+    // 修复：本 system 内部用 `admitted_collapse_tears` 做 reservation，每次 admit 后立刻
+    // 标记，下一次 occupied 检查同时看 set + portal_occupants。
+    use std::collections::HashSet;
+    let mut admitted_collapse_tears: HashSet<Entity> = HashSet::new();
+
     for req in events.read() {
         let Ok((portal, portal_pos)) = portals.get(req.portal) else {
             results.send(StartExtractResult::Rejected {
@@ -175,6 +191,12 @@ pub fn start_extract_request(
             continue;
         };
 
+        let collapse_tear_occupied = portal.kind == RiftKind::CollapseTear
+            && (portal_occupants
+                .iter()
+                .any(|progress| progress.portal == req.portal)
+                || admitted_collapse_tears.contains(&req.portal));
+
         let rejection = if existing_progress.is_some() {
             Some(ExtractRejectionReason::AlreadyBusy)
         } else if is_in_combat(combat, clock.tick) {
@@ -195,6 +217,8 @@ pub fn start_extract_request(
                 .is_some_and(|state| state.lifecycle == TsyLifecycle::Dead)
         }) {
             Some(ExtractRejectionReason::PortalCollapsed)
+        } else if collapse_tear_occupied {
+            Some(ExtractRejectionReason::PortalOccupied)
         } else {
             None
         };
@@ -217,6 +241,9 @@ pub fn start_extract_request(
             started_pos: started_pos(player_pos),
             wound_count_at_start: wounds.entries.len(),
         });
+        if portal.kind == RiftKind::CollapseTear {
+            admitted_collapse_tears.insert(req.portal);
+        }
         results.send(StartExtractResult::Started {
             player: req.player,
             portal: req.portal,
@@ -989,6 +1016,269 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].target, player);
         assert_eq!(collected[0].cause, "tsy_collapsed");
+    }
+
+    /// plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 同时只许 1 人撤；
+    /// 第二个玩家请求同一 portal 必须收到 `PortalOccupied`，触发"撞墙换下一个裂口"UX。
+    #[test]
+    fn collapse_tear_rejects_second_player_with_portal_occupied() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let collapse_tear = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: first,
+                portal: collapse_tear,
+            });
+        app.update();
+        // 清掉首轮结果，单看第二个玩家的反馈
+        app.world_mut()
+            .resource_mut::<Events<StartExtractResult>>()
+            .clear();
+        assert!(
+            app.world().entity(first).get::<ExtractProgress>().is_some(),
+            "首位玩家应已挂上 ExtractProgress 锁定该 CollapseTear"
+        );
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: second,
+                portal: collapse_tear,
+            });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        let reasons: Vec<_> = collected
+            .iter()
+            .filter_map(|r| match r {
+                StartExtractResult::Rejected {
+                    player,
+                    reason,
+                    portal,
+                } if *player == second && *portal == collapse_tear => Some(*reason),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![ExtractRejectionReason::PortalOccupied],
+            "第二位玩家应被 PortalOccupied 拒绝（CollapseTear 单 portal 单 player），实际：{:?}",
+            collected
+        );
+    }
+
+    /// plan-tsy-raceout-v1 §4 Q-RC4：MainRift / DeepRift 不受单 portal 单 player 限制；
+    /// 标准撤离允许多人同时在同一裂缝撤离（worldview "搜打撤" 语义）。
+    #[test]
+    fn main_rift_allows_concurrent_extracts_unlike_collapse_tear() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let main_rift = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::MainRift, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: first,
+                portal: main_rift,
+            });
+        app.update();
+        app.world_mut()
+            .resource_mut::<Events<StartExtractResult>>()
+            .clear();
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: second,
+                portal: main_rift,
+            });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        let started_count = collected
+            .iter()
+            .filter(
+                |r| matches!(r, StartExtractResult::Started { player, .. } if *player == second),
+            )
+            .count();
+        assert_eq!(
+            started_count, 1,
+            "MainRift 不限单 portal 单 player，第二位玩家应正常 Started，实际：{:?}",
+            collected
+        );
+    }
+
+    /// plan-tsy-raceout-v1 §4 Q-RC4 — Codex review #151 P1 修复回归：
+    /// `Commands::insert` 是 deferred；同一 tick 两个 StartExtractRequest 命中
+    /// 同一 CollapseTear 时，`portal_occupants.iter()` 只看到上一 tick 的状态。
+    /// 没有 in-loop reservation 会让两个 player 同帧都被 Started，违反 Q-RC4。
+    /// 本测试 send 两个 event 在 update 前 → 一次 update 内消费两个 event →
+    /// 第二个必须收到 PortalOccupied。
+    #[test]
+    fn collapse_tear_in_loop_reservation_prevents_same_tick_double_admit() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let tear = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        // 同一 update 内 send 两个 event（模拟同 tick 两个 client 包到达）
+        {
+            let mut req_writer = app
+                .world_mut()
+                .resource_mut::<Events<StartExtractRequest>>();
+            req_writer.send(StartExtractRequest {
+                player: first,
+                portal: tear,
+            });
+            req_writer.send(StartExtractRequest {
+                player: second,
+                portal: tear,
+            });
+        }
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        let started: Vec<Entity> = collected
+            .iter()
+            .filter_map(|r| match r {
+                StartExtractResult::Started { player, .. } => Some(*player),
+                _ => None,
+            })
+            .collect();
+        let rejected_with_occupied: Vec<Entity> = collected
+            .iter()
+            .filter_map(|r| match r {
+                StartExtractResult::Rejected {
+                    player,
+                    reason: ExtractRejectionReason::PortalOccupied,
+                    ..
+                } => Some(*player),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            started.len(),
+            1,
+            "同 tick 双请求只应有 1 个 Started（in-loop reservation 锁住第二个），实际 started={:?} all={:?}",
+            started,
+            collected
+        );
+        assert_eq!(
+            rejected_with_occupied.len(),
+            1,
+            "同 tick 双请求第二个应被 PortalOccupied 拒绝，实际 rejected_occupied={:?} all={:?}",
+            rejected_with_occupied,
+            collected
+        );
+    }
+
+    /// plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 多 portal 时各自独立计数；
+    /// 同 family 下两个 CollapseTear，两位玩家各占一个应都成功。
+    #[test]
+    fn collapse_tear_independent_portals_allow_parallel_extracts() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let tear_a = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let tear_b = app
+            .world_mut()
+            .spawn(portal(
+                "tsy_lingxu_01",
+                RiftKind::CollapseTear,
+                DVec3::new(20.0, 0.0, 0.0),
+            ))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        let second = spawn_player(&mut app, DVec3::new(20.0, 0.0, 0.0), Some("tsy_lingxu_01"));
+
+        for (player, portal_entity) in [(first, tear_a), (second, tear_b)] {
+            app.world_mut()
+                .resource_mut::<Events<StartExtractRequest>>()
+                .send(StartExtractRequest {
+                    player,
+                    portal: portal_entity,
+                });
+        }
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        let started_players: Vec<_> = collected
+            .iter()
+            .filter_map(|r| match r {
+                StartExtractResult::Started { player, .. } => Some(*player),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            started_players.contains(&first) && started_players.contains(&second),
+            "两位玩家在不同 CollapseTear 上应都 Started，实际：{:?}",
+            collected
+        );
+    }
+
+    /// plan-tsy-raceout-v1 §4 Q-RC4：同一 CollapseTear 上首位玩家撤离结束（ExtractProgress 移除）后，
+    /// 第二个玩家应能重新使用该 portal。锁是"在撤"而不是"曾撤"。
+    #[test]
+    fn collapse_tear_unlocks_after_first_player_completes() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let tear = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: first,
+                portal: tear,
+            });
+        app.update();
+        // 模拟首位完成撤离 — 移除 ExtractProgress
+        app.world_mut()
+            .entity_mut(first)
+            .remove::<ExtractProgress>();
+        app.world_mut()
+            .resource_mut::<Events<StartExtractResult>>()
+            .clear();
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player: second,
+                portal: tear,
+            });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        assert!(
+            collected.iter().any(
+                |r| matches!(r, StartExtractResult::Started { player, .. } if *player == second)
+            ),
+            "首位撤完后 portal 应解锁，第二位 Started 实际：{:?}",
+            collected
+        );
     }
 
     #[test]

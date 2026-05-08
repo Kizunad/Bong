@@ -352,6 +352,10 @@ fn reject_reason_wire(reason: ExtractRejectionReason) -> ExtractAbortedReasonV1 
             ExtractAbortedReasonV1::PortalExpired
         }
         ExtractRejectionReason::CannotExit => ExtractAbortedReasonV1::CannotExit,
+        // plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 已被其他玩家占用。
+        // 复用 AlreadyBusy IPC variant 避免 schema breaking change；
+        // client HUD 文案由 nearestPortal 切换提示弥补 UX。
+        ExtractRejectionReason::PortalOccupied => ExtractAbortedReasonV1::AlreadyBusy,
     }
 }
 
