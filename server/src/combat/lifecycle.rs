@@ -458,12 +458,15 @@ pub fn death_arbiter_tick(
         if let Some(registry) = death_registry.as_deref_mut() {
             registry.record_death(clock.tick, death_zone);
         }
+        let void_quota_exceeded = event.cause == CultivationDeathCause::VoidQuotaExceeded;
         let lifespan_exhausted = if event.cause == CultivationDeathCause::NaturalAging {
             apply_natural_aging_lifespan_exhaustion(
                 cultivation,
                 lifespan.as_deref_mut(),
                 player_state,
             );
+            true
+        } else if void_quota_exceeded {
             true
         } else {
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state)
@@ -508,11 +511,12 @@ pub fn death_arbiter_tick(
         });
 
         if lifespan_exhausted {
-            let lifespan_event = if event.cause == CultivationDeathCause::NaturalAging {
-                None
-            } else {
-                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
-            };
+            let lifespan_event =
+                if event.cause == CultivationDeathCause::NaturalAging || void_quota_exceeded {
+                    None
+                } else {
+                    death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
+                };
             let lifespan_event_char_id = lifespan_event
                 .as_ref()
                 .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
@@ -525,7 +529,11 @@ pub fn death_arbiter_tick(
                 &mut terminated,
                 position,
                 &mut vfx_events,
-                "natural_end",
+                if void_quota_exceeded {
+                    crate::cultivation::tribulation::VOID_QUOTA_EXCEEDED_REASON
+                } else {
+                    "natural_end"
+                },
                 Some(cause.as_str()),
                 lifespan_event.clone(),
             );
@@ -1020,7 +1028,8 @@ fn death_insight_category_from_cultivation_cause(
         | CultivationDeathCause::MeridianCollapse
         | CultivationDeathCause::NegativeZoneDrain
         | CultivationDeathCause::ContaminationOverflow
-        | CultivationDeathCause::SwarmQiDrain => DeathInsightCategoryV1::Cultivation,
+        | CultivationDeathCause::SwarmQiDrain
+        | CultivationDeathCause::VoidQuotaExceeded => DeathInsightCategoryV1::Cultivation,
     }
 }
 

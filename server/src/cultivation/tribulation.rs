@@ -20,11 +20,13 @@ use std::collections::HashSet;
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
+use crate::cultivation::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use crate::cultivation::life_record::{BiographyEntry, HeartDemonOutcome, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
+use crate::qi_physics::{constants::DEFAULT_SPIRIT_QI_TOTAL, WorldQiBudget};
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
 };
@@ -71,10 +73,75 @@ const DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER: f32 = 1.20;
 const DUXU_KAITIAN_WAVE: u32 = 5;
 const DUXU_FULL_HEALTH_EPSILON: f32 = 0.001;
 const DUXU_FULL_QI_EPSILON: f64 = 0.001;
-const HALF_STEP_QI_MAX_MULTIPLIER: f64 = 1.10;
-const HALF_STEP_LIFESPAN_YEARS: u32 = 200;
 const DUXU_OMEN_CLOUD_BLOCK_Y_OFFSET: i32 = 24;
 const DUXU_OMEN_CLOUD_BLOCK_OFFSETS: [i32; 5] = [-8, -4, 0, 4, 8];
+const VOID_QUOTA_K_ENV: &str = "BONG_VOID_QUOTA_K";
+
+pub const DEFAULT_VOID_QUOTA_K: f64 = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
+pub const VOID_QUOTA_BASIS: &str = "world_qi_budget.current_total";
+pub const VOID_QUOTA_EXCEEDED_REASON: &str = "void_quota_exceeded";
+
+#[derive(Debug, Clone, Copy, PartialEq, Resource)]
+pub struct VoidQuotaConfig {
+    pub quota_k: f64,
+}
+
+impl Default for VoidQuotaConfig {
+    fn default() -> Self {
+        Self {
+            quota_k: DEFAULT_VOID_QUOTA_K,
+        }
+    }
+}
+
+impl VoidQuotaConfig {
+    pub fn from_env() -> Self {
+        std::env::var(VOID_QUOTA_K_ENV)
+            .ok()
+            .and_then(|raw| raw.parse::<f64>().ok())
+            .filter(|quota_k| quota_k.is_finite() && *quota_k > 0.0)
+            .map(|quota_k| Self { quota_k })
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoidQuotaCheck {
+    pub occupied_slots: u32,
+    pub quota_limit: u32,
+    pub available_slots: u32,
+    pub total_world_qi: f64,
+    pub quota_k: f64,
+    pub exceeded: bool,
+}
+
+pub fn compute_void_quota_limit(total_world_qi: f64, quota_k: f64) -> u32 {
+    if !total_world_qi.is_finite() || !quota_k.is_finite() || quota_k <= 0.0 {
+        return 0;
+    }
+    let slots = (total_world_qi.max(0.0) / quota_k).floor();
+    if slots >= u32::MAX as f64 {
+        u32::MAX
+    } else {
+        slots as u32
+    }
+}
+
+pub fn check_void_quota(
+    occupied_slots: u32,
+    budget: &WorldQiBudget,
+    config: &VoidQuotaConfig,
+) -> VoidQuotaCheck {
+    let quota_limit = compute_void_quota_limit(budget.current_total, config.quota_k);
+    VoidQuotaCheck {
+        occupied_slots,
+        quota_limit,
+        available_slots: quota_limit.saturating_sub(occupied_slots),
+        total_world_qi: budget.current_total.max(0.0),
+        quota_k: config.quota_k,
+        exceeded: occupied_slots >= quota_limit,
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct DuXuWaveProfile {
@@ -347,8 +414,12 @@ pub fn start_du_xu_request_system(
 #[allow(clippy::too_many_arguments)]
 pub fn start_tribulation_system(
     settings: Res<PersistenceSettings>,
+    budget: Res<WorldQiBudget>,
+    void_quota: Res<VoidQuotaConfig>,
     mut events: EventReader<InitiateXuhuaTribulation>,
     mut announce: EventWriter<TribulationAnnounce>,
+    mut settled: EventWriter<TribulationSettled>,
+    mut death_triggers: EventWriter<CultivationDeathTrigger>,
     mut players: Query<(
         &Cultivation,
         &MeridianSystem,
@@ -357,12 +428,12 @@ pub fn start_tribulation_system(
         Option<&TribulationState>,
         Option<&CurrentDimension>,
     )>,
-    player_count: Query<(), With<Client>>,
     mut commands: Commands,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let mut accepted_this_tick = HashSet::new();
+    let mut reserved_occupied_slots = None;
     for ev in events.read() {
         if let Ok((c, meridians, lifecycle, username, active, current_dimension)) =
             players.get_mut(ev.entity)
@@ -393,10 +464,68 @@ pub fn start_tribulation_system(
                 .get(ev.entity)
                 .map(|pos| pos.get())
                 .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
-            let occupied_slots = load_ascension_quota(&settings)
-                .map(|quota| quota.occupied_slots)
-                .unwrap_or(0);
-            let quota_limit = ascension_quota_limit(player_count.iter().count());
+            let occupied_slots = match reserved_occupied_slots {
+                Some(slots) => slots,
+                None => {
+                    let slots = load_ascension_quota(&settings)
+                        .map(|quota| quota.occupied_slots)
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(
+                                "[bong][cultivation] failed to load ascension quota before tribulation start for {:?}: {error}",
+                                ev.entity,
+                            );
+                            0
+                        });
+                    reserved_occupied_slots = Some(slots);
+                    slots
+                }
+            };
+            let quota_check = check_void_quota(occupied_slots, &budget, &void_quota);
+            if quota_check.exceeded {
+                death_triggers.send(CultivationDeathTrigger {
+                    entity: ev.entity,
+                    cause: CultivationDeathCause::VoidQuotaExceeded,
+                    context: serde_json::json!({
+                        "reason": VOID_QUOTA_EXCEEDED_REASON,
+                        "waves_survived": 0,
+                        "total_world_qi": quota_check.total_world_qi,
+                        "quota_k": quota_check.quota_k,
+                    }),
+                });
+                settled.send(TribulationSettled {
+                    entity: ev.entity,
+                    result: DuXuResultV1 {
+                        char_id: lifecycle.character_id.clone(),
+                        outcome: DuXuOutcomeV1::Killed,
+                        killer: None,
+                        waves_survived: 0,
+                        reason: Some(VOID_QUOTA_EXCEEDED_REASON.to_string()),
+                    },
+                });
+                tracing::info!(
+                    "[bong][cultivation] {:?} void-quota tribulation rejected as terminal death (quota {}/{}, total_world_qi={}, quota_k={})",
+                    ev.entity,
+                    quota_check.occupied_slots,
+                    quota_check.quota_limit,
+                    quota_check.total_world_qi,
+                    quota_check.quota_k,
+                );
+                vfx_events.send(VfxEventRequest::new(
+                    p,
+                    VfxEventPayloadV1::SpawnParticle {
+                        event_id: "bong:tribulation_lightning".to_string(),
+                        origin: [p.x, p.y, p.z],
+                        direction: None,
+                        color: Some("#D0C8FF".to_string()),
+                        strength: Some(1.0),
+                        count: Some(3),
+                        duration_ticks: Some(14),
+                    },
+                ));
+                accepted_this_tick.insert(ev.entity);
+                continue;
+            }
+            reserved_occupied_slots = Some(occupied_slots.saturating_add(1));
             let origin_dimension = tribulation_dimension_for_participant(current_dimension);
             let state = TribulationState {
                 kind: TribulationKind::DuXu,
@@ -411,7 +540,7 @@ pub fn start_tribulation_system(
                     .saturating_add(DUXU_OMEN_TICKS + DUXU_LOCK_TICKS),
                 participants: vec![lifecycle.character_id.clone()],
                 failed: false,
-                half_step_on_success: occupied_slots >= quota_limit,
+                half_step_on_success: false,
             };
             if let Err(error) = persist_active_tribulation(
                 &settings,
@@ -441,9 +570,13 @@ pub fn start_tribulation_system(
                 started_tick: ev.started_tick,
             });
             tracing::info!(
-                "[bong][cultivation] {:?} initiated tribulation ({} waves)",
+                "[bong][cultivation] {:?} initiated tribulation ({} waves, quota {}/{}, total_world_qi={}, quota_k={})",
                 ev.entity,
-                ev.waves_total
+                ev.waves_total,
+                quota_check.occupied_slots,
+                quota_check.quota_limit,
+                quota_check.total_world_qi,
+                quota_check.quota_k,
             );
             // plan-particle-system-v1 §4.4：渡劫开场一道预警雷。
             vfx_events.send(VfxEventRequest::new(
@@ -1087,6 +1220,7 @@ pub fn record_tribulation_interceptor_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tribulation_wave_system(
     settings: Res<PersistenceSettings>,
     mut cleared: EventReader<TribulationWaveCleared>,
@@ -1101,6 +1235,7 @@ pub fn tribulation_wave_system(
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut settled: EventWriter<TribulationSettled>,
     mut quota_occupied: EventWriter<AscensionQuotaOccupied>,
+    mut death_triggers: EventWriter<CultivationDeathTrigger>,
 ) {
     for ev in cleared.read() {
         if let Ok((mut c, mut state, _, lifecycle, lifespan)) = players.get_mut(ev.entity) {
@@ -1110,23 +1245,25 @@ pub fn tribulation_wave_system(
             state.wave_current = state.wave_current.max(ev.wave);
             if state.wave_current >= state.waves_total {
                 // 渡劫成功
-                let outcome = if state.half_step_on_success {
-                    c.realm = Realm::Spirit;
-                    c.qi_max *= HALF_STEP_QI_MAX_MULTIPLIER;
-                    if let Some(mut lifespan) = lifespan {
-                        lifespan.cap_by_realm = lifespan
-                            .cap_by_realm
-                            .max(LifespanCapTable::SPIRIT.saturating_add(HALF_STEP_LIFESPAN_YEARS));
-                    }
+                let void_quota_exceeded = state.half_step_on_success;
+                let outcome = if void_quota_exceeded {
                     if let Err(error) =
                         delete_active_tribulation(&settings, lifecycle.character_id.as_str())
                     {
                         tracing::warn!(
-                            "[bong][cultivation] failed to clear half-step tribulation for {:?}: {error}",
+                            "[bong][cultivation] failed to clear void-quota tribulation for {:?}: {error}",
                             ev.entity,
                         );
                     }
-                    DuXuOutcomeV1::HalfStep
+                    death_triggers.send(CultivationDeathTrigger {
+                        entity: ev.entity,
+                        cause: CultivationDeathCause::VoidQuotaExceeded,
+                        context: serde_json::json!({
+                            "reason": VOID_QUOTA_EXCEEDED_REASON,
+                            "waves_survived": state.waves_total,
+                        }),
+                    });
+                    DuXuOutcomeV1::Killed
                 } else {
                     c.realm = Realm::Void;
                     c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
@@ -1165,6 +1302,7 @@ pub fn tribulation_wave_system(
                         outcome,
                         killer: None,
                         waves_survived: state.waves_total,
+                        reason: void_quota_exceeded.then(|| VOID_QUOTA_EXCEEDED_REASON.to_string()),
                     },
                 });
                 state.phase = TribulationPhase::Settle;
@@ -1258,6 +1396,7 @@ pub fn tribulation_failure_system(
                     outcome: DuXuOutcomeV1::Failed,
                     killer: None,
                     waves_survived: ev.wave.saturating_sub(1),
+                    reason: None,
                 },
             });
         }
@@ -1448,6 +1587,7 @@ fn settle_fled_tribulation(
             outcome: DuXuOutcomeV1::Fled,
             killer: None,
             waves_survived,
+            reason: None,
         },
     });
     fled.send(TribulationFled {
@@ -1523,6 +1663,7 @@ pub fn tribulation_intercept_death_system(
                 outcome: DuXuOutcomeV1::Killed,
                 killer: Some(killer_id.to_string()),
                 waves_survived: state.wave_current,
+                reason: None,
             },
         });
         commands.entity(death.target).remove::<(
@@ -1755,11 +1896,6 @@ fn full_meridians_opened_tick(record: &LifeRecord) -> Option<u64> {
     } else {
         None
     }
-}
-
-pub fn ascension_quota_limit(player_count: usize) -> u32 {
-    let scaled = (player_count / 50).max(1) as u32;
-    scaled.min(3)
 }
 
 fn apply_tribulation_failure_penalty(
@@ -2024,8 +2160,12 @@ mod tests {
         let mut app = App::new();
         let (settings, root) = persistence_settings("start-tribulation-dedupe");
         app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<CultivationDeathTrigger>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, start_tribulation_system);
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -2077,6 +2217,100 @@ mod tests {
         assert_eq!(emitted[0].entity, entity);
         assert_eq!(emitted[0].actor_name, "Azure");
         assert_eq!(app.world().resource::<Events<VfxEventRequest>>().len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn start_tribulation_system_reserves_void_quota_fcfs_within_tick() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("start-tribulation-quota-fcfs");
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(50.0));
+        app.insert_resource(VoidQuotaConfig { quota_k: 50.0 });
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, start_tribulation_system);
+
+        let first = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Position::new([12.0, 66.0, -8.0]),
+            ))
+            .id();
+        let second = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Beryl".to_string(),
+                    ..Default::default()
+                },
+                Position::new([16.0, 66.0, -8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity: first,
+            waves_total: 3,
+            started_tick: 100,
+        });
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity: second,
+            waves_total: 3,
+            started_tick: 100,
+        });
+
+        app.update();
+
+        let first_state = app
+            .world()
+            .get::<TribulationState>(first)
+            .expect("first tribulation should start");
+        assert!(!first_state.half_step_on_success);
+        assert!(
+            app.world().get::<TribulationState>(second).is_none(),
+            "second over-quota tribulation should not enter the regular wave loop"
+        );
+        let settled = app.world().resource::<Events<TribulationSettled>>();
+        let settled_events: Vec<_> = settled.get_reader().read(settled).cloned().collect();
+        assert_eq!(settled_events.len(), 1);
+        assert_eq!(settled_events[0].entity, second);
+        assert_eq!(settled_events[0].result.outcome, DuXuOutcomeV1::Killed);
+        assert_eq!(settled_events[0].result.waves_survived, 0);
+        assert_eq!(
+            settled_events[0].result.reason.as_deref(),
+            Some(VOID_QUOTA_EXCEEDED_REASON)
+        );
+        let death_triggers = app.world().resource::<Events<CultivationDeathTrigger>>();
+        let deaths: Vec<_> = death_triggers
+            .get_reader()
+            .read(death_triggers)
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].entity, second);
+        assert_eq!(deaths[0].cause, CultivationDeathCause::VoidQuotaExceeded);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3245,6 +3479,7 @@ mod tests {
                     outcome: DuXuOutcomeV1::Ascended,
                     killer: None,
                     waves_survived: 5,
+                    reason: None,
                 },
             });
 
@@ -3306,32 +3541,38 @@ mod tests {
     }
 
     #[test]
-    fn ascension_quota_limit_scales_by_player_count_with_hard_cap() {
-        assert_eq!(ascension_quota_limit(0), 1);
-        assert_eq!(ascension_quota_limit(49), 1);
-        assert_eq!(ascension_quota_limit(50), 1);
-        assert_eq!(ascension_quota_limit(99), 1);
-        assert_eq!(ascension_quota_limit(100), 2);
-        assert_eq!(ascension_quota_limit(149), 2);
-        assert_eq!(ascension_quota_limit(150), 3);
-        assert_eq!(ascension_quota_limit(200), 3);
+    fn void_quota_limit_uses_world_qi_budget_floor() {
+        let k = DEFAULT_VOID_QUOTA_K;
+        assert_eq!(compute_void_quota_limit(0.0, k), 0);
+        assert_eq!(compute_void_quota_limit(49.999, k), 0);
+        assert_eq!(compute_void_quota_limit(50.0, k), 1);
+        assert_eq!(compute_void_quota_limit(99.999, k), 1);
+        assert_eq!(compute_void_quota_limit(100.0, k), 2);
+        assert_eq!(compute_void_quota_limit(-1.0, k), 0);
+        assert_eq!(compute_void_quota_limit(f64::NAN, k), 0);
+        assert_eq!(compute_void_quota_limit(100.0, 0.0), 0);
     }
 
     #[test]
-    fn phase7_balance_quota_formula_is_players_per_50_with_hard_cap_3() {
-        let cases = [
-            (1, 1),
-            (50, 1),
-            (51, 1),
-            (99, 1),
-            (100, 2),
-            (149, 2),
-            (150, 3),
-            (500, 3),
-        ];
-        for (players, expected_limit) in cases {
-            assert_eq!(ascension_quota_limit(players), expected_limit);
-        }
+    fn check_void_quota_allows_zero_and_reports_availability() {
+        let config = VoidQuotaConfig { quota_k: 50.0 };
+        let low_budget = WorldQiBudget::from_total(100.0);
+        let mut depleted = low_budget;
+        depleted.current_total = 49.0;
+
+        let depleted_check = check_void_quota(0, &depleted, &config);
+        assert_eq!(depleted_check.quota_limit, 0);
+        assert_eq!(depleted_check.available_slots, 0);
+        assert!(depleted_check.exceeded);
+
+        let check = check_void_quota(1, &low_budget, &config);
+        assert_eq!(check.quota_limit, 2);
+        assert_eq!(check.available_slots, 1);
+        assert!(!check.exceeded);
+
+        let full = check_void_quota(2, &low_budget, &config);
+        assert_eq!(full.available_slots, 0);
+        assert!(full.exceeded);
     }
 
     #[test]
@@ -3892,9 +4133,9 @@ mod tests {
     }
 
     #[test]
-    fn half_step_success_keeps_spirit_and_does_not_occupy_quota() {
+    fn void_quota_exceeded_success_kills_and_does_not_occupy_quota() {
         let mut app = App::new();
-        let (settings, root) = persistence_settings("half-step-success");
+        let (settings, root) = persistence_settings("void-quota-exceeded-success");
         let char_id = "offline:Azure";
         persist_active_tribulation(
             &settings,
@@ -3908,11 +4149,23 @@ mod tests {
         .expect("active tribulation should persist before half-step success");
 
         app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 300 });
+        app.add_event::<DeathEvent>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
         app.add_event::<AscensionQuotaOccupied>();
         app.add_event::<SkillCapChanged>();
-        app.add_systems(Update, tribulation_wave_system);
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(
+            Update,
+            (
+                tribulation_wave_system,
+                death_arbiter_tick.after(tribulation_wave_system),
+            ),
+        );
 
         let entity = app
             .world_mut()
@@ -3924,9 +4177,18 @@ mod tests {
                     ..Default::default()
                 },
                 all_meridians_open(),
+                Wounds::default(),
                 Lifecycle {
                     character_id: char_id.to_string(),
                     ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                DeathRegistry {
+                    char_id: char_id.to_string(),
+                    death_count: 0,
+                    last_death_tick: None,
+                    prev_death_tick: None,
+                    last_death_zone: None,
                 },
                 LifespanComponent {
                     born_at_tick: 0,
@@ -3956,31 +4218,29 @@ mod tests {
         app.update();
 
         let entity_ref = app.world().entity(entity);
-        let cultivation = entity_ref
-            .get::<Cultivation>()
-            .expect("cultivation should remain attached");
-        assert_eq!(cultivation.realm, Realm::Spirit);
-        assert_eq!(cultivation.qi_max, 210.0 * HALF_STEP_QI_MAX_MULTIPLIER);
-        let lifespan = entity_ref
-            .get::<LifespanComponent>()
-            .expect("lifespan should remain attached");
-        assert_eq!(
-            lifespan.cap_by_realm,
-            LifespanCapTable::SPIRIT + HALF_STEP_LIFESPAN_YEARS
-        );
+        let lifecycle = entity_ref
+            .get::<Lifecycle>()
+            .expect("lifecycle should remain attached");
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(lifecycle.last_death_tick, Some(300));
         assert!(entity_ref.get::<TribulationState>().is_none());
 
         let settled = app.world().resource::<Events<TribulationSettled>>();
         let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
         assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::HalfStep);
+        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
         assert_eq!(emitted[0].result.waves_survived, 5);
+        assert_eq!(
+            emitted[0].result.reason.as_deref(),
+            Some(VOID_QUOTA_EXCEEDED_REASON)
+        );
         assert_eq!(app.world().resource::<Events<SkillCapChanged>>().len(), 0);
+        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 1);
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")
                 .is_none(),
-            "half-step success should clear active row"
+            "void quota death should clear active row"
         );
         let quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(quota.occupied_slots, 0);

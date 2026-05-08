@@ -37,6 +37,8 @@ pub struct DuXuResultV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub killer: Option<String>,
     pub waves_survived: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -298,6 +298,7 @@ mod tests {
                     outcome: DuXuOutcomeV1::Ascended,
                     killer: None,
                     waves_survived: 5,
+                    reason: None,
                 },
             });
 

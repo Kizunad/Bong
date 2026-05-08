@@ -1,15 +1,19 @@
 use valence::prelude::{Client, EventReader, Local, Query, Res, With};
 
 use crate::cultivation::tribulation::{
-    ascension_quota_limit, AscensionQuotaOccupied, AscensionQuotaOpened,
+    check_void_quota, AscensionQuotaOccupied, AscensionQuotaOpened, VoidQuotaConfig,
+    VOID_QUOTA_BASIS,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::persistence::{load_ascension_quota, PersistenceSettings};
+use crate::qi_physics::WorldQiBudget;
 use crate::schema::server_data::{AscensionQuotaV1, ServerDataPayloadV1, ServerDataV1};
 
 pub fn emit_ascension_quota_payloads(
     settings: Res<PersistenceSettings>,
+    budget: Res<WorldQiBudget>,
+    void_quota: Res<VoidQuotaConfig>,
     mut opened: EventReader<AscensionQuotaOpened>,
     mut occupied: EventReader<AscensionQuotaOccupied>,
     mut clients: Query<&mut Client, With<Client>>,
@@ -37,15 +41,17 @@ pub fn emit_ascension_quota_payloads(
         return;
     }
 
-    let data = build_ascension_quota_payload(&settings, joined_count, latest_occupied_slots);
+    let data =
+        build_ascension_quota_payload(&settings, &budget, &void_quota, latest_occupied_slots);
     for mut client in &mut clients {
-        send_ascension_quota_to_client(&mut client, data);
+        send_ascension_quota_to_client(&mut client, data.clone());
     }
 }
 
 fn build_ascension_quota_payload(
     settings: &PersistenceSettings,
-    joined_count: usize,
+    budget: &WorldQiBudget,
+    void_quota: &VoidQuotaConfig,
     occupied_override: Option<u32>,
 ) -> AscensionQuotaV1 {
     let occupied_slots = occupied_override.unwrap_or_else(|| {
@@ -56,7 +62,14 @@ fn build_ascension_quota_payload(
                 0
             })
     });
-    AscensionQuotaV1::new(occupied_slots, ascension_quota_limit(joined_count))
+    let quota = check_void_quota(occupied_slots, budget, void_quota);
+    AscensionQuotaV1::with_world_qi(
+        quota.occupied_slots,
+        quota.quota_limit,
+        quota.total_world_qi,
+        quota.quota_k,
+        VOID_QUOTA_BASIS,
+    )
 }
 
 fn send_ascension_quota_to_client(client: &mut Client, data: AscensionQuotaV1) {
@@ -75,6 +88,7 @@ fn send_ascension_quota_to_client(client: &mut Client, data: AscensionQuotaV1) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::tribulation::DEFAULT_VOID_QUOTA_K;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{bootstrap_sqlite, complete_tribulation_ascension};
     use std::path::PathBuf;
@@ -151,6 +165,8 @@ mod tests {
             .expect("quota setup should succeed");
         let mut app = App::new();
         app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
         app.add_systems(Update, emit_ascension_quota_payloads);
@@ -161,7 +177,10 @@ mod tests {
 
         let payloads = collect_ascension_quota_payloads(&mut helper);
         assert_eq!(payloads.len(), 1);
-        assert_eq!(payloads[0], AscensionQuotaV1::new(1, 1));
+        assert_eq!(
+            payloads[0],
+            AscensionQuotaV1::with_world_qi(1, 2, 100.0, DEFAULT_VOID_QUOTA_K, VOID_QUOTA_BASIS)
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -171,6 +190,8 @@ mod tests {
         let (settings, root) = persistence_settings("broadcast-events");
         let mut app = App::new();
         app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
         app.add_systems(Update, emit_ascension_quota_payloads);
@@ -189,8 +210,10 @@ mod tests {
 
         let first_payloads = collect_ascension_quota_payloads(&mut first);
         let second_payloads = collect_ascension_quota_payloads(&mut second);
-        assert_eq!(first_payloads, vec![AscensionQuotaV1::new(1, 1)]);
-        assert_eq!(second_payloads, vec![AscensionQuotaV1::new(1, 1)]);
+        let expected =
+            AscensionQuotaV1::with_world_qi(1, 2, 100.0, DEFAULT_VOID_QUOTA_K, VOID_QUOTA_BASIS);
+        assert_eq!(first_payloads, vec![expected.clone()]);
+        assert_eq!(second_payloads, vec![expected]);
 
         let _ = std::fs::remove_dir_all(root);
     }
