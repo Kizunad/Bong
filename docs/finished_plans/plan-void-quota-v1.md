@@ -130,14 +130,14 @@ K 值校准（运维 config）:
 
 ### 关键 commit
 
-- `2fead524f`（2026-05-08）`docs(plan-void-quota-v1): 升 active 并同步实地核验`
-- `30c05f028`（2026-05-08）`server(void-quota): 用世界灵气预算收口化虚名额`
-- `55f07b314`（2026-05-08）`agent(void-quota): 扩展名额契约和绝壁劫叙事`
-- `e2183fe00`（2026-05-08）`client(void-quota): 在检视面板展示化虚名额`
-- `9d67a6303`（2026-05-08）`docs(plan-void-quota-v1): finish evidence 并归档`
-- `36ccd5c69`（2026-05-08）`server(void-quota): 收紧化虚名额竞态`
-- `3ce3c01ee`（2026-05-08）`fix(void-quota): 收紧名额持久化边界`
-- `808cbab15`（2026-05-08）`fix(void-quota): 收紧跨端契约和检视刷新`
+- `dfa0080e1`（2026-05-08）`docs(plan-void-quota-v1): 升 active 并同步实地核验`
+- `6d3b92715`（2026-05-08）`server(void-quota): 用世界灵气预算收口化虚名额`
+- `d21cff4f5`（2026-05-08）`agent(void-quota): 扩展名额契约和绝壁劫叙事`
+- `6c73f28ee`（2026-05-08）`client(void-quota): 在检视面板展示化虚名额`
+- `8b671d5bf`（2026-05-08）`docs(plan-void-quota-v1): finish evidence 并归档`
+- `e522a871c`（2026-05-08）`server(void-quota): 收紧化虚名额竞态`
+- `35c3dbf8d`（2026-05-08）`fix(void-quota): 收紧名额持久化边界`
+- `49fbc0f79`（2026-05-08）`fix(void-quota): 收紧跨端契约和检视刷新`
 
 ### 测试结果
 
