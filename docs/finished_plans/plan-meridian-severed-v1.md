@@ -385,3 +385,126 @@ worldview §六:617 医道流派 + 平和色 + §十一 NPC 信誉度系统 + §
 - **测试结果**：`cargo test cultivation::meridian::severed` 数量 / 7 类来源接入测试 / 跨 server restart + 跨周目持久化 / WSLg 实测 inspect SEVERED 染色 + hotbar 灰显
 - **跨仓库核验**：server 主模块 + 7 类来源接入 / agent narration 7 类 + 接经术求医 / client inspect 经脉图染色 + hotbar 灰显 + plan-yidao-v1 NPC dialog
 - **遗留 / 后续**：plan-yidao-v1 完整实装（接经术招式 / 医者 NPC AI / 续命丹 alchemy 联调）/ 其他 v2 流派 plan 招式依赖经脉声明回填（zhenmai/woliu/dugu/tuike + 未来 anqi/zhenfa/baomai-v3）/ 上古接经术残卷 PvE jackpot（plan-tsy-loot-v1 vN+1）
+
+---
+
+## Finish Evidence
+
+**消费时间**：2026-05-08 一次性消费完整 P0 → P3
+**消费者**：`/consume-plan meridian-severed-v1`（Claude Code）
+**用户拍板**：2026-05-08 全 scope 推 + 决策门 §8 默认（B/A/C/A + #5②）
+
+### P0 决策门拍板（user 2026-05-08）
+
+| # | 主题 | 选项 | 落地 |
+|---|---|---|---|
+| #1 | 跨周目 SEVERED 处理 | **B**：写入生平卷（plan-life-record 负责），新角色 SEVERED 重置 INTACT | `on_player_terminated` 移除 `MeridianSeveredPermanent` component |
+| #2 | 接经术失败升级机制 | **A**：升级为「死脉」（dead_meridians 子集，无法再尝试） | `try_acupoint_repair` Failed 分支写 `dead_meridians` |
+| #3 | 招式依赖经脉粒度 | **C**：混合（核心招细粒度 + 辅招流派共享） | 留各 v2 plan P0 自行决定，本 plan 提供通用 `check_meridian_dependencies` 工具 + `SkillMeridianDependencies` 注册表 |
+| #4 | docs/CLAUDE.md §四 红旗加一条 | **A**：加 | ⚠️ docs/CLAUDE.md 严禁 `/consume-plan` 自动写入；**待用户手动加红旗**（建议条文："招式注册不声明依赖经脉 → 必查 plan-meridian-severed-v1"） |
+| #5 | SEVERED 状态表达 | **②**：独立 `MeridianSeveredPermanent` component 与 `Meridian.cracks/integrity` 共存 | `MeridianSeveredPermanent` 作 ECS Component；`enforce_severed_state` 把 `Meridian.integrity` 钳到 0 + opened=false |
+
+### 落地清单
+
+**P1 — server**：
+- `server/src/cultivation/meridian/severed.rs` 主模块（约 480 行实装 + 460 行测试）
+  - `MeridianSeveredPermanent` Component（severed_meridians + severed_at + dead_meridians）
+  - `SeveredSource` enum 7 类来源
+  - `MeridianSeveredEvent` Event
+  - `SeveredRecord { at_tick, source }` 快照
+  - `check_meridian_dependencies` / `check_meridian_runtime_integrity` 强约束检查
+  - `try_acupoint_repair` 接经术接口（plan-yidao-v1 占位）
+  - `AcupointRepairOutcome` enum（Restored / Failed / NotSevered / AlreadyDead）
+  - `apply_severed_event_system` 事件 → component 写入
+  - `meridian_severed_detection_tick` cracks → SEVERED 自动捕获
+  - `severed_source_from_crack` CrackCause → SeveredSource 7 映射
+  - `enforce_severed_state` 钳零 + opened=false
+  - `SkillMeridianDependencies` Resource（招式依赖经脉表）
+- `server/src/cultivation/components.rs` `CrackCause` 扩 3 类（VoluntarySever / TribulationFail / DuguDistortion）
+- `server/src/cultivation/skill_registry.rs` `CastRejectReason::MeridianSevered` 改为 `MeridianSevered(Option<MeridianId>)` 携带阻断经脉 id
+- `server/src/cultivation/burst_meridian.rs` 切换到 `check_meridian_runtime_integrity`，统一 SEVERED 检查路径
+- `server/src/cultivation/mod.rs` 注册 events / systems / Resource / 玩家默认挂 component
+- `server/src/cultivation/death_hooks.rs` `on_player_terminated` 移除 component（跨周目重置 #1=B）
+- `server/src/cultivation/tribulation.rs` `apply_tribulation_failure_penalty` 返回 closed ids → `tribulation_failure_system` / `abort_du_xu_on_client_removed` / `tribulation_escape_boundary_system` 三处 emit `MeridianSeveredEvent { TribulationFail }`
+- `server/src/persistence/mod.rs` `persist_player_cultivation_bundle` 签名加 `meridian_severed` + JSON bundle "meridian_severed" 字段（跨 server restart 持久化）
+- `server/src/player/mod.rs` 3 处 cultivation_bundle Query 加 `Option<&MeridianSeveredPermanent>` + 持久化调用
+
+**P2 — client**：
+- `client/src/main/java/com/bong/client/inventory/model/MeridianBody.java` 加 `severedChannels()` 访问器（hotbar 灰显将来用）
+- `client/src/test/java/com/bong/client/network/CultivationDetailHandlerTest.java` 加 2 pin tests（integrity=0 → SEVERED 黑色 0xFF666666 / 0.10 阈值边界）
+- `client/src/test/java/com/bong/client/inventory/model/MeridianBodyTest.java` 新增（3 tests）
+- inspect 染色 ✅ 复用 plan-cultivation-canonical-align-v1 已铺好的 `damageFromIntegrity(< 0.10) → SEVERED`，零代码改动
+
+**P3 — agent**：
+- `agent/packages/schema/src/meridian-severed.ts` `MeridianSeveredEventV1` + `SeveredSource` 双端契约
+- `agent/packages/schema/src/channels.ts` 加 `MERIDIAN_SEVERED: "bong:meridian_severed"` + `REDIS_V1_CHANNELS`
+- `agent/packages/schema/src/index.ts` 重新导出
+- `agent/packages/tiandao/src/meridian-severed-narration.ts` `meridianName` (20 经脉中文名) + `renderSeveredText` (7 来源叙事风格) + `renderMeridianSeveredNarration` (event → Narration)
+
+### 关键 commit
+
+| commit | 日期 | 主题 |
+|---|---|---|
+| `178452c32` | 2026-05-08 | feat(cultivation): plan-meridian-severed-v1 主模块 cultivation::meridian::severed（44 单测） |
+| `fa002ddb9` | 2026-05-08 | feat(cultivation): CastRejectReason::MeridianSevered 携带 MeridianId + CrackCause 扩 3 类 |
+| `8ecb614ae` | 2026-05-08 | feat(cultivation): 注册 MeridianSeveredEvent + apply_severed_event_system + 玩家默认挂 component |
+| `df3cb1cdd` | 2026-05-08 | feat(persistence): cultivation bundle 加 meridian_severed 字段实现跨 server restart |
+| `f7bebbe20` | 2026-05-08 | feat(cultivation): SEVERED 7 类来源接入 + detection system 自动捕获 cracks→SEVERED |
+| `ec5a0b1f5` | 2026-05-08 | feat(client): plan-meridian-severed-v1 P2 inspect 染色 + severedChannels 访问器 |
+| `df92f0d39` | 2026-05-08 | feat(agent): plan-meridian-severed-v1 P3 narration schema + 7 类来源渲染器 |
+
+### 测试结果
+
+- **server**：
+  - `cargo test cultivation::meridian::severed` → **57 passed**（>plan §7 下限 40）
+  - `cargo test cultivation::burst_meridian` → 9 passed（含新增 SEVERED component path 测试）
+  - `cargo test cultivation::tribulation` → 53 passed（4 个 fled/failed 路径无回归）
+  - `cargo test`（全量）→ **2742 passed / 0 failed**
+  - `cargo clippy --all-targets -- -D warnings` 干净
+  - `cargo fmt --check` 干净
+- **client**：
+  - `./gradlew test build` → BUILD SUCCESSFUL
+  - 新增 2 pin tests + 3 MeridianBody tests
+- **agent**：
+  - `npm test -w @bong/schema` → **296 passed**
+  - `npm test -w @bong/tiandao` → **270 passed**（含新增 14 个 narration tests）
+
+`grep -rcE '#\[test\]' server/src/cultivation/meridian/severed.rs` → **57**
+
+### 跨仓库核验
+
+| 层 | symbol | 路径 |
+|---|---|---|
+| server | `MeridianSeveredPermanent` / `MeridianSeveredEvent` / `SeveredSource` / `check_meridian_dependencies` / `try_acupoint_repair` / `apply_severed_event_system` / `meridian_severed_detection_tick` / `enforce_severed_state` / `SkillMeridianDependencies` / `AcupointRepairOutcome` | `server/src/cultivation/meridian/severed.rs` |
+| server | `CrackCause::VoluntarySever` / `TribulationFail` / `DuguDistortion` | `server/src/cultivation/components.rs` |
+| server | `CastRejectReason::MeridianSevered(Option<MeridianId>)` | `server/src/cultivation/skill_registry.rs` |
+| server | tribulation 7 类来源 #5 接入 | `server/src/cultivation/tribulation.rs` |
+| server | bundle "meridian_severed" 字段 | `server/src/persistence/mod.rs` |
+| agent | `MeridianSeveredEventV1` / `SeveredSource` schema | `agent/packages/schema/src/meridian-severed.ts` |
+| agent | `CHANNELS.MERIDIAN_SEVERED` | `agent/packages/schema/src/channels.ts` |
+| agent | `renderMeridianSeveredNarration` / `renderSeveredText` / `meridianName` | `agent/packages/tiandao/src/meridian-severed-narration.ts` |
+| client | `ChannelState.DamageLevel.SEVERED = 0xFF666666` ✅ 复用 plan-cultivation-canonical-align-v1 已实装 | `client/src/main/java/com/bong/client/inventory/model/ChannelState.java` |
+| client | `damageFromIntegrity(0.0) → SEVERED` ✅ 复用 | `client/src/main/java/com/bong/client/network/CultivationDetailHandler.java` |
+| client | `MeridianBody.severedChannels()` 新增便捷访问器 | `client/src/main/java/com/bong/client/inventory/model/MeridianBody.java` |
+
+### 遗留 / 后续
+
+**已知 [need-WSLg-verify]（云端无法验收）**：
+- P2 inspect 经脉图视觉染色（玩家 SEVERED 一条经脉后切到 inspect tab 看黑色显示）—— 单测已锁住 integrity=0 → SEVERED 颜色，但 UI 渲染需 WSLg 实跑
+- P2 hotbar 灰显视觉验收 —— 待 v2 流派 plan 在 `SkillMeridianDependencies` 注册依赖经脉 + client schema 推 severed 列表后才有可灰显的具体招式
+
+**已知 [need-LLM-eval]（云端无法验收）**：
+- P3 narration 古意检测 —— 单测覆盖锚点关键词 + 现代俚语黑名单，最终古意分数需 `npm run start:mock` 配合 narration-eval 实跑
+
+**待 user 手动落地**（`/consume-plan` docs/ 写权限受限）：
+- **决策门 #4 = A**：在 `docs/CLAUDE.md §四 孤岛红旗`末尾加一条：「**招式注册不声明依赖经脉**：新增 SkillBuilder / `register_skills` 调用未在 `SkillMeridianDependencies` 注册依赖经脉的（任一） SEVERED → 招式未被强约束保护 → **必查 `plan-meridian-severed-v1`**」
+
+**依赖未启动 plan**：
+- `plan-yidao-v1` 🆕（医道流派）—— 接经术招式 + 医者 NPC AI + 医者 NPC dialog UI + 续命丹 alchemy 联调 + 平和色染色加成。本 plan 已留 `try_acupoint_repair` 接口 + `AcupointRepairOutcome` 4 分支供其调用。
+- `plan-zhenmai-v2` ⬜：⑤ 绝脉断链主动 cast → emit `MeridianSeveredEvent { VoluntarySever }`
+- `plan-woliu-v2` / `plan-dugu-v2` / `plan-baomai-v3` ⬜：反噬阶梯 / 阴诡色 90%+ 形貌异化 / OverloadTear → 各自 emit
+- `plan-tsy-loot-v1` ✅：上古接经术残卷 PvE jackpot 路径，未在本 plan 范围（备选 PvE 路径）
+- `plan-multi-life-v1` ⏳：跨周目重置已通过 `on_player_terminated` 接好，但生平卷写入 SEVERED 摘要由 plan-life-record 负责
+
+**SEVERED → client 永久标记 schema 推送**（待 v2 plan 触发时再扩）：
+- 当前 client 通过 `damageFromIntegrity(< 0.10) → SEVERED` 显黑，但**无法区分**「瞬时低 integrity」与「永久 SEVERED」。区分需要 server 推 `severed_meridians[]` 给 client（plan-yidao-v1 / 各 v2 流派 plan 实装时统一扩 `cultivation_detail` 或新建 `meridian_severed_state` payload）。
