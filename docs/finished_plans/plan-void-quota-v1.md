@@ -137,8 +137,8 @@ K 值校准（运维 config）:
 ### 测试结果
 
 - `cd server && cargo test void_quota -- --nocapture` → 4 passed
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2880 passed
-- `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 305 passed；tiandao 257 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2938 passed
+- `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 305 passed；tiandao 271 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL
 
 ### 跨仓库核验
