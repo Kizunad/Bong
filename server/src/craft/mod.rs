@@ -18,7 +18,7 @@
 //!   * `unlock_via_mentor` NPC dialog 选项 → social plan dialog 引擎
 //!   * `unlock_via_insight` BreakthroughEvent / DefeatStrongerEvent 监听 → cultivation/combat plan
 //!
-//! P0 决策门收口（详见 `docs/plan-craft-v1.md` §5）：
+//! P0 决策门收口（详见 `docs/finished_plans/plan-craft-v1.md` §5）：
 //!   * #1 = A：保留 6 类（AnqiCarrier / DuguPotion / TuikeSkin / ZhenfaTrap / Tool / Misc）
 //!   * #2 = A：UI 排序按类别分组 + 类别内字母（`registry::grouped_for_ui`）
 //!   * #3 = B：取消任务返还材料 70%（`session::CANCEL_REFUND_RATIO`），qi 不退
@@ -36,8 +36,8 @@ use valence::prelude::App;
 
 #[allow(unused_imports)]
 pub use events::{
-    CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartedEvent, InsightTrigger,
-    RecipeUnlockedEvent, UnlockEventSource,
+    CraftCancelIntent, CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartIntent,
+    CraftStartedEvent, CraftUnlockIntent, InsightTrigger, RecipeUnlockedEvent, UnlockEventSource,
 };
 #[allow(unused_imports)]
 pub use recipe::{
@@ -87,6 +87,12 @@ pub fn register(app: &mut App) {
     app.add_event::<CraftCompletedEvent>();
     app.add_event::<CraftFailedEvent>();
     app.add_event::<RecipeUnlockedEvent>();
+    // P2 client → server intents（被 `network/craft_emit::apply_craft_intents` 系统消费）
+    app.add_event::<CraftStartIntent>();
+    app.add_event::<CraftCancelIntent>();
+    // P3 三渠道解锁 intent —— 由各 source plan emit，被
+    // `network/craft_emit::apply_unlock_intents` 系统消费
+    app.add_event::<CraftUnlockIntent>();
 }
 
 /// P1 验收基线：注册 5 个示例配方覆盖全 6 类（除 Misc 外）。

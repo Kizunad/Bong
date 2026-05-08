@@ -162,6 +162,10 @@ pub enum RedisOutbound {
     /// plan-lingtian-weather-v1 §3 / §4.4 — 天气事件起 / 落
     #[allow(dead_code)]
     WeatherEventUpdate(WeatherEventUpdateV1),
+    /// plan-craft-v1 P3 — 通用手搓出炉结果（成功 / 失败），agent narration 出炉叙事 trigger
+    CraftOutcome(crate::schema::craft::CraftOutcomeV1),
+    /// plan-craft-v1 P3 — 三渠道解锁广播，agent narration 首学/师承/顿悟 trigger
+    RecipeUnlocked(crate::schema::craft::RecipeUnlockedV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -471,6 +475,24 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WEATHER_EVENT_UPDATE,
+                payload,
+            })
+        }
+        RedisOutbound::CraftOutcome(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize CraftOutcomeV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: crate::schema::channels::CH_CRAFT_OUTCOME,
+                payload,
+            })
+        }
+        RedisOutbound::RecipeUnlocked(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize RecipeUnlockedV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: crate::schema::channels::CH_CRAFT_RECIPE_UNLOCKED,
                 payload,
             })
         }

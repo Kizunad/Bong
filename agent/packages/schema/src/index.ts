@@ -79,3 +79,6 @@ export * from "./container-interaction.js";
 
 // 活坍缩渊敌对 NPC 分层 (plan-tsy-hostile-v1 §6)
 export * from "./tsy-hostile-v1.js";
+
+// 通用手搓 (plan-craft-v1 §3)
+export * from "./craft.js";

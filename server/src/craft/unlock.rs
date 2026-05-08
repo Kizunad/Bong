@@ -177,6 +177,59 @@ pub fn unlock_via_insight(
     }
 }
 
+/// plan-craft-v1 P3 — 配方查询辅助：哪些配方可以由"使用残卷 X"解锁。
+///
+/// 各 source plan（inventory ItemUse hook）调用本函数把"使用一卷 scroll_X"
+/// 转成可解锁的 RecipeId 列表，再 emit `CraftUnlockIntent`。
+pub fn find_recipes_unlockable_by_scroll<'a>(
+    registry: &'a super::registry::CraftRegistry,
+    scroll_item_template: &str,
+) -> Vec<&'a super::recipe::CraftRecipe> {
+    registry
+        .iter()
+        .filter(|r| {
+            r.unlock_sources.iter().any(|src| match src {
+                UnlockSource::Scroll { item_template } => item_template == scroll_item_template,
+                _ => false,
+            })
+        })
+        .collect()
+}
+
+/// plan-craft-v1 P3 — 配方查询：哪些配方可以由"师承 archetype Y"解锁。
+pub fn find_recipes_unlockable_by_mentor<'a>(
+    registry: &'a super::registry::CraftRegistry,
+    npc_archetype: &str,
+) -> Vec<&'a super::recipe::CraftRecipe> {
+    registry
+        .iter()
+        .filter(|r| {
+            r.unlock_sources.iter().any(|src| match src {
+                UnlockSource::Mentor {
+                    npc_archetype: arch,
+                } => arch == npc_archetype,
+                _ => false,
+            })
+        })
+        .collect()
+}
+
+/// plan-craft-v1 P3 — 配方查询：哪些配方可以由"顿悟 trigger Z"解锁。
+pub fn find_recipes_unlockable_by_insight(
+    registry: &super::registry::CraftRegistry,
+    trigger: InsightTrigger,
+) -> Vec<&super::recipe::CraftRecipe> {
+    registry
+        .iter()
+        .filter(|r| {
+            r.unlock_sources.iter().any(|src| match src {
+                UnlockSource::Insight { trigger: t } => *t == trigger,
+                _ => false,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::recipe::{CraftCategory, CraftRecipe, CraftRequirements};
@@ -341,5 +394,46 @@ mod tests {
         // Bob 走 mentor
         let bob = unlock_via_mentor(&mut state, "offline:Bob", &recipe, "poison_master");
         assert!(matches!(bob, UnlockOutcome::Newly { .. }));
+    }
+
+    // ── plan-craft-v1 P3 — find_recipes_unlockable_by_* ─────────────
+
+    #[test]
+    fn find_by_scroll_returns_only_matching_recipes() {
+        let mut registry = super::super::registry::CraftRegistry::new();
+        crate::craft::register_examples(&mut registry).unwrap();
+        let matches = find_recipes_unlockable_by_scroll(&registry, "scroll_eclipse_needle_iron");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id.as_str(), "craft.example.eclipse_needle.iron");
+    }
+
+    #[test]
+    fn find_by_scroll_returns_empty_when_template_unknown() {
+        let mut registry = super::super::registry::CraftRegistry::new();
+        crate::craft::register_examples(&mut registry).unwrap();
+        let matches = find_recipes_unlockable_by_scroll(&registry, "scroll_unknown");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn find_by_mentor_returns_all_recipes_with_matching_archetype() {
+        let mut registry = super::super::registry::CraftRegistry::new();
+        crate::craft::register_examples(&mut registry).unwrap();
+        // poison_master 关联 蚀针 + 毒源煎汤 两个示例
+        let matches = find_recipes_unlockable_by_mentor(&registry, "poison_master");
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn find_by_insight_matches_only_specific_trigger() {
+        let mut registry = super::super::registry::CraftRegistry::new();
+        crate::craft::register_examples(&mut registry).unwrap();
+        // 伪灵皮 light 注册了 Insight::NearDeath
+        let near_death = find_recipes_unlockable_by_insight(&registry, InsightTrigger::NearDeath);
+        assert_eq!(near_death.len(), 1);
+        assert_eq!(near_death[0].id.as_str(), "craft.example.fake_skin.light");
+        // breakthrough 没人注册 → 空
+        let bt = find_recipes_unlockable_by_insight(&registry, InsightTrigger::Breakthrough);
+        assert!(bt.is_empty());
     }
 }

@@ -116,7 +116,12 @@ public class ServerDataRouterTest {
             "niche_intrusion",
             "niche_guardian_fatigue",
             "niche_guardian_broken",
-            "sparring_invite"
+            "sparring_invite",
+            // plan-craft-v1 P2 — 通用手搓 IPC（4 类）
+            "craft_recipe_list",
+            "craft_session_state",
+            "craft_outcome",
+            "recipe_unlocked"
         ), router.registeredTypes());
     }
 

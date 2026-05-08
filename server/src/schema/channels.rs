@@ -112,6 +112,10 @@ pub const CH_ALCHEMY_INSIGHT: &str = "bong:alchemy_insight";
 // 身份与信誉（plan-identity-v1 §7）—— Wanted 档玩家通知 agent。
 pub const CH_WANTED_PLAYER: &str = "bong:wanted_player";
 
+// 通用手搓（plan-craft-v1 P3）—— server → agent 观测频道。
+pub const CH_CRAFT_OUTCOME: &str = "bong:craft/outcome";
+pub const CH_CRAFT_RECIPE_UNLOCKED: &str = "bong:craft/recipe_unlocked";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +203,8 @@ mod tests {
         );
         assert_eq!(CH_ALCHEMY_INSIGHT, "bong:alchemy_insight");
         assert_eq!(CH_WANTED_PLAYER, "bong:wanted_player");
+        // plan-craft-v1 P3 — 通用手搓 server → agent 频道
+        assert_eq!(CH_CRAFT_OUTCOME, "bong:craft/outcome");
+        assert_eq!(CH_CRAFT_RECIPE_UNLOCKED, "bong:craft/recipe_unlocked");
     }
 }

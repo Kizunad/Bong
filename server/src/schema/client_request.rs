@@ -444,6 +444,17 @@ pub enum ClientRequestV1 {
         item_instance_id: u64,
         station_tier: u8,
     },
+    // ─── 通用手搓（plan-craft-v1 P2） ──────────────────────────
+    /// plan-craft-v1 §2 — 玩家在 inventory 手搓 tab 内点 [开始手搓]。
+    /// server 校验 unlock + 材料 + qi + 已有 session 后调 `start_craft`。
+    CraftStart {
+        v: u8,
+        recipe_id: String,
+    },
+    /// plan-craft-v1 §5 决策门 #3 — 取消进行中的 craft session，70% 材料返还，qi 不退。
+    CraftCancel {
+        v: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
