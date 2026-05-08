@@ -73,6 +73,7 @@ import {
   SetMeridianTargetRequestV1,
   SkillBarBindRequestV1,
   SkillBarCastRequestV1,
+  SkillConfigIntentRequestV1,
   StartDuXuRequestV1,
   SparringInviteResponseRequestV1,
   StartExtractRequestV1,
@@ -90,6 +91,7 @@ import {
   SkillBarEntryV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
+import { SkillConfigSnapshotV1, SkillConfigV1 } from "./skill-config.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import {
   AntidoteResultEventV1,
@@ -231,6 +233,7 @@ import {
   ServerDataSkillXpGainV1,
   ServerDataAscensionQuotaV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataSkillConfigSnapshotV1,
   ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
@@ -461,6 +464,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestQuickSlotBindV1: QuickSlotBindRequestV1,
   clientRequestSkillBarCastV1: SkillBarCastRequestV1,
   clientRequestSkillBarBindV1: SkillBarBindRequestV1,
+  clientRequestSkillConfigIntentV1: SkillConfigIntentRequestV1,
   clientRequestCoffinOpenV1: CoffinOpenRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
@@ -494,8 +498,11 @@ export const SCHEMA_REGISTRY = {
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
+  skillConfigV1: SkillConfigV1,
+  skillConfigSnapshotV1: SkillConfigSnapshotV1,
   serverDataSkillBarConfigV1: ServerDataSkillBarConfigV1,
   serverDataTechniquesSnapshotV1: ServerDataTechniquesSnapshotV1,
+  serverDataSkillConfigSnapshotV1: ServerDataSkillConfigSnapshotV1,
   weaponViewV1: WeaponViewV1,
   weaponEquippedV1: WeaponEquippedV1,
   weaponBrokenV1: WeaponBrokenV1,
@@ -804,6 +811,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestSkillBarCastV1,
   "client-request-skill-bar-bind-v1.json":
     SCHEMA_REGISTRY.clientRequestSkillBarBindV1,
+  "client-request-skill-config-intent-v1.json":
+    SCHEMA_REGISTRY.clientRequestSkillConfigIntentV1,
   "client-request-coffin-open-v1.json": SCHEMA_REGISTRY.clientRequestCoffinOpenV1,
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
@@ -855,10 +864,14 @@ export const GENERATED_SCHEMA_FILES = {
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,
+  "skill-config-v1.json": SCHEMA_REGISTRY.skillConfigV1,
+  "skill-config-snapshot-v1.json": SCHEMA_REGISTRY.skillConfigSnapshotV1,
   "server-data-skill-bar-config-v1.json":
     SCHEMA_REGISTRY.serverDataSkillBarConfigV1,
   "server-data-techniques-snapshot-v1.json":
     SCHEMA_REGISTRY.serverDataTechniquesSnapshotV1,
+  "server-data-skill-config-snapshot-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillConfigSnapshotV1,
   "weapon-view-v1.json": SCHEMA_REGISTRY.weaponViewV1,
   "weapon-equipped-v1.json": SCHEMA_REGISTRY.weaponEquippedV1,
   "weapon-broken-v1.json": SCHEMA_REGISTRY.weaponBrokenV1,

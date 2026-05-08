@@ -30,6 +30,7 @@ export * from "./pseudo-vein.js";
 export * from "./rat-phase-event.js";
 export * from "./realm-vision.js";
 export * from "./server-data.js";
+export * from "./skill-config.js";
 export * from "./social.js";
 export * from "./spirit-eye.js";
 export * from "./spiritual-sense.js";

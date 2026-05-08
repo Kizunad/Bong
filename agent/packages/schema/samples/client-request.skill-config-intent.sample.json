@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "skill_config_intent",
+  "skill_id": "zhenmai.sever_chain",
+  "config": {
+    "meridian_id": "Pericardium",
+    "backfire_kind": "tainted_yuan"
+  }
+}
