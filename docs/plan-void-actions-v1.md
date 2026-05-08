@@ -1,19 +1,19 @@
 # Bong · plan-void-actions-v1 · Active
 
-化虚专属 action 四类：**镇压坍缩渊 / 引爆区域 / 阻挡道伥扩散 / 道统传承**。在 `plan-void-quota-v1` ⏳ 立的化虚名额制下，化虚后玩家不再以"突破"为驱动（境界封顶 `Realm::Void`），切换到 4 大持续目标——**寿元延续 / 道统传承 / 世界影响 / 天道运维博弈**。每个 action 高消耗（真元走 `qi_physics::ledger` + 寿元走 `lifespan::deduct`）+ 全服可见（agent `scope: "broadcast"` 已铺）+ 不破红线（禁传送 / 禁复活 / 禁无成本生灵气；不消耗 quota slot 但反噬死亡会回流 slot）。
+化虚专属 action 四类：**镇压坍缩渊 / 引爆区域 / 阻挡道伥扩散 / 道统传承**。在 `plan-void-quota-v1` ✅ 立的化虚名额制下，化虚后玩家不再以"突破"为驱动（境界封顶 `Realm::Void`），切换到 4 大持续目标——**寿元延续 / 道统传承 / 世界影响 / 天道运维博弈**。每个 action 高消耗（真元走 `qi_physics::ledger` + 寿元走 `lifespan::deduct`）+ 全服可见（agent `scope: "broadcast"` 已铺）+ 不破红线（禁传送 / 禁复活 / 禁无成本生灵气；不消耗 quota slot 但反噬死亡会回流 slot）。
 
 **世界观锚点**：`worldview.md §三 line 145-160`（化虚体验：天道无力承担更多 + 化虚后角色定位）· `§八 运维博弈`（天道行为准则 + 化虚者参与世界级调控）· `§十六 坍缩渊镇压`（道伥涌出 + 末土 zone 塌缩）· `§十二 道统传承`（死前一次性遗物指定 + 亡者博物馆刻名）
 
 **前置硬依赖**：
 
 - `plan-tribulation-v1` ✅ finished — `Realm::Void` / `TribulationKind::DuXu` / `DuXuOutcomeV1::{Ascended, Killed}` / 全服 narration 框架（`bong:tribulation/*` Redis channel）已可用
-- `plan-void-quota-v1` ⏳ active — `check_void_quota` / `compute_void_quota_limit` / `release_ascension_quota_slot` hook 可直接调；本 plan 不消耗 quota slot 但反噬死亡走同一回流链
+- `plan-void-quota-v1` ✅ finished — `check_void_quota` / `compute_void_quota_limit` / `release_ascension_quota_slot` hook 可直接调；本 plan 不消耗 quota slot 但反噬死亡走同一回流链
 - `plan-tsy-lifecycle-v1` ✅ finished — `TsyLifecycle::{Active, Declining, Collapsing, Dead}` 阶段 + `TsyCollapseStarted` / `TsyCollapseCompleted` 事件 + `CH_TRIBULATION_COLLAPSE = "bong:tribulation/collapse"` channel 可订阅
 - `plan-tsy-hostile-v1` ✅ finished — `TsyHostileMarker` / `DaoxiangInstinctCooldown` / `DaoxiangInstinctAction` 道伥 NPC 框架（`SuppressTsy` action 推回 Declining 阶段或抑制 Daoxiang spawn）
 - `plan-death-lifecycle-v1` ✅ finished — `LifeRecord` @ `cultivation/life_record.rs` + `BiographyEntry` @ `death_lifecycle/intrusion_log.rs` + `life_record_snapshot` 广播框架（`LegacyAssign` action 扩 LifeRecord 字段写入）
 - `plan-qi-physics-v1` ✅ finished — `WorldQiBudget` 守恒账本 + `qi_physics::ledger::QiTransfer` 真元流动 API（action 烧真元走 ledger，**禁止 `cultivation.qi_current -= cost` 直接扣**）
 
-**交叉引用**：`plan-tribulation-v1` ✅ · `plan-tsy-lifecycle-v1` ✅ · `plan-void-quota-v1` ⏳ active · `plan-niche-defense-v1` ⬜（继承人选择 UI 候选并入，P3 决策门 #4）· `plan-death-lifecycle-v1` ✅（亡者博物馆 LifeRecord）· `plan-gameplay-journey-v1` §N (line 895-904 化虚四大目标 + line 902 化虚专属 action 缺口) · `plan-lifespan-v1` ✅（寿元 deduct API）
+**交叉引用**：`plan-tribulation-v1` ✅ · `plan-tsy-lifecycle-v1` ✅ · `plan-void-quota-v1` ✅ finished · `plan-niche-defense-v1` ⬜（继承人选择 UI 候选并入，P3 决策门 #4）· `plan-death-lifecycle-v1` ✅（亡者博物馆 LifeRecord）· `plan-gameplay-journey-v1` §N (line 895-904 化虚四大目标 + line 902 化虚专属 action 缺口) · `plan-lifespan-v1` ✅（寿元 deduct API）
 
 ---
 
