@@ -77,13 +77,19 @@ public final class VoidActionScreen extends Screen {
         MinecraftClient mc = MinecraftClient.getInstance();
         VoidActionStore.Snapshot snapshot = VoidActionStore.snapshot();
         long nowTick = nowTick();
+        if (nowTick < 0L) {
+            return;
+        }
         boolean sent = switch (kind) {
             case SUPPRESS_TSY -> VoidActionHandler.dispatchSuppressTsy(snapshot.targetZoneId(), nowTick);
             case EXPLODE_ZONE -> VoidActionHandler.dispatchExplodeZone(snapshot.targetZoneId(), nowTick);
             case BARRIER -> {
-                double x = mc.player == null ? 0.0 : mc.player.getX();
-                double y = mc.player == null ? 64.0 : mc.player.getY();
-                double z = mc.player == null ? 0.0 : mc.player.getZ();
+                if (mc == null || mc.player == null) {
+                    yield false;
+                }
+                double x = mc.player.getX();
+                double y = mc.player.getY();
+                double z = mc.player.getZ();
                 yield VoidActionHandler.dispatchBarrier(snapshot.targetZoneId(), x, y, z, nowTick);
             }
             case LEGACY_ASSIGN -> false;
@@ -101,6 +107,9 @@ public final class VoidActionScreen extends Screen {
         String cost = kind.qiCost() <= 0.0
             ? "无即时真元 / 寿元代价"
             : "真元 " + Math.round(kind.qiCost()) + " · 寿元 " + kind.lifespanCostYears() + " 年";
+        if (nowTick < 0L) {
+            return kind.label() + " | " + cost + " | 需进入世界";
+        }
         long readyAt = snapshot.readyAtTick(kind);
         if (readyAt <= nowTick) {
             return kind.label() + " | " + cost + " | 可用";
@@ -113,6 +122,6 @@ public final class VoidActionScreen extends Screen {
         if (mc != null && mc.world != null) {
             return mc.world.getTime();
         }
-        return System.currentTimeMillis() / 50L;
+        return -1L;
     }
 }

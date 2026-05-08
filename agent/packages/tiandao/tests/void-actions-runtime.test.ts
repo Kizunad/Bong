@@ -24,13 +24,17 @@ class FakePubSub implements VoidActionNarrationRuntimeClient {
     this.subscribedChannels.push(channel);
   }
 
-  on(_event: string, listener: (channel: string, message: string) => void) {
-    this.listeners.push(listener);
+  on(event: string, listener: (channel: string, message: string) => void) {
+    if (event === "message") {
+      this.listeners.push(listener);
+    }
     return this;
   }
 
-  off(_event: string, listener: (channel: string, message: string) => void) {
-    this.listeners = this.listeners.filter((entry) => entry !== listener);
+  off(event: string, listener: (channel: string, message: string) => void) {
+    if (event === "message") {
+      this.listeners = this.listeners.filter((entry) => entry !== listener);
+    }
     return this;
   }
 
@@ -41,6 +45,12 @@ class FakePubSub implements VoidActionNarrationRuntimeClient {
   async publish(channel: string, message: string): Promise<number> {
     this.published.push({ channel, message });
     return 1;
+  }
+
+  emit(channel: string, message: string): void {
+    for (const listener of this.listeners) {
+      listener(channel, message);
+    }
   }
 }
 
@@ -131,5 +141,37 @@ describe("VoidActionNarrationRuntime", () => {
 
     expect(pub.published).toHaveLength(0);
     expect(runtime.stats.rejectedContract).toBe(1);
+  });
+
+  it("serializes pubsub payload handling", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const llm: LlmClient = {
+      async chat() {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return JSON.stringify({ text: "虚风已过。", style: "narration" });
+      },
+    };
+    const runtime = new VoidActionNarrationRuntime({
+      llm,
+      model: "mock",
+      sub,
+      pub,
+      logger: { info: vi.fn(), warn: vi.fn() },
+      systemPrompt: "test",
+    });
+
+    await runtime.connect();
+    sub.emit(VOID_ACTION_BARRIER, JSON.stringify(payload("barrier")));
+    sub.emit(VOID_ACTION_BARRIER, JSON.stringify({ ...payload("barrier"), at_tick: 43 }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(pub.published).toHaveLength(2);
+    expect(maxInFlight).toBe(1);
   });
 });

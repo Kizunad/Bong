@@ -153,6 +153,7 @@ export class VoidActionNarrationRuntime {
   private readonly logger: VoidActionNarrationRuntimeLogger;
   private readonly systemPrompt: string;
   private connected = false;
+  private pending: Promise<void> = Promise.resolve();
 
   readonly stats: VoidActionNarrationRuntimeStats = {
     received: 0,
@@ -164,7 +165,11 @@ export class VoidActionNarrationRuntime {
 
   private readonly onMessage = (channel: string, message: string): void => {
     if (!VOID_ACTION_CHANNELS.includes(channel as (typeof VOID_ACTION_CHANNELS)[number])) return;
-    void this.handlePayload(channel, message);
+    this.pending = this.pending
+      .then(() => this.handlePayload(channel, message))
+      .catch((error: unknown) => {
+        this.logger.warn("[void-actions-runtime] queued payload failed:", error);
+      });
   };
 
   constructor(config: VoidActionNarrationRuntimeConfig) {
