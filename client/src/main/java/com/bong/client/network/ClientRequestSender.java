@@ -229,6 +229,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSkillBarBindItem(slot, templateId));
     }
 
+    public static void sendSkillConfigIntent(String skillId, com.google.gson.JsonObject config) {
+        dispatch(ClientRequestProtocol.encodeSkillConfigIntent(skillId, config));
+    }
+
     public static void sendChargeCarrier(String slot, double qiTarget) {
         dispatch(ClientRequestProtocol.encodeChargeCarrier(slot, qiTarget));
     }

@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
+import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
@@ -93,6 +94,18 @@ public class ClientRequestProtocolTest {
         assertEquals(
             "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":3003}",
             json
+        );
+    }
+
+    @Test
+    void encodesSkillConfigIntent() {
+        JsonObject config = new JsonObject();
+        config.addProperty("meridian_id", "Pericardium");
+        config.addProperty("backfire_kind", "tainted_yuan");
+
+        assertEquals(
+            "{\"type\":\"skill_config_intent\",\"v\":1,\"skill_id\":\"zhenmai.sever_chain\",\"config\":{\"meridian_id\":\"Pericardium\",\"backfire_kind\":\"tainted_yuan\"}}",
+            ClientRequestProtocol.encodeSkillConfigIntent("zhenmai.sever_chain", config)
         );
     }
 

@@ -2,6 +2,7 @@ package com.bong.client.combat.inspect;
 
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.combat.SkillConfigStore;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
@@ -29,6 +30,7 @@ public final class TechniquesTabPanel {
     private final FlowLayout techniqueList;
     private final TechniqueSearchBar searchBar;
     private final TechniqueDetailCard detailCard;
+    private final SkillConfigPanelManager configPanelManager;
     private final MeridianMiniSilhouette meridianMiniView;
     private final LabelComponent statusLine;
     private final List<TechniqueRowComponent> techniqueRows = new ArrayList<>();
@@ -68,7 +70,14 @@ public final class TechniquesTabPanel {
         listColumn.child(techniqueList);
         top.child(listColumn);
 
-        detailCard = new TechniqueDetailCard();
+        FlowLayout configLayer = Containers.verticalFlow(Sizing.fixed(1), Sizing.fixed(1));
+        configPanelManager = new SkillConfigPanelManager(configLayer, this::refreshSelection);
+        detailCard = new TechniqueDetailCard(technique -> {
+            MinecraftClient client = MinecraftClient.getInstance();
+            int screenWidth = client == null ? 480 : client.getWindow().getScaledWidth();
+            int screenHeight = client == null ? 320 : client.getWindow().getScaledHeight();
+            configPanelManager.open(technique, 190, 18, screenWidth, screenHeight);
+        });
         top.child(detailCard.component());
         root.child(top);
 
@@ -84,6 +93,7 @@ public final class TechniquesTabPanel {
         statusBox.child(statusLine);
         bottom.child(statusBox);
         root.child(bottom);
+        root.child(configLayer);
 
         rebuildTechniques(TechniquesListPanel.snapshot());
         techniquesListener = next -> {
@@ -100,6 +110,7 @@ public final class TechniquesTabPanel {
 
     public void close() {
         TechniquesListPanel.removeListener(techniquesListener);
+        configPanelManager.dispose();
         meridianHighlightSink.accept(List.of());
     }
 
@@ -123,6 +134,7 @@ public final class TechniquesTabPanel {
     }
 
     private void refreshVisibleTechniques() {
+        String previousSelection = selectedTechniqueId;
         visibleTechniques = TechniquesListPanel.filter(snapshot, searchBar.query());
         techniqueList.clearChildren();
         techniqueRows.clear();
@@ -139,6 +151,7 @@ public final class TechniquesTabPanel {
                     selected -> {
                         selectedTechniqueId = selected.id();
                         hoverTechniqueId = "";
+                        configPanelManager.onSelectedTechniqueChanged(selectedTechniqueId);
                         refreshSelection();
                     },
                     hovered -> {
@@ -156,6 +169,9 @@ public final class TechniquesTabPanel {
             if (findVisibleTechnique(selectedTechniqueId) == null) {
                 selectedTechniqueId = visibleTechniques.get(0).id();
             }
+        }
+        if (!previousSelection.equals(selectedTechniqueId)) {
+            configPanelManager.onSelectedTechniqueChanged(selectedTechniqueId);
         }
     }
 
@@ -231,6 +247,11 @@ public final class TechniquesTabPanel {
 
     private String lockReason(TechniquesListPanel.Technique technique) {
         if (technique == null) return "";
+        String configReason = SkillConfigSchemaRegistry.missingRequiredReason(
+            technique.id(),
+            SkillConfigStore.configFor(technique.id())
+        );
+        if (!configReason.isBlank()) return configReason;
         if (!technique.active()) return "尚未激活";
         MeridianBody body = MeridianStateStore.snapshot();
         if (body == null) return "";

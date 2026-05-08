@@ -72,6 +72,7 @@ public final class ServerDataRouter {
         QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
         SkillBarConfigHandler skillBarConfigHandler = new SkillBarConfigHandler();
         TechniquesSnapshotHandler techniquesSnapshotHandler = new TechniquesSnapshotHandler();
+        SkillConfigSnapshotHandler skillConfigSnapshotHandler = new SkillConfigSnapshotHandler();
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
         BurstMeridianHandler burstMeridianHandler = new BurstMeridianHandler();
@@ -130,6 +131,7 @@ public final class ServerDataRouter {
         handlers.put("quickslot_config", quickSlotConfigHandler);
         handlers.put("skillbar_config", skillBarConfigHandler);
         handlers.put("techniques_snapshot", techniquesSnapshotHandler);
+        handlers.put("skill_config_snapshot", skillConfigSnapshotHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
         handlers.put("burst_meridian_event", burstMeridianHandler);

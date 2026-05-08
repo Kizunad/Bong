@@ -733,6 +733,19 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSkillConfigIntent(String skillId, JsonObject config) {
+        if (skillId == null || skillId.isBlank()) {
+            throw new IllegalArgumentException("skillId must not be blank");
+        }
+        if (config == null) {
+            throw new IllegalArgumentException("config must not be null");
+        }
+        JsonObject obj = envelope("skill_config_intent");
+        obj.addProperty("skill_id", skillId.trim());
+        obj.add("config", config.deepCopy());
+        return obj.toString();
+    }
+
     public static String encodeChargeCarrier(String slot, double qiTarget) {
         if (!Double.isFinite(qiTarget) || qiTarget < 0.0 || qiTarget > 80.0) {
             throw new IllegalArgumentException("qiTarget must be finite in [0,80], got " + qiTarget);

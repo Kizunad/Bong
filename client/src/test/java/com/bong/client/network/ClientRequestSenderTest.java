@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
+import com.google.gson.JsonObject;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
@@ -353,5 +354,22 @@ public class ClientRequestSenderTest {
             sent.get(2).body()
         );
         assertEquals("{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":null}", sent.get(3).body());
+    }
+
+    @Test
+    void sendSkillConfigIntentUsesCorrectChannelAndJson() {
+        install();
+        JsonObject config = new JsonObject();
+        config.addProperty("meridian_id", "Pericardium");
+        config.addProperty("backfire_kind", "array");
+
+        ClientRequestSender.sendSkillConfigIntent("zhenmai.sever_chain", config);
+
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"skill_config_intent\",\"v\":1,\"skill_id\":\"zhenmai.sever_chain\",\"config\":{\"meridian_id\":\"Pericardium\",\"backfire_kind\":\"array\"}}",
+            sent.get(0).body()
+        );
     }
 }

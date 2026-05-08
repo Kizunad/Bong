@@ -1,5 +1,9 @@
 package com.bong.client.combat;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
+
 /**
  * Volatile cast-state store (§11.1). Authoritative data comes from the server
  * via {@code bong:combat/cast_sync}; this mirror is read by the HUD planner and
@@ -10,6 +14,7 @@ public final class CastStateStore {
     public static final long SHORT_INTERRUPT_COOLDOWN_MS = 500L;
 
     private static volatile CastState snapshot = CastState.idle();
+    private static final List<Consumer<CastState>> listeners = new CopyOnWriteArrayList<>();
 
     private CastStateStore() {
     }
@@ -19,7 +24,15 @@ public final class CastStateStore {
     }
 
     public static void replace(CastState next) {
-        snapshot = next == null ? CastState.idle() : next;
+        setSnapshot(next == null ? CastState.idle() : next);
+    }
+
+    public static void addListener(Consumer<CastState> listener) {
+        if (listener != null) listeners.add(listener);
+    }
+
+    public static void removeListener(Consumer<CastState> listener) {
+        listeners.remove(listener);
     }
 
     /** Begin casting (Idle → Casting). No-op if already casting. */
@@ -36,14 +49,14 @@ public final class CastStateStore {
         if (current.isCasting()) {
             return;
         }
-        snapshot = CastState.casting(source, slot, durationMs, startedAtMs);
+        setSnapshot(CastState.casting(source, slot, durationMs, startedAtMs));
     }
 
     /** Casting → Complete when duration has elapsed. */
     public static void complete(long nowMs) {
         CastState current = snapshot;
         if (!current.isCasting()) return;
-        snapshot = current.transitionToComplete(nowMs);
+        setSnapshot(current.transitionToComplete(nowMs));
     }
 
     /** Casting → Interrupt with a reason. Idempotent (stays in interrupt state). */
@@ -51,7 +64,7 @@ public final class CastStateStore {
         CastState current = snapshot;
         if (current.phase() == CastState.Phase.IDLE) return;
         if (current.phase() == CastState.Phase.INTERRUPT) return;
-        snapshot = current.transitionToInterrupt(reason, nowMs);
+        setSnapshot(current.transitionToInterrupt(reason, nowMs));
     }
 
     /**
@@ -63,19 +76,27 @@ public final class CastStateStore {
         if (current.phase() == CastState.Phase.CASTING) {
             if (current.durationMs() > 0
                 && nowMs - current.startedAtMs() >= current.durationMs()) {
-                snapshot = current.transitionToComplete(nowMs);
+                setSnapshot(current.transitionToComplete(nowMs));
             }
             return;
         }
         if (current.phase() == CastState.Phase.COMPLETE
             || current.phase() == CastState.Phase.INTERRUPT) {
             if (nowMs - current.endedAtMs() >= 300L) {
-                snapshot = CastState.idle();
+                setSnapshot(CastState.idle());
             }
         }
     }
 
     public static void resetForTests() {
         snapshot = CastState.idle();
+        listeners.clear();
+    }
+
+    private static void setSnapshot(CastState next) {
+        snapshot = next == null ? CastState.idle() : next;
+        for (Consumer<CastState> listener : listeners) {
+            listener.accept(snapshot);
+        }
     }
 }
