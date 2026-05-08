@@ -17,7 +17,7 @@ use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::qi_physics::{
     qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm, QiAccountId,
-    QiTransfer, QiTransferReason,
+    QiPhysicsError, QiTransfer, QiTransferReason,
 };
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
@@ -470,12 +470,20 @@ pub fn vortex_intercept_tick(
                     clock.tick,
                 );
                 record_vortex_practice(&mut practice_logs, caster);
-                record_vortex_qi_transfer(
+                if let Err(error) = record_vortex_qi_transfer(
                     &mut drain_events.p1(),
                     projectile_entity,
                     caster,
                     drained,
-                );
+                ) {
+                    tracing::warn!(
+                        ?projectile_entity,
+                        ?caster,
+                        drained,
+                        error = %error,
+                        "[bong][woliu] failed to record vortex qi transfer"
+                    );
+                }
                 drain_events.p0().send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: projectile_entity,
@@ -503,7 +511,20 @@ pub fn vortex_intercept_tick(
                     clock.tick,
                 );
                 record_vortex_practice(&mut practice_logs, caster);
-                record_vortex_qi_transfer(&mut drain_events.p1(), needle_entity, caster, drained);
+                if let Err(error) = record_vortex_qi_transfer(
+                    &mut drain_events.p1(),
+                    needle_entity,
+                    caster,
+                    drained,
+                ) {
+                    tracing::warn!(
+                        ?needle_entity,
+                        ?caster,
+                        drained,
+                        error = %error,
+                        "[bong][woliu] failed to record vortex qi transfer"
+                    );
+                }
                 drain_events.p0().send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: needle_entity,
@@ -664,7 +685,15 @@ pub fn vortex_aggregate_at<'a>(
             let ratio = qi_negative_field_drain_ratio(f64::from(field.delta), distance);
             Some((field, distance, ratio))
         })
-        .max_by(|(_, _, a), (_, _, b)| a.total_cmp(b))
+        .max_by(
+            |(left, left_distance, left_ratio), (right, right_distance, right_ratio)| {
+                left_ratio
+                    .total_cmp(right_ratio)
+                    .then_with(|| right_distance.total_cmp(left_distance))
+                    .then_with(|| left.delta.total_cmp(&right.delta))
+                    .then_with(|| right.caster.to_bits().cmp(&left.caster.to_bits()))
+            },
+        )
         .map(|(field, _, ratio)| (field.caster, field.delta, ratio as f32))
 }
 
@@ -839,20 +868,29 @@ fn record_vortex_qi_transfer(
     projectile: Entity,
     field_caster: Entity,
     drained: f32,
-) {
+) -> Result<(), QiPhysicsError> {
+    if let Some(transfer) = build_vortex_qi_transfer(projectile, field_caster, drained)? {
+        transfers.send(transfer);
+    }
+    Ok(())
+}
+
+fn build_vortex_qi_transfer(
+    projectile: Entity,
+    field_caster: Entity,
+    drained: f32,
+) -> Result<Option<QiTransfer>, QiPhysicsError> {
     let amount = f64::from(drained);
     if amount <= f64::EPSILON {
-        return;
+        return Ok(None);
     }
-    let Ok(transfer) = QiTransfer::new(
+    let transfer = QiTransfer::new(
         QiAccountId::container(format!("projectile:{}", projectile.to_bits())),
         QiAccountId::zone(format!("woliu_vortex:{}", field_caster.to_bits())),
         amount,
         QiTransferReason::Collision,
-    ) else {
-        return;
-    };
-    transfers.send(transfer);
+    )?;
+    Ok(Some(transfer))
 }
 
 fn record_vortex_backfire(record: &mut LifeRecord, cause: BackfireCause, tick: u64) {
@@ -1172,6 +1210,69 @@ mod tests {
         let drained_again = drain_qi_payload(&mut payload, 0.20);
         assert!((drained_again - 0.15).abs() < 1e-6);
         assert!((payload - 0.60).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vortex_aggregate_tie_break_prefers_nearer_field_independent_of_iteration_order() {
+        let near_weaker = VortexField {
+            center: DVec3::new(1.0, 0.0, 0.0),
+            radius: 3.0,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 100,
+            caster: Entity::from_raw(30),
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        };
+        let far_stronger = VortexField {
+            center: DVec3::new(2.0, 0.0, 0.0),
+            radius: 3.0,
+            delta: 1.0,
+            caster: Entity::from_raw(20),
+            ..near_weaker
+        };
+
+        let forward =
+            vortex_aggregate_at(DVec3::ZERO, [&near_weaker, &far_stronger].into_iter()).unwrap();
+        let reverse =
+            vortex_aggregate_at(DVec3::ZERO, [&far_stronger, &near_weaker].into_iter()).unwrap();
+
+        assert_eq!(forward.0, near_weaker.caster);
+        assert_eq!(reverse.0, near_weaker.caster);
+        assert_eq!(forward.1, 0.25);
+        assert!((forward.2 - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vortex_qi_transfer_builder_surfaces_invalid_amounts() {
+        let projectile = Entity::from_raw(1);
+        let field_caster = Entity::from_raw(2);
+
+        let transfer = build_vortex_qi_transfer(projectile, field_caster, 0.5)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            transfer.from,
+            QiAccountId::container(format!("projectile:{}", projectile.to_bits()))
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone(format!("woliu_vortex:{}", field_caster.to_bits()))
+        );
+        assert_eq!(transfer.reason, QiTransferReason::Collision);
+        assert_eq!(transfer.amount, 0.5);
+
+        assert!(build_vortex_qi_transfer(projectile, field_caster, 0.0)
+            .unwrap()
+            .is_none());
+
+        let Err(QiPhysicsError::InvalidAmount { field, value }) =
+            build_vortex_qi_transfer(projectile, field_caster, f32::NAN)
+        else {
+            panic!("expected invalid transfer amount for non-finite woliu drain");
+        };
+        assert_eq!(field, "transfer.amount");
+        assert!(value.is_nan());
     }
 
     #[test]
