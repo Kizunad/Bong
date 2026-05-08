@@ -92,21 +92,33 @@ import Base from "../../layouts/Base.astro";
           .replace(/'/g, "&#039;");
       }
 
-      // 与 server 端 `player_username_from_character_id`（player/state.rs）
-      // 同款语义：char_id 格式 `<source>:<username>` 或 `<source>:<username>:<uuid>`，
-      // 前两段拼接即 player_id。前提：username 不含 `:`（Minecraft username 字符
-      // 约束 `[a-zA-Z0-9_]` 天然保证，server 端也按此假设用 split_once(':')）。
-      // 若未来允许含 `:` 的 username，需改 char_id 格式（如 base64 编码 username 段）
-      // 并双端同步更新。
+      // char_id 格式（见 server/src/player/state.rs::rotate_current_character_id）：
+      //   - 旧格式：`<source>:<username>`（无 character 后缀）
+      //   - 新格式：`<source>:<username>:<uuid-v7>`（rotate 时 append UUIDv7）
+      // player_id = `<source>:<username>`，即整体去掉尾部 `:<uuid>` 段。
+      //
+      // 用 lastIndexOf + UUID 正则匹配尾段：仅当尾段长得像 UUID（36 字符 hex+hyphen）
+      // 才剥离，否则视为 `<source>:<username>` 整体保留。这种解析方式比"取前两段"
+      // 更稳健——若 username 含 `:`（理论可能，虽然 Minecraft 字符约束
+      // `[a-zA-Z0-9_]` 当前不允许），仍能正确归类。
       function playerIdOf(charId) {
         var s = String(charId || "");
         var firstColon = s.indexOf(":");
-        if (firstColon < 0) return "";
-        var rest = s.substring(firstColon + 1);
-        if (!rest) return "";
-        var nextColon = rest.indexOf(":");
-        var username = nextColon < 0 ? rest : rest.substring(0, nextColon);
-        return s.substring(0, firstColon) + ":" + username;
+        // 至少要有 source + username 两段
+        if (firstColon <= 0 || firstColon === s.length - 1) return "";
+
+        var lastColon = s.lastIndexOf(":");
+        // `<source>:<username>` 旧格式，整体即 player_id
+        if (lastColon === firstColon) return s;
+
+        // `<source>:<username>:<tail>` —— 仅当 tail 形如 UUID（36 字符 hex+hyphen，
+        // 含 4 个 hyphen 分段如 8-4-4-4-12）才视为 character_id 后缀
+        var tail = s.substring(lastColon + 1);
+        if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(tail)) {
+          return s.substring(0, lastColon);
+        }
+        // 非 UUID 尾段（异常 / 未知格式）按原值保留，避免误截断
+        return s;
       }
 
       var search = new URLSearchParams(window.location.search);

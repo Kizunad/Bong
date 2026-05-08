@@ -139,7 +139,8 @@
 | `395e02c` | 2026-05-07 | review fix: lives 世代序号改用列表位置而非 char_id 后缀正则（Codex P2） |
 | `196e81f` | 2026-05-07 | review fix: 采纳 Claude bot 4 条小问题（接入状态文档 / 删虚构 API 注释 / 移除 `_OK` 别名 / spec.realm 防漂移测试 / URL 编码注释） |
 | `20c264b` | 2026-05-08 | review fix: getStaticPaths 区分 ENOENT vs JSON/结构错误（CodeRabbit major） |
-| _下一 commit_ | 2026-05-08 | review fix: lives 重构为 query string 单页解决 static 路由 runtime 新 ID 404（Codex P1） |
+| `90e287d` | 2026-05-08 | review fix: lives 重构为 query string 单页解决 static 路由 runtime 新 ID 404（Codex P1） |
+| `311861d` | 2026-05-08 | review fix: 采纳 CodeRabbit 第 3 轮 3 条意见（文档旧路由叙述 / MD040 / playerIdOf 切首段语义） |
 
 ### 测试结果
 
