@@ -1,6 +1,6 @@
-# Bong · plan-perception-v1 · 模板（已被 v1.1 取代）
+# Bong · plan-perception-v1 · 已归档（被 v1.1 取代）
 
-> ⚠️ **本版本被 [`plan-perception-v1.1.md`](plan-perception-v1.1.md) 取代**。v1 仅模板态、未实施；v1.1 主要变更：去 Iris 依赖、补接入面 checklist、每 Phase 加可 grep 抓手、新增 §10 测试矩阵（≥ 200 用例 headless 自动化）。后续修改请直接改 v1.1。
+> **归档备注**：本版本被 [`plan-perception-v1.1.md`](plan-perception-v1.1.md) 取代。v1 仅模板态、未实施；v1.1 已在 `docs/finished_plans/` 归档并作为后续感知系统实现依据。后续修改请直接改 v1.1。
 
 
 **视野与感知系统专项**。定义 Bong 的双感知系统：**肉眼视觉**（受境界限制的清晰距离 + 雾化）与**神识感知**（worldview 已定义的境界世界感知能力，UI 形态采用屏幕边缘指示器）。
