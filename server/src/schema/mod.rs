@@ -17,6 +17,7 @@ pub mod combat_carrier;
 pub mod combat_event;
 pub mod combat_hud;
 pub mod common;
+pub mod craft;
 pub mod cultivation;
 pub mod death_insight;
 pub mod death_lifecycle;
