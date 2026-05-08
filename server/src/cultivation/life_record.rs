@@ -685,6 +685,26 @@ mod tests {
     }
 
     #[test]
+    fn serde_defaults_missing_void_action_fields_for_legacy_records() {
+        let legacy = serde_json::json!({
+            "character_id": "offline:Alice",
+            "created_at": 5,
+            "biography": [],
+            "insights_taken": [],
+            "skill_milestones": [],
+            "spirit_root_first": null,
+        });
+
+        let decoded: LifeRecord =
+            serde_json::from_value(legacy).expect("legacy life record should deserialize");
+
+        assert!(decoded.void_actions.is_empty());
+        assert_eq!(decoded.legacy_inheritor, None);
+        assert!(decoded.legacy_items.is_empty());
+        assert_eq!(decoded.legacy_letterbox, None);
+    }
+
+    #[test]
     fn death_insight_records_latest_death_tick_and_dedupes_same_text() {
         let mut lr = LifeRecord::new(canonical_player_id("Alice"));
         lr.push(BiographyEntry::NearDeath {

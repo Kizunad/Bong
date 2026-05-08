@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
-    ResMut, Username,
+    ResMut, Username, With,
 };
 
 use crate::cultivation::components::{Cultivation, Realm};
@@ -18,14 +18,14 @@ use crate::world::tsy_lifecycle::{TsyLifecycle, TsyZoneStateRegistry};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{
-    BarrierField, VoidActionCooldowns, VoidActionKind, VoidActionLogEntry,
+    BarrierDispelHistory, BarrierField, VoidActionCooldowns, VoidActionKind, VoidActionLogEntry,
     DAOXIANG_SUPPRESS_EXTENSION_TICKS,
 };
 use super::ledger_hooks::{
     borrow_explode_zone_qi, debit_caster_qi_to_account, schedule_barrier_return,
     VoidQiReturnSchedule,
 };
-use super::legacy::{assign_legacy, persist_legacy_letterbox};
+use super::legacy::{apply_legacy_assignment, persist_legacy_letterbox, LegacyLetterbox};
 
 #[derive(Debug, Clone, Event)]
 pub struct VoidActionIntent {
@@ -51,6 +51,7 @@ pub enum VoidActionError {
     TsyStateRejected,
     InvalidBarrierGeometry,
     LegacyAlreadyAssigned,
+    LegacyPersistFailed,
     LedgerRejected,
 }
 
@@ -66,6 +67,7 @@ impl VoidActionError {
             Self::TsyStateRejected => "tsy_state_rejected",
             Self::InvalidBarrierGeometry => "invalid_barrier_geometry",
             Self::LegacyAlreadyAssigned => "legacy_already_assigned",
+            Self::LegacyPersistFailed => "legacy_persist_failed",
             Self::LedgerRejected => "ledger_rejected",
         }
     }
@@ -90,7 +92,7 @@ pub fn precheck_void_action(
     if input.qi_current + f64::EPSILON < kind.qi_cost() {
         return Err(VoidActionError::QiInsufficient);
     }
-    if input.lifespan_remaining_years <= kind.lifespan_cost_years() as f64 {
+    if input.lifespan_remaining_years < kind.lifespan_cost_years() as f64 {
         return Err(VoidActionError::LifespanInsufficient);
     }
     if input.now_tick < input.ready_at_tick {
@@ -181,7 +183,7 @@ pub fn resolve_void_action_intents(
                 realm: cultivation.realm,
                 qi_current: cultivation.qi_current,
                 lifespan_remaining_years: lifespan.remaining_years(),
-                ready_at_tick: cooldowns.ready_at(intent.caster, kind),
+                ready_at_tick: cooldowns.ready_at(&actor_id, kind),
                 now_tick,
             },
         );
@@ -256,7 +258,7 @@ pub fn resolve_void_action_intents(
 
         match result {
             Ok(outcome) => {
-                cooldowns.set_used(intent.caster, kind, now_tick);
+                cooldowns.set_used(&actor_id, kind, now_tick);
                 let payload = VoidActionBroadcastV1::new(
                     kind,
                     actor_id.clone(),
@@ -327,8 +329,7 @@ fn cast_suppress_tsy(
         .by_family
         .get_mut(&family_id)
         .ok_or(VoidActionError::TargetNotTsy)?;
-    state.lifecycle = suppress_lifecycle(state.lifecycle)?;
-    state.collapsing_started_at_tick = None;
+    let next_lifecycle = suppress_lifecycle(state.lifecycle)?;
 
     debit_caster_qi_to_account(
         caster,
@@ -340,6 +341,9 @@ fn cast_suppress_tsy(
         VoidActionKind::SuppressTsy.qi_cost(),
     )
     .map_err(|_| VoidActionError::LedgerRejected)?;
+
+    state.lifecycle = next_lifecycle;
+    state.collapsing_started_at_tick = None;
 
     for (marker, cooldown) in daoxiang.iter_mut() {
         if marker.family_id == family_id {
@@ -395,6 +399,10 @@ fn cast_explode_zone(
         .iter_mut()
         .find(|zone| zone.name == zone_id)
         .ok_or(VoidActionError::ZoneNotFound)?;
+    let borrow_amount = super::components::EXPLODE_ZONE_QI_COST + zone.spirit_qi.max(0.0);
+    if budget.current_total < borrow_amount {
+        return Err(VoidActionError::LedgerRejected);
+    }
     debit_caster_qi_to_account(
         caster,
         actor_id,
@@ -405,7 +413,8 @@ fn cast_explode_zone(
         VoidActionKind::ExplodeZone.qi_cost(),
     )
     .map_err(|_| VoidActionError::LedgerRejected)?;
-    borrow_explode_zone_qi(budget, zone, actor_id, now_tick, return_schedule);
+    borrow_explode_zone_qi(budget, zone, actor_id, now_tick, return_schedule)
+        .map_err(|_| VoidActionError::LedgerRejected)?;
     let caused_death = deduct_lifespan_for_void_action(lifespan, VoidActionKind::ExplodeZone);
     life_record.void_actions.push(VoidActionLogEntry::accepted(
         VoidActionKind::ExplodeZone,
@@ -498,21 +507,17 @@ fn cast_legacy_assign(
     if life_record.legacy_letterbox.is_some() {
         return Err(VoidActionError::LegacyAlreadyAssigned);
     }
-    let letterbox = assign_legacy(
-        life_record,
-        actor_id,
-        inheritor_id,
-        item_instance_ids,
-        message,
-        now_tick,
-    );
+    let letterbox =
+        LegacyLetterbox::new(actor_id, inheritor_id, item_instance_ids, message, now_tick);
     if let Some(settings) = settings {
         if let Err(error) = persist_legacy_letterbox(settings, &letterbox) {
             tracing::warn!(
                 "[bong][void-action] failed to persist legacy letterbox for {actor_id}: {error}"
             );
+            return Err(VoidActionError::LegacyPersistFailed);
         }
     }
+    apply_legacy_assignment(life_record, letterbox);
     life_record.push(BiographyEntry::VoidAction {
         kind: VoidActionKind::LegacyAssign,
         target: inheritor_id.to_string(),
@@ -524,6 +529,35 @@ fn cast_legacy_assign(
         public_text: format!("{actor_id} 留下临终遗令，道统指向 {inheritor_id}。"),
         caused_death: false,
     })
+}
+
+pub fn apply_barrier_dispel_system(
+    mut history: ResMut<BarrierDispelHistory>,
+    barriers: Query<(Entity, &BarrierField)>,
+    mut daoxiang: Query<(Entity, &Position, &mut Cultivation), With<TsyHostileMarker>>,
+) {
+    let mut active_barriers = std::collections::HashSet::new();
+    for (barrier_entity, field) in &barriers {
+        active_barriers.insert(barrier_entity);
+        for (hostile_entity, position, mut cultivation) in &mut daoxiang {
+            let pos = position.get();
+            if !field.geometry.contains([pos.x, pos.y, pos.z]) {
+                continue;
+            }
+            if !history.mark_once(barrier_entity, hostile_entity) {
+                continue;
+            }
+            cultivation.qi_current = barrier_dispel_qi(cultivation.qi_current)
+                .min(cultivation.qi_max)
+                .max(0.0);
+            tracing::debug!(
+                "[bong][void-action] barrier {} dispelled daoxiang {:?}",
+                field.zone_id,
+                hostile_entity
+            );
+        }
+    }
+    history.retain_active_barriers(&active_barriers);
 }
 
 #[cfg(test)]
@@ -569,13 +603,10 @@ mod tests {
     }
 
     #[test]
-    fn precheck_rejects_equal_lifespan_cost() {
+    fn precheck_allows_equal_lifespan_cost() {
         let mut input = input();
         input.lifespan_remaining_years = 30.0;
-        assert_eq!(
-            precheck_void_action(VoidActionKind::Barrier, input),
-            Err(VoidActionError::LifespanInsufficient)
-        );
+        assert_eq!(precheck_void_action(VoidActionKind::Barrier, input), Ok(()));
     }
 
     #[test]
@@ -711,6 +742,56 @@ mod tests {
         assert_eq!(
             VoidActionError::LedgerRejected.wire_reason(),
             "ledger_rejected"
+        );
+    }
+
+    #[test]
+    fn barrier_dispel_system_halves_daoxiang_qi_once() {
+        use super::super::components::BarrierGeometry;
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.init_resource::<BarrierDispelHistory>();
+        app.add_systems(Update, apply_barrier_dispel_system);
+        app.world_mut().spawn(BarrierField::new(
+            "offline:Void",
+            "spawn",
+            BarrierGeometry::circle([0.0, 64.0, 0.0], 8.0),
+            10,
+        ));
+        let hostile = app
+            .world_mut()
+            .spawn((
+                TsyHostileMarker {
+                    family_id: "tsy".to_string(),
+                },
+                Position::new([4.0, 64.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(hostile)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            40.0
+        );
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(hostile)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            40.0
         );
     }
 }

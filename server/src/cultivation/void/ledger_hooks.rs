@@ -5,6 +5,7 @@ use valence::prelude::{bevy_ecs, Commands, Entity, Events, Query, Res, ResMut, R
 
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::tick::CultivationClock;
+use crate::qi_physics::constants::QI_EPSILON;
 use crate::qi_physics::{
     QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
 };
@@ -12,6 +13,7 @@ use crate::world::zone::{Zone, ZoneRegistry};
 
 use super::components::{
     BarrierField, VoidActionKind, BARRIER_QI_COST, EXPLODE_ZONE_DECAY_TICKS, EXPLODE_ZONE_QI_COST,
+    TICKS_PER_DAY,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,11 +68,22 @@ pub fn debit_caster_qi_to_account(
     amount: f64,
 ) -> Result<QiTransfer, QiPhysicsError> {
     let from = QiAccountId::player(actor_id);
-    let available = accounts.balance(&from).max(cultivation.qi_current.max(0.0));
-    accounts.set_balance(from.clone(), available)?;
+    let cultivation_balance = cultivation.qi_current.max(0.0);
+    if accounts.has_account(&from) {
+        let account_balance = accounts.balance(&from);
+        if (account_balance - cultivation_balance).abs() > QI_EPSILON {
+            return Err(QiPhysicsError::ConservationDrift {
+                expected: cultivation_balance,
+                actual: account_balance,
+                tolerance: QI_EPSILON,
+            });
+        }
+    } else {
+        accounts.set_balance(from.clone(), cultivation_balance)?;
+    }
     let transfer = QiTransfer::new(from.clone(), target, amount, QiTransferReason::VoidAction)?;
     accounts.transfer(transfer.clone())?;
-    cultivation.qi_current = accounts.balance(&from).min(cultivation.qi_current).max(0.0);
+    cultivation.qi_current = accounts.balance(&from).max(0.0);
     if let Some(events) = qi_transfer_events {
         events.send(transfer.clone());
     }
@@ -88,8 +101,15 @@ pub fn borrow_explode_zone_qi(
     owner_id: &str,
     now_tick: u64,
     schedule: &mut VoidQiReturnSchedule,
-) -> ScheduledQiReturn {
+) -> Result<ScheduledQiReturn, QiPhysicsError> {
     let borrow_amount = EXPLODE_ZONE_QI_COST + zone.spirit_qi.max(0.0);
+    if budget.current_total + QI_EPSILON < borrow_amount {
+        return Err(QiPhysicsError::InsufficientQi {
+            account: "WorldQiBudget.current_total".to_string(),
+            available: budget.current_total,
+            requested: borrow_amount,
+        });
+    }
     budget.current_total = (budget.current_total - borrow_amount).max(0.0);
     zone.spirit_qi = 1.0;
     let scheduled = ScheduledQiReturn {
@@ -100,7 +120,7 @@ pub fn borrow_explode_zone_qi(
         due_tick: now_tick.saturating_add(EXPLODE_ZONE_DECAY_TICKS),
     };
     schedule.push(scheduled.clone());
-    scheduled
+    Ok(scheduled)
 }
 
 pub fn apply_due_qi_returns(
@@ -109,13 +129,26 @@ pub fn apply_due_qi_returns(
     zones: &mut [Zone],
     due: Vec<ScheduledQiReturn>,
 ) -> usize {
+    let (applied, _) = apply_due_qi_returns_collect_failures(budget, accounts, zones, due);
+    applied
+}
+
+fn apply_due_qi_returns_collect_failures(
+    budget: &mut WorldQiBudget,
+    accounts: &mut WorldQiAccount,
+    zones: &mut [Zone],
+    due: Vec<ScheduledQiReturn>,
+) -> (usize, Vec<ScheduledQiReturn>) {
     let mut applied = 0;
+    let mut failed = Vec::new();
     let mut zones = Some(zones);
     for entry in due {
-        apply_due_qi_return(budget, accounts, zones.as_deref_mut(), entry);
-        applied += 1;
+        match apply_due_qi_return(budget, accounts, zones.as_deref_mut(), entry) {
+            Ok(()) => applied += 1,
+            Err(entry) => failed.push(entry),
+        }
     }
-    applied
+    (applied, failed)
 }
 
 fn apply_due_qi_return(
@@ -123,7 +156,7 @@ fn apply_due_qi_return(
     accounts: &mut WorldQiAccount,
     zones: Option<&mut [Zone]>,
     entry: ScheduledQiReturn,
-) {
+) -> Result<(), ScheduledQiReturn> {
     match entry.kind {
         VoidActionKind::ExplodeZone => {
             budget.current_total += entry.amount;
@@ -142,10 +175,12 @@ fn apply_due_qi_return(
                     "[bong][void-action] failed to return barrier qi for zone {}: {error}",
                     entry.zone_id
                 );
+                return Err(entry);
             }
         }
         VoidActionKind::SuppressTsy | VoidActionKind::LegacyAssign => {}
     }
+    Ok(())
 }
 
 pub fn schedule_barrier_return(
@@ -174,12 +209,25 @@ pub fn apply_due_void_qi_returns_system(
     if due.is_empty() {
         return;
     }
+    let mut failed = Vec::new();
     if let Some(zones) = zones.as_deref_mut() {
-        apply_due_qi_returns(&mut budget, &mut accounts, zones.zones.as_mut_slice(), due);
+        failed = apply_due_qi_returns_collect_failures(
+            &mut budget,
+            &mut accounts,
+            zones.zones.as_mut_slice(),
+            due,
+        )
+        .1;
     } else {
         for entry in due {
-            apply_due_qi_return(&mut budget, &mut accounts, None, entry);
+            if let Err(entry) = apply_due_qi_return(&mut budget, &mut accounts, None, entry) {
+                failed.push(entry);
+            }
         }
+    }
+    for mut entry in failed {
+        entry.due_tick = clock.tick.saturating_add(TICKS_PER_DAY);
+        schedule.push(entry);
     }
 }
 
@@ -278,6 +326,56 @@ mod tests {
     }
 
     #[test]
+    fn debit_caster_qi_rejects_existing_account_drift() {
+        let mut accounts = WorldQiAccount::default();
+        let mut c = cultivation(500.0);
+        accounts
+            .set_balance(QiAccountId::player("offline:Void"), 700.0)
+            .unwrap();
+
+        let error = debit_caster_qi_to_account(
+            Entity::PLACEHOLDER,
+            "offline:Void",
+            QiAccountId::zone("spawn"),
+            &mut c,
+            &mut accounts,
+            None,
+            150.0,
+        )
+        .expect_err("existing ledger/cultivation drift must reject");
+
+        assert!(matches!(error, QiPhysicsError::ConservationDrift { .. }));
+        assert_eq!(c.qi_current, 500.0);
+        assert_eq!(
+            accounts.balance(&QiAccountId::player("offline:Void")),
+            700.0
+        );
+    }
+
+    #[test]
+    fn debit_caster_qi_allows_initial_account_seed() {
+        let mut accounts = WorldQiAccount::default();
+        let mut c = cultivation(500.0);
+
+        debit_caster_qi_to_account(
+            Entity::PLACEHOLDER,
+            "offline:Void",
+            QiAccountId::zone("spawn"),
+            &mut c,
+            &mut accounts,
+            None,
+            150.0,
+        )
+        .expect("missing account may be seeded from cultivation view in v1");
+
+        assert_eq!(c.qi_current, 350.0);
+        assert_eq!(
+            accounts.balance(&QiAccountId::player("offline:Void")),
+            350.0
+        );
+    }
+
+    #[test]
     fn debit_caster_qi_records_transfer_in_account_history() {
         let mut accounts = WorldQiAccount::default();
         let mut c = cultivation(500.0);
@@ -299,7 +397,8 @@ mod tests {
         let mut budget = WorldQiBudget::from_total(1_000.0);
         let mut z = zone("spawn", 0.5);
         let mut schedule = VoidQiReturnSchedule::default();
-        let entry = borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule);
+        let entry = borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule)
+            .expect("budget can cover explode borrow");
         assert_eq!(entry.amount, 300.5);
         assert_eq!(budget.current_total, 699.5);
     }
@@ -309,7 +408,8 @@ mod tests {
         let mut budget = WorldQiBudget::from_total(1_000.0);
         let mut z = zone("spawn", 0.2);
         let mut schedule = VoidQiReturnSchedule::default();
-        borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule);
+        borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule)
+            .expect("budget can cover explode borrow");
         assert_eq!(z.spirit_qi, 1.0);
     }
 
@@ -318,8 +418,24 @@ mod tests {
         let mut budget = WorldQiBudget::from_total(1_000.0);
         let mut z = zone("spawn", 0.0);
         let mut schedule = VoidQiReturnSchedule::default();
-        let entry = borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule);
+        let entry = borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule)
+            .expect("budget can cover explode borrow");
         assert_eq!(entry.due_tick, 10 + EXPLODE_ZONE_DECAY_TICKS);
+    }
+
+    #[test]
+    fn explode_zone_rejects_budget_underflow_without_mutation() {
+        let mut budget = WorldQiBudget::from_total(100.0);
+        let mut z = zone("spawn", 0.5);
+        let mut schedule = VoidQiReturnSchedule::default();
+
+        let error = borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule)
+            .expect_err("budget underflow must reject");
+
+        assert!(matches!(error, QiPhysicsError::InsufficientQi { .. }));
+        assert_eq!(budget.current_total, 100.0);
+        assert_eq!(z.spirit_qi, 0.5);
+        assert!(schedule.is_empty());
     }
 
     #[test]
@@ -415,6 +531,31 @@ mod tests {
             BARRIER_QI_COST
         );
         assert_eq!(zones[0].spirit_qi, 0.5);
+    }
+
+    #[test]
+    fn due_barrier_return_failure_is_retriable() {
+        let mut budget = WorldQiBudget::from_total(1_000.0);
+        let mut accounts = WorldQiAccount::default();
+        let mut zones = vec![zone("spawn", 0.5)];
+        let entry = ScheduledQiReturn {
+            kind: VoidActionKind::Barrier,
+            owner_id: "a".to_string(),
+            zone_id: "spawn".to_string(),
+            amount: BARRIER_QI_COST,
+            due_tick: 20,
+        };
+
+        let (applied, failed) = apply_due_qi_returns_collect_failures(
+            &mut budget,
+            &mut accounts,
+            &mut zones,
+            vec![entry.clone()],
+        );
+
+        assert_eq!(applied, 0);
+        assert_eq!(failed, vec![entry]);
+        assert_eq!(accounts.balance(&QiAccountId::zone("spawn")), 0.0);
     }
 
     #[test]

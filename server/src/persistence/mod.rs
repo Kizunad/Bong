@@ -1359,9 +1359,10 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             );
             CREATE INDEX IF NOT EXISTS idx_legacy_letterbox_inheritor
             ON legacy_letterbox (inheritor_id, status);
-            PRAGMA user_version = 18;
             ",
         )?;
+        assert_legacy_letterbox_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 18;")?;
         transaction.commit()?;
     }
 
@@ -1471,6 +1472,43 @@ fn table_columns(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn assert_legacy_letterbox_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "legacy_letterbox")?;
+    let required = [
+        "owner_id",
+        "inheritor_id",
+        "payload_json",
+        "assigned_at_tick",
+        "reject_until_tick",
+        "status",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v18 migration completed but legacy_letterbox column {missing} missing"
+            )),
+        )));
+    }
+    let index_exists: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_legacy_letterbox_inheritor'",
+        [],
+        |row| row.get(0),
+    )?;
+    if index_exists != 1 {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other("v18 migration completed but legacy_letterbox index missing"),
+        )));
+    }
+    Ok(())
 }
 
 fn legacy_player_realm_to_cultivation(realm: &str) -> Option<Realm> {
@@ -5207,6 +5245,7 @@ mod persistence_tests {
             "social_renown",
             "social_spirit_niches",
             "social_faction_memberships",
+            "legacy_letterbox",
         ] {
             let exists: Option<String> = connection
                 .query_row(
@@ -5218,6 +5257,34 @@ mod persistence_tests {
                 .expect("sqlite_master social table query should succeed");
             assert_eq!(exists.as_deref(), Some(table), "{table} should exist");
         }
+    }
+
+    #[test]
+    fn v18_migration_rejects_partial_legacy_letterbox_schema() {
+        let db_path = database_path("v18-partial-legacy-letterbox");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE legacy_letterbox (
+                    owner_id TEXT PRIMARY KEY
+                );
+                PRAGMA user_version = 17;
+                ",
+            )
+            .expect("partial legacy table should be created");
+        drop(connection);
+
+        bootstrap_sqlite(&db_path, "server-run-test")
+            .expect_err("partial legacy_letterbox schema must block v18 migration");
+
+        let connection = Connection::open(&db_path).expect("db should reopen");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, 17);
     }
 
     #[test]

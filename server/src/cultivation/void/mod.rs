@@ -11,14 +11,15 @@ pub mod legacy;
 
 use valence::prelude::{App, IntoSystemConfigs, Update};
 
-use actions::resolve_void_action_intents;
-use components::VoidActionCooldowns;
+use actions::{apply_barrier_dispel_system, resolve_void_action_intents};
+use components::{BarrierDispelHistory, VoidActionCooldowns};
 use ledger_hooks::{
     apply_due_void_qi_returns_system, despawn_expired_barriers_system, VoidQiReturnSchedule,
 };
 
 pub fn register(app: &mut App) {
     app.init_resource::<VoidActionCooldowns>();
+    app.init_resource::<BarrierDispelHistory>();
     app.init_resource::<VoidQiReturnSchedule>();
     app.add_event::<actions::VoidActionIntent>();
     app.add_event::<actions::VoidActionBroadcast>();
@@ -26,8 +27,10 @@ pub fn register(app: &mut App) {
         Update,
         (
             resolve_void_action_intents.after(crate::cultivation::lifespan::lifespan_aging_tick),
+            apply_barrier_dispel_system,
             apply_due_void_qi_returns_system,
             despawn_expired_barriers_system,
-        ),
+        )
+            .chain(),
     );
 }

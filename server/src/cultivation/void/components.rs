@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity, Resource};
@@ -182,36 +182,56 @@ impl VoidActionLogEntry {
 
 #[derive(Debug, Default, Clone, Resource)]
 pub struct VoidActionCooldowns {
-    ready_at: HashMap<(Entity, VoidActionKind), u64>,
+    ready_at: HashMap<(String, VoidActionKind), u64>,
 }
 
 impl VoidActionCooldowns {
-    pub fn ready_at(&self, entity: Entity, kind: VoidActionKind) -> u64 {
-        self.ready_at.get(&(entity, kind)).copied().unwrap_or(0)
+    pub fn ready_at(&self, character_id: &str, kind: VoidActionKind) -> u64 {
+        self.ready_at
+            .get(&(character_id.to_string(), kind))
+            .copied()
+            .unwrap_or(0)
     }
 
-    pub fn is_ready(&self, entity: Entity, kind: VoidActionKind, now_tick: u64) -> bool {
-        now_tick >= self.ready_at(entity, kind)
+    pub fn is_ready(&self, character_id: &str, kind: VoidActionKind, now_tick: u64) -> bool {
+        now_tick >= self.ready_at(character_id, kind)
     }
 
-    pub fn set_used(&mut self, entity: Entity, kind: VoidActionKind, now_tick: u64) {
+    pub fn set_used(&mut self, character_id: &str, kind: VoidActionKind, now_tick: u64) {
         let cooldown = kind.cooldown_ticks();
         if cooldown == 0 {
             return;
         }
-        self.ready_at
-            .insert((entity, kind), now_tick.saturating_add(cooldown));
+        self.ready_at.insert(
+            (character_id.to_string(), kind),
+            now_tick.saturating_add(cooldown),
+        );
     }
 
-    pub fn force_ready_at(&mut self, entity: Entity, kind: VoidActionKind, tick: u64) {
-        self.ready_at.insert((entity, kind), tick);
+    pub fn force_ready_at(&mut self, character_id: &str, kind: VoidActionKind, tick: u64) {
+        self.ready_at.insert((character_id.to_string(), kind), tick);
+    }
+}
+
+#[derive(Debug, Default, Clone, Resource)]
+pub struct BarrierDispelHistory {
+    applied: HashSet<(Entity, Entity)>,
+}
+
+impl BarrierDispelHistory {
+    pub fn mark_once(&mut self, barrier: Entity, hostile: Entity) -> bool {
+        self.applied.insert((barrier, hostile))
+    }
+
+    pub fn retain_active_barriers(&mut self, active_barriers: &HashSet<Entity>) {
+        self.applied
+            .retain(|(barrier, _)| active_barriers.contains(barrier));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::Entity;
 
     #[test]
     fn action_kind_wire_names_are_stable() {
@@ -341,16 +361,16 @@ mod tests {
     #[test]
     fn cooldown_default_is_ready() {
         let cooldowns = VoidActionCooldowns::default();
-        assert!(cooldowns.is_ready(Entity::PLACEHOLDER, VoidActionKind::Barrier, 0));
+        assert!(cooldowns.is_ready("offline:Void", VoidActionKind::Barrier, 0));
     }
 
     #[test]
     fn cooldown_set_used_blocks_until_ready_tick() {
         let mut cooldowns = VoidActionCooldowns::default();
-        cooldowns.set_used(Entity::PLACEHOLDER, VoidActionKind::Barrier, 10);
-        assert!(!cooldowns.is_ready(Entity::PLACEHOLDER, VoidActionKind::Barrier, 10));
+        cooldowns.set_used("offline:Void", VoidActionKind::Barrier, 10);
+        assert!(!cooldowns.is_ready("offline:Void", VoidActionKind::Barrier, 10));
         assert!(cooldowns.is_ready(
-            Entity::PLACEHOLDER,
+            "offline:Void",
             VoidActionKind::Barrier,
             10 + BARRIER_COOLDOWN_TICKS
         ));
@@ -359,9 +379,9 @@ mod tests {
     #[test]
     fn legacy_assign_does_not_set_cooldown() {
         let mut cooldowns = VoidActionCooldowns::default();
-        cooldowns.set_used(Entity::PLACEHOLDER, VoidActionKind::LegacyAssign, 10);
+        cooldowns.set_used("offline:Void", VoidActionKind::LegacyAssign, 10);
         assert_eq!(
-            cooldowns.ready_at(Entity::PLACEHOLDER, VoidActionKind::LegacyAssign),
+            cooldowns.ready_at("offline:Void", VoidActionKind::LegacyAssign),
             0
         );
     }
@@ -369,11 +389,19 @@ mod tests {
     #[test]
     fn force_ready_at_overrides_cooldown_for_tests() {
         let mut cooldowns = VoidActionCooldowns::default();
-        cooldowns.set_used(Entity::PLACEHOLDER, VoidActionKind::Barrier, 10);
-        cooldowns.force_ready_at(Entity::PLACEHOLDER, VoidActionKind::Barrier, 12);
+        cooldowns.set_used("offline:Void", VoidActionKind::Barrier, 10);
+        cooldowns.force_ready_at("offline:Void", VoidActionKind::Barrier, 12);
         assert_eq!(
-            cooldowns.ready_at(Entity::PLACEHOLDER, VoidActionKind::Barrier),
+            cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
             12
         );
+    }
+
+    #[test]
+    fn cooldown_key_uses_stable_character_id() {
+        let mut cooldowns = VoidActionCooldowns::default();
+        cooldowns.set_used("offline:Void", VoidActionKind::Barrier, 10);
+        assert!(!cooldowns.is_ready("offline:Void", VoidActionKind::Barrier, 11));
+        assert!(cooldowns.is_ready("offline:Other", VoidActionKind::Barrier, 11));
     }
 }

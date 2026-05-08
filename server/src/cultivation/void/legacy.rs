@@ -102,16 +102,20 @@ pub fn assign_legacy(
         message,
         now_tick,
     );
-    life_record.legacy_inheritor = Some(inheritor_id.to_string());
-    life_record.legacy_items = item_instance_ids;
+    apply_legacy_assignment(life_record, letterbox.clone());
+    letterbox
+}
+
+pub fn apply_legacy_assignment(life_record: &mut LifeRecord, letterbox: LegacyLetterbox) {
+    life_record.legacy_inheritor = Some(letterbox.inheritor_id.clone());
+    life_record.legacy_items = letterbox.item_instance_ids.clone();
     life_record.legacy_letterbox = Some(letterbox.clone());
     life_record.void_actions.push(VoidActionLogEntry::accepted(
         VoidActionKind::LegacyAssign,
-        inheritor_id,
-        now_tick,
+        &letterbox.inheritor_id,
+        letterbox.assigned_at_tick,
         "legacy_assigned",
     ));
-    letterbox
 }
 
 pub fn persist_legacy_letterbox(

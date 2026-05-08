@@ -171,6 +171,10 @@ impl WorldQiAccount {
         self.balances.remove(account)
     }
 
+    pub fn has_account(&self, account: &QiAccountId) -> bool {
+        self.balances.contains_key(account)
+    }
+
     pub fn balance(&self, account: &QiAccountId) -> f64 {
         self.balances.get(account).copied().unwrap_or(0.0)
     }
