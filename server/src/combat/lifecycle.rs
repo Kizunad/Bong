@@ -1440,8 +1440,10 @@ fn reset_for_new_character(
         lifecycle.character_id = next_character_id;
     }
 
-    lifecycle.death_count = 0;
-    lifecycle.fortune_remaining = 3;
+    // plan-multi-life-v1 §0 O.4: per-life 运数。luck_pool::reset_for_new_life 同时
+    // 把 fortune 重置到 INITIAL_FORTUNE_PER_LIFE 并清零 death_count，
+    // 与 cultivation::luck_pool 单一数据源保持一致。
+    crate::cultivation::luck_pool::reset_for_new_life(lifecycle);
     lifecycle.last_death_tick = None;
     lifecycle.last_revive_tick = Some(now_tick);
     // 新角色与前角色无机制关联；灵龛归属同样不继承。
@@ -1457,8 +1459,13 @@ fn reset_for_new_character(
     }
 
     let default_player_state = PlayerState::default();
-    let spawn_position = crate::player::spawn_position();
-    let fresh_lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+    // plan-multi-life-v1 §2 / §3：新角色 spec 由 cultivation::character_select 唯一管理
+    // （spawn_pos = spawn_plain，realm = Awaken，lifespan = AWAKEN cap）。这里曾硬编
+    // MORTAL=80，与 attach_cultivation_to_joined_clients 路径用的 AWAKEN=120 数值漂移；
+    // 现统一从 spec 读，单一数据源。
+    let new_char_spec = crate::cultivation::character_select::next_character_spec();
+    let spawn_position = new_char_spec.spawn_pos;
+    let fresh_lifespan = LifespanComponent::new(new_char_spec.lifespan_cap);
 
     if let Some(mut death_registry) = death_registry {
         *death_registry = DeathRegistry::new(lifecycle.character_id.clone());
@@ -3235,7 +3242,9 @@ mod tests {
         assert_eq!(lifecycle.fortune_remaining, 3);
         assert_eq!(death_registry.death_count, 0);
         assert_eq!(death_registry.char_id, lifecycle.character_id);
-        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::MORTAL);
+        // plan-multi-life-v1 §2：新角色 = Awaken 境界，寿元 = 醒灵 cap (AWAKEN=120)
+        // 与 attach_cultivation_to_joined_clients 路径保持一致；旧值 MORTAL=80 是 bug。
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
         assert_eq!(lifespan.years_lived, 0.0);
         assert_eq!(player_state, &PlayerState::default());
         assert_eq!(
@@ -3262,7 +3271,8 @@ mod tests {
         assert!(persisted.inventory.is_some());
         let persisted_lifespan = persisted.lifespan.expect("fresh lifespan should persist");
         assert_eq!(persisted_lifespan.born_at_tick, 0);
-        assert_eq!(persisted_lifespan.cap_by_realm, LifespanCapTable::MORTAL);
+        // plan-multi-life-v1 §2：持久化的 lifespan 同样为 AWAKEN cap
+        assert_eq!(persisted_lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
         assert!(persisted_lifespan.years_lived >= 0.0);
         assert!(persisted_lifespan.years_lived < 0.01);
         assert_eq!(persisted_lifespan.offline_pause_tick, None);

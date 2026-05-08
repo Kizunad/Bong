@@ -28,6 +28,8 @@
 
 pub mod breakthrough;
 pub mod burst_meridian;
+pub mod character_lifecycle;
+pub mod character_select;
 pub mod color;
 pub mod components;
 pub mod composure;
@@ -45,6 +47,7 @@ pub mod karma;
 pub mod known_techniques;
 pub mod life_record;
 pub mod lifespan;
+pub mod luck_pool;
 pub mod meridian;
 pub mod meridian_open;
 pub mod neg_pressure;
