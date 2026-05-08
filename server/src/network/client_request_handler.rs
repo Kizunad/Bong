@@ -108,7 +108,7 @@ use crate::shelflife::{
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::config::{
     handle_config_intent, skill_config_snapshot_for_cast, validate_skill_config,
-    SkillConfigRejectReason, SkillConfigSchemas, SkillConfigStore,
+    SkillConfigRejectReason, SkillConfigSchemas, SkillConfigSnapshot, SkillConfigStore,
 };
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
@@ -4522,6 +4522,122 @@ mod tests {
     }
 
     #[test]
+    fn skill_bar_cast_rejects_when_skill_config_schemas_missing() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut().remove_resource::<SkillConfigSchemas>();
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "zhenmai.sever_chain".to_string(),
+            },
+        ));
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+        ));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+    }
+
+    #[test]
+    fn skill_config_intent_resource_failures_reply_with_authoritative_snapshot() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "zhenmai.sever_chain",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([
+                    ("meridian_id".to_string(), serde_json::json!("Pericardium")),
+                    (
+                        "backfire_kind".to_string(),
+                        serde_json::json!("tainted_yuan"),
+                    ),
+                ])),
+            );
+        app.world_mut().remove_resource::<SkillConfigSchemas>();
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillConfigIntent {
+                    v: 1,
+                    skill_id: "zhenmai.sever_chain".to_string(),
+                    config: std::collections::BTreeMap::from([
+                        ("meridian_id".to_string(), serde_json::json!("Pericardium")),
+                        ("backfire_kind".to_string(), serde_json::json!("array")),
+                    ]),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let snapshots = collect_skill_config_snapshots(&mut helper);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0]
+                .configs
+                .get("zhenmai.sever_chain")
+                .and_then(|config| config.fields.get("backfire_kind")),
+            Some(&serde_json::json!("tainted_yuan"))
+        );
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut().remove_resource::<SkillConfigStore>();
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillConfigIntent {
+                    v: 1,
+                    skill_id: "zhenmai.sever_chain".to_string(),
+                    config: std::collections::BTreeMap::from([
+                        ("meridian_id".to_string(), serde_json::json!("Pericardium")),
+                        ("backfire_kind".to_string(), serde_json::json!("array")),
+                    ]),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let snapshots = collect_skill_config_snapshots(&mut helper);
+        assert_eq!(snapshots.len(), 1);
+        assert!(snapshots[0].configs.is_empty());
+    }
+
+    #[test]
     fn skill_bar_cast_protocol_entity_id_does_not_fallback_to_entity_bits() {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -5011,7 +5127,7 @@ fn validate_skill_config_before_cast(
     combat_params: &CombatRequestParams,
 ) -> Result<(), SkillConfigRejectReason> {
     let Some(schemas) = combat_params.skill_config_schemas.as_deref() else {
-        return Ok(());
+        return Err(SkillConfigRejectReason::SchemaUnavailable);
     };
     if schemas.get(skill_id).is_none() {
         return Ok(());
@@ -5303,12 +5419,24 @@ fn handle_skill_config_intent_request(
     let player_id = canonical_player_id(username.as_str());
     let current_casting = combat_params.casting_q.get(entity).ok().cloned();
     let Some(schemas) = combat_params.skill_config_schemas.as_deref() else {
+        let snapshot = combat_params
+            .skill_config_store
+            .as_deref()
+            .map(|store| store.snapshot_for_player(player_id.as_str()))
+            .unwrap_or_else(empty_skill_config_snapshot);
+        send_authoritative_skill_config_snapshot(clients, entity, username.as_str(), snapshot);
         tracing::warn!(
             "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: schema resource missing"
         );
         return;
     };
     let Some(store) = combat_params.skill_config_store.as_deref_mut() else {
+        send_authoritative_skill_config_snapshot(
+            clients,
+            entity,
+            username.as_str(),
+            empty_skill_config_snapshot(),
+        );
         tracing::warn!(
             "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: store resource missing"
         );
@@ -5328,14 +5456,7 @@ fn handle_skill_config_intent_request(
                 "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: {reason:?}"
             );
             let snapshot = store.snapshot_for_player(player_id.as_str());
-            if let Ok((_, mut client)) = clients.get_mut(entity) {
-                send_skill_config_snapshot_to_client(
-                    &mut client,
-                    snapshot,
-                    entity,
-                    username.as_str(),
-                );
-            }
+            send_authoritative_skill_config_snapshot(clients, entity, username.as_str(), snapshot);
             return;
         }
     };
@@ -5350,18 +5471,28 @@ fn handle_skill_config_intent_request(
             );
         }
     }
-    if let Ok((_, mut client)) = clients.get_mut(entity) {
-        send_skill_config_snapshot_to_client(
-            &mut client,
-            snapshot.clone(),
-            entity,
-            username.as_str(),
-        );
-    }
+    send_authoritative_skill_config_snapshot(clients, entity, username.as_str(), snapshot.clone());
     tracing::info!(
         "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} configs={}",
         snapshot.configs.len()
     );
+}
+
+fn empty_skill_config_snapshot() -> SkillConfigSnapshot {
+    SkillConfigSnapshot {
+        configs: Default::default(),
+    }
+}
+
+fn send_authoritative_skill_config_snapshot(
+    clients: &mut Query<(&Username, &mut Client)>,
+    entity: valence::prelude::Entity,
+    username: &str,
+    snapshot: SkillConfigSnapshot,
+) {
+    if let Ok((_, mut client)) = clients.get_mut(entity) {
+        send_skill_config_snapshot_to_client(&mut client, snapshot, entity, username);
+    }
 }
 
 fn handle_skill_bar_bind(

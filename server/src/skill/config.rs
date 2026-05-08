@@ -183,6 +183,7 @@ pub enum SkillConfigRejectReason {
     UnknownSkill,
     NoSchema,
     StoreUnavailable,
+    SchemaUnavailable,
     UnknownField(String),
     MissingRequiredField(String),
     InvalidFieldValue(String),

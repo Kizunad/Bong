@@ -96,10 +96,11 @@ public final class CastStateStore {
     }
 
     private static void setSnapshot(CastState next) {
-        snapshot = next == null ? CastState.idle() : next;
+        CastState current = next == null ? CastState.idle() : next;
+        snapshot = current;
         for (Consumer<CastState> listener : listeners) {
             try {
-                listener.accept(snapshot);
+                listener.accept(current);
             } catch (RuntimeException ex) {
                 BongClient.LOGGER.warn("CastStateStore listener failed", ex);
             }

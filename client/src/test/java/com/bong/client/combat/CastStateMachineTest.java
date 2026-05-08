@@ -3,7 +3,9 @@ package com.bong.client.combat;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -117,5 +119,22 @@ class CastStateMachineTest {
         CastStateStore.beginCast(0, 100, 0L);
 
         assertEquals(1, delivered.get());
+    }
+
+    @Test
+    void listenerBroadcastUsesStableSnapshotValue() {
+        AtomicBoolean reentered = new AtomicBoolean();
+        AtomicReference<CastState> delivered = new AtomicReference<>();
+        CastStateStore.addListener(state -> {
+            if (reentered.compareAndSet(false, true)) {
+                CastStateStore.replace(CastState.idle());
+            }
+        });
+        CastStateStore.addListener(delivered::set);
+
+        CastStateStore.beginCast(0, 100, 0L);
+
+        assertTrue(delivered.get().isCasting());
+        assertTrue(CastStateStore.snapshot().isIdle());
     }
 }
