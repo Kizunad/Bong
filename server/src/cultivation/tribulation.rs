@@ -534,7 +534,6 @@ pub fn start_tribulation_system(
                 accepted_this_tick.insert(ev.entity);
                 continue;
             }
-            reserved_occupied_slots = Some(occupied_slots.saturating_add(1));
             let origin_dimension = tribulation_dimension_for_participant(current_dimension);
             let state = TribulationState {
                 kind: TribulationKind::DuXu,
@@ -563,7 +562,9 @@ pub fn start_tribulation_system(
                     "[bong][cultivation] failed to persist active tribulation for {:?}: {error}",
                     ev.entity,
                 );
+                continue;
             }
+            reserved_occupied_slots = Some(occupied_slots.saturating_add(1));
             commands
                 .entity(ev.entity)
                 .insert((state, TribulationOriginDimension(origin_dimension)));
@@ -2442,6 +2443,88 @@ mod tests {
         assert!(
             app.world().get::<TribulationState>(entity).is_none(),
             "quota store read failure must not start or reserve an in-memory tribulation"
+        );
+        assert_eq!(
+            app.world().resource::<Events<TribulationAnnounce>>().len(),
+            0
+        );
+        assert_eq!(
+            app.world().resource::<Events<TribulationSettled>>().len(),
+            0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
+        );
+        assert_eq!(app.world().resource::<Events<VfxEventRequest>>().len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn start_tribulation_system_aborts_when_active_row_persist_fails() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("start-tribulation-active-row-persist-failure");
+        {
+            let connection =
+                rusqlite::Connection::open(settings.db_path()).expect("sqlite should open");
+            connection
+                .execute_batch(
+                    "
+                    DROP TABLE tribulations_active;
+                    CREATE VIEW tribulations_active AS
+                    SELECT
+                        'offline:Existing' AS char_id,
+                        0 AS wave_current,
+                        3 AS waves_total,
+                        0 AS started_tick,
+                        1 AS schema_version,
+                        0 AS last_updated_wall
+                    WHERE 0;
+                    ",
+                )
+                .expect("active tribulation view should be installed");
+        }
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, start_tribulation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Position::new([12.0, 66.0, -8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(InitiateXuhuaTribulation {
+            entity,
+            waves_total: 3,
+            started_tick: 100,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "active-row persist failure must not start an untracked tribulation"
         );
         assert_eq!(
             app.world().resource::<Events<TribulationAnnounce>>().len(),
