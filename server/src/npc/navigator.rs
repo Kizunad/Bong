@@ -39,8 +39,8 @@ use bevy_transform::components::Transform;
 use pathfinding::prelude::astar;
 use valence::entity::{HeadYaw, Look};
 use valence::prelude::{
-    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Component, DVec3, Position, Query, Res,
-    Update, With,
+    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Component, DVec3, Entity,
+    EntityLayerId, Position, Query, Res, Update, With,
 };
 
 use crate::npc::movement::MovementController;
@@ -255,16 +255,26 @@ pub fn navigator_tick_system(
             &mut HeadYaw,
             &mut Navigator,
             Option<&MovementController>,
+            Option<&EntityLayerId>,
         ),
         With<NpcMarker>,
     >,
     providers: Option<Res<TerrainProviders>>,
-    layers: Query<&ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    layers: Query<(Entity, &ChunkLayer), With<crate::world::dimension::OverworldLayer>>,
 ) {
-    let layer = layers.get_single().ok();
+    // The overworld layer entity is what we compare an NPC's `EntityLayerId`
+    // against to decide if it's safe to apply overworld terrain. Other-dim
+    // NPCs (e.g. TSY hostiles in `tsy_hostile.rs`) also carry NpcMarker +
+    // Navigator and would otherwise be ground-snapped against the wrong
+    // terrain.
+    let overworld = layers.get_single().ok();
+    let overworld_entity = overworld.map(|(e, _)| e);
+    let layer = overworld.map(|(_, l)| l);
     let terrain = providers.as_deref().map(|p| &p.overworld);
 
-    for (mut position, mut transform, mut look, mut head_yaw, mut nav, movement_ctrl) in &mut npcs {
+    for (mut position, mut transform, mut look, mut head_yaw, mut nav, movement_ctrl, npc_layer) in
+        &mut npcs
+    {
         // If an Override ability (Dash, Leap, etc.) is active, it owns Position
         // this tick. Navigator must not interfere.
         let movement_ctrl = movement_ctrl.cloned().unwrap_or_default();
@@ -272,7 +282,24 @@ pub fn navigator_tick_system(
             continue;
         }
 
+        // True only when this NPC currently lives in the overworld layer the
+        // navigator's terrain inputs come from. Used to gate ground-snap (and,
+        // longer-term, pathfinding) so non-overworld NPCs aren't teleported
+        // against the wrong dimension's height map.
+        let in_overworld = match (npc_layer, overworld_entity) {
+            (Some(layer_id), Some(world)) => layer_id.0 == world,
+            // No overworld layer present (early boot / single-dim test fixtures):
+            // assume the NPC belongs here so existing tests keep working.
+            (Some(_), None) | (None, _) => true,
+        };
+
         let Some(goal) = nav.current_goal else {
+            if !in_overworld {
+                // Non-overworld NPC: leave its Y alone here. Its own
+                // dimension's tick system (or a future per-dim navigator)
+                // owns gravity for it.
+                continue;
+            }
             // Idle gravity: try chunk-based snap first (exact, respects loaded
             // blocks), then fall back to the terrain height map for NPCs that
             // are far above the chunk's ±GROUND_SCAN window.

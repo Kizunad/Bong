@@ -11,7 +11,7 @@ use valence::prelude::{
 };
 
 use crate::lingtian::pressure::PressureLevel;
-use crate::lingtian::{LingtianPlot, ZonePressureCrossed};
+use crate::lingtian::{LingtianPlot, ZonePressureCrossed, DEFAULT_ZONE};
 use crate::world::terrain::TerrainProviders;
 
 use super::spawn::{snap_spawn_y_to_surface, spawn_zombie_npc_at};
@@ -29,7 +29,23 @@ pub fn spawn_daoshen_on_pressure_high(
         if !matches!(e.level, PressureLevel::High) {
             continue;
         }
-        let Some(target_plot) = plots.iter().find(|p| p.zone == e.zone) else {
+        // Pressure events currently always carry `DEFAULT_ZONE` ("default")
+        // because `compute_zone_pressure_system` is single-zone (lingtian
+        // §1.3 — full multi-zone pressure is a separate plan). But
+        // `auto_set_plot_zone` back-fills `LingtianPlot.zone` from
+        // `ZoneRegistry` real names (e.g. "spawn", "qingyun"), so a strict
+        // equality match would *never* hit a plot in production once registry
+        // names diverge from "default". Until pressure becomes per-zone, fall
+        // back to ANY plot when the event uses the default key.
+        let target_plot = if e.zone == DEFAULT_ZONE {
+            plots
+                .iter()
+                .find(|p| p.zone == e.zone)
+                .or_else(|| plots.iter().next())
+        } else {
+            plots.iter().find(|p| p.zone == e.zone)
+        };
+        let Some(target_plot) = target_plot else {
             tracing::warn!(
                 "[bong][npc][daoshen] zone `{}` HIGH triggered but no LingtianPlot found for that zone",
                 e.zone
@@ -192,5 +208,96 @@ mod tests {
             q.iter(world).count()
         };
         assert_eq!(count, 0, "low pressure should not trigger daoshen spawn");
+    }
+
+    // -- P1.B: zone-key compatibility -----------------------------------------
+    //
+    // `compute_zone_pressure_system` currently always emits ZonePressureCrossed
+    // with `zone = DEFAULT_ZONE` ("default"), but `auto_set_plot_zone` fills
+    // each plot's zone from ZoneRegistry (e.g. "spawn"). A strict equality
+    // match would silently drop daoshen spawning in any non-trivial setup.
+    // Codex P1.B regression: confirm the DEFAULT_ZONE event still finds a
+    // plot whose zone has been registry-filled to a real name.
+
+    #[test]
+    fn default_zone_event_falls_back_to_any_plot() {
+        let mut app = make_app();
+        app.world_mut()
+            .spawn(crate::world::dimension::OverworldLayer);
+        // Plot's zone has been filled from ZoneRegistry — name diverges from
+        // the "default" the pressure event will carry.
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("spawn"));
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: DEFAULT_ZONE.to_string(),
+            level: PressureLevel::High,
+            raw_pressure: 1.0,
+        });
+        app.update();
+
+        let count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            count, 9,
+            "DEFAULT_ZONE event must fall back to any available plot \
+             (single-zone pressure compat) — got {count} daoshen"
+        );
+    }
+
+    #[test]
+    fn default_zone_event_with_no_plots_warns_and_skips() {
+        let mut app = make_app();
+        app.world_mut()
+            .spawn(crate::world::dimension::OverworldLayer);
+        // No plots at all.
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: DEFAULT_ZONE.to_string(),
+            level: PressureLevel::High,
+            raw_pressure: 1.0,
+        });
+        app.update();
+
+        let count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            count, 0,
+            "no plots → no daoshen, even with DEFAULT_ZONE event"
+        );
+    }
+
+    #[test]
+    fn named_zone_event_still_strict_match() {
+        // Future-proofing: when pressure becomes per-zone (named events),
+        // the strict-match path must NOT silently fall back to a different
+        // zone's plot — that would spawn daoshen in the wrong place.
+        let mut app = make_app();
+        app.world_mut()
+            .spawn(crate::world::dimension::OverworldLayer);
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None).with_zone("zone_a"));
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(900, 64, 900), None).with_zone("zone_b"));
+        app.world_mut().send_event(ZonePressureCrossed {
+            zone: "nonexistent_zone".to_string(),
+            level: PressureLevel::High,
+            raw_pressure: 1.0,
+        });
+        app.update();
+
+        let count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            count, 0,
+            "named-zone event with no matching plot must NOT fall back to a stranger plot"
+        );
     }
 }
