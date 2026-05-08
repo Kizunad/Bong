@@ -123,9 +123,9 @@
   * `agent/packages/tiandao/src/skills/era.md`：新增"新一世开场叙事"章节，规定触发条件 / scope / 文风 / 禁忌（不泄前世坐标 / 不暴名 / 无家族姓氏 / 无实力继承）
   * 道统遗物随机分散到 4 tsy 副本：plan-tsy-loot-v1 finished 已 ✅ 实装（`ItemRarity::Ancient` + `server/src/inventory/ancient_relics.rs` + 99/1 loot table），本 plan §0 Q-ML5 引用即可
 * **P3 — library-web 历代生平页面**
-  * `library-web/src/pages/lives/[player_id].astro`：动态路由按 player_id（`offline:<username>` 前两段）聚合 `_index.json` 中同玩家的历代角色卷宗
-  * `getStaticPaths` 在 build 阶段从 `public/deceased/_index.json` 提取 player_id 集合预生成静态页面，URL 编码 `:` → `-`（`offline:Ancestor` → `/lives/offline-Ancestor`）
+  * `library-web/src/pages/lives/index.astro`：单页 + 客户端 query string 形式 `?id=<player_id>`（与 `deceased/view.astro?path=...` 同款），客户端 fetch `/deceased/_index.json` 后按 player_id 过滤同玩家的历代角色卷宗
   * 客户端 JS 按 `died_at_tick` 升序显示"第 N 世"列表，链接到现有 `/deceased/view?path=...` 单卷详情
+  * **架构注解**（与 plan §3 字面 `[player_id].astro` 的差异）：原版用 `getStaticPaths` 在 build 期从 `_index.json` 预生成 `/lives/<encoded-id>` 路由，但 Astro `output: "static"` 模式下 deploy 后新出现的 player_id 无对应静态页 → 404（PR review 阶段 Codex P1 指出）。改用 query string + 客户端 fetch 范式后 runtime 新 ID 无需 rebuild 即可访问，与 `deceased/view.astro` 模式统一。plan §3 P3 验收口径"玩家可看自己历代生平"两种实现等价，路由形式调整不破坏数据契约
 
 ### 关键 commit
 
@@ -134,8 +134,12 @@
 | `ee17585` | 2026-05-07 | P0 引入 luck_pool / character_select / character_lifecycle 三个 cultivation 子模块 + reset_for_new_character 修复 cap 漂移 bug |
 | `bf01305` | 2026-05-07 | P1 寿命归零 → character_select 流程的端到端集成测试 (+4 测试) |
 | `0999d1e` | 2026-05-07 | P2 era skill 新增"新一世"开场 narration 章节 + 道统遗物引用 |
-| `23571c3` | 2026-05-07 | P3 历代生平页面 lives/[player_id].astro |
+| `23571c3` | 2026-05-07 | P3 历代生平页面 lives/[player_id].astro（review 阶段重构为 lives/index.astro，见末尾 commit） |
 | `9fb5bee` | 2026-05-07 | fmt 微调 character_lifecycle 测试块 |
+| `395e02c` | 2026-05-07 | review fix: lives 世代序号改用列表位置而非 char_id 后缀正则（Codex P2） |
+| `196e81f` | 2026-05-07 | review fix: 采纳 Claude bot 4 条小问题（接入状态文档 / 删虚构 API 注释 / 移除 `_OK` 别名 / spec.realm 防漂移测试 / URL 编码注释） |
+| `20c264b` | 2026-05-08 | review fix: getStaticPaths 区分 ENOENT vs JSON/结构错误（CodeRabbit major） |
+| _下一 commit_ | 2026-05-08 | review fix: lives 重构为 query string 单页解决 static 路由 runtime 新 ID 404（Codex P1） |
 
 ### 测试结果
 

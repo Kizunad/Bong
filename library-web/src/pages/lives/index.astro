@@ -1,0 +1,189 @@
+---
+import Base from "../../layouts/Base.astro";
+
+// plan-multi-life-v1 §3 数据契约第 6 条：
+//   `library-web/src/pages/lives/` 历代生平统计（按 player_id，不按家族 Q-ML1）
+//
+// **架构**：单页 + 客户端 query string 解析 `?id=offline:Alice`，与
+// `deceased/view.astro?path=...` 同款。曾用 `[player_id].astro` 动态路由
+// （getStaticPaths 在 build 时枚举 `_index.json` 中的 player_id 预生成静态页）
+// 但在 Astro `output: "static"` 模式下，**部署后新出现的 player_id 会 404**——
+// _index.json 由 server 运行时写入，新角色终结后 deploy 不重 build，
+// 静态路由就无法覆盖。改用 query string + 客户端 fetch `/deceased/_index.json`
+// 后即可支持 runtime 新 ID（与 deceased/view.astro 一致的范式）。
+//
+// 数据源：`library-web/public/deceased/_index.json`，entry 形如
+// `{ char_id: "offline:Alice:<uuid>", died_at_tick, path }`。
+// 玩家 player_id 取 char_id 前两段（`offline:Alice`）。
+---
+
+<Base
+  title="历代生平 — 末法残土图书馆"
+  description="按 player_id 聚合的同玩家历代角色卷宗（plan-multi-life-v1 §3）"
+>
+  <article class="museum-article max-w-4xl mx-auto">
+    <div class="museum-breadcrumb ink-reveal">
+      <a href="/" class="back-link font-kai">图书馆总目</a>
+      <span>/</span>
+      <a href="/deceased/" class="back-link font-kai">亡者博物馆</a>
+      <span>/</span>
+      <span class="font-kai">历代生平</span>
+    </div>
+
+    <div class="museum-status ink-reveal" id="lives-status">
+      正在翻检历代残卷……
+    </div>
+
+    <div id="lives-detail" style="display:none;">
+      <header class="mb-12 ink-reveal">
+        <div class="museum-kicker font-kai">同玩家 · 历代生平卷</div>
+        <h1 class="article-title mb-6 ink-brush" id="lives-title">
+          《无名》
+        </h1>
+        <p class="article-quote font-kai" id="lives-player-id">
+          一身一世，俱归此卷；不录家族，不传姓氏。
+        </p>
+      </header>
+
+      <section class="lives-section ink-reveal">
+        <h2 class="deceased-section-title">
+          <span data-fill="generation-count">…</span> 世卷宗
+        </h2>
+        <div
+          class="museum-empty-note font-kai"
+          id="lives-empty"
+          style="display:none;"
+        >
+          此玩家尚未在亡者博物馆留下卷宗。
+        </div>
+        <ol class="lives-list" id="lives-list" aria-live="polite"></ol>
+      </section>
+    </div>
+  </article>
+
+  <script is:inline>
+    (function () {
+      var status = document.getElementById("lives-status");
+      var detail = document.getElementById("lives-detail");
+      var titleEl = document.getElementById("lives-title");
+      var playerIdEl = document.getElementById("lives-player-id");
+      var emptyNote = document.getElementById("lives-empty");
+      var list = document.getElementById("lives-list");
+      var genCountEl = document.querySelector(
+        '[data-fill="generation-count"]',
+      );
+      if (
+        !status ||
+        !detail ||
+        !titleEl ||
+        !playerIdEl ||
+        !emptyNote ||
+        !list ||
+        !genCountEl
+      )
+        return;
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function playerIdOf(charId) {
+        var parts = String(charId || "").split(":");
+        if (parts.length < 2) return "";
+        return parts[0] + ":" + parts[1];
+      }
+
+      var search = new URLSearchParams(window.location.search);
+      var targetPlayerId = String(search.get("id") || "").trim();
+
+      if (!targetPlayerId) {
+        status.innerHTML =
+          '<p class="museum-empty-title">未指定玩家。</p><p class="museum-empty-note">' +
+          '请自 <a class="back-link" href="/deceased/">亡者博物馆</a> 选择一卷，再查阅其历代生平。' +
+          "</p>";
+        return;
+      }
+
+      fetch("/deceased/_index.json", { cache: "no-store" })
+        .then(function (response) {
+          if (!response.ok) throw new Error("missing deceased index");
+          return response.json();
+        })
+        .then(function (data) {
+          var entries = Array.isArray(data) ? data : [];
+          var matches = entries.filter(function (entry) {
+            return playerIdOf(entry && entry.char_id) === targetPlayerId;
+          });
+
+          // 按 died_at_tick 升序（最早 → 最新），方便阅读"几世"先后顺序
+          matches.sort(function (left, right) {
+            return (
+              Number(left.died_at_tick || 0) - Number(right.died_at_tick || 0)
+            );
+          });
+
+          var username = targetPlayerId.replace(/^offline:/, "");
+          titleEl.textContent = username || targetPlayerId;
+          playerIdEl.setAttribute("data-player-id", targetPlayerId);
+          document.title = (username || targetPlayerId) + " 历代生平 — 末法残土图书馆";
+
+          status.style.display = "none";
+          detail.style.display = "block";
+          genCountEl.textContent = String(matches.length);
+
+          if (matches.length === 0) {
+            emptyNote.style.display = "block";
+            return;
+          }
+
+          // 注意：char_id 后缀是 UUIDv7（见 server/src/player/state.rs::
+          // rotate_current_character_id），不是顺序编号，不能从 char_id 反推
+          // 第几世。世代序号从"按 died_at_tick 升序"的列表位置 (idx + 1) 计算。
+          list.innerHTML = matches
+            .map(function (entry, idx) {
+              var charId = entry.char_id || "";
+              var path = entry.path || "";
+              var detailHref = path
+                ? "/deceased/view?path=" +
+                  encodeURIComponent(path.replace(/^\/+/, ""))
+                : "#";
+              var generation = idx + 1;
+              var diedAt = entry.died_at_tick || 0;
+              return (
+                '<li class="lives-card ink-reveal visible">' +
+                '<div class="lives-card-row">' +
+                '<span class="lives-gen-badge">第 ' +
+                escapeHtml(generation) +
+                " 世</span>" +
+                '<span class="lives-card-id">' +
+                escapeHtml(charId) +
+                "</span>" +
+                "</div>" +
+                '<p class="lives-card-meta font-kai">' +
+                "终于第 " +
+                escapeHtml(diedAt) +
+                " tick · 第 " +
+                escapeHtml(idx + 1) +
+                " 卷" +
+                "</p>" +
+                '<a class="lives-detail-link font-kai" href="' +
+                escapeHtml(detailHref) +
+                '">展开生平卷</a>' +
+                "</li>"
+              );
+            })
+            .join("");
+        })
+        .catch(function () {
+          status.innerHTML =
+            '<p class="museum-empty-title">索引尚未生成。</p>' +
+            '<p class="museum-empty-note">待 server 终结角色后，会写入 <code>public/deceased/_index.json</code>。</p>';
+        });
+    })();
+  </script>
+</Base>
