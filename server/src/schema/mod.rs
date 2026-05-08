@@ -23,6 +23,7 @@ pub mod death_lifecycle;
 pub mod dugu;
 pub mod forge;
 pub mod forge_bridge;
+pub mod identity;
 pub mod inventory;
 pub mod lingtian;
 pub mod narration;

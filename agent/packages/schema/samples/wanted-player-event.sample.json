@@ -1,0 +1,10 @@
+{
+  "event": "wanted_player",
+  "player_uuid": "11111111-1111-1111-1111-111111111111",
+  "char_id": "offline:kiz",
+  "identity_display_name": "毒蛊师小李",
+  "identity_id": 0,
+  "reputation_score": -100,
+  "primary_tag": "dugu_revealed",
+  "tick": 24000
+}

@@ -1,0 +1,84 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "event",
+    "player_uuid",
+    "char_id",
+    "identity_display_name",
+    "identity_id",
+    "reputation_score",
+    "primary_tag",
+    "tick"
+  ],
+  "properties": {
+    "event": {
+      "const": "wanted_player",
+      "type": "string"
+    },
+    "player_uuid": {
+      "type": "string"
+    },
+    "char_id": {
+      "type": "string"
+    },
+    "identity_display_name": {
+      "type": "string"
+    },
+    "identity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reputation_score": {
+      "type": "integer"
+    },
+    "primary_tag": {
+      "anyOf": [
+        {
+          "const": "dugu_revealed",
+          "type": "string"
+        },
+        {
+          "const": "anqi_master",
+          "type": "string"
+        },
+        {
+          "const": "zhenfa_master",
+          "type": "string"
+        },
+        {
+          "const": "baomai_user",
+          "type": "string"
+        },
+        {
+          "const": "tuike_user",
+          "type": "string"
+        },
+        {
+          "const": "woliu_master",
+          "type": "string"
+        },
+        {
+          "const": "zhenmai_user",
+          "type": "string"
+        },
+        {
+          "const": "sword_master",
+          "type": "string"
+        },
+        {
+          "const": "forge_master",
+          "type": "string"
+        },
+        {
+          "const": "alchemy_master",
+          "type": "string"
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

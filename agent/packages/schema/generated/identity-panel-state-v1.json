@@ -1,0 +1,100 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "active_identity_id",
+    "last_switch_tick",
+    "cooldown_remaining_ticks",
+    "identities"
+  ],
+  "properties": {
+    "active_identity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "last_switch_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cooldown_remaining_ticks": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "identities": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "identity_id",
+          "display_name",
+          "reputation_score",
+          "frozen",
+          "revealed_tag_kinds"
+        ],
+        "properties": {
+          "identity_id": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "reputation_score": {
+            "type": "integer"
+          },
+          "frozen": {
+            "type": "boolean"
+          },
+          "revealed_tag_kinds": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "const": "dugu_revealed",
+                  "type": "string"
+                },
+                {
+                  "const": "anqi_master",
+                  "type": "string"
+                },
+                {
+                  "const": "zhenfa_master",
+                  "type": "string"
+                },
+                {
+                  "const": "baomai_user",
+                  "type": "string"
+                },
+                {
+                  "const": "tuike_user",
+                  "type": "string"
+                },
+                {
+                  "const": "woliu_master",
+                  "type": "string"
+                },
+                {
+                  "const": "zhenmai_user",
+                  "type": "string"
+                },
+                {
+                  "const": "sword_master",
+                  "type": "string"
+                },
+                {
+                  "const": "forge_master",
+                  "type": "string"
+                },
+                {
+                  "const": "alchemy_master",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
