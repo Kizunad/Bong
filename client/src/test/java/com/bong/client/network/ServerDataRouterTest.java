@@ -58,6 +58,7 @@ public class ServerDataRouterTest {
             "quickslot_config",
             "skillbar_config",
             "techniques_snapshot",
+            "skill_config_snapshot",
             "unlocks_sync",
             "event_stream_push",
             "burst_meridian_event",

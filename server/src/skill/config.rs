@@ -246,7 +246,7 @@ fn validate_field_value(field: &ConfigField, value: &Value) -> Result<(), ()> {
             let Some(value) = value.as_str() else {
                 return Err(());
             };
-            if options.iter().any(|option| *option == value) {
+            if options.contains(&value) {
                 Ok(())
             } else {
                 Err(())
