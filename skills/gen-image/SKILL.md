@@ -136,7 +136,7 @@ Image.fromarray(out).save("xxx.png")
 - **生成物**：`local_images/`（整个目录在 `.gitignore`，不进 repo）
 - **prompt 归档**：每次加 `--save-prompt`，写 `<name>_prompt.md` 到同目录
 - **接入客户端**：手动把最终 PNG 拷到：
-  - 粒子 → `client/src/main/resources/assets/bong-client/textures/particle/<name>.png`（去掉 `_alpha` 后缀）
+  - 粒子 → `client/src/main/resources/assets/bong/textures/particle/<name>.png`（去掉 `_alpha` 后缀；注意 namespace 是 `bong` 不是 `bong-client`）
   - HUD → `client/src/main/resources/assets/bong-client/textures/hud/<name>.png`
   - 物品 → `client/src/main/resources/assets/bong/textures/item/<name>/<variant>.png`
   - 场景 → 留在 `local_images/scenes/`，**不进客户端**（仅美术参考）

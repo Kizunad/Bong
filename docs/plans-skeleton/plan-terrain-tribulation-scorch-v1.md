@@ -157,7 +157,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
 }
 ```
 
-> **注**：原本草稿写过 `weather_overrides` 字段——但 MC 天气是**全局**的，没有 zone-scoped 系统消费。删除该字段（dead 字段会让人误以为已实装）。"雷雨实招雷"的实现路径走 server tick zone 检测 + 强制 spawn lightning entity（不依赖天气），见 §6 P2。如未来立 plan-weather-zone-override，再补回正式字段。
+> **注**：原本草稿写过 `weather_overrides` 字段——但 MC 天气是**全局**的，没有 zone-scoped 系统消费。删除该字段（dead 字段会让人误以为已实装）。"雷雨实招雷"的实现路径见 §6 P2，由 `plan-zone-weather-v1`（骨架，2026-05-08 立）的 `ZoneWeatherProfile { thunderstorm_multiplier, force_event, lightning_strike_per_min_override }` 提供 zone 级偏置 + 物理 hook，视觉走 `plan-zone-environment-v1`（骨架，同日立）的 `LightningPillar / EmberDrift / FogVeil` effect bundle。原"plan-weather-zone-override"占位作废。
 ```
 
 ### Blueprint zone 候选（首版 3 处）
@@ -270,7 +270,7 @@ extra_layers = (
 
 ## §8 开放问题
 
-- [ ] zone-scoped 天气改写（如真要按 zone 调整下雨频率）需立 plan-weather-zone-override——首版**不做**，按全局天气 + server tick 内 lightning entity 强制 spawn 实现"雷雨实招雷"
+- [ ] ~~zone-scoped 天气改写需立 plan-weather-zone-override~~ **2026-05-08 重定向**：由 `plan-zone-weather-v1`（骨架）+ `plan-zone-environment-v1`（骨架）双 plan 接管。本 plan §6 P2 表 `server/src/world/weather/scorch.rs::compute_strike_chance` 的命中率公式改为调用 `cultivation::style_modifier::for_zone_weather`（zone-weather P2 暴露），让暴烈色 ×0.7 / 金属甲 ×1.5 在系统层只有一个实现入口
 - [ ] 虚劫残屑的用途：plan-skill-v1（雷法残卷材料）vs plan-weapon-v1（雷霆器修高阶载体）vs plan-cultivation-v1（暴烈色染色催化）？建议 P3 阶段三选一立项
 - [ ] 雷击死亡的运数 / 寿元结算（worldview §十二）：本是天劫直接干预，是否应**算"突破反噬 / 天劫失败"**？倾向**否**——这是"环境天劫"，不是玩家主动渡劫，按正常死亡 Roll
 - [ ] 玩家在化虚遗迹周围"假装渡劫"（armor_stand + 雷云）是否触发天劫 narration 误判？建议 P3 阶段做 narration 检测白名单
@@ -291,6 +291,7 @@ extra_layers = (
   - **§8 第 2 项虚劫残屑用途**：仍待 plan-skill-v1 / plan-weapon-v1 / plan-cultivation-v1 三选一立项；不阻塞 P0–P2，可在 P3 启动前 1 周决策。
   - 补 `## Finish Evidence` 占位。
   - 升 active 触发条件：（a）plan-tribulation-v1 P1 完成（预兆锁定 + 雷劫渲染 + location 广播 RPC）；（b）plan-cultivation-v1 立骨架 + 暴露染色查询 API 签名；（c）§8 第 2 项虚劫残屑用途三选一决策。三件 done 后再升。
+- **2026-05-08**：天气 / 视觉路径重设计。立两份骨架 `plan-zone-environment-v1`（zone-scoped 持续视觉协议 + 客户端 emitter 注册表 + mixin 扩展）+ `plan-zone-weather-v1`（zone profile 概率覆写 + WeatherEvent → EnvironmentEffect 映射 + 物理 hook）；原占位 "plan-weather-zone-override" 作废。本 plan 头部 §4 / §8 / Finish Evidence 三处注释已重定向。升 active 新增前置：plan-zone-environment-v1 P0 + plan-zone-weather-v1 P0 至少落地。
 
 ---
 
@@ -311,6 +312,6 @@ extra_layers = (
   - agent：天劫 narration（依 plan-tribulation-v1 emit 接口）
 - 遗留 / 后续：
   - 虚劫残屑用途（依 §8 第 2 项决策）
-  - zone-scoped 天气改写（plan-weather-zone-override，v2+）
+  - zone-scoped 天气改写：由 `plan-zone-weather-v1` + `plan-zone-environment-v1` 接管（2026-05-08 立骨架）
   - 古战场焦土带复合 zone（§8 第 6 项，首版不做）
   - lightning_rod 主动招雷防御（§8 第 5 项，建议禁止）
