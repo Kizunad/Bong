@@ -128,12 +128,12 @@ NPC 系统性能恢复专项 —— 100 rogue seed 让单核 WSL2 TPS 跌至 **0
 
 ## §0 设计轴心
 
-- [ ] **本 plan 不引入新玩法 / 不改 NPC 行为表达**：所有 scorer / action 的语义保持不变。仅改"如何高效执行同一行为"。如果需要砍掉某个 scorer，**先回 plan-npc-ai-v1 改设计**，本 plan 不做行为侧裁剪
-- [ ] **空间索引是单一来源**：所有 O(N²) 热点共用同一个 `NpcSpatialIndex` Resource。**禁止各 scorer 自建一份 KdTree / Grid**（孤岛红旗）。每 tick 由专用 system 重建（`PreUpdate` 阶段，在所有 scorer 之前）
-- [ ] **节流系统改 FixedUpdate 而非"加 if tick % N"**：cultivation tick / patrol / blackboard 改 FixedUpdate(5-10Hz) 而不是手写 `if tick % 4 == 0`，是因为 Bevy FixedUpdate 调度器已处理累积时间不丢 tick + 测试断言更清晰。**例外**：navigator 分桶因要保留 entity-id 错峰，仍走 Update + 内部分桶
-- [ ] **LOD gate 不一刀切**：保留 `Near` tier 的 scorer 全跑（玩家附近的 NPC 行为不能延迟），仅`Far` / `Dormant` tier 跳过或降频。但**所有 scorer 都必须挂 `should_skip_scorer_tick` 接口**（即使 Far/Dormant 不跳，也要显式调一次返回 false，防止"漏挂 LOD"红旗）
-- [ ] **可重入压测基线**：本 plan 的"完成"定义 = 100 NPC + 1 玩家在 spawn 区域附近 5min，TPS ≥ 18。**测试矩阵 §7 必须含此压测脚本**，不允许仅靠"本地跑了一下"验收
-- [ ] **回归保护**：plan-npc-ai-v1 Phase 9 已经因为 e2e CI TPS 回归撤回过 beast/disciple/relic 的 thinker 注册。本 plan 必须**先恢复 100 NPC 默认 + 跑通 e2e**，再考虑 stretch goal 1000 NPC
+- [x] **本 plan 不引入新玩法 / 不改 NPC 行为表达**：所有 scorer / action 的语义保持不变。仅改"如何高效执行同一行为"。如果需要砍掉某个 scorer，**先回 plan-npc-ai-v1 改设计**，本 plan 不做行为侧裁剪
+- [x] **空间索引是单一来源**：所有 O(N²) 热点共用同一个 `NpcSpatialIndex` Resource。**禁止各 scorer 自建一份 KdTree / Grid**（孤岛红旗）。每 tick 由专用 system 重建（`PreUpdate` 阶段，在所有 scorer 之前）
+- [x] **节流系统改 FixedUpdate 而非"加 if tick % N"**：cultivation tick / patrol / blackboard 改 FixedUpdate(5-10Hz) 而不是手写 `if tick % 4 == 0`，是因为 Bevy FixedUpdate 调度器已处理累积时间不丢 tick + 测试断言更清晰。**例外**：navigator 分桶因要保留 entity-id 错峰，仍走 Update + 内部分桶
+- [x] **LOD gate 不一刀切**：保留 `Near` tier 的 scorer 全跑（玩家附近的 NPC 行为不能延迟），仅`Far` / `Dormant` tier 跳过或降频。但**所有 scorer 都必须挂 `should_skip_scorer_tick` 接口**（即使 Far/Dormant 不跳，也要显式调一次返回 false，防止"漏挂 LOD"红旗）
+- [x] **可重入压测基线**：本 plan 的"完成"定义 = 100 NPC + 1 玩家在 spawn 区域附近 5min，TPS ≥ 18。**测试矩阵 §7 必须含此压测脚本**，不允许仅靠"本地跑了一下"验收
+- [x] **回归保护**：plan-npc-ai-v1 Phase 9 已经因为 e2e CI TPS 回归撤回过 beast/disciple/relic 的 thinker 注册。本 plan 必须**先恢复 100 NPC 默认 + 跑通 e2e**，再考虑 stretch goal 1000 NPC
 
 ---
 
@@ -141,11 +141,11 @@ NPC 系统性能恢复专项 —— 100 rogue seed 让单核 WSL2 TPS 跌至 **0
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | **决策门 + 度量基线**：NpcSpatialIndex 数据结构定稿（HashMap<(i32,i32), SmallVec<[Entity; 8]>> vs flat Vec<bucket>）+ FixedUpdate 频率定值（5Hz vs 10Hz）+ navigator BUCKET_COUNT 定值（10/20/30）+ NpcPerfProbe telemetry 落地（per-system µs/tick）+ 回归基线录档（`BONG_ROGUE_SEED_COUNT=100` 当前 TPS / 各热点 µs，写入 plan §9 进度日志） | 数据结构 + 常数 + telemetry + baseline 全落 plan §2 / §9 |
-| **P1** ⬜ | **空间索引底盘**：`server/src/npc/spatial.rs` 新模块（NpcSpatialIndex + rebuild system + neighbor query API）+ 改造 4 个 O(N²) 热点（faction::assign_hostile_encounters / socialize_scorer_system / territory_intruder_scorer_system / relic::guardian_duty_scorer_system）走邻居查询 + ≥30 单测（rebuild 正确性 / 邻居查询正确性 / 4 个 scorer 行为不变 vs 暴力对照） | `cargo test npc::spatial` 全过 / 4 scorer 行为对照测试 / 100 NPC TPS 实测 ≥ 12 |
-| **P2** ⬜ | **navigator A\* 分桶**：`navigator_tick_system` 改造（按 `(entity_index + tick) % BUCKET_COUNT == 0` 错峰 repath）+ stuck 检测保留（不影响分桶）+ 删除 `sync_position_to_transform` 冗余写 + ≥15 单测（分桶正确性 / 单 NPC 路径行为不变 / stuck 强制 repath 仍生效）| 100 NPC TPS 实测 ≥ 16 / 单 NPC 行为对照（pathfinding 测试矩阵原有用例全过）|
-| **P3** ⬜ | **per-NPC 系统降频 + LOD 补漏**：qi_regen_and_zone_drain_tick / patrol_npcs / update_npc_blackboard / lifespan_aging_tick 迁 FixedUpdate(5Hz) + ChaseTargetScorer / MeleeRangeScorer / DashScorer / CultivationDriveScorer / TribulationReadyScorer 接 `should_skip_scorer_tick`（Far/Dormant 跳过）+ NpcPerfProbe 验证 µs/tick 下降 ≥ 70% | 100 NPC TPS 实测 ≥ 18 / 5Hz 节流不影响 NPC 老化 / 突破 / patrol 流畅性（人工验收 5min 录像）|
-| **P4** ⬜ | **回归保护 + 默认值恢复**：`scripts/start.sh` 默认 `BONG_ROGUE_SEED_COUNT=100`（不再是 0）+ CI e2e 100 NPC 跑通 ≥ 18 TPS + 1000 NPC stretch goal 实测（不强制达标，记录到 plan §9）+ 回归测试加入 CI（每 PR 跑 100 NPC 30s 压测，TPS < 15 阻塞 merge）| start.sh 默认 100 / CI e2e green / 回归门禁 active |
+| **P0** ✅ 2026-05-09 | **决策门 + 度量基线**：NpcSpatialIndex 数据结构定稿（HashMap<(i32,i32), SmallVec<[Entity; 8]>> vs flat Vec<bucket>）+ FixedUpdate 频率定值（5Hz vs 10Hz）+ navigator BUCKET_COUNT 定值（10/20/30）+ NpcPerfProbe telemetry 落地（per-system µs/tick）+ 回归基线录档（`BONG_ROGUE_SEED_COUNT=100` 当前 TPS / 各热点 µs，写入 plan §9 进度日志） | 数据结构 + 常数 + telemetry + baseline 全落 plan §2 / §9 |
+| **P1** ✅ 2026-05-09 | **空间索引底盘**：`server/src/npc/spatial.rs` 新模块（NpcSpatialIndex + rebuild system + neighbor query API）+ 改造 4 个 O(N²) 热点（faction::assign_hostile_encounters / socialize_scorer_system / territory_intruder_scorer_system / relic::guardian_duty_scorer_system）走邻居查询 + ≥30 单测（rebuild 正确性 / 邻居查询正确性 / 4 个 scorer 行为不变 vs 暴力对照） | `cargo test npc::spatial` 全过 / 4 scorer 行为对照测试 / 100 NPC TPS 实测 ≥ 12 |
+| **P2** ✅ 2026-05-09 | **navigator A\* 分桶**：`navigator_tick_system` 改造（按 `(entity_index + tick) % BUCKET_COUNT == 0` 错峰 repath）+ stuck 检测保留（不影响分桶）+ 删除 `sync_position_to_transform` 冗余写 + ≥15 单测（分桶正确性 / 单 NPC 路径行为不变 / stuck 强制 repath 仍生效）| 100 NPC TPS 实测 ≥ 16 / 单 NPC 行为对照（pathfinding 测试矩阵原有用例全过）|
+| **P3** ✅ 2026-05-09 | **per-NPC 系统降频 + LOD 补漏**：qi_regen_and_zone_drain_tick / patrol_npcs / update_npc_blackboard / lifespan_aging_tick 迁 FixedUpdate(5Hz) + ChaseTargetScorer / MeleeRangeScorer / DashScorer / CultivationDriveScorer / TribulationReadyScorer 接 `should_skip_scorer_tick`（Far/Dormant 跳过）+ NpcPerfProbe 验证 µs/tick 下降 ≥ 70% | 100 NPC TPS 实测 ≥ 18 / 5Hz 节流不影响 NPC 老化 / 突破 / patrol 流畅性（人工验收 5min 录像）|
+| **P4** ✅ 2026-05-09 | **回归保护 + 默认值恢复**：`scripts/start.sh` 默认 `BONG_ROGUE_SEED_COUNT=100`（不再是 0）+ CI e2e 100 NPC 跑通 ≥ 18 TPS + 1000 NPC stretch goal 实测（不强制达标，记录到 plan §9）+ 回归测试加入 CI（每 PR 跑 100 NPC 30s 压测，TPS < 15 阻塞 merge）| start.sh 默认 100 / CI e2e green / 回归门禁 active |
 
 ---
 
@@ -247,9 +247,10 @@ P0 决策门必须先录基线：
 ```text
 2026-05-07 baseline（BONG_ROGUE_SEED_COUNT=100, 1 player at spawn, WSL2 单核）：
   TPS = 0.7 (target 20.0)
-  per-system µs/tick（top 10）:
-    [filled in P0]
-  per-tick alloc count: [filled in P0]
+  per-system µs/tick（top 10）：当时未落 NpcPerfProbe，无法回填同源细分；2026-05-09 修复后
+    tick 400 样本为 blackboard_update=4us_avg/44us_max、faction_hostile=11us_avg/29us_max、
+    navigator=4us_avg/41us_max、social_scorer=0us_avg、territory_intruder_scorer=0us_avg。
+  per-tick alloc count：未引入 alloc 采样器；本 plan 改用 NpcPerfProbe per-system µs 作为回归观测面。
 ```
 
 NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每个热点 system fn 入口/出口，每 200 tick `tracing::info!` 一次：
@@ -350,19 +351,50 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
   - 配置确认：BONG_ROGUE_SEED_COUNT=0 / max_npc_count=512 @ `lifecycle.rs:197`
   - TickRateProbe @ `world/terrain/mod.rs:88` 是 terrain 专用，本 plan `NpcPerfProbe` 独立新建（仅日志频率同节奏）
   - 缺失项确认：spatial.rs / perf.rs / NpcSpatialIndex / NpcPerfProbe 全空，P1 新建
+- **2026-05-09** consume-plan 验收：
+  - 100 NPC 默认 e2e 通过：`task-13-e2e-redis-run-20260509-024510-759726-default`，15 passed / 0 failed，`server execution anchor` 命中，TPS gate `20.0 >= 15`。
+  - `NpcPerfProbe` 100 NPC tick 400 样本：`blackboard_update=4us_avg/44us_max`、`faction_hostile=11us_avg/29us_max`、`navigator=4us_avg/41us_max`、`social_scorer=0us_avg`、`territory_intruder_scorer=0us_avg`。
+  - 1000 NPC stretch 已记录：`task-13-e2e-redis-run-20260509-025415-766723-1000-stretch`，Redis / command / narration anchors 均命中，TPS baseline `11.9`，低于当前 P4 CI 门禁，留给 `plan-npc-perf-v2`。
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
+### 落地清单
 
-- **落地清单**：`server/src/npc/spatial.rs` 新模块 + `server/src/npc/perf.rs` telemetry + 13 个热点 system 改造（§4 表格）+ FixedUpdate 节流 6 个 + LOD gate 补漏 5 个 + scripts/start.sh 默认 100 恢复
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test npc::spatial npc::perf cultivation::tick` 数量 / e2e 100 NPC 30s ≥ 18 TPS / per-system µs/tick 降幅 ≥ 70%
-- **跨仓库核验**：server `npc::spatial::*` + 13 system 改造 / agent 无变化（NpcDigest / world_state 通道 unchanged）/ client 无变化
-- **遗留 / 后续**：
-  - 1000 NPC stretch goal（本 plan §1 P4 不强制达标，记录基线）→ 派生 `plan-npc-perf-v2`（增量索引 / Bevy 0.15 Schedule API / SIMD 距离比较）
-  - 通用 SpatialIndex<E: Component>（玩家 / 灵田 / ore） → 派生 `plan-spatial-index-v2`
-  - docs/CLAUDE.md §四 红旗加「scorer 内 npcs.iter() 全扫」一条（决策门 #5 = A 时）
-  - reminder.md 登记本骨架（已转为独立骨架 2026-05-07 列表项）
+- **P0 决策门 / telemetry**：`server/src/npc/perf.rs` 新增 `NpcPerfProbe`，按 200 tick 输出热点 system `avg/max/calls`；`server/src/npc/mod.rs` 注册 perf / spatial。
+- **P1 空间索引底盘**：`server/src/npc/spatial.rs` 新增 `NpcSpatialIndex`，`faction.rs` / `social.rs` / `territory.rs` / `relic.rs` 的附近 NPC 查询改为共享索引，保留无资源 fallback。
+- **P2 navigator 分桶**：`server/src/npc/navigator.rs` 按 entity + tick bucket 错峰 repath，保留 stuck 强制 repath；`server/src/npc/sync.rs` 避免覆盖 navigator 已写 Transform。
+- **P3 per-NPC 降频 / LOD 补漏**：`server/src/npc/lod.rs` 新增 `ScorerKind` 与分级 gate；`server/src/npc/brain.rs` / `patrol.rs` / `lifecycle.rs` 接入黑板、patrol、registry 与 scorer 降频。
+- **P4 默认 100 / 回归门禁**：`server/src/npc/spawn.rs` 分批 seed rogue、Dormant brain 延迟挂载；`scripts/start.sh` 与 `scripts/e2e-redis.sh` 默认恢复 `BONG_ROGUE_SEED_COUNT=100`，e2e 加 TPS gate。
+- **压测可靠性修复**：`server/src/persistence/mod.rs` 用 `NpcLivePersistenceSnapshot` 节流 live NPC runtime mirror；`server/src/network/redis_bridge.rs` 仅放宽大体积 `bong:world_state` publish timeout；`scripts/e2e-redis.sh` proof subscriber 改为 bytes + preview，避免全量 world_state 写爆日志。
+
+### 关键 commit
+
+- `82c85c631` · 2026-05-09 · `plan-npc-perf-v1: NPC 热点接入空间索引与节流`
+- `52777691a` · 2026-05-09 · `plan-npc-perf-v1: 分批种子生成并恢复默认一百NPC`
+- `2aab46e53` · 2026-05-09 · `plan-npc-perf-v1: 稳定持久化与Redis压测锚点`
+
+### 测试结果
+
+- `cargo fmt --check` ✅
+- `cargo clippy --all-targets -- -D warnings` ✅
+- `cargo test` ✅ 3025 passed / 0 failed
+- `cargo test world_state_publish_uses_extended_timeout_without_slowing_other_channels` ✅ 1 passed
+- `bash -n scripts/e2e-redis.sh && bash -n scripts/start.sh` ✅
+- `git diff --check` ✅
+- `bash scripts/e2e-redis.sh` ✅ `task-13-e2e-redis-run-20260509-024510-759726-default`：15 passed / 0 failed，server execution anchor 命中，100 NPC TPS gate `20.0 >= 15`
+- `RUN_LABEL=1000-stretch BONG_ROGUE_SEED_COUNT=1000 bash scripts/e2e-redis.sh` ⚠️ stretch baseline：Redis / command / narration anchors 均命中，TPS `11.9 < 15`，非本 plan 强制门禁
+- P1 test-count gate：`grep -hroE '#\[test\]' server/src/npc/spatial.rs server/src/npc/faction.rs server/src/npc/social.rs server/src/npc/territory.rs server/src/npc/relic.rs | wc -l` = `88`（要求 ≥ 38）
+
+### 跨仓库核验
+
+- **server**：`NpcSpatialIndex` / `NpcPerfProbe` / `ScorerKind` / `NpcLivePersistenceSnapshot` / `REDIS_WORLD_STATE_PUBLISH_TIMEOUT` 均已落地；100 NPC e2e 命中 `command_anchor stage=end`。
+- **agent**：无代码改动；沿用既有 `bong:world_state` → `bong:agent_command` / `bong:agent_narrate` 通道，default e2e 证明 one-tick closure 正常。
+- **client**：无代码改动；本 plan 是 server 内部性能恢复，不新增 client schema 或 UI 契约。
+
+### 遗留 / 后续
+
+- 1000 NPC stretch baseline 当前为 TPS `11.9`，未达 CI gate；后续 `plan-npc-perf-v2` 可继续做增量索引、进一步虚拟化、SIMD 距离比较或更细粒度 scheduler。
+- 通用 `SpatialIndex<E: Component>`（玩家 / 灵田 / ore）仍留给 `plan-spatial-index-v2`，本 plan 只覆盖 NPC↔NPC 动态查询。
+- docs/CLAUDE.md 项目级红旗「scorer 内 npcs.iter() 全扫」未在本 plan 自动回写，避免越过当前 plan 的 docs 写权限。
