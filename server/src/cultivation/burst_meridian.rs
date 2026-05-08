@@ -5,6 +5,9 @@ use crate::combat::events::{AttackIntent, AttackSource, FIST_REACH};
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::meridian::severed::{
+    check_meridian_runtime_integrity, MeridianSeveredPermanent,
+};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -99,11 +102,14 @@ pub fn resolve_beng_quan(
     }
 
     let Some(meridians) = world.get::<MeridianSystem>(caster) else {
-        return rejected(CastRejectReason::MeridianSevered);
+        return rejected(CastRejectReason::MERIDIAN_SEVERED);
     };
     let integrity_snapshot = right_arm_integrity_snapshot(meridians);
-    if !has_usable_right_arm_meridian(meridians) {
-        return rejected(CastRejectReason::MeridianSevered);
+    let severed = world.get::<MeridianSeveredPermanent>(caster);
+    if let Err(blocking) =
+        check_meridian_runtime_integrity(&RIGHT_ARM_MERIDIANS, meridians, severed)
+    {
+        return rejected(CastRejectReason::MeridianSevered(Some(blocking)));
     }
 
     let started_at_ms = current_unix_millis();
@@ -414,8 +420,47 @@ mod tests {
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 
-        assert_eq!(result, rejected(CastRejectReason::MeridianSevered));
+        // 全断时退化为 "声明顺序首条" —— RIGHT_ARM_MERIDIANS[0] = LargeIntestine
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(
+                MeridianId::LargeIntestine
+            )))
+        );
         assert_no_mutation(&app, caster, 100.0, 0.0);
+    }
+
+    #[test]
+    fn beng_quan_rejects_when_severed_component_marks_first_dep() {
+        // SEVERED component 标 LargeIntestine → 即使 Meridian.integrity 仍 1.0 也拒绝
+        let mut app = app();
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(MeridianSeveredPermanent::default());
+        {
+            let mut sev = app
+                .world_mut()
+                .get_mut::<MeridianSeveredPermanent>(caster)
+                .unwrap();
+            sev.insert(
+                MeridianId::LargeIntestine,
+                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                0,
+            );
+        }
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        // check_meridian_runtime_integrity 先查 SEVERED component → 返回首个 SEVERED
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(
+                MeridianId::LargeIntestine
+            )))
+        );
+        assert_no_mutation(&app, caster, 100.0, 1.0);
     }
 
     #[test]

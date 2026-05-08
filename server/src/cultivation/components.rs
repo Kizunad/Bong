@@ -144,8 +144,11 @@ pub struct MeridianCrack {
 pub enum CrackCause {
     Overload,
     Attack,
-    Backfire,     // 走火入魔
-    ForgeFailure, // 淬炼失败
+    Backfire,        // 走火入魔
+    ForgeFailure,    // 淬炼失败
+    VoluntarySever,  // plan-meridian-severed-v1 §4 #1：zhenmai ⑤ 主动绝脉
+    TribulationFail, // plan-meridian-severed-v1 §4 #5：渡劫失败爆脉
+    DuguDistortion,  // plan-meridian-severed-v1 §4 #6：dugu 阴诡色形貌异化侵蚀
 }
 
 impl Meridian {
