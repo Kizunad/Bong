@@ -58,11 +58,28 @@ impl SkillConfigStore {
         &mut self,
         player_id: &str,
         configs: BTreeMap<String, SkillConfig>,
+        schemas: &SkillConfigSchemas,
     ) {
-        if configs.is_empty() {
+        let mut validated = BTreeMap::new();
+        for (skill_id, config) in configs {
+            match validate_skill_config(&skill_id, config.fields, schemas) {
+                Ok(config) => {
+                    validated.insert(skill_id, config);
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        "[bong][skill_config] discard persisted config player_id={} skill_id={} reason={:?}",
+                        player_id,
+                        skill_id,
+                        reason
+                    );
+                }
+            }
+        }
+        if validated.is_empty() {
             self.configs.remove(player_id);
         } else {
-            self.configs.insert(player_id.to_string(), configs);
+            self.configs.insert(player_id.to_string(), validated);
         }
     }
 
@@ -540,6 +557,56 @@ mod tests {
             validated.fields.get("backfire_kind"),
             Some(&json!("tainted_yuan"))
         );
+    }
+
+    #[test]
+    fn replace_player_configs_sanitizes_persisted_configs() {
+        let schemas = SkillConfigSchemas::default();
+        let mut store = SkillConfigStore::default();
+        store.replace_player_configs(
+            "offline:Azure",
+            BTreeMap::from([
+                (
+                    "zhenmai.sever_chain".to_string(),
+                    SkillConfig::new(BTreeMap::from([
+                        ("meridian_id".to_string(), json!("Pericardium")),
+                        ("backfire_kind".to_string(), json!("array")),
+                    ])),
+                ),
+                (
+                    "unknown.skill".to_string(),
+                    SkillConfig::new(BTreeMap::from([("typo".to_string(), json!(true))])),
+                ),
+            ]),
+            &schemas,
+        );
+
+        let snapshot = store.snapshot_for_player("offline:Azure");
+        assert_eq!(snapshot.configs.len(), 1);
+        assert_eq!(
+            snapshot
+                .configs
+                .get("zhenmai.sever_chain")
+                .and_then(|config| config.fields.get("backfire_kind")),
+            Some(&json!("array"))
+        );
+
+        store.replace_player_configs(
+            "offline:Azure",
+            BTreeMap::from([(
+                "zhenmai.sever_chain".to_string(),
+                SkillConfig::new(BTreeMap::from([(
+                    "backfire_kind".to_string(),
+                    json!("array"),
+                )])),
+            )]),
+            &schemas,
+        );
+
+        assert!(store
+            .snapshot_for_player("offline:Azure")
+            .configs
+            .is_empty());
     }
 
     #[test]

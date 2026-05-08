@@ -135,6 +135,7 @@ public final class TechniquesTabPanel {
 
     private void refreshVisibleTechniques() {
         String previousSelection = selectedTechniqueId;
+        hoverTechniqueId = "";
         visibleTechniques = TechniquesListPanel.filter(snapshot, searchBar.query());
         techniqueList.clearChildren();
         techniqueRows.clear();

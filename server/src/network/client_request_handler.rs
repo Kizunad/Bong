@@ -4484,6 +4484,44 @@ mod tests {
     }
 
     #[test]
+    fn valid_skill_config_intent_replies_with_authoritative_snapshot() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillConfigIntent {
+                    v: 1,
+                    skill_id: "zhenmai.sever_chain".to_string(),
+                    config: std::collections::BTreeMap::from([
+                        ("meridian_id".to_string(), serde_json::json!("Pericardium")),
+                        ("backfire_kind".to_string(), serde_json::json!("array")),
+                    ]),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let snapshots = collect_skill_config_snapshots(&mut helper);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0]
+                .configs
+                .get("zhenmai.sever_chain")
+                .and_then(|config| config.fields.get("backfire_kind")),
+            Some(&serde_json::json!("array"))
+        );
+    }
+
+    #[test]
     fn skill_bar_cast_protocol_entity_id_does_not_fallback_to_entity_bits() {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -5311,6 +5349,14 @@ fn handle_skill_config_intent_request(
                 username
             );
         }
+    }
+    if let Ok((_, mut client)) = clients.get_mut(entity) {
+        send_skill_config_snapshot_to_client(
+            &mut client,
+            snapshot.clone(),
+            entity,
+            username.as_str(),
+        );
     }
     tracing::info!(
         "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} configs={}",

@@ -49,8 +49,10 @@ class SkillConfigPanelManagerTest {
         public void positionAt(int anchorX, int anchorY, int screenWidth, int screenHeight) {
         }
 
-        void save() {
-            if (onSave != null) onSave.accept(current.deepCopy());
+        void save(JsonObject next) {
+            if (onSave != null) {
+                onSave.accept(next == null ? current.deepCopy() : next.deepCopy());
+            }
             if (onClose != null) onClose.run();
         }
     }
@@ -119,12 +121,12 @@ class SkillConfigPanelManagerTest {
     }
 
     @Test
-    void realOpenSaveUpdatesLocalStoreAndSendsIntent() {
+    void realOpenSaveSendsIntentWithoutOptimisticStoreUpdate() {
         captureRequests();
         AtomicInteger saveCallbacks = new AtomicInteger();
         JsonObject current = new JsonObject();
         current.addProperty("meridian_id", "Pericardium");
-        current.addProperty("backfire_kind", "array");
+        current.addProperty("backfire_kind", "real_yuan");
         SkillConfigStore.updateLocal("zhenmai.sever_chain", current);
         manager = new SkillConfigPanelManager(
             Containers.verticalFlow(Sizing.fixed(240), Sizing.fixed(180)),
@@ -140,11 +142,17 @@ class SkillConfigPanelManagerTest {
         assertNotNull(manager.activeWindow());
         assertNotNull(lastWindow);
 
-        lastWindow.save();
+        JsonObject edited = new JsonObject();
+        edited.addProperty("meridian_id", "Pericardium");
+        edited.addProperty("backfire_kind", "array");
+        lastWindow.save(edited);
 
         assertFalse(manager.isOpen());
         assertEquals(1, saveCallbacks.get());
-        assertEquals("array", SkillConfigStore.configFor("zhenmai.sever_chain").get("backfire_kind").getAsString());
+        assertEquals(
+            "real_yuan",
+            SkillConfigStore.configFor("zhenmai.sever_chain").get("backfire_kind").getAsString()
+        );
         assertEquals(1, sent.size());
         assertEquals(
             "{\"type\":\"skill_config_intent\",\"v\":1,\"skill_id\":\"zhenmai.sever_chain\",\"config\":{\"meridian_id\":\"Pericardium\",\"backfire_kind\":\"array\"}}",

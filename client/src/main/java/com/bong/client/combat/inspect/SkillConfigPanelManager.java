@@ -67,7 +67,6 @@ public final class SkillConfigPanelManager {
             schema,
             current,
             config -> {
-                SkillConfigStore.updateLocal(technique.id(), config);
                 ClientRequestSender.sendSkillConfigIntent(technique.id(), config);
                 if (afterSave != null) afterSave.run();
             },

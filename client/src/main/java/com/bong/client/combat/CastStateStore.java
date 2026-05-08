@@ -1,5 +1,7 @@
 package com.bong.client.combat;
 
+import com.bong.client.BongClient;
+
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -96,7 +98,11 @@ public final class CastStateStore {
     private static void setSnapshot(CastState next) {
         snapshot = next == null ? CastState.idle() : next;
         for (Consumer<CastState> listener : listeners) {
-            listener.accept(snapshot);
+            try {
+                listener.accept(snapshot);
+            } catch (RuntimeException ex) {
+                BongClient.LOGGER.warn("CastStateStore listener failed", ex);
+            }
         }
     }
 }

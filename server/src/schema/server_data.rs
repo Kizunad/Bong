@@ -2801,6 +2801,9 @@ mod tests {
                 "../../../agent/packages/schema/samples/server-data.techniques-snapshot.sample.json"
             ),
             include_str!(
+                "../../../agent/packages/schema/samples/server-data.skill-config-snapshot.sample.json"
+            ),
+            include_str!(
                 "../../../agent/packages/schema/samples/server-data.rift-portal-state.sample.json"
             ),
             include_str!(

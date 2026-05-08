@@ -377,6 +377,8 @@ pub struct Karma {
 mod tests {
     use super::*;
 
+    use std::collections::HashSet;
+
     use crate::npc::brain::canonical_npc_id;
     use crate::player::state::canonical_player_id;
     use valence::prelude::App;
@@ -405,6 +407,19 @@ mod tests {
         }
         assert_eq!(chain.map(Realm::required_meridians), [1, 3, 6, 12, 16, 20]);
         assert_eq!(Realm::Void.required_meridians(), 20);
+    }
+
+    #[test]
+    fn meridian_all_matches_partition_without_duplicates() {
+        let merged: Vec<MeridianId> = MeridianId::REGULAR
+            .iter()
+            .chain(MeridianId::EXTRAORDINARY.iter())
+            .copied()
+            .collect();
+        assert_eq!(merged.as_slice(), MeridianId::ALL.as_slice());
+
+        let unique: HashSet<MeridianId> = MeridianId::ALL.iter().copied().collect();
+        assert_eq!(unique.len(), MeridianId::ALL.len());
     }
 
     #[test]

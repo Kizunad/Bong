@@ -14,7 +14,12 @@ public final class SkillConfigStore {
     }
 
     public static Map<String, JsonObject> snapshot() {
-        return snapshot;
+        if (snapshot.isEmpty()) return Collections.emptyMap();
+        Map<String, JsonObject> copy = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonObject> entry : snapshot.entrySet()) {
+            copy.put(entry.getKey(), entry.getValue().deepCopy());
+        }
+        return Collections.unmodifiableMap(copy);
     }
 
     public static JsonObject configFor(String skillId) {

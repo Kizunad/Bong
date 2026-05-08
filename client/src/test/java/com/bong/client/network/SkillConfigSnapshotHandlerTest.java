@@ -1,14 +1,17 @@
 package com.bong.client.network;
 
 import com.bong.client.combat.SkillConfigStore;
+import com.google.gson.JsonObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillConfigSnapshotHandlerTest {
@@ -38,6 +41,24 @@ class SkillConfigSnapshotHandlerTest {
         assertFalse(dispatch.handled());
         assertTrue(dispatch.logMessage().contains("not an object"));
         assertTrue(SkillConfigStore.snapshot().isEmpty());
+    }
+
+    @Test
+    void snapshotReturnsImmutableDeepCopy() {
+        new SkillConfigSnapshotHandler().handle(parseEnvelope("""
+            {"v":1,"type":"skill_config_snapshot","configs":{
+              "zhenmai.sever_chain":{"meridian_id":"Pericardium","backfire_kind":"tainted_yuan"}
+            }}"""));
+
+        Map<String, JsonObject> snapshot = SkillConfigStore.snapshot();
+        assertThrows(UnsupportedOperationException.class, snapshot::clear);
+
+        snapshot.get("zhenmai.sever_chain").addProperty("backfire_kind", "array");
+
+        assertEquals(
+            "tainted_yuan",
+            SkillConfigStore.configFor("zhenmai.sever_chain").get("backfire_kind").getAsString()
+        );
     }
 
     @Test
