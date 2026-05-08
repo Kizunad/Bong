@@ -15,7 +15,7 @@ use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::qi_physics::constants::QI_WOLIU_VORTEX_THEORETICAL_LIMIT_DELTA;
+use crate::qi_physics::qi_negative_field_drain_ratio;
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
     ProjectileQiDrainedEventV1, VortexBackfireCauseV1, VortexBackfireEventV1, VortexFieldStateV1,
@@ -450,8 +450,9 @@ pub fn vortex_intercept_tick(
     }
 
     for (projectile_entity, position, mut projectile) in &mut projectiles {
-        if let Some((caster, delta)) = vortex_aggregate_at(position.get(), fields.iter()) {
-            let drained = drain_qi_payload(&mut projectile.qi_payload, delta);
+        if let Some((caster, delta, distance)) = vortex_aggregate_at(position.get(), fields.iter())
+        {
+            let drained = drain_qi_payload(&mut projectile.qi_payload, delta, distance);
             if drained > f32::EPSILON {
                 record_projectile_drain(
                     &mut life_records,
@@ -475,8 +476,9 @@ pub fn vortex_intercept_tick(
     }
 
     for (needle_entity, position, mut needle) in &mut needles {
-        if let Some((caster, delta)) = vortex_aggregate_at(position.get(), fields.iter()) {
-            let drained = drain_qi_payload(&mut needle.qi_payload, delta);
+        if let Some((caster, delta, distance)) = vortex_aggregate_at(position.get(), fields.iter())
+        {
+            let drained = drain_qi_payload(&mut needle.qi_payload, delta, distance);
             if drained > f32::EPSILON {
                 record_projectile_drain(
                     &mut life_records,
@@ -643,19 +645,26 @@ pub fn vortex_qi_cost_per_sec(realm: Realm) -> f64 {
 pub fn vortex_aggregate_at<'a>(
     position: DVec3,
     fields: impl Iterator<Item = &'a VortexField>,
-) -> Option<(Entity, f32)> {
+) -> Option<(Entity, f32, f64)> {
     fields
-        .filter(|field| position.distance(field.center) <= f64::from(field.radius))
-        .max_by(|a, b| a.delta.total_cmp(&b.delta))
-        .map(|field| (field.caster, field.delta))
+        .filter_map(|field| {
+            let distance = position.distance(field.center);
+            if distance > f64::from(field.radius) {
+                return None;
+            }
+            let ratio = qi_negative_field_drain_ratio(f64::from(field.delta), distance);
+            Some((field, distance, ratio))
+        })
+        .max_by(|(_, _, a), (_, _, b)| a.total_cmp(b))
+        .map(|(field, distance, _)| (field.caster, field.delta, distance))
 }
 
-pub fn drain_qi_payload(qi_payload: &mut f32, delta: f32) -> f32 {
+pub fn drain_qi_payload(qi_payload: &mut f32, field_intensity: f32, distance_blocks: f64) -> f32 {
     if *qi_payload <= 0.0 {
         *qi_payload = 0.0;
         return 0.0;
     }
-    let ratio = (delta / QI_WOLIU_VORTEX_THEORETICAL_LIMIT_DELTA).clamp(0.0, 1.0);
+    let ratio = qi_negative_field_drain_ratio(f64::from(field_intensity), distance_blocks) as f32;
     let drained = (*qi_payload * ratio).clamp(0.0, *qi_payload);
     *qi_payload = (*qi_payload - drained).max(0.0);
     drained
@@ -1094,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn projectile_drain_uses_max_aggregate_delta_and_clamps() {
+    fn projectile_drain_uses_strongest_inverse_square_field() {
         let low = VortexField {
             center: DVec3::ZERO,
             radius: 3.0,
@@ -1106,21 +1115,23 @@ mod tests {
             last_maintain_tick: 0,
         };
         let high = VortexField {
-            delta: 0.65,
+            center: DVec3::new(3.0, 0.0, 0.0),
+            delta: 0.80,
             caster: Entity::from_raw(11),
             ..low
         };
-        assert_eq!(
-            vortex_aggregate_at(DVec3::new(0.5, 0.0, 0.0), [&low, &high].into_iter()),
-            Some((Entity::from_raw(11), 0.65))
-        );
+        let (caster, delta, distance) =
+            vortex_aggregate_at(DVec3::new(0.5, 0.0, 0.0), [&low, &high].into_iter()).unwrap();
+        assert_eq!(caster, Entity::from_raw(10));
+        assert_eq!(delta, 0.25);
+        assert!((distance - 0.5).abs() < 1e-9);
 
         let mut payload = 1.0;
-        let drained = drain_qi_payload(&mut payload, 0.65);
-        assert!((drained - 0.8125).abs() < 1e-6);
-        let drained_again = drain_qi_payload(&mut payload, 0.8);
-        assert!((drained_again - 0.1875).abs() < 1e-6);
-        assert!(payload.abs() < 1e-6);
+        let drained = drain_qi_payload(&mut payload, delta, distance);
+        assert!((drained - 0.25).abs() < 1e-6);
+        let drained_again = drain_qi_payload(&mut payload, 0.80, 2.0);
+        assert!((drained_again - 0.15).abs() < 1e-6);
+        assert!((payload - 0.60).abs() < 1e-6);
     }
 
     #[test]

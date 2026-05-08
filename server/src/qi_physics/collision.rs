@@ -1,4 +1,6 @@
-use super::constants::{QI_ACOUSTIC_THRESHOLD, QI_DRAIN_CLAMP, QI_EXCRETION_BASE};
+use super::constants::{
+    QI_ACOUSTIC_THRESHOLD, QI_DRAIN_CLAMP, QI_EXCRETION_BASE, QI_NEGATIVE_FIELD_K,
+};
 use super::distance::qi_distance_atten;
 use super::env::EnvField;
 use super::ledger::{QiAccountId, QiTransfer, QiTransferReason};
@@ -12,6 +14,18 @@ pub struct CollisionOutcome {
     pub defender_lost: f64,
     pub defender_absorbed: f64,
     pub transfers: Vec<QiTransfer>,
+}
+
+pub fn qi_negative_field_drain_ratio(field_intensity: f64, distance_blocks: f64) -> f64 {
+    if !field_intensity.is_finite() || field_intensity <= 0.0 {
+        return 0.0;
+    }
+    if !distance_blocks.is_finite() {
+        return 0.0;
+    }
+
+    let effective_radius = distance_blocks.max(1.0);
+    (field_intensity * QI_NEGATIVE_FIELD_K / effective_radius.powi(2)).clamp(0.0, 1.0)
 }
 
 pub fn qi_collision(
@@ -240,5 +254,20 @@ mod tests {
             &EnvField::default(),
         );
         assert_eq!(outcome.defender_lost, 0.0);
+    }
+
+    #[test]
+    fn negative_field_drain_uses_inverse_square_distance() {
+        let near = qi_negative_field_drain_ratio(0.8, 1.0);
+        let far = qi_negative_field_drain_ratio(0.8, 2.0);
+        assert!((near - 0.8).abs() < 1e-9);
+        assert!((far - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn negative_field_drain_clamps_invalid_and_overstrong_fields() {
+        assert_eq!(qi_negative_field_drain_ratio(-0.1, 1.0), 0.0);
+        assert_eq!(qi_negative_field_drain_ratio(0.8, f64::NAN), 0.0);
+        assert_eq!(qi_negative_field_drain_ratio(2.0, 0.0), 1.0);
     }
 }

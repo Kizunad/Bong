@@ -19,7 +19,7 @@ pub mod traits;
 use valence::prelude::App;
 
 pub use channeling::{qi_channeling, qi_channeling_transfer, ChannelDirection, ChannelingOutcome};
-pub use collision::{qi_collision, CollisionOutcome};
+pub use collision::{qi_collision, qi_negative_field_drain_ratio, CollisionOutcome};
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
