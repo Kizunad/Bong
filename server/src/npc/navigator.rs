@@ -585,6 +585,28 @@ fn resolve_ground_y_from_chunk(
     ref_y: i32,
     layer: Option<&ChunkLayer>,
 ) -> Option<i32> {
+    resolve_ground_y_from_chunk_range(
+        wx,
+        wz,
+        ref_y - GROUND_SCAN_DEPTH,
+        ref_y + GROUND_SCAN_UP,
+        layer,
+    )
+}
+
+/// Generalised version of [`resolve_ground_y_from_chunk`] that takes explicit
+/// `[bottom, top]` bounds (clamped to the layer height). Used by the idle
+/// fallback path to do a deep column scan for player-placed structures
+/// (towers, platforms) before trusting the terrain heightmap — without this,
+/// a high-altitude NPC could be teleported through a tower and into the
+/// natural ground beneath it.
+fn resolve_ground_y_from_chunk_range(
+    wx: i32,
+    wz: i32,
+    bottom: i32,
+    top: i32,
+    layer: Option<&ChunkLayer>,
+) -> Option<i32> {
     let layer = layer?;
     let min_y = layer.min_y();
     let max_y = min_y + layer.height() as i32 - 1;
@@ -595,10 +617,11 @@ fn resolve_ground_y_from_chunk(
     let lx = wx.rem_euclid(16) as u32;
     let lz = wz.rem_euclid(16) as u32;
 
-    // Scan upward first (for climbing steps/slopes).
-    let scan_top = (ref_y + GROUND_SCAN_UP).min(max_y);
-    // Scan down to find the ground.
-    let scan_bottom = (ref_y - GROUND_SCAN_DEPTH).max(min_y);
+    let scan_top = top.min(max_y);
+    let scan_bottom = bottom.max(min_y);
+    if scan_bottom > scan_top {
+        return None;
+    }
 
     // From scan_top downward, find first solid block with air/passable above.
     for y in (scan_bottom..=scan_top).rev() {
@@ -835,6 +858,19 @@ fn snap_to_ground(pos: DVec3, layer: Option<&ChunkLayer>) -> DVec3 {
 /// be spawned (or otherwise displaced) far above the loaded chunk's ±scan
 /// window — the height-map query is unbounded, so it can drop them from any
 /// altitude.
+///
+/// Three-stage resolution to avoid teleporting NPCs into player-placed blocks
+/// (towers, platforms) when chunk's narrow standard scan misses ground:
+///
+/// 1. **Standard chunk scan** — the existing ±GROUND_SCAN_DEPTH/+UP window.
+///    Cheap, exact, handles the common case.
+/// 2. **Deep chunk scan from `ref_y` down to `terrain_y`** — only when (1)
+///    misses *and* terrain gives a hint. Catches structures the standard
+///    scan was too narrow to see; if a tower exists between the NPC and the
+///    natural surface, the deep scan finds its top.
+/// 3. **Terrain heightmap** — only used when the column has no solid blocks
+///    at all (chunk genuinely empty for that XZ down to natural ground), so
+///    we can't possibly clip into a structure.
 fn snap_to_ground_with_fallback<S>(
     pos: DVec3,
     layer: Option<&ChunkLayer>,
@@ -847,16 +883,34 @@ where
     let wz = pos.z.floor() as i32;
     let ref_y = pos.y.floor() as i32;
 
+    // (1) Standard window.
     if let Some(ground_y) = resolve_ground_y_from_chunk(wx, wz, ref_y, layer) {
         return DVec3::new(pos.x, f64::from(ground_y + 1), pos.z);
     }
-    if let Some(terrain) = terrain {
-        let info = terrain.query_surface(wx, wz);
-        if info.passable {
-            return DVec3::new(pos.x, f64::from(info.y + 1), pos.z);
-        }
+
+    // No terrain to consult → can't safely guess; leave the NPC in place.
+    let Some(terrain) = terrain else {
+        return pos;
+    };
+    let info = terrain.query_surface(wx, wz);
+    if !info.passable {
+        return pos;
     }
-    pos
+    let terrain_y = info.y;
+
+    // (2) Deep scan from current Y down to the natural surface. Catches any
+    // player-placed structure between the NPC and the heightmap's ground
+    // before we trust the heightmap. We give it some upward slack too, in
+    // case `ref_y` is below a structure's top.
+    if let Some(structure_top) =
+        resolve_ground_y_from_chunk_range(wx, wz, terrain_y, ref_y + GROUND_SCAN_UP, layer)
+    {
+        return DVec3::new(pos.x, f64::from(structure_top + 1), pos.z);
+    }
+
+    // (3) Heightmap is the last resort — only safe because (2) just confirmed
+    // the column has no solid blocks at all in that range.
+    DVec3::new(pos.x, f64::from(terrain_y + 1), pos.z)
 }
 
 fn rotate_y(dir: DVec3, angle: f64) -> DVec3 {
@@ -1174,6 +1228,99 @@ mod tests {
         assert!(
             (snapped.y - 200.0).abs() < 1e-6,
             "non-passable terrain (lava/deep water) should NOT snap NPC into hazard; got {}",
+            snapped.y,
+        );
+    }
+
+    // -- Bug #1.C: avoid teleporting through player-placed structures ---------
+    //
+    // The chunk-loaded + heightmap-fallback combo had a hole: if the standard
+    // ±GROUND_SCAN window misses ground (NPC very high) AND the terrain
+    // heightmap returns natural surface, naively trusting the heightmap can
+    // drop the NPC right through a player-built tower into the rock below.
+    // The fix does a deep column scan first; only when the column has no
+    // solid blocks at all does the heightmap get the final say.
+
+    /// Build a chunk with the given (lx,ly,lz) coordinates set to STONE.
+    /// `tower_top_y == None` means just natural ground at `natural_y`.
+    fn build_chunk_app(natural_y: i32, tower_top_y: Option<i32>) -> (App, Entity) {
+        use valence::prelude::{BlockState, Chunk, UnloadedChunk};
+        use valence::testing::ScenarioSingleClient;
+
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        let layer_entity = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<ChunkLayer>>();
+            q.iter(world).next().unwrap()
+        };
+        {
+            let mut layer = app.world_mut().get_mut::<ChunkLayer>(layer_entity).unwrap();
+            let mut chunk = UnloadedChunk::with_height(384);
+            let min_y = layer.min_y();
+
+            // Natural ground (single solid layer at Y=natural_y).
+            for lx in 0..16u32 {
+                for lz in 0..16u32 {
+                    let local_y = (natural_y - min_y) as u32;
+                    chunk.set_block_state(lx, local_y, lz, BlockState::STONE);
+                }
+            }
+
+            // Optional tower: solid stone column from natural_y+1 up to tower_top_y
+            // at world XZ = (0, 0). The single column is enough to cover the
+            // (0.5, _, 0.5) NPC position used in tests.
+            if let Some(top) = tower_top_y {
+                for y in (natural_y + 1)..=top {
+                    let local_y = (y - min_y) as u32;
+                    chunk.set_block_state(0, local_y, 0, BlockState::STONE);
+                }
+            }
+
+            layer.insert_chunk([0, 0], chunk);
+        }
+        (app, layer_entity)
+    }
+
+    #[test]
+    fn snap_with_fallback_lands_on_tower_top_not_through_it() {
+        // Tower from Y=67 to Y=200, NPC very high above. Standard ±16/+4 from
+        // Y=400 misses everything (blocks are at 66..200). The deep-scan path
+        // must find the tower top and put the NPC there — NOT trust the
+        // heightmap (Y=66) and teleport through the tower into the rock.
+        let (app, layer_entity) = build_chunk_app(66, Some(200));
+        let surface = FlatSurface(66);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        let snapped =
+            snap_to_ground_with_fallback(DVec3::new(0.5, 400.0, 0.5), Some(layer), Some(&surface));
+
+        assert!(
+            (snapped.y - 201.0).abs() < 1e-6,
+            "must land on tower top (Y=201, one above the topmost stone at Y=200), \
+             not teleport through the tower to natural ground (Y=67); got Y={}",
+            snapped.y,
+        );
+    }
+
+    #[test]
+    fn snap_with_fallback_uses_heightmap_only_when_column_truly_empty() {
+        // No tower — just natural ground at Y=66. NPC at Y=400 is way above
+        // the standard scan window. Deep scan from 66..404 finds the natural
+        // ground at Y=66; the heightmap gives the same answer. Either way
+        // the NPC lands at Y=67. (This test pins the path: deep-scan agrees
+        // with the heightmap, so no surprise.)
+        let (app, layer_entity) = build_chunk_app(66, None);
+        let surface = FlatSurface(66);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        let snapped =
+            snap_to_ground_with_fallback(DVec3::new(0.5, 400.0, 0.5), Some(layer), Some(&surface));
+
+        assert!(
+            (snapped.y - 67.0).abs() < 1e-6,
+            "open plains: NPC must drop to natural ground+1 (Y=67); got Y={}",
             snapped.y,
         );
     }
