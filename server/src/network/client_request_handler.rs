@@ -106,7 +106,8 @@ use crate::shelflife::{
 };
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::config::{
-    handle_config_intent, skill_config_snapshot_for_cast, SkillConfigSchemas, SkillConfigStore,
+    handle_config_intent, skill_config_snapshot_for_cast, validate_skill_config,
+    SkillConfigRejectReason, SkillConfigSchemas, SkillConfigStore,
 };
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
@@ -4338,6 +4339,79 @@ mod tests {
     }
 
     #[test]
+    fn skill_bar_cast_requires_config_for_schema_fixture() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "zhenmai.sever_chain".to_string(),
+            },
+        ));
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+        ));
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        assert!(app.world().get::<Casting>(entity).is_none());
+
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "zhenmai.sever_chain",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([
+                    ("meridian_id".to_string(), serde_json::json!("Pericardium")),
+                    ("backfire_kind".to_string(), serde_json::json!("array")),
+                ])),
+            );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+
+        let casting = app.world().get::<Casting>(entity).unwrap();
+        assert_eq!(casting.skill_id.as_deref(), Some("zhenmai.sever_chain"));
+        assert_eq!(
+            casting
+                .skill_config
+                .as_ref()
+                .and_then(|config| config.fields.get("backfire_kind")),
+            Some(&serde_json::json!("array"))
+        );
+    }
+
+    #[test]
     fn skill_bar_cast_protocol_entity_id_does_not_fallback_to_entity_bits() {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -4754,6 +4828,15 @@ fn handle_skill_bar_cast(
         return;
     }
 
+    if let Err(reason) =
+        validate_skill_config_before_cast(&skill_id, entity, clients, combat_params)
+    {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} rejected: missing or invalid SkillConfig ({reason:?})"
+        );
+        return;
+    }
+
     if let Ok(prev) = combat_params.casting_q.get(entity) {
         if prev.source == CastSource::SkillBar && prev.slot == slot {
             tracing::debug!(
@@ -4809,6 +4892,33 @@ fn handle_skill_bar_cast(
         definition.cooldown_ticks,
         clock.tick
     );
+}
+
+fn validate_skill_config_before_cast(
+    skill_id: &str,
+    entity: valence::prelude::Entity,
+    clients: &mut Query<(&Username, &mut Client)>,
+    combat_params: &CombatRequestParams,
+) -> Result<(), SkillConfigRejectReason> {
+    let Some(schemas) = combat_params.skill_config_schemas.as_deref() else {
+        return Ok(());
+    };
+    if schemas.get(skill_id).is_none() {
+        return Ok(());
+    }
+    let Ok((username, _)) = clients.get_mut(entity) else {
+        return Err(SkillConfigRejectReason::UnknownSkill);
+    };
+    let Some(store) = combat_params.skill_config_store.as_deref() else {
+        return Err(SkillConfigRejectReason::NoSchema);
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let Some(config) = store.config_for(player_id.as_str(), skill_id) else {
+        return Err(SkillConfigRejectReason::MissingRequiredField(
+            "config".to_string(),
+        ));
+    };
+    validate_skill_config(skill_id, config.fields.clone(), schemas).map(|_| ())
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use valence::prelude::{bevy_ecs, Resource};
 
 use crate::combat::components::Casting;
@@ -135,7 +135,29 @@ impl SkillConfigSchemas {
 
 impl Default for SkillConfigSchemas {
     fn default() -> Self {
-        Self::empty()
+        Self::new([SkillConfigSchema {
+            skill_id: "zhenmai.sever_chain",
+            fields: vec![
+                ConfigField {
+                    key: "meridian_id",
+                    label: "选定经脉",
+                    kind: ConfigFieldKind::MeridianId {
+                        allowed: MeridianId::ALL.to_vec(),
+                    },
+                    required: true,
+                    default: Some(json!("Lung")),
+                },
+                ConfigField {
+                    key: "backfire_kind",
+                    label: "反震加成攻击类型",
+                    kind: ConfigFieldKind::Enum {
+                        options: vec!["real_yuan", "physical_carrier", "tainted_yuan", "array"],
+                    },
+                    required: true,
+                    default: Some(json!("real_yuan")),
+                },
+            ],
+        }])
     }
 }
 
@@ -418,5 +440,44 @@ mod tests {
         )
         .unwrap();
         assert!(!snapshot.configs.contains_key("burst_meridian.beng_quan"));
+    }
+
+    #[test]
+    fn default_registry_contains_zhenmai_sever_chain_fixture() {
+        let schemas = SkillConfigSchemas::default();
+        let mut config = BTreeMap::new();
+        config.insert("meridian_id".to_string(), json!("Pericardium"));
+        config.insert("backfire_kind".to_string(), json!("tainted_yuan"));
+
+        let validated = validate_skill_config("zhenmai.sever_chain", config, &schemas).unwrap();
+
+        assert_eq!(
+            validated.fields.get("meridian_id"),
+            Some(&json!("Pericardium"))
+        );
+        assert_eq!(
+            validated.fields.get("backfire_kind"),
+            Some(&json!("tainted_yuan"))
+        );
+    }
+
+    #[test]
+    fn zhenmai_sever_chain_intent_saves_with_default_registry() {
+        let schemas = SkillConfigSchemas::default();
+        let mut store = SkillConfigStore::default();
+        let snapshot = handle_config_intent(
+            "offline:Azure",
+            "zhenmai.sever_chain",
+            BTreeMap::from([
+                ("meridian_id".to_string(), json!("Pericardium")),
+                ("backfire_kind".to_string(), json!("array")),
+            ]),
+            None,
+            &mut store,
+            &schemas,
+        )
+        .unwrap();
+
+        assert!(snapshot.configs.contains_key("zhenmai.sever_chain"));
     }
 }

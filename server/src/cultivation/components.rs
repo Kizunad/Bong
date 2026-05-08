@@ -104,6 +104,29 @@ impl MeridianId {
         MeridianId::YangWei,
     ];
 
+    pub const ALL: [MeridianId; 20] = [
+        MeridianId::Lung,
+        MeridianId::LargeIntestine,
+        MeridianId::Stomach,
+        MeridianId::Spleen,
+        MeridianId::Heart,
+        MeridianId::SmallIntestine,
+        MeridianId::Bladder,
+        MeridianId::Kidney,
+        MeridianId::Pericardium,
+        MeridianId::TripleEnergizer,
+        MeridianId::Gallbladder,
+        MeridianId::Liver,
+        MeridianId::Ren,
+        MeridianId::Du,
+        MeridianId::Chong,
+        MeridianId::Dai,
+        MeridianId::YinQiao,
+        MeridianId::YangQiao,
+        MeridianId::YinWei,
+        MeridianId::YangWei,
+    ];
+
     pub fn family(self) -> MeridianFamily {
         if Self::REGULAR.contains(&self) {
             MeridianFamily::Regular
