@@ -11,6 +11,7 @@ use crate::cultivation::meridian::severed::{
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::qi_physics::{MediumKind, StyleAttack};
 use crate::schema::server_data::{BurstMeridianEventV1, ServerDataPayloadV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
@@ -39,6 +40,30 @@ pub struct BurstMeridianEvent {
     pub tick: u64,
     pub overload_ratio: f64,
     pub integrity_snapshot: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BengQuanStyleAttack {
+    pub qi_invest: f64,
+    pub integrity_snapshot: f64,
+}
+
+impl StyleAttack for BengQuanStyleAttack {
+    fn style_color(&self) -> ColorKind {
+        ColorKind::Heavy
+    }
+
+    fn injected_qi(&self) -> f64 {
+        self.qi_invest.max(0.0)
+    }
+
+    fn purity(&self) -> f64 {
+        self.integrity_snapshot.clamp(0.0, 1.0)
+    }
+
+    fn medium(&self) -> MediumKind {
+        MediumKind::bare(ColorKind::Heavy)
+    }
 }
 
 impl BurstMeridianEvent {
@@ -541,5 +566,17 @@ mod tests {
         let burst_events = app.world().resource::<Events<BurstMeridianEvent>>();
         let burst = burst_events.iter_current_update_events().next().unwrap();
         assert!((burst.integrity_snapshot - 0.7).abs() < 1e-12);
+    }
+
+    #[test]
+    fn beng_quan_style_attack_uses_heavy_color_and_integrity_purity() {
+        let attack = BengQuanStyleAttack {
+            qi_invest: 12.0,
+            integrity_snapshot: 0.7,
+        };
+
+        assert_eq!(attack.style_color(), ColorKind::Heavy);
+        assert_eq!(attack.injected_qi(), 12.0);
+        assert_eq!(attack.purity(), 0.7);
     }
 }

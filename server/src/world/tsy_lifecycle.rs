@@ -358,20 +358,160 @@ pub fn tsy_lifecycle_apply_spirit_qi(
         if state.lifecycle.is_dead() {
             continue;
         }
-        let ratio = state.skeleton_ratio();
-        let is_collapsing = state.lifecycle.is_collapsing();
-        for layer in [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep] {
+        apply_tsy_spirit_qi_conserved(state, &mut zones);
+    }
+}
+
+fn apply_tsy_spirit_qi_conserved(state: &TsyZoneState, zones: &mut ZoneRegistry) {
+    let ratio = state.skeleton_ratio();
+    let is_collapsing = state.lifecycle.is_collapsing();
+    let targets: Vec<(String, f64)> = [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep]
+        .into_iter()
+        .map(|layer| {
             let suffix = match layer {
                 TsyDepth::Shallow => "_shallow",
                 TsyDepth::Mid => "_mid",
                 TsyDepth::Deep => "_deep",
             };
-            let zone_name = format!("{}{}", state.family_id, suffix);
-            if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                zone.spirit_qi = compute_layer_spirit_qi(layer, ratio, is_collapsing);
-            }
+            (
+                format!("{}{}", state.family_id, suffix),
+                compute_layer_spirit_qi(layer, ratio, is_collapsing),
+            )
+        })
+        .collect();
+
+    let mut current_layers: Vec<(String, f64, f64)> = Vec::new();
+    let mut current_sum = 0.0;
+    let mut target_sum = 0.0;
+    let mut dimension = None;
+    for (zone_name, target_qi) in &targets {
+        if let Some(zone) = zones.find_zone_by_name(zone_name) {
+            current_sum += zone.spirit_qi;
+            target_sum += *target_qi;
+            dimension.get_or_insert(zone.dimension);
+            current_layers.push((zone_name.clone(), zone.spirit_qi, *target_qi));
         }
     }
+
+    let mut target_scale = 1.0;
+    if let Some(dimension) = dimension {
+        let qi_to_redistribute = (current_sum - target_sum).max(0.0);
+        if qi_to_redistribute > f64::EPSILON {
+            let distributed = redistribute_qi_to_surrounding_zone_capacity(
+                zones,
+                dimension,
+                &targets,
+                qi_to_redistribute,
+            );
+            target_scale = (distributed / qi_to_redistribute).clamp(0.0, 1.0);
+        } else if (target_sum - current_sum) > f64::EPSILON {
+            let qi_to_draw = target_sum - current_sum;
+            let drawn = draw_qi_from_surrounding_zones(zones, dimension, &targets, qi_to_draw);
+            target_scale = (drawn / qi_to_draw).clamp(0.0, 1.0);
+        }
+    }
+
+    for (zone_name, current_qi, target_qi) in current_layers {
+        if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+            zone.spirit_qi = current_qi + (target_qi - current_qi) * target_scale;
+        }
+    }
+}
+
+fn redistribute_qi_to_surrounding_zone_capacity(
+    zones: &mut ZoneRegistry,
+    dimension: DimensionKind,
+    targets: &[(String, f64)],
+    amount: f64,
+) -> f64 {
+    if amount <= f64::EPSILON {
+        return 0.0;
+    }
+    let target_names: std::collections::HashSet<&str> =
+        targets.iter().map(|(name, _)| name.as_str()).collect();
+    let has_surrounding_zone = zones
+        .zones
+        .iter()
+        .any(|zone| zone.dimension == dimension && !target_names.contains(zone.name.as_str()));
+    if !has_surrounding_zone {
+        tracing::warn!(
+            "[bong][tsy] no same-dimension surrounding zone can absorb {amount} spirit_qi"
+        );
+        return 0.0;
+    }
+    let mut candidates: Vec<(usize, f64, f64)> = zones
+        .zones
+        .iter()
+        .enumerate()
+        .filter(|(_, zone)| {
+            zone.dimension == dimension && !target_names.contains(zone.name.as_str())
+        })
+        .filter_map(|(index, zone)| {
+            let capacity = (1.0 - zone.spirit_qi).max(0.0);
+            if capacity <= f64::EPSILON {
+                return None;
+            }
+            let weight = (1.0 - zone.spirit_qi.clamp(0.0, 1.0)).max(0.01);
+            Some((index, weight, capacity))
+        })
+        .collect();
+    let mut distributed = 0.0;
+    while amount - distributed > f64::EPSILON && !candidates.is_empty() {
+        let remaining = amount - distributed;
+        let total_weight: f64 = candidates.iter().map(|(_, weight, _)| *weight).sum();
+        if total_weight <= f64::EPSILON {
+            break;
+        }
+        let mut progressed = false;
+        for (index, weight, capacity) in candidates.iter_mut() {
+            let planned = remaining * *weight / total_weight;
+            let applied = planned.min(*capacity);
+            if applied <= f64::EPSILON {
+                continue;
+            }
+            zones.zones[*index].spirit_qi += applied;
+            *capacity -= applied;
+            distributed += applied;
+            progressed = true;
+        }
+        candidates.retain(|(_, _, capacity)| *capacity > f64::EPSILON);
+        if !progressed {
+            break;
+        }
+    }
+    distributed
+}
+
+fn draw_qi_from_surrounding_zones(
+    zones: &mut ZoneRegistry,
+    dimension: DimensionKind,
+    targets: &[(String, f64)],
+    amount: f64,
+) -> f64 {
+    if amount <= f64::EPSILON {
+        return 0.0;
+    }
+    let target_names: std::collections::HashSet<&str> =
+        targets.iter().map(|(name, _)| name.as_str()).collect();
+    let available: f64 = zones
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == dimension && !target_names.contains(zone.name.as_str()))
+        .map(|zone| zone.spirit_qi.max(0.0))
+        .sum();
+    if available <= f64::EPSILON {
+        return 0.0;
+    }
+    let draw = amount.min(available);
+    for zone in zones
+        .zones
+        .iter_mut()
+        .filter(|zone| zone.dimension == dimension && !target_names.contains(zone.name.as_str()))
+    {
+        let share = zone.spirit_qi.max(0.0) / available;
+        zone.spirit_qi = (zone.spirit_qi - draw * share).clamp(-1.0, 1.0);
+    }
+    draw
 }
 
 /// plan §3.3 + §6 — `TsyCollapseCompleted` 事件消费器。
@@ -1049,6 +1189,199 @@ mod tests {
         assert!(!TsyLifecycle::Active.is_collapsing());
         assert!(TsyLifecycle::Dead.is_dead());
         assert!(!TsyLifecycle::Collapsing.is_dead());
+    }
+
+    #[test]
+    fn apply_spirit_qi_redistributes_collapse_delta_to_surrounding_zone() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_deep", DimensionKind::Tsy, -0.9),
+                mk("safe", DimensionKind::Tsy, -0.5),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Collapsing,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::new(),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: Some(0),
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        assert!(
+            (before_sum - after_sum).abs() < 1e-9,
+            "TSY lifecycle spirit_qi rewrite must conserve surrounding zone sum"
+        );
+        assert!(zones.find_zone_by_name("safe").unwrap().spirit_qi > 0.0);
+    }
+
+    #[test]
+    fn apply_spirit_qi_scales_collapse_delta_when_surrounding_capacity_is_full() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_deep", DimensionKind::Tsy, -0.9),
+                mk("nearly_full", DimensionKind::Tsy, 0.95),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Collapsing,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::new(),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: Some(0),
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        assert!((before_sum - after_sum).abs() < 1e-9);
+        assert!((zones.find_zone_by_name("nearly_full").unwrap().spirit_qi - 1.0).abs() < 1e-9);
+        assert!(
+            zones.find_zone_by_name("tsy_a_shallow").unwrap().spirit_qi > -1.0,
+            "TSY layer should only move as far as surrounding capacity can absorb"
+        );
+    }
+
+    #[test]
+    fn apply_spirit_qi_keeps_layers_when_no_surrounding_zone_can_absorb_delta() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_deep", DimensionKind::Tsy, -0.9),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Collapsing,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::new(),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: Some(0),
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before: Vec<_> = zones
+            .zones
+            .iter()
+            .map(|zone| (zone.name.clone(), zone.spirit_qi))
+            .collect();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after: Vec<_> = zones
+            .zones
+            .iter()
+            .map(|zone| (zone.name.clone(), zone.spirit_qi))
+            .collect();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn apply_spirit_qi_draws_reverse_delta_from_surrounding_zone() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.8),
+                mk("tsy_a_deep", DimensionKind::Tsy, -1.0),
+                mk("safe", DimensionKind::Tsy, 0.8),
+                mk("overworld_safe", DimensionKind::Overworld, 0.8),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Active,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::from([1]),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: None,
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        assert!(
+            (before_sum - after_sum).abs() < 1e-9,
+            "TSY lifecycle reverse delta must draw from same-dimension surrounding qi"
+        );
+        assert!((zones.find_zone_by_name("tsy_a_shallow").unwrap().spirit_qi - -0.3).abs() < 1e-9);
+        assert!((zones.find_zone_by_name("tsy_a_mid").unwrap().spirit_qi - -0.6).abs() < 1e-9);
+        assert!((zones.find_zone_by_name("tsy_a_deep").unwrap().spirit_qi - -0.9).abs() < 1e-9);
+        assert!((zones.find_zone_by_name("safe").unwrap().spirit_qi - 0.2).abs() < 1e-9);
+        assert!((zones.find_zone_by_name("overworld_safe").unwrap().spirit_qi - 0.8).abs() < 1e-9);
     }
 
     #[test]

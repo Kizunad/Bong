@@ -4,6 +4,7 @@ use valence::prelude::{bevy_ecs, DVec3, Entity};
 use crate::combat::carrier::CarrierKind;
 use crate::combat::decay::CarrierGrade;
 use crate::cultivation::components::ColorKind;
+use crate::qi_physics::{CarrierGrade as QiCarrierGrade, MediumKind, StyleAttack};
 
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
 pub struct QiProjectile {
@@ -21,6 +22,50 @@ pub struct AnqiProjectileFlight {
     pub velocity: DVec3,
     pub max_distance: f32,
     pub hitbox_inflation: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
+pub struct AnqiStyleAttack {
+    pub color: ColorKind,
+    pub qi_payload: f64,
+    pub carrier_grade: CarrierGrade,
+}
+
+#[allow(dead_code)]
+impl AnqiStyleAttack {
+    pub fn new(flight: &AnqiProjectileFlight, projectile: &QiProjectile) -> Self {
+        Self {
+            color: flight.qi_color,
+            qi_payload: f64::from(projectile.qi_payload.max(0.0)),
+            carrier_grade: flight.carrier_grade,
+        }
+    }
+
+    fn qi_carrier_grade(self) -> QiCarrierGrade {
+        match self.carrier_grade {
+            CarrierGrade::Mundane => QiCarrierGrade::BareQi,
+            CarrierGrade::Bone | CarrierGrade::Beast => QiCarrierGrade::SpiritWeapon,
+            CarrierGrade::Spirit | CarrierGrade::Relic => QiCarrierGrade::AncientRelic,
+        }
+    }
+}
+
+impl StyleAttack for AnqiStyleAttack {
+    fn style_color(&self) -> ColorKind {
+        self.color
+    }
+
+    fn injected_qi(&self) -> f64 {
+        self.qi_payload
+    }
+
+    fn medium(&self) -> MediumKind {
+        MediumKind {
+            color: self.color,
+            carrier: self.qi_carrier_grade(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,5 +112,29 @@ mod tests {
         let (evaporated, residual) = residual_qi_after_miss(40.0);
         assert_eq!(evaporated, 28.0);
         assert_eq!(residual, 12.0);
+    }
+
+    #[test]
+    fn anqi_style_attack_exposes_projectile_payload_to_qi_physics() {
+        let flight = AnqiProjectileFlight {
+            carrier_kind: CarrierKind::YibianShougu,
+            qi_color: ColorKind::Sharp,
+            carrier_grade: CarrierGrade::Relic,
+            spawn_pos: DVec3::ZERO,
+            prev_pos: DVec3::ZERO,
+            velocity: DVec3::ZERO,
+            max_distance: 32.0,
+            hitbox_inflation: 0.1,
+        };
+        let projectile = QiProjectile {
+            owner: None,
+            qi_payload: 12.0,
+        };
+
+        let attack = AnqiStyleAttack::new(&flight, &projectile);
+
+        assert_eq!(attack.style_color(), ColorKind::Sharp);
+        assert_eq!(attack.injected_qi(), 12.0);
+        assert_eq!(attack.medium().carrier, QiCarrierGrade::AncientRelic);
     }
 }

@@ -1,16 +1,16 @@
 //! plan-lingtian-v1 §1.3 / §1.4 — 灵气账本（区域级）+ lingtian-tick 计数器。
 //!
-//! `ZoneQiAccount` 是 lingtian 系统**自有**的区域灵气账本，与 `world::zone::Zone.spirit_qi`
-//! （归一化 -1..=1 用于 NPC AI / heal）暂时解耦。设计原因：
-//!   * plan §1.4 把"补灵 +0.5 / 抽吸 -0.5"作为绝对量记，与 -1..=1 归一化不兼容
-//!   * lingtian 是首个引入"灵气流出 / 流入区域"的系统，先在自家立账更安全
-//!   * 后续 plan-zhenfa-v1 / WorldQiAccount 落地时再合账（TODO 已记录）
+//! `ZoneQiAccount` 是 lingtian 系统的区域灵气 facade；本地 f32 账面继续服务
+//! plan-lingtian-v1 的"补灵 +0.5 / 抽吸 -0.5"绝对量语义，同时通过
+//! `sync_world_qi_account` 把 zone 余额镜像到底盘 `WorldQiAccount`。
 //!
 //! `LingtianTickAccumulator` 把 Bevy tick（1/20s）累计到 lingtian-tick（60s）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use valence::prelude::{bevy_ecs, Resource};
+use valence::prelude::{bevy_ecs, ResMut, Resource};
+
+use crate::qi_physics::{QiAccountId, QiPhysicsError, WorldQiAccount};
 
 /// plan §4 — LingtianTick 周期 = 1 min = 1200 Bevy tick @ 20tps。
 pub const BEVY_TICKS_PER_LINGTIAN_TICK: u32 = 1200;
@@ -19,6 +19,7 @@ pub const BEVY_TICKS_PER_LINGTIAN_TICK: u32 = 1200;
 #[derive(Debug, Default, Resource)]
 pub struct ZoneQiAccount {
     qi: HashMap<String, f32>,
+    removed_zones: HashSet<String>,
 }
 
 /// 默认 zone 名（plan §1.3 zone 解析未实装时的 fallback）。
@@ -31,7 +32,9 @@ impl ZoneQiAccount {
 
     /// 用某个 baseline 在指定 zone 设初值（loader / 测试用）。
     pub fn set(&mut self, zone: impl Into<String>, value: f32) {
-        self.qi.insert(zone.into(), value.max(0.0));
+        let zone = zone.into();
+        self.removed_zones.remove(&zone);
+        self.qi.insert(zone, value.max(0.0));
     }
 
     pub fn get(&self, zone: &str) -> f32 {
@@ -40,11 +43,54 @@ impl ZoneQiAccount {
 
     /// 拿可变引用；不存在则插入 0 后返回。
     pub fn get_mut(&mut self, zone: &str) -> &mut f32 {
+        self.removed_zones.remove(zone);
         self.qi.entry(zone.to_string()).or_insert(0.0)
+    }
+
+    pub fn remove(&mut self, zone: &str) -> Option<f32> {
+        let removed = self.qi.remove(zone);
+        if removed.is_some() {
+            self.removed_zones.insert(zone.to_string());
+        }
+        removed
     }
 
     pub fn zones(&self) -> impl Iterator<Item = &String> {
         self.qi.keys()
+    }
+
+    pub fn sync_world_qi_account(
+        &mut self,
+        account: &mut WorldQiAccount,
+    ) -> Result<(), QiPhysicsError> {
+        let active_zone_accounts: HashSet<QiAccountId> =
+            self.qi.keys().cloned().map(QiAccountId::zone).collect();
+        for (zone, value) in &self.qi {
+            account.set_balance(QiAccountId::zone(zone.clone()), f64::from(value.max(0.0)))?;
+        }
+        let removed_zone_accounts: Vec<_> = self
+            .removed_zones
+            .drain()
+            .map(QiAccountId::zone)
+            .filter(|account_id| !active_zone_accounts.contains(account_id))
+            .collect();
+        for account_id in removed_zone_accounts {
+            account.remove_balance(&account_id);
+        }
+        Ok(())
+    }
+}
+
+pub fn sync_zone_qi_account_to_world_qi_account(
+    zone_qi: Option<ResMut<ZoneQiAccount>>,
+    world_qi: Option<ResMut<WorldQiAccount>>,
+) {
+    let (Some(zone_qi), Some(mut world_qi)) = (zone_qi, world_qi) else {
+        return;
+    };
+    let mut zone_qi = zone_qi;
+    if let Err(error) = zone_qi.sync_world_qi_account(&mut world_qi) {
+        tracing::warn!("[bong][lingtian] failed to sync ZoneQiAccount to WorldQiAccount: {error}");
     }
 }
 
@@ -101,6 +147,51 @@ mod tests {
         assert_eq!(*r, 0.0);
         *r = 7.0;
         assert_eq!(acct.get("new"), 7.0);
+    }
+
+    #[test]
+    fn zone_qi_account_syncs_to_world_qi_account_facade() {
+        let mut acct = ZoneQiAccount::new();
+        acct.set("field", 3.5);
+        let mut world = WorldQiAccount::default();
+
+        acct.sync_world_qi_account(&mut world).unwrap();
+
+        assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
+    }
+
+    #[test]
+    fn zone_qi_account_sync_removes_deleted_zone_from_world_qi_account() {
+        let mut acct = ZoneQiAccount::new();
+        acct.set("field", 3.5);
+        acct.set("stale", 2.0);
+        let mut world = WorldQiAccount::default();
+        acct.sync_world_qi_account(&mut world).unwrap();
+        assert_eq!(world.balance(&QiAccountId::zone("stale")), 2.0);
+
+        assert_eq!(acct.remove("stale"), Some(2.0));
+        acct.sync_world_qi_account(&mut world).unwrap();
+
+        assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
+        assert_eq!(world.balance(&QiAccountId::zone("stale")), 0.0);
+    }
+
+    #[test]
+    fn sync_system_mirrors_zone_qi_account_into_world_qi_account() {
+        let mut app = valence::prelude::App::new();
+        let mut acct = ZoneQiAccount::new();
+        acct.set("field", 3.5);
+        app.insert_resource(acct);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(
+            valence::prelude::Update,
+            sync_zone_qi_account_to_world_qi_account,
+        );
+
+        app.update();
+
+        let world = app.world().resource::<WorldQiAccount>();
+        assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
     }
 
     #[test]

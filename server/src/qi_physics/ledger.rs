@@ -64,6 +64,7 @@ pub enum QiAccountKind {
     Container,
     Rift,
     Tiandao,
+    Overflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -98,6 +99,10 @@ impl QiAccountId {
 
     pub fn tiandao() -> Self {
         Self::new(QiAccountKind::Tiandao, "tiandao")
+    }
+
+    pub fn overflow(id: impl Into<String>) -> Self {
+        Self::new(QiAccountKind::Overflow, id)
     }
 }
 
@@ -158,6 +163,10 @@ impl WorldQiAccount {
         let amount = finite_non_negative(amount, "balance")?;
         self.balances.insert(account, amount);
         Ok(())
+    }
+
+    pub fn remove_balance(&mut self, account: &QiAccountId) -> Option<f64> {
+        self.balances.remove(account)
     }
 
     pub fn balance(&self, account: &QiAccountId) -> f64 {
@@ -479,6 +488,29 @@ mod tests {
         let snap = summarize_world_qi(app.world_mut());
         assert_eq!(snap.zone_qi, -0.6);
         assert_eq!(snap.total_observed(), -0.6);
+    }
+
+    #[test]
+    fn world_qi_snapshot_asserts_conservation_across_ledger_transfer() {
+        let mut app = App::new();
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        let mut account = WorldQiAccount::default();
+        let from = QiAccountId::player("p1");
+        let to = QiAccountId::zone("spawn");
+        account.set_balance(from.clone(), 10.0).unwrap();
+        account.set_balance(to.clone(), 5.0).unwrap();
+        app.insert_resource(account);
+        let before = summarize_world_qi(app.world_mut());
+
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .transfer(QiTransfer::new(from, to, 3.0, QiTransferReason::ReleaseToZone).unwrap())
+            .unwrap();
+        let after = summarize_world_qi(app.world_mut());
+
+        assert_eq!(before.budget_current_total, 100.0);
+        assert_eq!(after.budget_current_total, 100.0);
+        assert!(assert_conservation(&before, &after, 0.0).is_ok());
     }
 
     fn snapshot(total: f64) -> WorldQiSnapshot {

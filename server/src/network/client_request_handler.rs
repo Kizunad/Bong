@@ -94,6 +94,8 @@ use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction}
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
+use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
+use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
@@ -130,10 +132,6 @@ use crate::world::tsy_container_search::{
 };
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use crate::zhenfa::{ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest};
-
-const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
-const TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
-const TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD: f32 = 0.01;
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -5823,11 +5821,11 @@ fn maybe_apply_targeted_item_wear(
     }
     let username = username?;
     let weight = karma_weights?.weight_for_player(username);
-    if weight < TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD {
+    if weight < QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD {
         return None;
     }
 
-    let wear_fraction = targeted_item_wear_fraction(item.instance_id, username, weight);
+    let wear_fraction = qi_targeted_item_wear_fraction(item.instance_id, username, weight);
     match apply_item_spiritual_wear(inventory, item.instance_id, wear_fraction) {
         Ok(update) => {
             if let Some(events) = durability_changed_tx {
@@ -5859,20 +5857,6 @@ fn maybe_apply_targeted_item_wear(
 
 fn is_spiritual_item_for_targeted_wear(item: &ItemInstance) -> bool {
     item.spirit_quality > 0.0 || item.forge_quality.is_some() || item.mineral_id.is_some()
-}
-
-fn targeted_item_wear_fraction(instance_id: u64, username: &str, karma_weight: f32) -> f64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    instance_id.hash(&mut hasher);
-    username.hash(&mut hasher);
-    karma_weight.to_bits().hash(&mut hasher);
-    let bucket = hasher.finish() % 10_000;
-    let unit = bucket as f64 / 9_999.0;
-    TARGETED_ITEM_WEAR_MIN_FRACTION
-        + (TARGETED_ITEM_WEAR_MAX_FRACTION - TARGETED_ITEM_WEAR_MIN_FRACTION) * unit
 }
 
 fn send_moved_event(

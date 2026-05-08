@@ -76,7 +76,8 @@ pub use processing::{
 };
 #[allow(unused_imports)]
 pub use qi_account::{
-    LingtianTickAccumulator, ZoneQiAccount, BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
+    sync_zone_qi_account_to_world_qi_account, LingtianTickAccumulator, ZoneQiAccount,
+    BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
 };
 #[allow(unused_imports)]
 pub use seed::{seed_id_for, SeedRegistry};
@@ -177,6 +178,7 @@ pub fn register(app: &mut App) {
             systems::record_dye_contamination_warning_recent_events,
             systems::record_replenish_to_pressure,
             systems::compute_zone_pressure_system,
+            qi_account::sync_zone_qi_account_to_world_qi_account,
             // session emit 在 apply 后跑，client 拿到的是结算后状态
             systems::emit_harvest_inventory_snapshots,
             network_emit::emit_lingtian_session_to_clients,

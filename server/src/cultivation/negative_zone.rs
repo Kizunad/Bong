@@ -5,13 +5,17 @@
 //!   * 优先从 qi 扣；qi=0 后从 `Health` 扣（战斗 plan 管辖，本 plan 产出事件）
 //!   * `Health <= 0` → emit `CultivationDeathTrigger::NegativeZoneDrain`
 
-use valence::prelude::{Entity, EventWriter, Position, Query, Res};
+use valence::prelude::{Entity, EventWriter, Events, Position, Query, ResMut};
 
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::Cultivation;
-use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
+use super::death_hooks::{
+    release_qi_amount_to_zone, CultivationDeathCause, CultivationDeathTrigger,
+};
+use crate::cultivation::life_record::LifeRecord;
+use crate::qi_physics::QiTransfer;
 
 pub const SIPHON_FACTOR: f64 = 0.001;
 
@@ -24,23 +28,26 @@ pub fn siphon_amount(zone_qi: f64, qi_max: f64) -> f64 {
     pressure * qi_max * SIPHON_FACTOR
 }
 
+#[allow(clippy::type_complexity)]
 pub fn negative_zone_siphon_tick(
-    zones: Option<Res<ZoneRegistry>>,
+    zones: Option<ResMut<ZoneRegistry>>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut players: Query<(
         Entity,
         &Position,
         Option<&CurrentDimension>,
+        Option<&LifeRecord>,
         &mut Cultivation,
     )>,
 ) {
-    let Some(zones) = zones else {
+    let Some(mut zones) = zones else {
         return;
     };
-    for (entity, pos, current_dimension, mut cultivation) in players.iter_mut() {
-        let dimension = current_dimension
-            .map(|current| current.0)
-            .unwrap_or(DimensionKind::Overworld);
+    for (entity, pos, current_dimension, life_record, mut cultivation) in players.iter_mut() {
+        let Some(dimension) = current_dimension.map(|current| current.0) else {
+            continue;
+        };
         let zone_name = zones
             .find_zone(dimension, pos.0)
             .map(|z| (z.name.clone(), z.spirit_qi));
@@ -53,11 +60,32 @@ pub fn negative_zone_siphon_tick(
         }
         if cultivation.qi_current >= siphon {
             cultivation.qi_current -= siphon;
+            release_qi_amount_to_zone(
+                entity,
+                siphon,
+                Some(pos),
+                current_dimension,
+                life_record,
+                Some(&mut *zones),
+                qi_transfers.as_deref_mut(),
+                "negative_zone_siphon",
+            );
             continue;
         }
         // qi 吸干，转抽血肉：本 plan 不持 Health Component，发事件由战斗 plan 消费。
         // 作为最低保障：qi_current 归零，并若尚无命脉收口，直接报死亡触发。
+        let drained = cultivation.qi_current.max(0.0);
         cultivation.qi_current = 0.0;
+        release_qi_amount_to_zone(
+            entity,
+            drained,
+            Some(pos),
+            current_dimension,
+            life_record,
+            Some(&mut *zones),
+            qi_transfers.as_deref_mut(),
+            "negative_zone_siphon",
+        );
         deaths.send(CultivationDeathTrigger {
             entity,
             cause: CultivationDeathCause::NegativeZoneDrain,
@@ -72,6 +100,8 @@ pub fn negative_zone_siphon_tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::player::state::canonical_player_id;
+    use crate::qi_physics::QiAccountId;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, Events, Update};
 
@@ -108,6 +138,7 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
+                LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
 
@@ -121,5 +152,80 @@ mod tests {
             .drain()
             .collect();
         assert!(deaths.is_empty());
+    }
+
+    #[test]
+    fn negative_zone_siphon_skips_entity_without_current_dimension() {
+        let mut app = App::new();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
+        app.insert_resource(zones);
+        app.add_systems(Update, negative_zone_siphon_tick);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                LifeRecord::new(canonical_player_id("Azure")),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert_eq!(cultivation.qi_current, 1.0);
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+    }
+
+    #[test]
+    fn negative_zone_siphon_records_qi_transfer_to_zone() {
+        let mut app = App::new();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
+        app.insert_resource(zones);
+        app.add_systems(Update, negative_zone_siphon_tick);
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                LifeRecord::new(canonical_player_id("Azure")),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(cultivation.qi_current < 1.0);
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(
+            transfers[0].from,
+            QiAccountId::player(canonical_player_id("Azure"))
+        );
     }
 }

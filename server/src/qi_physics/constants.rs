@@ -58,6 +58,12 @@ pub const LINGTIAN_DRAIN_PLAYER_RATIO: f32 = 0.8;
 pub const LINGTIAN_DRAIN_ZONE_RATIO: f32 = 0.2;
 /// plan-lingtian-v1：plot 灵气不足时从环境场漏吸的比例。
 pub const QI_LINGTIAN_AMBIENT_LEAK_RATIO: f32 = 0.2;
+/// plan-qi-physics-patch-v1 P2-6：跨界磨损最小比例。
+pub const QI_TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
+/// plan-qi-physics-patch-v1 P2-6：跨界磨损最大比例。
+pub const QI_TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
+/// plan-qi-physics-patch-v1 P2-6：低于该 karma 权重不触发跨界磨损。
+pub const QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD: f32 = 0.01;
 /// plan-zhenmai-v1：截脉防御窗口基础时长。
 pub const QI_ZHENMAI_PREP_WINDOW_MS: u32 = 1000;
 /// plan-zhenmai-v1：截脉污染残留倍率。

@@ -10,13 +10,14 @@ use crate::combat::needle::{
     realm_rank, IntentSource, ShootNeedleIntent, QI_NEEDLE_COOLDOWN_TICKS, QI_NEEDLE_SKILL_ID,
 };
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, PlayerInventory,
 };
 use crate::network::cast_emit::current_unix_millis;
+use crate::qi_physics::{MediumKind, StyleAttack};
 use crate::schema::dugu::{
     AntidoteResultEventV1, AntidoteResultV1, DuguObfuscationStateV1, DuguPoisonProgressEventV1,
     DuguPoisonStateV1,
@@ -63,6 +64,28 @@ pub struct PendingDuguInfusion {
     pub target_carrier: InfuseTarget,
     pub infused_at_tick: u64,
     pub expires_at_tick: u64,
+}
+
+impl StyleAttack for PendingDuguInfusion {
+    fn style_color(&self) -> ColorKind {
+        ColorKind::Insidious
+    }
+
+    fn injected_qi(&self) -> f64 {
+        DUGU_INFUSE_COST
+    }
+
+    fn purity(&self) -> f64 {
+        match self.target_carrier {
+            InfuseTarget::NextNeedle => 0.9,
+            InfuseTarget::NextMeleeAttack => 0.75,
+            InfuseTarget::CarrierSlot { .. } => 0.8,
+        }
+    }
+
+    fn medium(&self) -> MediumKind {
+        MediumKind::bare(ColorKind::Insidious)
+    }
 }
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
@@ -1168,5 +1191,18 @@ mod tests {
             app.world().get::<Lifecycle>(entity).unwrap().state,
             LifecycleState::Alive
         );
+    }
+
+    #[test]
+    fn pending_dugu_infusion_exposes_insidious_style_attack() {
+        let infusion = PendingDuguInfusion {
+            target_carrier: InfuseTarget::NextNeedle,
+            infused_at_tick: 10,
+            expires_at_tick: 70,
+        };
+
+        assert_eq!(infusion.style_color(), ColorKind::Insidious);
+        assert_eq!(infusion.injected_qi(), DUGU_INFUSE_COST);
+        assert!(infusion.purity() > 0.8);
     }
 }
