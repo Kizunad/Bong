@@ -5,13 +5,16 @@
 //!   * 优先从 qi 扣；qi=0 后从 `Health` 扣（战斗 plan 管辖，本 plan 产出事件）
 //!   * `Health <= 0` → emit `CultivationDeathTrigger::NegativeZoneDrain`
 
-use valence::prelude::{Entity, EventWriter, Position, Query, Res};
+use valence::prelude::{Entity, EventWriter, Events, Position, Query, ResMut};
 
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::Cultivation;
-use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
+use super::death_hooks::{
+    release_qi_amount_to_zone, CultivationDeathCause, CultivationDeathTrigger,
+};
+use crate::qi_physics::QiTransfer;
 
 pub const SIPHON_FACTOR: f64 = 0.001;
 
@@ -25,8 +28,9 @@ pub fn siphon_amount(zone_qi: f64, qi_max: f64) -> f64 {
 }
 
 pub fn negative_zone_siphon_tick(
-    zones: Option<Res<ZoneRegistry>>,
+    zones: Option<ResMut<ZoneRegistry>>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut players: Query<(
         Entity,
         &Position,
@@ -34,7 +38,7 @@ pub fn negative_zone_siphon_tick(
         &mut Cultivation,
     )>,
 ) {
-    let Some(zones) = zones else {
+    let Some(mut zones) = zones else {
         return;
     };
     for (entity, pos, current_dimension, mut cultivation) in players.iter_mut() {
@@ -53,11 +57,32 @@ pub fn negative_zone_siphon_tick(
         }
         if cultivation.qi_current >= siphon {
             cultivation.qi_current -= siphon;
+            release_qi_amount_to_zone(
+                entity,
+                siphon,
+                Some(pos),
+                current_dimension,
+                None,
+                Some(&mut *zones),
+                qi_transfers.as_deref_mut(),
+                "negative_zone_siphon",
+            );
             continue;
         }
         // qi 吸干，转抽血肉：本 plan 不持 Health Component，发事件由战斗 plan 消费。
         // 作为最低保障：qi_current 归零，并若尚无命脉收口，直接报死亡触发。
+        let drained = cultivation.qi_current.max(0.0);
         cultivation.qi_current = 0.0;
+        release_qi_amount_to_zone(
+            entity,
+            drained,
+            Some(pos),
+            current_dimension,
+            None,
+            Some(&mut *zones),
+            qi_transfers.as_deref_mut(),
+            "negative_zone_siphon",
+        );
         deaths.send(CultivationDeathTrigger {
             entity,
             cause: CultivationDeathCause::NegativeZoneDrain,
@@ -121,5 +146,38 @@ mod tests {
             .drain()
             .collect();
         assert!(deaths.is_empty());
+    }
+
+    #[test]
+    fn negative_zone_siphon_records_qi_transfer_to_zone() {
+        let mut app = App::new();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
+        app.insert_resource(zones);
+        app.add_systems(Update, negative_zone_siphon_tick);
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(cultivation.qi_current < 1.0);
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(transfers.len(), 1);
     }
 }

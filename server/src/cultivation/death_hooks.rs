@@ -65,7 +65,8 @@ pub fn apply_revive_penalty(
     cultivation: &mut Cultivation,
     meridians: &mut MeridianSystem,
     contam: &mut Contamination,
-) {
+) -> f64 {
+    let released_qi = cultivation.qi_current.max(0.0);
     if let Some(prev) = cultivation.realm.previous() {
         cultivation.realm = prev;
     }
@@ -91,6 +92,7 @@ pub fn apply_revive_penalty(
         }
     }
     cultivation.qi_max = 10.0 + meridians.sum_capacity();
+    released_qi
 }
 
 pub fn on_player_revived(
@@ -99,16 +101,22 @@ pub fn on_player_revived(
     mut events: EventReader<PlayerRevived>,
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut players: Query<(
         &mut Cultivation,
         &mut MeridianSystem,
         &mut Contamination,
         &mut LifeRecord,
+        Option<&Position>,
+        Option<&CurrentDimension>,
     )>,
 ) {
     let now = clock.tick;
     for ev in events.read() {
-        if let Ok((mut c, mut ms, mut cn, mut life)) = players.get_mut(ev.entity) {
+        if let Ok((mut c, mut ms, mut cn, mut life, position, current_dimension)) =
+            players.get_mut(ev.entity)
+        {
             if matches!(
                 life.biography.last(),
                 Some(BiographyEntry::Rebirth { tick, .. }) if *tick == now
@@ -116,7 +124,17 @@ pub fn on_player_revived(
                 continue;
             }
             let prior = c.realm;
-            apply_revive_penalty(&mut c, &mut ms, &mut cn);
+            let released_qi = apply_revive_penalty(&mut c, &mut ms, &mut cn);
+            release_qi_amount_to_zone(
+                ev.entity,
+                released_qi,
+                position,
+                current_dimension,
+                Some(&life),
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                "revive_penalty",
+            );
             if prior == Realm::Void && c.realm != Realm::Void {
                 match release_ascension_quota_slot(&settings) {
                     Ok(release) if release.opened_slot => {
@@ -232,26 +250,47 @@ fn release_terminated_qi_to_zone(
     qi_transfers: Option<&mut Events<QiTransfer>>,
 ) {
     let amount = cultivation.qi_current.max(0.0);
+    release_qi_amount_to_zone(
+        entity,
+        amount,
+        position,
+        current_dimension,
+        life_record,
+        zones,
+        qi_transfers,
+        "terminated",
+    );
+}
+
+pub fn release_qi_amount_to_zone(
+    entity: Entity,
+    amount: f64,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: Option<&LifeRecord>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    source: &'static str,
+) -> f64 {
     if amount <= QI_EPSILON {
-        return;
+        return 0.0;
     }
     let Some(position) = position else {
         tracing::warn!(
-            "[bong][cultivation] terminated {:?} with qi={} but no Position; skip qi release",
+            "[bong][cultivation] {source} {:?} with qi={} but no Position; skip qi release",
             entity,
             amount,
         );
-        return;
+        return 0.0;
     };
     let Some(zones) = zones else {
         tracing::warn!(
-            "[bong][cultivation] terminated {:?} with qi={} but no ZoneRegistry; skip qi release",
+            "[bong][cultivation] {source} {:?} with qi={} but no ZoneRegistry; skip qi release",
             entity,
             amount,
         );
-        return;
+        return 0.0;
     };
-
     let dimension = current_dimension
         .map(|current| current.0)
         .unwrap_or(DimensionKind::Overworld);
@@ -260,14 +299,14 @@ fn release_terminated_qi_to_zone(
         .map(|zone| zone.name.clone())
     else {
         tracing::warn!(
-            "[bong][cultivation] terminated {:?} with qi={} outside known zone; skip qi release",
+            "[bong][cultivation] {source} {:?} with qi={} outside known zone; skip qi release",
             entity,
             amount,
         );
-        return;
+        return 0.0;
     };
     let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
-        return;
+        return 0.0;
     };
 
     let from = terminated_qi_account_id(entity, life_record);
@@ -281,7 +320,7 @@ fn release_terminated_qi_to_zone(
                 "[bong][cultivation] invalid terminated qi release for {:?}",
                 entity,
             );
-            return;
+            return 0.0;
         }
     };
 
@@ -303,6 +342,7 @@ fn release_terminated_qi_to_zone(
             outcome.overflow,
         );
     }
+    outcome.accepted
 }
 
 fn terminated_qi_account_id(entity: Entity, life_record: Option<&LifeRecord>) -> QiAccountId {
@@ -435,6 +475,58 @@ mod tests {
             life.biography.last(),
             Some(BiographyEntry::Rebirth { tick: 42, .. })
         ));
+    }
+
+    #[test]
+    fn revived_hook_releases_previous_qi_to_current_zone() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<PlayerRevived>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_revived);
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 8.0,
+                    composure: 0.9,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new(canonical_player_id("Alice")),
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(after > before);
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
-use crate::qi_physics::{constants::DEFAULT_SPIRIT_QI_TOTAL, WorldQiBudget};
+use crate::qi_physics::{constants::DEFAULT_SPIRIT_QI_TOTAL, QiTransfer, WorldQiBudget};
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
 };
@@ -38,9 +38,11 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm};
+use super::death_hooks::release_qi_amount_to_zone;
 use super::meridian::severed::{MeridianSeveredEvent, SeveredSource};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
@@ -1335,14 +1337,27 @@ pub fn tribulation_failure_system(
         &Lifecycle,
         Option<&mut Wounds>,
         Option<&mut TribulationState>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
     )>,
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
     for ev in failed.read() {
-        if let Ok((mut cultivation, meridians, lifecycle, wounds, state)) =
-            players.get_mut(ev.entity)
+        if let Ok((
+            mut cultivation,
+            meridians,
+            lifecycle,
+            wounds,
+            state,
+            position,
+            current_dimension,
+            life_record,
+        )) = players.get_mut(ev.entity)
         {
             if let Some(mut state) = state {
                 state.failed = true;
@@ -1351,8 +1366,18 @@ pub fn tribulation_failure_system(
             // plan-meridian-severed-v1 §4 #5：渡劫失败爆脉降境 → emit
             // MeridianSeveredEvent { TribulationFail } 让永久 SEVERED component 落档。
             // severed_events 用 Option<ResMut<Events<...>>> 以便测试 app 未注册 event 也能跑通。
-            let severed_ids =
+            let (released_qi, severed_ids) =
                 apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
+            release_qi_amount_to_zone(
+                ev.entity,
+                released_qi,
+                position,
+                current_dimension,
+                life_record,
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                "tribulation_failure",
+            );
             if let Some(ref mut sink) = severed_events {
                 let now_tick = clock.as_deref().map(|c| c.tick).unwrap_or_default();
                 for id in severed_ids {
@@ -1410,15 +1435,27 @@ pub fn abort_du_xu_on_client_removed(
         Option<&mut Wounds>,
         &mut TribulationState,
         Option<&mut LifeRecord>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
     )>,
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
     for entity in removed_clients.read() {
-        let Ok((mut cultivation, meridians, lifecycle, wounds, mut state, life_record)) =
-            players.get_mut(entity)
+        let Ok((
+            mut cultivation,
+            meridians,
+            lifecycle,
+            wounds,
+            mut state,
+            life_record,
+            position,
+            current_dimension,
+        )) = players.get_mut(entity)
         else {
             continue;
         };
@@ -1439,6 +1476,10 @@ pub fn abort_du_xu_on_client_removed(
             &mut settled,
             &mut fled,
             severed_events.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            zones.as_deref_mut(),
+            position,
+            current_dimension,
         );
     }
 }
@@ -1464,6 +1505,8 @@ pub fn tribulation_escape_boundary_system(
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
     for (
         entity,
@@ -1498,6 +1541,10 @@ pub fn tribulation_escape_boundary_system(
                 &mut settled,
                 &mut fled,
                 severed_events.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                zones.as_deref_mut(),
+                Some(position),
+                current_dimension,
             );
             continue;
         }
@@ -1520,6 +1567,10 @@ pub fn tribulation_escape_boundary_system(
             &mut settled,
             &mut fled,
             severed_events.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            zones.as_deref_mut(),
+            Some(position),
+            current_dimension,
         );
     }
 }
@@ -1536,22 +1587,37 @@ fn settle_fled_tribulation(
     lifecycle: &Lifecycle,
     wounds: Option<valence::prelude::Mut<'_, Wounds>>,
     state: &mut TribulationState,
-    life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
+    mut life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
     settled: &mut EventWriter<TribulationSettled>,
     fled: &mut EventWriter<TribulationFled>,
     severed_events: Option<&mut Events<MeridianSeveredEvent>>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    zones: Option<&mut ZoneRegistry>,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
 ) {
     state.failed = true;
     state.phase = TribulationPhase::Settle;
     let waves_survived = state.wave_current;
-    if let Some(mut life_record) = life_record {
+    if let Some(life_record) = life_record.as_deref_mut() {
         life_record.push(BiographyEntry::TribulationFled {
             wave: waves_survived.saturating_add(1),
             tick: fled_tick,
         });
     }
     // plan-meridian-severed-v1 §4 #5：渡劫逃跑也算失败，关闭的经脉同样写永久 SEVERED
-    let severed_ids = apply_tribulation_failure_penalty(cultivation, meridians, wounds);
+    let (released_qi, severed_ids) =
+        apply_tribulation_failure_penalty(cultivation, meridians, wounds);
+    release_qi_amount_to_zone(
+        entity,
+        released_qi,
+        position,
+        current_dimension,
+        life_record.as_deref(),
+        zones,
+        qi_transfers,
+        "tribulation_fled",
+    );
     if let Some(sink) = severed_events {
         for id in severed_ids {
             sink.send(MeridianSeveredEvent {
@@ -1890,7 +1956,8 @@ fn apply_tribulation_failure_penalty(
     cultivation: &mut Cultivation,
     meridians: Option<valence::prelude::Mut<'_, MeridianSystem>>,
     wounds: Option<valence::prelude::Mut<'_, Wounds>>,
-) -> Vec<MeridianId> {
+) -> (f64, Vec<MeridianId>) {
+    let released_qi = cultivation.qi_current.max(0.0);
     cultivation.realm = Realm::Spirit;
     cultivation.qi_current = 0.0;
     cultivation.last_qi_zero_at = None;
@@ -1924,7 +1991,7 @@ fn apply_tribulation_failure_penalty(
             .max(floor)
             .min(wounds.health_max.max(1.0));
     }
-    severed_meridians
+    (released_qi, severed_meridians)
 }
 
 #[cfg(test)]
@@ -1949,6 +2016,8 @@ mod tests {
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
     use crate::persistence::{bootstrap_sqlite, load_active_tribulation};
+    use crate::qi_physics::{QiTransfer, QiTransferReason};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -4528,6 +4597,12 @@ mod tests {
 
         app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 300 });
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.25;
+        app.insert_resource(zones);
         app.add_event::<TribulationFailed>();
         app.add_event::<TribulationFled>();
         app.add_event::<TribulationSettled>();
@@ -4535,6 +4610,7 @@ mod tests {
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<QiTransfer>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -4588,6 +4664,12 @@ mod tests {
                 TribulationState::restored(2, 5, 120),
             ))
             .id();
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
 
         app.world_mut()
             .resource_mut::<Events<TribulationFailed>>()
@@ -4628,6 +4710,17 @@ mod tests {
         assert_eq!(registry.last_death_tick, Some(55));
         assert_eq!(lifespan.years_lived, 90.0);
         assert!(entity_ref.get::<TribulationState>().is_none());
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
 
         assert_eq!(
             app.world()
@@ -4642,6 +4735,12 @@ mod tests {
             0
         );
         assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 0);
+        assert!(
+            zone_after > zone_before,
+            "tribulation failure should release cleared qi back to the current zone"
+        );
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")

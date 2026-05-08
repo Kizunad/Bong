@@ -7,7 +7,7 @@
 //!   * `amount <= 0` 的条目移除
 //!   * 所有条目都清空 + qi/经络全毁 → emit `CultivationDeathTrigger::ContaminationOverflow`
 
-use valence::prelude::{Entity, EventWriter, Query};
+use valence::prelude::{Entity, EventWriter, Events, Position, Query, ResMut};
 
 use crate::alchemy::skill_hook::purge_rate_bonus;
 use crate::skill::components::{SkillId, SkillSet};
@@ -17,6 +17,10 @@ use super::breakthrough::skill_cap_for_realm;
 use super::components::{Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 use valence::prelude::Res;
 
 /// plan §0-3 10:15 排异亏损比。
@@ -46,8 +50,12 @@ pub fn purge_step(
 pub fn contamination_tick(
     clock: Res<CultivationClock>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut players: Query<(
         Entity,
+        Option<&Position>,
+        Option<&CurrentDimension>,
         &mut Cultivation,
         &mut Contamination,
         &mut MeridianSystem,
@@ -55,7 +63,16 @@ pub fn contamination_tick(
     )>,
 ) {
     let now = clock.tick;
-    for (entity, mut cultivation, mut contam, mut meridians, skill_set) in players.iter_mut() {
+    for (
+        entity,
+        position,
+        current_dimension,
+        mut cultivation,
+        mut contam,
+        mut meridians,
+        skill_set,
+    ) in players.iter_mut()
+    {
         if contam.entries.is_empty() {
             continue;
         }
@@ -82,6 +99,14 @@ pub fn contamination_tick(
             let budget = cultivation.qi_current.max(0.0);
             let (_purge, cost, _cleared) = purge_step(entry, budget, purge_rate);
             cultivation.qi_current -= cost;
+            release_contamination_cost_to_zone(
+                entity,
+                cost,
+                position,
+                current_dimension,
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+            );
             if cultivation.qi_current < 0.0 {
                 any_qi_deficit = true;
                 // 对首条已打通经脉添加裂痕
@@ -115,6 +140,45 @@ pub fn contamination_tick(
     }
 }
 
+fn release_contamination_cost_to_zone(
+    entity: Entity,
+    amount: f64,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let (Some(position), Some(zones)) = (position, zones) else {
+        return;
+    };
+    let dimension = current_dimension
+        .map(|current| current.0)
+        .unwrap_or(DimensionKind::Overworld);
+    let Some(zone_name) = zones
+        .find_zone(dimension, position.0)
+        .map(|zone| zone.name.clone())
+    else {
+        return;
+    };
+    let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
+        return;
+    };
+    let from = QiAccountId::player(format!("entity:{entity:?}:contamination"));
+    let to = QiAccountId::zone(zone.name.clone());
+    let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+    let Ok(outcome) = qi_release_to_zone(amount, from, to, zone_current, QI_ZONE_UNIT_CAPACITY)
+    else {
+        return;
+    };
+    zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
+    if let (Some(transfer), Some(qi_transfers)) = (outcome.transfer, qi_transfers) {
+        qi_transfers.send(transfer);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,7 +186,8 @@ mod tests {
     use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
     use crate::cultivation::death_hooks::CultivationDeathTrigger;
     use crate::skill::components::{SkillEntry, SkillSet};
-    use valence::prelude::{App, Update};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::{App, Events, Position, Update};
 
     #[test]
     fn purge_consumes_qi_at_10_to_15_ratio() {
@@ -233,5 +298,55 @@ mod tests {
             skilled_contam.entries[0].amount < baseline_contam.entries[0].amount,
             "alchemy skill should purge more contamination per tick"
         );
+    }
+
+    #[test]
+    fn contamination_purge_releases_spent_qi_to_current_zone() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, contamination_tick);
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 10.0,
+                qi_max: 10.0,
+                ..Default::default()
+            },
+            Contamination {
+                entries: vec![ContamSource {
+                    amount: 1.0,
+                    color: ColorKind::Mellow,
+                    attacker_id: None,
+                    introduced_at: 1,
+                }],
+            },
+            MeridianSystem::default(),
+        ));
+
+        app.update();
+
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(after > before);
+        assert_eq!(transfers.len(), 1);
     }
 }
