@@ -27,7 +27,7 @@ use crate::schema::channels::{
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WOLIU_BACKFIRE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WANTED_PLAYER, CH_WOLIU_BACKFIRE,
     CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -46,6 +46,7 @@ use crate::schema::death_lifecycle::{
 };
 use crate::schema::dugu::DuguPoisonProgressEventV1;
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
+use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
@@ -155,6 +156,7 @@ pub enum RedisOutbound {
     ProjectileDespawned(ProjectileDespawnedEventV1),
     TuikeShed(ShedEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
+    WantedPlayer(WantedPlayerEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -417,6 +419,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_STYLE_BALANCE_TELEMETRY,
+                payload,
+            })
+        }
+        RedisOutbound::WantedPlayer(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize WantedPlayerEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_WANTED_PLAYER,
                 payload,
             })
         }
