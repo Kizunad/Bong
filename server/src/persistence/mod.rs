@@ -36,7 +36,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 17;
+const CURRENT_USER_VERSION: i32 = 18;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1338,6 +1338,30 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             )));
         }
         transaction.execute_batch("PRAGMA user_version = 17;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 18 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS legacy_letterbox (
+                owner_id TEXT PRIMARY KEY,
+                inheritor_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                assigned_at_tick INTEGER NOT NULL CHECK (assigned_at_tick >= 0),
+                reject_until_tick INTEGER NOT NULL CHECK (reject_until_tick >= 0),
+                status TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE INDEX IF NOT EXISTS idx_legacy_letterbox_inheritor
+            ON legacy_letterbox (inheritor_id, status);
+            PRAGMA user_version = 18;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -4046,6 +4070,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::AnqiSniped { .. } => "anqi_sniped",
         BiographyEntry::FalseSkinShed { .. } => "false_skin_shed",
         BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
+        BiographyEntry::VoidAction { .. } => "void_action",
     }
 }
 
@@ -4129,7 +4154,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::VortexBackfired { tick, .. }
         | BiographyEntry::AnqiSniped { tick, .. }
         | BiographyEntry::FalseSkinShed { tick, .. }
-        | BiographyEntry::SpawnTutorialCompleted { tick, .. } => *tick,
+        | BiographyEntry::SpawnTutorialCompleted { tick, .. }
+        | BiographyEntry::VoidAction { tick, .. } => *tick,
     }
 }
 
@@ -7019,6 +7045,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
             character_id: life_record.character_id.clone(),
@@ -7118,6 +7145,7 @@ mod persistence_tests {
                 total_xp_at: 1_280,
             }],
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
             character_id: life_record.character_id.clone(),
@@ -7253,6 +7281,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
             character_id: life_record.character_id.clone(),
@@ -7333,6 +7362,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let first_lifecycle = Lifecycle {
             character_id: first_life_record.character_id.clone(),
@@ -7361,6 +7391,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let second_lifecycle = Lifecycle {
             character_id: second_life_record.character_id.clone(),
@@ -7439,6 +7470,7 @@ mod persistence_tests {
                 death_insights: Vec::new(),
                 skill_milestones: Vec::new(),
                 spirit_root_first: None,
+                ..LifeRecord::default()
             };
             let lifecycle = Lifecycle {
                 character_id: life_record.character_id.clone(),
@@ -7504,6 +7536,7 @@ mod persistence_tests {
                 death_insights: Vec::new(),
                 skill_milestones: Vec::new(),
                 spirit_root_first: None,
+                ..LifeRecord::default()
             };
             let lifecycle = Lifecycle {
                 character_id: life_record.character_id.clone(),
@@ -7574,6 +7607,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         }
     }
 
@@ -7826,6 +7860,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -7923,6 +7958,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id,
@@ -8098,6 +8134,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -8261,6 +8298,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -8451,6 +8489,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -8694,6 +8733,7 @@ mod persistence_tests {
                             death_insights: Vec::new(),
                             skill_milestones: Vec::new(),
                             spirit_root_first: None,
+                            ..LifeRecord::default()
                         };
                         let lifecycle = Lifecycle {
                             character_id: char_id.clone(),

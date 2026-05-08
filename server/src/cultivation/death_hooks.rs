@@ -34,6 +34,7 @@ pub enum CultivationDeathCause {
     NaturalAging,
     SwarmQiDrain,
     VoidQuotaExceeded,
+    VoidActionBacklash,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -632,6 +633,7 @@ mod tests {
                     death_insights: Vec::new(),
                     skill_milestones: Vec::new(),
                     spirit_root_first: None,
+                    ..LifeRecord::default()
                 },
             ))
             .id();

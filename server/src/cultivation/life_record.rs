@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
 use super::components::{ColorKind, MeridianId, Realm};
+use super::void::components::{VoidActionKind, VoidActionLogEntry};
+use super::void::legacy::LegacyLetterbox;
 use crate::skill::components::SkillId;
 
 const UNASSIGNED_CHARACTER_ID: &str = "unassigned:life_record";
@@ -225,6 +227,14 @@ pub enum BiographyEntry {
         minutes_since_spawn: u32,
         tick: u64,
     },
+    /// plan-void-actions-v1 — 化虚者四类世界级 action 公开入生平卷。
+    VoidAction {
+        kind: VoidActionKind,
+        target: String,
+        qi_cost: f64,
+        lifespan_cost_years: u32,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,6 +274,14 @@ pub struct LifeRecord {
     pub death_insights: Vec<DeathInsightRecord>,
     #[serde(default)]
     pub skill_milestones: Vec<SkillMilestone>,
+    #[serde(default)]
+    pub void_actions: Vec<VoidActionLogEntry>,
+    #[serde(default)]
+    pub legacy_inheritor: Option<String>,
+    #[serde(default)]
+    pub legacy_items: Vec<u64>,
+    #[serde(default)]
+    pub legacy_letterbox: Option<LegacyLetterbox>,
     pub spirit_root_first: Option<MeridianId>,
 }
 
@@ -282,6 +300,10 @@ impl LifeRecord {
             insights_taken: Vec::new(),
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
+            void_actions: Vec::new(),
+            legacy_inheritor: None,
+            legacy_items: Vec::new(),
+            legacy_letterbox: None,
             spirit_root_first: None,
         }
     }
@@ -552,6 +574,16 @@ fn format_entry(entry: &BiographyEntry) -> String {
             minutes_since_spawn,
             tick,
         } => format!("t{tick}:spawn_tutorial_completed:{minutes_since_spawn}m"),
+        BiographyEntry::VoidAction {
+            kind,
+            target,
+            qi_cost,
+            lifespan_cost_years,
+            tick,
+        } => format!(
+            "t{tick}:void_action:{}:{target}:qi{qi_cost:.1}:life{lifespan_cost_years}",
+            kind.wire_name()
+        ),
     }
 }
 

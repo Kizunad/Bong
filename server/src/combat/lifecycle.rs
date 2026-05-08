@@ -459,6 +459,7 @@ pub fn death_arbiter_tick(
             registry.record_death(clock.tick, death_zone);
         }
         let void_quota_exceeded = event.cause == CultivationDeathCause::VoidQuotaExceeded;
+        let void_action_backlash = event.cause == CultivationDeathCause::VoidActionBacklash;
         let lifespan_exhausted = if event.cause == CultivationDeathCause::NaturalAging {
             apply_natural_aging_lifespan_exhaustion(
                 cultivation,
@@ -466,7 +467,7 @@ pub fn death_arbiter_tick(
                 player_state,
             );
             true
-        } else if void_quota_exceeded {
+        } else if void_quota_exceeded || void_action_backlash {
             true
         } else {
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state)
@@ -511,12 +512,14 @@ pub fn death_arbiter_tick(
         });
 
         if lifespan_exhausted {
-            let lifespan_event =
-                if event.cause == CultivationDeathCause::NaturalAging || void_quota_exceeded {
-                    None
-                } else {
-                    death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
-                };
+            let lifespan_event = if event.cause == CultivationDeathCause::NaturalAging
+                || void_quota_exceeded
+                || void_action_backlash
+            {
+                None
+            } else {
+                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
+            };
             let lifespan_event_char_id = lifespan_event
                 .as_ref()
                 .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
@@ -1029,7 +1032,8 @@ fn death_insight_category_from_cultivation_cause(
         | CultivationDeathCause::NegativeZoneDrain
         | CultivationDeathCause::ContaminationOverflow
         | CultivationDeathCause::SwarmQiDrain
-        | CultivationDeathCause::VoidQuotaExceeded => DeathInsightCategoryV1::Cultivation,
+        | CultivationDeathCause::VoidQuotaExceeded
+        | CultivationDeathCause::VoidActionBacklash => DeathInsightCategoryV1::Cultivation,
     }
 }
 

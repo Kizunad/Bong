@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use std::fmt;
 use std::time::Duration;
 
+use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
@@ -27,9 +28,10 @@ use crate::schema::channels::{
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE,
-    CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WORLD_STATE, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
+    CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
+    CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
+    CH_WORLD_STATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -70,6 +72,7 @@ use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, Tribulat
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
+use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::zone_pressure::ZonePressureCrossedV1;
@@ -167,6 +170,8 @@ pub enum RedisOutbound {
     CraftOutcome(crate::schema::craft::CraftOutcomeV1),
     /// plan-craft-v1 P3 — 三渠道解锁广播，agent narration 首学/师承/顿悟 trigger
     RecipeUnlocked(crate::schema::craft::RecipeUnlockedV1),
+    /// plan-void-actions-v1 — 化虚四类世界级 action 公告。
+    VoidAction(VoidActionBroadcastV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -671,6 +676,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::VoidAction(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize VoidActionBroadcastV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::PublishFanout {
+                channels: void_action_fanout_channels(&evt),
+                payload,
+            })
+        }
         RedisOutbound::Rebirth(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize RebirthEventV1: {error}"))
@@ -1033,6 +1049,16 @@ fn tribulation_fanout_channels(event: &TribulationEventV1) -> Vec<&'static str> 
     channels.push(CH_TRIBULATION);
 
     channels
+}
+
+fn void_action_fanout_channels(event: &VoidActionBroadcastV1) -> Vec<&'static str> {
+    let channel = match event.kind {
+        VoidActionKind::SuppressTsy => CH_VOID_ACTION_SUPPRESS_TSY,
+        VoidActionKind::ExplodeZone => CH_VOID_ACTION_EXPLODE_ZONE,
+        VoidActionKind::Barrier => CH_VOID_ACTION_BARRIER,
+        VoidActionKind::LegacyAssign => CH_VOID_ACTION_LEGACY_ASSIGN,
+    };
+    vec![channel]
 }
 
 fn redact_redis_url_for_log(redis_url: &str) -> String {

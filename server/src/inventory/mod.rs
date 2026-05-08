@@ -5407,6 +5407,7 @@ cols = 4
                     death_insights: Vec::new(),
                     skill_milestones: Vec::new(),
                     spirit_root_first: None,
+                    ..LifeRecord::default()
                 },
             ))
             .id();
@@ -5451,6 +5452,7 @@ cols = 4
                     death_insights: Vec::new(),
                     skill_milestones: Vec::new(),
                     spirit_root_first: None,
+                    ..LifeRecord::default()
                 },
             ))
             .id();
@@ -5512,6 +5514,7 @@ cols = 4
                     death_insights: Vec::new(),
                     skill_milestones: Vec::new(),
                     spirit_root_first: None,
+                    ..LifeRecord::default()
                 },
             ))
             .id();
