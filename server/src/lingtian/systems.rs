@@ -1483,7 +1483,12 @@ pub fn compute_zone_pressure_system(
             weather,
         )
     };
-    let new_level = PressureLevel::classify(pressure);
+    // plan-lingtian-weather-v1 §5 / worldview §七 — 阴霾期间天道注视减弱，
+    // 阈值降 1 档（HeavyHaze.pressure_threshold_relax_steps()=1）。其他事件返回 0。
+    let relax_steps = weather
+        .map(|w| w.pressure_threshold_relax_steps())
+        .unwrap_or(0);
+    let new_level = PressureLevel::classify_with_relax(pressure, relax_steps);
     let old_level = tracker
         .state(&zone)
         .map(|s| s.last_level)
@@ -3463,6 +3468,59 @@ mod tests {
         assert!(
             (p - 0.05).abs() < 1e-3,
             "winter natural_supply offset 应当 0.05，实际 {p}"
+        );
+    }
+
+    #[test]
+    fn haze_active_relaxes_pressure_classification_by_one_tier() {
+        // plan-lingtian-weather-v1 §5 / worldview §七 — 阴霾期间天道注视减弱，
+        // 阈值降 1 档。
+        // setup：冬季（Blizzard / Haze 可触发 zone），HeavyHaze active；
+        // 灌满 100 个 high_cost 作物（demand = 100 × 0.012 = 1.2 → 原 raw=1.2 → HIGH）
+        // 但 haze 阈值降 1 档 → 应被分类为 Mid。
+        let mut app = build_pressure_app_with_season(0.0, Season::Winter);
+        // 注入 HeavyHaze active weather（覆盖 ActiveWeather 默认空状态）
+        let mut active_weather = crate::lingtian::weather::ActiveWeather::new();
+        active_weather.insert(
+            DEFAULT_ZONE,
+            crate::lingtian::weather::WeatherEvent::HeavyHaze,
+            10_000, // 远期过期，本测期间不清
+        );
+        app.insert_resource(active_weather);
+
+        spawn_high_cost_planted(&mut app, 100); // demand 1.2 → raw HIGH
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let s = tracker.state(DEFAULT_ZONE).unwrap();
+        // raw pressure 应该 ≈ 1.2（natural_supply=0、winter +10% 不影响 0）
+        assert!(
+            (s.last_pressure - 1.2).abs() < 1e-3,
+            "raw pressure ≈ 1.2，实际 {}",
+            s.last_pressure
+        );
+        // 但 classified 档位应当被降为 Mid（1 档）而非 High
+        assert_eq!(
+            s.last_level,
+            PL::Mid,
+            "阴霾期间 raw=1.2 应被降为 Mid，实际 {:?}",
+            s.last_level
+        );
+    }
+
+    #[test]
+    fn no_haze_no_relax_pressure_classified_normally() {
+        // 对照：相同 raw pressure 但无 haze → classified 仍为 High。
+        let mut app = build_pressure_app_with_season(0.0, Season::Winter);
+        spawn_high_cost_planted(&mut app, 100);
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let s = tracker.state(DEFAULT_ZONE).unwrap();
+        assert!((s.last_pressure - 1.2).abs() < 1e-3);
+        assert_eq!(
+            s.last_level,
+            PL::High,
+            "无阴霾时 raw=1.2 应当 High，实际 {:?}",
+            s.last_level
         );
     }
 

@@ -319,6 +319,24 @@ impl Default for WeatherRng {
 // 生成器 / 应用 systems
 // ============================================================================
 
+/// plan-lingtian-weather-v1 §5 / worldview §八 — 是否当前是"夏季雷暴稳定渡劫窗口"。
+///
+/// 雷暴在 Summer 与 汐转都可能出现，但 plan §5 把"夏季雷暴"明确作为
+/// plan-tribulation-v1 的稳定窗口（汐转期 RNG ×2，事件分布更乱，不稳定）。
+/// 本函数是 plan-tribulation-v1 / 调用方查询当前是否处于稳定窗口的薄 helper。
+///
+/// 不实装 tribulation 触发逻辑——本 plan 仅暴露状态供查询。
+pub fn is_stable_tribulation_window(season: Season, active_weather: Option<WeatherEvent>) -> bool {
+    matches!(season, Season::Summer) && matches!(active_weather, Some(WeatherEvent::Thunderstorm))
+}
+
+/// plan-lingtian-weather-v1 §5 — 当前是否为"汐转期"（plan-narrative-v1 hint 触发条件）。
+///
+/// 给 plan-narrative-v1 用：天道情绪在汐转期更易触发暗示性 narration（worldview §八）。
+pub fn is_xizhuan_phase(season: Season) -> bool {
+    season.is_xizhuan()
+}
+
 /// plan §3 — 在指定 zone 上"试 roll"一次天气事件；命中 → 写入 `active`。
 ///
 /// 同 zone 已有事件 → 跳过（不覆盖正在进行中的 weather）。否则按 §3 表概率
@@ -834,5 +852,47 @@ mod tests {
             (min_d..=max_d).contains(&dur),
             "{ev:?} duration {dur} 不在 [{min_d}, {max_d}]"
         );
+    }
+
+    // -------- plan-lingtian-weather-v1 §6 P4 hooks --------
+
+    #[test]
+    fn is_stable_tribulation_window_only_summer_thunderstorm() {
+        // 唯一返回 true 的组合：Summer + Thunderstorm
+        assert!(is_stable_tribulation_window(
+            Season::Summer,
+            Some(WeatherEvent::Thunderstorm)
+        ));
+        // 其他季节 + 雷暴：false
+        for season in [
+            Season::Winter,
+            Season::SummerToWinter,
+            Season::WinterToSummer,
+        ] {
+            assert!(
+                !is_stable_tribulation_window(season, Some(WeatherEvent::Thunderstorm)),
+                "汐转 / 冬 + 雷暴不应当稳定，{season:?}"
+            );
+        }
+        // Summer + 其他事件：false
+        for ev in [
+            WeatherEvent::DroughtWind,
+            WeatherEvent::Blizzard,
+            WeatherEvent::HeavyHaze,
+            WeatherEvent::LingMist,
+        ] {
+            assert!(!is_stable_tribulation_window(Season::Summer, Some(ev)));
+        }
+        // 无事件：false
+        assert!(!is_stable_tribulation_window(Season::Summer, None));
+    }
+
+    #[test]
+    fn is_xizhuan_phase_helper_matches_season_is_xizhuan() {
+        // narrative hint helper：跟 Season::is_xizhuan() 同语义。
+        assert!(!is_xizhuan_phase(Season::Summer));
+        assert!(!is_xizhuan_phase(Season::Winter));
+        assert!(is_xizhuan_phase(Season::SummerToWinter));
+        assert!(is_xizhuan_phase(Season::WinterToSummer));
     }
 }

@@ -57,6 +57,24 @@ impl PressureLevel {
         }
     }
 
+    /// plan-lingtian-weather-v1 §5 / worldview §七 — 把 pressure 映射成档位时
+    /// 临时降 N 档（阴霾期间 N=1）。
+    ///
+    /// `relax_steps=0` 等价于 [`classify`]；`relax_steps=1` 把 High→Mid → Low
+    /// → None 各自降一档；多档放宽递归降。这反映"天道注视减弱"的语义：
+    /// 同样 raw pressure 在阴霾下不触发同等档的负面效果。
+    pub fn classify_with_relax(pressure: f32, relax_steps: u8) -> Self {
+        let mut level = Self::classify(pressure);
+        for _ in 0..relax_steps {
+            level = match level {
+                Self::High => Self::Mid,
+                Self::Mid => Self::Low,
+                Self::Low | Self::None => Self::None,
+            };
+        }
+        level
+    }
+
     pub fn is_higher_than(self, other: Self) -> bool {
         self.rank() > other.rank()
     }
@@ -386,5 +404,98 @@ mod tests {
             (delta - 0.2).abs() < 1e-6,
             "winter - summer effective_supply 应当 +0.2（即 1.1 - 0.9），实际 {delta}（summer={summer}, winter={winter}）"
         );
+    }
+
+    // -------- plan-lingtian-weather-v1 §6 P4 — 阴霾 ↔ 密度阈值耦合 --------
+
+    #[test]
+    fn classify_with_relax_zero_matches_classify() {
+        for p in [0.0, 0.29, 0.30, 0.59, 0.60, 0.99, 1.0, 5.0] {
+            assert_eq!(
+                PressureLevel::classify_with_relax(p, 0),
+                PressureLevel::classify(p),
+                "relax=0 应等价于 classify, p={p}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_with_relax_step_1_high_becomes_mid() {
+        // raw 1.0 → classify=High → relax 1 → Mid
+        assert_eq!(
+            PressureLevel::classify_with_relax(1.0, 1),
+            PressureLevel::Mid
+        );
+        assert_eq!(
+            PressureLevel::classify_with_relax(2.5, 1),
+            PressureLevel::Mid
+        );
+    }
+
+    #[test]
+    fn classify_with_relax_step_1_mid_becomes_low() {
+        assert_eq!(
+            PressureLevel::classify_with_relax(0.6, 1),
+            PressureLevel::Low
+        );
+        assert_eq!(
+            PressureLevel::classify_with_relax(0.99, 1),
+            PressureLevel::Low
+        );
+    }
+
+    #[test]
+    fn classify_with_relax_step_1_low_becomes_none() {
+        assert_eq!(
+            PressureLevel::classify_with_relax(0.3, 1),
+            PressureLevel::None
+        );
+        assert_eq!(
+            PressureLevel::classify_with_relax(0.59, 1),
+            PressureLevel::None
+        );
+    }
+
+    #[test]
+    fn classify_with_relax_step_1_none_stays_none() {
+        assert_eq!(
+            PressureLevel::classify_with_relax(0.0, 1),
+            PressureLevel::None
+        );
+        assert_eq!(
+            PressureLevel::classify_with_relax(0.29, 1),
+            PressureLevel::None
+        );
+    }
+
+    #[test]
+    fn classify_with_relax_multi_steps_compounds() {
+        // raw 1.0 → High → relax 2 → Low；relax 3 → None
+        assert_eq!(
+            PressureLevel::classify_with_relax(1.0, 2),
+            PressureLevel::Low
+        );
+        assert_eq!(
+            PressureLevel::classify_with_relax(1.0, 3),
+            PressureLevel::None
+        );
+        assert_eq!(
+            PressureLevel::classify_with_relax(1.0, 99),
+            PressureLevel::None
+        );
+    }
+
+    #[test]
+    fn weather_event_haze_relax_steps_eq_one_others_zero() {
+        // 与 weather.rs 的 pressure_threshold_relax_steps 对接：阴霾 1 / 其他 0
+        assert_eq!(WeatherEvent::HeavyHaze.pressure_threshold_relax_steps(), 1);
+        for ev in [
+            WeatherEvent::Thunderstorm,
+            WeatherEvent::DroughtWind,
+            WeatherEvent::Blizzard,
+            WeatherEvent::LingMist,
+        ] {
+            assert_eq!(ev.pressure_threshold_relax_steps(), 0);
+        }
     }
 }
