@@ -27,6 +27,10 @@ use super::unlock::RecipeUnlockState;
 /// §5 决策门 #3 = B：取消返还 70%，30% 损耗惩罚。
 pub const CANCEL_REFUND_RATIO: f64 = 0.7;
 
+/// `start_craft` 的"ledger 与 cultivation 视图失同步"严格判定阈值。
+/// 浮点容差 — 1e-9 远大于 transfer 路径任何累积误差，但小到能捕获语义性 desync。
+const QI_SYNC_EPSILON: f64 = 1e-9;
+
 /// 玩家进行中的手搓任务。
 /// 玩家只允许同时挂 1 个 CraftSession（单任务）。`remaining_ticks` 由
 /// `tick_session` 在玩家在线时推进；为 0 时调用 `finalize_craft`。
@@ -299,11 +303,25 @@ pub fn start_craft(
     let from = QiAccountId::player(request.player_id);
     let to = QiAccountId::zone(request.zone_id);
     if recipe.qi_cost > 0.0 {
-        // 守恒律：调用方必须先把 cultivation.qi_current 镜像到
-        // ledger.player(id) 余额后再起手手搓（待 qi_physics::sync_player_qi_to_ledger
-        // system 接入后由 ECS hook 自动同步）。本函数**不**主动 set_balance，
-        // 避免 ad-hoc 注入导致 sum(ledger) inflate 破坏全局守恒律。
+        // 守恒律：调用方必须先把 cultivation.qi_current **严格** sync 到
+        // ledger.player(id)（待 qi_physics::sync_player_qi_to_ledger system
+        // 接入后由 ECS hook 自动同步）。本函数**不**主动 set_balance，避免
+        // ad-hoc 注入导致 sum(ledger) inflate 破坏全局守恒律。
+        //
+        // 如果 ledger.balance(player) ≠ cultivation.qi_current，说明视图失同步：
+        // - balance < cult：出过 cultivation 增量没镜像到 ledger（如 regen）
+        // - balance > cult：ledger 收到了 cultivation 没扣的 outflow
+        // 两种情况都属 desync，调用方需要先 sync 再 retry。
         let player_balance = deps.ledger.balance(&from);
+        if (player_balance - deps.cultivation.qi_current).abs() > QI_SYNC_EPSILON {
+            return Err(StartCraftError::LedgerOutOfSync {
+                player_balance,
+                cultivation_qi_current: deps.cultivation.qi_current,
+                required: recipe.qi_cost,
+            });
+        }
+        // 视图严格一致后，验证余额够付（外层 cultivation_qi_current >= qi_cost
+        // 已校验，sync 一致后 player_balance 也保证 >= qi_cost；fail-safe）
         if player_balance < recipe.qi_cost {
             return Err(StartCraftError::LedgerOutOfSync {
                 player_balance,
@@ -1319,6 +1337,53 @@ mod tests {
         ));
         // 失败时无副作用：cultivation 不动 / 材料不动
         assert_eq!(cult.qi_current, 50.0);
+        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    }
+
+    #[test]
+    fn start_craft_rejects_ledger_overshoot_relative_to_cultivation() {
+        // 严格 sync 校验：即使 ledger.balance(player) > qi_cost 但 ≠
+        // cultivation.qi_current，也属于 desync 必须 reject。
+        // 防止"ledger 凭空多 200 但 cultivation 只 50"误算守恒。
+        let mut registry = CraftRegistry::new();
+        registry.register(simple_recipe("a")).unwrap();
+        let mut unlock = RecipeUnlockState::new();
+        unlock.unlock("offline:Alice", RecipeId::new("a"));
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        // ledger 余额 200 > cultivation 50：明显 desync（不应当通过）
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), 200.0)
+            .unwrap();
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("a"),
+                current_tick: 0,
+                zone_id: "spawn",
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            StartCraftError::LedgerOutOfSync {
+                player_balance: 200.0,
+                cultivation_qi_current: 50.0,
+                required: 5.0,
+            }
+        ));
+        // 失败时无副作用：余额 / 材料 / cultivation 不动
+        assert_eq!(cult.qi_current, 50.0);
+        assert_eq!(ledger.balance(&QiAccountId::player("offline:Alice")), 200.0);
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
     }
 }
