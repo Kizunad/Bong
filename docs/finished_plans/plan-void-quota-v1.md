@@ -128,10 +128,11 @@ K 值校准（运维 config）:
 
 ### 关键 commit
 
-- `729bf95d0`（2026-05-08）`docs(plan-void-quota-v1): 升 active 并同步实地核验`
-- `057fabf92`（2026-05-08）`server(void-quota): 用世界灵气预算收口化虚名额`
-- `05d6a8e8a`（2026-05-08）`agent(void-quota): 扩展名额契约和绝壁劫叙事`
-- `cf807f641`（2026-05-08）`client(void-quota): 在检视面板展示化虚名额`
+- `30fba5e20`（2026-05-08）`docs(plan-void-quota-v1): 升 active 并同步实地核验`
+- `016e388e5`（2026-05-08）`server(void-quota): 用世界灵气预算收口化虚名额`
+- `766e3419a`（2026-05-08）`agent(void-quota): 扩展名额契约和绝壁劫叙事`
+- `3b096c4a4`（2026-05-08）`client(void-quota): 在检视面板展示化虚名额`
+- `53889023f`（2026-05-08）`docs(plan-void-quota-v1): finish evidence 并归档`
 
 ### 测试结果
 
