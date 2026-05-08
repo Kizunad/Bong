@@ -33,7 +33,8 @@ pub use ledger::{
 };
 pub use release::{accumulate_zone_release, qi_release_to_zone, ZoneReleaseOutcome};
 pub use tiandao::{
-    collapse_redistribute_qi, era_decay_step, tribulation_trigger, TribulationCause,
+    collapse_redistribute_qi, era_decay_step, era_decay_tick, tribulation_trigger, EraDecayClock,
+    TribulationCause,
 };
 pub use traits::{Container, SimpleStyleAttack, SimpleStyleDefense, StyleAttack, StyleDefense};
 
@@ -94,6 +95,8 @@ pub(crate) fn finite_non_negative(value: f64, field: &'static str) -> Result<f64
 pub fn register(app: &mut App) {
     tracing::info!("[bong][qi_physics] registering qi physics resources");
     app.insert_resource(WorldQiBudget::from_env())
+        .init_resource::<EraDecayClock>()
         .init_resource::<WorldQiAccount>()
-        .add_event::<QiTransfer>();
+        .add_event::<QiTransfer>()
+        .add_systems(valence::prelude::Update, era_decay_tick);
 }

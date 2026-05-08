@@ -4,7 +4,7 @@ use valence::prelude::{bevy_ecs, DVec3, Entity, Events};
 use crate::combat::components::{DefenseWindow, SkillBarBindings};
 use crate::combat::events::{DefenseIntent, StatusEffectKind};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::components::{ColorKind, Cultivation, Realm};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::inventory::{
     PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
@@ -13,6 +13,7 @@ use crate::qi_physics::constants::{
     QI_ZHENMAI_CONCUSSION_BASE_SEVERITY, QI_ZHENMAI_CONTAM_RESIDUAL_MULTIPLIER,
     QI_ZHENMAI_PARRY_RECOVERY_TICKS, QI_ZHENMAI_PREP_WINDOW_MS,
 };
+use crate::qi_physics::StyleDefense;
 
 pub const ZHENMAI_PARRY_SKILL_ID: &str = "zhenmai.parry";
 
@@ -80,6 +81,29 @@ pub fn jiemai_qi_cost_for_realm(realm: Realm) -> Option<f64> {
         Realm::Solidify => Some(8.0),
         Realm::Spirit => Some(10.0),
         Realm::Void => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZhenmaiStyleDefense {
+    pub realm: Realm,
+    pub armor_weight: f64,
+}
+
+impl StyleDefense for ZhenmaiStyleDefense {
+    fn defense_color(&self) -> ColorKind {
+        ColorKind::Solid
+    }
+
+    fn resistance(&self) -> f64 {
+        let realm_factor = jiemai_qi_cost_for_realm(self.realm).unwrap_or(0.0) / 10.0;
+        let armor_factor =
+            1.0 - f64::from(jiemai_armor_modifier_for_item_weight(self.armor_weight));
+        (realm_factor + armor_factor).clamp(0.0, 1.0)
+    }
+
+    fn drain_affinity(&self) -> f64 {
+        0.2
     }
 }
 
@@ -301,5 +325,21 @@ mod tests {
             Realm::Induce
         ));
         assert!(jiemai_fov_check(back, defender, Some(&look), Realm::Spirit));
+    }
+
+    #[test]
+    fn zhenmai_style_defense_uses_solid_color_and_armor_weight() {
+        let light = ZhenmaiStyleDefense {
+            realm: Realm::Induce,
+            armor_weight: 0.0,
+        };
+        let heavy = ZhenmaiStyleDefense {
+            realm: Realm::Spirit,
+            armor_weight: 7.0,
+        };
+
+        assert_eq!(light.defense_color(), ColorKind::Solid);
+        assert!(heavy.resistance() > light.resistance());
+        assert_eq!(heavy.drain_affinity(), 0.2);
     }
 }

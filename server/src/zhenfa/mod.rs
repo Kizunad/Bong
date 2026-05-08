@@ -19,6 +19,7 @@ use crate::inventory::{
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::{MediumKind, StyleAttack, StyleDefense};
 use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
 
@@ -118,6 +119,38 @@ pub struct ZhenfaInstance {
     pub color_main: ColorKind,
     pub color_secondary: Option<ColorKind>,
     pub anchor_entity: Entity,
+}
+
+impl StyleAttack for ZhenfaInstance {
+    fn style_color(&self) -> ColorKind {
+        self.color_main
+    }
+
+    fn injected_qi(&self) -> f64 {
+        self.qi_invest_amount.max(0.0)
+    }
+
+    fn purity(&self) -> f64 {
+        self.qi_invest_ratio.clamp(0.0, 1.0)
+    }
+
+    fn medium(&self) -> MediumKind {
+        MediumKind::bare(self.color_main)
+    }
+}
+
+impl StyleDefense for ZhenfaInstance {
+    fn defense_color(&self) -> ColorKind {
+        self.color_secondary.unwrap_or(self.color_main)
+    }
+
+    fn resistance(&self) -> f64 {
+        f64::from(self.ward_radius) / 16.0
+    }
+
+    fn drain_affinity(&self) -> f64 {
+        self.qi_invest_ratio.clamp(0.0, 1.0) * 0.25
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1692,5 +1725,33 @@ mod tests {
             [1, 64, 1],
             0
         ));
+    }
+
+    #[test]
+    fn zhenfa_instance_exposes_style_attack_and_defense() {
+        let instance = ZhenfaInstance {
+            id: 1,
+            kind: ZhenfaKind::Ward,
+            owner: Entity::from_raw(1),
+            owner_player_id: "offline:Azure".to_string(),
+            pos: [1, 64, 1],
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.5,
+            qi_invest_amount: 25.0,
+            effect_radius: 2,
+            ward_radius: 8,
+            placed_at_tick: 1,
+            expires_at_tick: 100,
+            triggered_at: None,
+            trigger: None,
+            color_main: ColorKind::Intricate,
+            color_secondary: Some(ColorKind::Solid),
+            anchor_entity: Entity::from_raw(2),
+        };
+
+        assert_eq!(instance.style_color(), ColorKind::Intricate);
+        assert_eq!(instance.injected_qi(), 25.0);
+        assert_eq!(instance.defense_color(), ColorKind::Solid);
+        assert_eq!(instance.resistance(), 0.5);
     }
 }

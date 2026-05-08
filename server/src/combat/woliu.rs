@@ -16,8 +16,8 @@ use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, Meridia
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::qi_physics::{
-    qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm, QiAccountId,
-    QiPhysicsError, QiTransfer, QiTransferReason,
+    qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm, MediumKind,
+    QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, StyleAttack,
 };
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
@@ -93,6 +93,24 @@ pub struct VortexField {
     pub caster: Entity,
     pub env_qi_at_cast: f32,
     pub last_maintain_tick: u64,
+}
+
+impl StyleAttack for VortexField {
+    fn style_color(&self) -> ColorKind {
+        ColorKind::Intricate
+    }
+
+    fn injected_qi(&self) -> f64 {
+        f64::from(self.delta.max(0.0))
+    }
+
+    fn purity(&self) -> f64 {
+        (1.0 - f64::from(self.radius / 32.0).clamp(0.0, 0.5)).clamp(0.5, 1.0)
+    }
+
+    fn medium(&self) -> MediumKind {
+        MediumKind::bare(ColorKind::Intricate)
+    }
 }
 
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
@@ -1429,5 +1447,23 @@ mod tests {
             ambient_qi_perception(0.8, 0.2, true).as_deref(),
             Some("灵气浓度: 0.20")
         );
+    }
+
+    #[test]
+    fn vortex_field_exposes_intricate_style_attack() {
+        let field = VortexField {
+            center: DVec3::ZERO,
+            radius: 4.0,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 100,
+            caster: Entity::from_raw(1),
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        };
+
+        assert_eq!(field.style_color(), ColorKind::Intricate);
+        assert_eq!(field.injected_qi(), 0.25);
+        assert!(field.purity() >= 0.5);
     }
 }

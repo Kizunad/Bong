@@ -48,6 +48,7 @@ use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::npc::tsy_hostile::TsyHostileMarker;
+use crate::qi_physics::collapse_redistribute_qi;
 use crate::world::dimension::{DimensionKind, DimensionLayers, TsyLayer};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::tsy::{DimensionAnchor, TsyPresence};
@@ -358,18 +359,68 @@ pub fn tsy_lifecycle_apply_spirit_qi(
         if state.lifecycle.is_dead() {
             continue;
         }
-        let ratio = state.skeleton_ratio();
-        let is_collapsing = state.lifecycle.is_collapsing();
-        for layer in [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep] {
+        apply_tsy_spirit_qi_conserved(state, &mut zones);
+    }
+}
+
+fn apply_tsy_spirit_qi_conserved(state: &TsyZoneState, zones: &mut ZoneRegistry) {
+    let ratio = state.skeleton_ratio();
+    let is_collapsing = state.lifecycle.is_collapsing();
+    let targets: Vec<(String, f64)> = [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep]
+        .into_iter()
+        .map(|layer| {
             let suffix = match layer {
                 TsyDepth::Shallow => "_shallow",
                 TsyDepth::Mid => "_mid",
                 TsyDepth::Deep => "_deep",
             };
-            let zone_name = format!("{}{}", state.family_id, suffix);
-            if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                zone.spirit_qi = compute_layer_spirit_qi(layer, ratio, is_collapsing);
+            (
+                format!("{}{}", state.family_id, suffix),
+                compute_layer_spirit_qi(layer, ratio, is_collapsing),
+            )
+        })
+        .collect();
+
+    let mut current_sum = 0.0;
+    let mut target_sum = 0.0;
+    let mut dimension = None;
+    for (zone_name, target_qi) in &targets {
+        if let Some(zone) = zones.find_zone_by_name(zone_name) {
+            current_sum += zone.spirit_qi;
+            target_sum += *target_qi;
+            dimension.get_or_insert(zone.dimension);
+        }
+    }
+
+    if let Some(dimension) = dimension {
+        let qi_to_redistribute = (current_sum - target_sum).max(0.0);
+        if qi_to_redistribute > f64::EPSILON {
+            let surrounding_zones: Vec<(String, f64)> = zones
+                .zones
+                .iter()
+                .filter(|zone| {
+                    zone.dimension == dimension
+                        && !targets
+                            .iter()
+                            .any(|(target_name, _)| target_name == &zone.name)
+                })
+                .map(|zone| (zone.name.clone(), zone.spirit_qi))
+                .collect();
+            if let Ok(redistributed) =
+                collapse_redistribute_qi(qi_to_redistribute, &surrounding_zones)
+            {
+                for (zone_name, amount) in redistributed {
+                    if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                        zone.spirit_qi = (zone.spirit_qi + amount).clamp(-1.0, 1.0);
+                    }
+                }
             }
+        }
+    }
+
+    for (zone_name, target_qi) in targets {
+        if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+            zone.spirit_qi = target_qi;
         }
     }
 }
@@ -1049,6 +1100,52 @@ mod tests {
         assert!(!TsyLifecycle::Active.is_collapsing());
         assert!(TsyLifecycle::Dead.is_dead());
         assert!(!TsyLifecycle::Collapsing.is_dead());
+    }
+
+    #[test]
+    fn apply_spirit_qi_redistributes_collapse_delta_to_surrounding_zone() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_deep", DimensionKind::Tsy, -0.9),
+                mk("safe", DimensionKind::Tsy, -0.5),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Collapsing,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::new(),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: Some(0),
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after_sum: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
+        assert!(
+            (before_sum - after_sum).abs() < 1e-9,
+            "TSY lifecycle spirit_qi rewrite must conserve surrounding zone sum"
+        );
+        assert!(zones.find_zone_by_name("safe").unwrap().spirit_qi > 0.0);
     }
 
     #[test]

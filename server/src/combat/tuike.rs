@@ -8,12 +8,13 @@ use valence::prelude::{
 };
 
 use crate::combat::components::DerivedAttrs;
-use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::components::{ColorKind, Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, InventoryInstanceIdAllocator,
     ItemRegistry, PlayerInventory, EQUIP_SLOT_FALSE_SKIN,
 };
+use crate::qi_physics::StyleDefense;
 use crate::schema::tuike::{FalseSkinKindV1, FalseSkinStateV1, ShedEventV1};
 
 pub const SPIDER_SILK_MATERIAL_ID: &str = "ash_spider_silk";
@@ -68,6 +69,26 @@ impl FalseSkinKind {
         match self {
             Self::SpiderSilk => 1.0,
             Self::RottenWoodArmor => 0.6,
+        }
+    }
+}
+
+impl StyleDefense for FalseSkinKind {
+    fn defense_color(&self) -> ColorKind {
+        match self {
+            Self::SpiderSilk => ColorKind::Gentle,
+            Self::RottenWoodArmor => ColorKind::Solid,
+        }
+    }
+
+    fn resistance(&self) -> f64 {
+        (self.contam_capacity_per_layer() / 30.0).clamp(0.0, 1.0)
+    }
+
+    fn drain_affinity(&self) -> f64 {
+        match self {
+            Self::SpiderSilk => 0.15,
+            Self::RottenWoodArmor => 0.05,
         }
     }
 }
@@ -877,5 +898,16 @@ mod tests {
         let skin = app.world().entity(entity).get::<FalseSkin>().unwrap();
         assert_eq!(skin.instance_id, 42);
         assert_eq!(skin.kind, FalseSkinKind::RottenWoodArmor);
+    }
+
+    #[test]
+    fn false_skin_kind_implements_qi_physics_style_defense() {
+        let silk = FalseSkinKind::SpiderSilk;
+        let armor = FalseSkinKind::RottenWoodArmor;
+
+        assert_eq!(silk.defense_color(), ColorKind::Gentle);
+        assert_eq!(armor.defense_color(), ColorKind::Solid);
+        assert!(armor.resistance() > silk.resistance());
+        assert!(silk.drain_affinity() > armor.drain_affinity());
     }
 }
