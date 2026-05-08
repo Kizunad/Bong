@@ -15,7 +15,7 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 
 _自动生成于 2026-05-08 · 共 105 份 plan_
 
-```
+```text
 总进度  ██████████████████████████░░░░  87.0%
 ```
 

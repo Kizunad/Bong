@@ -68,7 +68,8 @@ public final class StatusPanelExtension {
         );
     }
 
-    public static String ascensionQuotaTooltip() {
+    public static String ascensionQuotaTooltip(String realmKey) {
+        if (!canSeeAscensionQuota(realmKey)) return "";
         AscensionQuotaStore.State state = AscensionQuotaStore.snapshot();
         if (state.quotaBasis().isEmpty()) return "";
         return String.format(

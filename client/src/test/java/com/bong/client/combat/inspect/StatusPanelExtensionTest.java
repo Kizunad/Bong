@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,7 +53,7 @@ class StatusPanelExtensionTest {
 
         String line = StatusPanelExtension.ascensionQuotaLine("Spirit");
         assertEquals("当前世界化虚名额: 1 / 2 · world_qi_budget.current_total", line);
-        assertTrue(StatusPanelExtension.ascensionQuotaTooltip().contains("K: 50.0"));
+        assertTrue(StatusPanelExtension.ascensionQuotaTooltip("Spirit").contains("K: 50.0"));
     }
 
     @Test void ascensionQuotaLineIsHiddenBeforeSpiritRealm() {
@@ -66,5 +67,24 @@ class StatusPanelExtensionTest {
         ));
 
         assertEquals("", StatusPanelExtension.ascensionQuotaLine("Condense"));
+        assertEquals("", StatusPanelExtension.ascensionQuotaTooltip("Condense"));
+    }
+
+    @Test void ascensionQuotaStoreContinuesAfterThrowingListener() {
+        AtomicInteger notified = new AtomicInteger();
+        AscensionQuotaStore.addListener(state -> {
+            throw new IllegalStateException("boom");
+        });
+        AscensionQuotaStore.addListener(state -> notified.incrementAndGet());
+
+        assertDoesNotThrow(() -> AscensionQuotaStore.replace(new AscensionQuotaStore.State(
+            1,
+            2,
+            1,
+            100.0,
+            50.0,
+            "world_qi_budget.current_total"
+        )));
+        assertEquals(1, notified.get());
     }
 }

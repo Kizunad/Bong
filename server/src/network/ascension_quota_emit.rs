@@ -28,7 +28,7 @@ pub fn emit_ascension_quota_payloads(
     mut emit_state: Local<AscensionQuotaEmitState>,
 ) {
     let joined_count = clients.iter_mut().count();
-    let count_changed = emit_state.last_client_count.replace(joined_count) != Some(joined_count);
+    let count_changed = emit_state.last_client_count != Some(joined_count);
     let mut should_broadcast = false;
     let mut latest_occupied_slots = None;
 
@@ -42,15 +42,20 @@ pub fn emit_ascension_quota_payloads(
     }
 
     if joined_count == 0 {
+        emit_state.last_client_count = Some(0);
         return;
     }
 
-    let data =
-        build_ascension_quota_payload(&settings, &budget, &void_quota, latest_occupied_slots);
+    let Some(data) =
+        build_ascension_quota_payload(&settings, &budget, &void_quota, latest_occupied_slots)
+    else {
+        return;
+    };
     let payload_changed = emit_state.last_payload.as_ref() != Some(&data);
     if !should_broadcast && !count_changed && !payload_changed {
         return;
     }
+    emit_state.last_client_count = Some(joined_count);
     emit_state.last_payload = Some(data.clone());
 
     for mut client in &mut clients {
@@ -63,31 +68,36 @@ fn build_ascension_quota_payload(
     budget: &WorldQiBudget,
     void_quota: &VoidQuotaConfig,
     occupied_override: Option<u32>,
-) -> AscensionQuotaV1 {
-    let occupied_slots = occupied_override.unwrap_or_else(|| {
-        load_ascension_quota(settings)
-            .map(|quota| quota.occupied_slots)
-            .unwrap_or_else(|error| {
+) -> Option<AscensionQuotaV1> {
+    let occupied_slots = match occupied_override {
+        Some(slots) => slots,
+        None => match load_ascension_quota(settings) {
+            Ok(quota) => quota.occupied_slots,
+            Err(error) => {
                 tracing::warn!("[bong][network] failed to load ascension quota: {error}");
-                0
-            })
-    });
-    let active_du_xu_slots = load_active_tribulation_count(settings).unwrap_or_else(|error| {
-        tracing::warn!("[bong][network] failed to load active tribulation count: {error}");
-        0
-    });
+                return None;
+            }
+        },
+    };
+    let active_du_xu_slots = match load_active_tribulation_count(settings) {
+        Ok(slots) => slots,
+        Err(error) => {
+            tracing::warn!("[bong][network] failed to load active tribulation count: {error}");
+            return None;
+        }
+    };
     let quota = check_void_quota(
         occupied_slots.saturating_add(active_du_xu_slots),
         budget,
         void_quota,
     );
-    AscensionQuotaV1::with_world_qi(
+    Some(AscensionQuotaV1::with_world_qi(
         quota.occupied_slots,
         quota.quota_limit,
         quota.total_world_qi,
         quota.quota_k,
         VOID_QUOTA_BASIS,
-    )
+    ))
 }
 
 fn send_ascension_quota_to_client(client: &mut Client, data: AscensionQuotaV1) {
@@ -279,6 +289,31 @@ mod tests {
                 VOID_QUOTA_BASIS
             )]
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persistence_read_failure_skips_quota_broadcast() {
+        let root = unique_temp_dir("missing-db");
+        let settings = PersistenceSettings::with_paths(
+            root.join("missing").join("bong.db"),
+            root.join("library-web").join("public").join("deceased"),
+            "ascension-quota-missing-db",
+        );
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_systems(Update, emit_ascension_quota_payloads);
+        let mut helper = spawn_mock_client(&mut app, "Azure");
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(collect_ascension_quota_payloads(&mut helper).is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }
