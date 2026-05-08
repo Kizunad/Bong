@@ -202,6 +202,10 @@ export const CHANNELS = {
   ALCHEMY_INTERVENTION_RESULT: "bong:alchemy/intervention_result",
   /** Server → Agent: 丹心识别高精度线索 */
   ALCHEMY_INSIGHT: "bong:alchemy_insight",
+
+  // ─── 身份与信誉（plan-identity-v1 §7） ────────────────────────
+  /** Server → Agent: 玩家 active identity 反应分级跌入 Wanted (<-75) 后 emit */
+  WANTED_PLAYER: "bong:wanted_player",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -269,6 +273,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ALCHEMY_SESSION_END,
   CHANNELS.ALCHEMY_INTERVENTION_RESULT,
   CHANNELS.ALCHEMY_INSIGHT,
+  CHANNELS.WANTED_PLAYER,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

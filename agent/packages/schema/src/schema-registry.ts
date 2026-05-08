@@ -141,6 +141,13 @@ import {
   WeaponForgeStationDataV1,
   WeaponTier,
 } from "./forge.js";
+import {
+  IdentityPanelEntryV1,
+  IdentityPanelStateV1,
+  ReactionTierV1,
+  RevealedTagKindV1,
+  WantedPlayerEventV1,
+} from "./identity.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
@@ -657,6 +664,12 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeBlueprintTurnPageV1: ForgeBlueprintTurnPageRequestV1,
   clientRequestForgeLearnBlueprintV1: ForgeLearnBlueprintRequestV1,
   clientRequestForgeStationPlaceV1: ForgeStationPlaceRequestV1,
+  // ─── 身份与信誉（plan-identity-v1 §7） ──────────
+  revealedTagKindV1: RevealedTagKindV1,
+  reactionTierV1: ReactionTierV1,
+  wantedPlayerEventV1: WantedPlayerEventV1,
+  identityPanelEntryV1: IdentityPanelEntryV1,
+  identityPanelStateV1: IdentityPanelStateV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -1047,6 +1060,9 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-blueprint-turn-page-v1.json": SCHEMA_REGISTRY.clientRequestForgeBlueprintTurnPageV1,
   "client-request-forge-learn-blueprint-v1.json": SCHEMA_REGISTRY.clientRequestForgeLearnBlueprintV1,
   "client-request-forge-station-place-v1.json": SCHEMA_REGISTRY.clientRequestForgeStationPlaceV1,
+  // plan-identity-v1 §7
+  "wanted-player-event-v1.json": SCHEMA_REGISTRY.wantedPlayerEventV1,
+  "identity-panel-state-v1.json": SCHEMA_REGISTRY.identityPanelStateV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

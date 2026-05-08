@@ -1,0 +1,21 @@
+{
+  "active_identity_id": 1,
+  "last_switch_tick": 12000,
+  "cooldown_remaining_ticks": 12000,
+  "identities": [
+    {
+      "identity_id": 0,
+      "display_name": "kiz",
+      "reputation_score": -50,
+      "frozen": true,
+      "revealed_tag_kinds": ["dugu_revealed"]
+    },
+    {
+      "identity_id": 1,
+      "display_name": "alt",
+      "reputation_score": 0,
+      "frozen": false,
+      "revealed_tag_kinds": []
+    }
+  ]
+}
