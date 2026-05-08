@@ -12,6 +12,10 @@ mod death_lifecycle;
 mod fauna;
 #[allow(dead_code)]
 mod forge;
+// identity：P0 锁定数据模型 + persistence；P1 起 /identity slash / consumer / scorer
+// 等会逐步消费这些 API，初期保留 #[allow(dead_code)]，每个 P 接入后再收口。
+#[allow(dead_code)]
+mod identity;
 mod inventory;
 #[allow(dead_code)]
 mod lingtian;
@@ -110,6 +114,7 @@ fn run_server() {
     audio::register(&mut app);
     combat::register(&mut app);
     social::register(&mut app);
+    identity::register(&mut app);
     death_lifecycle::register(&mut app);
     spiritwood::register(&mut app);
     forge::register(&mut app);

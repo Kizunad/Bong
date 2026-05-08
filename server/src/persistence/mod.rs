@@ -30,10 +30,13 @@ use crate::schema::social::{
     RenownTagV1,
 };
 
+#[allow(dead_code)]
+pub mod identity;
+
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 16;
+const CURRENT_USER_VERSION: i32 = 17;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1312,6 +1315,15 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             )?;
         }
         transaction.execute_batch("PRAGMA user_version = 16;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 17 {
+        let transaction = connection.transaction()?;
+        identity::migrate_v17(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 17;")?;
         transaction.commit()?;
     }
 
@@ -2678,7 +2690,9 @@ fn resolve_nearest_player_id(
     Some(canonical_player_id(username.0.as_str()))
 }
 
-fn open_persistence_connection(settings: &PersistenceSettings) -> io::Result<Connection> {
+pub(crate) fn open_persistence_connection(
+    settings: &PersistenceSettings,
+) -> io::Result<Connection> {
     if let Some(parent) = settings.db_path().parent() {
         fs::create_dir_all(parent)?;
     }
