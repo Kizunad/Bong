@@ -1,10 +1,12 @@
 package com.bong.client.combat.inspect;
 
+import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.combat.store.StatusEffectStore;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -51,6 +53,40 @@ public final class StatusPanelExtension {
         sb.append("\u5269\u4f59: ").append(formatMs(e.remainingMs())).append('\n');
         sb.append("\u9a71\u6563\u96be\u5ea6: ").append(e.dispelDifficulty()).append("/5");
         return sb.toString();
+    }
+
+    public static String ascensionQuotaLine(String realmKey) {
+        if (!canSeeAscensionQuota(realmKey)) return "";
+        AscensionQuotaStore.State state = AscensionQuotaStore.snapshot();
+        if (state.quotaBasis().isEmpty()) return "";
+        return String.format(
+            Locale.ROOT,
+            "当前世界化虚名额: %d / %d · %s",
+            state.occupiedSlots(),
+            state.quotaLimit(),
+            state.quotaBasis()
+        );
+    }
+
+    public static String ascensionQuotaTooltip() {
+        AscensionQuotaStore.State state = AscensionQuotaStore.snapshot();
+        if (state.quotaBasis().isEmpty()) return "";
+        return String.format(
+            Locale.ROOT,
+            "总灵气: %.1f\nK: %.1f\n剩余名额: %d",
+            state.totalWorldQi(),
+            state.quotaK(),
+            state.availableSlots()
+        );
+    }
+
+    static boolean canSeeAscensionQuota(String realmKey) {
+        if (realmKey == null) return false;
+        String normalized = realmKey.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("spirit")
+            || normalized.equals("void")
+            || normalized.equals("通灵")
+            || normalized.equals("化虚");
     }
 
     private static String formatMs(long ms) {

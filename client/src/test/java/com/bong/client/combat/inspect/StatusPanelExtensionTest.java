@@ -1,5 +1,6 @@
 package com.bong.client.combat.inspect;
 
+import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.combat.store.StatusEffectStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -9,7 +10,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class StatusPanelExtensionTest {
-    @AfterEach void tearDown() { StatusEffectStore.resetForTests(); }
+    @AfterEach void tearDown() {
+        StatusEffectStore.resetForTests();
+        AscensionQuotaStore.resetForTests();
+    }
 
     @Test void groupsAreOrderedByKindEnum() {
         StatusEffectStore.replace(List.of(
@@ -34,5 +38,33 @@ class StatusPanelExtensionTest {
         assertTrue(t.contains("zombie"));
         assertTrue(t.contains("4.5s"));
         assertTrue(t.contains("2/5"));
+    }
+
+    @Test void ascensionQuotaLineShowsSpiritRealmQuotaSource() {
+        AscensionQuotaStore.replace(new AscensionQuotaStore.State(
+            1,
+            2,
+            1,
+            100.0,
+            50.0,
+            "world_qi_budget.current_total"
+        ));
+
+        String line = StatusPanelExtension.ascensionQuotaLine("Spirit");
+        assertEquals("当前世界化虚名额: 1 / 2 · world_qi_budget.current_total", line);
+        assertTrue(StatusPanelExtension.ascensionQuotaTooltip().contains("K: 50.0"));
+    }
+
+    @Test void ascensionQuotaLineIsHiddenBeforeSpiritRealm() {
+        AscensionQuotaStore.replace(new AscensionQuotaStore.State(
+            1,
+            2,
+            1,
+            100.0,
+            50.0,
+            "world_qi_budget.current_total"
+        ));
+
+        assertEquals("", StatusPanelExtension.ascensionQuotaLine("Condense"));
     }
 }
