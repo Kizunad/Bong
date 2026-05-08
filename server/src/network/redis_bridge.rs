@@ -2066,6 +2066,39 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn publishes_wanted_player_on_correct_channel() {
+        use crate::schema::identity::{
+            RevealedTagKindV1, WantedPlayerEventTag, WantedPlayerEventV1,
+        };
+        let payload = WantedPlayerEventV1 {
+            event: WantedPlayerEventTag::WantedPlayer,
+            player_uuid: "11111111-1111-1111-1111-111111111111".to_string(),
+            char_id: "offline:kiz".to_string(),
+            identity_display_name: "毒蛊师小李".to_string(),
+            identity_id: 0,
+            reputation_score: -100,
+            primary_tag: RevealedTagKindV1::DuguRevealed,
+            tick: 24_000,
+        };
+
+        let command = prepare_outbound_command(RedisOutbound::WantedPlayer(payload))
+            .expect("wanted player payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_WANTED_PLAYER);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["event"], "wanted_player");
+                assert_eq!(v["primary_tag"], "dugu_revealed");
+                assert_eq!(v["identity_id"], 0);
+                assert_eq!(v["reputation_score"], -100);
+                assert_eq!(v["tick"], 24_000);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn publishes_forge_start_on_correct_channel() {
         let payload = ForgeStartPayloadV1 {
             v: 1,

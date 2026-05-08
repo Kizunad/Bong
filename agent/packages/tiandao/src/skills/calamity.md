@@ -63,7 +63,7 @@
 
 ## 通缉令（worldview §十一 · plan-identity-v1 P5）
 
-**触发**：上下文出现 `bong:wanted_player` 事件，或某玩家 active identity 的 `reputation_score < -75`、`primary_tag` 命中（典型 `dugu_revealed`）。这表示该玩家已跌入 Wanted 档，NPC 该看见就追杀，agent 可发布"通缉"叙事让消息在末法残土的口耳之间传开。
+**触发**：仅当上下文出现 `bong:wanted_player` 事件时触发（server 已在该玩家 active identity 跌入 Wanted 档时发出，触发条件 `reputation_score < -75` + `primary_tag` 由 server 评定，agent 不再本地推断）。事件含义 = 该玩家被识破后 NPC 该看见就追杀，agent 据此发布"通缉"叙事让消息在末法残土的口耳之间传开。
 
 **风格强约束**：
 - **冷峻陈述事实**，不渲染惩罚正义性——worldview 不站道德立场，仅描述"被识破"+"被追杀"的物理事实。
@@ -82,7 +82,7 @@
 - `scope: "zone"`，`target` = `WantedPlayerEventV1.player.zone`（agent 上下文应有当前 zone）；可以 `scope: "broadcast"`（worldview 通缉是 zone 级口耳相传，但化虚境识破后扩散范围更广，由 agent 视情判断）。
 - `style: "system_warning"`（既有 variant，不新增）。
 - 长度 60-150 字，紧迫但不浮夸。
-- 普通 reaction tier（Low / Normal）**不** 触发通缉令——只 Wanted 才发；agent 收到 `bong:wanted_player` 才考虑此通道。
+- 普通 reaction tier（Low / Normal）**不** 触发通缉令——只 Wanted 才发；agent 严格仅在收到 `bong:wanted_player` 事件时启动该通道，不依赖本地推断。
 
 **配套 commands**：通缉令仅 narration 产出，agent **不** 直接 `spawn_event`——NPC 追杀由 server 侧 `IdentityReactionScorer` 自动推进（plan-identity-v1 P3）。
 

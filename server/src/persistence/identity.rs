@@ -131,7 +131,14 @@ pub fn load_player_identities(
         return Ok(None);
     }
 
-    let active_identity_id = IdentityId(active_id_raw.max(0) as u32);
+    let requested_active_id = IdentityId(active_id_raw.max(0) as u32);
+    // 校验 active_identity_id 在 identities 列表里——脏数据下回退到首个可用 identity
+    // 避免 PlayerIdentities::active() 返回 None 后调用方误判为"无 identity"。
+    let active_identity_id = if identities.iter().any(|p| p.id == requested_active_id) {
+        requested_active_id
+    } else {
+        identities[0].id
+    };
     let last_switch_tick = last_switch_tick_raw.max(0) as u64;
 
     Ok(Some(PlayerIdentities {
@@ -199,6 +206,34 @@ mod tests {
         let settings = fresh_settings();
         let loaded = load_player_identities(&settings, "offline:nobody").expect("load");
         assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn load_falls_back_to_first_id_when_active_id_invalid() {
+        // 防回归：脏数据 active_identity_id 不在 identities 列表 → 回退到 identities[0].id
+        // 而不是返回不一致的 PlayerIdentities（CodeRabbit Major 反馈）。
+        let settings = fresh_settings();
+        let mut pid = PlayerIdentities::with_default("kiz", 0);
+        pid.identities
+            .push(IdentityProfile::new(IdentityId(7), "alt", 100));
+        pid.active_identity_id = IdentityId(99); // 故意写一个不存在的 id
+        save_player_identities(&settings, "offline:kiz", &pid).expect("save");
+
+        let loaded = load_player_identities(&settings, "offline:kiz")
+            .expect("load")
+            .expect("Some");
+        assert!(
+            loaded
+                .identities
+                .iter()
+                .any(|p| p.id == loaded.active_identity_id),
+            "load 后 active_identity_id 必须是 identities 中真实存在的 id"
+        );
+        assert_eq!(
+            loaded.active_identity_id,
+            IdentityId(0),
+            "回退到 identities[0].id"
+        );
     }
 
     #[test]

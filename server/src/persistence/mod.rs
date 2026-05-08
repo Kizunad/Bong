@@ -1323,6 +1323,17 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
     if current_version < 17 {
         let transaction = connection.transaction()?;
         identity::migrate_v17(&transaction)?;
+        // 防 user_version 升级但表不存在的 silent regression：在 PRAGMA 前显式 assert
+        let table_exists: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'player_identities'",
+            [],
+            |row| row.get(0),
+        )?;
+        if table_exists != 1 {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other("v17 migration completed but player_identities table missing"),
+            )));
+        }
         transaction.execute_batch("PRAGMA user_version = 17;")?;
         transaction.commit()?;
     }

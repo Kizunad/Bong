@@ -66,8 +66,13 @@ impl Command for IdentityCmd {
             .literal("switch")
             .argument("id")
             .with_parser::<i32>()
-            .with_executable(|input: &mut ParseInput| IdentityCmd::Switch {
-                id: i32::parse_arg(input).unwrap_or_default().max(0) as u32,
+            .with_executable(|input: &mut ParseInput| {
+                let raw = i32::parse_arg(input).unwrap_or(-1);
+                IdentityCmd::Switch {
+                    // 负数（如 `/identity switch -1`）保持负数 → 转 u32 强制 wrap，
+                    // 后续 apply_switch 通过 UnknownIdentityId 拒绝；不再静默 clamp 到 0。
+                    id: i32_to_identity_id_raw(raw),
+                }
             });
 
         graph
@@ -78,6 +83,18 @@ impl Command for IdentityCmd {
             .with_executable(|input: &mut ParseInput| IdentityCmd::Rename {
                 new_name: String::parse_arg(input).unwrap_or_default(),
             });
+    }
+}
+
+/// 把 valence_command 解出来的 i32 id 转成保留语义的 u32：
+/// - 0..=i32::MAX → 直接转 u32（合法 id）
+/// - 负数 → 映射到一个**保证不在玩家 identity 列表里**的特殊值（u32::MAX），
+///   让 apply_switch 走 `UnknownIdentityId` 拒绝路径，不再被 `.max(0)` 当成 id 0 误执行。
+pub(crate) fn i32_to_identity_id_raw(raw: i32) -> u32 {
+    if raw < 0 {
+        u32::MAX
+    } else {
+        raw as u32
     }
 }
 
@@ -839,5 +856,47 @@ mod tests {
     fn already_active_message_contains_id() {
         let err = IdentityCmdError::AlreadyActive(IdentityId(7));
         assert!(err.message().contains("7"), "msg={}", err.message());
+    }
+
+    #[test]
+    fn i32_to_identity_id_raw_passthrough_for_non_negative() {
+        assert_eq!(i32_to_identity_id_raw(0), 0);
+        assert_eq!(i32_to_identity_id_raw(7), 7);
+        assert_eq!(i32_to_identity_id_raw(i32::MAX), i32::MAX as u32);
+    }
+
+    #[test]
+    fn i32_to_identity_id_raw_negative_maps_to_max() {
+        // 负数通过 -> u32::MAX，apply_switch 会 UnknownIdentityId 拒绝
+        assert_eq!(i32_to_identity_id_raw(-1), u32::MAX);
+        assert_eq!(i32_to_identity_id_raw(-100), u32::MAX);
+        assert_eq!(i32_to_identity_id_raw(i32::MIN), u32::MAX);
+    }
+
+    #[test]
+    fn negative_switch_id_rejected_via_unknown_identity_path() {
+        // 防回归：codex review 指出 .max(0) 把负数 clamp 成 0 会误切到默认 identity。
+        // 修复后负数 → u32::MAX → apply_switch 找不到该 id → UnknownIdentityId
+        let mut pid = PlayerIdentities::with_default("kiz", 0);
+        let registry = niche_at_origin("offline:kiz");
+        let err = apply_switch(
+            &mut pid,
+            IdentityId(i32_to_identity_id_raw(-1)),
+            "offline:kiz",
+            pos_at_niche(),
+            100,
+            &registry,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            IdentityCmdError::UnknownIdentityId(IdentityId(u32::MAX))
+        );
+        assert_eq!(
+            pid.active_identity_id,
+            IdentityId::DEFAULT,
+            "失败不改 state"
+        );
+        assert_eq!(pid.last_switch_tick, 0, "拒绝不消耗冷却");
     }
 }

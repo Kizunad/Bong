@@ -89,7 +89,15 @@ pub fn emit_wanted_player_to_redis(
         else {
             continue;
         };
-        let _ = redis.tx_outbound.send(RedisOutbound::WantedPlayer(payload));
+        let payload_clone = payload.clone();
+        if let Err(error) = redis.tx_outbound.send(RedisOutbound::WantedPlayer(payload)) {
+            tracing::warn!(
+                ?error,
+                char_id = payload_clone.char_id.as_str(),
+                identity_id = payload_clone.identity_id,
+                "[bong][identity] failed to enqueue wanted_player outbound event"
+            );
+        }
     }
 }
 
