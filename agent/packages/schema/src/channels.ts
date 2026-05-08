@@ -212,6 +212,10 @@ export const CHANNELS = {
   // ─── 身份与信誉（plan-identity-v1 §7） ────────────────────────
   /** Server → Agent: 玩家 active identity 反应分级跌入 Wanted (<-75) 后 emit */
   WANTED_PLAYER: "bong:wanted_player",
+
+  // ─── 经脉永久 SEVERED（plan-meridian-severed-v1 §1 P3） ────────────────────────
+  /** Server → Agent: 经脉永久 SEVERED 事件流（7 类来源 emit 同一通道） */
+  MERIDIAN_SEVERED: "bong:meridian_severed",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -281,6 +285,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ALCHEMY_INTERVENTION_RESULT,
   CHANNELS.ALCHEMY_INSIGHT,
   CHANNELS.WANTED_PLAYER,
+  CHANNELS.MERIDIAN_SEVERED,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

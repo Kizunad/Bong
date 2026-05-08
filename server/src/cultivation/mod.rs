@@ -45,6 +45,7 @@ pub mod karma;
 pub mod known_techniques;
 pub mod life_record;
 pub mod lifespan;
+pub mod meridian;
 pub mod meridian_open;
 pub mod neg_pressure;
 pub mod negative_zone;
@@ -104,6 +105,10 @@ use self::lifespan::{
     AgingEventEmitted, DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted,
     LifespanExtensionIntent, LifespanExtensionLedger,
 };
+use self::meridian::severed::{
+    apply_severed_event_system, meridian_severed_detection_tick, MeridianSeveredEvent,
+    MeridianSeveredPermanent, SkillMeridianDependencies,
+};
 use self::meridian_open::meridian_open_tick;
 use self::neg_pressure::tick_neg_pressure;
 use self::negative_zone::negative_zone_siphon_tick;
@@ -160,6 +165,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
+    app.insert_resource(SkillMeridianDependencies::default());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());
@@ -199,6 +205,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianOverloadEvent>();
     app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
+    app.add_event::<MeridianSeveredEvent>();
     app.add_event::<CultivationSessionPracticeEvent>();
     app.add_event::<InfuseDuguPoisonIntent>();
     app.add_event::<DuguObfuscationDisruptedEvent>();
@@ -236,6 +243,27 @@ pub fn register(app: &mut App) {
             // plan §11-5 业力
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
+        ),
+    );
+    // plan-meridian-severed-v1 §1 P1：detection（cracks → integrity ≤ ε → emit
+    // SEVERED event）+ apply（event → write component）。两步顺序保证同 tick 内
+    // detection 写入 event，apply 后续读取并落 component；独立 add_systems 避开
+    // 上面 tuple 超 Bevy 20 元素上限。
+    //
+    // codex P1（PR #157 review）：apply 必须 .after 所有 SEVERED 发射方，否则
+    // tribulation 失败/逃跑路径与 despawn_disconnected_clients 在同 tick 触发时
+    // 可能丢 SEVERED event（事件队列在玩家被 despawn 后才被消费，event 落到
+    // missing entity 直接 drop）。所有当前 emitter（detection / 三 tribulation
+    // 系统）显式 .after 锁定。未来新 emitter 接入时也必须加这条 ordering edge。
+    app.add_systems(
+        Update,
+        (
+            meridian_severed_detection_tick,
+            apply_severed_event_system
+                .after(meridian_severed_detection_tick)
+                .after(tribulation_failure_system)
+                .after(abort_du_xu_on_client_removed)
+                .after(tribulation_escape_boundary_system),
         ),
     );
     app.add_systems(
@@ -499,6 +527,18 @@ fn attach_cultivation_to_joined_clients(
         let default_lifespan =
             LifespanComponent::new(LifespanCapTable::for_realm(cultivation.realm));
 
+        let mut severed_permanent = MeridianSeveredPermanent::default();
+        if let Some(persisted_bundle) = persisted_bundle.as_ref() {
+            if let Some(value) = persisted_bundle.get("meridian_severed") {
+                match serde_json::from_value::<MeridianSeveredPermanent>(value.clone()) {
+                    Ok(decoded) => severed_permanent = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "meridian_severed", error)
+                    }
+                }
+            }
+        }
+
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
@@ -514,6 +554,7 @@ fn attach_cultivation_to_joined_clients(
             unlocked_perceptions,
             insight_modifiers,
             DuguPractice::default(),
+            severed_permanent,
         ));
         if restored_lifespan.is_none() {
             entity_commands.insert(default_lifespan);

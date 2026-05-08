@@ -57,6 +57,7 @@ export * from "./forge-event.js";
 export * from "./insight-offer.js";
 export * from "./insight-request.js";
 export * from "./heart-demon.js";
+export * from "./meridian-severed.js";
 export * from "./tribulation.js";
 
 // 炼丹 (plan-alchemy-v1 §4)

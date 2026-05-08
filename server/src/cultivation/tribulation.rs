@@ -11,8 +11,8 @@
 
 use valence::prelude::{
     bevy_ecs, BlockPos, BlockState, ChunkLayer, Client, Commands, Component, Entity, Event,
-    EventReader, EventWriter, Position, Query, RemovedComponents, Res, ResMut, Resource, Username,
-    With,
+    EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
+    Username, With,
 };
 
 use std::collections::HashSet;
@@ -39,6 +39,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm};
+use super::meridian::severed::{MeridianSeveredEvent, SeveredSource};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
     complete_tribulation_ascension, delete_active_tribulation, load_ascension_quota,
@@ -1200,6 +1201,7 @@ pub fn tribulation_wave_system(
 #[allow(clippy::type_complexity)]
 pub fn tribulation_failure_system(
     settings: Res<PersistenceSettings>,
+    clock: Option<Res<CombatClock>>,
     mut failed: EventReader<TribulationFailed>,
     mut players: Query<(
         &mut Cultivation,
@@ -1210,6 +1212,7 @@ pub fn tribulation_failure_system(
     )>,
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
+    mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
 ) {
     for ev in failed.read() {
         if let Ok((mut cultivation, meridians, lifecycle, wounds, state)) =
@@ -1219,7 +1222,22 @@ pub fn tribulation_failure_system(
                 state.failed = true;
                 state.phase = TribulationPhase::Settle;
             }
-            apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
+            // plan-meridian-severed-v1 §4 #5：渡劫失败爆脉降境 → emit
+            // MeridianSeveredEvent { TribulationFail } 让永久 SEVERED component 落档。
+            // severed_events 用 Option<ResMut<Events<...>>> 以便测试 app 未注册 event 也能跑通。
+            let severed_ids =
+                apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
+            if let Some(ref mut sink) = severed_events {
+                let now_tick = clock.as_deref().map(|c| c.tick).unwrap_or_default();
+                for id in severed_ids {
+                    sink.send(MeridianSeveredEvent {
+                        entity: ev.entity,
+                        meridian_id: id,
+                        source: SeveredSource::TribulationFail,
+                        at_tick: now_tick,
+                    });
+                }
+            }
             if let Err(error) =
                 delete_active_tribulation(&settings, lifecycle.character_id.as_str())
             {
@@ -1269,6 +1287,7 @@ pub fn abort_du_xu_on_client_removed(
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
+    mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
 ) {
     for entity in removed_clients.read() {
         let Ok((mut cultivation, meridians, lifecycle, wounds, mut state, life_record)) =
@@ -1292,6 +1311,7 @@ pub fn abort_du_xu_on_client_removed(
             life_record,
             &mut settled,
             &mut fled,
+            severed_events.as_deref_mut(),
         );
     }
 }
@@ -1316,6 +1336,7 @@ pub fn tribulation_escape_boundary_system(
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
+    mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
 ) {
     for (
         entity,
@@ -1349,6 +1370,7 @@ pub fn tribulation_escape_boundary_system(
                 life_record,
                 &mut settled,
                 &mut fled,
+                severed_events.as_deref_mut(),
             );
             continue;
         }
@@ -1370,6 +1392,7 @@ pub fn tribulation_escape_boundary_system(
             life_record,
             &mut settled,
             &mut fled,
+            severed_events.as_deref_mut(),
         );
     }
 }
@@ -1389,6 +1412,7 @@ fn settle_fled_tribulation(
     life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
     settled: &mut EventWriter<TribulationSettled>,
     fled: &mut EventWriter<TribulationFled>,
+    severed_events: Option<&mut Events<MeridianSeveredEvent>>,
 ) {
     state.failed = true;
     state.phase = TribulationPhase::Settle;
@@ -1399,7 +1423,18 @@ fn settle_fled_tribulation(
             tick: fled_tick,
         });
     }
-    apply_tribulation_failure_penalty(cultivation, meridians, wounds);
+    // plan-meridian-severed-v1 §4 #5：渡劫逃跑也算失败，关闭的经脉同样写永久 SEVERED
+    let severed_ids = apply_tribulation_failure_penalty(cultivation, meridians, wounds);
+    if let Some(sink) = severed_events {
+        for id in severed_ids {
+            sink.send(MeridianSeveredEvent {
+                entity,
+                meridian_id: id,
+                source: SeveredSource::TribulationFail,
+                at_tick: fled_tick,
+            });
+        }
+    }
     if let Err(error) = delete_active_tribulation(settings, lifecycle.character_id.as_str()) {
         tracing::warn!(
             "[bong][cultivation] failed to delete fled active tribulation for {:?}: {error}",
@@ -1731,21 +1766,29 @@ fn apply_tribulation_failure_penalty(
     cultivation: &mut Cultivation,
     meridians: Option<valence::prelude::Mut<'_, MeridianSystem>>,
     wounds: Option<valence::prelude::Mut<'_, Wounds>>,
-) {
+) -> Vec<MeridianId> {
     cultivation.realm = Realm::Spirit;
     cultivation.qi_current = 0.0;
     cultivation.last_qi_zero_at = None;
     cultivation.pending_material_bonus = 0.0;
 
+    let mut severed_meridians: Vec<MeridianId> = Vec::new();
     if let Some(mut meridians) = meridians {
         let keep = Realm::Spirit.required_meridians();
         let closures = pick_closures(&meridians, keep);
         for (is_regular, idx) in closures {
-            if is_regular {
-                close_meridian(&mut meridians.regular[idx]);
+            let id = if is_regular {
+                let m = &mut meridians.regular[idx];
+                let id = m.id;
+                close_meridian(m);
+                id
             } else {
-                close_meridian(&mut meridians.extraordinary[idx]);
-            }
+                let m = &mut meridians.extraordinary[idx];
+                let id = m.id;
+                close_meridian(m);
+                id
+            };
+            severed_meridians.push(id);
         }
         cultivation.qi_max = 10.0 + meridians.sum_capacity();
     }
@@ -1757,6 +1800,7 @@ fn apply_tribulation_failure_penalty(
             .max(floor)
             .min(wounds.health_max.max(1.0));
     }
+    severed_meridians
 }
 
 #[cfg(test)]
