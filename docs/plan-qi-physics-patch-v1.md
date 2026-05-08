@@ -37,7 +37,7 @@
 
 ---
 
-## 代码库扫描（2026-05-05）
+## 代码库扫描（2026-05-05，历史基线）
 
 - **底盘可用**：`server/src/qi_physics/` 已包含 `distance.rs` / `excretion.rs` / `collision.rs` / `channeling.rs` / `release.rs` / `ledger.rs` / `tiandao.rs`；`mod.rs` 对外导出 `qi_distance_atten` / `qi_excretion` / `regen_from_zone` / `qi_collision` / `qi_channeling` / `qi_release_to_zone` / `WorldQiAccount` / `QiTransfer` / `collapse_redistribute_qi` / `era_decay_step` / `tribulation_trigger` / `StyleAttack` / `StyleDefense`，并在 `server/src/main.rs:100` 注册。
 - **下游尚未接入底盘**：`rg 'qi_physics::|crate::qi_physics|use crate::qi_physics' server/src` 只命中 `server/src/main.rs` 和 `server/src/qi_physics/*` 自身测试/模块；业务模块还没有直接调用 qi_physics。
@@ -45,6 +45,14 @@
 - **P1 shelflife 仍是本地公式**：`server/src/shelflife/registry.rs:69-137` 仍注册 bone coin / 灵石 / 益兽骨 / 陈酒 / 灵木棍 profile；`server/src/shelflife/compute.rs:18,173-186` 仍有 `DEAD_ZONE_SHELFLIFE_MULTIPLIER` 和 `Exponential` / `Linear` / `Stepwise` 三套公式。
 - **P2/P3 迁移点仍在**：`server/src/cultivation/tick.rs:42-45,49` 已是零和参考实现但常数未移到底盘；`server/src/lingtian/growth.rs:29` 仍有 `ZONE_LEAK_RATIO`；`server/src/world/tsy_container.rs:179` 仍有 `SEARCH_DRAIN_MULTIPLIER`；`server/src/network/client_request_handler.rs:127-129,5224-5287` 仍是本地跨界磨损；`server/src/world/tsy_lifecycle.rs:235,371` 已有 `TsyCollapseStarted` 与周期灵气改写，但未接 `collapse_redistribute_qi`；`server/src/cultivation/tribulation.rs:1736` / `server/src/cultivation/contamination.rs:97` / `server/src/cultivation/death_hooks.rs:57` 仍有 `qi_current = 0.0` 类去向待补。
 - **agent/client 边界**：agent 端 `agent/packages/tiandao/tests/arbiter.test.ts:71` 仍有 conservation scaling 测试；schema 端 `agent/packages/schema/src/common.ts:6` 仍定义 `SPIRIT_QI_TOTAL = 100.0`；client 目前只消费 `spirit_qi` / `qi_current` payload，未直接涉及 qi_physics 迁移。
+
+## 代码库复核（2026-05-08）
+
+- **底盘调用已进入业务模块**：`combat/decay.rs` 已走 `qi_physics::qi_distance_atten`；`cultivation/tick.rs` 已调用 `regen_from_zone`；`player/gameplay.rs` 已用 `QI_GATHER_REWARD` / `QI_ZONE_UNIT_CAPACITY` 做采集 zone 对冲；`world/tsy_drain.rs` 已接 `qi_excretion_loss`、`WorldQiAccount`、`QiTransfer`；`combat/woliu.rs` 已用 `qi_negative_field_drain_ratio` + `QiTransfer`。
+- **旧常量清单已清掉一批**：`rg 'BASE_LOSS_PER_BLOCK|VORTEX_THEORETICAL_LIMIT_DELTA|JIEMAI_|QI_REGEN_COEF|ZONE_LEAK_RATIO|SEARCH_DRAIN_MULTIPLIER|GATHER_SPIRIT_QI_REWARD' server/src` 当前为 0；对应 canonical 常量已集中到 `server/src/qi_physics/constants.rs`（如 `QI_CULTIVATION_REGEN_RATE`、`QI_ZONE_UNIT_CAPACITY`、`QI_GATHER_REWARD`、`QI_LINGTIAN_AMBIENT_LEAK_RATIO`、`QI_TSY_SEARCH_EXPOSURE_FACTOR`）。
+- **P0 仍未全绿**：`lingtian/qi_account.rs` 仍只在注释中提到未来接 `WorldQiAccount`，尚未与 `Zone.spirit_qi` 合账；`world/events.rs` 已接 `collapse_redistribute_qi`，但 `cultivation/death_hooks.rs` / `cultivation/contamination.rs` / `cultivation/tribulation.rs` 仍有 `qi_current = 0.0` 类释放去向待补。
+- **P1 基本未启动**：`server/src/shelflife/types.rs` / `compute.rs` / `registry.rs` 仍保留 `Linear` / `Exponential` / `Stepwise` 本地公式；未看到 shelflife 主路径调用 `qi_excretion` / `ContainerKind`。
+- **P3 有底盘和少量接入，但未闭环**：`qi_physics::tiandao::era_decay_step` 与 `world/events.rs` 的 `collapse_redistribute_qi` 已存在；`tsy_lifecycle.rs:371` 仍直接用 `compute_layer_spirit_qi` 改写 zone，7 流派业务模块还未实装 `StyleAttack` / `StyleDefense`。
 
 ---
 
@@ -62,10 +70,10 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | **红线 6 处**（3 公式正典化 + 3 守恒律违反 fix）: ① `combat/decay.rs:5` 0.06 → 0.03 + bonus 校准 ② `tsy_drain.rs` × `dead_zone.rs` 合并 ③ `lingtian/qi_account.rs` × `Zone.spirit_qi` 合账接 `WorldQiAccount` ④ **采集奖励守恒**: `player/gameplay.rs:294` `GATHER_SPIRIT_QI_REWARD = 14.0` 凭空生 → 加 zone 对冲 ⑤ **TSY 抽取记账**: `cultivation/tsy_drain.rs:101` drain 去向走 ledger ⑥ **域崩清零记账**: `world/events.rs:1178` `zone.spirit_qi = 0.0` 走 `tribulation_trigger` 而非暴力赋零 | 6 PR 各自独立合入；每 PR 跨 24h 模拟守恒断言通过；旧符号 grep 0 |
+| **P0** ◐ | **红线 6 处**（3 公式正典化 + 3 守恒律违反 fix）: ① `combat/decay.rs` 已走 `qi_distance_atten` ② `world/tsy_drain.rs` 已接 `qi_excretion_loss` + ledger ③ `lingtian/qi_account.rs` 仍未与 `Zone.spirit_qi` 合账 ④ `player/gameplay.rs` 已加 zone 对冲 ⑤ TSY 抽取已有 `QiTransfer` 记账 ⑥ `world/events.rs` 已接部分 redistribution，但死亡/污染/渡劫清零路径仍待 ledger | 剩余 P0-3 / P0-6 类路径补完；每 PR 跨 24h 模拟守恒断言通过；旧符号 grep 保持 0 |
 | **P1** ⬜ | **shelflife 5 profile 全迁**: bone_coin_5/15/40_v1、ling_shi、yi_shou、chen_jiu、ling_mu_gun → 走 `qi_excretion(ContainerKind::*, env)` 统一表达；下限 clamp 到 zone qi（修复"归零到 0"违反压强法则）+ shelflife 3 公式（Linear/Exp/Stepwise）压成 `ContainerKind` 形态参数 | 5 物品类型 freshness 曲线在标准 zone 下与原行为±5% 内一致；死域 zone qi=0 时归零保持原行为 |
-| **P2** ⬜ | **战斗侧 + lingtian + cultivation + 杂项**: woliu 离散表按 §5 决策落地（B 推荐: 境界 → 涡流场强度映射 + 1/r² 算子）/ jiemai 多常数迁 / cultivation tick QI_REGEN_COEF / lingtian ZONE_LEAK_RATIO / tsy_container SEARCH_DRAIN_MULTIPLIER / 跨界磨损 / 灵龛真元注入 + **守恒释放路径补全**（招式释放 / 容器衰变 / 死亡真元归还全走 `qi_release_to_zone`）| 全 server cargo test 过；`grep -rE 'BASE_LOSS_PER_BLOCK\|VORTEX_THEORETICAL_LIMIT_DELTA\|JIEMAI_*\|QI_REGEN_COEF\|ZONE_LEAK_RATIO\|SEARCH_DRAIN_MULTIPLIER' server/src/` 全 0；**SPIRIT_QI_TOTAL 全局守恒断言 24h 模拟通过** |
-| **P3** ⬜ | **新机制接入**: ① `TsyCollapseStarted` event 后端挂 `collapse_redistribute_qi`(worldview §十一 line 789) ② 异体排斥 ρ 物理实装 → `StyleAttack` trait impl 给 7 流派（baomai/anqi/dugu/zhenmai/tuike/woliu/zhenfa）③ 天道时代衰减 1-3% 定时器 ④ 阈值灾劫触发器接 `tribulation.rs` ⑤ 节律 EnvField 数据源接 `plan-lingtian-weather-v1` ⑥ **汐转 TSY 周期重置守恒检查**: `tsy_lifecycle.rs:371` `compute_layer_spirit_qi` 周期改写 zone，sum 必须守恒 ⑦ **暴力清零事件灵气去向**: 渡劫完成 `tribulation.rs:1736` / 污染爆发 `contamination.rs:97` / TSY-collapse `events.rs:1643` 三处 `qi_current=0` / `zone=0` 灵气去向需明示 | 坍缩渊塌缩前后周围 zone 总和恒等；汐转前后 sum 恒等；7 流派对打能区分 ρ；100h 模拟 SPIRIT_QI_TOTAL 衰减 ∈ [1%, 3%]；阈值灾劫可触发；暴力清零事件全部走 ledger |
+| **P2** ◐ | **战斗侧 + lingtian + cultivation + 杂项**: woliu 已按 B 决议接入场强 + 1/r² drain；jiemai / cultivation / lingtian / TSY 搜索相关旧常量已迁到 `qi_physics::constants`；跨界磨损、灵龛注入、容器衰变与死亡真元归还仍需继续收口到 `qi_release_to_zone` / ledger | 全 server cargo test 过；旧常量 grep 保持 0；**SPIRIT_QI_TOTAL 全局守恒断言 24h 模拟通过** |
+| **P3** ◐ | **新机制接入**: ① `world/events.rs` 已有 `collapse_redistribute_qi` 接入点 ② `qi_physics` 已有 `StyleAttack` / `StyleDefense` trait 与 `era_decay_step` ③ 7 流派业务 impl、节律 EnvField、汐转 TSY 周期守恒、暴力清零事件 ledger 仍未闭合 | 坍缩渊塌缩前后周围 zone 总和恒等；汐转前后 sum 恒等；7 流派对打能区分 ρ；100h 模拟 SPIRIT_QI_TOTAL 衰减 ∈ [1%, 3%]；阈值灾劫可触发；暴力清零事件全部走 ledger |
 
 ---
 
@@ -141,11 +149,11 @@
 
 - [ ] **PR 粒度细化**: P0 现 6 PR，P2 估计 ~9 个独立 PR；超 200 行 diff 的 PR 要再拆吗？或按"逻辑单元"打包（如"shelflife 5 profile"算 1 PR）
 - [ ] **既有 plan 是否需要回写 Finish Evidence**: 比如 plan-shelflife-v1 已 finished，本 plan 把它的 profile 全迁了，需不需要在 plan-shelflife-v1 文末补"已被 qi-physics-patch P1 取代"？还是只在本 plan 进度日志记？
-- [ ] **woliu 决议风险**: P2-1 取决于 qi-physics §5 红线 3 决议（A/B/C），若决议改变本 plan P2 节奏要重排
+- [x] **woliu 决议风险**: 已按 B 决议落地（境界 → 涡流场强度 + 1/r² 负灵域距离算子），见 2026-05-08 `6c4af82da` / PR #152。
 - [ ] **测试 fixture 共享**: 24h / 100h 模拟测试是否抽出共用 harness（每 plan 独立维护一份 fixture 太重）
 - [ ] **agent 侧的 conservation scaling 测试**(`agent/packages/tiandao/tests/arbiter.test.ts:71`)是否要重写适配 server 端新机制?
 - [ ] **shelflife 衰变是否补 zone**（消耗型 vs 回流型）: 当前 sealed_qi 单向减少不补 zone（违反压强法则 + 守恒律），但"消耗型"也是合理设计观。worldview §二「离体真元被末法残土像海绵吸水一样瞬间分解」语义上倾向回流（分解后变 zone 基底浓度）。**默认推荐回流（守恒）**，但要在 P1 启动前裁决落到 ContainerKind 行为
-- [ ] **采集奖励物理来源**: `GATHER_SPIRIT_QI_REWARD = 14.0` 是不是应该改成"按 zone 浓度抽取"模式（同 `compute_regen`）？还是保留固定 14 奖励但加 zone -= 14 对冲？**默认推荐固定奖励 + zone 对冲**——简单且不破坏当前采集体验，但 zone -= 14 / cap=zone_qi 防止抽到负
+- [x] **采集奖励物理来源**: 已采用固定奖励 + zone 对冲；`player/gameplay.rs` 当前用 `QI_GATHER_REWARD` / `QI_ZONE_UNIT_CAPACITY` cap 到可用 zone qi，防止抽负。
 - [ ] **`drain_qi_to_player=0.8 / to_zone=0.2` 比例去向**: lingtian/qi_account.rs 现有的灵田分账比例（80% 进玩家 / 20% 留 zone）是否合理？合账到 WorldQiAccount 后这个比例由谁主张？**默认推荐**：作为 `qi_physics::constants::LINGTIAN_DRAIN_PLAYER_RATIO` 保留，灵田场景专属
 - [ ] **agent IPC 精度损失**(f64→f32): server schema 是 f64，agent worldmodel 用 f32（`agent/packages/worldmodel/`），跨边界可能丢精度；100h 守恒断言时累积误差或被吃掉。需在 P3 节律对接 PR 内一并修
 
@@ -161,3 +169,5 @@
   - 加：NPC 修炼 zone 对冲验证（P2-9）+ 汐转周期重置守恒（P3-6）+ 渡劫/污染暴力清零去向（P3-7）
   - §4 加 4 条决策点：shelflife 是否补 zone / 采集奖励物理来源 / lingtian 分账比例去向 / agent IPC f64→f32 精度
   - **P0 从 3 PR 扩到 6 PR**——3 守恒违反 fix 是 P0 因为它们在违反 worldview §二/§十 第一公理，不修就跑不出 24h 守恒断言
+- **2026-05-07**：首批旧真元物理迁移已合入（`19cce2bb3` / PR #142）。已完成一批常数与调用点收口：cultivation regen 走 `regen_from_zone`，采集奖励加 zone 对冲，TSY drain 接 `WorldQiAccount` / `QiTransfer`，lingtian leak / jiemai / zhenmai / TSY search 等旧常量迁到 `qi_physics::constants`。整体 plan 未完成，P1 shelflife 与剩余释放路径继续保留。
+- **2026-05-08**：涡流负灵域距离算子已合入（`6c4af82da` / PR #152）。P2-1 采纳 B 决议：境界映射场强，实际 drain 走 `qi_negative_field_drain_ratio` 并 emit `QiTransfer`。实地复核显示旧常量清单 grep 为 0，但 `lingtian/qi_account.rs` 合账、shelflife 全迁、TSY 周期守恒、死亡/污染/渡劫清零 ledger、7 流派 `StyleAttack` 业务 impl 仍未闭合；本 plan 仍保持 Active。
