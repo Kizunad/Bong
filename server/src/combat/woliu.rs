@@ -124,6 +124,7 @@ pub fn register(app: &mut valence::prelude::App) {
     app.add_event::<VortexCastIntent>();
     app.add_event::<VortexBackfireEvent>();
     app.add_event::<ProjectileQiDrainedEvent>();
+    app.add_event::<QiTransfer>();
     app.add_systems(
         valence::prelude::Update,
         (
@@ -902,6 +903,15 @@ mod tests {
         app.add_event::<QiTransfer>();
         app.add_event::<ApplyStatusEffectIntent>();
         app
+    }
+
+    #[test]
+    fn register_initializes_transfer_event_for_standalone_woliu_app() {
+        let mut app = App::new();
+
+        register(&mut app);
+
+        assert!(app.world().contains_resource::<Events<QiTransfer>>());
     }
 
     #[test]
