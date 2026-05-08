@@ -48,6 +48,88 @@ impl Season {
             Self::WinterToSummer => "winter_to_summer",
         }
     }
+
+    /// plan-lingtian-weather-v1 §2 — `plot_qi_cap` 的稳定季节修饰（绝对增量）。
+    /// 夏散 -0.2、冬聚 +0.2；汐转返回 0（基线无偏移，由调用方乘
+    /// [`xizhuan_qi_cap_amplitude`] 注入 jitter）。
+    pub const fn plot_qi_cap_modifier(self) -> f32 {
+        match self {
+            Self::Summer => -0.2,
+            Self::Winter => 0.2,
+            Self::SummerToWinter | Self::WinterToSummer => 0.0,
+        }
+    }
+
+    /// plan-lingtian-weather-v1 §2 — `natural_supply` 的稳定季节修饰（相对增量）。
+    /// 夏 -10%、冬 +10%、汐转 0（基线无偏移）。
+    pub const fn natural_supply_modifier(self) -> f32 {
+        match self {
+            Self::Summer => -0.10,
+            Self::Winter => 0.10,
+            Self::SummerToWinter | Self::WinterToSummer => 0.0,
+        }
+    }
+
+    /// plan-lingtian-weather-v1 §2 — plot ↔ zone qi 流速倍率。
+    /// 夏 ×1.3（缚力外散）、冬 ×0.7（缚力内收）、汐转基线 1.0（具体由
+    /// [`xizhuan_zone_flow_jitter_max_delta`] 派生 1.0–1.5 RNG）。
+    pub const fn zone_flow_multiplier(self) -> f32 {
+        match self {
+            Self::Summer => 1.3,
+            Self::Winter => 0.7,
+            Self::SummerToWinter | Self::WinterToSummer => 1.0,
+        }
+    }
+
+    /// plan-lingtian-weather-v1 §2 — 汐转期 `plot_qi_cap` jitter 振幅。
+    /// 调用方传 jitter ∈ [-1, 1]，乘以振幅即可得"反复 ±0.3"。
+    /// 非汐转季节返回 0（无 jitter）。
+    pub const fn xizhuan_qi_cap_amplitude(self) -> f32 {
+        if self.is_xizhuan() {
+            0.3
+        } else {
+            0.0
+        }
+    }
+
+    /// plan-lingtian-weather-v1 §2 — 汐转期 `natural_supply` jitter 振幅（±20%）。
+    pub const fn xizhuan_supply_amplitude(self) -> f32 {
+        if self.is_xizhuan() {
+            0.20
+        } else {
+            0.0
+        }
+    }
+
+    /// plan-lingtian-weather-v1 §2 — 汐转期 `zone_flow_multiplier` jitter 上限（最大额外 +0.5）。
+    /// 实际倍率 = 基线 1.0 + jitter_normalized_[0,1] × 0.5（即 1.0–1.5 RNG）。
+    /// 非汐转返回 0（无 jitter，使用稳定 1.3 / 0.7）。
+    pub const fn xizhuan_zone_flow_jitter_max_delta(self) -> f32 {
+        if self.is_xizhuan() {
+            0.5
+        } else {
+            0.0
+        }
+    }
+
+    /// plan-lingtian-weather-v1 §0 / §3 — 汐转期天气事件 RNG 翻倍倍率。
+    ///
+    /// 由 P2 `weather_generator_system` 在每 game-day RNG roll 时乘到基线触发
+    /// 概率上；P0 引入但调用点在 P2，先暂 `#[allow(dead_code)]`。
+    #[allow(dead_code)]
+    pub const fn weather_rng_multiplier(self) -> f32 {
+        if self.is_xizhuan() {
+            2.0
+        } else {
+            1.0
+        }
+    }
+}
+
+impl Default for Season {
+    fn default() -> Self {
+        Self::Summer
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,5 +371,102 @@ mod tests {
         assert_eq!(result.season, Season::SummerToWinter);
         assert_eq!(result.tick_into_phase, 0);
         assert_eq!(result.year_index, 1);
+    }
+
+    // -------- plan-lingtian-weather-v1 §2 modifier 单测 --------
+
+    #[test]
+    fn season_default_is_summer() {
+        // 与 query_season("", 0) 在 jiezeq-v1 下保持一致：tick 0 → Summer。
+        assert_eq!(Season::default(), Season::Summer);
+    }
+
+    #[test]
+    fn plot_qi_cap_modifier_summer_minus_0_2() {
+        assert!(
+            (Season::Summer.plot_qi_cap_modifier() + 0.2).abs() < 1e-6,
+            "Summer 夏散：plot_qi_cap_modifier 应当 -0.2，实际 {}",
+            Season::Summer.plot_qi_cap_modifier()
+        );
+    }
+
+    #[test]
+    fn plot_qi_cap_modifier_winter_plus_0_2() {
+        assert!(
+            (Season::Winter.plot_qi_cap_modifier() - 0.2).abs() < 1e-6,
+            "Winter 冬聚：plot_qi_cap_modifier 应当 +0.2，实际 {}",
+            Season::Winter.plot_qi_cap_modifier()
+        );
+    }
+
+    #[test]
+    fn plot_qi_cap_modifier_xizhuan_zero_base() {
+        assert_eq!(Season::SummerToWinter.plot_qi_cap_modifier(), 0.0);
+        assert_eq!(Season::WinterToSummer.plot_qi_cap_modifier(), 0.0);
+    }
+
+    #[test]
+    fn natural_supply_modifier_summer_minus_10_percent() {
+        assert!((Season::Summer.natural_supply_modifier() + 0.10).abs() < 1e-6);
+    }
+
+    #[test]
+    fn natural_supply_modifier_winter_plus_10_percent() {
+        assert!((Season::Winter.natural_supply_modifier() - 0.10).abs() < 1e-6);
+    }
+
+    #[test]
+    fn natural_supply_modifier_xizhuan_zero_base() {
+        assert_eq!(Season::SummerToWinter.natural_supply_modifier(), 0.0);
+        assert_eq!(Season::WinterToSummer.natural_supply_modifier(), 0.0);
+    }
+
+    #[test]
+    fn zone_flow_multiplier_summer_1_3() {
+        assert!((Season::Summer.zone_flow_multiplier() - 1.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zone_flow_multiplier_winter_0_7() {
+        assert!((Season::Winter.zone_flow_multiplier() - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zone_flow_multiplier_xizhuan_1_0_base() {
+        assert!((Season::SummerToWinter.zone_flow_multiplier() - 1.0).abs() < 1e-6);
+        assert!((Season::WinterToSummer.zone_flow_multiplier() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn xizhuan_qi_cap_amplitude_only_in_xizhuan() {
+        assert_eq!(Season::Summer.xizhuan_qi_cap_amplitude(), 0.0);
+        assert_eq!(Season::Winter.xizhuan_qi_cap_amplitude(), 0.0);
+        assert!((Season::SummerToWinter.xizhuan_qi_cap_amplitude() - 0.3).abs() < 1e-6);
+        assert!((Season::WinterToSummer.xizhuan_qi_cap_amplitude() - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn xizhuan_supply_amplitude_only_in_xizhuan() {
+        assert_eq!(Season::Summer.xizhuan_supply_amplitude(), 0.0);
+        assert_eq!(Season::Winter.xizhuan_supply_amplitude(), 0.0);
+        assert!((Season::SummerToWinter.xizhuan_supply_amplitude() - 0.20).abs() < 1e-6);
+        assert!((Season::WinterToSummer.xizhuan_supply_amplitude() - 0.20).abs() < 1e-6);
+    }
+
+    #[test]
+    fn xizhuan_zone_flow_jitter_max_delta_only_in_xizhuan() {
+        assert_eq!(Season::Summer.xizhuan_zone_flow_jitter_max_delta(), 0.0);
+        assert_eq!(Season::Winter.xizhuan_zone_flow_jitter_max_delta(), 0.0);
+        assert!((Season::SummerToWinter.xizhuan_zone_flow_jitter_max_delta() - 0.5).abs() < 1e-6);
+        assert!((Season::WinterToSummer.xizhuan_zone_flow_jitter_max_delta() - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn weather_rng_multiplier_doubles_in_xizhuan() {
+        // §0 / §3 — 汐转期"全部事件 RNG ×2"
+        assert_eq!(Season::Summer.weather_rng_multiplier(), 1.0);
+        assert_eq!(Season::Winter.weather_rng_multiplier(), 1.0);
+        assert_eq!(Season::SummerToWinter.weather_rng_multiplier(), 2.0);
+        assert_eq!(Season::WinterToSummer.weather_rng_multiplier(), 2.0);
     }
 }

@@ -51,7 +51,9 @@ use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
 use super::network_emit::replenish_source_wire;
 use super::plot::{CropInstance, LingtianPlot};
-use super::pressure::{compute_zone_pressure, PressureLevel, ZonePressureTracker};
+use super::pressure::{
+    compute_zone_pressure, derive_supply_jitter, PressureLevel, ZonePressureTracker,
+};
 use super::qi_account::{
     LingtianTickAccumulator, ZoneQiAccount, BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
 };
@@ -1431,14 +1433,22 @@ pub fn record_replenish_to_pressure(
     }
 }
 
-/// plan §5.1 — 每 lingtian-tick 后（通过读 `LingtianTickAccumulator` 刚归零）
-/// 重算 zone pressure、prune 7d 窗口、跨档上升时发 `ZonePressureCrossed`
-/// 事件；HIGH 进入时清 zone 所有 plot_qi（道伥 spawn 由下游 npc 系统接）。
+/// plan §5.1 + plan-lingtian-weather-v1 §2 / §3 — 每 lingtian-tick 后（通过
+/// 读 `LingtianTickAccumulator` 刚归零）重算 zone pressure、prune 7d 窗口、
+/// 跨档上升时发 `ZonePressureCrossed` 事件；HIGH 进入时清 zone 所有 plot_qi
+/// （道伥 spawn 由下游 npc 系统接）。
+///
+/// 季节修饰从 `WorldSeasonState.current.season` 取（jiezeq-v1 全服同步）；
+/// 天气事件从 `ActiveWeather` Resource 取（P2 落地 weather_generator_system
+/// 后自动填）。
+#[allow(clippy::too_many_arguments)]
 pub fn compute_zone_pressure_system(
     accumulator: Res<LingtianTickAccumulator>,
     clock: Res<LingtianClock>,
     mut tracker: ResMut<ZonePressureTracker>,
     registry: Res<PlantKindRegistry>,
+    season_state: Option<Res<crate::world::season::WorldSeasonState>>,
+    active_weather: Option<Res<crate::lingtian::weather::ActiveWeather>>,
     mut plots: Query<&mut LingtianPlot>,
     mut events: EventWriter<ZonePressureCrossed>,
 ) {
@@ -1451,12 +1461,34 @@ pub fn compute_zone_pressure_system(
     let now = clock.lingtian_tick;
     tracker.state_mut(&zone).prune(now);
 
+    let season = season_state
+        .as_deref()
+        .map(|s| s.current.season)
+        .unwrap_or_default();
+    // 汐转 jitter：用 (zone_hash, lingtian_tick / day_ticks) 派生稳定 unit float
+    // 避免每 tick 抖动；非汐转季节 amplitude=0 → 结果与 jitter 无关。
+    let jitter_unit = derive_supply_jitter(&zone, now);
+    let weather = active_weather.as_deref().and_then(|aw| aw.current(&zone));
+
     // 借用拆分：读出 pressure 先丢作用域，再改 state
     let pressure = {
         let plots_iter = plots.iter().map(|m| -> &LingtianPlot { m });
-        compute_zone_pressure(&zone, plots_iter, &registry, &tracker)
+        compute_zone_pressure(
+            &zone,
+            plots_iter,
+            &registry,
+            &tracker,
+            season,
+            jitter_unit,
+            weather,
+        )
     };
-    let new_level = PressureLevel::classify(pressure);
+    // plan-lingtian-weather-v1 §5 / worldview §七 — 阴霾期间天道注视减弱，
+    // 阈值降 1 档（HeavyHaze.pressure_threshold_relax_steps()=1）。其他事件返回 0。
+    let relax_steps = weather
+        .map(|w| w.pressure_threshold_relax_steps())
+        .unwrap_or(0);
+    let new_level = PressureLevel::classify_with_relax(pressure, relax_steps);
     let old_level = tracker
         .state(&zone)
         .map(|s| s.last_level)
@@ -1979,6 +2011,7 @@ mod tests {
     use crate::lingtian::environment::{PlotBiome, PlotEnvironment};
     use crate::lingtian::plot::CropInstance;
     use crate::lingtian::qi_account::BEVY_TICKS_PER_LINGTIAN_TICK;
+    use crate::world::season::Season;
 
     fn ci_she_hao_kind() -> PlantKind {
         PlantKind {
@@ -3159,10 +3192,15 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            // 用 SummerToWinter（汐转期 modifier=0）保留 plan-lingtian-v1 的
+            // "三大基础修饰 → cap 2.8" 锁定，避免与 plan-lingtian-weather-v1 §2
+            // 夏散 -0.2 / 冬聚 +0.2 的物理修饰交织。
             environment: PlotEnvironment {
                 water_adjacent: true,
                 biome: PlotBiome::Wetland,
                 zhenfa_jvling: true,
+                season: Season::SummerToWinter,
+                active_weather: None,
             },
         });
         for _ in 0..TILL_MANUAL_TICKS {
@@ -3179,7 +3217,9 @@ mod tests {
     }
 
     #[test]
-    fn till_default_environment_keeps_cap_at_1_0() {
+    fn till_default_summer_environment_yields_cap_0_8() {
+        // plan-lingtian-weather-v1 §2 — `PlotEnvironment::base()` 默认 Summer
+        // (-0.2 modifier)，所以裸开垦的 plot_qi_cap = 1.0 - 0.2 = 0.8。
         let mut app = build_app();
         let player = app
             .world_mut()
@@ -3202,6 +3242,41 @@ mod tests {
             .iter(app.world())
             .next()
             .unwrap();
+        assert!(
+            (plot.plot_qi_cap - 0.8).abs() < 1e-6,
+            "Summer base 应当 0.8（=1.0 - 0.2 summer），实际 {}",
+            plot.plot_qi_cap
+        );
+    }
+
+    #[test]
+    fn till_xizhuan_environment_keeps_cap_at_1_0() {
+        // 汐转期 modifier=0，plot_qi_cap 锁回 plan-lingtian-v1 的 1.0 基线。
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
+            .id();
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos: BlockPos::new(0, 64, 0),
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment {
+                season: Season::SummerToWinter,
+                ..PlotEnvironment::base()
+            },
+        });
+        for _ in 0..TILL_MANUAL_TICKS {
+            app.update();
+        }
+        let plot = app
+            .world_mut()
+            .query::<&LingtianPlot>()
+            .iter(app.world())
+            .next()
+            .unwrap();
         assert!((plot.plot_qi_cap - 1.0).abs() < 1e-6);
     }
 
@@ -3214,6 +3289,14 @@ mod tests {
     };
 
     fn build_pressure_app(natural_supply: f32) -> App {
+        // 默认 pin 在 Summer（plan §2 的"夏散" 物理常态）：natural_supply -10%，
+        // amplitude=0 → jitter 不影响（可重现）。原 plan-lingtian-v1 §5.1 测试
+        // 大多用 natural_supply=0，0 × 任何系数仍是 0，不受影响；只有
+        // `natural_supply_offsets_demand` 的断言因夏 -10% 调整。
+        build_pressure_app_with_season(natural_supply, Season::Summer)
+    }
+
+    fn build_pressure_app_with_season(natural_supply: f32, season: Season) -> App {
         let mut app = App::new();
         let mut tracker = ZonePressureTracker::new();
         tracker.set_natural_supply(DEFAULT_ZONE, natural_supply);
@@ -3229,11 +3312,23 @@ mod tests {
                 description: String::new(),
             })
             .unwrap();
+        // 显式 pin 季节状态：测试可重现，不受默认 query_season 影响。
+        // 用 Default + 字段覆写避开 `tick_offset` 私有字段限制（cross-module）。
+        let mut season_state = crate::world::season::WorldSeasonState::default();
+        season_state.current = crate::world::season::SeasonState {
+            season,
+            tick_into_phase: 0,
+            phase_total_ticks: season.phase_total_ticks(),
+            year_index: 0,
+        };
+        season_state.last_phase_change_tick = 0;
+
         app.insert_resource(LingtianTickAccumulator::new())
             .insert_resource(LingtianClock::default())
             .insert_resource(ZoneQiAccount::new())
             .insert_resource(plant_registry)
             .insert_resource(tracker)
+            .insert_resource(season_state)
             .add_event::<ReplenishCompleted>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
@@ -3345,14 +3440,89 @@ mod tests {
     }
 
     #[test]
-    fn natural_supply_offsets_demand() {
+    fn natural_supply_offsets_demand_in_summer() {
+        // plan-lingtian-weather-v1 §2 — Summer natural_supply -10%：
+        // base 0.5 × 0.9 = 0.45 effective；demand 0.6（50 × 0.012/tick）；
+        // pressure = 0.6 - 0.45 = 0.15（仍在 LOW 阈值 0.3 以下 → None）。
         let mut app = build_pressure_app(0.5);
-        spawn_high_cost_planted(&mut app, 50); // demand 0.6
+        spawn_high_cost_planted(&mut app, 50);
         step_one_lingtian_tick(&mut app);
         let tracker = app.world().resource::<ZonePressureTracker>();
         let p = tracker.state(DEFAULT_ZONE).unwrap().last_pressure;
-        assert!((p - 0.1).abs() < 1e-3);
+        assert!(
+            (p - 0.15).abs() < 1e-3,
+            "summer natural_supply offset 应当 0.15，实际 {p}"
+        );
         assert_eq!(tracker.state(DEFAULT_ZONE).unwrap().last_level, PL::None);
+    }
+
+    #[test]
+    fn natural_supply_offsets_demand_in_winter_extra_supply() {
+        // plan-lingtian-weather-v1 §2 — Winter natural_supply +10%：
+        // base 0.5 × 1.1 = 0.55 effective；demand 0.6；pressure = 0.05。
+        let mut app = build_pressure_app_with_season(0.5, Season::Winter);
+        spawn_high_cost_planted(&mut app, 50);
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let p = tracker.state(DEFAULT_ZONE).unwrap().last_pressure;
+        assert!(
+            (p - 0.05).abs() < 1e-3,
+            "winter natural_supply offset 应当 0.05，实际 {p}"
+        );
+    }
+
+    #[test]
+    fn haze_active_relaxes_pressure_classification_by_one_tier() {
+        // plan-lingtian-weather-v1 §5 / worldview §七 — 阴霾期间天道注视减弱，
+        // 阈值降 1 档。
+        // setup：冬季（Blizzard / Haze 可触发 zone），HeavyHaze active；
+        // 灌满 100 个 high_cost 作物（demand = 100 × 0.012 = 1.2 → 原 raw=1.2 → HIGH）
+        // 但 haze 阈值降 1 档 → 应被分类为 Mid。
+        let mut app = build_pressure_app_with_season(0.0, Season::Winter);
+        // 注入 HeavyHaze active weather（覆盖 ActiveWeather 默认空状态）
+        let mut active_weather = crate::lingtian::weather::ActiveWeather::new();
+        active_weather.insert(
+            DEFAULT_ZONE,
+            crate::lingtian::weather::WeatherEvent::HeavyHaze,
+            0,      // started_at
+            10_000, // expires_at（远期，本测期间不清）
+        );
+        app.insert_resource(active_weather);
+
+        spawn_high_cost_planted(&mut app, 100); // demand 1.2 → raw HIGH
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let s = tracker.state(DEFAULT_ZONE).unwrap();
+        // raw pressure 应该 ≈ 1.2（natural_supply=0、winter +10% 不影响 0）
+        assert!(
+            (s.last_pressure - 1.2).abs() < 1e-3,
+            "raw pressure ≈ 1.2，实际 {}",
+            s.last_pressure
+        );
+        // 但 classified 档位应当被降为 Mid（1 档）而非 High
+        assert_eq!(
+            s.last_level,
+            PL::Mid,
+            "阴霾期间 raw=1.2 应被降为 Mid，实际 {:?}",
+            s.last_level
+        );
+    }
+
+    #[test]
+    fn no_haze_no_relax_pressure_classified_normally() {
+        // 对照：相同 raw pressure 但无 haze → classified 仍为 High。
+        let mut app = build_pressure_app_with_season(0.0, Season::Winter);
+        spawn_high_cost_planted(&mut app, 100);
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let s = tracker.state(DEFAULT_ZONE).unwrap();
+        assert!((s.last_pressure - 1.2).abs() < 1e-3);
+        assert_eq!(
+            s.last_level,
+            PL::High,
+            "无阴霾时 raw=1.2 应当 High，实际 {:?}",
+            s.last_level
+        );
     }
 
     #[test]

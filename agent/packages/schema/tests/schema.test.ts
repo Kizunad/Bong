@@ -54,6 +54,11 @@ import {
   PseudoVeinSnapshotV1,
 } from "../src/pseudo-vein.js";
 import {
+  WeatherEventDataV1,
+  WeatherEventKindV1,
+  WeatherEventUpdateV1,
+} from "../src/lingtian-weather.js";
+import {
   RatPhaseChangeEventV1,
   validateRatPhaseChangeEventV1Contract,
 } from "../src/rat-phase-event.js";
@@ -174,6 +179,11 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PSEUDO_VEIN_DISSIPATE);
   });
 
+  it("declares weather event update Redis channel", () => {
+    expect(CHANNELS.WEATHER_EVENT_UPDATE).toBe("bong:weather_event_update");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.WEATHER_EVENT_UPDATE);
+  });
+
   it("declares zong formation Redis channel", () => {
     expect(CHANNELS.ZONG_CORE_ACTIVATED).toBe("bong:zong_core_activated");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONG_CORE_ACTIVATED);
@@ -255,6 +265,18 @@ describe("sample files pass schema validation", () => {
   it("pseudo-vein-dissipate-event.sample.json", () => {
     const data = loadSample("pseudo-vein-dissipate-event.sample.json");
     const result = validate(PseudoVeinDissipateEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("weather-event-data.sample.json", () => {
+    const data = loadSample("weather-event-data.sample.json");
+    const result = validate(WeatherEventDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("weather-event-update.sample.json", () => {
+    const data = loadSample("weather-event-update.sample.json");
+    const result = validate(WeatherEventUpdateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
@@ -1344,5 +1366,89 @@ describe("schema rejects invalid data", () => {
       validateAgentCommandV1Contract,
       data,
     );
+  });
+});
+
+describe("plan-lingtian-weather-v1 §4.2 schema", () => {
+  it("WeatherEventKindV1 接受 5 个 wire 字符串", () => {
+    for (const kind of [
+      "thunderstorm",
+      "drought_wind",
+      "blizzard",
+      "heavy_haze",
+      "ling_mist",
+    ]) {
+      const result = validate(WeatherEventKindV1, kind);
+      expect(result.ok, `kind=${kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("WeatherEventKindV1 拒绝未知 wire 字符串", () => {
+    const result = validate(WeatherEventKindV1, "tornado");
+    expect(result.ok).toBe(false);
+  });
+
+  it("WeatherEventDataV1 拒绝缺字段", () => {
+    const data = {
+      v: 1,
+      zone_id: "default",
+      kind: "thunderstorm",
+      // 缺 started_at_lingtian_tick
+      expires_at_lingtian_tick: 200,
+      remaining_ticks: 100,
+    };
+    const result = validate(WeatherEventDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("WeatherEventDataV1 拒绝负 tick", () => {
+    const data = {
+      v: 1,
+      zone_id: "default",
+      kind: "thunderstorm",
+      started_at_lingtian_tick: -1,
+      expires_at_lingtian_tick: 200,
+      remaining_ticks: 100,
+    };
+    const result = validate(WeatherEventDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("WeatherEventUpdateV1 接受 started/expired 两种 kind", () => {
+    for (const kind of ["started", "expired"]) {
+      const data = {
+        v: 1,
+        kind,
+        data: {
+          v: 1,
+          zone_id: "default",
+          kind: "thunderstorm",
+          started_at_lingtian_tick: 0,
+          expires_at_lingtian_tick: 200,
+          remaining_ticks: 100,
+        },
+      };
+      const result = validate(WeatherEventUpdateV1, data);
+      expect(result.ok, `kind=${kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("WeatherEventUpdateV1 拒绝未知 kind（含原 cleared 历史变体）", () => {
+    for (const kind of ["unknown", "cleared"]) {
+      const data = {
+        v: 1,
+        kind,
+        data: {
+          v: 1,
+          zone_id: "default",
+          kind: "thunderstorm",
+          started_at_lingtian_tick: 0,
+          expires_at_lingtian_tick: 200,
+          remaining_ticks: 100,
+        },
+      };
+      const result = validate(WeatherEventUpdateV1, data);
+      expect(result.ok).toBe(false);
+    }
   });
 });

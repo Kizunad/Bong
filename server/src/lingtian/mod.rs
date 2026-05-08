@@ -34,15 +34,24 @@ pub mod seed;
 pub mod session;
 pub mod systems;
 pub mod terrain;
+pub mod weather;
 
 #[allow(unused_imports)]
 pub use contamination::{apply_dye_contamination_on_replenish, dye_contamination_decay_tick};
 #[allow(unused_imports)]
-pub use environment::{compute_plot_qi_cap, PlotBiome, PlotEnvironment};
+pub use environment::{
+    apply_xizhuan_qi_cap_jitter, apply_xizhuan_supply_jitter, compute_plot_qi_cap,
+    compute_zone_flow_multiplier, PlotBiome, PlotEnvironment,
+};
 #[allow(unused_imports)]
 pub use pressure::{
     compute_zone_pressure, PressureLevel, ZonePressureState, ZonePressureTracker, PRESSURE_HIGH,
     PRESSURE_LOW, PRESSURE_MID, REPLENISH_WINDOW_LINGTIAN_TICKS,
+};
+#[allow(unused_imports)]
+pub use weather::{
+    try_roll_weather_for_zone, weather_apply_to_plot_system, weather_generator_system,
+    ActiveWeather, ActiveWeatherEntry, WeatherEvent, WeatherLifecycleEvent, WeatherRng,
 };
 
 #[allow(unused_imports)]
@@ -111,6 +120,9 @@ pub fn register(app: &mut App) {
     app.insert_resource(LingtianHarvestRng::default());
     app.insert_resource(LingtianClock::default());
     app.insert_resource(ZonePressureTracker::new());
+    // plan-lingtian-weather-v1 §3 — 单 zone MVP
+    app.insert_resource(ActiveWeather::new());
+    app.insert_resource(WeatherRng::default());
     let processing_registry =
         processing::ProcessingRecipeRegistry::load_default().unwrap_or_else(|error| {
             tracing::error!("[bong][lingtian][processing] recipe load failed: {error}");
@@ -136,6 +148,8 @@ pub fn register(app: &mut App) {
     app.add_event::<StartDrainQiRequest>();
     app.add_event::<DrainQiCompleted>();
     app.add_event::<ZonePressureCrossed>();
+    // plan-lingtian-weather-v1 §3 — 天气事件生命周期 (started / expired)
+    app.add_event::<WeatherLifecycleEvent>();
     // 11 systems — 用两段 .chain() 避开 Bevy IntoSystemConfigs 的 tuple 上限
     app.add_systems(
         Update,
@@ -154,6 +168,10 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            // plan-lingtian-weather-v1 §3 —— 必须先于 growth_tick / pressure 跑
+            // （expire 清完 + 新事件就位再做生长 / 压力计算）
+            weather::weather_generator_system,
+            weather::weather_apply_to_plot_system,
             systems::lingtian_growth_tick,
             // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）
             systems::record_dye_contamination_warning_recent_events,

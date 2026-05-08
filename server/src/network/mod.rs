@@ -52,6 +52,7 @@ pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
+pub mod weather_bridge;
 pub mod woliu_event_bridge;
 pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
@@ -338,6 +339,11 @@ pub fn register(app: &mut App) {
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
             zone_pressure_bridge::publish_zone_pressure_crossed_events
                 .after(crate::lingtian::systems::compute_zone_pressure_system),
+            // plan-lingtian-weather-v1 §3 / §4.4 — 把 Bevy WeatherLifecycleEvent
+            // 转译成 RedisOutbound::WeatherEventUpdate；必须在 weather generator /
+            // apply system 之后跑，确保 Bevy events 已就位。
+            weather_bridge::publish_weather_lifecycle_events
+                .after(crate::lingtian::weather::weather_apply_to_plot_system),
         ),
     );
     app.add_systems(

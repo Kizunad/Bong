@@ -1,0 +1,24 @@
+{
+  "anyOf": [
+    {
+      "const": "thunderstorm",
+      "type": "string"
+    },
+    {
+      "const": "drought_wind",
+      "type": "string"
+    },
+    {
+      "const": "blizzard",
+      "type": "string"
+    },
+    {
+      "const": "heavy_haze",
+      "type": "string"
+    },
+    {
+      "const": "ling_mist",
+      "type": "string"
+    }
+  ]
+}

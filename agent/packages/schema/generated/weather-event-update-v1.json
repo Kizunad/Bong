@@ -1,0 +1,85 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "data"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "started",
+          "type": "string"
+        },
+        {
+          "const": "expired",
+          "type": "string"
+        }
+      ]
+    },
+    "data": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "zone_id",
+        "kind",
+        "started_at_lingtian_tick",
+        "expires_at_lingtian_tick",
+        "remaining_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "zone_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "thunderstorm",
+              "type": "string"
+            },
+            {
+              "const": "drought_wind",
+              "type": "string"
+            },
+            {
+              "const": "blizzard",
+              "type": "string"
+            },
+            {
+              "const": "heavy_haze",
+              "type": "string"
+            },
+            {
+              "const": "ling_mist",
+              "type": "string"
+            }
+          ]
+        },
+        "started_at_lingtian_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expires_at_lingtian_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

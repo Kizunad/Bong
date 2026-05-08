@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "kind": "started",
+  "data": {
+    "v": 1,
+    "zone_id": "default",
+    "kind": "ling_mist",
+    "started_at_lingtian_tick": 5760,
+    "expires_at_lingtian_tick": 5820,
+    "remaining_ticks": 60
+  }
+}
