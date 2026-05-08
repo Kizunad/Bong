@@ -291,3 +291,64 @@ pub struct DuXuResult {
 
 - 2026-04-25：核对实装。Phase 0 数据层 + Quota 已落库（`TribulationState` / `AscensionQuotaStore` / `tribulations_active` / `ascension_quota`），Phase 1 仅渡虚劫成功(化虚) / 失败(退境) 两条结算闭环；预兆事件 `TribulationAnnounce` + 预警雷 VFX 已 emit，network → 客户端聊天栏未接；锁定期/3 波 AOE/心魔劫/截胡/半步化虚/域崩/定向天罚均未启动。
 - 2026-05-01：重新核对代码并更新状态。渡虚劫主链（主动起劫、预兆/锁定/雷云临时方块、3~5 波、AOE、心魔 MVP、截胡、失败/逃劫/化虚/半步结算、跨维度过滤）、client HUD、agent narration、域崩 runtime/HUD/VFX/overlay/worldgen mask、定向天罚隐性层、Phase 7 回归均已落地。仍保留 §9 非阻塞后续：心魔多情境树、起劫确认 UX、阵法/传送硬禁、灵龛归属、quota 最终事务性再校验、active tribulation 完整恢复、域崩 terminal kill 与 raster mask runtime 消费。
+
+## Finish Evidence
+
+`/plans-status docs/plan-tribulation-v1.md` 实地核验通过（2026-05-08）：所有阶段文档自报与代码现实一致，无虚标红旗；§9 八条尾巴均为非阻塞后续，已分别 hand-off 到对应 plan / skeleton。
+
+### 落地清单
+
+| 阶段 | 模块 / 文件 | 行数 | 关键 symbol |
+|---|---|---|---|
+| **P0 数据层 + 名额** | `server/src/cultivation/tribulation.rs` | 4,981 | `TribulationState`(L88) · `TribulationKind::{DuXu, ZoneCollapse, Targeted}`(L150) · `AscensionQuotaStore`(L157) · `tribulations_active` / `ascension_quota` 持久化（`server/src/persistence/mod.rs` L1000+） |
+| **P1 渡虚劫核心** | （同上） | — | 起劫菜单 + 预兆/锁定/3~5 波 AOE；`tribulation_omen_cloud_block_overlay_system` 临时云层方块（L799-876）；`record_tribulation_interceptor_system`(L1025) 截胡登记；`Fled` / `Killed` / `Ascended` / `HalfStep` 全分支结算 |
+| **P2 观战/截胡** | `client/.../hud/TribulationBroadcastHudPlanner.java` + `combat/store/TribulationStateStore.java` / `TribulationBroadcastStore.java` | — | 100 格同强度 AOE（tribulation.rs L607-706）· `tribulation_intercept_death_system`(L1431) 战绩记录 · 渡劫者本人 + 观战者差异化 HUD |
+| **P3 心魔 + 开天雷** | `agent/packages/tiandao/src/heart-demon-runtime.ts` + `tribulation.rs` | 324 + (L100-136 / L232) | `HEART_DEMON_CANONICAL_CHOICES`（坚心/执念/无解 MVP 三选项）· arbiter 校验 + fallback 兜底 + server guard · 开天雷无格挡（满血满真元硬扛）· 加波触发（通灵圆满累计时长） |
+| **P4 域崩** | `server/src/world/events.rs` | 4,127 | 低灵气 1h 监控 + 10min 撤离窗口（L333-387）· HUD 倒计时 + VFX 边界（L733/759）· `ZoneCollapse` cause → `ZoneDeathKind::Death` 横死判定 · worldgen `realm_collapse_mask` 离线导出 |
+| **P5 定向天罚** | `server/src/world/karma.rs` | 611 | `KarmaWeightStore`(L48) · `QiDensityHeatmap`(L161) · `targeted_calamity_roll()`(L241) 概率操控管道 · hidden `karma_backlash` schedule · 欺天阵延后到 `plan-zhenfa`（reminder.md 已登记） |
+| **P6 Agent 叙事** | `agent/packages/tiandao/src/tribulation-runtime.ts` + `agent/packages/schema/src/tribulation.ts` | 322 | 冷漠语调 prompt（L118 "化虚有位，叩关者可往；天道只空出座次..."）· `AscensionQuotaOpened` 广播（`server/src/cultivation/death_hooks.rs` L86-160）· 截胡讽刺 / 域崩哀歌 narration · 传统境界名 / targeted 泄密 guard |
+| **P7 平衡回归** | `tribulation.rs` L1128 + 测试 | — | 3 波强度曲线 · 化虚名额 `player_count/50` 硬上限 3 · 半步化虚结算 · 截胡窗口时长锁定 |
+
+### 关键 commits
+
+- `137daf894` 2026-04-25 — `Merge pull request #96 from Kizunad/auto/plan-tribulation-v1`（plan 主体合入 main）
+- `610710528` — `feat(server): 生成渡劫预兆雷云方块`（P1 临时云层方块）
+- `9bfec3d42` — `feat(server): 接入心魔劫预生成`（P3 agent 预生成接线）
+- `38dc87419` — `feat(server): 允许心魔劫波间插队`（P3 心魔与雷波协调）
+- `21a0a608d` — `fix(server): 允许心魔期截胡`（P2/P3 交叉收尾）
+- `2a8850b14` — `fix(server): 收紧渡劫截胡结算`（P2 战绩 / 物品 100% 转移）
+- `5439aac4d` — `fix(server): 持久化域崩状态标记`（P4 ZoneStatus::Collapsed）
+- `d73ca9ca4` — `fix(server): 缩短域崩撤离窗口`（P4 平衡回归）
+- `182803640` — `fix(server): 限定域崩结算维度`（P4 跨维度过滤）
+- `1ced5dc20` / `2b78fd278` — `fix(server): 按维度过滤渡劫波及` / `按起劫维度判定逃劫`（P1 维度边界）
+- `51e1cd852` / `e86995abb` — `feat(server): 标记化虚劫气压力` / `标记连破劫气`（P5 KarmaWeightStore 接入）
+- `ee1a97731` — `fix(agent): 隐藏定向天罚叙事`（P5 隐性层 narration guard）
+- `27486e140` — `fix(agent): 加固天劫叙事兜底`（P6 fallback prompt）
+- `9abfb9d05` / `5999c2c62` — `test(server): 锁定渡劫平衡回归` / `锁定观劫雷击范围`（P7 / P2 回归 pin）
+- `3b05fe274` — `补齐跨系统接入缺口`（P0~P7 收口）
+- `9e973894e` 2026-05-01 — `merge(main): 合并主线并保留天劫实现`（最终主线对齐）
+
+### 测试结果
+
+- **Server**：`server/src/cultivation/tribulation.rs` **53 个 `#[test]`** + `server/src/world/karma.rs` **13 个 `#[test]`** + `world/events.rs` 域崩集成多 case = **66+ 单测**（覆盖渡虚/截胡/心魔/化虚名额/域崩/定向天罚/平衡回归）
+- **Client**：`TribulationBroadcastHudPlannerTest.java` + `TribulationBroadcastStoreTest.java` 两套 HUD/Store 单测
+- **Agent**：`heart-demon-runtime.ts` + `tribulation-runtime.ts` 各自 vitest 覆盖 fallback / arbiter / 冷漠口吻 prompt 校验
+
+### 跨仓库核验
+
+- **server ↔ agent**：`agent/packages/schema/src/tribulation.ts` schema → `samples/server-data.tribulation-broadcast.sample.json` 双端拍片；Redis channel `bong:tribulation` / `bong:tribulation_omen` / `bong:heart_demon_request` / `bong:heart_demon_offer` / `bong:zone_collapse` 在 `agent/packages/schema/src/channels.ts` 注册
+- **server ↔ client**：`TribulationStateHandler.java` / `TribulationBroadcastHandler.java` 消费 server CustomPayload；`TribulationOmenCloudPlayer` / `TribulationBoundaryPlayer` / `TribulationLightningPlayer` 三类粒子 player 与 server VFX channel 对齐
+- **agent ↔ client**：心魔 offer 复用 `Insight offer screen`；agent fallback 文案锁定原句"北风忽起，雷云自聚..."
+
+### 遗留 / 后续（§9 全部为非阻塞）
+
+- **心魔劫多情境树**：MVP 三 canonical choices 已可玩，3-5 情境 × 2-4 选项的树状结构需后续 plan（schema + server + client UI 联动）
+- **起劫确认 UX**：client 已有渡虚劫按钮 + server 权威校验，缺二次确认弹窗 / tooltip 文案——纯 UX 补强
+- **阵法/传送硬禁**：锁定半径 / VFX / 逃劫判定已落，"不可新布阵法" + 真正物理墙 / 传送禁用依赖 movement / `plan-zhenfa`（reminder.md 已登记）
+- **灵龛归属作废**：缺现有灵龛模块；域崩已禁经脉打通/自愈/炉鼎注灵，灵龛侧待对应系统成型
+- **Quota 最终事务性再校验**：当前公式/持久化/释放广播已落，多人同时起劫场景建议把最终 Ascended/HalfStep 移入 DB transaction
+- **Active tribulation 恢复字段**：当前能回 active 渡劫，`tribulations_active` 仍缺 phase / epicenter / participants / pending heart demon 完整上下文——保守失败恢复可用，后续迁移补全
+- **域崩 terminal 语义**：cause → `ZoneDeathKind::Death` 跳过运数保底，仍沿现有 death lifecycle；若"完全不可复活"需 death lifecycle 增加 terminal cause
+- **Worldgen raster mask runtime 消费**：`realm_collapse_mask` 已导出/校验，runtime authority 仍走 DB overlay / `ZoneRegistry`；若让 raster 成权威需另接 `TerrainProvider`
+
+— 验收人 Kiz · 2026-05-08
