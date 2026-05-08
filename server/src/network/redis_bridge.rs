@@ -77,6 +77,7 @@ use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
+const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(1);
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
@@ -1102,8 +1103,9 @@ async fn execute_publish(
     channel: &'static str,
     payload: &str,
 ) -> Result<(), String> {
+    let timeout = publish_timeout_for_channel(channel);
     match tokio::time::timeout(
-        REDIS_IO_TIMEOUT,
+        timeout,
         redis::cmd("PUBLISH")
             .arg(channel)
             .arg(payload)
@@ -1118,10 +1120,15 @@ async fn execute_publish(
             Ok(())
         }
         Ok(Err(error)) => Err(format!("failed to publish {channel}: {error}")),
-        Err(_) => Err(format!(
-            "timed out publishing {channel} after {:?}",
-            REDIS_IO_TIMEOUT
-        )),
+        Err(_) => Err(format!("timed out publishing {channel} after {timeout:?}")),
+    }
+}
+
+fn publish_timeout_for_channel(channel: &str) -> Duration {
+    if channel == CH_WORLD_STATE {
+        REDIS_WORLD_STATE_PUBLISH_TIMEOUT
+    } else {
+        REDIS_IO_TIMEOUT
     }
 }
 
@@ -2957,6 +2964,18 @@ mod redis_bridge_tests {
         assert_eq!(
             redact_redis_url_for_log("not-a-redis-url"),
             "[redacted redis endpoint]"
+        );
+    }
+
+    #[test]
+    fn world_state_publish_uses_extended_timeout_without_slowing_other_channels() {
+        assert_eq!(
+            publish_timeout_for_channel(CH_WORLD_STATE),
+            REDIS_WORLD_STATE_PUBLISH_TIMEOUT
+        );
+        assert_eq!(
+            publish_timeout_for_channel(CH_AGENT_COMMAND),
+            REDIS_IO_TIMEOUT
         );
     }
 
