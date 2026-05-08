@@ -34,6 +34,7 @@ use crate::inventory::{
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{canonical_player_id, PlayerState};
+use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::common::GameEventType;
 use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
@@ -122,6 +123,7 @@ pub struct CompletionEventWriters<'w> {
     pub replenish: EventWriter<'w, ReplenishCompleted>,
     pub drain_qi: EventWriter<'w, DrainQiCompleted>,
     pub dye_warning: EventWriter<'w, DyeContaminationWarning>,
+    pub qi_transfer: EventWriter<'w, QiTransfer>,
 }
 
 /// 灵田逻辑时间：冷却仍用 lingtian-tick，残料保鲜用真实 server tick。
@@ -710,6 +712,7 @@ pub fn apply_completed_sessions(
                     &mut zone_qi,
                     time.lingtian_tick(),
                     &mut writers.drain_qi,
+                    &mut writers.qi_transfer,
                 );
             }
         }
@@ -1084,6 +1087,7 @@ fn apply_drain_qi_completion(
     zone_qi: &mut ZoneQiAccount,
     now_lingtian_tick: u64,
     drain_completed: &mut EventWriter<DrainQiCompleted>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
 ) {
     let (plot_owner, drained, to_player, to_zone) = {
         let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
@@ -1111,6 +1115,7 @@ fn apply_drain_qi_completion(
     }
     // 散逸 zone qi
     *zone_qi.get_mut(DEFAULT_ZONE) += to_zone;
+    emit_drain_qi_transfers(player, pos, to_player, to_zone, qi_transfers);
 
     // 双方 LifeRecord 记账（仅 owner != player）
     if let Some(owner) = plot_owner {
@@ -1140,6 +1145,37 @@ fn apply_drain_qi_completion(
         qi_to_player: to_player,
         qi_to_zone: to_zone,
     });
+}
+
+fn emit_drain_qi_transfers(
+    player: Entity,
+    pos: &valence::prelude::BlockPos,
+    to_player: f32,
+    to_zone: f32,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+) {
+    let plot_account =
+        QiAccountId::container(format!("lingtian_plot:{},{},{}", pos.x, pos.y, pos.z));
+    if to_player > 0.0 {
+        if let Ok(transfer) = QiTransfer::new(
+            plot_account.clone(),
+            QiAccountId::player(format!("{player:?}")),
+            to_player as f64,
+            QiTransferReason::Channeling,
+        ) {
+            qi_transfers.send(transfer);
+        }
+    }
+    if to_zone > 0.0 {
+        if let Ok(transfer) = QiTransfer::new(
+            plot_account,
+            QiAccountId::zone(DEFAULT_ZONE),
+            to_zone as f64,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            qi_transfers.send(transfer);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1662,6 +1698,7 @@ mod tests {
             .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<QiTransfer>()
             .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
@@ -2268,6 +2305,7 @@ mod tests {
             .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<QiTransfer>()
             .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
@@ -2509,6 +2547,7 @@ mod tests {
             .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<QiTransfer>()
             .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
@@ -2772,6 +2811,7 @@ mod tests {
             .add_event::<DyeContaminationWarning>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<QiTransfer>()
             .add_event::<SkillXpGain>()
             .add_systems(
                 Update,
@@ -3332,6 +3372,7 @@ mod tests {
             .add_event::<ReplenishCompleted>()
             .add_event::<StartDrainQiRequest>()
             .add_event::<DrainQiCompleted>()
+            .add_event::<QiTransfer>()
             .add_event::<ZonePressureCrossed>()
             .add_systems(
                 Update,
@@ -3698,6 +3739,25 @@ mod tests {
             "zone qi delta={}",
             zone_after - zone_before
         );
+        let qi_transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            qi_transfers.len(),
+            2,
+            "偷灵应写 player + zone 两笔 ledger event"
+        );
+        assert_eq!(
+            qi_transfers[0].to.kind,
+            crate::qi_physics::QiAccountKind::Player
+        );
+        assert!((qi_transfers[0].amount - 0.4).abs() < 1e-6);
+        assert_eq!(qi_transfers[0].reason, QiTransferReason::Channeling);
+        assert_eq!(qi_transfers[1].to, QiAccountId::zone(DEFAULT_ZONE));
+        assert!((qi_transfers[1].amount - 0.1).abs() < 1e-6);
+        assert_eq!(qi_transfers[1].reason, QiTransferReason::ReleaseToZone);
 
         let owner_lr = app.world().get::<LifeRecord>(owner).unwrap();
         let thief_lr = app.world().get::<LifeRecord>(thief).unwrap();
