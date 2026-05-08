@@ -81,6 +81,8 @@ pub fn sample(
         qi_density: 0.12,
         mofa_decay: 0.40,
         qi_vein_flow: 0.0,
+        spirit_eye_candidates: 0,
+        realm_collapse_mask: 0,
         sky_island_mask: 0.0,
         sky_island_base_y: 9999.0,
         sky_island_thickness: 0.0,
@@ -93,6 +95,9 @@ pub fn sample(
         // 镜像，目前不做。
         ground_cover_density: 0.0,
         ground_cover_id: 0,
+        zongmen_origin_id: 0,
+        mineral_density: 0.0,
+        mineral_kind: 0,
         fossil_bbox: 0,
         anomaly_intensity: 0.0,
         anomaly_kind: 0,
