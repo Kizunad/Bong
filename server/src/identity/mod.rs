@@ -5,10 +5,16 @@
 //! 信誉度账本"。worldview §十一 把这套机制定为末法残土的洗白通道：旧 identity 冻结待复用、
 //! 新 identity 信誉从 0 开始；毒蛊师等 permanent tag 仅在切回旧 identity 时再触发。
 //!
-//! 本模块仅负责数据模型、默认 identity 创建、持久化与几个 helper 函数。`/identity` slash
-//! 在 P1 (`command.rs`) 实装；`DuguRevealedEvent` consumer 在 P2 (`dugu_consumer.rs`)；
-//! NPC 反应分级在 P3 (`reaction.rs` / `scorer.rs`)；通用 `RevealedEvent` trait 在 P4
-//! (`revealed.rs`)；gossip + agent + client UI 在 P5 (`gossip.rs` 与跨仓库 hooks)。
+//! 子模块：
+//! - [`events`]：P1 `IdentityCreatedEvent` / `IdentitySwitchedEvent` Bevy 事件
+//! - [`precondition`]：P1 `WithinOwnNiche` precondition（玩家须在自己灵龛 5 格内）
+//! - [`command`]：P1 `/identity list / new / switch / rename` slash command
+//! - `DuguRevealedEvent` consumer 在 P2 (`dugu_consumer.rs`)；NPC 反应分级在 P3
+//! - 通用 `RevealedEvent` trait 在 P4 (`revealed.rs`)；gossip + agent + client UI 在 P5
+
+pub mod command;
+pub mod events;
+pub mod precondition;
 
 use std::collections::HashMap;
 
@@ -252,6 +258,7 @@ pub fn register(app: &mut App) {
         attach_identity_bundle_to_joined_clients
             .after(crate::player::attach_player_state_to_joined_clients),
     );
+    command::register(app);
 }
 
 /// 玩家加入时附挂 [`PlayerIdentities`] Component。

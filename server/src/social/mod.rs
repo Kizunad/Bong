@@ -122,7 +122,7 @@ pub(crate) struct SpiritNicheRegistry {
 }
 
 impl SpiritNicheRegistry {
-    fn upsert(&mut self, niche: SpiritNiche) {
+    pub(crate) fn upsert(&mut self, niche: SpiritNiche) {
         self.niches.insert(niche.owner.clone(), niche);
     }
 
@@ -1772,6 +1772,22 @@ pub(crate) fn block_break_is_protected_by_registered_spirit_niche(
     registry.active_niches().any(|niche| {
         Some(niche.owner.as_str()) != actor_char_id
             && block_distance_squared(block_pos, niche.pos)
+                <= SPIRIT_NICHE_RADIUS * SPIRIT_NICHE_RADIUS
+    })
+}
+
+/// 玩家是否在自己灵龛的 5 格安全半径内（plan-identity-v1 P1 `WithinOwnNiche`）。
+///
+/// 仅匹配 `niche.owner == actor_char_id` 且 `!niche.revealed`（已被识破的灵龛
+/// 失去安全语义，worldview §十一 "灵龛 = 安全空间" 仅指未暴露的灵龛）。
+pub(crate) fn position_is_within_own_active_spirit_niche(
+    actor_char_id: &str,
+    pos: DVec3,
+    registry: &SpiritNicheRegistry,
+) -> bool {
+    registry.active_niches().any(|niche| {
+        niche.owner == actor_char_id
+            && distance_squared_to_niche(pos, niche.pos)
                 <= SPIRIT_NICHE_RADIUS * SPIRIT_NICHE_RADIUS
     })
 }
