@@ -165,6 +165,7 @@ impl Default for SkillConfigSchemas {
 pub enum SkillConfigRejectReason {
     UnknownSkill,
     NoSchema,
+    StoreUnavailable,
     UnknownField(String),
     MissingRequiredField(String),
     InvalidFieldValue(String),
@@ -341,6 +342,36 @@ mod tests {
         }])
     }
 
+    fn numeric_schemas() -> SkillConfigSchemas {
+        SkillConfigSchemas::new([SkillConfigSchema {
+            skill_id: "burst_meridian.beng_quan",
+            fields: vec![
+                ConfigField {
+                    key: "intensity",
+                    label: "强度",
+                    kind: ConfigFieldKind::IntRange {
+                        min: 0,
+                        max: 10,
+                        step: 2,
+                    },
+                    required: true,
+                    default: None,
+                },
+                ConfigField {
+                    key: "ratio",
+                    label: "比例",
+                    kind: ConfigFieldKind::FloatRange {
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.25,
+                    },
+                    required: true,
+                    default: None,
+                },
+            ],
+        }])
+    }
+
     #[test]
     fn validates_required_enum_meridian_and_bool_defaults() {
         let mut config = BTreeMap::new();
@@ -376,6 +407,56 @@ mod tests {
         assert_eq!(
             validate_skill_config("burst_meridian.beng_quan", invalid, &schemas).unwrap_err(),
             SkillConfigRejectReason::InvalidFieldValue("stance".to_string())
+        );
+    }
+
+    #[test]
+    fn validates_numeric_ranges_and_rejects_boundary_violations() {
+        let schemas = numeric_schemas();
+        let valid = BTreeMap::from([
+            ("intensity".to_string(), json!(10)),
+            ("ratio".to_string(), json!(0.75)),
+        ]);
+        assert!(validate_skill_config("burst_meridian.beng_quan", valid, &schemas).is_ok());
+
+        let invalid_int_step = BTreeMap::from([
+            ("intensity".to_string(), json!(3)),
+            ("ratio".to_string(), json!(0.75)),
+        ]);
+        assert_eq!(
+            validate_skill_config("burst_meridian.beng_quan", invalid_int_step, &schemas)
+                .unwrap_err(),
+            SkillConfigRejectReason::InvalidFieldValue("intensity".to_string())
+        );
+
+        let overflowing_int = BTreeMap::from([
+            ("intensity".to_string(), json!(i64::from(i32::MAX) + 1)),
+            ("ratio".to_string(), json!(0.75)),
+        ]);
+        assert_eq!(
+            validate_skill_config("burst_meridian.beng_quan", overflowing_int, &schemas)
+                .unwrap_err(),
+            SkillConfigRejectReason::InvalidFieldValue("intensity".to_string())
+        );
+
+        let invalid_float_step = BTreeMap::from([
+            ("intensity".to_string(), json!(8)),
+            ("ratio".to_string(), json!(0.3)),
+        ]);
+        assert_eq!(
+            validate_skill_config("burst_meridian.beng_quan", invalid_float_step, &schemas)
+                .unwrap_err(),
+            SkillConfigRejectReason::InvalidFieldValue("ratio".to_string())
+        );
+
+        let out_of_range_float = BTreeMap::from([
+            ("intensity".to_string(), json!(8)),
+            ("ratio".to_string(), json!(1.25)),
+        ]);
+        assert_eq!(
+            validate_skill_config("burst_meridian.beng_quan", out_of_range_float, &schemas)
+                .unwrap_err(),
+            SkillConfigRejectReason::InvalidFieldValue("ratio".to_string())
         );
     }
 

@@ -11,10 +11,26 @@ import java.util.function.Consumer;
 
 /** Owns the singleton floating SkillConfig editor in the techniques tab. */
 public final class SkillConfigPanelManager {
+    @FunctionalInterface
+    interface WindowFactory {
+        WindowHandle create(
+            SkillConfigSchemaRegistry.SkillConfigSchema schema,
+            JsonObject current,
+            Consumer<JsonObject> onSave,
+            Runnable onClose
+        );
+    }
+
+    interface WindowHandle {
+        FlowLayout component();
+        void positionAt(int anchorX, int anchorY, int screenWidth, int screenHeight);
+    }
+
     private final FlowLayout host;
     private final Runnable afterSave;
+    private final WindowFactory windowFactory;
     private final Consumer<CastState> castListener = this::onCastStateChanged;
-    private SkillConfigFloatingWindow activeWindow;
+    private WindowHandle activeWindow;
     private String activeSkillId = "";
 
     public SkillConfigPanelManager(FlowLayout host) {
@@ -22,8 +38,13 @@ public final class SkillConfigPanelManager {
     }
 
     public SkillConfigPanelManager(FlowLayout host, Runnable afterSave) {
+        this(host, afterSave, SkillConfigFloatingWindow::new);
+    }
+
+    SkillConfigPanelManager(FlowLayout host, Runnable afterSave, WindowFactory windowFactory) {
         this.host = host;
         this.afterSave = afterSave;
+        this.windowFactory = windowFactory == null ? SkillConfigFloatingWindow::new : windowFactory;
         CastStateStore.addListener(castListener);
     }
 
@@ -42,7 +63,7 @@ public final class SkillConfigPanelManager {
         activeSkillId = technique.id();
         JsonObject current = SkillConfigStore.configFor(technique.id());
         if (current == null) current = SkillConfigSchemaRegistry.defaultConfig(technique.id());
-        activeWindow = new SkillConfigFloatingWindow(
+        activeWindow = windowFactory.create(
             schema,
             current,
             config -> {
@@ -77,7 +98,7 @@ public final class SkillConfigPanelManager {
         return activeSkillId;
     }
 
-    public SkillConfigFloatingWindow activeWindow() {
+    public WindowHandle activeWindow() {
         return activeWindow;
     }
 

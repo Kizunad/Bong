@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /** Floating editor for a single technique's SkillConfig fields. */
-public final class SkillConfigFloatingWindow {
+public final class SkillConfigFloatingWindow implements SkillConfigPanelManager.WindowHandle {
     private final SkillConfigSchemaRegistry.SkillConfigSchema schema;
     private final FlowLayout root;
     private final JsonObject currentConfig;

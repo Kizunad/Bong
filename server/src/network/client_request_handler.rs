@@ -87,6 +87,7 @@ use crate::network::cast_emit::{
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
+use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
@@ -2406,6 +2407,27 @@ mod tests {
         false
     }
 
+    fn collect_skill_config_snapshots(
+        helper: &mut MockClientHelper,
+    ) -> Vec<crate::skill::config::SkillConfigSnapshot> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::SkillConfigSnapshot(snapshot) => Some(snapshot),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     fn has_inventory_durability_payload(helper: &mut MockClientHelper, instance_id: u64) -> bool {
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
@@ -4343,7 +4365,7 @@ mod tests {
         let mut app = App::new();
         register_request_app(&mut app);
 
-        let (client_bundle, _helper) = create_mock_client("Azure");
+        let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut skill_bar = SkillBarBindings::default();
         assert!(skill_bar.set(
             0,
@@ -4408,6 +4430,56 @@ mod tests {
                 .as_ref()
                 .and_then(|config| config.fields.get("backfire_kind")),
             Some(&serde_json::json!("array"))
+        );
+
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "zhenmai.sever_chain",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([
+                    ("meridian_id".to_string(), serde_json::json!("Pericardium")),
+                    (
+                        "backfire_kind".to_string(),
+                        serde_json::json!("tainted_yuan"),
+                    ),
+                ])),
+            );
+        let casting = app.world().get::<Casting>(entity).unwrap();
+        assert_eq!(
+            casting
+                .skill_config
+                .as_ref()
+                .and_then(|config| config.fields.get("backfire_kind")),
+            Some(&serde_json::json!("array"))
+        );
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillConfigIntent {
+                    v: 1,
+                    skill_id: "zhenmai.sever_chain".to_string(),
+                    config: std::collections::BTreeMap::from([(
+                        "backfire_kind".to_string(),
+                        serde_json::json!("invalid"),
+                    )]),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let snapshots = collect_skill_config_snapshots(&mut helper);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0]
+                .configs
+                .get("zhenmai.sever_chain")
+                .and_then(|config| config.fields.get("backfire_kind")),
+            Some(&serde_json::json!("tainted_yuan"))
         );
     }
 
@@ -4910,7 +4982,7 @@ fn validate_skill_config_before_cast(
         return Err(SkillConfigRejectReason::UnknownSkill);
     };
     let Some(store) = combat_params.skill_config_store.as_deref() else {
-        return Err(SkillConfigRejectReason::NoSchema);
+        return Err(SkillConfigRejectReason::StoreUnavailable);
     };
     let player_id = canonical_player_id(username.0.as_str());
     let Some(config) = store.config_for(player_id.as_str(), skill_id) else {
@@ -5217,6 +5289,15 @@ fn handle_skill_config_intent_request(
             tracing::warn!(
                 "[bong][network] skill_config_intent entity={entity:?} skill={skill_id} rejected: {reason:?}"
             );
+            let snapshot = store.snapshot_for_player(player_id.as_str());
+            if let Ok((_, mut client)) = clients.get_mut(entity) {
+                send_skill_config_snapshot_to_client(
+                    &mut client,
+                    snapshot,
+                    entity,
+                    username.as_str(),
+                );
+            }
             return;
         }
     };
