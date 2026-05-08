@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs,
-    Position, Query, Res, UniqueId,
+    ParamSet, Position, Query, Res, UniqueId,
 };
 
 use crate::combat::components::{
@@ -15,7 +15,10 @@ use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::qi_physics::qi_negative_field_drain_ratio;
+use crate::qi_physics::{
+    qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm, QiAccountId,
+    QiTransfer, QiTransferReason,
+};
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
     ProjectileQiDrainedEventV1, VortexBackfireCauseV1, VortexBackfireEventV1, VortexFieldStateV1,
@@ -441,7 +444,10 @@ pub fn vortex_intercept_tick(
     fields: Query<&VortexField>,
     mut projectiles: Query<ProjectileDrainItem<'_>>,
     mut needles: Query<NeedleDrainItem<'_>>,
-    mut events: EventWriter<ProjectileQiDrainedEvent>,
+    mut drain_events: ParamSet<(
+        EventWriter<ProjectileQiDrainedEvent>,
+        EventWriter<QiTransfer>,
+    )>,
     mut life_records: Query<&mut LifeRecord>,
     mut practice_logs: Query<&mut PracticeLog>,
 ) {
@@ -450,9 +456,10 @@ pub fn vortex_intercept_tick(
     }
 
     for (projectile_entity, position, mut projectile) in &mut projectiles {
-        if let Some((caster, delta, distance)) = vortex_aggregate_at(position.get(), fields.iter())
+        if let Some((caster, delta, drain_ratio)) =
+            vortex_aggregate_at(position.get(), fields.iter())
         {
-            let drained = drain_qi_payload(&mut projectile.qi_payload, delta, distance);
+            let drained = drain_qi_payload(&mut projectile.qi_payload, drain_ratio);
             if drained > f32::EPSILON {
                 record_projectile_drain(
                     &mut life_records,
@@ -462,7 +469,13 @@ pub fn vortex_intercept_tick(
                     clock.tick,
                 );
                 record_vortex_practice(&mut practice_logs, caster);
-                events.send(ProjectileQiDrainedEvent {
+                record_vortex_qi_transfer(
+                    &mut drain_events.p1(),
+                    projectile_entity,
+                    caster,
+                    drained,
+                );
+                drain_events.p0().send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: projectile_entity,
                     owner: projectile.owner,
@@ -476,9 +489,10 @@ pub fn vortex_intercept_tick(
     }
 
     for (needle_entity, position, mut needle) in &mut needles {
-        if let Some((caster, delta, distance)) = vortex_aggregate_at(position.get(), fields.iter())
+        if let Some((caster, delta, drain_ratio)) =
+            vortex_aggregate_at(position.get(), fields.iter())
         {
-            let drained = drain_qi_payload(&mut needle.qi_payload, delta, distance);
+            let drained = drain_qi_payload(&mut needle.qi_payload, drain_ratio);
             if drained > f32::EPSILON {
                 record_projectile_drain(
                     &mut life_records,
@@ -488,7 +502,8 @@ pub fn vortex_intercept_tick(
                     clock.tick,
                 );
                 record_vortex_practice(&mut practice_logs, caster);
-                events.send(ProjectileQiDrainedEvent {
+                record_vortex_qi_transfer(&mut drain_events.p1(), needle_entity, caster, drained);
+                drain_events.p0().send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: needle_entity,
                     owner: needle.owner,
@@ -598,14 +613,7 @@ fn close_vortex_without_backfire(
 }
 
 pub fn vortex_delta_for_realm(realm: Realm) -> f32 {
-    match realm {
-        Realm::Awaken => 0.0,
-        Realm::Induce => 0.10,
-        Realm::Condense => 0.25,
-        Realm::Solidify => 0.45,
-        Realm::Spirit => 0.65,
-        Realm::Void => 0.80,
-    }
+    qi_woliu_vortex_field_strength_for_realm(realm) as f32
 }
 
 pub fn vortex_radius_for_realm(realm: Realm) -> f32 {
@@ -645,7 +653,7 @@ pub fn vortex_qi_cost_per_sec(realm: Realm) -> f64 {
 pub fn vortex_aggregate_at<'a>(
     position: DVec3,
     fields: impl Iterator<Item = &'a VortexField>,
-) -> Option<(Entity, f32, f64)> {
+) -> Option<(Entity, f32, f32)> {
     fields
         .filter_map(|field| {
             let distance = position.distance(field.center);
@@ -656,15 +664,15 @@ pub fn vortex_aggregate_at<'a>(
             Some((field, distance, ratio))
         })
         .max_by(|(_, _, a), (_, _, b)| a.total_cmp(b))
-        .map(|(field, distance, _)| (field.caster, field.delta, distance))
+        .map(|(field, _, ratio)| (field.caster, field.delta, ratio as f32))
 }
 
-pub fn drain_qi_payload(qi_payload: &mut f32, field_intensity: f32, distance_blocks: f64) -> f32 {
+pub fn drain_qi_payload(qi_payload: &mut f32, drain_ratio: f32) -> f32 {
     if *qi_payload <= 0.0 {
         *qi_payload = 0.0;
         return 0.0;
     }
-    let ratio = qi_negative_field_drain_ratio(f64::from(field_intensity), distance_blocks) as f32;
+    let ratio = drain_ratio.clamp(0.0, 1.0);
     let drained = (*qi_payload * ratio).clamp(0.0, *qi_payload);
     *qi_payload = (*qi_payload - drained).max(0.0);
     drained
@@ -825,6 +833,27 @@ fn record_vortex_practice(practice_logs: &mut Query<&mut PracticeLog>, caster: E
     }
 }
 
+fn record_vortex_qi_transfer(
+    transfers: &mut EventWriter<QiTransfer>,
+    projectile: Entity,
+    field_caster: Entity,
+    drained: f32,
+) {
+    let amount = f64::from(drained);
+    if amount <= f64::EPSILON {
+        return;
+    }
+    let Ok(transfer) = QiTransfer::new(
+        QiAccountId::container(format!("projectile:{}", projectile.to_bits())),
+        QiAccountId::zone(format!("woliu_vortex:{}", field_caster.to_bits())),
+        amount,
+        QiTransferReason::Collision,
+    ) else {
+        return;
+    };
+    transfers.send(transfer);
+}
+
 fn record_vortex_backfire(record: &mut LifeRecord, cause: BackfireCause, tick: u64) {
     record.push(BiographyEntry::VortexBackfired {
         cause: format!("{cause:?}"),
@@ -870,6 +899,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<VortexBackfireEvent>();
         app.add_event::<ProjectileQiDrainedEvent>();
+        app.add_event::<QiTransfer>();
         app.add_event::<ApplyStatusEffectIntent>();
         app
     }
@@ -1120,18 +1150,92 @@ mod tests {
             caster: Entity::from_raw(11),
             ..low
         };
-        let (caster, delta, distance) =
+        let (caster, delta, drain_ratio) =
             vortex_aggregate_at(DVec3::new(0.5, 0.0, 0.0), [&low, &high].into_iter()).unwrap();
         assert_eq!(caster, Entity::from_raw(10));
         assert_eq!(delta, 0.25);
-        assert!((distance - 0.5).abs() < 1e-9);
+        assert!((drain_ratio - 0.25).abs() < 1e-6);
 
         let mut payload = 1.0;
-        let drained = drain_qi_payload(&mut payload, delta, distance);
+        let drained = drain_qi_payload(&mut payload, drain_ratio);
         assert!((drained - 0.25).abs() < 1e-6);
-        let drained_again = drain_qi_payload(&mut payload, 0.80, 2.0);
+        let drained_again = drain_qi_payload(&mut payload, 0.20);
         assert!((drained_again - 0.15).abs() < 1e-6);
         assert!((payload - 0.60).abs() < 1e-6);
+    }
+
+    #[test]
+    fn intercept_tick_chooses_near_weaker_field_and_records_transfer() {
+        let mut app = app(10);
+        let near_actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        let far_actor = spawn_actor(&mut app, Realm::Void, 100.0);
+        app.world_mut().entity_mut(near_actor).insert(VortexField {
+            center: DVec3::ZERO,
+            radius: 3.0,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 100,
+            caster: near_actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        app.world_mut().entity_mut(far_actor).insert(VortexField {
+            center: DVec3::new(3.0, 0.0, 0.0),
+            radius: 3.0,
+            delta: 0.80,
+            cast_at_tick: 0,
+            maintain_max_ticks: 100,
+            caster: far_actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        let projectile = app
+            .world_mut()
+            .spawn((
+                Position::new([0.5, 0.0, 0.0]),
+                QiProjectile {
+                    owner: None,
+                    qi_payload: 1.0,
+                },
+            ))
+            .id();
+        app.add_systems(Update, vortex_intercept_tick);
+
+        app.update();
+
+        let drain = app
+            .world()
+            .resource::<Events<ProjectileQiDrainedEvent>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!(drain.field_caster, near_actor);
+        assert!((drain.drained_amount - 0.25).abs() < 1e-6);
+        assert!((drain.remaining_payload - 0.75).abs() < 1e-6);
+
+        let transfer = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!(
+            transfer.from,
+            QiAccountId::container(format!("projectile:{}", projectile.to_bits()))
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone(format!("woliu_vortex:{}", near_actor.to_bits()))
+        );
+        assert_eq!(transfer.reason, QiTransferReason::Collision);
+        assert!((transfer.amount - f64::from(drain.drained_amount)).abs() < 1e-9);
+
+        let remaining = app
+            .world()
+            .get::<QiProjectile>(projectile)
+            .unwrap()
+            .qi_payload;
+        assert!((1.0 - (remaining + transfer.amount as f32)).abs() < 1e-6);
     }
 
     #[test]

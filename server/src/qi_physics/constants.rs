@@ -10,6 +10,8 @@ pub const QI_EXCRETION_BASE: f64 = 0.30;
 pub const QI_ACOUSTIC_THRESHOLD: f64 = 0.40;
 /// worldview §四：涡流 1/r^2 系数。
 pub const QI_NEGATIVE_FIELD_K: f64 = 1.0;
+/// worldview §四：避免 1/r^2 在 r→0 处奇异；1 格内视为饱和近场。
+pub const QI_NEGATIVE_FIELD_MIN_RADIUS_BLOCKS: f64 = 1.0;
 /// worldview §四：涡流反向获利上限。
 pub const QI_DRAIN_CLAMP: f64 = 0.50;
 /// worldview §九：骨币半衰参考，约 13 天。
