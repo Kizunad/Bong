@@ -270,6 +270,11 @@ pub fn register(app: &mut App) {
     wanted_player_emit::register(app);
     // 通用 RevealedEvent 路径：把 DuguRevealedEvent 用 trait 版 consumer 接住
     // （6 流派 vN+1 各自仿照 add_systems(Update, consume_revealed_event::<XxxEvent>)）。
+    //
+    // cultivation::dugu 声明事件类型但**从未** `app.add_event::<DuguRevealedEvent>()` 把它
+    // 注册成 Bevy Events resource（plan-dugu-v1 留 stub 待 consumer 时机），故由 identity
+    // module 在引入第一个 consumer 时补这一步——否则 EventReader 拿不到 Events<E> 会 panic。
+    app.add_event::<crate::cultivation::dugu::DuguRevealedEvent>();
     app.add_systems(
         Update,
         revealed::consume_revealed_event::<crate::cultivation::dugu::DuguRevealedEvent>,
@@ -664,5 +669,22 @@ mod tests {
     #[test]
     fn cooldown_constant_is_24000_ticks() {
         assert_eq!(IDENTITY_SWITCH_COOLDOWN_TICKS, 24_000);
+    }
+
+    #[test]
+    fn register_initializes_dugu_event_resource() {
+        // 防回归：identity::register 必须 add_event::<DuguRevealedEvent>，否则
+        // consume_revealed_event::<DuguRevealedEvent> 在生产 App 启动时拿不到 Events
+        // resource 会 panic（CI e2e 已撞过一次）。
+        use crate::cultivation::dugu::DuguRevealedEvent;
+        use valence::prelude::{App, Events};
+        let mut app = App::new();
+        super::register(&mut app);
+        assert!(
+            app.world()
+                .get_resource::<Events<DuguRevealedEvent>>()
+                .is_some(),
+            "register 必须把 Events<DuguRevealedEvent> 加进 World"
+        );
     }
 }
