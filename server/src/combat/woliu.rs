@@ -460,16 +460,8 @@ pub fn vortex_intercept_tick(
         if let Some((caster, delta, drain_ratio)) =
             vortex_aggregate_at(position.get(), fields.iter())
         {
-            let drained = drain_qi_payload(&mut projectile.qi_payload, drain_ratio);
+            let drained = projected_qi_drain(projectile.qi_payload, drain_ratio);
             if drained > f32::EPSILON {
-                record_projectile_drain(
-                    &mut life_records,
-                    caster,
-                    projectile_entity,
-                    drained,
-                    clock.tick,
-                );
-                record_vortex_practice(&mut practice_logs, caster);
                 if let Err(error) = record_vortex_qi_transfer(
                     &mut drain_events.p1(),
                     projectile_entity,
@@ -483,7 +475,17 @@ pub fn vortex_intercept_tick(
                         error = %error,
                         "[bong][woliu] failed to record vortex qi transfer"
                     );
+                    continue;
                 }
+                drain_qi_payload(&mut projectile.qi_payload, drain_ratio);
+                record_projectile_drain(
+                    &mut life_records,
+                    caster,
+                    projectile_entity,
+                    drained,
+                    clock.tick,
+                );
+                record_vortex_practice(&mut practice_logs, caster);
                 drain_events.p0().send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: projectile_entity,
@@ -501,16 +503,8 @@ pub fn vortex_intercept_tick(
         if let Some((caster, delta, drain_ratio)) =
             vortex_aggregate_at(position.get(), fields.iter())
         {
-            let drained = drain_qi_payload(&mut needle.qi_payload, drain_ratio);
+            let drained = projected_qi_drain(needle.qi_payload, drain_ratio);
             if drained > f32::EPSILON {
-                record_projectile_drain(
-                    &mut life_records,
-                    caster,
-                    needle_entity,
-                    drained,
-                    clock.tick,
-                );
-                record_vortex_practice(&mut practice_logs, caster);
                 if let Err(error) = record_vortex_qi_transfer(
                     &mut drain_events.p1(),
                     needle_entity,
@@ -524,7 +518,17 @@ pub fn vortex_intercept_tick(
                         error = %error,
                         "[bong][woliu] failed to record vortex qi transfer"
                     );
+                    continue;
                 }
+                drain_qi_payload(&mut needle.qi_payload, drain_ratio);
+                record_projectile_drain(
+                    &mut life_records,
+                    caster,
+                    needle_entity,
+                    drained,
+                    clock.tick,
+                );
+                record_vortex_practice(&mut practice_logs, caster);
                 drain_events.p0().send(ProjectileQiDrainedEvent {
                     field_caster: caster,
                     projectile: needle_entity,
@@ -698,14 +702,21 @@ pub fn vortex_aggregate_at<'a>(
 }
 
 pub fn drain_qi_payload(qi_payload: &mut f32, drain_ratio: f32) -> f32 {
-    if *qi_payload <= 0.0 {
+    if !qi_payload.is_finite() || *qi_payload <= 0.0 {
         *qi_payload = 0.0;
         return 0.0;
     }
-    let ratio = drain_ratio.clamp(0.0, 1.0);
-    let drained = (*qi_payload * ratio).clamp(0.0, *qi_payload);
+    let drained = projected_qi_drain(*qi_payload, drain_ratio);
     *qi_payload = (*qi_payload - drained).max(0.0);
     drained
+}
+
+fn projected_qi_drain(qi_payload: f32, drain_ratio: f32) -> f32 {
+    if !qi_payload.is_finite() || qi_payload <= 0.0 || !drain_ratio.is_finite() {
+        return 0.0;
+    }
+    let ratio = drain_ratio.clamp(0.0, 1.0);
+    (qi_payload * ratio).clamp(0.0, qi_payload)
 }
 
 pub fn ambient_qi_perception(
@@ -1210,6 +1221,21 @@ mod tests {
         let drained_again = drain_qi_payload(&mut payload, 0.20);
         assert!((drained_again - 0.15).abs() < 1e-6);
         assert!((payload - 0.60).abs() < 1e-6);
+    }
+
+    #[test]
+    fn projected_qi_drain_matches_mutating_drain_without_touching_payload() {
+        let payload = 1.0;
+
+        let projected = projected_qi_drain(payload, 0.25);
+        let mut actual_payload = payload;
+        let drained = drain_qi_payload(&mut actual_payload, 0.25);
+
+        assert_eq!(payload, 1.0);
+        assert!((projected - drained).abs() < 1e-6);
+        assert!((actual_payload - 0.75).abs() < 1e-6);
+        assert_eq!(projected_qi_drain(f32::NAN, 0.25), 0.0);
+        assert_eq!(projected_qi_drain(1.0, f32::NAN), 0.0);
     }
 
     #[test]
