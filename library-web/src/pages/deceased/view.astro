@@ -31,6 +31,12 @@ import Base from "../../layouts/Base.astro";
       </section>
 
       <section class="deceased-section ink-reveal">
+        <h2 class="deceased-section-title">化虚行事</h2>
+        <div class="deceased-empty-note" id="deceased-void-empty" style="display:none;">此卷未载化虚行事。</div>
+        <ol class="biography-timeline" id="deceased-void-list"></ol>
+      </section>
+
+      <section class="deceased-section ink-reveal">
         <h2 class="deceased-section-title">技艺里程碑</h2>
         <div class="deceased-empty-note" id="deceased-skill-empty" style="display:none;">此人未留下技艺突破记录。</div>
         <ol class="skill-milestone-list" id="deceased-skill-list"></ol>
@@ -55,9 +61,11 @@ import Base from "../../layouts/Base.astro";
       var skillSummary = document.getElementById("deceased-skill-summary");
       var skillList = document.getElementById("deceased-skill-list");
       var skillEmpty = document.getElementById("deceased-skill-empty");
+      var voidList = document.getElementById("deceased-void-list");
+      var voidEmpty = document.getElementById("deceased-void-empty");
       var bioList = document.getElementById("deceased-bio-list");
       var bioEmpty = document.getElementById("deceased-bio-empty");
-      if (!status || !detail || !title || !quote || !kicker || !metaGrid || !skillSummary || !skillList || !skillEmpty || !bioList || !bioEmpty) {
+      if (!status || !detail || !title || !quote || !kicker || !metaGrid || !skillSummary || !skillList || !skillEmpty || !voidList || !voidEmpty || !bioList || !bioEmpty) {
         return;
       }
 
@@ -66,8 +74,10 @@ import Base from "../../layouts/Base.astro";
       metaGrid.innerHTML = "";
       skillSummary.textContent = "";
       skillList.innerHTML = "";
+      voidList.innerHTML = "";
       bioList.innerHTML = "";
       skillEmpty.style.display = "none";
+      voidEmpty.style.display = "none";
       bioEmpty.style.display = "none";
 
       var search = new URLSearchParams(window.location.search);
@@ -92,9 +102,13 @@ import Base from "../../layouts/Base.astro";
           var lifecycle = snapshot && snapshot.lifecycle || {};
           var biography = Array.isArray(life.biography) ? life.biography : [];
           var milestones = Array.isArray(life.skill_milestones) ? life.skill_milestones : [];
+          var voidActions = Array.isArray(life.void_actions) ? life.void_actions : [];
+          var legacyItems = Array.isArray(life.legacy_items) ? life.legacy_items : [];
 
           title.textContent = "《" + display.name + "生平卷》";
-          kicker.textContent = display.prefix ? display.prefix + " 终结卷宗" : "终结卷宗";
+          kicker.textContent = voidActions.length > 0 || life.legacy_inheritor
+            ? "化虚者终结卷宗"
+            : (display.prefix ? display.prefix + " 终结卷宗" : "终结卷宗");
           quote.textContent = buildQuote(snapshot, milestones, biography);
           document.title = display.name + "生平卷 — 末法残土图书馆";
 
@@ -107,6 +121,9 @@ import Base from "../../layouts/Base.astro";
             renderMetaField("余运", String(lifecycle.fortune_remaining || 0)),
             renderMetaField("生平条目", String(biography.length)),
             renderMetaField("技艺突破", String(milestones.length)),
+            renderMetaField("化虚行事", String(voidActions.length)),
+            renderMetaField("道统继承", life.legacy_inheritor ? String(life.legacy_inheritor) : "未指定"),
+            renderMetaField("遗物数", String(legacyItems.length)),
           ].join("");
 
           skillSummary.innerHTML = milestones.length > 0
@@ -128,6 +145,12 @@ import Base from "../../layouts/Base.astro";
                 '</li>'
               );
             }).join("");
+          }
+
+          if (voidActions.length === 0) {
+            voidEmpty.style.display = "block";
+          } else {
+            voidList.innerHTML = voidActions.map(formatVoidActionEntry).join("");
           }
 
           if (biography.length === 0) {
@@ -293,6 +316,8 @@ import Base from "../../layouts/Base.astro";
           return '汲他人田';
         case 'PlotDestroyedByOther':
           return '灵田被毁';
+        case 'VoidAction':
+          return '化虚行事';
         default:
           return humanizeToken(kind || '未记');
       }
@@ -330,9 +355,27 @@ import Base from "../../layouts/Base.astro";
           return '汲取他人灵田灵气 ' + Number(payload.amount_drained || 0).toFixed(2) + '。';
         case 'PlotDestroyedByOther':
           return '自家灵田毁于他人之手。';
+        case 'VoidAction':
+          return '行 ' + humanizeToken(payload.kind || '未记') + ' 于 ' + humanizeToken(payload.target || '未记') + '，耗真元 ' + Number(payload.qi_cost || 0).toFixed(1) + '，折寿 ' + Number(payload.lifespan_cost_years || 0) + ' 年。';
         default:
           return JSON.stringify(payload);
       }
+    }
+
+    function formatVoidActionEntry(entry) {
+      var tick = Number(entry && entry.at_tick || 0);
+      var kind = humanizeToken(entry && entry.kind || 'void_action');
+      var target = humanizeToken(entry && entry.target || '未记');
+      var outcome = humanizeToken(entry && entry.outcome || '未记');
+      return (
+        '<li class="biography-item">' +
+          '<div class="timeline-tick">t' + tick + '</div>' +
+          '<div class="timeline-body">' +
+            '<div class="timeline-title">化虚 ' + escapeHtml(kind) + '</div>' +
+            '<p class="timeline-text">目标 ' + escapeHtml(target) + '，结局 ' + escapeHtml(outcome) + '；真元 ' + Number(entry && entry.qi_cost || 0).toFixed(1) + '，寿元 ' + Number(entry && entry.lifespan_cost_years || 0) + ' 年。</p>' +
+          '</div>' +
+        '</li>'
+      );
     }
 
     function humanizeToken(value) {
