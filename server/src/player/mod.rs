@@ -14,6 +14,7 @@ use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
+use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::persistence::persist_player_cultivation_bundle;
 use crate::persistence::PersistenceSettings;
@@ -71,6 +72,7 @@ type CultivationBundleQueryItem<'a> = (
     &'a UnlockedPerceptions,
     &'a InsightModifiers,
     Option<&'a TutorialState>,
+    Option<&'a MeridianSeveredPermanent>,
 );
 
 pub fn register(app: &mut App) {
@@ -271,6 +273,7 @@ pub(crate) fn despawn_disconnected_clients(
         &UnlockedPerceptions,
         &InsightModifiers,
         Option<&TutorialState>,
+        Option<&MeridianSeveredPermanent>,
     )>,
 ) {
     for entity in disconnected_clients.read() {
@@ -300,8 +303,10 @@ pub(crate) fn despawn_disconnected_clients(
                 unlocked_perceptions,
                 insight_modifiers,
                 tutorial_state,
+                severed,
             )) = cultivation_bundle.get(entity)
             {
+                let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
                 if let Err(error) = persist_player_cultivation_bundle(
                     &settings,
                     username.0.as_str(),
@@ -316,6 +321,7 @@ pub(crate) fn despawn_disconnected_clients(
                     unlocked_perceptions,
                     insight_modifiers,
                     tutorial_state,
+                    &severed_owned,
                 ) {
                     tracing::warn!(
                         "[bong][player] failed to persist cultivation bundle for disconnected client `{}`: {error}",
@@ -386,6 +392,7 @@ fn flush_connected_players_on_shutdown(
         &UnlockedPerceptions,
         &InsightModifiers,
         Option<&TutorialState>,
+        Option<&MeridianSeveredPermanent>,
     )>,
 ) {
     if app_exit.read().next().is_none() {
@@ -419,8 +426,10 @@ fn flush_connected_players_on_shutdown(
             unlocked_perceptions,
             insight_modifiers,
             tutorial_state,
+            severed,
         )) = cultivation_bundle.get(entity)
         {
+            let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
             if let Err(error) = persist_player_cultivation_bundle(
                 &settings,
                 username.0.as_str(),
@@ -435,6 +444,7 @@ fn flush_connected_players_on_shutdown(
                 unlocked_perceptions,
                 insight_modifiers,
                 tutorial_state,
+                &severed_owned,
             ) {
                 tracing::warn!(
                     "[bong][player] failed to persist cultivation bundle during shutdown flush for `{}`: {error}",
@@ -552,8 +562,10 @@ fn autosave_player_cultivation_bundles(
         unlocked_perceptions,
         insight_modifiers,
         tutorial_state,
+        severed,
     ) in &players
     {
+        let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
         match persist_player_cultivation_bundle(
             &settings,
             username.0.as_str(),
@@ -568,6 +580,7 @@ fn autosave_player_cultivation_bundles(
             unlocked_perceptions,
             insight_modifiers,
             tutorial_state,
+            &severed_owned,
         ) {
             Ok(()) => saved_count += 1,
             Err(error) => tracing::warn!(
