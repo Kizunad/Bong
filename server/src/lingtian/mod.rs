@@ -49,7 +49,10 @@ pub use pressure::{
     PRESSURE_LOW, PRESSURE_MID, REPLENISH_WINDOW_LINGTIAN_TICKS,
 };
 #[allow(unused_imports)]
-pub use weather::WeatherEvent;
+pub use weather::{
+    try_roll_weather_for_zone, weather_apply_to_plot_system, weather_generator_system,
+    ActiveWeather, ActiveWeatherEntry, WeatherEvent, WeatherRng,
+};
 
 #[allow(unused_imports)]
 pub use events::{
@@ -117,6 +120,9 @@ pub fn register(app: &mut App) {
     app.insert_resource(LingtianHarvestRng::default());
     app.insert_resource(LingtianClock::default());
     app.insert_resource(ZonePressureTracker::new());
+    // plan-lingtian-weather-v1 §3 — 单 zone MVP
+    app.insert_resource(ActiveWeather::new());
+    app.insert_resource(WeatherRng::default());
     let processing_registry =
         processing::ProcessingRecipeRegistry::load_default().unwrap_or_else(|error| {
             tracing::error!("[bong][lingtian][processing] recipe load failed: {error}");
@@ -160,6 +166,10 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            // plan-lingtian-weather-v1 §3 —— 必须先于 growth_tick / pressure 跑
+            // （expire 清完 + 新事件就位再做生长 / 压力计算）
+            weather::weather_generator_system,
+            weather::weather_apply_to_plot_system,
             systems::lingtian_growth_tick,
             // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）
             systems::record_dye_contamination_warning_recent_events,

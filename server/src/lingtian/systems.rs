@@ -1439,13 +1439,16 @@ pub fn record_replenish_to_pressure(
 /// （道伥 spawn 由下游 npc 系统接）。
 ///
 /// 季节修饰从 `WorldSeasonState.current.season` 取（jiezeq-v1 全服同步）；
-/// 天气事件 P2 加 `ActiveWeather` Resource 后从该处取，目前暂传 None。
+/// 天气事件从 `ActiveWeather` Resource 取（P2 落地 weather_generator_system
+/// 后自动填）。
+#[allow(clippy::too_many_arguments)]
 pub fn compute_zone_pressure_system(
     accumulator: Res<LingtianTickAccumulator>,
     clock: Res<LingtianClock>,
     mut tracker: ResMut<ZonePressureTracker>,
     registry: Res<PlantKindRegistry>,
     season_state: Option<Res<crate::world::season::WorldSeasonState>>,
+    active_weather: Option<Res<crate::lingtian::weather::ActiveWeather>>,
     mut plots: Query<&mut LingtianPlot>,
     mut events: EventWriter<ZonePressureCrossed>,
 ) {
@@ -1465,6 +1468,7 @@ pub fn compute_zone_pressure_system(
     // 汐转 jitter：用 (zone_hash, lingtian_tick / day_ticks) 派生稳定 unit float
     // 避免每 tick 抖动；非汐转季节 amplitude=0 → 结果与 jitter 无关。
     let jitter_unit = derive_supply_jitter(&zone, now);
+    let weather = active_weather.as_deref().and_then(|aw| aw.current(&zone));
 
     // 借用拆分：读出 pressure 先丢作用域，再改 state
     let pressure = {
@@ -1476,7 +1480,7 @@ pub fn compute_zone_pressure_system(
             &tracker,
             season,
             jitter_unit,
-            None,
+            weather,
         )
     };
     let new_level = PressureLevel::classify(pressure);
