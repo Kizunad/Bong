@@ -6,6 +6,7 @@
 //! 未启用 —— `main.rs` 的 `mod skill` 带 `#[allow(dead_code)]`，系统挂载等 P3+ 触发点接入时再 `register(app)`。
 
 pub mod components;
+pub mod config;
 pub mod curve;
 pub mod events;
 
@@ -22,6 +23,9 @@ use events::{SkillLvUp, SkillXpGain};
 /// **尚未被 `main.rs` 调用**（见 plan §9 P1：各 plan 触发点对接在 P3+）。
 /// 先提供 register 函数以便测试验证 framework 就绪。
 pub fn register(app: &mut App) {
+    app.init_resource::<config::SkillConfigStore>();
+    app.insert_resource(config::SkillConfigSchemas::default());
+
     app.add_event::<SkillXpGain>();
     app.add_event::<SkillLvUp>();
     app.add_event::<events::SkillCapChanged>();

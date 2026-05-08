@@ -1,11 +1,11 @@
-# Bong · plan-hotbar-modify-v2 · Active
+# Bong · plan-hotbar-modify-v2
 
 InspectScreen 功法工作台重整 + `SkillConfig` 通用配置底盘。承接 `plan-hotbar-modify-v1` finished（验收 2026-04-29），本 plan 做两件事：
 
 1. 把 v1 的「战斗·修炼」工作台改成真正的「功法」tab：只展示战斗功法，不再混入技艺三行和重复状态块。
 2. 建立 `SkillConfig`：每个招式可声明一组可配置字段，玩家在功法详情卡打开 floating window 配置，server 在 cast 开始时读取快照。
 
-**状态**：2026-05-08 从 skeleton 升 active。当前代码已有 v1 skillbar / techniques snapshot 基座，但 v2 UI 清理与 `SkillConfig` 还未实现。
+**状态**：2026-05-08 finished。v1 skillbar / techniques snapshot 基座已复用；v2 UI 清理、`SkillConfig` 通用底盘、floating window、`zhenmai.sever_chain` schema fixture 已落地。
 
 **世界观锚点**：无新增物理 / 经济概念。`SkillConfig` 只保存玩家对招式参数的选择，不直接写物理公式；具体代价仍归消费者 plan。例如 zhenmai-v2 的「绝脉断链」永久 SEVERED 语义归 zhenmai-v2 + meridian-severed-v1，本 plan 只提供配置入口与快照机制。
 
@@ -601,3 +601,54 @@ rg -n "skill_config_intent|skill_config_snapshot|SkillConfigStore|Casting\\.skil
 
 - 2026-05-07：初版 skeleton 创建，范围包括「功法」独立 tab + `SkillConfig` 通用底盘。
 - 2026-05-08：升 active 前清理。修正旧 skeleton 的状态漂移：后续消费者仍是 skeleton；`SkillConfig` 走既有 `bong:client_request` / `bong:server_data`，不是新 channel；保留 `快捷使用` tab；不删除核心 `MeridianChannel`；把「齿轮翻面」统一改为 floating window；补现状对齐、分阶段交付、测试矩阵与 Finish Evidence 模板；同步修正 zhenmai-v2 skeleton 中对本 plan 的旧引用。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 UI 清理：`client/src/main/java/com/bong/client/combat/inspect/TechniquesTabPanel.java` 替代旧 `CombatTrainingPanel`，`InspectScreen` tab 文案改为「功法」，功法 tab 只消费 `TechniquesListPanel.snapshot()`；`MeridianMiniSilhouette` 和 `BodyInspectComponent` 多经脉高亮 API 已接入，`快捷使用` tab 保留。
+- P1 SkillConfig server 底盘：`server/src/skill/config.rs` 新增 `SkillConfig` / `SkillConfigStore` / `SkillConfigSchemas` / intent 校验；`PlayerUiPrefs.skill_configs` 持久化；`ClientRequestV1::SkillConfigIntent`、`ServerDataPayloadV1::SkillConfigSnapshot`、`Casting.skill_config` 和 `skill_config_emit` 已接入。
+- P2 schema/client 配置窗口：`agent/packages/schema/src/skill-config.ts`、client request/server data schema/generated artifacts/sample 已补齐；client `SkillConfigStore`、`SkillConfigSnapshotHandler`、`ClientRequestProtocol.encodeSkillConfigIntent`、`ClientRequestSender.sendSkillConfigIntent`、`SkillConfigFloatingWindow`、`SkillConfigPanelManager` 已落地。
+- P3 契约 fixture：`SkillConfigSchemas::default()` 注册 `zhenmai.sever_chain`，`KnownTechniques` / `TECHNIQUE_DEFINITIONS` 包含 fixture；generic skill cast 对有 schema 的功法要求配置有效并在 cast 开始时快照；不实现 zhenmai-v2 gameplay。
+
+### 关键 commit
+
+- `3f63065d7` (2026-05-08) `docs(plan-hotbar-modify-v2): 升 active 并清理引用`：从 skeleton 升 active，清理后续 skeleton 旧引用与 plan 边界。
+- `afecedb9c` (2026-05-08) `feat(client): 重整功法 tab 工作台`：完成 P0 功法 tab、搜索、绑定、经脉高亮与旧命名清理。
+- `0d55d05f9` (2026-05-08) `feat(server): 接入 SkillConfig 底盘`：完成 P1 server store/schema/handler/persistence/cast snapshot 基座。
+- `2891c8eca` (2026-05-08) `feat(schema): 对齐 SkillConfig 协议`：完成 TypeBox schema、sample 与 generated schema。
+- `67846eb57` (2026-05-08) `feat(client): 接入功法配置浮窗`：完成 P2 client store、snapshot handler、floating window、manager 与 request sender。
+- `bc64bed77` (2026-05-08) `feat(server): 注册绝脉断链配置契约`：完成 P3 `zhenmai.sever_chain` fixture 与 cast config gate。
+- `da2973a8e` (2026-05-08) `fix(test): 补齐 SkillConfig 验证收口`：补齐 router type set 与 clippy 收口，恢复全量 server/client 验证。
+- `4183103e5` (2026-05-08) `fix(skill-config): 修复快照回推与配置测试缺口`：按 review 修复重连/拒绝后的权威 snapshot 回推，补 cast snapshot isolation、IntRange/FloatRange validation 与 client real-open save 回归。
+- `d5365a2da` (2026-05-08) `fix(skill-config): 收口 review 快照与恢复校验`：按二轮 review 移除 client 乐观落库、隔离 cast listener 异常、深拷贝 SkillConfig snapshot、成功 intent 回推权威 snapshot、恢复持久化配置时重新校验并丢弃坏数据。
+- `5995f3af3` (2026-05-08) `fix(skill-config): 收口基础设施缺失回退`：按后续 review 补齐 `CastStateStore` 稳定广播快照，server 在 `SkillConfigSchemas` / store 缺失时 fail-close 并回推权威 snapshot，补资源缺失与 listener 广播回归。
+- `665f31148` (2026-05-08) `Merge remote-tracking branch 'origin/main' into auto/plan-hotbar-modify-v2`：接入主线 `plan-craft-v1` 后解决 `InspectScreen` / `InspectScreenQuickUseTabTest` 冲突，保留本 plan「功法」tab 重命名，同时保留主线新增「手搓」tab 和 craft panel wiring。
+
+### 测试结果
+
+- `cd agent && npm run generate -w @bong/schema`：通过，已刷新 skill config generated schema artifacts。
+- `cd agent && npm run build`：通过。
+- `cd agent && npm test -w @bong/schema`：通过，schema 12 files / 327 tests passed。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && cargo test`：通过，2972 tests passed。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过，build successful。
+- `cd server && cargo test skill::config && cargo test skill_bar_cast_requires_config_for_schema_fixture && cargo test reconnect_with_same_player_id_receives_fresh_snapshot`：通过。
+- `cd server && cargo test valid_skill_config_intent_replies_with_authoritative_snapshot && cargo test meridian_all_matches_partition_without_duplicates && cargo test deserialize_server_data_samples`：通过。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests '*SkillConfig*' --tests '*CastStateMachineTest' --tests '*TechniquesListPanelTest'`：通过。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests '*InspectScreenQuickUseTabTest' --tests '*SkillConfig*'`：通过，覆盖主线新增「手搓」tab 与本 plan「功法」tab 的冲突合并面。
+- `git diff --check`：通过。
+
+### 跨仓库核验
+
+- `rg -n "战斗·修炼|CombatTrainingPanel|TAB_COMBAT_TRAINING" client/src/main/java client/src/test/java`：无匹配，运行态旧 tab / 旧类名 / 旧常量已清零。
+- `rg -n "skill_config_intent|skill_config_snapshot|SkillConfigStore|Casting\.skill_config" server agent client`：命中 server / agent schema / client 三侧协议与 store surface。
+- `rg -n "pub skill_config|skill_config:" server/src/combat/components.rs server/src/network/client_request_handler.rs`：命中 `Casting.skill_config` 字段与 cast 构造点。
+- `rg -n "zhenmai\.sever_chain|SkillConfigSchemaRegistry|SkillConfigSchemas::default|MeridianId::ALL" server client agent/packages/schema`：命中 server fixture、client fixture、schema sample 与已知功法注册。
+- `rg -n "^<<<<<<<|^=======|^>>>>>>>" .`：无匹配，主线 merge 冲突标记已清零。
+
+### 遗留 / 后续
+
+- 本 plan 只提供通用配置底盘和 `zhenmai.sever_chain` 契约 fixture；真实绝脉断链 gameplay、代价与 SEVERED 语义仍归后续 `plan-zhenmai-v2` / `plan-meridian-severed-v1`。
+- `IntRange` / `FloatRange` client 控件未在本 plan 强制落地；当前 fixture 只需要 `Enum` / `MeridianId` / `Bool`。
+- `npm ci` 曾报告 2 个 audit vulnerabilities；未执行 `npm audit fix`，避免越出本 plan 依赖范围。

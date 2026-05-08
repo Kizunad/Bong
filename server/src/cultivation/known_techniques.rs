@@ -28,12 +28,13 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 9] = [
+const TECHNIQUE_IDS: [&str; 10] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
     "zhenmai.parry",
+    "zhenmai.sever_chain",
     "woliu.vortex",
     "dugu.shoot_needle",
     "dugu.infuse_poison",
@@ -61,7 +62,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 9] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 10] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -151,6 +152,19 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 9] = [
         cooldown_ticks: 10,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/zhenmai_parry.png",
+    },
+    TechniqueDefinition {
+        id: "zhenmai.sever_chain",
+        display_name: "绝脉断链",
+        grade: "yellow",
+        description: "按配置锁定一条经脉与反震类型，真实断链结算由 zhenmai-v2 接入。",
+        required_realm: "Induce",
+        required_meridians: &[],
+        qi_cost: 5.0,
+        cast_ticks: 1,
+        cooldown_ticks: 20,
+        range: 1.0,
+        icon_texture: "bong:textures/gui/skill/zhenmai_sever_chain.png",
     },
     TechniqueDefinition {
         id: "woliu.vortex",

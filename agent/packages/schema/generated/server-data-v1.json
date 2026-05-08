@@ -12561,6 +12561,36 @@
       "required": [
         "v",
         "type",
+        "configs"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "skill_config_snapshot",
+          "type": "string"
+        },
+        "configs": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "caster",
         "active",
         "center",

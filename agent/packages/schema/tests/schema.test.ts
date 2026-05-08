@@ -667,6 +667,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.skill-config-snapshot.sample.json", () => {
+    const data = loadSample("server-data.skill-config-snapshot.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.weapon-equipped.sample.json", () => {
     const data = loadSample("server-data.weapon-equipped.sample.json");
     const result = validate(ServerDataV1, data);
@@ -839,6 +845,12 @@ describe("sample files pass schema validation", () => {
 
   it("client-request.skill-bar-cast.sample.json", () => {
     const data = loadSample("client-request.skill-bar-cast.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.skill-config-intent.sample.json", () => {
+    const data = loadSample("client-request.skill-config-intent.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
@@ -1151,6 +1163,13 @@ describe("negative sample files fail schema validation", () => {
     const slots = data.slots as Array<Record<string, unknown> | null>;
     slots[0] = { kind: "skill", display_name: "崩拳" };
     const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects non-object skill config intent payload", () => {
+    const data = loadObjectSample("client-request.skill-config-intent.sample.json");
+    data.config = null;
+    const result = validate(ClientRequestV1, data);
     expect(result.ok).toBe(false);
   });
 });

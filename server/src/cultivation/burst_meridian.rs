@@ -124,6 +124,7 @@ pub fn resolve_beng_quan(
         start_position: caster_position,
         complete_cooldown_ticks: BENG_QUAN_COOLDOWN_TICKS,
         skill_id: Some(BENG_QUAN_SKILL_ID.to_string()),
+        skill_config: None,
     });
 
     if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {

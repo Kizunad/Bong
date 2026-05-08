@@ -12,6 +12,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { AlchemyInterventionV1, BlockPosV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
+import { SkillConfigV1 } from "./skill-config.js";
 import {
   CancelSearchRequestV1,
   StartSearchRequestV1,
@@ -378,6 +379,17 @@ export const SkillBarBindRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type SkillBarBindRequestV1 = Static<typeof SkillBarBindRequestV1>;
+
+export const SkillConfigIntentRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_config_intent"),
+    skill_id: Type.String({ minLength: 1 }),
+    config: SkillConfigV1,
+  },
+  { additionalProperties: false },
+);
+export type SkillConfigIntentRequestV1 = Static<typeof SkillConfigIntentRequestV1>;
 
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
@@ -846,6 +858,7 @@ export const ClientRequestV1 = Type.Union([
   QuickSlotBindRequestV1,
   SkillBarCastRequestV1,
   SkillBarBindRequestV1,
+  SkillConfigIntentRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,

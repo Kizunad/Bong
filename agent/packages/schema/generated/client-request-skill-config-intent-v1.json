@@ -1,0 +1,30 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "skill_id",
+    "config"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "skill_config_intent",
+      "type": "string"
+    },
+    "skill_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "config": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {}
+      }
+    }
+  }
+}

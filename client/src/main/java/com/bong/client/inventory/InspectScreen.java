@@ -49,11 +49,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_EQUIP = 0;
     private static final int TAB_CULTIVATION = 1;
     private static final int TAB_SKILL = 2;
-    private static final int TAB_COMBAT_TRAINING = 3;
+    private static final int TAB_TECHNIQUES = 3;
     private static final int TAB_QUICK_USE = 4;
     /** plan-craft-v1 §2 — 通用手搓标签（无方块、纯 inventory 内集成）。 */
     private static final int TAB_CRAFT = 5;
-    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "战斗·修炼", "快捷使用", "手搓"};
+    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "功法", "快捷使用", "手搓"};
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
@@ -79,8 +79,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
     private FlowLayout skillTabContent;
-    private com.bong.client.combat.inspect.CombatTrainingPanel combatTrainingPanel;
-    private FlowLayout combatTrainingTabContent;
+    private com.bong.client.combat.inspect.TechniquesTabPanel techniquesTabPanel;
+    private FlowLayout techniquesTabContent;
     private FlowLayout quickUseTabContent;
     /** plan-craft-v1 §2 — 通用手搓 tab（CraftTabPanel 自管 listeners + UI 重建）。 */
     private com.bong.client.inventory.component.CraftTabPanel craftTab;
@@ -176,9 +176,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             com.bong.client.skill.SkillSetStore.removeListener(skillListener);
             skillListener = null;
         }
-        if (combatTrainingPanel != null) {
-            combatTrainingPanel.close();
-            combatTrainingPanel = null;
+        if (techniquesTabPanel != null) {
+            techniquesTabPanel.close();
+            techniquesTabPanel = null;
         }
         if (craftTab != null) {
             craftTab.dispose();
@@ -463,11 +463,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.child(skillTabContent);
         skillTabContent.positioning(Positioning.absolute(-9999, -9999));
 
-        // Tab 3: 战斗·修炼（plan-hotbar-modify-v1 §4）
-        combatTrainingPanel = new com.bong.client.combat.inspect.CombatTrainingPanel();
-        combatTrainingTabContent = combatTrainingPanel.component();
-        leftCol.child(combatTrainingTabContent);
-        combatTrainingTabContent.positioning(Positioning.absolute(-9999, -9999));
+        // Tab 3: 功法（plan-hotbar-modify-v2 §1）
+        techniquesTabPanel = new com.bong.client.combat.inspect.TechniquesTabPanel(channels -> {
+            if (bodyInspect != null) bodyInspect.setTechniqueMeridianHighlights(channels);
+        });
+        techniquesTabContent = techniquesTabPanel.component();
+        leftCol.child(techniquesTabContent);
+        techniquesTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         // Tab 4: 快捷使用（plan-HUD-v1 §10）
         quickUseTabContent = buildQuickUseTabContent();
@@ -781,7 +783,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             equipTabContent,
             cultivationTabContent,
             skillTabContent,
-            combatTrainingTabContent,
+            techniquesTabContent,
             quickUseTabContent,
             craftTabContent,
         };
@@ -794,8 +796,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // 切到技艺 tab 时刷一次最新快照（离开其他 tab 时可能积攒了若干事件）。
         if (idx == TAB_SKILL) {
             refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
-        } else if (idx == TAB_COMBAT_TRAINING && combatTrainingPanel != null) {
-            combatTrainingPanel.refreshFromStores();
+        } else if (idx == TAB_TECHNIQUES && techniquesTabPanel != null) {
+            techniquesTabPanel.refreshFromStores();
             hydrateSkillBarFromStore();
         } else if (idx == TAB_QUICK_USE) {
             hydrateQuickUseFromStore();
@@ -1529,15 +1531,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
             // Hotbar
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-            if (button == 0 && activeTab == TAB_COMBAT_TRAINING && hIdx >= 0 && combatTrainingPanel != null
-                    && combatTrainingPanel.selectedTechnique() != null) {
-                if (combatTrainingPanel.bindSelectedTechniqueToSlot(hIdx)) {
+            if (button == 0 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null
+                    && techniquesTabPanel.selectedTechnique() != null) {
+                if (techniquesTabPanel.bindSelectedTechniqueToSlot(hIdx)) {
                     hydrateSkillBarFromStore();
                     return true;
                 }
             }
-            if (button == 1 && activeTab == TAB_COMBAT_TRAINING && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
-                if (combatTrainingPanel != null && combatTrainingPanel.clearSkillSlot(hIdx)) {
+            if (button == 1 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
+                if (techniquesTabPanel != null && techniquesTabPanel.clearSkillSlot(hIdx)) {
                     hydrateSkillBarFromStore();
                     return true;
                 }

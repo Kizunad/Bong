@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "configs"
+  ],
+  "properties": {
+    "configs": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {}
+          }
+        }
+      }
+    }
+  }
+}

@@ -11,7 +11,9 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 双层人体检视组件 — 体表层(肉体伤势) + 经脉层(气脉状态)。
@@ -71,6 +73,7 @@ public class BodyInspectComponent extends BaseComponent {
     private BodyPart highlightedPart;
     private MeridianChannel highlightedChannel;
     private boolean highlightValid;
+    private final EnumSet<MeridianChannel> techniqueHighlightedChannels = EnumSet.noneOf(MeridianChannel.class);
 
     // 运行时物品（可被玩家拖拽修改，初始化时从模型同步）
     private final EnumMap<BodyPart, InventoryItem> physicalApplied = new EnumMap<>(BodyPart.class);
@@ -196,6 +199,24 @@ public class BodyInspectComponent extends BaseComponent {
     public void clearHighlight() {
         this.highlightedPart = null;
         this.highlightedChannel = null;
+    }
+
+    public void setTechniqueMeridianHighlights(java.util.Collection<MeridianChannel> channels) {
+        techniqueHighlightedChannels.clear();
+        if (channels == null) return;
+        for (MeridianChannel channel : channels) {
+            if (channel != null) techniqueHighlightedChannels.add(channel);
+        }
+    }
+
+    public void clearTechniqueMeridianHighlights() {
+        techniqueHighlightedChannels.clear();
+    }
+
+    public Set<MeridianChannel> techniqueMeridianHighlightsForTests() {
+        return techniqueHighlightedChannels.isEmpty()
+            ? Set.of()
+            : EnumSet.copyOf(techniqueHighlightedChannels);
     }
 
     // ==================== Rendering ====================
@@ -373,7 +394,8 @@ public class BodyInspectComponent extends BaseComponent {
             if (cs == null) continue;
             boolean hover = (ch == hoveredChannel);
             boolean selected = (ch == selectedChannel);
-            drawMeridianGlow(ctx, cx, by, ch, cs, hover, selected);
+            boolean techniqueHighlighted = techniqueHighlightedChannels.contains(ch);
+            drawMeridianGlow(ctx, cx, by, ch, cs, hover, selected, techniqueHighlighted);
         }
 
         // Highlight drag target
@@ -505,12 +527,12 @@ public class BodyInspectComponent extends BaseComponent {
     /** 显示脉 — 干净的单笔画：深色边 + 主色线 + 可选选中环。不发光。 */
     private void drawMeridianGlow(OwoUIDrawContext ctx, int cx, int by,
                                   MeridianChannel ch, ChannelState cs,
-                                  boolean hover, boolean selected) {
+                                  boolean hover, boolean selected, boolean techniqueHighlighted) {
         int[][] wp = MERIDIAN_PATHS.get(ch);
         if (wp == null) return;
 
         int baseRgb = cs.damage().color() & 0x00FFFFFF;
-        boolean active = hover || selected;
+        boolean active = hover || selected || techniqueHighlighted;
 
         // Alpha / 粗度：默认纤细，激活时加粗提亮
         int mainAlpha;
@@ -586,6 +608,10 @@ public class BodyInspectComponent extends BaseComponent {
         }
 
         // 选中：终点位置画一个静态白环（无脉动、不闪烁）
+        if (techniqueHighlighted && !selected) {
+            int[] end = wp[wp.length - 1];
+            drawCircleOutline(ctx, cx + end[0], by + end[1], 4, 0xCC9FE0D0);
+        }
         if (selected) {
             int[] end = wp[wp.length - 1];
             drawCircleOutline(ctx, cx + end[0], by + end[1], 4, 0xDDFFFFFF);

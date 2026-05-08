@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::PlayerSocialSnapshotV1;
 use crate::schema::world_state::PlayerPowerBreakdown;
 use crate::skill::components::SkillSet;
+use crate::skill::config::SkillConfig;
 use crate::world::dimension::DimensionKind;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
@@ -48,6 +50,8 @@ pub(crate) struct PlayerUiPrefs {
     pub quick_slots: [Option<String>; 9],
     #[serde(default)]
     pub skill_bar: [SkillSlotPersist; 9],
+    #[serde(default)]
+    pub skill_configs: BTreeMap<String, SkillConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -2286,10 +2290,32 @@ mod player_state_tests {
         .expect("legacy prefs should decode with default skill_bar");
 
         assert_eq!(prefs.quick_slots[0], Some("tea".to_string()));
+        assert!(prefs.skill_configs.is_empty());
         assert!(prefs
             .skill_bar
             .iter()
             .all(|slot| matches!(slot, SkillSlotPersist::Empty)));
+    }
+
+    #[test]
+    fn ui_prefs_accepts_legacy_payload_without_skill_configs() {
+        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+            "quick_slots": [null, null, null, null, null, null, null, null, null],
+            "skill_bar": [
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"}
+            ]
+        }))
+        .expect("legacy prefs should decode without skill_configs");
+
+        assert!(prefs.skill_configs.is_empty());
     }
 
     #[test]

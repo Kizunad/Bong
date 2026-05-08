@@ -1,7 +1,12 @@
 package com.bong.client.combat.inspect;
 
+import com.bong.client.inventory.model.MeridianChannel;
+
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -47,6 +52,7 @@ public final class TechniquesListPanel {
     public record Technique(
         String id,
         String displayName,
+        List<String> aliases,
         Grade grade,
         float proficiency,     // 0..1
         boolean active,         // maintainable toggle
@@ -59,9 +65,43 @@ public final class TechniquesListPanel {
         int cooldownTicks,
         float range
     ) {
+        public Technique(
+            String id,
+            String displayName,
+            Grade grade,
+            float proficiency,
+            boolean active,
+            String castKey,
+            String description,
+            String requiredRealm,
+            List<RequiredMeridian> requiredMeridians,
+            float qiCost,
+            int castTicks,
+            int cooldownTicks,
+            float range
+        ) {
+            this(
+                id,
+                displayName,
+                List.of(),
+                grade,
+                proficiency,
+                active,
+                castKey,
+                description,
+                requiredRealm,
+                requiredMeridians,
+                qiCost,
+                castTicks,
+                cooldownTicks,
+                range
+            );
+        }
+
         public Technique {
             id = id == null ? "" : id;
             displayName = displayName == null ? "" : displayName;
+            aliases = aliases == null ? List.of() : List.copyOf(aliases);
             grade = grade == null ? Grade.MORTAL : grade;
             if (proficiency < 0f) proficiency = 0f;
             if (proficiency > 1f) proficiency = 1f;
@@ -108,6 +148,72 @@ public final class TechniquesListPanel {
         listeners.remove(listener);
     }
 
+    public static List<Technique> filter(List<Technique> source, String query) {
+        if (source == null || source.isEmpty()) return List.of();
+        if (query == null || query.isBlank()) return List.copyOf(source);
+        List<Technique> out = new ArrayList<>();
+        for (Technique technique : source) {
+            if (matchesQuery(technique, query)) out.add(technique);
+        }
+        return out;
+    }
+
+    public static boolean matchesQuery(Technique technique, String query) {
+        if (technique == null) return false;
+        if (query == null || query.isBlank()) return true;
+        String needle = normalizeSearch(query);
+        if (containsNormalized(technique.id(), needle) || containsNormalized(technique.displayName(), needle)) {
+            return true;
+        }
+        for (String alias : technique.aliases()) {
+            if (containsNormalized(alias, needle)) return true;
+        }
+        return false;
+    }
+
+    public static List<MeridianChannel> requiredChannels(Technique technique) {
+        if (technique == null || technique.requiredMeridians().isEmpty()) return List.of();
+        List<MeridianChannel> channels = new ArrayList<>();
+        for (RequiredMeridian required : technique.requiredMeridians()) {
+            channelFromWire(required.channel()).ifPresent(channels::add);
+        }
+        return channels;
+    }
+
+    public static Optional<MeridianChannel> channelFromWire(String wire) {
+        if (wire == null || wire.isBlank()) return Optional.empty();
+        String key = normalizeMeridian(wire);
+        for (MeridianChannel channel : MeridianChannel.values()) {
+            if (normalizeMeridian(channel.name()).equals(key)
+                || normalizeMeridian(channel.displayName()).equals(key)) {
+                return Optional.of(channel);
+            }
+        }
+        return Optional.ofNullable(switch (key) {
+            case "lung", "lu" -> MeridianChannel.LU;
+            case "largeintestine", "li" -> MeridianChannel.LI;
+            case "stomach", "st" -> MeridianChannel.ST;
+            case "spleen", "sp" -> MeridianChannel.SP;
+            case "heart", "ht" -> MeridianChannel.HT;
+            case "smallintestine", "si" -> MeridianChannel.SI;
+            case "bladder", "bl" -> MeridianChannel.BL;
+            case "kidney", "ki" -> MeridianChannel.KI;
+            case "pericardium", "pc" -> MeridianChannel.PC;
+            case "tripleenergizer", "te" -> MeridianChannel.TE;
+            case "gallbladder", "gb" -> MeridianChannel.GB;
+            case "liver", "lr" -> MeridianChannel.LR;
+            case "ren" -> MeridianChannel.REN;
+            case "du" -> MeridianChannel.DU;
+            case "chong" -> MeridianChannel.CHONG;
+            case "dai" -> MeridianChannel.DAI;
+            case "yinqiao" -> MeridianChannel.YIN_QIAO;
+            case "yangqiao" -> MeridianChannel.YANG_QIAO;
+            case "yinwei" -> MeridianChannel.YIN_WEI;
+            case "yangwei" -> MeridianChannel.YANG_WEI;
+            default -> null;
+        });
+    }
+
     public static void clearListenersForTests() {
         listeners.clear();
     }
@@ -115,5 +221,17 @@ public final class TechniquesListPanel {
     public static void resetForTests() {
         snapshot = Collections.emptyList();
         listeners.clear();
+    }
+
+    private static boolean containsNormalized(String value, String needle) {
+        return value != null && normalizeSearch(value).contains(needle);
+    }
+
+    private static String normalizeSearch(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeMeridian(String value) {
+        return normalizeSearch(value).replace("_", "").replace("-", "").replace(" ", "");
     }
 }

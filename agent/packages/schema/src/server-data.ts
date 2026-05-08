@@ -12,6 +12,7 @@ import {
   SkillBarConfigV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
+import { SkillConfigSnapshotV1 } from "./skill-config.js";
 import { CarrierStateV1 } from "./combat-carrier.js";
 import { DuguPoisonStateV1 } from "./dugu.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
@@ -172,6 +173,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("burst_meridian_event"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
+  Type.Literal("skill_config_snapshot"),
   Type.Literal("weapon_equipped"),
   Type.Literal("weapon_broken"),
   Type.Literal("treasure_equipped"),
@@ -855,6 +857,16 @@ export const ServerDataTechniquesSnapshotV1 = Type.Object(
 );
 export type ServerDataTechniquesSnapshotV1 = Static<typeof ServerDataTechniquesSnapshotV1>;
 
+export const ServerDataSkillConfigSnapshotV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_config_snapshot"),
+    ...SkillConfigSnapshotV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillConfigSnapshotV1 = Static<typeof ServerDataSkillConfigSnapshotV1>;
+
 export const ServerDataVortexStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1346,6 +1358,7 @@ export const ServerDataV1 = Type.Union([
   BurstMeridianEventV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataSkillConfigSnapshotV1,
   ServerDataVortexStateV1,
   ServerDataDuguPoisonStateV1,
   ServerDataCarrierStateV1,
