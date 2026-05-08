@@ -36,13 +36,18 @@ export const DuXuOutcomeV1 = Type.Union([
 ]);
 export type DuXuOutcomeV1 = Static<typeof DuXuOutcomeV1>;
 
+export const DuXuResultReasonV1 = Type.Union([
+  Type.Literal("void_quota_exceeded"),
+]);
+export type DuXuResultReasonV1 = Static<typeof DuXuResultReasonV1>;
+
 export const DuXuResultV1 = Type.Object(
   {
     char_id: Type.String({ minLength: 1 }),
     outcome: DuXuOutcomeV1,
     killer: Type.Optional(Type.String({ minLength: 1 })),
     waves_survived: Type.Integer({ minimum: 0 }),
-    reason: Type.Optional(Type.String({ minLength: 1 })),
+    reason: Type.Optional(DuXuResultReasonV1),
   },
   { additionalProperties: false },
 );

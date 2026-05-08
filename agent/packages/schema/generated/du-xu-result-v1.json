@@ -44,7 +44,7 @@
       "type": "integer"
     },
     "reason": {
-      "minLength": 1,
+      "const": "void_quota_exceeded",
       "type": "string"
     }
   }

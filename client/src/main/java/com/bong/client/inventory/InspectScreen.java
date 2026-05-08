@@ -410,15 +410,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         cultivationTabContent.child(qiColorVectorHud);
         // 网络新快照到达时推到 UI（BodyInspect 内部不会自动感知 MeridianStateStore.replace）。
         // 存成字段以便 removed() 回调里解绑 —— 否则每开一次 InspectScreen 都累积一个悬挂监听。
-        meridianBodyListener = body -> {
+        meridianBodyListener = body -> MinecraftClient.getInstance().execute(() -> {
             if (body != null) bodyInspect.setMeridianBody(body);
             if (qiColorVectorHud != null) qiColorVectorHud.setBody(body);
             refreshBodyStatus.run();
-        };
+        });
         MeridianStateStore.addListener(meridianBodyListener);
-        qiColorObservedListener = ignored -> refreshBodyStatus.run();
+        qiColorObservedListener = ignored -> MinecraftClient.getInstance().execute(refreshBodyStatus);
         QiColorObservedStore.addListener(qiColorObservedListener);
-        ascensionQuotaListener = ignored -> refreshBodyStatus.run();
+        ascensionQuotaListener = ignored -> MinecraftClient.getInstance().execute(refreshBodyStatus);
         AscensionQuotaStore.addListener(ascensionQuotaListener);
         bodyInspect.addSelectionListener(ch -> refreshBodyStatus.run());
 
