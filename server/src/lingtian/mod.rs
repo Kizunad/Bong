@@ -168,4 +168,8 @@ pub fn register(app: &mut App) {
             .after(systems::apply_completed_sessions),
     );
     app.add_systems(Update, systems::release_lingtian_plot_owner_on_npc_death);
+    app.add_systems(
+        Update,
+        systems::auto_set_plot_zone.after(systems::apply_completed_sessions),
+    );
 }

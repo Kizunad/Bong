@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, Res, ResMut, Resource, With, Without,
+    Position, PreUpdate, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::events::{AttackIntent, AttackSource};
@@ -540,6 +540,16 @@ pub fn register(app: &mut App) {
                 seclusion_action_system,
             )
                 .in_set(BigBrainSet::Actions),
+        )
+        // Must run before `process_npc_retire_requests` (also in Update) so
+        // the request is consumed in the same tick it's emitted. Without this
+        // edge, the request can be deferred a tick, during which a cancelled
+        // RetireAction may have removed PendingRetirement — the consumer then
+        // processes a stale request and retires an NPC that should have stayed.
+        .add_systems(
+            Update,
+            emit_retire_request_on_pending_added
+                .before(crate::npc::lifecycle::process_npc_retire_requests),
         );
 }
 
@@ -580,7 +590,6 @@ fn ageing_scorer_system(
 fn retire_action_system(
     mut commands: Commands,
     npcs: Query<(Option<&PendingRetirement>, &NpcLifespan), With<NpcMarker>>,
-    mut retire_requests: EventWriter<NpcRetireRequest>,
     mut actions: Query<(&Actor, &mut ActionState), With<RetireAction>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
@@ -593,7 +602,6 @@ fn retire_action_system(
             ActionState::Requested => {
                 if pending_retirement.is_none() {
                     commands.entity(*actor).insert(PendingRetirement);
-                    retire_requests.send(NpcRetireRequest { entity: *actor });
                 }
                 *state = ActionState::Executing;
             }
@@ -609,6 +617,15 @@ fn retire_action_system(
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
+    }
+}
+
+pub(crate) fn emit_retire_request_on_pending_added(
+    query: Query<Entity, (bevy_ecs::query::Added<PendingRetirement>, With<NpcMarker>)>,
+    mut requests: EventWriter<NpcRetireRequest>,
+) {
+    for entity in &query {
+        requests.send(NpcRetireRequest { entity });
     }
 }
 
@@ -719,6 +736,8 @@ fn flee_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    navigator.stop();
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -847,6 +866,8 @@ fn chase_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    navigator.stop();
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -927,6 +948,7 @@ fn melee_attack_action_system(
             }
             ActionState::Executing => {
                 let Ok((_npc_pos, mut bb, profile, _)) = npcs.get_mut(*actor) else {
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -1207,6 +1229,8 @@ fn flee_cultivator_action_system(
                 }
 
                 let Some(target_pos) = blackboard.target_position else {
+                    navigator.stop();
+                    *state = ActionState::Failure;
                     continue;
                 };
 

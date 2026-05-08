@@ -30,6 +30,7 @@ pub struct ScatteredCultivator {
     pub fail_streak: u8,
     pub last_replenish_tick: u64,
     pub migration_cooldown_until: u64,
+    pub farming_executing_ticks: u32,
 }
 
 impl ScatteredCultivator {
@@ -40,6 +41,7 @@ impl ScatteredCultivator {
             fail_streak: 0,
             last_replenish_tick: 0,
             migration_cooldown_until: 0,
+            farming_executing_ticks: 0,
         }
     }
 

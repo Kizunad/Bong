@@ -23,6 +23,7 @@ use super::movement::GameTick;
 use super::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 
 const FARMING_ACTION_SPEED: f64 = 0.65;
+const MAX_FARMING_EXECUTING_TICKS: u32 = 400;
 const MIGRATION_SUCCESS_DISTANCE: f64 = 3.0;
 
 type FarmingNpcQueryItem<'a> = (
@@ -424,6 +425,7 @@ fn till_action_system(
                 );
                 if inserted {
                     cultivator.home_plot = Some(pos);
+                    cultivator.farming_executing_ticks = 0;
                     cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
@@ -437,6 +439,24 @@ fn till_action_system(
                         cultivator.record_farming_success();
                     }
                     *state = ActionState::Success;
+                } else if let Ok((_, mut cultivator)) = npcs.get_mut(*actor) {
+                    cultivator.farming_executing_ticks += 1;
+                    if cultivator.farming_executing_ticks >= MAX_FARMING_EXECUTING_TICKS {
+                        sessions.clear(*actor);
+                        cultivator.record_farming_failure();
+                        tracing::warn!("[farming] till action timeout actor={actor:?}");
+                        *state = ActionState::Failure;
+                    }
+                } else {
+                    // Session exists but cultivator query miss — actor was
+                    // despawned or lost ScatteredCultivator. Drop the session
+                    // and fail; otherwise the action stays Executing forever
+                    // and the timeout never fires.
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] till action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -490,6 +510,7 @@ fn plant_action_system(
                     *actor,
                     ActiveSession::Planting(PlantingSession::new(pos, plant_id)),
                 ) {
+                    cultivator.farming_executing_ticks = 0;
                     cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
@@ -503,6 +524,20 @@ fn plant_action_system(
                         cultivator.record_farming_success();
                     }
                     *state = ActionState::Success;
+                } else if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                    cultivator.farming_executing_ticks += 1;
+                    if cultivator.farming_executing_ticks >= MAX_FARMING_EXECUTING_TICKS {
+                        sessions.clear(*actor);
+                        cultivator.record_farming_failure();
+                        tracing::warn!("[farming] plant action timeout actor={actor:?}");
+                        *state = ActionState::Failure;
+                    }
+                } else {
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] plant action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -559,6 +594,7 @@ fn harvest_action_system(
                     *actor,
                     ActiveSession::Harvest(HarvestSession::new(pos, plant_id, SessionMode::Auto)),
                 ) {
+                    cultivator.farming_executing_ticks = 0;
                     cultivator.record_farming_success();
                     *state = ActionState::Executing;
                 } else {
@@ -572,6 +608,20 @@ fn harvest_action_system(
                         cultivator.record_farming_success();
                     }
                     *state = ActionState::Success;
+                } else if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                    cultivator.farming_executing_ticks += 1;
+                    if cultivator.farming_executing_ticks >= MAX_FARMING_EXECUTING_TICKS {
+                        sessions.clear(*actor);
+                        cultivator.record_farming_failure();
+                        tracing::warn!("[farming] harvest action timeout actor={actor:?}");
+                        *state = ActionState::Failure;
+                    }
+                } else {
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] harvest action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -617,6 +667,7 @@ fn replenish_action_system(
                     *actor,
                     ActiveSession::Replenish(ReplenishSession::new(pos, ReplenishSource::Zone)),
                 ) {
+                    cultivator.farming_executing_ticks = 0;
                     cultivator.last_replenish_tick = now;
                     cultivator.record_farming_success();
                     *state = ActionState::Executing;
@@ -631,6 +682,20 @@ fn replenish_action_system(
                         cultivator.record_farming_success();
                     }
                     *state = ActionState::Success;
+                } else if let Ok(mut cultivator) = cultivators.get_mut(*actor) {
+                    cultivator.farming_executing_ticks += 1;
+                    if cultivator.farming_executing_ticks >= MAX_FARMING_EXECUTING_TICKS {
+                        sessions.clear(*actor);
+                        cultivator.record_farming_failure();
+                        tracing::warn!("[farming] replenish action timeout actor={actor:?}");
+                        *state = ActionState::Failure;
+                    }
+                } else {
+                    sessions.clear(*actor);
+                    tracing::warn!(
+                        "[farming] replenish action: actor query miss with active session → Failure"
+                    );
+                    *state = ActionState::Failure;
                 }
             }
             ActionState::Cancelled => {
@@ -772,6 +837,7 @@ mod tests {
 
         let ripe = LingtianPlot {
             pos: BlockPos::new(1, 64, 1),
+            zone: String::new(),
             owner: Some(Entity::from_raw(7)),
             crop: Some(crate::lingtian::plot::CropInstance {
                 kind: "ci_she_hao".to_string(),

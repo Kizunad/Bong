@@ -350,10 +350,16 @@ pub struct TsyDropRoll {
 #[allow(clippy::too_many_arguments)]
 pub fn register(app: &mut App) {
     let spawn_pools = load_tsy_spawn_pool_registry().unwrap_or_else(|error| {
-        panic!("[bong][tsy-hostile] failed to load tsy_spawn_pools.json: {error}")
+        tracing::error!(
+            "[bong][tsy-hostile] failed to load tsy_spawn_pools.json: {error} — using empty registry, tsy hostile spawning disabled"
+        );
+        TsySpawnPoolRegistry::default()
     });
     let drop_tables = load_tsy_drop_table_registry().unwrap_or_else(|error| {
-        panic!("[bong][tsy-hostile] failed to load tsy_drops.json: {error}")
+        tracing::error!(
+            "[bong][tsy-hostile] failed to load tsy_drops.json: {error} — using empty registry, tsy hostile drops disabled"
+        );
+        TsyNpcDropTableRegistry::default()
     });
 
     app.add_event::<TsyNpcSpawned>()

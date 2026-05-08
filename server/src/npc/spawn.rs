@@ -52,6 +52,19 @@ use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
 
+pub fn snap_spawn_y_to_surface(
+    pos: DVec3,
+    terrain: Option<&impl crate::world::terrain::SurfaceProvider>,
+) -> DVec3 {
+    if let Some(terrain) = terrain {
+        let info = terrain.query_surface(pos.x.floor() as i32, pos.z.floor() as i32);
+        if info.passable {
+            return DVec3::new(pos.x, f64::from(info.y + 1), pos.z);
+        }
+    }
+    pos
+}
+
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct NpcMarker;
 
@@ -963,8 +976,6 @@ pub fn spawn_beast_npc_at(
 pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
     if skin.as_ref().is_some_and(|skin| !skin.is_fallback()) {
         EntityKind::PLAYER
-    } else if skin.as_ref().is_some_and(SignedSkin::is_fallback) {
-        EntityKind::WITCH
     } else {
         EntityKind::VILLAGER
     }
@@ -1554,11 +1565,15 @@ mod tests {
 
     #[test]
     fn rogue_commoner_visual_kind_uses_player_only_for_real_skin() {
-        assert_eq!(fallback_rogue_commoner_kind(&None), EntityKind::VILLAGER);
+        assert_eq!(
+            fallback_rogue_commoner_kind(&None),
+            EntityKind::VILLAGER,
+            "None skin should produce villager (neutral NPC model)",
+        );
         assert_eq!(
             fallback_rogue_commoner_kind(&Some(SignedSkin::fallback())),
-            EntityKind::WITCH,
-            "MineSkin fallback sentinel should produce visible vanilla fallback, not Steve"
+            EntityKind::VILLAGER,
+            "MineSkin fallback skin should produce villager, not witch (散修不该是女巫模型)",
         );
         assert_eq!(
             fallback_rogue_commoner_kind(&Some(SignedSkin {
@@ -1568,7 +1583,8 @@ mod tests {
                     hash: "hash".into(),
                 },
             })),
-            EntityKind::PLAYER
+            EntityKind::PLAYER,
+            "real MineSkin skin should produce player entity",
         );
     }
 
@@ -2082,5 +2098,88 @@ mod tests {
             query.iter(world).count()
         };
         assert_eq!(npc_count, 0);
+    }
+
+    // -- Bug #2: snap_spawn_y_to_surface regression tests ------------------
+
+    #[test]
+    fn snap_spawn_y_above_ground_snaps_down() {
+        use crate::world::terrain::{SurfaceInfo, SurfaceProvider};
+        struct FlatGround;
+        impl SurfaceProvider for FlatGround {
+            fn query_surface(&self, _x: i32, _z: i32) -> SurfaceInfo {
+                SurfaceInfo {
+                    y: 66,
+                    passable: true,
+                }
+            }
+        }
+        let terrain = FlatGround;
+        let pos = DVec3::new(10.5, 200.0, 20.5);
+        let snapped = snap_spawn_y_to_surface(pos, Some(&terrain));
+        assert!(
+            (snapped.y - 67.0).abs() < 0.01,
+            "spawn at Y=200 should snap to surface_y+1=67, got {}",
+            snapped.y,
+        );
+        assert!(
+            (snapped.x - pos.x).abs() < 0.01 && (snapped.z - pos.z).abs() < 0.01,
+            "XZ should be unchanged",
+        );
+    }
+
+    #[test]
+    fn snap_spawn_y_below_ground_snaps_up() {
+        use crate::world::terrain::{SurfaceInfo, SurfaceProvider};
+        struct FlatGround;
+        impl SurfaceProvider for FlatGround {
+            fn query_surface(&self, _x: i32, _z: i32) -> SurfaceInfo {
+                SurfaceInfo {
+                    y: 66,
+                    passable: true,
+                }
+            }
+        }
+        let terrain = FlatGround;
+        let pos = DVec3::new(5.0, 10.0, 5.0);
+        let snapped = snap_spawn_y_to_surface(pos, Some(&terrain));
+        assert!(
+            (snapped.y - 67.0).abs() < 0.01,
+            "spawn at Y=10 should snap to surface_y+1=67, got {}",
+            snapped.y,
+        );
+    }
+
+    #[test]
+    fn snap_spawn_y_impassable_surface_keeps_original() {
+        use crate::world::terrain::{SurfaceInfo, SurfaceProvider};
+        struct LavaSurface;
+        impl SurfaceProvider for LavaSurface {
+            fn query_surface(&self, _x: i32, _z: i32) -> SurfaceInfo {
+                SurfaceInfo {
+                    y: 66,
+                    passable: false,
+                }
+            }
+        }
+        let terrain = LavaSurface;
+        let pos = DVec3::new(5.0, 80.0, 5.0);
+        let snapped = snap_spawn_y_to_surface(pos, Some(&terrain));
+        assert!(
+            (snapped.y - 80.0).abs() < 0.01,
+            "impassable surface should keep original Y=80, got {}",
+            snapped.y,
+        );
+    }
+
+    #[test]
+    fn snap_spawn_y_no_terrain_keeps_original() {
+        let pos = DVec3::new(5.0, 80.0, 5.0);
+        let snapped = snap_spawn_y_to_surface(pos, None::<&crate::world::terrain::TerrainProvider>);
+        assert!(
+            (snapped.y - 80.0).abs() < 0.01,
+            "no terrain provider should keep original Y=80, got {}",
+            snapped.y,
+        );
     }
 }

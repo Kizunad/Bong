@@ -14,8 +14,8 @@
 use std::collections::HashSet;
 
 use valence::prelude::{
-    bevy_ecs, App, Component, Entity, EventWriter, IntoSystemConfigs, Query, ResMut, Resource,
-    Update, With,
+    bevy_ecs, App, Component, Despawned, Entity, EventWriter, IntoSystemConfigs, Query, ResMut,
+    Resource, Update, With, Without,
 };
 
 use crate::cultivation::tribulation::{TribulationState, TribulationWaveCleared};
@@ -93,7 +93,10 @@ pub fn register(app: &mut App) {
 
 #[allow(clippy::type_complexity)]
 pub(crate) fn npc_tribulation_auto_wave_tick(
-    mut npcs: Query<(Entity, &TribulationState, &mut NpcTribulationPacing), With<NpcMarker>>,
+    mut npcs: Query<
+        (Entity, &TribulationState, &mut NpcTribulationPacing),
+        (With<NpcMarker>, Without<Despawned>),
+    >,
     mut cleared: EventWriter<TribulationWaveCleared>,
 ) {
     for (entity, state, mut pacing) in &mut npcs {
@@ -113,9 +116,10 @@ pub(crate) fn npc_tribulation_auto_wave_tick(
 
 /// 结束后释放配额：任何挂在 `AscensionQuotaStore.active` 但已没有
 /// `TribulationState` 的 NPC 都会被释放（涵盖成功进 Void / 失败 / 被取消）。
+#[allow(clippy::type_complexity)]
 pub(crate) fn release_quota_for_ended_tribulations(
     mut store: ResMut<AscensionQuotaStore>,
-    ongoing: Query<Entity, (With<NpcMarker>, With<TribulationState>)>,
+    ongoing: Query<Entity, (With<NpcMarker>, With<TribulationState>, Without<Despawned>)>,
 ) {
     if store.active.is_empty() {
         return;
