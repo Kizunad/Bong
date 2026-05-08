@@ -51,7 +51,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_SKILL = 2;
     private static final int TAB_COMBAT_TRAINING = 3;
     private static final int TAB_QUICK_USE = 4;
-    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "战斗·修炼", "快捷使用"};
+    /** plan-craft-v1 §2 — 通用手搓标签（无方块、纯 inventory 内集成）。 */
+    private static final int TAB_CRAFT = 5;
+    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "战斗·修炼", "快捷使用", "手搓"};
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
@@ -80,6 +82,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private com.bong.client.combat.inspect.CombatTrainingPanel combatTrainingPanel;
     private FlowLayout combatTrainingTabContent;
     private FlowLayout quickUseTabContent;
+    /** plan-craft-v1 §2 — 通用手搓 tab（CraftTabPanel 自管 listeners + UI 重建）。 */
+    private com.bong.client.inventory.component.CraftTabPanel craftTab;
+    private FlowLayout craftTabContent;
     private FlowLayout skillScrollDropZone;
     private LabelComponent skillScrollDropTitle;
     private LabelComponent skillScrollDropHint;
@@ -174,6 +179,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (combatTrainingPanel != null) {
             combatTrainingPanel.close();
             combatTrainingPanel = null;
+        }
+        if (craftTab != null) {
+            craftTab.dispose();
+            craftTab = null;
         }
         super.removed();
     }
@@ -464,6 +473,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         quickUseTabContent = buildQuickUseTabContent();
         leftCol.child(quickUseTabContent);
         quickUseTabContent.positioning(Positioning.absolute(-9999, -9999));
+
+        // Tab 5: 手搓（plan-craft-v1 §2 — 无方块通用合成入口）
+        craftTab = new com.bong.client.inventory.component.CraftTabPanel();
+        craftTabContent = craftTab.root();
+        leftCol.child(craftTabContent);
+        craftTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         middle.child(leftCol);
 
@@ -767,7 +782,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             cultivationTabContent,
             skillTabContent,
             combatTrainingTabContent,
-            quickUseTabContent
+            quickUseTabContent,
+            craftTabContent,
         };
         for (int i = 0; i < tabs.length; i++) {
             tabLabels[i].color(Color.ofArgb(i == idx ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
@@ -783,6 +799,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             hydrateSkillBarFromStore();
         } else if (idx == TAB_QUICK_USE) {
             hydrateQuickUseFromStore();
+        } else if (idx == TAB_CRAFT && craftTab != null) {
+            // 切到手搓 tab：刷一次最新 store 快照（store 在 tab 隐藏期间也会被更新）
+            craftTab.rebuildAll();
         }
     }
 
