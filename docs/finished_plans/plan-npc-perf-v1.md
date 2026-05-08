@@ -371,9 +371,9 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
 
 ### 关键 commit
 
-- `82c85c631` · 2026-05-09 · `plan-npc-perf-v1: NPC 热点接入空间索引与节流`
-- `52777691a` · 2026-05-09 · `plan-npc-perf-v1: 分批种子生成并恢复默认一百NPC`
-- `2aab46e53` · 2026-05-09 · `plan-npc-perf-v1: 稳定持久化与Redis压测锚点`
+- `7d0cfc67b` · 2026-05-09 · `plan-npc-perf-v1: NPC 热点接入空间索引与节流`
+- `307820d34` · 2026-05-09 · `plan-npc-perf-v1: 分批种子生成并恢复默认一百NPC`
+- `06dcc18ae` · 2026-05-09 · `plan-npc-perf-v1: 稳定持久化与Redis压测锚点`
 
 ### 测试结果
 
