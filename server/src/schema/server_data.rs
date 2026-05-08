@@ -494,20 +494,47 @@ impl TribulationStateV1 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AscensionQuotaV1 {
     pub occupied_slots: u32,
     pub quota_limit: u32,
     pub available_slots: u32,
+    #[serde(default)]
+    pub total_world_qi: f64,
+    #[serde(default)]
+    pub quota_k: f64,
+    #[serde(default)]
+    pub quota_basis: String,
 }
 
 impl AscensionQuotaV1 {
     pub fn new(occupied_slots: u32, quota_limit: u32) -> Self {
+        Self::with_world_qi(occupied_slots, quota_limit, 0.0, 0.0, "")
+    }
+
+    pub fn with_world_qi(
+        occupied_slots: u32,
+        quota_limit: u32,
+        total_world_qi: f64,
+        quota_k: f64,
+        quota_basis: impl Into<String>,
+    ) -> Self {
         Self {
             occupied_slots,
             quota_limit,
             available_slots: quota_limit.saturating_sub(occupied_slots),
+            total_world_qi: if total_world_qi.is_finite() {
+                total_world_qi.max(0.0)
+            } else {
+                0.0
+            },
+            quota_k: if quota_k.is_finite() {
+                quota_k.max(0.0)
+            } else {
+                0.0
+            },
+            quota_basis: quota_basis.into(),
         }
     }
 }
@@ -2123,7 +2150,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TribulationBroadcast(data) => {
                 Self::TribulationBroadcast { data: data.clone() }
             }
-            ServerDataPayloadV1::AscensionQuota(data) => Self::AscensionQuota { data: *data },
+            ServerDataPayloadV1::AscensionQuota(data) => {
+                Self::AscensionQuota { data: data.clone() }
+            }
             ServerDataPayloadV1::HeartDemonOffer(data) => {
                 Self::HeartDemonOffer { data: data.clone() }
             }
@@ -3036,6 +3065,15 @@ mod tests {
 
         assert_eq!(value["status"], "collapsed");
         assert_eq!(value["perception_text"], "灵气几近断绝，此地有不祥预感");
+    }
+
+    #[test]
+    fn ascension_quota_defaults_new_world_qi_fields_for_legacy_payloads() {
+        let payload: AscensionQuotaV1 =
+            serde_json::from_str(r#"{"occupied_slots":1,"quota_limit":3,"available_slots":2}"#)
+                .expect("legacy ascension quota payload should deserialize");
+
+        assert_eq!(payload, AscensionQuotaV1::new(1, 3));
     }
 
     #[test]

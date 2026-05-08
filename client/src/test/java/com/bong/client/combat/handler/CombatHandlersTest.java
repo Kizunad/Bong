@@ -208,13 +208,18 @@ class CombatHandlersTest {
     void ascensionQuotaPopulatesStore() {
         String json = """
             {"v":1,"type":"ascension_quota",
-             "occupied_slots":1,"quota_limit":3,"available_slots":2}""";
+             "occupied_slots":1,"quota_limit":2,"available_slots":1,
+             "total_world_qi":100.0,"quota_k":50.0,
+             "quota_basis":"world_qi_budget.current_total"}""";
         ServerDataDispatch dispatch = new AscensionQuotaHandler().handle(parse(json));
         assertTrue(dispatch.handled());
         AscensionQuotaStore.State state = AscensionQuotaStore.snapshot();
         assertEquals(1, state.occupiedSlots());
-        assertEquals(3, state.quotaLimit());
-        assertEquals(2, state.availableSlots());
+        assertEquals(2, state.quotaLimit());
+        assertEquals(1, state.availableSlots());
+        assertEquals(100.0, state.totalWorldQi());
+        assertEquals(50.0, state.quotaK());
+        assertEquals("world_qi_budget.current_total", state.quotaBasis());
     }
 
     private static ServerDataEnvelope parse(String json) {

@@ -1949,8 +1949,11 @@ mod tests {
         ));
         let deceased_dir = root.join("deceased");
         std::fs::create_dir_all(&deceased_dir).expect("test persistence dirs should be creatable");
+        let db_path = root.join("bong.db");
+        crate::persistence::bootstrap_sqlite(&db_path, &format!("npc-brain-{test_name}"))
+            .expect("test sqlite should bootstrap");
         let settings = crate::persistence::PersistenceSettings::with_paths(
-            root.join("bong.db"),
+            db_path,
             deceased_dir,
             format!("npc-brain-{test_name}"),
         );
@@ -3503,6 +3506,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(AscensionQuotaStore::default());
+        app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(100.0));
+        app.insert_resource(crate::cultivation::tribulation::VoidQuotaConfig::default());
         let (settings, persistence_root) = npc_brain_persistence_settings("rogue-tribulation-loop");
         app.insert_resource(settings);
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();

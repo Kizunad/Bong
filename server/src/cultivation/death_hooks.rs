@@ -33,6 +33,7 @@ pub enum CultivationDeathCause {
     ContaminationOverflow,
     NaturalAging,
     SwarmQiDrain,
+    VoidQuotaExceeded,
 }
 
 #[derive(Debug, Clone, Event)]

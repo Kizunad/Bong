@@ -20,10 +20,16 @@ public final class AscensionQuotaHandler implements ServerDataHandler {
             "available_slots",
             Math.max(0, quotaLimit - occupiedSlots)
         );
+        double totalWorldQi = readDouble(payload, "total_world_qi", 0.0);
+        double quotaK = readDouble(payload, "quota_k", 0.0);
+        String quotaBasis = readString(payload, "quota_basis", "");
         AscensionQuotaStore.replace(new AscensionQuotaStore.State(
             occupiedSlots,
             quotaLimit,
-            availableSlots
+            availableSlots,
+            totalWorldQi,
+            quotaK,
+            quotaBasis
         ));
         return ServerDataDispatch.handled(envelope.type(), "ascension quota updated");
     }
@@ -36,5 +42,21 @@ public final class AscensionQuotaHandler implements ServerDataHandler {
         double value = p.getAsDouble();
         if (!Double.isFinite(value)) return fallback;
         return Math.max(0, (int) value);
+    }
+
+    private static double readDouble(JsonObject obj, String field, double fallback) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        if (!p.isNumber()) return fallback;
+        double value = p.getAsDouble();
+        return Double.isFinite(value) ? Math.max(0.0, value) : fallback;
+    }
+
+    private static String readString(JsonObject obj, String field, String fallback) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        return p.isString() ? p.getAsString() : fallback;
     }
 }

@@ -2029,6 +2029,7 @@ mod redis_bridge_tests {
                         outcome: crate::schema::tribulation::DuXuOutcomeV1::Ascended,
                         killer: None,
                         waves_survived: 5,
+                        reason: None,
                     }),
                 ),
                 vec![CH_TRIBULATION_SETTLE, CH_TRIBULATION],

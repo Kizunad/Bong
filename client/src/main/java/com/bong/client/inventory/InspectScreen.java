@@ -5,6 +5,8 @@ import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.combat.inspect.StatusPanelExtension;
+import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.cultivation.ColorKind;
 import com.bong.client.cultivation.QiColorVectorHud;
 import com.bong.client.cultivation.QiColorObservedState;
@@ -129,6 +131,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     /** Screen 存活期间持有的 MeridianStateStore 订阅，close 时移除避免泄漏。 */
     private Consumer<MeridianBody> meridianBodyListener;
     private Consumer<QiColorObservedState> qiColorObservedListener;
+    private Consumer<AscensionQuotaStore.State> ascensionQuotaListener;
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
@@ -167,6 +170,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (qiColorObservedListener != null) {
             QiColorObservedStore.removeListener(qiColorObservedListener);
             qiColorObservedListener = null;
+        }
+        if (ascensionQuotaListener != null) {
+            AscensionQuotaStore.removeListener(ascensionQuotaListener);
+            ascensionQuotaListener = null;
         }
         if (inventoryListener != null) {
             InventoryStateStore.removeListener(inventoryListener);
@@ -390,6 +397,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (sb.length() > 0) sb.append("  §8·  ");
                 sb.append("§7").append(observedColor.displayText());
             }
+            String quotaLine = StatusPanelExtension.ascensionQuotaLine(b.realm());
+            if (!quotaLine.isEmpty()) {
+                if (sb.length() > 0) sb.append("  §8·  ");
+                sb.append("§7").append(quotaLine);
+            }
             bodyStatusLabel.text(Text.literal(sb.toString()));
         };
         refreshBodyStatus.run();
@@ -398,14 +410,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         cultivationTabContent.child(qiColorVectorHud);
         // 网络新快照到达时推到 UI（BodyInspect 内部不会自动感知 MeridianStateStore.replace）。
         // 存成字段以便 removed() 回调里解绑 —— 否则每开一次 InspectScreen 都累积一个悬挂监听。
-        meridianBodyListener = body -> {
+        meridianBodyListener = body -> MinecraftClient.getInstance().execute(() -> {
             if (body != null) bodyInspect.setMeridianBody(body);
             if (qiColorVectorHud != null) qiColorVectorHud.setBody(body);
             refreshBodyStatus.run();
-        };
+        });
         MeridianStateStore.addListener(meridianBodyListener);
-        qiColorObservedListener = ignored -> refreshBodyStatus.run();
+        qiColorObservedListener = ignored -> MinecraftClient.getInstance().execute(refreshBodyStatus);
         QiColorObservedStore.addListener(qiColorObservedListener);
+        ascensionQuotaListener = ignored -> MinecraftClient.getInstance().execute(refreshBodyStatus);
+        AscensionQuotaStore.addListener(ascensionQuotaListener);
         bodyInspect.addSelectionListener(ch -> refreshBodyStatus.run());
 
         // 根据当前选择应用灰态，并订阅变化

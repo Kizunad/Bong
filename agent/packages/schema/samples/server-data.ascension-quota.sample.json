@@ -2,6 +2,9 @@
   "v": 1,
   "type": "ascension_quota",
   "occupied_slots": 1,
-  "quota_limit": 3,
-  "available_slots": 2
+  "quota_limit": 2,
+  "available_slots": 1,
+  "total_world_qi": 100,
+  "quota_k": 50,
+  "quota_basis": "world_qi_budget.current_total"
 }

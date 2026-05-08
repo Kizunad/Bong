@@ -1606,6 +1606,16 @@ pub fn load_active_tribulation(
     load_active_tribulation_from_connection(&connection, char_id)
 }
 
+pub fn load_active_tribulation_count(settings: &PersistenceSettings) -> io::Result<u32> {
+    let connection = open_persistence_connection(settings)?;
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM tribulations_active", [], |row| {
+            row.get(0)
+        })
+        .map_err(io::Error::other)?;
+    sql_to_u32(count)
+}
+
 pub fn delete_active_tribulation(settings: &PersistenceSettings, char_id: &str) -> io::Result<()> {
     let connection = open_persistence_connection(settings)?;
     connection

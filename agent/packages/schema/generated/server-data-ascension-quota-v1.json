@@ -6,7 +6,10 @@
     "type",
     "occupied_slots",
     "quota_limit",
-    "available_slots"
+    "available_slots",
+    "total_world_qi",
+    "quota_k",
+    "quota_basis"
   ],
   "properties": {
     "v": {
@@ -28,6 +31,18 @@
     "available_slots": {
       "minimum": 0,
       "type": "integer"
+    },
+    "total_world_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "quota_k": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "quota_basis": {
+      "minLength": 1,
+      "type": "string"
     }
   }
 }

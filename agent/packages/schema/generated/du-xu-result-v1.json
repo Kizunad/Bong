@@ -42,6 +42,10 @@
     "waves_survived": {
       "minimum": 0,
       "type": "integer"
+    },
+    "reason": {
+      "const": "void_quota_exceeded",
+      "type": "string"
     }
   }
 }

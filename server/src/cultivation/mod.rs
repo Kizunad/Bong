@@ -172,6 +172,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());
+    app.insert_resource(self::tribulation::VoidQuotaConfig::from_env());
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
 
@@ -955,6 +956,7 @@ mod tests {
         app.add_event::<tribulation::TribulationWaveCleared>();
         app.add_event::<tribulation::TribulationSettled>();
         app.add_event::<tribulation::AscensionQuotaOccupied>();
+        app.add_event::<CultivationDeathTrigger>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_systems(
             Update,
