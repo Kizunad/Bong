@@ -50,7 +50,7 @@
 
 > **2026-05-04 Q-ML0 reframe**：寿元上限 + 死亡扣寿公式**全部引用 plan-lifespan-v1 §2**（`LifespanCapTable` 是 single source of truth）。本 plan 不另写一套数值。
 
-```
+```text
 角色死亡:
   寿元 -= 死亡扣除值（按 plan-lifespan-v1 §2，例如：被杀 = 当前境界寿元上限 × 5%；
                      渡劫失败 -100 年；老死即终结）
@@ -77,7 +77,7 @@
 - [ ] `server/src/cultivation/character_select.rs` 新角色生成 + spawn_plain 出生（Q-ML4）
 - [ ] `server/src/cultivation/luck_pool.rs` per-life 运数池（**P0 验证 plan-death-lifecycle-v1 已实装是否 per-character**；不是则改）
 - [ ] `agent/.../skills/era.md` "新一世" 开场 narration(协调 plan-spawn-tutorial-v1)
-- [ ] `library-web/src/pages/lives/[player_id].astro` 历代生平统计（按 player_id，不按家族 Q-ML1）
+- [ ] `library-web/src/pages/lives/index.astro` 历代生平统计（按 `?id=<player_id>` 查询参数，不按家族 Q-ML1。原 plan 字面 `[player_id].astro` 在 PR review 中调整为 query string 单页范式以支持 runtime 新 ID，详 Finish Evidence）
 
 ---
 
@@ -104,7 +104,7 @@
   - Q-ML5 道统遗物仅随机分散（不做 legacy_assign）
   - 关键修正：原 §2 寿元上限表 (80/150/300/500/1000/2000) → 引 lifespan-v1 §2 LifespanCapTable (120/200/350/600/1000/2000)
   - 下一步起 P0 worktree（character_lifecycle::regenerate_or_terminate + 验证 luck_pool per-character + character_select spawn_plain 路径）
-- **2026-05-07**：P0/P1/P2/P3 全部 ✅。`/consume-plan multi-life-v1` 一次过：cultivation 三个新模块（luck_pool / character_select / character_lifecycle）+ era skill 新一世 narration 章节 + library-web /lives/[player_id].astro。详 Finish Evidence。
+- **2026-05-07**：P0/P1/P2/P3 全部 ✅。`/consume-plan multi-life-v1` 一次过：cultivation 三个新模块（luck_pool / character_select / character_lifecycle）+ era skill 新一世 narration 章节 + library-web `/lives/index.astro`（`?id=<player_id>` query string 形式）。详 Finish Evidence。
 
 ## Finish Evidence
 
@@ -134,7 +134,7 @@
 | `ee17585` | 2026-05-07 | P0 引入 luck_pool / character_select / character_lifecycle 三个 cultivation 子模块 + reset_for_new_character 修复 cap 漂移 bug |
 | `bf01305` | 2026-05-07 | P1 寿命归零 → character_select 流程的端到端集成测试 (+4 测试) |
 | `0999d1e` | 2026-05-07 | P2 era skill 新增"新一世"开场 narration 章节 + 道统遗物引用 |
-| `23571c3` | 2026-05-07 | P3 历代生平页面 lives/[player_id].astro（review 阶段重构为 lives/index.astro，见末尾 commit） |
+| `23571c3` | 2026-05-07 | P3 历代生平页面初版 lives/[player_id].astro（后续 PR review 阶段重构为 lives/index.astro + query string，见末尾 commit） |
 | `9fb5bee` | 2026-05-07 | fmt 微调 character_lifecycle 测试块 |
 | `395e02c` | 2026-05-07 | review fix: lives 世代序号改用列表位置而非 char_id 后缀正则（Codex P2） |
 | `196e81f` | 2026-05-07 | review fix: 采纳 Claude bot 4 条小问题（接入状态文档 / 删虚构 API 注释 / 移除 `_OK` 别名 / spec.realm 防漂移测试 / URL 编码注释） |
@@ -151,18 +151,18 @@
 * `cd server && cargo test` 全栈 → **2554 passed; 0 failed**
 * `cd agent && npm install && npm run build` → schema + tiandao 全绿
 * `cd agent/packages/tiandao && npm test` → 38 files / 256 passed
-* `cd library-web && LOCAL_LIBRARY_PATH=../docs/library npm run build` → 41 pages built（含 `/lives/offline-Ancestor/index.html` 自动从现有 `_index.json` 中的 `offline:Ancestor` 生成）
+* `cd library-web && LOCAL_LIBRARY_PATH=../docs/library npm run build` → 41 pages built（含 `/lives/index.html`；运行时通过 `?id=<player_id>` 客户端 fetch `_index.json` 后展示对应历代）
 * `cargo clippy --all-targets` → 我加的三个新模块 + combat/lifecycle.rs 改动 0 warning（main 已存在的 13 warning 不在本 plan 范围）
 
 ### 跨仓库核验
 
 * **server**：`cultivation::luck_pool::INITIAL_FORTUNE_PER_LIFE` / `cultivation::character_select::NewCharacterSpec` / `cultivation::character_lifecycle::{LifeOutcome, TerminateReason, regenerate_or_terminate}` / `combat::lifecycle::reset_for_new_character` 接 spec
 * **agent**：`agent/packages/tiandao/src/skills/era.md` 新一世开场叙事章节（规则文档，无新 schema）
-* **library-web**：`/lives/<encoded-player-id>` 动态路由（构建期从 `public/deceased/_index.json` 提取 player_id 集合）
+* **library-web**：`/lives/index.astro` + 查询参数 `?id=<player_id>`（运行时客户端 fetch `public/deceased/_index.json` 后按 player_id 过滤）
 
 ### 遗留 / 后续
 
 * **client UI**："再来一世"按钮的具体视觉与 emit_terminate_screen 的端到端 e2e 联调待 client 改 plan 跟进——server 侧 `RevivalActionKind::CreateNewCharacter` 协议已稳定，client 现状已能触发该 intent
-* **library-web 顶级入口**：本 plan 只加了 `/lives/[player_id]` 单玩家页，"列出所有玩家 player_id" 的索引页 (`/lives/index.astro`) 暂未做——可作后续小补丁，从同一 `_index.json` 聚合
+* **library-web 顶级入口**：当前 `/lives/index.astro` 只承载单玩家查询（`?id=<player_id>`）；"列出所有玩家 player_id" 的聚合 discover/list 入口尚未提供——可在同页追加 list 模式作为后续小补丁，从同一 `_index.json` 聚合 player_id 集合
 * **agent 新一世 narration 实运行触发**：era.md 已定义触发条件与文风，但 era Agent 的 `narrations` payload 路由（player vs broadcast）与 spawn_tutorial 端协调具体由后续 agent plan 决定，本 plan 只锁文档接口
 * **lifespan-v1 P3 化虚化路径**：plan §0 第 2 条"化虚 per-life 可达"已由 lifespan-v1 数值表保证，但化虚 quota 终结/释放在多周目后是否需要额外语义跟踪，待 lifespan-v1 P4+ 推进时确认
