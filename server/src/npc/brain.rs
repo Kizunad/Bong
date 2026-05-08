@@ -620,7 +620,7 @@ fn retire_action_system(
     }
 }
 
-pub fn emit_retire_request_on_pending_added(
+pub(crate) fn emit_retire_request_on_pending_added(
     query: Query<Entity, (bevy_ecs::query::Added<PendingRetirement>, With<NpcMarker>)>,
     mut requests: EventWriter<NpcRetireRequest>,
 ) {
