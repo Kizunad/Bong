@@ -247,9 +247,9 @@ P0 决策门必须先录基线：
 ```text
 2026-05-07 baseline（BONG_ROGUE_SEED_COUNT=100, 1 player at spawn, WSL2 单核）：
   TPS = 0.7 (target 20.0)
-  per-system µs/tick（top 10）：当时未落 NpcPerfProbe，无法回填同源细分；2026-05-09 修复后
-    tick 400 样本为 blackboard_update=4us_avg/44us_max、faction_hostile=11us_avg/29us_max、
-    navigator=4us_avg/41us_max、social_scorer=0us_avg、territory_intruder_scorer=0us_avg。
+  per-system µs/tick（top 10）：当时未落 NpcPerfProbe，无法回填同源细分；2026-05-09 rebase 后
+    tick 400 样本为 blackboard_update=3us_avg/7us_max、faction_hostile=13us_avg/63us_max、
+    navigator=3us_avg/13us_max、social_scorer=0us_avg、territory_intruder_scorer=0us_avg。
   per-tick alloc count：未引入 alloc 采样器；本 plan 改用 NpcPerfProbe per-system µs 作为回归观测面。
 ```
 
@@ -352,8 +352,8 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
   - TickRateProbe @ `world/terrain/mod.rs:88` 是 terrain 专用，本 plan `NpcPerfProbe` 独立新建（仅日志频率同节奏）
   - 缺失项确认：spatial.rs / perf.rs / NpcSpatialIndex / NpcPerfProbe 全空，P1 新建
 - **2026-05-09** consume-plan 验收：
-  - 100 NPC 默认 e2e 通过：`task-13-e2e-redis-run-20260509-024510-759726-default`，15 passed / 0 failed，`server execution anchor` 命中，TPS gate `20.0 >= 15`。
-  - `NpcPerfProbe` 100 NPC tick 400 样本：`blackboard_update=4us_avg/44us_max`、`faction_hostile=11us_avg/29us_max`、`navigator=4us_avg/41us_max`、`social_scorer=0us_avg`、`territory_intruder_scorer=0us_avg`。
+  - 100 NPC 默认 e2e 通过：`task-13-e2e-redis-run-20260509-030837-777433-default`，15 passed / 0 failed，`server execution anchor` 命中，TPS gate `20.0 >= 15`。
+  - `NpcPerfProbe` 100 NPC tick 400 样本：`blackboard_update=3us_avg/7us_max`、`faction_hostile=13us_avg/63us_max`、`navigator=3us_avg/13us_max`、`social_scorer=0us_avg`、`territory_intruder_scorer=0us_avg`。
   - 1000 NPC stretch 已记录：`task-13-e2e-redis-run-20260509-025415-766723-1000-stretch`，Redis / command / narration anchors 均命中，TPS baseline `11.9`，低于当前 P4 CI 门禁，留给 `plan-npc-perf-v2`。
 
 ---
@@ -379,11 +379,11 @@ NpcPerfProbe 用 `std::time::Instant::now()` + `Duration::as_micros()` 包住每
 
 - `cargo fmt --check` ✅
 - `cargo clippy --all-targets -- -D warnings` ✅
-- `cargo test` ✅ 3025 passed / 0 failed
+- `cargo test` ✅ 3035 passed / 0 failed
 - `cargo test world_state_publish_uses_extended_timeout_without_slowing_other_channels` ✅ 1 passed
 - `bash -n scripts/e2e-redis.sh && bash -n scripts/start.sh` ✅
 - `git diff --check` ✅
-- `bash scripts/e2e-redis.sh` ✅ `task-13-e2e-redis-run-20260509-024510-759726-default`：15 passed / 0 failed，server execution anchor 命中，100 NPC TPS gate `20.0 >= 15`
+- `bash scripts/e2e-redis.sh` ✅ `task-13-e2e-redis-run-20260509-030837-777433-default`：15 passed / 0 failed，server execution anchor 命中，100 NPC TPS gate `20.0 >= 15`
 - `RUN_LABEL=1000-stretch BONG_ROGUE_SEED_COUNT=1000 bash scripts/e2e-redis.sh` ⚠️ stretch baseline：Redis / command / narration anchors 均命中，TPS `11.9 < 15`，非本 plan 强制门禁
 - P1 test-count gate：`grep -hroE '#\[test\]' server/src/npc/spatial.rs server/src/npc/faction.rs server/src/npc/social.rs server/src/npc/territory.rs server/src/npc/relic.rs | wc -l` = `88`（要求 ≥ 38）
 
