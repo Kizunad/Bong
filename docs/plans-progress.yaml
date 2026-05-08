@@ -650,15 +650,15 @@ plans:
     blocking_on: []
     summary: "骨架；化虚后不再以突破为驱动，改为参与天道运维博弈，对应 worldview §三 / §八 / §十六 / §十二。"
 
-  - file: plan-void-quota-v1.md
+  - file: finished_plans/plan-void-quota-v1.md
     group: cultivation-economy
     title: "化虚名额按世界灵气总量动态调控"
-    state: active-design
-    percent: 15
+    state: merged
+    percent: 100
     last_updated: "2026-05-08"
     pr_refs: []
     blocking_on: []
-    summary: "Active（2026-05-08 实地核验后由 skeleton 升级）；覆盖 plan-tribulation-v1 已落地的 player_count/50 + hard cap 3 + half_step_on_success 旧规则。现有 AscensionQuota 持久化 / server-data / client store 可复用；P0 改为 WorldQiBudget.current_total / BONG_VOID_QUOTA_K 公式，P1 补绝壁劫死亡语义与 agent narration，P2 release hook 已部分落地，P3 inspect UI 未落。"
+    summary: "已归档；覆盖 plan-tribulation-v1 的 player_count/50 + hard cap 3 + half_step_on_success 旧规则。`check_void_quota` 改读 WorldQiBudget.current_total / BONG_VOID_QUOTA_K；超额起劫直接 VoidQuotaExceeded 真死；AscensionQuota payload 扩 total_world_qi/quota_k/quota_basis，agent 绝壁劫 narration 与 client inspect 展示均落地。"
 
   # ============================================================
   # Group: finished

@@ -25,7 +25,7 @@
 - **`server/src/cultivation/void/` 目录不存在** —— 本 plan P1 新建子模块（含 `mod.rs` / `actions.rs` / `legacy.rs` / `ledger_hooks.rs`）
 - **`VoidAction` / `VoidActionRequest` 不存在** —— 4 类 action enum 由本 plan P1 新建
 
-### B. AscensionQuota / 化虚 quota 链路（plan-void-quota-v1 ⏳ 已升 active 并 ship）
+### B. AscensionQuota / 化虚 quota 链路（plan-void-quota-v1 ✅ finished）
 
 - **`compute_void_quota_limit(total_world_qi: f64, quota_k: f64) -> u32`** @ `server/src/cultivation/tribulation.rs:117`（commit 057fabf92）
 - **`check_void_quota(occupied, &budget, &config) -> VoidQuotaCheckV1`** @ `server/src/cultivation/tribulation.rs:129`
@@ -322,7 +322,7 @@ pub struct LifeRecord {
 
 - **2026-05-01** 骨架创建。`plan-gameplay-journey-v1` §N L902/L904 派生（化虚专属 action + 道统传承 UI 缺口）。
 - **2026-05-08** 实地核验后升 active。
-  - 确认前置依赖：`plan-tribulation-v1` ✅ / `plan-void-quota-v1` ⏳ active 且 P0/P1 已 ship（commit 057fabf92）/ `plan-tsy-lifecycle-v1` ✅ / `plan-tsy-hostile-v1` ✅ / `plan-death-lifecycle-v1` ✅ / `plan-qi-physics-v1` ✅
+  - 确认前置依赖：`plan-tribulation-v1` ✅ / `plan-void-quota-v1` ✅ finished（`check_void_quota` + 绝壁劫已落地）/ `plan-tsy-lifecycle-v1` ✅ / `plan-tsy-hostile-v1` ✅ / `plan-death-lifecycle-v1` ✅ / `plan-qi-physics-v1` ✅
   - 确认可直接复用：`Realm::Void` @ components.rs:19 / `check_void_quota` @ tribulation.rs:129 / `compute_void_quota_limit` @ L117 / `release_ascension_quota_slot` death hook / `TsyLifecycle::{Active, Declining, Collapsing, Dead}` / `TsyHostileMarker` / `LifeRecord` / `WorldQiBudget` / `qi_physics::ledger::QiTransfer` / `lifespan::deduct` / agent `scope: "broadcast"`
   - 确认缺失项（P0/P1 必新建）：`server/src/cultivation/void/` 子模块全空 / `VoidAction` / `LegacyEntry` / `BarrierField` / `legacy_letterbox` / 4 类 broadcast narration / `VoidActionScreen` UI / `library-web/legacy` 页面
   - 命名差异锁定（命名差异表 7 项）
