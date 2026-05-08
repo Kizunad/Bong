@@ -45,6 +45,7 @@ pub mod karma;
 pub mod known_techniques;
 pub mod life_record;
 pub mod lifespan;
+pub mod meridian;
 pub mod meridian_open;
 pub mod neg_pressure;
 pub mod negative_zone;
