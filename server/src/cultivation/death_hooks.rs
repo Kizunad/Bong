@@ -6,7 +6,10 @@
 //! 移除 Cultivation Component 实现）。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Query};
+use valence::prelude::{
+    bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
+    ResMut,
+};
 
 use super::color::PracticeLog;
 use super::components::{Contamination, Cultivation, MeridianSystem, QiColor, Realm};
@@ -15,9 +18,12 @@ use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
-use valence::prelude::Res;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CultivationDeathCause {
@@ -45,6 +51,13 @@ pub struct PlayerRevived {
 pub struct PlayerTerminated {
     pub entity: Entity,
 }
+
+type TerminatedPlayerQueryItem<'a> = (
+    &'a Cultivation,
+    Option<&'a Position>,
+    Option<&'a CurrentDimension>,
+    Option<&'a LifeRecord>,
+);
 
 /// 重生响应：境界 -1、qi=0、composure=0.3、contam 清空、LIFO 关脉至对应境界。
 pub fn apply_revive_penalty(
@@ -147,13 +160,27 @@ pub fn on_player_terminated(
     mut commands: Commands,
     mut events: EventReader<PlayerTerminated>,
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
-    players: Query<&Cultivation>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    players: Query<TerminatedPlayerQueryItem<'_>>,
 ) {
     for ev in events.read() {
         let was_void = players
             .get(ev.entity)
-            .map(|cultivation| cultivation.realm == Realm::Void)
+            .map(|(cultivation, _, _, _)| cultivation.realm == Realm::Void)
             .unwrap_or(false);
+        if let Ok((cultivation, position, current_dimension, life_record)) = players.get(ev.entity)
+        {
+            release_terminated_qi_to_zone(
+                ev.entity,
+                cultivation,
+                position,
+                current_dimension,
+                life_record,
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+            );
+        }
         if was_void {
             match release_ascension_quota_slot(&settings) {
                 Ok(release) if release.opened_slot => {
@@ -186,6 +213,98 @@ pub fn on_player_terminated(
     }
 }
 
+fn release_terminated_qi_to_zone(
+    entity: Entity,
+    cultivation: &Cultivation,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: Option<&LifeRecord>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+) {
+    let amount = cultivation.qi_current.max(0.0);
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let Some(position) = position else {
+        tracing::warn!(
+            "[bong][cultivation] terminated {:?} with qi={} but no Position; skip qi release",
+            entity,
+            amount,
+        );
+        return;
+    };
+    let Some(zones) = zones else {
+        tracing::warn!(
+            "[bong][cultivation] terminated {:?} with qi={} but no ZoneRegistry; skip qi release",
+            entity,
+            amount,
+        );
+        return;
+    };
+
+    let dimension = current_dimension
+        .map(|current| current.0)
+        .unwrap_or(DimensionKind::Overworld);
+    let Some(zone_name) = zones
+        .find_zone(dimension, position.0)
+        .map(|zone| zone.name.clone())
+    else {
+        tracing::warn!(
+            "[bong][cultivation] terminated {:?} with qi={} outside known zone; skip qi release",
+            entity,
+            amount,
+        );
+        return;
+    };
+    let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
+        return;
+    };
+
+    let from = terminated_qi_account_id(entity, life_record);
+    let to = QiAccountId::zone(zone.name.clone());
+    let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+    let outcome = match qi_release_to_zone(amount, from, to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "[bong][cultivation] invalid terminated qi release for {:?}",
+                entity,
+            );
+            return;
+        }
+    };
+
+    zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
+    if let Some(transfer) = outcome.transfer {
+        if let Some(qi_transfers) = qi_transfers {
+            qi_transfers.send(transfer);
+        } else {
+            tracing::warn!(
+                "[bong][cultivation] terminated qi release for {:?} has no QiTransfer event resource",
+                entity,
+            );
+        }
+    }
+    if outcome.overflow > QI_EPSILON {
+        tracing::warn!(
+            "[bong][cultivation] terminated qi release for {:?} overflowed zone cap by {}",
+            entity,
+            outcome.overflow,
+        );
+    }
+}
+
+fn terminated_qi_account_id(entity: Entity, life_record: Option<&LifeRecord>) -> QiAccountId {
+    if let Some(life_record) = life_record {
+        if !life_record.character_id.trim().is_empty() {
+            return QiAccountId::player(life_record.character_id.clone());
+        }
+    }
+    QiAccountId::player(format!("entity:{entity:?}"))
+}
+
 /// 将致死触发转发到生平卷（by caller）与 Redis 外发通道（留给 network 模块接入）。
 pub fn log_death_trigger(
     mut events: EventReader<CultivationDeathTrigger>,
@@ -210,7 +329,9 @@ mod tests {
     use crate::cultivation::tick::CultivationClock;
     use crate::persistence::{complete_tribulation_ascension, load_ascension_quota};
     use crate::player::state::canonical_player_id;
-    use valence::prelude::App;
+    use crate::qi_physics::{QiAccountId, QiTransferReason};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::{App, Events, Position};
 
     fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
         let temp_root = std::env::temp_dir().join(format!(
@@ -370,6 +491,7 @@ mod tests {
         app.insert_resource(settings.clone());
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -407,6 +529,7 @@ mod tests {
         app.insert_resource(PersistenceSettings::default());
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -428,5 +551,112 @@ mod tests {
         assert!(app.world().get::<Contamination>(entity).is_none());
         assert!(app.world().get::<PracticeLog>(entity).is_none());
         assert!(app.world().get::<QiColor>(entity).is_none());
+    }
+
+    #[test]
+    fn terminated_player_releases_qi_to_current_zone() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.2;
+        app.insert_resource(zones);
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: 10.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                LifeRecord::new(canonical_player_id("Azure")),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_after - 0.4).abs() < 1e-9,
+            "10 qi should add 0.2 normalized zone qi, got {zone_after}",
+        );
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(
+            transfers[0].from,
+            QiAccountId::player(canonical_player_id("Azure"))
+        );
+        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert!((transfers[0].amount - 10.0).abs() < 1e-9);
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+    }
+
+    #[test]
+    fn terminated_qi_release_caps_at_zone_capacity() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.95;
+        app.insert_resource(zones);
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: 10.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!((zone_after - 1.0).abs() < 1e-9);
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert!((transfers[0].amount - 2.5).abs() < 1e-9);
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
     }
 }
