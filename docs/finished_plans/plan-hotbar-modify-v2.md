@@ -621,16 +621,18 @@ rg -n "skill_config_intent|skill_config_snapshot|SkillConfigStore|Casting\\.skil
 - `bc64bed77` (2026-05-08) `feat(server): 注册绝脉断链配置契约`：完成 P3 `zhenmai.sever_chain` fixture 与 cast config gate。
 - `da2973a8e` (2026-05-08) `fix(test): 补齐 SkillConfig 验证收口`：补齐 router type set 与 clippy 收口，恢复全量 server/client 验证。
 - `4183103e5` (2026-05-08) `fix(skill-config): 修复快照回推与配置测试缺口`：按 review 修复重连/拒绝后的权威 snapshot 回推，补 cast snapshot isolation、IntRange/FloatRange validation 与 client real-open save 回归。
+- `d5365a2da` (2026-05-08) `fix(skill-config): 收口 review 快照与恢复校验`：按二轮 review 移除 client 乐观落库、隔离 cast listener 异常、深拷贝 SkillConfig snapshot、成功 intent 回推权威 snapshot、恢复持久化配置时重新校验并丢弃坏数据。
 
 ### 测试结果
 
 - `cd agent && npm run generate -w @bong/schema`：通过，已刷新 skill config generated schema artifacts。
 - `cd agent && npm run build && npm test -w @bong/schema`：通过，schema 11 files / 308 tests passed。
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：通过，2790 tests passed。
+- `cd server && cargo test`：通过，2793 tests passed。
 - `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build`：通过，build successful。
 - `cd server && cargo test skill::config && cargo test skill_bar_cast_requires_config_for_schema_fixture && cargo test reconnect_with_same_player_id_receives_fresh_snapshot`：通过。
-- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests '*SkillConfig*'`：通过。
+- `cd server && cargo test valid_skill_config_intent_replies_with_authoritative_snapshot && cargo test meridian_all_matches_partition_without_duplicates && cargo test deserialize_server_data_samples`：通过。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test --tests '*SkillConfig*' --tests '*CastStateMachineTest' --tests '*TechniquesListPanelTest'`：通过。
 - `git diff --check`：通过。
 
 ### 跨仓库核验
