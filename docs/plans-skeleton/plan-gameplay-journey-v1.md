@@ -354,10 +354,10 @@
 - plan-tribulation-v1 ✅ finished；plan-void-quota-v1 ✅ finished（2026-05-08，世界灵气预算名额 + 绝壁劫）
 - plan-terrain-tribulation-scorch-v1 升 active（仍 skeleton）
 - ~~渡劫第一视角 UI(派生 plan-tribulation-pov-ui-v1)~~ ❌ **不立**：已实装于 plan-tribulation-v1 + plan-HUD-v1 (`TribulationBroadcastHudPlanner` 5 阶段 + 三视角 + `TribulationStateStore` 已存在 + 测试通过；玩家自身 HP/真元走标准 HUD 复用)
-- plan-multi-life-v1 ✅ active (2026-05-04 升级，6 决策 + reframe 对齐 lifespan-v1)
-- plan-tsy-raceout-v1 ✅ active (2026-05-04 升级，5 决策闭环 — 3s 撤离 / 单裂口 1 人 / 允许 PVP)
-- plan-lifespan-v1 ✅ active (2026-05-04 升级，5 决策 — NaturalDeathCorpse 复用 TSY BodyInstance)
-- plan-void-quota-v1 ✅ finished；plan-void-actions-v1 已升 active（2026-05-08，4 类化虚 action 决策门收口）
+- plan-multi-life-v1 ⏳ active-design (~8%；LifespanCapTable 复用就绪，character_lifecycle::regenerate_or_terminate / per-life luck_pool 全未实装)
+- plan-tsy-raceout-v1 ⏳ active-design (~10%；CollapseStarted 事件已存在，3s 撤离 / 单裂口 1 人 / 允许 PVP 未闭环)
+- plan-lifespan-v1 ✅ finished (2026-05-03，PR #117 commit 3bc94b4f 归档)
+- plan-void-quota-v1 ✅ finished；plan-void-actions-v1 ⏳ active-design（2026-05-08，4 类化虚 action 决策门收口）
 
 ---
 
@@ -1649,7 +1649,7 @@ graph TD
 
 | 并行组 | Plan |
 |---|---|
-| 组 4-A | plan-terrain-tribulation-scorch-v1 + plan-tsy-raceout-v1 🆕 |
+| 组 4-A | plan-terrain-tribulation-scorch-v1 + plan-tsy-raceout-v1 ⏳ active-design |
 | 组 4-B(等 narrative+ash+scorch) | plan-tribulation-v1 ⏳ 收尾（含 §M.2 避劫 + 渡虚劫 POV UI） |
 
 **Wave 4 退出条件**：E2E `p4-spirit.sh` 全绿；3 客户端联机渡劫广播验收。
@@ -1658,7 +1658,7 @@ graph TD
 
 | 并行组 | Plan |
 |---|---|
-| 组 5-A | plan-void-quota-v1 ✅ finished + plan-multi-life-v1 🆕 |
+| 组 5-A | plan-void-quota-v1 ✅ finished + plan-multi-life-v1 ⏳ active-design |
 | 组 5-B(quota 已完成) | plan-void-actions-v1 ⏳ active-design |
 | 组 5-C(终极) | **plan-gameplay-acceptance-v1** 🆕（6 段 E2E + 100h 实测） |
 

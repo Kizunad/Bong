@@ -61,7 +61,7 @@
 
 ## §2 关键公式
 
-```
+```text
 total_world_qi = WorldQiBudget.current_total
 quota_max      = floor(total_world_qi / BONG_VOID_QUOTA_K)
 can_void       = current_void_count < quota_max
@@ -73,7 +73,8 @@ can_void       = current_void_count < quota_max
 ```
 
 K 值校准（运维 config）:
-```
+
+```text
 当前 qi_physics 单位:
   DEFAULT_SPIRIT_QI_TOTAL = 100.0
   BONG_VOID_QUOTA_K 默认 50.0
@@ -125,7 +126,7 @@ K 值校准（运维 config）:
 - **P1 绝壁劫死亡语义**：`server/src/cultivation/death_hooks.rs` 新增 `CultivationDeathCause::VoidQuotaExceeded`，`server/src/combat/lifecycle.rs` 将其作为终局死亡处理；`DuXuResultV1.reason = "void_quota_exceeded"`；`agent/packages/tiandao/src/tribulation-runtime.ts` 输出"天地装不下你了。"。
 - **P2 名额回流**：保留 `release_ascension_quota_slot` 的重生 / 死透 / 降境 hook，`AscensionQuotaOpened` 继续驱动新的 quota snapshot。
 - **P3 client inspect 展示**：`AscensionQuotaStore` / `AscensionQuotaHandler` 保存扩展字段；`StatusPanelExtension` + `InspectScreen` 在通灵/化虚检视状态条展示当前世界化虚名额、来源和 tooltip 数据。
-- **Review 收口**：移除 `TribulationState.half_step_on_success` 的死分支；起劫 quota 检查把活跃渡虚劫计入占位，跨 tick 抢位也会被绝壁劫拒绝；旧 IPC 字段保持 `false` 输出以兼容现有 client/schema。
+- **Review 收口**：移除 `TribulationState.half_step_on_success` 的死分支；起劫 quota 检查把活跃渡虚劫计入占位，跨 tick 抢位也会被绝壁劫拒绝；quota 读写失败改为 fail-closed，不再制造未持久化化虚者；旧 IPC 字段保持 `false` 输出以兼容现有 client/schema。
 
 ### 关键 commit
 
@@ -135,12 +136,15 @@ K 值校准（运维 config）:
 - `e2183fe00`（2026-05-08）`client(void-quota): 在检视面板展示化虚名额`
 - `9d67a6303`（2026-05-08）`docs(plan-void-quota-v1): finish evidence 并归档`
 - `36ccd5c69`（2026-05-08）`server(void-quota): 收紧化虚名额竞态`
+- `3ce3c01ee`（2026-05-08）`fix(void-quota): 收紧名额持久化边界`
+- `808cbab15`（2026-05-08）`fix(void-quota): 收紧跨端契约和检视刷新`
 
 ### 测试结果
 
 - `cd server && cargo test void_quota -- --nocapture` → 5 passed
 - `cd server && cargo test start_tribulation_system_counts_in_flight_void_tribulations_across_ticks -- --nocapture` → 1 passed
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2940 passed
+- `cd server && cargo test quota -- --nocapture` → 30 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2944 passed
 - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 305 passed；tiandao 271 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL
 
