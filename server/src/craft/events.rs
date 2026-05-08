@@ -121,6 +121,23 @@ pub struct CraftCancelIntent {
     pub caster: Entity,
 }
 
+/// plan-craft-v1 P3 §0 设计轴心 —— 三渠道解锁通用 intent。
+///
+/// 各 source plan（inventory ItemUse / social NPC dialog / cultivation
+/// breakthrough/insight）按自身条件触发时 emit 一条 `CraftUnlockIntent`，
+/// craft 模块的 `apply_unlock_intents` 系统统一处理：查 recipe → 跑
+/// 对应 `unlock_via_*` → 写 `RecipeUnlockState` → emit `RecipeUnlockedEvent`。
+///
+/// 这种"intent 入口集中化"避免每个 source plan 各自写一份 unlock 流程，
+/// 也让 worldview §九 信息差精神有单一可观察点（trace `apply_unlock_intents`
+/// 即可看到全服解锁）。
+#[derive(Debug, Clone, Event, PartialEq, Eq)]
+pub struct CraftUnlockIntent {
+    pub caster: Entity,
+    pub recipe_id: RecipeId,
+    pub source: UnlockEventSource,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

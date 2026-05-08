@@ -25,14 +25,16 @@ use valence::prelude::{
 
 use crate::combat::CombatClock;
 use crate::craft::{
-    cancel_craft, finalize_craft, start_craft, tick_session, CancelCraftOutcome, CraftCancelIntent,
-    CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftRegistry, CraftSession,
-    CraftStartIntent, CraftStartedEvent, FinalizeCraftOutcome, RecipeUnlockState,
-    RecipeUnlockedEvent, StartCraftDeps, StartCraftError, StartCraftRequest,
+    cancel_craft, finalize_craft, start_craft, tick_session, unlock_via_insight, unlock_via_mentor,
+    unlock_via_scroll, CancelCraftOutcome, CraftCancelIntent, CraftCompletedEvent,
+    CraftFailedEvent, CraftFailureReason, CraftRegistry, CraftSession, CraftStartIntent,
+    CraftStartedEvent, CraftUnlockIntent, FinalizeCraftOutcome, RecipeUnlockState,
+    RecipeUnlockedEvent, StartCraftDeps, StartCraftError, StartCraftRequest, UnlockEventSource,
+    UnlockOutcome,
 };
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::inventory::{
-    add_item_to_player_inventory, ItemRegistry, InventoryInstanceIdAllocator, PlayerInventory,
+    add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -41,9 +43,8 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::ledger::WorldQiAccount;
 use crate::schema::craft::{
-    CraftCategoryV1, CraftFailureReasonV1, CraftOutcomeV1, CraftRecipeEntryV1,
-    CraftRequirementsV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1,
-    UnlockEventSourceV1,
+    CraftCategoryV1, CraftFailureReasonV1, CraftOutcomeV1, CraftRecipeEntryV1, CraftRequirementsV1,
+    CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1, UnlockEventSourceV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
@@ -209,7 +210,9 @@ pub fn apply_craft_intents(
                     material_returned: 0,
                     qi_refunded: 0.0,
                 });
-                commands.entity(intent.caster).insert(CraftSessionStateDirty);
+                commands
+                    .entity(intent.caster)
+                    .insert(CraftSessionStateDirty);
             }
         }
     }
@@ -265,9 +268,7 @@ pub fn apply_craft_intents(
                 &template,
                 count,
             ) {
-                tracing::warn!(
-                    "[bong][craft] cancel refund failed for {template} x{count}: {err}"
-                );
+                tracing::warn!("[bong][craft] cancel refund failed for {template} x{count}: {err}");
             }
         }
         tracing::info!(
@@ -296,10 +297,7 @@ pub fn tick_craft_sessions(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut completed_tx: EventWriter<CraftCompletedEvent>,
-    mut sessions: Query<
-        (Entity, &mut CraftSession, &mut PlayerInventory),
-        With<Client>,
-    >,
+    mut sessions: Query<(Entity, &mut CraftSession, &mut PlayerInventory), With<Client>>,
 ) {
     for (entity, mut session, mut inventory) in sessions.iter_mut() {
         if tick_session(&mut session, 1) {
@@ -354,10 +352,7 @@ pub fn emit_craft_session_state(
     mut commands: Commands,
     names: Query<&Username>,
     mut clients: Query<&mut Client>,
-    sessions_with_dirty: Query<
-        (Entity, Option<&CraftSession>),
-        With<CraftSessionStateDirty>,
-    >,
+    sessions_with_dirty: Query<(Entity, Option<&CraftSession>), With<CraftSessionStateDirty>>,
 ) {
     for (entity, session) in sessions_with_dirty.iter() {
         let player_id = match names.get(entity) {
@@ -369,8 +364,7 @@ pub fn emit_craft_session_state(
             continue;
         };
         let payload = ServerDataPayloadV1::CraftSessionState(build_session_state_payload(
-            &player_id,
-            session,
+            &player_id, session,
         ));
         send_payload(&mut client, payload, &format!("session_state {entity:?}"));
         commands.entity(entity).remove::<CraftSessionStateDirty>();
@@ -479,6 +473,78 @@ pub fn emit_recipe_list_on_join(
             ServerDataPayloadV1::CraftRecipeList(Box::new(payload)),
             "recipe_list::join",
         );
+    }
+}
+
+/// §7 — plan-craft-v1 P3 三渠道解锁 intent 处理。
+///
+/// 各 source plan 按自身条件触发时 emit `CraftUnlockIntent`，本系统统一
+/// 把它们路由到对应的 `unlock_via_*` 函数 + emit `RecipeUnlockedEvent`。
+/// SourceMismatch / Already 都视为 noop（不广播，不影响业务）。
+///
+/// 出现的 narration 由后续 `emit_recipe_unlocked_payloads` 给 client，
+/// `craft_event_bridge` 给 agent。
+pub fn apply_unlock_intents(
+    mut intents: EventReader<CraftUnlockIntent>,
+    mut unlocked_tx: EventWriter<RecipeUnlockedEvent>,
+    mut unlock_state: ResMut<RecipeUnlockState>,
+    registry: Res<CraftRegistry>,
+    clock: Res<CombatClock>,
+    names: Query<&Username>,
+) {
+    for intent in intents.read() {
+        let player_id = match names.get(intent.caster) {
+            Ok(u) => canonical_player_id(u.0.as_str()),
+            Err(_) => format!("entity:{}", intent.caster.to_bits()),
+        };
+        let Some(recipe) = registry.get(&intent.recipe_id) else {
+            tracing::warn!(
+                "[bong][craft] unlock intent ignored: recipe `{}` not in registry",
+                intent.recipe_id
+            );
+            continue;
+        };
+        let outcome = match &intent.source {
+            UnlockEventSource::Scroll { item_template } => {
+                unlock_via_scroll(&mut unlock_state, &player_id, recipe, item_template)
+            }
+            UnlockEventSource::Mentor { npc_archetype } => {
+                unlock_via_mentor(&mut unlock_state, &player_id, recipe, npc_archetype)
+            }
+            UnlockEventSource::Insight { trigger } => {
+                unlock_via_insight(&mut unlock_state, &player_id, recipe, *trigger)
+            }
+        };
+        match outcome {
+            UnlockOutcome::Newly { source } => {
+                tracing::info!(
+                    "[bong][craft] unlock newly player={} recipe={} source={:?}",
+                    player_id,
+                    recipe.id,
+                    source
+                );
+                unlocked_tx.send(RecipeUnlockedEvent {
+                    caster: intent.caster,
+                    recipe_id: recipe.id.clone(),
+                    source,
+                    unlocked_at_tick: clock.tick,
+                });
+            }
+            UnlockOutcome::Already => {
+                tracing::debug!(
+                    "[bong][craft] unlock already-known player={} recipe={}",
+                    player_id,
+                    recipe.id
+                );
+            }
+            UnlockOutcome::SourceMismatch => {
+                tracing::debug!(
+                    "[bong][craft] unlock source mismatch player={} recipe={} (intent source did not match recipe.unlock_sources)",
+                    player_id,
+                    recipe.id
+                );
+            }
+        }
     }
 }
 

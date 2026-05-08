@@ -37,7 +37,7 @@ use valence::prelude::App;
 #[allow(unused_imports)]
 pub use events::{
     CraftCancelIntent, CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartIntent,
-    CraftStartedEvent, InsightTrigger, RecipeUnlockedEvent, UnlockEventSource,
+    CraftStartedEvent, CraftUnlockIntent, InsightTrigger, RecipeUnlockedEvent, UnlockEventSource,
 };
 #[allow(unused_imports)]
 pub use recipe::{
@@ -90,6 +90,9 @@ pub fn register(app: &mut App) {
     // P2 client → server intents（被 `network/craft_emit::apply_craft_intents` 系统消费）
     app.add_event::<CraftStartIntent>();
     app.add_event::<CraftCancelIntent>();
+    // P3 三渠道解锁 intent —— 由各 source plan emit，被
+    // `network/craft_emit::apply_unlock_intents` 系统消费
+    app.add_event::<CraftUnlockIntent>();
 }
 
 /// P1 验收基线：注册 5 个示例配方覆盖全 6 类（除 Misc 外）。
