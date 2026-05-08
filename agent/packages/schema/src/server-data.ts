@@ -733,6 +733,9 @@ export const ServerDataAscensionQuotaV1 = Type.Object(
     occupied_slots: Type.Integer({ minimum: 0 }),
     quota_limit: Type.Integer({ minimum: 0 }),
     available_slots: Type.Integer({ minimum: 0 }),
+    total_world_qi: Type.Number({ minimum: 0 }),
+    quota_k: Type.Number({ minimum: 0 }),
+    quota_basis: Type.String({ minLength: 1 }),
   },
   { additionalProperties: false },
 );

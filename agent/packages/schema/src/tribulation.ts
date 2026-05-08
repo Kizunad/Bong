@@ -42,6 +42,7 @@ export const DuXuResultV1 = Type.Object(
     outcome: DuXuOutcomeV1,
     killer: Type.Optional(Type.String({ minLength: 1 })),
     waves_survived: Type.Integer({ minimum: 0 }),
+    reason: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );

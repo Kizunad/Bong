@@ -42,6 +42,10 @@
     "waves_survived": {
       "minimum": 0,
       "type": "integer"
+    },
+    "reason": {
+      "minLength": 1,
+      "type": "string"
     }
   }
 }

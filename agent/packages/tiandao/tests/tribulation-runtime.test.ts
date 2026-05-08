@@ -306,6 +306,44 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
 
+  it("uses void quota death narration when DuXu result carries quota reason", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "du_xu",
+        phase: { kind: "settle" },
+        result: {
+          char_id: "offline:Azure",
+          outcome: "killed",
+          waves_survived: 5,
+          reason: "void_quota_exceeded",
+        },
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:du_xu|char:offline:Azure|settle",
+      text: "天地装不下你了。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
   it("falls back to zone-scoped hint for hidden targeted calamity", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
