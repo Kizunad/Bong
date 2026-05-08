@@ -1108,15 +1108,31 @@ fn apply_drain_qi_completion(
         (owner, drained, to_player, to_zone)
     };
 
-    // 注入操作者 cultivation.qi_current（cap at qi_max）
-    if let Ok(mut cult) = cultivations.get_mut(player) {
-        let room = (cult.qi_max - cult.qi_current).max(0.0);
-        cult.qi_current += (to_player as f64).min(room);
-    }
-    // 散逸 zone qi
-    *zone_qi.get_mut(DEFAULT_ZONE) += to_zone;
     let player_account = qi_player_account_id(player, life_records);
-    emit_drain_qi_transfers(player_account, pos, to_player, to_zone, qi_transfers);
+    // 注入操作者 cultivation.qi_current（cap at qi_max）；未入账份额回流 zone。
+    let actual_to_player = if player_account.is_some() {
+        if let Ok(mut cult) = cultivations.get_mut(player) {
+            let room = (cult.qi_max - cult.qi_current).max(0.0);
+            let credited = (to_player as f64).min(room);
+            cult.qi_current += credited;
+            credited as f32
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    let actual_to_zone = to_zone + (to_player - actual_to_player).max(0.0);
+
+    // 散逸 zone qi
+    *zone_qi.get_mut(DEFAULT_ZONE) += actual_to_zone;
+    emit_drain_qi_transfers(
+        player_account,
+        pos,
+        actual_to_player,
+        actual_to_zone,
+        qi_transfers,
+    );
 
     // 双方 LifeRecord 记账（仅 owner != player）
     if let Some(owner) = plot_owner {
@@ -1143,13 +1159,13 @@ fn apply_drain_qi_completion(
         player,
         pos: *pos,
         plot_qi_drained: drained,
-        qi_to_player: to_player,
-        qi_to_zone: to_zone,
+        qi_to_player: actual_to_player,
+        qi_to_zone: actual_to_zone,
     });
 }
 
 fn emit_drain_qi_transfers(
-    player_account: QiAccountId,
+    player_account: Option<QiAccountId>,
     pos: &valence::prelude::BlockPos,
     to_player: f32,
     to_zone: f32,
@@ -1158,13 +1174,19 @@ fn emit_drain_qi_transfers(
     let plot_account =
         QiAccountId::container(format!("lingtian_plot:{},{},{}", pos.x, pos.y, pos.z));
     if to_player > 0.0 {
-        send_qi_transfer(
-            qi_transfers,
-            plot_account.clone(),
-            player_account,
-            to_player as f64,
-            QiTransferReason::Channeling,
-        );
+        if let Some(player_account) = player_account {
+            send_qi_transfer(
+                qi_transfers,
+                plot_account.clone(),
+                player_account,
+                to_player as f64,
+                QiTransferReason::Channeling,
+            );
+        } else {
+            tracing::warn!(
+                "[bong][lingtian] skip player qi transfer without stable account at {pos:?}"
+            );
+        }
     }
     if to_zone > 0.0 {
         send_qi_transfer(
@@ -1177,16 +1199,17 @@ fn emit_drain_qi_transfers(
     }
 }
 
-fn qi_player_account_id(player: Entity, life_records: &Query<&mut LifeRecord>) -> QiAccountId {
+fn qi_player_account_id(
+    player: Entity,
+    life_records: &Query<&mut LifeRecord>,
+) -> Option<QiAccountId> {
     if let Ok(life_record) = life_records.get(player) {
         if !life_record.character_id.trim().is_empty() {
-            return QiAccountId::player(life_record.character_id.clone());
+            return Some(QiAccountId::player(life_record.character_id.clone()));
         }
     }
-    tracing::warn!(
-        "[bong][lingtian] DrainQiSession ledger fallback uses transient entity account for {player:?}"
-    );
-    QiAccountId::player(format!("entity:{player:?}"))
+    tracing::warn!("[bong][lingtian] DrainQiSession has no stable ledger account for {player:?}");
+    None
 }
 
 fn send_qi_transfer(
@@ -3777,9 +3800,13 @@ mod tests {
             2,
             "偷灵应写 player + zone 两笔 ledger event"
         );
+        let plot_account =
+            QiAccountId::container(format!("lingtian_plot:{},{},{}", pos.x, pos.y, pos.z));
+        assert_eq!(qi_transfers[0].from, plot_account);
         assert_eq!(qi_transfers[0].to, QiAccountId::player("bob"));
         assert!((qi_transfers[0].amount - 0.4).abs() < 1e-6);
         assert_eq!(qi_transfers[0].reason, QiTransferReason::Channeling);
+        assert_eq!(qi_transfers[1].from, plot_account);
         assert_eq!(qi_transfers[1].to, QiAccountId::zone(DEFAULT_ZONE));
         assert!((qi_transfers[1].amount - 0.1).abs() < 1e-6);
         assert_eq!(qi_transfers[1].reason, QiTransferReason::ReleaseToZone);
@@ -3808,6 +3835,7 @@ mod tests {
         p.plot_qi_cap = 5.0;
         p.plot_qi = 5.0;
         app.world_mut().spawn(p);
+        let zone_before = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
         let cult = Cultivation {
             qi_current: 99.0,
             qi_max: 100.0,
@@ -3828,6 +3856,22 @@ mod tests {
             "应封顶 qi_max=100, 实得 {}",
             cult.qi_current
         );
+        let zone_after = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        assert!(
+            (zone_after - zone_before - 4.0).abs() < 1e-5,
+            "玩家 cap 溢出应回流 zone, delta={}",
+            zone_after - zone_before
+        );
+        let qi_transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(qi_transfers.len(), 2);
+        assert_eq!(qi_transfers[0].to, QiAccountId::player("p"));
+        assert!((qi_transfers[0].amount - 1.0).abs() < 1e-6);
+        assert_eq!(qi_transfers[1].to, QiAccountId::zone(DEFAULT_ZONE));
+        assert!((qi_transfers[1].amount - 4.0).abs() < 1e-6);
     }
 
     #[test]
