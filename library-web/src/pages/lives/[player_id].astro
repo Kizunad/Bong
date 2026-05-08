@@ -23,15 +23,26 @@ export async function getStaticPaths() {
 
   let entries: Array<{ char_id?: string }> = [];
   try {
-    if (fs.existsSync(indexPath)) {
-      const raw = fs.readFileSync(indexPath, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        entries = parsed;
-      }
+    const raw = fs.readFileSync(indexPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      entries = parsed;
+    } else {
+      // 文件存在但根值不是 array → 数据结构异常，让 build 红，而非默默降级
+      throw new Error(
+        `Expected JSON array at root of ${indexPath}, got ${typeof parsed}`,
+      );
     }
-  } catch (_err) {
-    entries = [];
+  } catch (err) {
+    // 仅在文件缺失（ENOENT，新仓 / 测试环境常见）时静默降级；
+    // 其他错误（JSON 损坏、权限问题、结构异常）必须 propagate 让 build 红，
+    // 否则会把真实故障伪装成"暂无亡者"占位页。
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") {
+      entries = [];
+    } else {
+      throw err;
+    }
   }
 
   const playerIds = new Set<string>();
