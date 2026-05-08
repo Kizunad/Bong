@@ -10,7 +10,7 @@ class InspectScreenQuickUseTabTest {
     @Test
     void inspectScreenExposesDedicatedQuickUseTab() {
         assertEquals(
-            List.of("装备", "修仙", "技艺", "战斗·修炼", "快捷使用"),
+            List.of("装备", "修仙", "技艺", "功法", "快捷使用"),
             InspectScreen.tabNamesForTests()
         );
     }

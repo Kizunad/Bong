@@ -36,6 +36,7 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
         String displayName = SkillBarConfigHandler.readString(obj, "display_name");
         String grade = SkillBarConfigHandler.readString(obj, "grade");
         if (id == null || id.isEmpty() || displayName == null || displayName.isEmpty()) return null;
+        List<String> aliases = parseAliases(obj);
         float proficiency = (float) readDouble(obj, "proficiency", 0.0);
         boolean active = readBoolean(obj, "active", false);
         String description = SkillBarConfigHandler.readString(obj, "description");
@@ -48,6 +49,7 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
         return new TechniquesListPanel.Technique(
             id,
             displayName,
+            aliases,
             TechniquesListPanel.Grade.fromWire(grade),
             proficiency,
             active,
@@ -60,6 +62,20 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
             cooldownTicks,
             range
         );
+    }
+
+    private static List<String> parseAliases(JsonObject obj) {
+        JsonArray arr = SkillBarConfigHandler.readArray(obj, "aliases");
+        if (arr == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (JsonElement el : arr) {
+            if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) continue;
+            var primitive = el.getAsJsonPrimitive();
+            if (!primitive.isString()) continue;
+            String alias = primitive.getAsString();
+            if (alias != null && !alias.isBlank()) out.add(alias);
+        }
+        return out;
     }
 
     private static List<TechniquesListPanel.RequiredMeridian> parseRequiredMeridians(JsonObject obj) {
