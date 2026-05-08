@@ -13,6 +13,7 @@
 //! - 通用 `RevealedEvent` trait 在 P4 (`revealed.rs`)；gossip + agent + client UI 在 P5
 
 pub mod command;
+pub mod dugu_consumer;
 pub mod events;
 pub mod precondition;
 
@@ -259,6 +260,7 @@ pub fn register(app: &mut App) {
             .after(crate::player::attach_player_state_to_joined_clients),
     );
     command::register(app);
+    dugu_consumer::register(app);
 }
 
 /// 玩家加入时附挂 [`PlayerIdentities`] Component。
