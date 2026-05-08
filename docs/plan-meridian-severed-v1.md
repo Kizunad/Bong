@@ -27,6 +27,52 @@
 
 ---
 
+## 现状对齐（2026-05-08 升 active 时核验）
+
+> 草稿先于 burst_meridian 调研；实际代码部分先行实装，本节锁定差异以便 P0 决策门收口。
+
+### 命名差异：MeridianId 实际命名 ≠ 草稿缩写
+
+`server/src/cultivation/components.rs:49-72` 已实装 20 经脉 enum，**用全称命名**而非草稿的 `LU/HT/PC/...` 两字母缩写：
+
+| 草稿缩写 | 实际命名 | 草稿缩写 | 实际命名 |
+|---|---|---|---|
+| LU | `Lung` | LR | `Liver` |
+| LI | `LargeIntestine` | GB | `Gallbladder` |
+| HT | `Heart` | REN | `Ren` |
+| SI | `SmallIntestine` | DU | `Du` |
+| PC | `Pericardium` | CHONG | `Chong` |
+| TE | `TripleEnergizer` | DAI | `Dai` |
+| SP | `Spleen` | YINWEI | `YinWei` |
+| ST | `Stomach` | YANGWEI | `YangWei` |
+| KI | `Kidney` | YINQIAO | `YinQiao` |
+| BL | `Bladder` | YANGQIAO | `YangQiao` |
+
+§2 / §3 / §4 涉及代码 symbol 的位置一律按**实名**写。`MeridianId::REGULAR`（12 正经）+ `MeridianId::EXTRAORDINARY`（8 奇经）常量已存，P1 直接复用。
+
+### 已部分实装（先于本 plan 落地）
+
+| 接入面声明 | 代码现状 | 本 plan 处置 |
+|---|---|---|
+| `MeridianSystem` component（20 经脉） | ✅ `cultivation::components::MeridianSystem`（regular[12] + extraordinary[8]） | P1 直接读，不重建 |
+| `Meridian` struct（含 `integrity: f64 / cracks: Vec<MeridianCrack>`） | ✅ `cultivation::components::Meridian`（line 119-131） | **现状用 `cracks + integrity` 表达 4 档损伤的连续值**——草稿设计独立 `INTACT/MICRO_TEAR/TORN/SEVERED` enum 与现状不同，P0 决策门 #5（新增）：① 由 cracks 派生 SEVERED 状态（`integrity ≤ 0` ⇒ SEVERED） vs ② 独立 `MeridianSeveredPermanent` component 与 cracks 共存（草稿原方案，长期记忆持久化更清晰） |
+| `CrackCause` enum | ✅ 现 4 类：`Overload / Attack / Backfire / ForgeFailure`（line 143-149） | 草稿 `SeveredSource` 设 7 类（VoluntarySever / BackfireOverload / OverloadTear / CombatWound / TribulationFail / DuguDistortion / Other）—— P1 扩 `CrackCause` 加 3 类（VoluntarySever / TribulationFail / DuguDistortion）；BackfireOverload ≈ Backfire / OverloadTear ≈ Overload / CombatWound ≈ Attack |
+| `CastRejectReason::MeridianSevered` | ✅ `cultivation::skill_registry.rs:20` 已实装 | 招式 cast 检查接口已就位，本 plan §3 强约束直接挂 |
+| `cultivation::burst_meridian` SEVERED 拒绝 | ✅ `burst_meridian.rs:102 / 106` 已用，测试 `beng_quan_rejects_all_right_arm_meridians_severed` 已存 | 体修招式已**事实上**遵守"经脉 SEVERED → cast 失败"约束，本 plan 是把这个**散落实装提取为通用 trait**（`Skill::dependencies()`） |
+| `Skill::dependencies()` trait 接口 | ❌ 未实装（招式各自硬编 SEVERED 检查） | P0 决策门 #3（已存）：依赖经脉清单粒度——粗粒度（流派级）vs 细粒度（每招），决定 trait 形态 |
+| `MeridianSeveredEvent { entity, meridian_id, source }` | ❌ 未实装 | P1 新建 |
+| `qi_physics::field::sever_meridian` 算子 | ❌ 未实装 | P1 走 plan-qi-physics-patch-v1 P3 加新算子（草稿头部已点） |
+| inspect 经脉图 SEVERED 染色 | 🟡 inspect 经脉图框架由 plan-cultivation-canonical-align-v1 ✅ 已搭，染色扩展由 P2 加 | client 仅扩颜色映射，无新 UI 框架 |
+| hotbar 招式灰显 | 🟡 hotbar 框架由 plan-hotbar-modify-v1 ✅ 已搭 | client 仅扩 tooltip + 灰显逻辑 |
+
+### P0 决策门补充（草稿 §8 之外）
+
+- **#5 SEVERED 状态表达**：① cracks 派生（`Meridian.integrity ≤ ε` ⇒ SEVERED） vs ② 独立 `MeridianSeveredPermanent` component（与 cracks 共存，永久标记） vs ③ 在 `Meridian` 加 `severed: bool` 字段
+  - 默认推 ②（草稿原方案）—— 永久 SEVERED 是"出 cracks 列表的最终状态"，独立 component 持久化语义更清晰，且能记录 `severed_at: HashMap<MeridianId, (tick, SeveredSource)>`（草稿 §2 已设计）
+  - 反对意见：① 派生最少改动，但语义模糊（暂时性 cracks 与永久 SEVERED 都靠 integrity 数值区分）
+
+---
+
 ## 接入面 Checklist
 
 - **进料**：`cultivation::Cultivation { meridian_system }` / `cultivation::MeridianSystem`（12 正经 + 8 奇经状态）/ `SkillRegistry` / `SkillSet` / `combat::WoundEvent`（战场重伤来源）/ `qi_physics::field::sever_meridian`（patch P3 加新算子）
@@ -112,29 +158,25 @@ pub enum SeveredSource {
     Other(String),         // 扩展性
 }
 
+// MeridianId 已由 server/src/cultivation/components.rs:49-72 实装；
+// 本 plan 直接复用，不重新声明。20 变体（12 正经 + 8 奇经）：
 pub enum MeridianId {
     // 12 正经
-    LU,  // 手太阴肺
-    LI,  // 手阳明大肠
-    HT,  // 手少阴心
-    SI,  // 手太阳小肠
-    PC,  // 手厥阴心包
-    TE,  // 手少阳三焦
-    SP,  // 足太阴脾
-    ST,  // 足阳明胃
-    KI,  // 足少阴肾
-    BL,  // 足太阳膀胱
-    LR,  // 足厥阴肝
-    GB,  // 足少阳胆
+    Lung,            // 手太阴肺
+    LargeIntestine,  // 手阳明大肠
+    Stomach,         // 足阳明胃
+    Spleen,          // 足太阴脾
+    Heart,           // 手少阴心
+    SmallIntestine,  // 手太阳小肠
+    Bladder,         // 足太阳膀胱
+    Kidney,          // 足少阴肾
+    Pericardium,     // 手厥阴心包
+    TripleEnergizer, // 手少阳三焦
+    Gallbladder,     // 足少阳胆
+    Liver,           // 足厥阴肝
     // 8 奇经
-    REN,    // 任脉
-    DU,     // 督脉
-    CHONG,  // 冲脉
-    DAI,   // 带脉
-    YINWEI,
-    YANGWEI,
-    YINQIAO,
-    YANGQIAO,
+    Ren, Du, Chong, Dai,
+    YinQiao, YangQiao, YinWei, YangWei,
 }
 
 // SkillRegistry 扩展接口
@@ -168,15 +210,18 @@ pub fn check_meridian_dependencies(
 
 基于 worldview §六:583-599 经脉路径与真元属性。每流派列**核心依赖经脉**（任一 SEVERED → 该流派招式效率受影响或废）：
 
+> 经脉名按 `MeridianId` 实名（`Lung/LargeIntestine/Heart/...`）。
+
 | 流派 | 核心依赖经脉 | SEVERED 单条后果（举例）|
 |---|---|---|
-| **体修·爆脉**（baomai）| 手三阳全（LI/SI/TE）+ 任督（REN/DU）| 任督断 → 全力一击废 / 手三阳任一断 → 崩拳威力 ×0.5 |
-| **器修·暗器**（anqi）| 手三阴全（LU/HT/PC）| LU 断 → 飞剑废 / HT/PC 断 → 暗器封灵效率 ×0.3 |
-| **地师·阵法**（zhenfa）| 任督 + 足三阴肾经（KI）| 任督断 → 阵法预埋成功率 ×0.3 / KI 断 → 真元封入方块失败 |
-| **毒蛊**（dugu）| 足三阴全（SP/KI/LR）+ 手三阴 LU（飞针）| 足三阴任一断 → 自蕴失败率激增 / LU 断 → 蚀针射程崩 |
-| **截脉·震爆**（zhenmai）| 手三阴 LU + 手三阳 LI（接触反震协调）| 任一断 → ① 弹反 K_drain ×0.5 |
+| **体修·爆脉**（baomai）| 手三阳全（`LargeIntestine` / `SmallIntestine` / `TripleEnergizer`）+ 任督（`Ren` / `Du`）| 任督断 → 全力一击废 / 手三阳任一断 → 崩拳威力 ×0.5（已部分实装于 `burst_meridian.rs:102/106`，beng_quan 测试 `beng_quan_rejects_all_right_arm_meridians_severed` 已绿）|
+| **器修·暗器**（anqi）| 手三阴全（`Lung` / `Heart` / `Pericardium`）| `Lung` 断 → 飞剑废 / `Heart`/`Pericardium` 断 → 暗器封灵效率 ×0.3 |
+| **地师·阵法**（zhenfa）| 任督 + 足三阴肾经（`Kidney`）| 任督断 → 阵法预埋成功率 ×0.3 / `Kidney` 断 → 真元封入方块失败 |
+| **毒蛊**（dugu）| 足三阴全（`Spleen` / `Kidney` / `Liver`）+ 手三阴 `Lung`（飞针）| 足三阴任一断 → 自蕴失败率激增 / `Lung` 断 → 蚀针射程崩 |
+| **截脉·震爆**（zhenmai）| 手三阴 `Lung` + 手三阳 `LargeIntestine`（接触反震协调）| 任一断 → ① 弹反 K_drain ×0.5 |
 | **替尸·蜕壳**（tuike）| 手三阴全（御物-伪皮）| 手三阴任一断 → 着壳维持 qi/s ×3 |
-| **涡流·绝灵**（woliu）| 任督 + 手三阴心经（HT，流速控制）| 任督断 → 持涡 Δ ×0.5 / HT 断 → 涡口吸取率 ×0.3 |
+| **涡流·绝灵**（woliu）| 任督 + 手少阴心经（`Heart`，流速控制）| 任督断 → 持涡 Δ ×0.5 / `Heart` 断 → 涡口吸取率 ×0.3 |
+| **医道**（yidao，支援）| `Lung` + `LargeIntestine` + `Heart` + `Du`（化虚级群体接经）| `Lung` 断 → 接经 cast 失败 / `Du` 断 → 群体接经废（化虚专属）|
 
 ### 注册时声明范例
 
@@ -184,7 +229,7 @@ pub fn check_meridian_dependencies(
 // 例：plan-zhenmai-v2 内
 registry.register(SkillBuilder::new("zhenmai.parry")
     .resolve_fn(cast_parry)
-    .dependencies(vec![MeridianId::LU, MeridianId::LI])  // ★ 强约束
+    .dependencies(vec![MeridianId::Lung, MeridianId::LargeIntestine])  // ★ 强约束
     .build());
 ```
 
@@ -319,6 +364,7 @@ worldview §六:617 医道流派 + 平和色 + §十一 NPC 信誉度系统 + §
 
 ## §9 进度日志
 
+- **2026-05-08** 升 active。实地核验 `server/src/cultivation/components.rs:49-72`（MeridianId enum） + `Meridian.cracks/integrity` + `CrackCause` 4 类 + `CastRejectReason::MeridianSevered` + `burst_meridian.rs:102/106` 拒绝路径已实装；草稿命名差异（`LU/HT/PC` → `Lung/Heart/Pericardium`）通过"现状对齐"段落锁定；P0 决策门 #5（SEVERED 状态表达：cracks 派生 vs 独立 component）补入 §8。
 - **2026-05-06** 骨架立项。源自 plan-zhenmai-v2 ⑤ 绝脉断链私有 component `MeridianSeveredVoluntary` 的提取需求 + 用户拍"SEVERED 应是通用受伤类型，依赖经脉的招式都失效"。
   - 设计轴心：SEVERED 通用受伤类型（worldview §四:280-307 4 档损伤已正典）+ 永久 + 跨周目重置 + 招式依赖经脉强约束（CLAUDE.md 风格规则）+ 接经术医者 NPC 服务（不是 PvE jackpot 主路径）+ inspect UI 可视化
   - 7 流派依赖经脉清单锁定（粗粒度，§3 强约束）—— 各 v2 plan 实装时必守此规则

@@ -25,9 +25,28 @@
 
 ---
 
+## 现状对齐（2026-05-08 升 active 时核验）
+
+| 接入面声明 | 代码实际状况 | 影响 |
+|---|---|---|
+| `craft::CraftRegistry` 通用手搓注册表 | ❌ 顶层 `server/src/craft/` 模块**尚未建** | P1 主体新建，符合 plan 设计 |
+| `alchemy::RecipeRegistry` | ✅ `server/src/alchemy/recipe.rs` + `resolver.rs` 已存（丹药专用） | 命名空间分离：本 plan 用 `craft::CraftRegistry` 不与 alchemy 冲突 |
+| `inventory::ItemInstance.spirit_quality / template_id` | ✅ `server/src/inventory/mod.rs:212` 实装 | P1 配方 `materials: Vec<(ItemId, u32)>` 直接读 |
+| `botany::PlantRegistry` | 🔄 实名是 **`botany::PlantKindRegistry`**（`server/src/botany/registry.rs`，`npc::farming_brain.rs:475` / `lingtian::seed.rs:29` 已使用） | §3 数据契约用 `botany::PlantKindRegistry` 而非草稿的 `PlantRegistry` |
+| `cultivation::Cultivation { realm, qi_color }` | 🔄 `Cultivation` 含 `realm`，**`QiColor` 是独立 component**（不是 Cultivation 内字段） | requirements `qi_color_min` 检查走 `Query<(&Cultivation, &QiColor)>` |
+| `cultivation::QiColor` | ✅ `server/src/cultivation/components.rs` + `color.rs:105 evolve_qi_color` 已实装 | 染色 gate 直接读 |
+| `qi_physics::ledger::QiTransfer` | ✅ `server/src/qi_physics/ledger.rs` 实装 | qi_cost 走 ledger 守恒律 P1 直接调 |
+| `skill::SkillSet { learned_recipes }` | 🔄 `SkillSet` 在 `server/src/skill/components.rs:91` 已存，但**目前无 `learned_recipes` 字段** | P1 阶段需扩 SkillSet 加该字段（或新建 `RecipeUnlockState` resource，§3 已计划后者） |
+| `craft::CraftSession` component | ❌ 不存 | P1 新建 |
+| inventory CraftTab UI | ❌ `client/src/main/java/com/bong/client/` 下无 craft 相关类 | P2 新建 |
+
+> **结论**：plan 设计与现状一致——本 plan 是新建底盘，无既有代码冲突。仅需在 §3 数据契约把 `botany::PlantRegistry` 改写为 `botany::PlantKindRegistry`，QiColor 接入按独立 component 处理；其余按草稿推进。
+
+---
+
 ## 接入面 Checklist
 
-- **进料**：`inventory::Inventory` / `cultivation::Cultivation { realm, qi_color }` / `skill::SkillSet { learned_recipes }` / `botany::PlantRegistry` / `mineral` 物品 ID / 各流派 plan 注册的配方
+- **进料**：`inventory::Inventory` / `cultivation::Cultivation` + 独立 `QiColor` component（realm gate / qi_color gate）/ `skill::SkillSet`（P1 扩 `learned_recipes` 或挂独立 `RecipeUnlockState` resource）/ `botany::PlantKindRegistry` / `mineral` 物品 ID / 各流派 plan 注册的配方
 - **出料**：`craft::CraftRegistry` 全局配方注册表 + `CraftSession` component（玩家进行中单任务）+ `CraftCompletedEvent` / `CraftFailedEvent` / `RecipeUnlockedEvent` + IPC schema 5 sample（payload 类型）
 - **共享类型**：
   ```rust
@@ -281,6 +300,7 @@ pub enum UnlockSource {
 
 ## §6 进度日志
 
+- **2026-05-08** 升 active。实地核验 `inventory::ItemInstance` ✅ / `cultivation::QiColor`（独立 component）✅ / `qi_physics::ledger` ✅ / `botany::PlantKindRegistry`（实名修正）✅ / `alchemy::RecipeRegistry`（命名空间不冲突）✅ / `craft` 顶层模块未建（符合 plan 设计）/ `SkillSet` 缺 `learned_recipes` 字段（P1 扩或挂 `RecipeUnlockState` resource）。"现状对齐"段落锁定差异；接入面 Checklist 进料行已修正（`PlantKindRegistry` + `QiColor` 独立 component）。
 - **2026-05-06** 骨架立项。源自 plan-dugu-v2 起草过程中发现"蚀针 / 自蕴煎汤的手搓 UI 缺失"问题，上钻发现是通用问题（多个流派都有"轻度仪式化"合成需求），最终决定立通用 plan 而非各流派各自补 UI。
   - 设计轴心：inventory 标签集成（无方块）+ 单任务（无并发）+ in-game 时间推进（在线累积下线暂停）+ 三渠道解锁（残卷/师承/顿悟）+ 首版不实装磨损税和装备加速
   - 配方分类 6 类（AnqiCarrier/DuguPotion/TuikeSkin/ZhenfaTrap/Tool/Misc）
