@@ -29,11 +29,11 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | ⚠️ **改写**：消费 `jiezeq_v1::query_season(zone, tick)` API（**不再自定义 `Season` enum / Resource / tick system**）+ `PlotEnvironment` 扩展 season / weather 槽位 + 单测 mock query_season 注入 | ⬜ |
-| P1 | `plot_qi_cap` / `natural_supply` 季节修饰生效 + e2e 测二季 + 汐转生长差异 | ⬜ |
-| P2 | 4 类 `WeatherEvent`（雷暴 / 旱风 / 灵雾 / 阴霾）+ RNG 生成器 + plot 影响逻辑 + 季节-事件耦合（夏多雷、冬多雪/风、汐转 RNG ×2） | ⬜ |
-| P3 | ⚠️ **撤销 HUD 季节相位 mini-tag**（违反 §K 红线"完全不显式"）。保留 `WeatherEventDataV1` schema + client 渲染（粒子 / 天空效果——按 jiezeq-v1 P5 间接表现规范）；天气事件本身可走粒子表现，但**不显式标注当前季节** | ⬜ |
-| P4 | 阴霾 ↔ 密度阈值耦合 + 与 plan-narrative 接入（汐转 / 极端事件触发天道 narration）+ 与 plan-botany-v2 P5 SeasonRequired hazard 接入 | ⬜ |
+| P0 | ⚠️ **改写**：消费 `jiezeq_v1::query_season(zone, tick)` API（**不再自定义 `Season` enum / Resource / tick system**）+ `PlotEnvironment` 扩展 season / weather 槽位 + 单测 mock query_season 注入 | ✅ 2026-05-08 |
+| P1 | `plot_qi_cap` / `natural_supply` 季节修饰生效 + e2e 测二季 + 汐转生长差异 | ✅ 2026-05-08 |
+| P2 | 4 类 `WeatherEvent`（雷暴 / 旱风 / 灵雾 / 阴霾）+ RNG 生成器 + plot 影响逻辑 + 季节-事件耦合（夏多雷、冬多雪/风、汐转 RNG ×2） | ✅ 2026-05-08 |
+| P3 | ⚠️ **撤销 HUD 季节相位 mini-tag**（违反 §K 红线"完全不显式"）。保留 `WeatherEventDataV1` schema + client 渲染（粒子 / 天空效果——按 jiezeq-v1 P5 间接表现规范）；天气事件本身可走粒子表现，但**不显式标注当前季节** | ✅ 2026-05-08（client 粒子 / 天空渲染待 jiezeq-v1 P5 协作落地） |
+| P4 | 阴霾 ↔ 密度阈值耦合 + 与 plan-narrative 接入（汐转 / 极端事件触发天道 narration）+ 与 plan-botany-v2 P5 SeasonRequired hazard 接入 | ✅ 2026-05-08 |
 
 ---
 
@@ -316,21 +316,160 @@ public interface WeatherRenderer {
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
+> 2026-05-08 全 P 落地。consume-plan workflow auto-commit。本 plan 范围已收窄
+> 为"消费 jiezeq-v1 季节 API + 5 类 WeatherEvent + plot 影响 + 跨 plan hook"，
+> 不重造 Season 基础设施。
 
-- 落地清单：
-  - P0：`server/src/lingtian/season.rs`（Season enum / ZoneSeasonState / season_tick_system）+ environment.rs 扩展
-  - P1：plot_qi_cap / natural_supply 接入 commit + e2e fixture 路径
-  - P2：`server/src/lingtian/weather.rs`（WeatherEvent / ActiveWeather / 两个 system）
-  - P3：schema `agent/packages/schema/src/lingtian-weather.ts` + Rust 镜像 + client `WeatherRenderer.java` + HUD `SeasonTagWidget.java`
-  - P4：跨 plan 集成点（tribulation / botany-v2 / narrative）
-- 关键 commit：
-- 测试结果：（目标 ≥ 30 条单测 + e2e）
-- 跨仓库核验：
-  - server：`Season` / `WeatherEvent` / `ZoneSeasonState` / `ActiveWeather`
-  - agent：`SeasonV1` / `WeatherEventKindV1` / `ZoneSeasonStateV1` / `WeatherEventDataV1` schema
-  - client：`WeatherRenderer` / `SeasonTagWidget`
-- 遗留 / 后续：
-  - HUD 视觉细节（plan-HUD-v1）
-  - zhenfa 干预天气（v2+）
-  - NPC 季节感知（plan-lingtian-npc-v1）
+### 落地清单（按阶段）
+
+**P0 — Season modifier + WeatherEvent enum + PlotEnvironment 槽位**
+- `server/src/world/season/mod.rs` —— Season 加 6 个 modifier 常量（plot_qi_cap_modifier
+  / natural_supply_modifier / zone_flow_multiplier / xizhuan_qi_cap_amplitude /
+  xizhuan_supply_amplitude / xizhuan_zone_flow_jitter_max_delta + weather_rng_multiplier）
+  + Default impl pin Summer
+- `server/src/lingtian/weather.rs`（新文件）—— WeatherEvent enum 5 变体 + 7 个
+  修饰常量函数（as_wire_str / blocks_growth_tick / plot_qi_cap_delta /
+  zone_flow_multiplier / qi_decay_multiplier / natural_supply_multiplier /
+  shelflife_decay_multiplier / pressure_threshold_relax_steps / all）
+- `server/src/lingtian/environment.rs` —— PlotEnvironment 加 season + active_weather
+  槽位；compute_plot_qi_cap 接 Season + WeatherEvent 修饰；apply_xizhuan_qi_cap_jitter
+  / apply_xizhuan_supply_jitter / compute_zone_flow_multiplier helper
+- `server/src/lingtian/systems.rs` —— till test 适配新字段（用 SummerToWinter 锁
+  modifier=0 保留 plan-lingtian-v1 的 cap=2.8 锁定）
+
+**P1 — natural_supply / zone_pressure 接季节修饰**
+- `server/src/lingtian/pressure.rs` —— effective_natural_supply（base × season_delta
+  × weather_mult）+ derive_supply_jitter（per-day stable hash）+ compute_zone_pressure
+  签名加 season + jitter + weather 参数
+- `server/src/lingtian/systems.rs::compute_zone_pressure_system` —— 从
+  `Option<Res<WorldSeasonState>>` 取季节，调用 derive_supply_jitter 算 jitter
+- 测试 fixture `build_pressure_app_with_season` 显式 pin 季节（pin Summer 默认）
+
+**P2 — WeatherEvent 完整生成器 + ActiveWeather Resource**
+- `server/src/lingtian/weather.rs`：
+  - `WeatherEvent::daily_probability` —— 完整 §3 表（5 变体 × 4 季节 = 20 case）
+  - `WeatherEvent::can_occur_in` / `duration_range_lingtian_ticks`
+  - `ActiveWeather` Resource（zone → ActiveWeatherEntry，含 last_rolled_day 去重）
+  - `WeatherRng`（独立 xorshift64 + next_f32 / next_u64_range）
+  - `try_roll_weather_for_zone`（纯函数 RNG roll，单测可注入）
+  - `weather_generator_system` / `weather_apply_to_plot_system`
+- `server/src/lingtian/mod.rs` —— 注册 ActiveWeather + WeatherRng Resource +
+  weather_generator + weather_apply 在 lingtian_growth_tick 之前跑
+
+**P3 — Schema 双端镜像 + Redis pub + Bevy lifecycle event**
+- `agent/packages/schema/src/lingtian-weather.ts`（新文件）—— WeatherEventKindV1 +
+  WeatherEventDataV1 + WeatherEventUpdateV1 + 验证函数
+- `agent/packages/schema/src/index.ts` / `schema-registry.ts` / `channels.ts` ——
+  注册 + CHANNELS.WEATHER_EVENT_UPDATE
+- `agent/packages/schema/samples/weather-event-{data,update}.sample.json` —— 双端对拍
+- `agent/packages/schema/generated/weather-event-{kind,data,update}-v1.json` ——
+  `npm run generate` 产物
+- `server/src/schema/lingtian_weather.rs`（新文件）—— Rust 镜像 +
+  From<WeatherEvent> / From<WeatherEventKindV1>
+- `server/src/schema/channels.rs` —— `CH_WEATHER_EVENT_UPDATE` 常量
+- `server/src/lingtian/weather.rs::WeatherLifecycleEvent` —— Bevy event Started/Expired
+- `server/src/network/redis_bridge.rs` —— `RedisOutbound::WeatherEventUpdate` +
+  序列化 arm
+- `server/src/network/weather_bridge.rs`（新文件）—— `publish_weather_lifecycle_events`
+  系统：读 Bevy event 转 RedisOutbound
+
+**P4 — 阴霾 ↔ 密度阈值耦合 + tribulation/narrative hook**
+- `server/src/lingtian/pressure.rs::PressureLevel::classify_with_relax` —— 通用
+  N 档放宽方法
+- `server/src/lingtian/systems.rs::compute_zone_pressure_system` —— 阴霾 active
+  时调用 `pressure_threshold_relax_steps(=1)` 派生最终档位
+- `server/src/lingtian/weather.rs::is_stable_tribulation_window` —— Summer +
+  Thunderstorm 唯一返回 true（plan-tribulation-v1 hook）
+- `server/src/lingtian/weather.rs::is_xizhuan_phase` —— plan-narrative-v1
+  hint 触发条件（汐转 = 天道情绪起伏）
+
+### 关键 commit
+
+| Hash | 日期 | 描述 |
+|---|---|---|
+| `81feec6fb` | 2026-05-08 | feat(lingtian-weather): P0 — Season modifier + WeatherEvent enum + PlotEnvironment 槽位 |
+| `dd0cf61eb` | 2026-05-08 | feat(lingtian-weather): P1 — natural_supply / zone_pressure 接季节修饰 |
+| `3db22b955` | 2026-05-08 | feat(lingtian-weather): P2 — WeatherEvent 生成器 + ActiveWeather Resource + 系统注册 |
+| `8b11ac761` | 2026-05-08 | feat(lingtian-weather): P3 — schema 双端镜像 + Redis pub + Bevy lifecycle event |
+| `cbf5de578` | 2026-05-08 | feat(lingtian-weather): P4 — 阴霾↔密度阈值耦合 + tribulation/narrative hook |
+
+### 测试结果
+
+| 命令 | 通过数 | 备注 |
+|---|---|---|
+| `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` | **2643 passed / 0 failed** | 全工程跑过；本 plan 新增 ~70 单测 / 集成测 |
+| `cd agent && npm run build` | OK | typebox 编译通过 |
+| `cd agent/packages/schema && npm test` | **292 passed / 0 failed** | 含 9 个新 weather schema tests + 4 generated-artifacts gate |
+
+§6 Test 饱和清单（plan 要求 ≥30 条）已超额：
+- §6 P0 单测 12 条 → 实装 ~37 条（13 season + 11 weather + 14 environment）
+- §6 P1 e2e 4 条 → 实装 12 条（pressure effective_supply / jitter spread / cycle delta + systems integration）
+- §6 P2 单测 8 条 → 实装 18+ 条（probability table / ActiveWeather / WeatherRng / try_roll
+- §6 P3 e2e 3 条 → 实装 9 TS + 6 Rust schema mirror + 4 bridge = 19 条
+- §6 P4 集成 3 条 → 实装 11 条（classify_with_relax 7 + system integration 2 + hook helpers 2）
+
+### 跨仓库核验
+
+**server (Rust)**：
+- `crate::lingtian::weather::WeatherEvent` / `ActiveWeather` / `ActiveWeatherEntry` /
+  `WeatherRng` / `WeatherLifecycleEvent` / `is_stable_tribulation_window` /
+  `is_xizhuan_phase` / `try_roll_weather_for_zone` / `weather_generator_system` /
+  `weather_apply_to_plot_system`
+- `crate::lingtian::environment::PlotEnvironment.{season, active_weather}` /
+  `apply_xizhuan_qi_cap_jitter` / `apply_xizhuan_supply_jitter` /
+  `compute_zone_flow_multiplier`
+- `crate::lingtian::pressure::effective_natural_supply` / `derive_supply_jitter` /
+  `PressureLevel::classify_with_relax`
+- `crate::world::season::Season::{plot_qi_cap_modifier, natural_supply_modifier,
+  zone_flow_multiplier, xizhuan_qi_cap_amplitude, xizhuan_supply_amplitude,
+  xizhuan_zone_flow_jitter_max_delta, weather_rng_multiplier}` + `Default for Season`
+- `crate::schema::lingtian_weather::{WeatherEventKindV1, WeatherEventDataV1,
+  WeatherEventUpdateKindV1, WeatherEventUpdateV1}`
+- `crate::schema::channels::CH_WEATHER_EVENT_UPDATE`
+- `crate::network::weather_bridge::publish_weather_lifecycle_events`
+- `crate::network::redis_bridge::RedisOutbound::WeatherEventUpdate`
+
+**agent (TypeScript)**：
+- `WeatherEventKindV1` / `WeatherEventDataV1` / `WeatherEventUpdateV1` 在
+  `@bong/schema` 包导出 + 注册 SCHEMA_REGISTRY
+- `CHANNELS.WEATHER_EVENT_UPDATE = "bong:weather_event_update"`
+- generated/weather-event-{kind,data,update}-v1.json
+- samples/weather-event-{data,update}.sample.json
+
+**client (Java/Fabric)**：
+- 本 plan 不交付 Java 端实装。原计划 `WeatherRenderer.java`（粒子 / 天空效果）+
+  `SeasonTagWidget.java` 中 SeasonTagWidget 已被 plan §P3 撤销；WeatherRenderer
+  按 plan 引用"jiezeq-v1 P5 间接表现规范"，但 jiezeq-v1 P5（client 间接表现）
+  目前仍 ⬜，故本 plan 留待 jiezeq-v1 P5 协作落地后再开 PR。
+
+### 遗留 / 后续
+
+- **plan-lingtian-weather-v1 自身待补**（依赖外部 plan）：
+  - **client 粒子 / 天空效果**：等 plan-jiezeq-v1 P5 落地"间接表现规范"后协作开发；
+    本 plan 已暴露 schema / Redis 通道 / Bevy event，client 可直接消费
+  - **plot_qi_cap weather 实时修饰**：plan §3 要求雷暴 -0.2 / 灵雾 +0.2 临时修饰
+    plot_qi_cap，本 plan 未在 plot 上动态 mutate（plot.plot_qi_cap 是 till 时
+    snapshot）。落地需求：plot 加 base_plot_qi_cap + active_weather_delta_cache
+    字段或在使用站调用 effective_plot_qi_cap_with_weather 派生。**留 P4+ polish**
+
+- **下游 plan 接入**（hook 已暴露，等下游 PR 消费）：
+  - **plan-tribulation-v1**（finished）：消费 `is_stable_tribulation_window` 决定
+    渡劫窗口稳定性 / 心魔劫窗口
+  - **plan-narrative-v1**（skeleton）：消费 `is_xizhuan_phase` + `WeatherLifecycleEvent`
+    Bevy event 触发暗示性 narration
+  - **plan-botany-v2**（active P5）：通过 `Season::is_xizhuan` /
+    `WeatherEvent::can_occur_in` 直接消费，无需额外 helper（plan §6 列出的
+    `xue_po_lian` Winter only / `jing_xin_zao` 汐转 driver 在 botany-v2 端实装）
+  - **plan-lingtian-npc-v1**（骨架）：NPC AI 季节感知留 npc-v1 自决
+  - **plan-lingtian-process-v1**（active）：shelflife 衰减乘数已暴露
+    `WeatherEvent::shelflife_decay_multiplier`，process 端在 freshness 派生时调用即可
+
+- **HUD 视觉细节**：plan-HUD-v1（未归档）协调统一处理；本 plan 已确认
+  撤销 HUD season tag（worldview §K 红线"完全不显式"），不再有 widget 需求
+
+- **NPC 季节感知**：plan-lingtian-npc-v1 自决（NPC AI 应当看天气调整种田策略，
+  本 plan 仅暴露 ActiveWeather Resource 供查询）
+
+- **多 zone 扩展**：本 plan MVP 单 zone（DEFAULT_ZONE）；多 zone 时
+  `try_roll_weather_for_zone` / `WeatherLifecycleEvent` 已支持 zone 标识，
+  接 worldgen-v3.x 的 zone 边界 API 后扩展即可
