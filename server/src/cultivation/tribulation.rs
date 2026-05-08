@@ -4662,6 +4662,7 @@ mod tests {
                 },
                 LifeRecord::new(char_id),
                 Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 TribulationState::restored(2, 5, 120),
             ))
             .id();

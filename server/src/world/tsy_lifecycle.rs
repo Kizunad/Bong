@@ -397,14 +397,13 @@ fn apply_tsy_spirit_qi_conserved(state: &TsyZoneState, zones: &mut ZoneRegistry)
     if let Some(dimension) = dimension {
         let qi_to_redistribute = (current_sum - target_sum).max(0.0);
         if qi_to_redistribute > f64::EPSILON {
-            if let Some(distributed) = redistribute_qi_to_surrounding_zone_capacity(
+            let distributed = redistribute_qi_to_surrounding_zone_capacity(
                 zones,
                 dimension,
                 &targets,
                 qi_to_redistribute,
-            ) {
-                target_scale = (distributed / qi_to_redistribute).clamp(0.0, 1.0);
-            }
+            );
+            target_scale = (distributed / qi_to_redistribute).clamp(0.0, 1.0);
         } else if (target_sum - current_sum) > f64::EPSILON {
             let qi_to_draw = target_sum - current_sum;
             let drawn = draw_qi_from_surrounding_zones(zones, dimension, &targets, qi_to_draw);
@@ -424,9 +423,9 @@ fn redistribute_qi_to_surrounding_zone_capacity(
     dimension: DimensionKind,
     targets: &[(String, f64)],
     amount: f64,
-) -> Option<f64> {
+) -> f64 {
     if amount <= f64::EPSILON {
-        return Some(0.0);
+        return 0.0;
     }
     let target_names: std::collections::HashSet<&str> =
         targets.iter().map(|(name, _)| name.as_str()).collect();
@@ -435,7 +434,10 @@ fn redistribute_qi_to_surrounding_zone_capacity(
         .iter()
         .any(|zone| zone.dimension == dimension && !target_names.contains(zone.name.as_str()));
     if !has_surrounding_zone {
-        return None;
+        tracing::warn!(
+            "[bong][tsy] no same-dimension surrounding zone can absorb {amount} spirit_qi"
+        );
+        return 0.0;
     }
     let mut candidates: Vec<(usize, f64, f64)> = zones
         .zones
@@ -477,7 +479,7 @@ fn redistribute_qi_to_surrounding_zone_capacity(
             break;
         }
     }
-    Some(distributed)
+    distributed
 }
 
 fn draw_qi_from_surrounding_zones(
@@ -1280,6 +1282,55 @@ mod tests {
             zones.find_zone_by_name("tsy_a_shallow").unwrap().spirit_qi > -1.0,
             "TSY layer should only move as far as surrounding capacity can absorb"
         );
+    }
+
+    #[test]
+    fn apply_spirit_qi_keeps_layers_when_no_surrounding_zone_can_absorb_delta() {
+        fn mk(name: &str, dimension: DimensionKind, spirit_qi: f64) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension,
+                bounds: (DVec3::ZERO, DVec3::splat(1.0)),
+                spirit_qi,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
+                mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
+                mk("tsy_a_deep", DimensionKind::Tsy, -0.9),
+            ],
+        };
+        let state = TsyZoneState {
+            family_id: "tsy_a".into(),
+            lifecycle: TsyLifecycle::Collapsing,
+            source_class: AncientRelicSource::DaoLord,
+            initial_skeleton: vec![1],
+            remaining_skeleton: HashSet::new(),
+            created_at_tick: 0,
+            activated_at_tick: Some(0),
+            collapsing_started_at_tick: Some(0),
+            dead_at_tick: None,
+            main_world_anchor: anchor(),
+        };
+        let before: Vec<_> = zones
+            .zones
+            .iter()
+            .map(|zone| (zone.name.clone(), zone.spirit_qi))
+            .collect();
+
+        apply_tsy_spirit_qi_conserved(&state, &mut zones);
+
+        let after: Vec<_> = zones
+            .zones
+            .iter()
+            .map(|zone| (zone.name.clone(), zone.spirit_qi))
+            .collect();
+        assert_eq!(after, before);
     }
 
     #[test]

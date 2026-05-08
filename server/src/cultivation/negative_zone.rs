@@ -167,6 +167,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 Cultivation {
                     qi_current: 1.0,
                     qi_max: 100.0,

@@ -22,7 +22,7 @@ use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,9 +294,15 @@ pub fn release_qi_amount_to_zone(
         );
         return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
     };
-    let dimension = current_dimension
-        .map(|current| current.0)
-        .unwrap_or(DimensionKind::Overworld);
+    let Some(current_dimension) = current_dimension else {
+        tracing::warn!(
+            "[bong][cultivation] {source} {:?} with qi={} but no CurrentDimension; route qi to overflow",
+            entity,
+            amount,
+        );
+        return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
+    };
+    let dimension = current_dimension.0;
     let Some(zone_name) = zones
         .find_zone(dimension, position.0)
         .map(|zone| zone.name.clone())
@@ -436,6 +442,7 @@ mod tests {
     use crate::persistence::{complete_tribulation_ascension, load_ascension_quota};
     use crate::player::state::canonical_player_id;
     use crate::qi_physics::{QiAccountId, QiTransferReason};
+    use crate::world::dimension::DimensionKind;
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::prelude::{App, Events, Position};
 
@@ -568,6 +575,7 @@ mod tests {
                 },
                 MeridianSystem::default(),
                 Contamination::default(),
+                CurrentDimension(DimensionKind::Overworld),
                 LifeRecord::new(canonical_player_id("Alice")),
             ))
             .id();
@@ -741,6 +749,7 @@ mod tests {
                 MeridianSystem::default(),
                 Contamination::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
@@ -799,6 +808,7 @@ mod tests {
                 MeridianSystem::default(),
                 Contamination::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
@@ -852,6 +862,7 @@ mod tests {
                 MeridianSystem::default(),
                 Contamination::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
         app.world_mut().send_event(PlayerTerminated { entity });

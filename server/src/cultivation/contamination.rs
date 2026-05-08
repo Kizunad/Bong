@@ -177,6 +177,7 @@ mod tests {
     use crate::cultivation::death_hooks::CultivationDeathTrigger;
     use crate::qi_physics::{QiAccountId, QiTransferReason};
     use crate::skill::components::{SkillEntry, SkillSet};
+    use crate::world::dimension::DimensionKind;
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::prelude::{App, Events, Position, Update};
 
@@ -311,6 +312,7 @@ mod tests {
             .spirit_qi;
         app.world_mut().spawn((
             Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
             Cultivation {
                 realm: Realm::Spirit,
                 qi_current: 10.0,

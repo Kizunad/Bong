@@ -6,9 +6,9 @@
 //!
 //! `LingtianTickAccumulator` 把 Bevy tick（1/20s）累计到 lingtian-tick（60s）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use valence::prelude::{bevy_ecs, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, ResMut, Resource};
 
 use crate::qi_physics::{QiAccountId, QiPhysicsError, WorldQiAccount};
 
@@ -19,6 +19,7 @@ pub const BEVY_TICKS_PER_LINGTIAN_TICK: u32 = 1200;
 #[derive(Debug, Default, Resource)]
 pub struct ZoneQiAccount {
     qi: HashMap<String, f32>,
+    removed_zones: HashSet<String>,
 }
 
 /// 默认 zone 名（plan §1.3 zone 解析未实装时的 fallback）。
@@ -31,7 +32,9 @@ impl ZoneQiAccount {
 
     /// 用某个 baseline 在指定 zone 设初值（loader / 测试用）。
     pub fn set(&mut self, zone: impl Into<String>, value: f32) {
-        self.qi.insert(zone.into(), value.max(0.0));
+        let zone = zone.into();
+        self.removed_zones.remove(&zone);
+        self.qi.insert(zone, value.max(0.0));
     }
 
     pub fn get(&self, zone: &str) -> f32 {
@@ -40,7 +43,16 @@ impl ZoneQiAccount {
 
     /// 拿可变引用；不存在则插入 0 后返回。
     pub fn get_mut(&mut self, zone: &str) -> &mut f32 {
+        self.removed_zones.remove(zone);
         self.qi.entry(zone.to_string()).or_insert(0.0)
+    }
+
+    pub fn remove(&mut self, zone: &str) -> Option<f32> {
+        let removed = self.qi.remove(zone);
+        if removed.is_some() {
+            self.removed_zones.insert(zone.to_string());
+        }
+        removed
     }
 
     pub fn zones(&self) -> impl Iterator<Item = &String> {
@@ -48,23 +60,35 @@ impl ZoneQiAccount {
     }
 
     pub fn sync_world_qi_account(
-        &self,
+        &mut self,
         account: &mut WorldQiAccount,
     ) -> Result<(), QiPhysicsError> {
+        let active_zone_accounts: HashSet<QiAccountId> =
+            self.qi.keys().cloned().map(QiAccountId::zone).collect();
         for (zone, value) in &self.qi {
             account.set_balance(QiAccountId::zone(zone.clone()), f64::from(value.max(0.0)))?;
+        }
+        let removed_zone_accounts: Vec<_> = self
+            .removed_zones
+            .drain()
+            .map(QiAccountId::zone)
+            .filter(|account_id| !active_zone_accounts.contains(account_id))
+            .collect();
+        for account_id in removed_zone_accounts {
+            account.remove_balance(&account_id);
         }
         Ok(())
     }
 }
 
 pub fn sync_zone_qi_account_to_world_qi_account(
-    zone_qi: Option<Res<ZoneQiAccount>>,
+    zone_qi: Option<ResMut<ZoneQiAccount>>,
     world_qi: Option<ResMut<WorldQiAccount>>,
 ) {
     let (Some(zone_qi), Some(mut world_qi)) = (zone_qi, world_qi) else {
         return;
     };
+    let mut zone_qi = zone_qi;
     if let Err(error) = zone_qi.sync_world_qi_account(&mut world_qi) {
         tracing::warn!("[bong][lingtian] failed to sync ZoneQiAccount to WorldQiAccount: {error}");
     }
@@ -134,6 +158,22 @@ mod tests {
         acct.sync_world_qi_account(&mut world).unwrap();
 
         assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
+    }
+
+    #[test]
+    fn zone_qi_account_sync_removes_deleted_zone_from_world_qi_account() {
+        let mut acct = ZoneQiAccount::new();
+        acct.set("field", 3.5);
+        acct.set("stale", 2.0);
+        let mut world = WorldQiAccount::default();
+        acct.sync_world_qi_account(&mut world).unwrap();
+        assert_eq!(world.balance(&QiAccountId::zone("stale")), 2.0);
+
+        assert_eq!(acct.remove("stale"), Some(2.0));
+        acct.sync_world_qi_account(&mut world).unwrap();
+
+        assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
+        assert_eq!(world.balance(&QiAccountId::zone("stale")), 0.0);
     }
 
     #[test]

@@ -165,6 +165,10 @@ impl WorldQiAccount {
         Ok(())
     }
 
+    pub fn remove_balance(&mut self, account: &QiAccountId) -> Option<f64> {
+        self.balances.remove(account)
+    }
+
     pub fn balance(&self, account: &QiAccountId) -> f64 {
         self.balances.get(account).copied().unwrap_or(0.0)
     }

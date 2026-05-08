@@ -48,6 +48,12 @@ mod tests {
         }
     }
 
+    fn make_tsy_buffer_zone(name: &str) -> Zone {
+        let mut zone = make_tsy_zone(name);
+        zone.spirit_qi = -0.5;
+        zone
+    }
+
     fn ancient_item(id: u64) -> ItemInstance {
         ItemInstance {
             instance_id: id,
@@ -127,6 +133,16 @@ mod tests {
             zones
                 .register_runtime_zone(make_tsy_zone(name))
                 .expect("register");
+        }
+        for name in [
+            "tsy_buffer_a",
+            "tsy_buffer_b",
+            "tsy_buffer_c",
+            "tsy_buffer_d",
+        ] {
+            zones
+                .register_runtime_zone(make_tsy_buffer_zone(name))
+                .expect("register buffer");
         }
     }
 
