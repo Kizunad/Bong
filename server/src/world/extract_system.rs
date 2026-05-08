@@ -157,6 +157,18 @@ pub fn start_extract_request(
     clock: Res<CombatClock>,
     lifecycle_registry: Option<Res<TsyZoneStateRegistry>>,
 ) {
+    // plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 单 portal 1 人。
+    //
+    // `Commands::insert` 是 deferred（system 结束才 ApplyDeferred），所以 `portal_occupants`
+    // 只能看到上一 tick 的 ExtractProgress。同一 tick 内若有两个 StartExtractRequest 命中
+    // 同一 CollapseTear，**两个都会通过 `portal_occupants.iter()` 检查并被 Started**——直接
+    // 违反 Q-RC4 单 portal 单 player 的契约（多 client 包同帧到达时常发生）。
+    //
+    // 修复：本 system 内部用 `admitted_collapse_tears` 做 reservation，每次 admit 后立刻
+    // 标记，下一次 occupied 检查同时看 set + portal_occupants。
+    use std::collections::HashSet;
+    let mut admitted_collapse_tears: HashSet<Entity> = HashSet::new();
+
     for req in events.read() {
         let Ok((portal, portal_pos)) = portals.get(req.portal) else {
             results.send(StartExtractResult::Rejected {
@@ -179,12 +191,11 @@ pub fn start_extract_request(
             continue;
         };
 
-        // plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 单 portal 1 人。
-        // MainRift / DeepRift 不限制（标准撤离允许多人同时在同一裂缝撤）。
         let collapse_tear_occupied = portal.kind == RiftKind::CollapseTear
-            && portal_occupants
+            && (portal_occupants
                 .iter()
-                .any(|progress| progress.portal == req.portal);
+                .any(|progress| progress.portal == req.portal)
+                || admitted_collapse_tears.contains(&req.portal));
 
         let rejection = if existing_progress.is_some() {
             Some(ExtractRejectionReason::AlreadyBusy)
@@ -230,6 +241,9 @@ pub fn start_extract_request(
             started_pos: started_pos(player_pos),
             wound_count_at_start: wounds.entries.len(),
         });
+        if portal.kind == RiftKind::CollapseTear {
+            admitted_collapse_tears.insert(req.portal);
+        }
         results.send(StartExtractResult::Started {
             player: req.player,
             portal: req.portal,
@@ -1103,6 +1117,74 @@ mod tests {
         assert_eq!(
             started_count, 1,
             "MainRift 不限单 portal 单 player，第二位玩家应正常 Started，实际：{:?}",
+            collected
+        );
+    }
+
+    /// plan-tsy-raceout-v1 §4 Q-RC4 — Codex review #151 P1 修复回归：
+    /// `Commands::insert` 是 deferred；同一 tick 两个 StartExtractRequest 命中
+    /// 同一 CollapseTear 时，`portal_occupants.iter()` 只看到上一 tick 的状态。
+    /// 没有 in-loop reservation 会让两个 player 同帧都被 Started，违反 Q-RC4。
+    /// 本测试 send 两个 event 在 update 前 → 一次 update 内消费两个 event →
+    /// 第二个必须收到 PortalOccupied。
+    #[test]
+    fn collapse_tear_in_loop_reservation_prevents_same_tick_double_admit() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let tear = app
+            .world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::CollapseTear, DVec3::ZERO))
+            .id();
+        let first = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+        let second = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        // 同一 update 内 send 两个 event（模拟同 tick 两个 client 包到达）
+        {
+            let mut req_writer = app
+                .world_mut()
+                .resource_mut::<Events<StartExtractRequest>>();
+            req_writer.send(StartExtractRequest {
+                player: first,
+                portal: tear,
+            });
+            req_writer.send(StartExtractRequest {
+                player: second,
+                portal: tear,
+            });
+        }
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        let started: Vec<Entity> = collected
+            .iter()
+            .filter_map(|r| match r {
+                StartExtractResult::Started { player, .. } => Some(*player),
+                _ => None,
+            })
+            .collect();
+        let rejected_with_occupied: Vec<Entity> = collected
+            .iter()
+            .filter_map(|r| match r {
+                StartExtractResult::Rejected {
+                    player,
+                    reason: ExtractRejectionReason::PortalOccupied,
+                    ..
+                } => Some(*player),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            started.len(),
+            1,
+            "同 tick 双请求只应有 1 个 Started（in-loop reservation 锁住第二个），实际 started={:?} all={:?}",
+            started,
+            collected
+        );
+        assert_eq!(
+            rejected_with_occupied.len(),
+            1,
+            "同 tick 双请求第二个应被 PortalOccupied 拒绝，实际 rejected_occupied={:?} all={:?}",
+            rejected_with_occupied,
             collected
         );
     }
