@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, Resource};
+use valence::prelude::{bevy_ecs, Res, ResMut, Resource};
 
 use crate::qi_physics::{QiAccountId, QiPhysicsError, WorldQiAccount};
 
@@ -55,6 +55,18 @@ impl ZoneQiAccount {
             account.set_balance(QiAccountId::zone(zone.clone()), f64::from(value.max(0.0)))?;
         }
         Ok(())
+    }
+}
+
+pub fn sync_zone_qi_account_to_world_qi_account(
+    zone_qi: Option<Res<ZoneQiAccount>>,
+    world_qi: Option<ResMut<WorldQiAccount>>,
+) {
+    let (Some(zone_qi), Some(mut world_qi)) = (zone_qi, world_qi) else {
+        return;
+    };
+    if let Err(error) = zone_qi.sync_world_qi_account(&mut world_qi) {
+        tracing::warn!("[bong][lingtian] failed to sync ZoneQiAccount to WorldQiAccount: {error}");
     }
 }
 
@@ -121,6 +133,24 @@ mod tests {
 
         acct.sync_world_qi_account(&mut world).unwrap();
 
+        assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
+    }
+
+    #[test]
+    fn sync_system_mirrors_zone_qi_account_into_world_qi_account() {
+        let mut app = valence::prelude::App::new();
+        let mut acct = ZoneQiAccount::new();
+        acct.set("field", 3.5);
+        app.insert_resource(acct);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(
+            valence::prelude::Update,
+            sync_zone_qi_account_to_world_qi_account,
+        );
+
+        app.update();
+
+        let world = app.world().resource::<WorldQiAccount>();
         assert_eq!(world.balance(&QiAccountId::zone("field")), 3.5);
     }
 

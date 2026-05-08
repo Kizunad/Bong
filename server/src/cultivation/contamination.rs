@@ -34,7 +34,14 @@ pub fn purge_step(
     qi_budget: f64,
     purge_rate: f64,
 ) -> (f64, f64, bool) {
-    let want_purge = purge_rate.min(contam.amount);
+    let (actual_purge, actual_cost, _) = preview_purge_step(contam.amount, qi_budget, purge_rate);
+    apply_purge_cost(contam, actual_cost);
+    let cleared = contam.amount <= 1e-9;
+    (actual_purge, actual_cost, cleared)
+}
+
+fn preview_purge_step(contam_amount: f64, qi_budget: f64, purge_rate: f64) -> (f64, f64, bool) {
+    let want_purge = purge_rate.min(contam_amount);
     let want_cost = want_purge * DRAIN_RATIO;
     let actual_cost = want_cost.min(qi_budget);
     let actual_purge = if want_cost > 0.0 {
@@ -42,9 +49,18 @@ pub fn purge_step(
     } else {
         0.0
     };
-    contam.amount = (contam.amount - actual_purge).max(0.0);
-    let cleared = contam.amount <= 1e-9;
+    let cleared = (contam_amount - actual_purge).max(0.0) <= 1e-9;
     (actual_purge, actual_cost, cleared)
+}
+
+fn apply_purge_cost(contam: &mut super::components::ContamSource, accepted_cost: f64) -> f64 {
+    let actual_purge = if accepted_cost > 0.0 {
+        (accepted_cost / DRAIN_RATIO).min(contam.amount)
+    } else {
+        0.0
+    };
+    contam.amount = (contam.amount - actual_purge).max(0.0);
+    actual_purge
 }
 
 #[allow(clippy::type_complexity)]
@@ -98,16 +114,21 @@ pub fn contamination_tick(
 
         for entry in contam.entries.iter_mut() {
             let budget = cultivation.qi_current.max(0.0);
-            let (_purge, cost, _cleared) = purge_step(entry, budget, purge_rate);
-            cultivation.qi_current -= cost;
-            release_contamination_cost_to_zone(
+            let (_purge, planned_cost, _cleared) =
+                preview_purge_step(entry.amount, budget, purge_rate);
+            let accepted_cost = release_contamination_cost_to_zone(
                 entity,
-                cost,
+                planned_cost,
                 position,
                 current_dimension,
                 zones.as_deref_mut(),
                 qi_transfers.as_deref_mut(),
             );
+            if accepted_cost <= QI_EPSILON {
+                continue;
+            }
+            apply_purge_cost(entry, accepted_cost);
+            cultivation.qi_current -= accepted_cost;
             if cultivation.qi_current < 0.0 {
                 any_qi_deficit = true;
                 // 对首条已打通经脉添加裂痕
@@ -148,12 +169,12 @@ fn release_contamination_cost_to_zone(
     current_dimension: Option<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<QiTransfer>>,
-) {
+) -> f64 {
     if amount <= QI_EPSILON {
-        return;
+        return 0.0;
     }
     let (Some(position), Some(zones)) = (position, zones) else {
-        return;
+        return 0.0;
     };
     let dimension = current_dimension
         .map(|current| current.0)
@@ -162,22 +183,23 @@ fn release_contamination_cost_to_zone(
         .find_zone(dimension, position.0)
         .map(|zone| zone.name.clone())
     else {
-        return;
+        return 0.0;
     };
     let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
-        return;
+        return 0.0;
     };
     let from = QiAccountId::player(format!("entity:{entity:?}:contamination"));
     let to = QiAccountId::zone(zone.name.clone());
     let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
     let Ok(outcome) = qi_release_to_zone(amount, from, to, zone_current, QI_ZONE_UNIT_CAPACITY)
     else {
-        return;
+        return 0.0;
     };
     zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
     if let (Some(transfer), Some(qi_transfers)) = (outcome.transfer, qi_transfers) {
         qi_transfers.send(transfer);
     }
+    outcome.accepted
 }
 
 #[cfg(test)]
@@ -230,12 +252,15 @@ mod tests {
     fn alchemy_skill_increases_contamination_purge_rate() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, contamination_tick);
 
         let baseline = app
             .world_mut()
             .spawn((
+                Position::new([8.0, 66.0, 8.0]),
                 Cultivation {
                     realm: Realm::Spirit,
                     qi_current: 10.0,
@@ -265,6 +290,7 @@ mod tests {
         let skilled = app
             .world_mut()
             .spawn((
+                Position::new([9.0, 66.0, 9.0]),
                 Cultivation {
                     realm: Realm::Spirit,
                     qi_current: 10.0,
@@ -349,5 +375,40 @@ mod tests {
             .collect();
         assert!(after > before);
         assert_eq!(transfers.len(), 1);
+    }
+
+    #[test]
+    fn contamination_purge_without_zone_release_does_not_consume_qi_or_contam() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_systems(Update, contamination_tick);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+                Contamination {
+                    entries: vec![ContamSource {
+                        amount: 1.0,
+                        color: ColorKind::Mellow,
+                        attacker_id: None,
+                        introduced_at: 1,
+                    }],
+                },
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let contamination = app.world().get::<Contamination>(entity).unwrap();
+        assert_eq!(cultivation.qi_current, 10.0);
+        assert_eq!(contamination.entries[0].amount, 1.0);
     }
 }

@@ -481,6 +481,29 @@ mod tests {
         assert_eq!(snap.total_observed(), -0.6);
     }
 
+    #[test]
+    fn world_qi_snapshot_asserts_conservation_across_ledger_transfer() {
+        let mut app = App::new();
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        let mut account = WorldQiAccount::default();
+        let from = QiAccountId::player("p1");
+        let to = QiAccountId::zone("spawn");
+        account.set_balance(from.clone(), 10.0).unwrap();
+        account.set_balance(to.clone(), 5.0).unwrap();
+        app.insert_resource(account);
+        let before = summarize_world_qi(app.world_mut());
+
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .transfer(QiTransfer::new(from, to, 3.0, QiTransferReason::ReleaseToZone).unwrap())
+            .unwrap();
+        let after = summarize_world_qi(app.world_mut());
+
+        assert_eq!(before.budget_current_total, 100.0);
+        assert_eq!(after.budget_current_total, 100.0);
+        assert!(assert_conservation(&before, &after, 0.0).is_ok());
+    }
+
     fn snapshot(total: f64) -> WorldQiSnapshot {
         WorldQiSnapshot {
             player_qi: total,
