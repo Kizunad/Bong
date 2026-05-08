@@ -145,7 +145,7 @@ K 值校准（运维 config）:
 - `cd server && cargo test start_tribulation_system_counts_in_flight_void_tribulations_across_ticks -- --nocapture` → 1 passed
 - `cd server && cargo test quota -- --nocapture` → 30 passed
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet` → 2964 passed
-- `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 305 passed；tiandao 271 passed
+- `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` → schema 324 passed；tiandao 281 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL
 
 ### 跨仓库核验
