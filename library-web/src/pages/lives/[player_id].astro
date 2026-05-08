@@ -46,7 +46,11 @@ export async function getStaticPaths() {
   }
 
   // Astro 路由参数不允许 `:`，把 `offline:Alice` 编码为 URL-safe 的
-  // `offline-Alice`，客户端再反向还原。
+  // `offline-Alice` 仅用于 URL slug。**注意**：本编码不是双射——若未来出现含 `-`
+  // 的用户名（如 `bob-cool`），`offline-bob-cool` 反向解析有歧义。当前实现把原始
+  // player_id 通过 `props.player_id_raw` 直接传给页面 component，**不依赖 URL 反向
+  // 解析**，所以无 bug；但若将来加"列表 → 详情"链接只传 slug 时务必规避此歧义
+  // （建议改用 base64url / 双下划线分隔等无歧义编码）。
   const encodePlayerIdForUrl = (playerId: string): string =>
     playerId.replace(/:/g, "-");
 

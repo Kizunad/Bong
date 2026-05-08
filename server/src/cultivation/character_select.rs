@@ -101,4 +101,17 @@ mod tests {
             "新角色寿元 cap 必须 = AWAKEN，不可退回 MORTAL（plan §2 规定）",
         );
     }
+
+    #[test]
+    fn spec_realm_matches_cultivation_default() {
+        // 防漂移：`combat::lifecycle::reset_for_new_character` 通过 `Cultivation::default()`
+        // 间接保证新角色 realm = Awaken，但 spec 字段也声明了 realm。两边语义必须一致——
+        // 若有人改了 `Cultivation::default().realm` 但忘了改 spec（或反之），本测试会撞红。
+        use crate::cultivation::components::Cultivation;
+        assert_eq!(
+            Cultivation::default().realm,
+            next_character_spec().realm,
+            "Cultivation::default().realm 与 next_character_spec().realm 必须保持一致，否则 reset 路径与 attach 路径数值漂移",
+        );
+    }
 }

@@ -4,17 +4,31 @@
 //! 还是 **角色终结进入 character_select**。判定逻辑严格遵循 plan-multi-life-v1
 //! §2 流程：
 //!
-//! 1. 自然老死（[`CultivationDeathCause::NaturalAging`]）→ `Terminate(NaturalAging)`，
-//!    plan §0 第 6 条："寿元 = 0 OR 运数耗尽 → 角色终结"，且 `NaturalAging`
-//!    在底层已被 `apply_natural_aging_lifespan_exhaustion` 标记 lifespan 耗尽。
+//! 1. 自然老死（[`CultivationDeathCause::NaturalAging`]）→ `Terminate(NaturalAging)`。
+//!    底层 `combat::lifecycle::apply_natural_aging_lifespan_exhaustion` 会同时把
+//!    `years_lived` 推到 cap，使 lifespan 也满足 exhausted；本决策器把 cause 优先
+//!    判，保留"老死"语义而不被 LifespanExhausted 抢占。
 //! 2. 寿元 ≤ 0（被杀 / 渡劫失败 + 死亡扣寿后 cap 归零）→ `Terminate(LifespanExhausted)`
 //! 3. 运数池耗尽（fortune == 0）→ `Terminate(FortuneExhausted)`
 //! 4. 否则 → `Revive(remaining_fortune)`，调用方应用 [`crate::cultivation::luck_pool::spend_fortune`]
 //!    扣 1 后让玩家在灵龛重生
 //!
-//! plan-death-lifecycle-v1 已在 `combat::lifecycle::handle_revival_action_intents`
-//! 实现了完整 IO 流（emit terminate_screen / DeathInsightRequested 等）；
-//! 本模块只暴露 **纯决策函数**，无副作用，方便单元测试覆盖每条状态转换。
+//! ## 当前接入状态（plan-multi-life-v1 P0）
+//!
+//! **本函数是接口先于实装**。生产路径的死亡 → 重生/终结决策仍由
+//! `combat::lifecycle::determine_revival_decision` 做出（含 `RebirthChanceInput`
+//! / 灵龛归属 / 渡劫概率 / karma 等更复杂的输入），而非本函数。本模块作为
+//! plan-multi-life-v1 §3 数据契约第 2 条要求的 **决策语义层** 落地，提供：
+//!
+//! 1. 单一职责的纯决策入口（无副作用，便于单测覆盖每条状态转换）；
+//! 2. 与 [`crate::cultivation::luck_pool`] 配套的 multi-life 语义门面；
+//! 3. plan §2 流程在代码层的可执行验证（17 单测 / 4 集成测试链路）。
+//!
+//! 后续 P+1 阶段如需让生产路径切到新决策器，可在 `combat::lifecycle::handle_cultivation_death_triggers`
+//! 中替换 `determine_revival_decision` 的"是否完全不重生"分支为本函数——届时
+//! 本模块的所有测试与现有 17 case 应自动锁住语义不漂移（CLAUDE.md "Testing —
+//! 饱和化测试"第 3 条："mock 顶位时接口必须完整 ... 真实 impl 接入时只换 impl
+//! 不改测试"）。
 
 use crate::combat::components::Lifecycle;
 use crate::cultivation::death_hooks::CultivationDeathCause;
@@ -75,7 +89,9 @@ pub fn regenerate_or_terminate(
     lifecycle: &Lifecycle,
     cause: CultivationDeathCause,
 ) -> LifeOutcome {
-    // plan §2 第 1 条：自然老死即终结，不消耗运数（NaturalAging.skips_fortune == true）
+    // plan §2 第 1 条：自然老死即终结。NaturalAging 在调用前已被
+    // `apply_natural_aging_lifespan_exhaustion` 推满 years_lived，但此处仍按
+    // cause 优先判定，保留"老死"语义不被后续的 LifespanExhausted 抢占。
     if cause == CultivationDeathCause::NaturalAging {
         return LifeOutcome::Terminate {
             reason: TerminateReason::NaturalAging,
@@ -109,6 +125,7 @@ mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
     use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
+    use crate::cultivation::luck_pool::INITIAL_FORTUNE_PER_LIFE;
 
     fn fresh_lifecycle() -> Lifecycle {
         Lifecycle {
@@ -224,7 +241,7 @@ mod tests {
 
     #[test]
     fn natural_aging_always_terminates_regardless_of_fortune() {
-        // NaturalAging 跳过运数检查（CultivationDeathCause::skips_fortune == true）
+        // NaturalAging 跳过运数检查（regenerate_or_terminate 第一个分支即返回 Terminate(NaturalAging)）
         let lifespan = fresh_lifespan();
         let lc = fresh_lifecycle(); // fortune=3 满
 
@@ -422,11 +439,8 @@ mod tests {
 
         // 即便玩家寿元尚未到 cap、运数仍满，老死语义也应进 character_select
         let spec = next_character_spec();
-        assert_eq!(spec.initial_fortune, INITIAL_FORTUNE_PER_LIFE_OK);
+        assert_eq!(spec.initial_fortune, INITIAL_FORTUNE_PER_LIFE);
     }
-
-    // 局部别名，避免在测试里重复 crate 路径
-    const INITIAL_FORTUNE_PER_LIFE_OK: u8 = crate::cultivation::luck_pool::INITIAL_FORTUNE_PER_LIFE;
 
     #[test]
     fn fortune_exhausted_to_new_life_spec_resets_pool() {
@@ -450,7 +464,7 @@ mod tests {
         // spec 应给新角色 fortune=3（per-life pool 重置而非保留耗尽态）
         let spec = next_character_spec();
         assert_eq!(spec.initial_fortune, 3);
-        assert_eq!(spec.initial_fortune, INITIAL_FORTUNE_PER_LIFE_OK);
+        assert_eq!(spec.initial_fortune, INITIAL_FORTUNE_PER_LIFE);
     }
 
     #[test]
