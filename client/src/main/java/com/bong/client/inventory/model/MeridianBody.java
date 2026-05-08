@@ -87,6 +87,27 @@ public final class MeridianBody {
         return n == null ? 0 : n;
     }
 
+    /**
+     * plan-meridian-severed-v1 §6 / 决策门 #5=②：返回所有当前损伤等级 = SEVERED 的经脉
+     * 通道。本方法是给将来 hotbar 灰显逻辑用的便捷访问器——招式 cast 检查依赖经脉时，
+     * 调用方对 each dependency 调 `severedChannels().contains(ch)` 即可决定是否灰显。
+     *
+     * <p>注意：客户端的 SEVERED 判定来自 {@link CultivationDetailHandler#damageFromIntegrity}
+     * （integrity &lt; 0.10 即归为 SEVERED 显示），与服务端 `MeridianSeveredPermanent`
+     * 永久标记不完全等同；轻度损伤（integrity 0.05-0.09）也会被这里显黑色但实际可恢复。
+     * 真正区分"瞬时染色 vs 永久"需要服务端推送 severed 列表（plan-yidao-v1 / 各 v2
+     * 流派 plan 实装时再扩 schema）。
+     */
+    public java.util.Set<MeridianChannel> severedChannels() {
+        java.util.EnumSet<MeridianChannel> result = java.util.EnumSet.noneOf(MeridianChannel.class);
+        for (Map.Entry<MeridianChannel, ChannelState> entry : channels.entrySet()) {
+            if (entry.getValue().damage() == ChannelState.DamageLevel.SEVERED) {
+                result.add(entry.getKey());
+            }
+        }
+        return result;
+    }
+
     /** 全身平均有效流量比 */
     public double overallFlowHealth() {
         double sum = 0;
