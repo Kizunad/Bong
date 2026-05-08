@@ -352,9 +352,11 @@ pub struct LifeRecord {
   - `eb552861e`（2026-05-09）`fix(void-actions): 修正 barrier 到期灵气回流`：review 修复 Barrier 到期不再给 `WorldQiBudget` 铸造 150，改为 `barrier:<zone>` ledger 账户转回真实 zone 账户并补回归。
   - `2426f62ad`（2026-05-09）`fix(void-actions): 收紧化虚账本与屏障结算`：review 修复 SuppressTsy 半提交、ExplodeZone 预算不足增发、Barrier 退款失败重试、稳定 character_id 冷却、BarrierField 实际驱散、v18 migration 结构断言与 `VoidActionBacklash` 专用终结 cause。
   - `6fa464390`（2026-05-09）`fix(void-actions): 补客户端派发与天道背压`：review 修复 client 无世界 tick / 空 player 派发、`VoidActionStore` 原子更新、void_action 负向编码测试，以及 tiandao runtime 串行化 LLM payload 处理。
+  - `2b6e89c55`（2026-05-09）`fix(void-actions): 同步化虚施法账本视图`：review 修复已有 player ledger 与 `Cultivation.qi_current` 正常漂移后第二次化虚施法被锁死的问题，v1 bridge 每次施法前改以 cultivation 视图重同步 ledger。
 - **测试结果**：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3103 passed。
   - `cd server && cargo test cultivation::void` → 74 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 74。
+  - `cd server && cargo test cultivation::void::ledger_hooks` → 19 passed。
   - `cd server && cargo test void_action_backlash_records_dedicated_termination_cause` / `cargo test v18_migration_rejects_partial_legacy_letterbox_schema` / `cargo test serde_defaults_missing_void_action_fields_for_legacy_records` → all passed。
   - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 285 passed；schema 327 passed。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
@@ -367,4 +369,4 @@ pub struct LifeRecord {
 - **遗留 / 后续**：
   - v1 采用 circle barrier；polygon / rect 边界、化虚 vs 化虚 PVP、ExplodeZone 分月资源曲线、以及 zone 灵气归零后的玩家行为 telemetry 留 v2/运营校准。
   - `LegacyLetterbox` 已记录 24h 拒绝窗口和状态；继承人 NPC dialog / 实物领取结算可在后续 niche-defense 或 legacy follow-up 中接 UI 流程。
-  - `debit_caster_qi_to_account` 仍允许 v1 初次缺失账户从 `Cultivation.qi_current` seed；已有账户与 cultivation 分歧时已经 fail-fast。后续若接入 craft 注释中的全局 sync system，应统一改成显式 `LedgerOutOfSync`，完全移除 action 内 seed。
+  - `debit_caster_qi_to_account` 在 v1 仍以 `Cultivation.qi_current` 作为玩家真元 source of truth，每次施法前把 `WorldQiAccount` player account 重同步到该视图，避免旧版 `max(account, cultivation)` 放大真元；后续若接入 craft 注释中的全局 sync system，应统一改成显式 `LedgerOutOfSync`，完全移除 action 内 seed / resync bridge。
