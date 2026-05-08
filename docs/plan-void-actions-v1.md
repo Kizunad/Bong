@@ -27,7 +27,7 @@
 
 ### B. AscensionQuota / 化虚 quota 链路（plan-void-quota-v1 ✅ finished）
 
-- **`compute_void_quota_limit(total_world_qi: f64, quota_k: f64) -> u32`** @ `server/src/cultivation/tribulation.rs:117`（commit 057fabf92）
+- **`compute_void_quota_limit(total_world_qi: f64, quota_k: f64) -> u32`** @ `server/src/cultivation/tribulation.rs:117`（commit 30c05f028）
 - **`check_void_quota(occupied, &budget, &config) -> VoidQuotaCheckV1`** @ `server/src/cultivation/tribulation.rs:129`
 - **`release_ascension_quota_slot`** @ `server/src/death_lifecycle/`（降境 / 死透 / `RealmRegressed { from: Void }` 路径已 hook）
 - **`AscensionQuotaStore`** @ `server/src/npc/tribulation.rs:26` / **`AscensionQuotaV1`** schema @ `server/src/schema/server_data.rs`

@@ -641,14 +641,14 @@ plans:
     summary: "骨架；承接 gameplay-journey §P 流派克制理论。设计转向：从查表式 ρ/W/β const 改为 qi-physics 物理引擎应用层（StyleAttack/Defense trait 注册物理参数，克制涌现而非查表）。P1 telemetry 已在 PR #129 顺手实装混元色版（2026-05-04），但 spec 要求的 5 维（attacker_style/defender_style/distance/h_eff/qi_drain）未对齐；P0 StyleMatrix const 全空白。等 qi-physics 落地。"
 
   - file: plan-void-actions-v1.md
-    group: skeleton
+    group: cultivation-economy
     title: "化虚专属 action（镇压/引爆/阻挡/传承）"
-    state: skeleton
-    percent: 5
-    last_updated: ""
+    state: active-design
+    percent: 15
+    last_updated: "2026-05-08"
     pr_refs: []
     blocking_on: []
-    summary: "骨架；化虚后不再以突破为驱动，改为参与天道运维博弈，对应 worldview §三 / §八 / §十六 / §十二。"
+    summary: "Active（2026-05-08 升级）；化虚后不再以突破为驱动，改为镇压坍缩渊 / 引爆区域 / 阻挡道伥扩散 / 道统传承四类 action。前置 void-quota 已 finished，P0 仍需收口 action 成本、寿元扣减、冷却与 narration 模板。"
 
   - file: finished_plans/plan-void-quota-v1.md
     group: cultivation-economy

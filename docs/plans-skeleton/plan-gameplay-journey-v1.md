@@ -357,7 +357,7 @@
 - plan-multi-life-v1 ✅ active (2026-05-04 升级，6 决策 + reframe 对齐 lifespan-v1)
 - plan-tsy-raceout-v1 ✅ active (2026-05-04 升级，5 决策闭环 — 3s 撤离 / 单裂口 1 人 / 允许 PVP)
 - plan-lifespan-v1 ✅ active (2026-05-04 升级，5 决策 — NaturalDeathCorpse 复用 TSY BodyInstance)
-- plan-void-quota-v1 ✅ finished；plan-void-actions-v1 仍 ⬜（quota 前置已解除，可升 active）
+- plan-void-quota-v1 ✅ finished；plan-void-actions-v1 已升 active（2026-05-08，4 类化虚 action 决策门收口）
 
 ---
 
@@ -1410,7 +1410,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
 | 40 | `plan-void-quota-v1` | ✅ finished（2026-05-08；`AscensionQuota` 已改世界灵气预算 + 绝壁劫真死） | cultivation-canonical-align-v1 ✅, tribulation-v1 ✅, qi-physics-v1 ✅ | §N.0 + O.3 |
-| 41 | `plan-void-actions-v1` | 🆕 | tribulation-v1, void-quota-v1 | §N 化虚专属 action |
+| 41 | `plan-void-actions-v1` | ⏳ active-design（2026-05-08；4 类化虚 action 血肉 + 决策门收口） | tribulation-v1, void-quota-v1 ✅ | §N 化虚专属 action |
 | 42 | `plan-multi-life-v1` | ⏳ active-design (~8%；LifespanCapTable 复用就绪，character_lifecycle::regenerate_or_terminate / per-life luck_pool 全未实装) | death-lifecycle ✅, lifespan-v1 ✅ (PR #117), tsy-loot ✅, spawn-tutorial ✅ | §M.3 多周目 + O.4；引用 lifespan-v1 §2 不另维护 |
 
 #### 层 G：终极验收
@@ -1659,7 +1659,7 @@ graph TD
 | 并行组 | Plan |
 |---|---|
 | 组 5-A | plan-void-quota-v1 ✅ finished + plan-multi-life-v1 🆕 |
-| 组 5-B(quota 已完成) | plan-void-actions-v1 🆕 |
+| 组 5-B(quota 已完成) | plan-void-actions-v1 ⏳ active-design |
 | 组 5-C(终极) | **plan-gameplay-acceptance-v1** 🆕（6 段 E2E + 100h 实测） |
 
 **Wave 5 退出条件**：E2E `p5-void.sh` 三终局(succeed/intercepted/burst)全绿；100h 真实玩家走通。
@@ -1696,7 +1696,7 @@ graph TD
                         ✅ → niche-defense-v1 (3w) — 已 finished (2026-05-05 PR #130 commit e08e2efc)
                             ✅ → tribulation-v1 (4w) — finished
                                 ✅ → void-quota-v1 (2w) — finished（世界灵气预算公式 + 绝壁劫）
-                                    ⬜ → void-actions-v1 (2w)
+                                    ⏳ → void-actions-v1 (2w) — active-design（4 类化虚 action）
                                         🆕 → gameplay-acceptance-v1 (4w 含 100h 实测)
     ───────────────────────────────────────
     剩临界路径 ≈ 15 周（约 4 个月，前 16 周已实际跑完）
@@ -1721,7 +1721,7 @@ graph TD
 
 **对策**：Wave 0 + Wave 1 关键 plan 必须**双人结对**或**同时起 2 路并行实验**——卡 1 周以上立即换路。
 
-> **2026-05-08 状态**：tribulation-v1 已 ✅ finished；void-quota-v1 已 ✅ finished。`AscensionQuota` 人数公式 / 半步化虚旧规则已替换为世界灵气预算公式 / 绝壁劫死亡语义，当前瓶颈顺延到 void-actions 与 gameplay-acceptance。
+> **2026-05-08 状态**：tribulation-v1 已 ✅ finished；void-quota-v1 已 ✅ finished；void-actions-v1 已升 active-design。`AscensionQuota` 人数公式 / 半步化虚旧规则已替换为世界灵气预算公式 / 绝壁劫死亡语义，当前瓶颈顺延到 void-actions 落地与 gameplay-acceptance。
 
 ### Q.7 升 active 操作清单
 
@@ -1729,7 +1729,7 @@ graph TD
 
 - [ ] `git mv docs/plans-skeleton/plan-gameplay-journey-v1.md docs/plan-gameplay-journey-v1.md`
 - [ ] 同步起新派生 plan 的 skeleton（Q.1 标 🆕 的）：
-  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / style-balance-v1 ⬜ / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / **void-quota-v1 ✅ finished** (05-08) / void-actions-v1 ⬜ / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
+  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / style-balance-v1 ⬜ / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / **void-quota-v1 ✅ finished** (05-08) / **void-actions-v1 ⏳ active-design** (05-08) / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
 - [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"
