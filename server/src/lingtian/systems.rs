@@ -3864,9 +3864,13 @@ mod tests {
             .drain()
             .collect();
         assert_eq!(qi_transfers.len(), 2);
+        let plot_account =
+            QiAccountId::container(format!("lingtian_plot:{},{},{}", pos.x, pos.y, pos.z));
+        assert_eq!(qi_transfers[0].from, plot_account);
         assert_eq!(qi_transfers[0].to, QiAccountId::player("p"));
         assert!((qi_transfers[0].amount - 1.0).abs() < 1e-6);
         assert_eq!(qi_transfers[0].reason, QiTransferReason::Channeling);
+        assert_eq!(qi_transfers[1].from, plot_account);
         assert_eq!(qi_transfers[1].to, QiAccountId::zone(DEFAULT_ZONE));
         assert!((qi_transfers[1].amount - 4.0).abs() < 1e-6);
         assert_eq!(qi_transfers[1].reason, QiTransferReason::ReleaseToZone);
@@ -3911,6 +3915,9 @@ mod tests {
             .drain()
             .collect();
         assert_eq!(qi_transfers.len(), 1, "缺稳定玩家账户时只写 zone 回流账");
+        let plot_account =
+            QiAccountId::container(format!("lingtian_plot:{},{},{}", pos.x, pos.y, pos.z));
+        assert_eq!(qi_transfers[0].from, plot_account);
         assert_eq!(qi_transfers[0].to, QiAccountId::zone(DEFAULT_ZONE));
         assert!((qi_transfers[0].amount - 0.1).abs() < 1e-6);
         assert_eq!(qi_transfers[0].reason, QiTransferReason::ReleaseToZone);
