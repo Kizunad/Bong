@@ -14,6 +14,7 @@ pub mod client_request_handler;
 pub mod combat_bridge;
 pub mod combat_hud_state_emit;
 pub mod command_executor;
+pub mod craft_emit;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
 pub mod defense_window_emit;
@@ -489,6 +490,20 @@ pub fn register(app: &mut App) {
         Update,
         crate::alchemy::apply_alchemy_explode_outcomes
             .after(client_request_handler::handle_client_request_payloads),
+    );
+    // ── plan-craft-v1 P2：通用手搓 IPC（client_request → intent → session → outcome）──
+    app.add_systems(
+        Update,
+        (
+            craft_emit::apply_craft_intents
+                .after(client_request_handler::handle_client_request_payloads),
+            craft_emit::tick_craft_sessions.after(craft_emit::apply_craft_intents),
+            craft_emit::emit_craft_session_state.after(craft_emit::tick_craft_sessions),
+            craft_emit::emit_craft_outcome_payloads.after(craft_emit::tick_craft_sessions),
+            craft_emit::emit_recipe_unlocked_payloads,
+            craft_emit::emit_recipe_list_on_join
+                .after(crate::inventory::attach_inventory_to_joined_clients),
+        ),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(Update, derived_attrs_emit::emit_derived_attrs_sync_payloads);
