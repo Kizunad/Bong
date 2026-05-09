@@ -926,6 +926,13 @@ fn apply_life_extension(
     apply_qi_max_loss(world, caster, calc.medic_qi_max_loss_ratio);
     apply_qi_max_loss(world, patient, calc.patient_qi_max_loss_ratio);
     add_karma(world, caster, calc.medic_karma_delta);
+    let realm_regressed = maybe_regress_patient_realm(
+        world,
+        caster,
+        patient,
+        calc.patient_realm_regress_chance,
+        now_tick,
+    );
     if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(patient) {
         lifecycle.revive(now_tick);
     }
@@ -942,7 +949,11 @@ fn apply_life_extension(
         karma_delta: calc.medic_karma_delta,
         medic_qi_max_delta: -calc.medic_qi_max_loss_ratio,
         patient_qi_max_delta: -calc.patient_qi_max_loss_ratio,
-        detail: "life extension revived patient".to_string(),
+        detail: if realm_regressed {
+            "life extension revived patient; realm regressed".to_string()
+        } else {
+            "life extension revived patient".to_string()
+        },
         ..Default::default()
     }
 }
@@ -1398,6 +1409,44 @@ fn deterministic_success_roll(
     (value % 10_000) as f64 / 10_000.0
 }
 
+fn maybe_regress_patient_realm(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    patient: Entity,
+    chance: f64,
+    tick: u64,
+) -> bool {
+    if deterministic_life_extension_regression_roll(caster, patient, tick) >= chance {
+        return false;
+    }
+    let Some(mut cultivation) = world.get_mut::<Cultivation>(patient) else {
+        return false;
+    };
+    let Some(previous) = previous_realm(cultivation.realm) else {
+        return false;
+    };
+    cultivation.realm = previous;
+    true
+}
+
+fn deterministic_life_extension_regression_roll(caster: Entity, patient: Entity, tick: u64) -> f64 {
+    let mut value = caster.to_bits().rotate_left(11) ^ patient.to_bits().rotate_left(29) ^ tick;
+    value ^= 0xD1B5_4A32_D192_ED03;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    (value % 10_000) as f64 / 10_000.0
+}
+
+fn previous_realm(realm: Realm) -> Option<Realm> {
+    match realm {
+        Realm::Awaken => None,
+        Realm::Induce => Some(Realm::Awaken),
+        Realm::Condense => Some(Realm::Induce),
+        Realm::Solidify => Some(Realm::Condense),
+        Realm::Spirit => Some(Realm::Solidify),
+        Realm::Void => Some(Realm::Spirit),
+    }
+}
+
 pub fn healer_npc_decision(
     hp_percent: f32,
     severed_count: u32,
@@ -1824,6 +1873,32 @@ mod tests {
         assert!(app.world().get::<Cultivation>(medic).unwrap().qi_max < 300.0);
         assert!(app.world().get::<Cultivation>(patient).unwrap().qi_max < 100.0);
         assert!(app.world().get::<Karma>(medic).unwrap().weight > 0.0);
+    }
+
+    #[test]
+    fn life_extension_applies_patient_realm_regression_chance() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Spirit);
+        let patient = spawn_patient(&mut app);
+        app.world_mut()
+            .get_mut::<Cultivation>(patient)
+            .unwrap()
+            .realm = Realm::Spirit;
+        let tick = (100..10_000)
+            .find(|tick| deterministic_life_extension_regression_roll(medic, patient, *tick) < 0.5)
+            .expect("realm regression tick");
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.enter_near_death(tick);
+        app.world_mut().entity_mut(patient).insert(lifecycle);
+
+        let outcome = apply_life_extension(app.world_mut(), medic, patient, 0.0, true, tick, tick);
+
+        assert_eq!(outcome.success_count, 1);
+        assert_eq!(
+            app.world().get::<Cultivation>(patient).unwrap().realm,
+            Realm::Solidify
+        );
+        assert!(outcome.detail.contains("realm regressed"));
     }
 
     #[test]
