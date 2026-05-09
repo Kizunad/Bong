@@ -15,6 +15,7 @@ import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.forge.ForgeScreenBootstrap;
+import com.bong.client.identity.IdentityPanelScreenBootstrap;
 import com.bong.client.input.DefaultInteractionHandlers;
 import com.bong.client.input.InteractionKeybindings;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
@@ -55,6 +56,7 @@ public class BongClient implements ClientModInitializer {
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
         ForgeScreenBootstrap.register();
+        IdentityPanelScreenBootstrap.register();
         LingtianActionScreenBootstrap.register();
         VoidActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();

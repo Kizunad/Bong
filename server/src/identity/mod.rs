@@ -15,6 +15,7 @@
 pub mod command;
 pub mod dugu_consumer;
 pub mod events;
+pub mod gossip;
 pub mod precondition;
 pub mod reaction;
 pub mod revealed;
@@ -267,6 +268,7 @@ pub fn register(app: &mut App) {
     dugu_consumer::register(app);
     reaction::register(app);
     scorer::register(app);
+    gossip::register(app);
     wanted_player_emit::register(app);
     // 通用 RevealedEvent 路径：把 DuguRevealedEvent 用 trait 版 consumer 接住
     // （6 流派 vN+1 各自仿照 add_systems(Update, consume_revealed_event::<XxxEvent>)）。

@@ -17,6 +17,7 @@ use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Re
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::topology::MeridianTopology;
 use crate::cultivation::tribulation::{InitiateXuhuaTribulation, TribulationState};
+use crate::identity::{reaction::npc_should_seek_attack, PlayerIdentities};
 use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{
     NpcAgingConfig, NpcArchetype, NpcLifespan, NpcRegistry, NpcRetireRequest, PendingRetirement,
@@ -832,6 +833,7 @@ fn should_flee_from_score(score: f32) -> bool {
 
 fn chase_target_scorer_system(
     npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
+    players: Query<&PlayerIdentities, With<ClientMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<ChaseTargetScorer>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
@@ -841,6 +843,14 @@ fn chase_target_scorer_system(
     for (Actor(actor), mut score) in &mut scorers {
         let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                if bb
+                    .nearest_player
+                    .and_then(|player| players.get(player).ok())
+                    .and_then(PlayerIdentities::active)
+                    .is_some_and(npc_should_seek_attack)
+                {
+                    return 1.0;
+                }
                 chase_score(bb.player_distance, profile)
             }) {
                 Some(value) => value,
@@ -2003,6 +2013,7 @@ fn seclusion_action_system(
 mod tests {
     use super::*;
     use crate::combat::events::AttackIntent;
+    use crate::identity::{IdentityId, IdentityProfile, RevealedTag, RevealedTagKind};
     use crate::npc::hunger::HungerConfig;
     use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
     use crate::npc::navigator::Navigator;
@@ -2134,6 +2145,55 @@ mod tests {
         assert_eq!(chase_score(33.0, &profile), 0.0);
         assert_eq!(chase_score(f32::INFINITY, &profile), 0.0);
         assert_eq!(chase_score(0.8, &profile), 0.0);
+    }
+
+    #[test]
+    fn chase_target_scorer_boosts_wanted_identity_even_outside_normal_range() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            chase_target_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+        let mut profile = IdentityProfile::new(IdentityId::DEFAULT, "毒蛊师", 0);
+        profile.renown.notoriety = 30;
+        profile.revealed_tags.push(RevealedTag {
+            kind: RevealedTagKind::DuguRevealed,
+            witnessed_at_tick: 20,
+            witness_realm: Realm::Spirit,
+            permanent: true,
+        });
+        let target = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                PlayerIdentities {
+                    identities: vec![profile],
+                    active_identity_id: IdentityId::DEFAULT,
+                    last_switch_tick: 0,
+                },
+            ))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 80.0,
+                    target_position: Some(DVec3::new(80.0, 66.0, 0.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), ChaseTargetScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 1.0);
     }
 
     #[test]

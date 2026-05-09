@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "type": "identity_panel_state",
+  "active_identity_id": 1,
+  "last_switch_tick": 24000,
+  "cooldown_remaining_ticks": 0,
+  "identities": [
+    {
+      "identity_id": 0,
+      "display_name": "旧名",
+      "reputation_score": -80,
+      "frozen": true,
+      "revealed_tag_kinds": ["dugu_revealed"]
+    },
+    {
+      "identity_id": 1,
+      "display_name": "白面",
+      "reputation_score": 0,
+      "frozen": false,
+      "revealed_tag_kinds": []
+    }
+  ]
+}

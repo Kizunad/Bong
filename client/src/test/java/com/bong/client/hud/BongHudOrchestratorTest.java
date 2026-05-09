@@ -3,6 +3,9 @@ package com.bong.client.hud;
 import com.bong.client.botany.BotanySkillViewModel;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
+import com.bong.client.identity.IdentityPanelEntry;
+import com.bong.client.identity.IdentityPanelState;
+import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.skill.SkillId;
@@ -31,6 +34,7 @@ public class BongHudOrchestratorTest {
         HarvestSessionStore.resetForTests();
         SkillSetStore.resetForTests();
         PlayerStateStore.resetForTests();
+        IdentityPanelStateStore.resetForTest();
     }
 
     @Test
@@ -182,6 +186,27 @@ public class BongHudOrchestratorTest {
         assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
         assertEquals(HudRenderLayer.BASELINE, commands.get(1).layer());
         assertTrue(commands.get(1).text().contains("超载"));
+    }
+
+    @Test
+    void identityHudCornerLabelIsIncludedWhenIdentityStateExists() {
+        IdentityPanelStateStore.replace(new IdentityPanelState(
+            0,
+            100L,
+            0L,
+            List.of(new IdentityPanelEntry(0, "白面", 0, false, List.of()))
+        ));
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            0L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> "[#0] 白面".equals(cmd.text())));
     }
 
     @Test
