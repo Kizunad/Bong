@@ -104,7 +104,7 @@ public class MeridianOpenHudPlannerTest {
 
     @Test
     void progressClampedAt100Percent() {
-        MeridianStateStore.replace(bodyWithTarget(MeridianChannel.SP, 1.0));
+        MeridianStateStore.replace(bodyWithTarget(MeridianChannel.SP, 1.3));
         List<HudRenderCommand> commands = MeridianOpenHudPlanner.buildCommands(FIXED_WIDTH, 960, 540);
         assertTrue(commands.stream().anyMatch(cmd ->
             cmd.isText() && cmd.text().contains("100%")));

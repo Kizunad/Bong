@@ -83,13 +83,16 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         boolean qiColorChaotic = readBoolean(payload, "qi_color_chaotic");
         boolean qiColorHunyuan = readBoolean(payload, "qi_color_hunyuan");
         EnumMap<ColorKind, Double> practiceWeights = parsePracticeWeights(readArray(payload, "practice_weights"));
-        int targetMeridianIdx = (int) readDouble(payload, "target_meridian");
-        boolean hasTarget = payload.has("target_meridian")
-            && payload.get("target_meridian").isJsonPrimitive()
-            && payload.getAsJsonPrimitive("target_meridian").isNumber();
         MeridianChannel targetMeridian = null;
-        if (hasTarget && targetMeridianIdx >= 0 && targetMeridianIdx < CHANNEL_ORDER.length) {
-            targetMeridian = CHANNEL_ORDER[targetMeridianIdx];
+        JsonElement targetEl = payload.get("target_meridian");
+        if (targetEl != null && targetEl.isJsonPrimitive() && targetEl.getAsJsonPrimitive().isNumber()) {
+            double raw = targetEl.getAsDouble();
+            if (Double.isFinite(raw) && raw == Math.rint(raw)) {
+                int idx = (int) Math.rint(raw);
+                if (idx >= 0 && idx < CHANNEL_ORDER.length) {
+                    targetMeridian = CHANNEL_ORDER[idx];
+                }
+            }
         }
 
         MeridianBody body = buildBody(

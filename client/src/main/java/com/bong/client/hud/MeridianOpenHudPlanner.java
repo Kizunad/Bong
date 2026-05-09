@@ -39,8 +39,8 @@ public final class MeridianOpenHudPlanner {
 
         double progress = Math.max(0.0, Math.min(1.0, state.healProgress()));
 
-        int x = (screenWidth - PANEL_WIDTH) / 2;
-        int y = screenHeight - 82;
+        int x = Math.max(0, (screenWidth - PANEL_WIDTH) / 2);
+        int y = Math.max(0, screenHeight - 82);
 
         out.add(HudRenderCommand.rect(HudRenderLayer.MERIDIAN_OPEN, x + 2, y + 2, PANEL_WIDTH, PANEL_HEIGHT, 0x88000000));
         out.add(HudRenderCommand.rect(HudRenderLayer.MERIDIAN_OPEN, x, y, PANEL_WIDTH, PANEL_HEIGHT, BG));
