@@ -328,6 +328,14 @@ import {
   YidaoSkillIdV1,
 } from "./yidao.js";
 import {
+  TurbulenceFieldV1,
+  WoliuBackfireLevelV1,
+  WoliuBackfireV1,
+  WoliuPullDisplaceV1,
+  WoliuSkillCastV1,
+  WoliuSkillIdV1,
+} from "./woliu_v2.js";
+import {
   DeceasedExposureSnapshotV1,
   DeceasedRenownSnapshotV1,
   DeceasedSocialSnapshotV1,
@@ -575,6 +583,12 @@ export const SCHEMA_REGISTRY = {
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   zhenmaiSkillEventV1: ZhenmaiSkillEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  woliuSkillIdV1: WoliuSkillIdV1,
+  woliuBackfireLevelV1: WoliuBackfireLevelV1,
+  woliuSkillCastV1: WoliuSkillCastV1,
+  woliuBackfireV1: WoliuBackfireV1,
+  turbulenceFieldV1: TurbulenceFieldV1,
+  woliuPullDisplaceV1: WoliuPullDisplaceV1,
   duguPoisonStateV1: DuguPoisonStateV1,
   duguPoisonProgressEventV1: DuguPoisonProgressEventV1,
   duguObfuscationStateV1: DuguObfuscationStateV1,
