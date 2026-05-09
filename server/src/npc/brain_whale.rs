@@ -181,7 +181,10 @@ pub fn step_position_toward(
     } else {
         baseline_y + dy.signum() * cruise_speed
     };
-    let phase = (phase_ticks % period_ticks) as f64 / period_ticks as f64;
+    // 防御 period_ticks=0：misconfigure 时 fallback 到 1（osc=0），不 panic。
+    // 默认 200，所以正常路径一定走 ≥ 1 分支。
+    let safe_period = period_ticks.max(1);
+    let phase = (phase_ticks % safe_period) as f64 / safe_period as f64;
     let osc = (phase * std::f64::consts::TAU).sin() * y_amplitude;
     (
         DVec3::new(next_x, next_baseline_y + osc, next_z),
@@ -270,6 +273,17 @@ mod tests {
         let (next, baseline) = step_position_toward(here, 80.0, target, 0.5, 0.0, 0, 200);
         assert_eq!(next, DVec3::new(0.0, 80.0, 0.0));
         assert_eq!(baseline, 80.0, "baseline at target stays target.y");
+    }
+
+    #[test]
+    fn step_position_toward_period_zero_does_not_panic() {
+        // 回归 PR-177 coderabbit minor：误配 period_ticks=0 不能除零 panic。
+        // 应 fallback 到 osc=0，baseline 仍正常推进。
+        let here = DVec3::new(0.0, 80.0, 0.0);
+        let target = DVec3::new(0.0, 80.0, 0.0);
+        let (next, next_baseline) = step_position_toward(here, 80.0, target, 0.5, 1.25, 7, 0);
+        assert_eq!(next.y, 80.0, "period=0 fallback 应让 osc=0");
+        assert_eq!(next_baseline, 80.0);
     }
 
     #[test]

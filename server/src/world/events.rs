@@ -1439,7 +1439,12 @@ fn beast_kind_from_command(command: &Command) -> Option<BeastKind> {
         "spider" => Some(BeastKind::Spider),
         "hybrid_beast" => Some(BeastKind::HybridBeast),
         "void_distorted" => Some(BeastKind::VoidDistorted),
-        "whale" => Some(BeastKind::Whale),
+        // 不接 "whale"：beast_tide 路径走 spawn_beast_tide_zombie 出普通僵尸贴
+        // FaunaTag，但 whale 需要专属 spawn_whale_npc_at（GeckoLib 渲染 / HP 800
+        // / drift brain）。如果在这里允许 whale，僵尸会顶 FaunaTag::Whale 并掉
+        // 神兽 legendary 表（jing_gu/jing_sui/jing_hun_yu），变成无限刷掉落 exploit。
+        // 飞鲸只走 `/summon whale` dev 命令；后续要接入 tide 须先把 spawn_beast_tide_*
+        // 改成走真正的 spawn_whale_npc_at。
         _ => None,
     }
 }
@@ -2282,8 +2287,9 @@ mod events_tests {
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
-        ActiveEventsResource, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+        beast_kind_from_command, persist_zone_collapsed_overlays,
+        redistribute_zone_qi_before_collapse, tick_active_events, ActiveEventsResource,
+        RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
         COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
         EVENT_THUNDER_TRIBULATION, LOCUST_SWARM_DISBAND_THRESHOLD,
         REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID, REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS,
@@ -2322,6 +2328,37 @@ mod events_tests {
             target: target.to_string(),
             params,
         }
+    }
+
+    /// 回归 PR-177 codex P1：beast_tide 路径不能 spawn whale，否则掉落 exploit。
+    /// `beast_kind_from_command` 接受 rat / spider / hybrid_beast / void_distorted；
+    /// **拒绝** whale（防止僵尸贴 FaunaTag::Whale 后掉 jing_gu/jing_sui/jing_hun_yu）。
+    #[test]
+    fn beast_kind_from_command_rejects_whale_to_prevent_loot_exploit() {
+        let make_cmd = |kind: &str| {
+            let mut params = HashMap::new();
+            params.insert("beast_kind".to_string(), json!(kind));
+            Command {
+                command_type: CommandType::SpawnEvent,
+                target: "any".to_string(),
+                params,
+            }
+        };
+        // 接受这些（合法 tide kind）
+        for legit in ["rat", "spider", "hybrid_beast", "void_distorted"] {
+            assert!(
+                beast_kind_from_command(&make_cmd(legit)).is_some(),
+                "{legit} 应被合法 beast_tide 接受"
+            );
+        }
+        // 拒绝 whale —— 避免普通僵尸顶 FaunaTag::Whale 刷神兽 legendary
+        assert_eq!(
+            beast_kind_from_command(&make_cmd("whale")),
+            None,
+            "whale 不能进 beast_tide 通道（exploit 风险）—— 仅走 /summon whale"
+        );
+        // 兜底：未知 kind 也是 None
+        assert_eq!(beast_kind_from_command(&make_cmd("unknown_xyz")), None);
     }
 
     fn spawn_event_command_with_params(

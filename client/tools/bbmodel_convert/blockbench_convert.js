@@ -2,36 +2,24 @@ const glob = require("glob");
 const path = require("path")
 const fs = require("fs");
 
+// 单次 glob 处理所有 *.bbmodel：parse 一次后按后缀做模型 + 贴图导出，最后删源。
+// 避免上游三路并发 glob 撞上 unlinkSync 删除源文件、贴图偶发丢失（PR-177 review）。
 glob("RP/models/**/*.bbmodel", null, function (er, files) {
   files.forEach(function (file) {
     fs.readFile(file, "utf8", function (err, data) {
+      if (err) throw err;
+      const model = JSON.parse(data);
       let resultName = file.substr(0, file.lastIndexOf(".")) + ".json";
       console.log("Converting " + file + " into " + resultName);
-      fs.writeFileSync(
-        resultName,
-        exportModel(JSON.parse(data))
-        );
+      fs.writeFileSync(resultName, exportModel(model));
+
+      if (file.endsWith(".entity.bbmodel")) {
+        exportTexture(model, "entity");
+      } else if (file.endsWith(".block.bbmodel")) {
+        exportTexture(model, "blocks");
+      }
+
       fs.unlinkSync(file);
-    });
-  });
-});
-
-glob("RP/models/**/*.entity.bbmodel", null, function (er, files) {
-  files.forEach(function (file) {
-    fs.readFile(file, "utf8", function (err, data) {
-      let resultName = "RP/textures/entity/" + path.basename(file).split(".entity")[0] + ".png";
-      console.log("Converting " + file + " into " + resultName);
-      exportTexture(JSON.parse(data), "entity");
-    });
-  });
-});
-
-glob("RP/models/**/*.block.bbmodel", null, function (er, files) {
-  files.forEach(function (file) {
-    fs.readFile(file, "utf8", function (err, data) {
-      let resultName = "RP/textures/entity/" + path.basename(file).split(".entity")[0] + ".png";
-      console.log("Converting " + file + " into " + resultName);
-      exportTexture(JSON.parse(data), "blocks");
     });
   });
 });
@@ -155,10 +143,12 @@ function compileGroup(data, group) {
         ) {
           locators[key] = {
             offset,
+            // 修：上游 [0]/[0]/[0] 是 typo，三轴都用 X 旋转 → Y/Z 旋转 locator 错位。
+            // 改用对应轴 [0]/[1]/[2]（X 取负，Y 取负 — Bedrock 与 Java 坐标系手性差）。
             rotation: [
               -element.rotation[0],
-              -element.rotation[0],
-              element.rotation[0],
+              -element.rotation[1],
+              element.rotation[2],
             ],
           };
         } else {
