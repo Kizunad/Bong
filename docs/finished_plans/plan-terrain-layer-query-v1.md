@@ -159,12 +159,12 @@ pub struct LayerSchema {
   - P0：新增 `server/src/world/terrain/layer_registry_fixture.json`，Rust 单测读取 fixture 对照 schema 名称、类型和 safe_default。
   - P1：下游接入现实已核验：`docs/finished_plans/plan-botany-v2.md` 记录 P0 已使用旧 `TerrainProvider::sample_layer` / `server/src/botany/env_lock.rs::env_sample_layer`；`docs/finished_plans/plan-mineral-v2.md` 记录 `plan-terrain-layer-query-v1` 是 P6 `fossil_bbox` 共享 layer 前置。两者已归档，本 PR 未越权改其他 docs。
 - 关键 commit：
-  - `0293d7149`（2026-05-09）`terrain: 补齐 layer 按名查询接口`
+  - `b44883da5`（2026-05-09）`terrain: 补齐 layer 按名查询接口`
 - 测试结果：
   - `cargo test raster::tests` 通过（9 passed; 3015 filtered out）。
   - `cargo fmt --check` 通过。
   - `cargo clippy --all-targets -- -D warnings` 通过。
-  - `cargo test` 通过（3024 passed; 0 failed）。
+  - `cargo test` 通过（3072 passed; 0 failed）。
 - 跨仓库核验：
   - server：`TerrainProvider::sample_layer_f32` / `sample_layer_u8` / `layer_names` / `LayerSchema` / `LayerExportType` 均落在 `server/src/world/terrain/raster.rs`；`ColumnSample` / `TileFields` / `wilderness::sample` 已同步新增 layer fallback。
   - worldgen：schema fixture 由 `worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY` 当前 39 条导出；Rust 测试断言名称、`export_type`、`safe_default` 对齐。
