@@ -28,7 +28,7 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 20] = [
+const TECHNIQUE_IDS: [&str; 25] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -77,7 +77,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 20] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 25] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
