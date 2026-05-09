@@ -23,8 +23,8 @@ pub mod style_telemetry;
 pub mod tuike;
 pub mod weapon;
 pub mod woliu;
-pub mod yidao;
 pub mod woliu_v2;
+pub mod yidao;
 pub mod zhenmai_v2;
 
 use std::path::Path;
