@@ -416,6 +416,9 @@ pub fn resolve_yidao_skill(
         let Some(patient) = target else {
             return rejected(CastRejectReason::InvalidTarget);
         };
+        if skill == YidaoSkillId::LifeExtension && patient == caster {
+            return rejected(CastRejectReason::InvalidTarget);
+        }
         if !is_patient_in_range(world, caster, patient, spec.range_m) {
             return rejected(CastRejectReason::InvalidTarget);
         }
@@ -578,6 +581,7 @@ fn apply_meridian_repair(
             add_karma(world, caster, calc.medic_karma_on_failure);
             add_karma(world, patient, calc.patient_karma_on_failure);
             out.failure_count = 1;
+            out.qi_transferred = 0.0;
             out.karma_delta = calc.medic_karma_on_failure + calc.patient_karma_on_failure;
             out.detail = "meridian repair failed; dead meridian recorded".to_string();
         }
@@ -810,9 +814,7 @@ fn grow_healer_identity(
         world.entity_mut(caster).insert(KarmaCounter::default());
     }
     if let Some(mut mastery) = world.get_mut::<HealingMastery>(caster) {
-        for _ in 0..success_count {
-            mastery.add_cast_growth(skill);
-        }
+        mastery.add_cast_growth(skill);
     }
     let mut contract_state = None;
     if let Some(mut profile) = world.get_mut::<HealerProfile>(caster) {
@@ -827,8 +829,7 @@ fn grow_healer_identity(
         }
     }
     if let Some(mut log) = world.get_mut::<PracticeLog>(caster) {
-        let practice_gain = yidao_skill_spec(skill).practice_gain * f64::from(success_count);
-        log.add(ColorKind::Gentle, practice_gain);
+        log.add(ColorKind::Gentle, yidao_skill_spec(skill).practice_gain);
     }
     let karma_weight = world.get::<Karma>(caster).map(|karma| karma.weight);
     if let (Some(mut karma_counter), Some(karma_weight)) =
@@ -1366,6 +1367,31 @@ mod tests {
     }
 
     #[test]
+    fn failed_meridian_repair_reports_no_qi_transfer() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Awaken);
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+        let fail_tick = (0..10_000)
+            .find(|tick| {
+                deterministic_success_roll(medic, patient, MeridianId::Lung, *tick) >= 0.99
+            })
+            .expect("failure tick");
+
+        let outcome = apply_meridian_repair(app.world_mut(), medic, patient, 0.0, true, fail_tick);
+
+        assert_eq!(outcome.success_count, 0);
+        assert_eq!(outcome.failure_count, 1);
+        assert_eq!(outcome.qi_transferred, 0.0);
+    }
+
+    #[test]
     fn contam_purge_scales_all_sources_by_residual_ratio() {
         let mut app = app_with_yidao();
         let medic = spawn_medic(&mut app, Realm::Void);
@@ -1517,6 +1543,33 @@ mod tests {
     }
 
     #[test]
+    fn life_extension_rejects_self_target() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Spirit);
+        app.world_mut().entity_mut(medic).insert(Wounds {
+            health_current: 0.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        });
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.enter_near_death(95);
+        app.world_mut().entity_mut(medic).insert(lifecycle);
+
+        let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(medic));
+
+        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert_eq!(
+            app.world().get::<Lifecycle>(medic).unwrap().state,
+            LifecycleState::NearDeath
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(medic).unwrap().qi_current,
+            300.0
+        );
+        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
+    }
+
+    #[test]
     fn mass_meridian_repair_repairs_multiple_patients_and_scales_costs_by_n() {
         let mut app = app_with_yidao();
         let medic = spawn_medic(&mut app, Realm::Void);
@@ -1553,6 +1606,32 @@ mod tests {
             .count();
         assert_eq!(repaired, 3);
         assert!(app.world().get::<Cultivation>(medic).unwrap().qi_max < 300.0);
+    }
+
+    #[test]
+    fn healer_growth_is_per_cast_while_reputation_tracks_successful_patients() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        let patients = vec![
+            spawn_patient(&mut app),
+            spawn_patient(&mut app),
+            spawn_patient(&mut app),
+        ];
+
+        grow_healer_identity(
+            app.world_mut(),
+            medic,
+            &patients,
+            YidaoSkillId::MassMeridianRepair,
+            3,
+            120,
+        );
+
+        let mastery = app.world().get::<HealingMastery>(medic).unwrap();
+        assert_eq!(mastery.mass_meridian_repair, 0.5);
+        let profile = app.world().get::<HealerProfile>(medic).unwrap();
+        assert_eq!(profile.reputation, 3);
+        assert_eq!(profile.contracts.len(), 3);
     }
 
     #[test]
