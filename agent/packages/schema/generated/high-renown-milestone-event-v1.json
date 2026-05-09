@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "event",
+    "player_uuid",
+    "char_id",
+    "identity_id",
+    "identity_display_name",
+    "fame",
+    "milestone",
+    "identity_exposed",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "event": {
+      "const": "high_renown_milestone",
+      "type": "string"
+    },
+    "player_uuid": {
+      "type": "string"
+    },
+    "char_id": {
+      "type": "string"
+    },
+    "identity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "identity_display_name": {
+      "type": "string"
+    },
+    "fame": {
+      "type": "integer"
+    },
+    "milestone": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "identity_exposed": {
+      "type": "boolean"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "zone": {
+      "type": "string"
+    }
+  }
+}

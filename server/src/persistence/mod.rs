@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 19;
+const CURRENT_USER_VERSION: i32 = 20;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1401,6 +1401,31 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 20 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS high_renown_milestones (
+                player_uuid TEXT NOT NULL,
+                char_id TEXT NOT NULL,
+                identity_id INTEGER NOT NULL CHECK (identity_id >= 0),
+                milestone INTEGER NOT NULL CHECK (milestone >= 0),
+                emitted_at_tick INTEGER NOT NULL CHECK (emitted_at_tick >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (player_uuid, identity_id, milestone)
+            );
+            CREATE INDEX IF NOT EXISTS idx_high_renown_milestones_char
+            ON high_renown_milestones (char_id, identity_id, milestone);
+            ",
+        )?;
+        assert_high_renown_milestones_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 20;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1575,6 +1600,63 @@ fn assert_void_action_cooldowns_schema_ready(
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             io::Error::other(format!(
                 "v19 migration completed but void_action_cooldowns primary key mismatch: expected character_id,kind got {primary_key:?}"
+            )),
+        )));
+    }
+    Ok(())
+}
+
+fn assert_high_renown_milestones_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "high_renown_milestones")?;
+    let required = [
+        "player_uuid",
+        "char_id",
+        "identity_id",
+        "milestone",
+        "emitted_at_tick",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v20 migration completed but high_renown_milestones column {missing} missing"
+            )),
+        )));
+    }
+    let index_exists: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_high_renown_milestones_char'",
+        [],
+        |row| row.get(0),
+    )?;
+    if index_exists != 1 {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other("v20 migration completed but high_renown_milestones index missing"),
+        )));
+    }
+    let mut statement = transaction.prepare("PRAGMA table_info(high_renown_milestones)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [
+        ("player_uuid".to_owned(), 1),
+        ("identity_id".to_owned(), 2),
+        ("milestone".to_owned(), 3),
+    ];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v20 migration completed but high_renown_milestones primary key mismatch: expected player_uuid,identity_id,milestone got {primary_key:?}"
             )),
         )));
     }
@@ -5419,6 +5501,7 @@ mod persistence_tests {
             "social_faction_memberships",
             "legacy_letterbox",
             "void_action_cooldowns",
+            "high_renown_milestones",
         ] {
             let exists: Option<String> = connection
                 .query_row(
@@ -5430,6 +5513,133 @@ mod persistence_tests {
                 .expect("sqlite_master social table query should succeed");
             assert_eq!(exists.as_deref(), Some(table), "{table} should exist");
         }
+
+        for column in [
+            "player_uuid",
+            "char_id",
+            "identity_id",
+            "milestone",
+            "emitted_at_tick",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            let column_exists: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('high_renown_milestones') WHERE name = ?1",
+                    params![column],
+                    |row| row.get(0),
+                )
+                .expect("high_renown_milestones column query should succeed");
+            assert_eq!(column_exists, 1, "{column} should exist");
+        }
+
+        let high_renown_index: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_high_renown_milestones_char'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("high renown index query should succeed");
+        assert_eq!(
+            high_renown_index.as_deref(),
+            Some("idx_high_renown_milestones_char")
+        );
+
+        let mut high_renown_pk_statement = connection
+            .prepare("PRAGMA table_info(high_renown_milestones)")
+            .expect("high renown table_info should prepare");
+        let high_renown_pk = high_renown_pk_statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+            })
+            .expect("high renown table_info query should succeed")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("high renown table_info rows should collect")
+            .into_iter()
+            .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            high_renown_pk,
+            [
+                ("player_uuid".to_string(), 1),
+                ("identity_id".to_string(), 2),
+                ("milestone".to_string(), 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn v20_migration_rejects_malformed_high_renown_table() {
+        let db_path = database_path("v20-malformed-high-renown");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE high_renown_milestones (
+                    player_uuid TEXT NOT NULL,
+                    identity_id INTEGER NOT NULL,
+                    milestone INTEGER NOT NULL,
+                    PRIMARY KEY (player_uuid, identity_id, milestone)
+                );
+                PRAGMA user_version = 19;
+                ",
+            )
+            .expect("legacy malformed fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v20 migration should reject malformed table");
+        let message = error.to_string();
+        assert!(
+            message.contains("high_renown_milestones column char_id missing")
+                || message.contains("no such column: char_id"),
+            "unexpected error: {message}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should still be readable");
+        assert_eq!(user_version, 19);
+    }
+
+    #[test]
+    fn v20_migration_rejects_high_renown_table_with_wrong_primary_key() {
+        let db_path = database_path("v20-wrong-high-renown-pk");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE high_renown_milestones (
+                    player_uuid TEXT NOT NULL,
+                    char_id TEXT NOT NULL,
+                    identity_id INTEGER NOT NULL,
+                    milestone INTEGER NOT NULL,
+                    emitted_at_tick INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL,
+                    PRIMARY KEY (char_id, identity_id, milestone)
+                );
+                CREATE INDEX idx_high_renown_milestones_char
+                ON high_renown_milestones (char_id, identity_id, milestone);
+                PRAGMA user_version = 19;
+                ",
+            )
+            .expect("legacy wrong primary key fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v20 migration should reject wrong high renown primary key");
+        let message = error.to_string();
+        assert!(
+            message.contains("high_renown_milestones primary key mismatch"),
+            "unexpected error: {message}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should still be readable");
+        assert_eq!(user_version, 19);
     }
 
     #[test]

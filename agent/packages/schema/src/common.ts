@@ -56,6 +56,7 @@ export const NarrationStyle = Type.Union([
   Type.Literal("perception"),
   Type.Literal("narration"),
   Type.Literal("era_decree"),
+  Type.Literal("political_jianghu"),
 ]);
 export type NarrationStyle = Static<typeof NarrationStyle>;
 
@@ -65,6 +66,7 @@ export const NarrationKind = Type.Union([
   Type.Literal("niche_intrusion_by_npc"),
   Type.Literal("npc_farm_pressure"),
   Type.Literal("scattered_cultivator"),
+  Type.Literal("political_jianghu"),
 ]);
 export type NarrationKind = Static<typeof NarrationKind>;
 

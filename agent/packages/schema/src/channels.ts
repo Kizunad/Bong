@@ -98,6 +98,9 @@ export const CHANNELS = {
   /** Server → Agent/Client: 灵龛抄家入侵流水（plan-niche-defense-v1 P4） */
   SOCIAL_NICHE_INTRUSION: "bong:social/niche_intrusion",
 
+  /** Server → Agent: 玩家 active identity 声名跨 100/500/1000 阈值 */
+  HIGH_RENOWN_MILESTONE: "bong:high_renown_milestone",
+
   /** Server → Agent: 灵田 zone pressure 跨档事件（plan-lingtian-npc-v1 P5） */
   ZONE_PRESSURE_CROSSED: "bong:zone/pressure_crossed",
 
@@ -268,6 +271,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_FEUD,
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.SOCIAL_NICHE_INTRUSION,
+  CHANNELS.HIGH_RENOWN_MILESTONE,
   CHANNELS.ZONE_PRESSURE_CROSSED,
   CHANNELS.WEATHER_EVENT_UPDATE,
   CHANNELS.RAT_PHASE_EVENT,

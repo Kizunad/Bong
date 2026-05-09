@@ -48,6 +48,7 @@ pub enum NarrationStyle {
     Perception,
     Narration,
     EraDecree,
+    PoliticalJianghu,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -58,6 +59,7 @@ pub enum NarrationKind {
     NicheIntrusionByNpc,
     NpcFarmPressure,
     ScatteredCultivator,
+    PoliticalJianghu,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
