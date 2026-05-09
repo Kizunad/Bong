@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Bong · plan-poison-trait-v1 · 骨架 - Plan Overview</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card-bg: #111111;
+    --border: #222222;
+    --gold: #c9a96e;
+    --gold-dim: #8a7a4e;
+    --text: #d4d4d4;
+    --text-dim: #777;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    color: var(--gold);
+    font-size: 1.6em;
+    border-bottom: 2px solid var(--gold-dim);
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  h2 {
+    color: var(--gold);
+    font-size: 1.15em;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    padding-left: 8px;
+    border-left: 3px solid var(--gold-dim);
+  }
+  .section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td, th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--gold-dim); font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+  code {
+    background: #1a1a2e;
+    color: var(--gold);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 4px; color: var(--text-dim); font-size: 0.9em; }
+  .skill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .skill-card {
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .skill-name {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 1.0em;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .skill-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 3px;
+    font-size: 0.88em;
+  }
+  .skill-row .label {
+    color: var(--gold-dim);
+    min-width: 70px;
+    flex-shrink: 0;
+  }
+  .skill-row .val { color: var(--text); }
+  .stat-box {
+    display: inline-block;
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    margin-right: 12px;
+    margin-bottom: 8px;
+  }
+  .stat-box .stat-label { color: var(--gold-dim); font-size: 0.8em; }
+  .stat-box .stat-val { color: var(--gold); font-size: 1.3em; font-weight: 700; }
+  .dep-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+  }
+  .footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.75em;
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<h1>Bong · plan-poison-trait-v1 · 骨架</h1>
+<div class="subtitle">「毒性真元」特性泛型路径——**任何流派**可通过吃毒丹累积 `PoisonToxicity` 特性，让暗器/阵法/爆脉拳等招式附毒。代价三条：① 寿命扣减（接 plan-lifespan-v1 ✅） ② 消化负荷（DigestionLoad，本 plan 新建**通用底盘**） ③ 经脉 MICRO_TEAR 累积（接 plan-meridian-severed-v1 ⏳）。**双层附毒**：① 吃丹长期 stat 修饰 ② 毒丹研磨为粉涂暗器瞬时单次 debuff（接 plan-craft-v1 ⏳）。**5 种初级毒丹 + 5 种对应毒粉**（§3.5 规格表，骨币 50→800 阶梯）</div>
+
+<!-- Stats bar -->
+<div>
+  <div class="stat-box">
+    <div class="stat-label">阶段数</div>
+    <div class="stat-val">6</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">招式/阵法数</div>
+    <div class="stat-val">3</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">前置依赖</div>
+    <div class="stat-val">8</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">开放问题</div>
+    <div class="stat-val">10</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">测试下限</div>
+    <div class="stat-val">100</div>
+  </div>
+</div>
+
+<!-- Worldview anchors -->
+<h2>世界观锚点</h2>
+<div class="section">
+  <ul>
+    <li>`worldview.md §五:480 「毒性真元」特性正典（暗器附毒/阵法地雷加伤/爆脉拳带毒）`</li><li>`§五:525-535 毒 vs 毒蛊关键边界（谁能用/触发暴露/解毒/社会后果四列）`</li><li>`§六:618-625 染色物理（毒色走暗绿/紫，普通可洗，区别于阴诡色不可洗）`</li><li>`§四:280-307 经脉损伤 4 档（MICRO_TEAR/TORN/SEVERED）`</li><li>`§十二:1043 续命路径有代价`（毒丹路径是其反向 —— 短期增伤，长期透支寿元）</li>
+  </ul>
+</div>
+
+<!-- Dependencies -->
+<h2>前置依赖</h2>
+<div class="section">
+  <div class="dep-grid">
+    <div>
+      <table>
+        <tr><th>依赖项</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-alchemy-v2</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-craft-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-lifespan-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-meridian-severed-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-multi-style-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-cultivation-canonical-align-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-skill-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-alchemy-client-v1</code></td></tr>
+
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th>反向被依赖</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-anqi-v2</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-zhenfa-v2</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-baomai-v3</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-craft-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-alchemy-v2</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-style-balance-v1</code></td></tr>
+
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Phase overview -->
+<h2>阶段总览</h2>
+<div class="section">
+  <table>
+    <tr><th>阶段</th><th>内容</th><th>验收标准</th></tr>
+    <tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P0</strong></td><td>决策门：§5 十问题收口（含 5 种毒丹设计 / 毒粉 vs PoisonToxicity 关系 / 吃食物动画范围）+ 数值表锁定 + 与 dugu-v2 边界文档化 + qi_physics 是否扩 poison ρ 决策 + meri...</td><td style="color:#888;font-size:0.85em;">数值矩阵进 §3 / 边界 spec 进 §0 / qi_physics 决策记 §5 / 等 meridian-severed P1 ship + craft-v1 §5 #1 决策门</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P1</strong></td><td>server `cultivation::poison_trait::*` 主实装（PoisonToxicity / DigestionLoad component + consume_poison_pill handler + poiso...</td><td style="color:#888;font-size:0.85em;">`cargo test cultivation::poison_trait` 全过 / `grep -rcE '#\[test\]' server/src/cultivation/poison_tra...</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P2</strong></td><td>与 plan-alchemy-v2 ✅ 集成（注册 5 种初级毒丹 alchemy 配方 + side_effect_tag 特化）+ 与 plan-craft-v1 ⏳ 集成（注册 5 种毒丹研磨配方进 PoisonPowder cate...</td><td style="color:#888;font-size:0.85em;">`alchemy::pill::eat()` → PoisonToxicity 累积 e2e / `craft::start()` → 毒粉产出 e2e / lifespan 扣减实测 / merid...</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P3</strong></td><td>client 3 HUD（PoisonToxicityIndicator / DigestionLoadBar / LifespanWarningBlink）+ 2 粒子（POISON_PILL_EATEN_PUFF / POISON_BR...</td><td style="color:#888;font-size:0.85em;">render_animation.py headless 验证 / WSLg 实跑双视角 / 10 个 icon transparent bg 检查 / narration-eval ✅ 4 类叙事过...</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P4</strong></td><td>给 plan-anqi-v2 / plan-zhenfa-v2 / plan-baomai-v3 提供 PoisonAttackHook 联调 demo（每个流派至少一招接入 PoisonToxicity 修饰 + 至少 plan-anqi...</td><td style="color:#888;font-size:0.85em;">三流派至少一招 e2e 实测毒效附加 + anqi-v2 涂粉命中 e2e / style-balance 矩阵更新</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P5</strong></td><td>telemetry 校准（PoisonToxicity 累积速率 / DigestionLoad 上限 / 寿命扣减比例 PVP 实测 / 5 丹用量分布 / 毒粉消耗速率）+ library 条目补（cultivation-XXXX 毒丹...</td><td style="color:#888;font-size:0.85em;">PVP 实测数据进 plan §6 进度日志 / library 条目通过 review-book</td></tr>
+
+  </table>
+</div>
+
+<!-- Skills/Moves -->
+<h2>招式/阵法规格</h2>
+<div class="section">
+  <div class="skill-grid">
+    
+        <div class="skill-card">
+          <div class="skill-name">毒丹（alchemy 注册，side_effect_pool 特化）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**alchemy 注册示例**（plan-alchemy-v2 ✅ 配方框架）：</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">毒粉（craft 注册，毒丹研磨产物）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**craft 注册示例**（plan-craft-v1 ⏳ 配方框架）：</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">毒丹研磨 vs 直接服丹的策略博弈</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview 锚：§五:480 "毒性真元让暗器附毒"覆盖两条路径——**长期 stat 修饰**（吃丹）+ **瞬时载体涂抹**（毒粉）。两者**可叠加**（PoisonToxicity 修饰</span></div>
+        </div>
+        
+  </div>
+</div>
+
+<!-- Open questions -->
+<h2>开放问题 / 决策门</h2>
+<div class="section">
+  <ul>
+    <li>#1 PoisonToxicity 累积曲线</li>
+<li>#2 DigestionLoad 容量与超量触发</li>
+<li>#3 寿命扣减阶梯</li>
+<li>#4 经脉 MICRO_TEAR 触发条件</li>
+<li>#5 附毒 dmg 转化曲线</li>
+<li>#6 与 dugu-v2 阴诡色 lock 冲突处理</li>
+<li>#7 是否扩 qi_physics 加 poison ρ 修饰算子</li>
+<li>#8 五种初级毒丹的命名 + 数值差异化是否合理</li>
+<li>#9 毒粉与 PoisonToxicity 的双层设计是否合理</li>
+<li>#10 吃食物动画的范围</li>
+
+  </ul>
+</div>
+
+<div class="footer">
+  plan_overview_gen.py &middot; plan-poison-trait-v1.md &middot; 骨架审阅页
+</div>
+
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Bong · plan-baomai-v3 · 骨架 - Plan Overview</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card-bg: #111111;
+    --border: #222222;
+    --gold: #c9a96e;
+    --gold-dim: #8a7a4e;
+    --text: #d4d4d4;
+    --text-dim: #777;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    color: var(--gold);
+    font-size: 1.6em;
+    border-bottom: 2px solid var(--gold-dim);
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  h2 {
+    color: var(--gold);
+    font-size: 1.15em;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    padding-left: 8px;
+    border-left: 3px solid var(--gold-dim);
+  }
+  .section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td, th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--gold-dim); font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+  code {
+    background: #1a1a2e;
+    color: var(--gold);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 4px; color: var(--text-dim); font-size: 0.9em; }
+  .skill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .skill-card {
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .skill-name {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 1.0em;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .skill-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 3px;
+    font-size: 0.88em;
+  }
+  .skill-row .label {
+    color: var(--gold-dim);
+    min-width: 70px;
+    flex-shrink: 0;
+  }
+  .skill-row .val { color: var(--text); }
+  .stat-box {
+    display: inline-block;
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    margin-right: 12px;
+    margin-bottom: 8px;
+  }
+  .stat-box .stat-label { color: var(--gold-dim); font-size: 0.8em; }
+  .stat-box .stat-val { color: var(--gold); font-size: 1.3em; font-weight: 700; }
+  .dep-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+  }
+  .footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.75em;
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<h1>Bong · plan-baomai-v3 · 骨架</h1>
+<div class="subtitle">体修·爆脉功法**五招完整包**：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 反噬 / 客户端 UI 全流程。承接 `plan-baomai-v1` ✅ finished（PR #76 commit b0302396 归档；崩拳 P0 已实装）+ `plan-baomai-v2` ✅ active（2026-05-05，全力一击双 skill charge/release + Exhausted 虚脱期 + 完整专属 UI 蓄力球/释放雷光/虚脱灰晕 + 越级原则数值矩阵）—— v3 引入**爆脉物理**（worldview §五:402 过载撕裂 + §五:399-405 破产狂战</div>
+
+<!-- Stats bar -->
+<div>
+  <div class="stat-box">
+    <div class="stat-label">阶段数</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">招式/阵法数</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">前置依赖</div>
+    <div class="stat-val">7</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">开放问题</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">测试下限</div>
+    <div class="stat-val">120</div>
+  </div>
+</div>
+
+<!-- Worldview anchors -->
+<h2>世界观锚点</h2>
+<div class="section">
+  <ul>
+    <li>`worldview.md §三:187 化虚 ×5 质变（凡躯彻底重铸）`（散功物理依据）</li><li>`§五:399-405 体修/爆脉流核心定义`（破产狂战士+零距离贴脸+过载撕裂）</li><li>`§五:402 过载撕裂物理`（赌命爆发，战后真元上限永久扣除）</li><li>`§五:466 primary axis 经脉龟裂深度+真元过载倍率`</li><li>`§六:611 沉重色`（真元浑厚下沉密度极高 / 近身爆发+ / 抗物理冲击+）</li><li>`§四:354 过载撕裂引脉裂物理`</li><li>`§四:368-372 越级矩阵`（化虚拳碾压低境的池子物理）</li><li>`§P ρ=0.65 体修异体排斥率最高`</li><li>`§P.2 α=0.3 异体侵入消耗系数`</li><li>`§K narration 沉默`</li>
+  </ul>
+</div>
+
+<!-- Dependencies -->
+<h2>前置依赖</h2>
+<div class="section">
+  <div class="dep-grid">
+    <div>
+      <table>
+        <tr><th>依赖项</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-patch-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-skill-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-baomai-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-meridian-severed-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-cultivation-canonical-align-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-input-binding-v1</code></td></tr>
+
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th>反向被依赖</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-style-balance-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-tribulation-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-narrative-political-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-meridian-severed-v1</code></td></tr>
+
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Phase overview -->
+<h2>阶段总览</h2>
+<div class="section">
+  <table>
+    <tr><th>阶段</th><th>内容</th><th>验收标准</th></tr>
+    <tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P0</strong></td><td>决策门：5 招数值表锁定 + ① 崩拳 v1 数值校准 + ② 全力一击 v2 数值校准 + 新 3 招（撼山/焚血/散功）数值表 + 经脉依赖清单（plan-meridian-severed-v1 §3 强约束）+ 熟练度生长曲线 + §...</td><td style="color:#888;font-size:0.85em;">数值矩阵 + 物理公式落 plan §2</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P1</strong></td><td>server `combat::baomai_v3::*` 5 招 logic（v1 崩拳 + v2 全力一击迁入 + v3 撼山/焚血/散功 新增）+ 过载撕裂物理 + 经脉依赖检查（走 plan-meridian-severed-v1）...</td><td style="color:#888;font-size:0.85em;">`cargo test combat::baomai_v3` 全过 / 守恒断言 / 散功 qi_max 永久 -50% 跨 server restart 测试 / 散功期间敌方攻击正常命中测试 / ...</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P2</strong></td><td>client 5 动画（崩拳 / 全力一击双 v2 已 ✅ / 撼山砸地姿态 / 焚血割腕滴血动作 / 散功化虚级凡躯震颤光柱）+ 4 粒子（GROUND_WAVE_DUST / BLOOD_BURN_CRIMSON / BODY_TRAN...</td><td style="color:#888;font-size:0.85em;">render_animation.py 验证 / WSLg 实跑 5 招视觉确认</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P3</strong></td><td>4 音效 recipe（mountain_shake_rumble / blood_burn_sizzle / transcendence_thunder / meridian_crack）+ agent 5 招 narration tem...</td><td style="color:#888;font-size:0.85em;">narration-eval ✅ 5 招 + 化虚级孤注叙事 全过古意检测</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P4</strong></td><td>PVP telemetry 校准 / 沉重色 hook（PracticeLog → QiColor 沉重色累积演化）+ vs 7 流派对位（特别 vs 涡流 W=0.8 强克 / vs 替尸 W=0.3 / vs 截脉 W=0.5）+ 化虚...</td><td style="color:#888;font-size:0.85em;">7 流派 4×3 攻防对位体修通过 / 化虚级孤注实战 / 沉重色长期累积演化</td></tr>
+
+  </table>
+</div>
+
+<!-- Skills/Moves -->
+<h2>招式/阵法规格</h2>
+<div class="section">
+  <div class="skill-grid">
+    
+        <div class="skill-card">
+          <div class="skill-name">① 崩拳（v1 ✅ finished，v3 校准 + 熟练度生长 + 经脉依赖）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">0</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview §五:402 + §P ρ=0.65。零距离贴脸强灌真元，过载倍率 ×1.5。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">② 全力一击（v2 ✅ active，v3 集成 + 校准）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview §四:381-391 全力一击物理 + plan-baomai-v2 已实装 charge/release 双 skill + Exhausted。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">③ 撼山（v3 新增，AOE 砸地震波）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">25</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">30s → 10s（lv 0→100）</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview §五 体修不只是单点贴脸，AOE 砸地是体修控场招（worldview §四 距离衰减针对飞行真元，但震波传地不属飞行物——同 woliu 涡口逻辑）。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">④ 焚血（v3 新增，HP 自损换 qi 倍率）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">60s → 20s（lv 0→100）</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview §五:402 体修代价物理化身——**用血肉换爆发**。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">⑤ 散功 — 化虚专属（凡躯极限输出 5s flow_rate ×10 过载不撕裂窗口，qi_max 永久 -50%）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">5</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview §三:187 化虚 ×5 质变 + §四:354 过载撕裂反向物理化身。**化虚专属**——通灵以下 cast 仅触发 5% qi_max 损失但无 flow_rate 放大效果（</span></div>
+        </div>
+        
+  </div>
+</div>
+
+<!-- Open questions -->
+<h2>开放问题 / 决策门</h2>
+<div class="section">
+  <ul>
+    <li>#1 化虚级散功 qi_max 永久 -50% 是否过苛</li>
+<li>#2 焚血 HP 烧到 &lt; 10% 是否强制结束</li>
+<li>#3 经脉龟裂可视化是 passive 累积还是手动触发</li>
+<li>#4 散功 flow_rate 倍率（化虚 ×10）是否合适</li>
+<li>#5 沉重色 hook 实装位置</li>
+
+  </ul>
+</div>
+
+<div class="footer">
+  plan_overview_gen.py &middot; plan-baomai-v3.md &middot; 骨架审阅页
+</div>
+
+</body>
+</html>

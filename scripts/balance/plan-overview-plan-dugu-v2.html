@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Bong · plan-dugu-v2 · 骨架 - Plan Overview</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card-bg: #111111;
+    --border: #222222;
+    --gold: #c9a96e;
+    --gold-dim: #8a7a4e;
+    --text: #d4d4d4;
+    --text-dim: #777;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    color: var(--gold);
+    font-size: 1.6em;
+    border-bottom: 2px solid var(--gold-dim);
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  h2 {
+    color: var(--gold);
+    font-size: 1.15em;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    padding-left: 8px;
+    border-left: 3px solid var(--gold-dim);
+  }
+  .section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td, th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--gold-dim); font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+  code {
+    background: #1a1a2e;
+    color: var(--gold);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 4px; color: var(--text-dim); font-size: 0.9em; }
+  .skill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .skill-card {
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .skill-name {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 1.0em;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .skill-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 3px;
+    font-size: 0.88em;
+  }
+  .skill-row .label {
+    color: var(--gold-dim);
+    min-width: 70px;
+    flex-shrink: 0;
+  }
+  .skill-row .val { color: var(--text); }
+  .stat-box {
+    display: inline-block;
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    margin-right: 12px;
+    margin-bottom: 8px;
+  }
+  .stat-box .stat-label { color: var(--gold-dim); font-size: 0.8em; }
+  .stat-box .stat-val { color: var(--gold); font-size: 1.3em; font-weight: 700; }
+  .dep-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+  }
+  .footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.75em;
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<h1>Bong · plan-dugu-v2 · 骨架</h1>
+<div class="subtitle">毒蛊功法五招完整包：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 反噬 / 暴露身份 / 客户端 UI 全流程。承接 `plan-dugu-v1` ✅ finished（PR #126 commit 44a6ff9b 归档，shoot_needle P0 已实装）—— v2 引入**脏真元物理**（ρ=0.05 几乎无异体排斥）+ **永久阈值分三档**（低三段仅 HP/qi / 固元短期 / 通灵+ 永久 qi_max 衰减）+ **自蕴**（自身经脉养成毒源）+ **暴露概率系统** + **阴诡色形貌异化**，五招完整规格（蚀针 / 自蕴 / 侵染 / 神识遮蔽 / 倒蚀），无境</div>
+
+<!-- Stats bar -->
+<div>
+  <div class="stat-box">
+    <div class="stat-label">阶段数</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">招式/阵法数</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">前置依赖</div>
+    <div class="stat-val">7</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">开放问题</div>
+    <div class="stat-val">7</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">测试下限</div>
+    <div class="stat-val">120</div>
+  </div>
+</div>
+
+<!-- Worldview anchors -->
+<h2>世界观锚点</h2>
+<div class="section">
+  <ul>
+    <li>`worldview.md §三:368 越级原则物理事实`（永久阈值分级依据）</li><li>`§四:506 末土后招原则`（神识遮蔽 / 伪示）</li><li>`§五:421-427 毒蛊核心定义`（飞针+毒草+脏真元+寄生比喻）</li><li>`§五:520-535 毒 vs 毒蛊关键边界`（暴露身份 + 全服追杀社会后果）</li><li>`§六:618-621 阴诡色长期沉淀`（自身经脉慢性侵蚀）</li><li>`§六:625 染色形成 ~10h 主色`（自蕴时间下界）</li><li>`§十一:947-970 NPC 反应分级 + 毒蛊师 baseline -50`</li><li>`§十一:967 高境 NPC 神识识破`</li><li>`§三:78 化虚天道针对 + §十一 灵物密度阈值`（倒蚀化虚级触发绝壁劫）</li><li>`§K narration 沉默`</li>
+  </ul>
+</div>
+
+<!-- Dependencies -->
+<h2>前置依赖</h2>
+<div class="section">
+  <div class="dep-grid">
+    <div>
+      <table>
+        <tr><th>依赖项</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-patch-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-skill-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-multi-style-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-identity-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-botany-v2</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-HUD-v1</code></td></tr>
+
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th>反向被依赖</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-style-balance-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-tribulation-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-narrative-political-v1</code></td></tr>
+
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Phase overview -->
+<h2>阶段总览</h2>
+<div class="section">
+  <table>
+    <tr><th>阶段</th><th>内容</th><th>验收标准</th></tr>
+    <tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P0</strong></td><td>决策门：5 招数值表锁定 + 永久阈值分三档对齐 + 自蕴时间曲线锚定 + 暴露概率公式 + §5 七决策门收口 + qi_physics 接入面定稿 + 与 plan-style-balance-v1 ρ/W 矩阵对齐 + EnvFiel...</td><td style="color:#888;font-size:0.85em;">数值矩阵 + 物理公式落 plan §2 / qi_physics::env 痕迹 design 对齐</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P1</strong></td><td>server `combat::dugu_v2::*` 5 招 logic + 脏真元物理 + 永久阈值分级 + 自蕴累积 + 暴露概率 + EnvField 痕迹写入 + qi_physics 算子调用 + ≥120 单测（每招 ≥15 ...</td><td style="color:#888;font-size:0.85em;">`cargo test combat::dugu_v2` 全过 / 守恒断言（脏真元 99% 散回 zone）/ 永久阈值分档测试每档完整 / `grep -rcE '#\[test\]' serve...</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P2</strong></td><td>client 4 动画（蚀针掷出 / 自蕴服毒 / 神识遮蔽姿态 / 倒蚀远指）+ 3 粒子（DUGU_DARK_GREEN_MIST / DUGU_TAINT_PULSE / DUGU_REVERSE_BURST）+ 4 HUD 组件（D...</td><td style="color:#888;font-size:0.85em;">render_animation.py headless 验证通过 / WSLg 实跑 5 招视觉确认 / HUD 4 组件渲染无闪烁</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P3</strong></td><td>3 音效 recipe（dugu_needle_hiss / dugu_self_cure_drink / dugu_curse_cackle）+ agent 5 招 narration template + 暴露身份江湖传闻型叙事（pla...</td><td style="color:#888;font-size:0.85em;">narration-eval ✅ 5 招 + 暴露 + 永久衰减心理 + 化虚级清算预兆 全过古意检测</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P4</strong></td><td>PVP telemetry 校准 / 缜密色 hook 改成阴诡色 hook（PracticeLog → QiColor 阴诡色累积演化）/ 坍缩渊负灵域内毒蛊行为（毒蛊师在坍缩渊内 不能 自蕴 因为环境真元极薄，需 plan-tsy-zo...</td><td style="color:#888;font-size:0.85em;">7 流派 4×3 攻防对位毒蛊行通过 / 阴诡色长期累积演化测试 / 暴露后江湖传闻 narration 实测</td></tr>
+
+  </table>
+</div>
+
+<!-- Skills/Moves -->
+<h2>招式/阵法规格</h2>
+<div class="section">
+  <div class="skill-grid">
+    
+        <div class="skill-card">
+          <div class="skill-name">① 蚀针 — 飞针注入脏真元</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">8（</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">3s</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">远程飞针（worldview §五:421 极其微小但穿透力极强）注入脏真元。低境扣 HP/qi，高境造成 qi_max 永久衰减。专长**漫长追猎战**——给猎物放血。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">② 自蕴 — 长期养自身经脉成毒源</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">服毒草煎汤 + 自身真元淬炼 → **自身经脉变成毒源**。所有蛊毒招式威力 = 阴诡色 % 的乘数。这是毒蛊师的"修炼通路"，跟 cultivation 静坐冲击经脉**并行**而非替代。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">③ 侵染 — 二次注入触发联级</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">12 + 8（</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">8s</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">已经被蚀针中过的目标，第二次蚀针 → 触发**已植入脏真元反应**，效果 ×N。**故意放过第一次没死的猎物**让他逃 → 7 天后第二次出现 → 一招速杀。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">④ 神识遮蔽 — 身份隐藏 + 伪示</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">5（</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">worldview §五:520-527 毒蛊师**主动遮蔽神识 + 伪装成普通修士**，inspect 看到的是假流派标签。可装成截脉师 / 器修 / 体修，让对手准备错对策。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">⑤ 倒蚀 — 化虚级远程引爆已种入毒（专属）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">50（</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">60s（</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">远程一指 → 引爆**所有已种入敌人体内的脏真元永久标记**（多个玩家身上同时触发）→ 多经脉同时撕裂。**化虚级专属**——通灵以下试 = HUD「指无应」（无已种入永久标记可引爆，因为低境施法者本</span></div>
+        </div>
+        
+  </div>
+</div>
+
+<!-- Open questions -->
+<h2>开放问题 / 决策门</h2>
+<div class="section">
+  <ul>
+    <li>#1 化虚倒蚀触发绝壁劫</li>
+<li>#2 暴露概率公式</li>
+<li>#3 自蕴累积曲线（边际递减，0→90% 总累计 ~100h）合理吗</li>
+<li>#4 流派识别痕迹三种统一为 `DuguTaintField` 还是各自独立</li>
+<li>#5 自蕴专属毒草是新建 dugu 专属物种还是复用 plan-botany-v2 17 物种</li>
+<li>#6 永久 lock 字段实装位置</li>
+<li>#7 TaintMark 持久化到玩家死亡或永久持久化</li>
+
+  </ul>
+</div>
+
+<div class="footer">
+  plan_overview_gen.py &middot; plan-dugu-v2.md &middot; 骨架审阅页
+</div>
+
+</body>
+</html>

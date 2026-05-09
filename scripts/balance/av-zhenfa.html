@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>地师 · 阵法 — 布阵 / 材料 / 成型 / 朽坏 视觉总览</title>
+<style>
+/* ── reset & base ── */
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#d8d8d8;font-family:"Cascadia Code","Fira Code","SF Mono",monospace;padding:24px 32px;min-width:1000px}
+h1{text-align:center;font-size:20px;color:#4a3a7a;border-bottom:2px solid #4a3a7a;padding-bottom:10px;margin-bottom:28px;text-shadow:0 0 14px #4a3a7a55}
+h2{font-size:15px;color:#7a6aaa;margin-bottom:6px}
+
+/* ── array section ── */
+.array-section{border:1px solid #4a3a7a33;border-radius:10px;background:#111;margin-bottom:36px;padding:20px 24px;box-shadow:0 0 24px #4a3a7a0d}
+.array-header{display:flex;align-items:baseline;gap:12px;margin-bottom:16px;border-bottom:1px solid #222;padding-bottom:10px}
+.array-name{font-size:18px;color:#4a3a7a;font-weight:bold}
+.array-en{font-size:12px;color:#666}
+
+/* ── 4-column flow ── */
+.flow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px}
+.flow-col{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:14px;min-height:320px;position:relative}
+.flow-label{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;text-align:center}
+
+/* ── material cards ── */
+.mat-list{display:flex;flex-direction:column;gap:8px;align-items:center}
+.mat-card{display:flex;align-items:center;gap:8px;background:#151515;border:1px solid #2a2a2a;border-radius:6px;padding:6px 10px;width:100%}
+.mat-card svg{flex-shrink:0}
+.mat-name{font-size:11px;color:#bbb;flex:1}
+.mat-qty{font-size:13px;color:#7a6aaa;font-weight:bold;font-family:monospace}
+
+/* ── top-down grid container ── */
+.grid-view{display:flex;justify-content:center;align-items:center;min-height:240px}
+
+/* ── decay timeline ── */
+.decay-timeline{display:flex;flex-direction:column;gap:12px;align-items:center;padding-top:10px}
+.decay-stage{display:flex;align-items:center;gap:8px;width:100%}
+.decay-bar{height:6px;border-radius:3px;flex:1}
+.decay-label{font-size:10px;color:#888;width:50px;text-align:right}
+.decay-pct{font-size:10px;color:#666;width:30px}
+
+/* ── HUD section ── */
+.hud-section{margin-top:20px;padding-top:14px;border-top:1px solid #1e1e1e}
+.hud-section h2{margin-bottom:10px}
+.hud-row{display:flex;gap:16px;flex-wrap:wrap}
+.hud-widget{background:#0d0d0d;border:1px solid #222;border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:140px}
+.hud-widget-label{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px}
+
+/* ── SVG glow filters ── */
+.glow-purple{filter:drop-shadow(0 0 4px #7a6aaa66)}
+
+/* ── keyframes ── */
+@keyframes dash-flow{to{stroke-dashoffset:-20}}
+@keyframes pulse-glow{0%,100%{opacity:.4}50%{opacity:1}}
+@keyframes block-appear{0%{opacity:0;transform:scale(0)}60%{transform:scale(1.2)}100%{opacity:1;transform:scale(1)}}
+@keyframes line-draw{0%{stroke-dashoffset:200}100%{stroke-dashoffset:0}}
+@keyframes glow-expand{0%{opacity:0;r:0}50%{opacity:.5}100%{opacity:0;r:40}}
+@keyframes crack{0%{opacity:1;stroke-dashoffset:0}100%{opacity:0;stroke-dashoffset:30}}
+@keyframes dim-out{0%{opacity:.8}100%{opacity:.08}}
+@keyframes particle-dissipate{0%{opacity:.6;transform:translate(0,0) scale(1)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(0)}}
+@keyframes shimmer-overlay{0%{opacity:.05}50%{opacity:.2}100%{opacity:.05}}
+@keyframes glitch-shift{0%,100%{transform:translate(0,0)}25%{transform:translate(-2px,1px)}50%{transform:translate(1px,-1px)}75%{transform:translate(-1px,-2px)}}
+@keyframes spiral-in{0%{transform:rotate(0deg) translateX(var(--r));opacity:.7}100%{transform:rotate(360deg) translateX(0);opacity:0}}
+@keyframes hex-pulse{0%,100%{stroke-width:1;opacity:.5}50%{stroke-width:2.5;opacity:.9}}
+@keyframes eye-fill{0%{stroke-dashoffset:100}100%{stroke-dashoffset:0}}
+</style>
+</head>
+<body>
+
+<h1>地师 · 阵法 — 布阵 / 材料 / 成型 / 朽坏 视觉总览</h1>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- 护龛阵  Ward Array                                   -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="array-section">
+  <div class="array-header">
+    <span class="array-name">护龛阵</span>
+    <span class="array-en">Ward Array &mdash; 六角护盾，守护神龛</span>
+  </div>
+  <div class="flow">
+    <!-- COL 1: Materials -->
+    <div class="flow-col">
+      <div class="flow-label">材料消耗</div>
+      <div class="mat-list">
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="20" rx="2" fill="#3a2a6a" stroke="#7a6aaa" stroke-width="1"/>
+            <circle cx="14" cy="14" r="5" fill="none" stroke="#aa99dd" stroke-width="1">
+              <animate attributeName="opacity" values=".4;1;.4" dur="2s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="14" cy="14" r="2" fill="#aa99dd" opacity=".6"/>
+          </svg>
+          <span class="mat-name">阵眼方块</span>
+          <span class="mat-qty">&times;1</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <circle cx="10" cy="18" r="4" fill="#5a4a3a" opacity=".7"/>
+            <circle cx="16" cy="15" r="3" fill="#6a5a4a" opacity=".6"/>
+            <circle cx="13" cy="20" r="2.5" fill="#4a3a2a" opacity=".5"/>
+            <circle cx="18" cy="19" r="2" fill="#7a6a5a" opacity=".4"/>
+          </svg>
+          <span class="mat-name">上古残土碎</span>
+          <span class="mat-qty">&times;5</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <line x1="8" y1="24" x2="8" y2="6" stroke="#8a7a5a" stroke-width="2" stroke-linecap="round"/>
+            <polygon points="8,4 8,14 20,9" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".5" opacity=".8"/>
+          </svg>
+          <span class="mat-name">阵旗</span>
+          <span class="mat-qty">&times;1</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COL 2: Deployment (top-down) -->
+    <div class="flow-col">
+      <div class="flow-label">布阵过程（俯视）</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="w-glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <!-- ground grid -->
+          <g stroke="#1a1a1a" stroke-width=".5">
+            <line x1="0" y1="40" x2="200" y2="40"/><line x1="0" y1="80" x2="200" y2="80"/>
+            <line x1="0" y1="120" x2="200" y2="120"/><line x1="0" y1="160" x2="200" y2="160"/>
+            <line x1="40" y1="0" x2="40" y2="200"/><line x1="80" y1="0" x2="80" y2="200"/>
+            <line x1="120" y1="0" x2="120" y2="200"/><line x1="160" y1="0" x2="160" y2="200"/>
+          </g>
+          <!-- hexagonal 阵眼 positions: center + 6 around -->
+          <!-- center 阵眼 (placed first) -->
+          <rect x="94" y="94" width="12" height="12" rx="2" fill="#3a2a6a" stroke="#7a6aaa" stroke-width="1" opacity="0" filter="url(#w-glow)">
+            <animate attributeName="opacity" from="0" to="1" dur=".4s" begin="0s" fill="freeze"/>
+            <set attributeName="opacity" to="1" begin=".4s"/>
+          </rect>
+          <!-- hex vertices (阵旗 positions, appear sequentially) -->
+          <!-- top -->
+          <polygon points="100,30 94,38 106,38" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur=".3s" begin=".8s" fill="freeze"/>
+          </polygon>
+          <!-- top-right -->
+          <polygon points="160,65 154,73 166,73" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur=".3s" begin="1.2s" fill="freeze"/>
+          </polygon>
+          <!-- bottom-right -->
+          <polygon points="160,135 154,143 166,143" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur=".3s" begin="1.6s" fill="freeze"/>
+          </polygon>
+          <!-- bottom -->
+          <polygon points="100,170 94,178 106,178" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur=".3s" begin="2.0s" fill="freeze"/>
+          </polygon>
+          <!-- bottom-left -->
+          <polygon points="40,135 34,143 46,143" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur=".3s" begin="2.4s" fill="freeze"/>
+          </polygon>
+          <!-- top-left -->
+          <polygon points="40,65 34,73 46,73" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur=".3s" begin="2.8s" fill="freeze"/>
+          </polygon>
+          <!-- connection lines (light up after all placed) -->
+          <polygon points="100,34 160,69 160,139 100,174 40,139 40,69" fill="none" stroke="#7a6aaa" stroke-width="1.5" stroke-dasharray="200" stroke-dashoffset="200" filter="url(#w-glow)">
+            <animate attributeName="stroke-dashoffset" from="600" to="0" dur="1.5s" begin="3.2s" fill="freeze"/>
+          </polygon>
+          <!-- inner star lines -->
+          <line x1="100" y1="34" x2="100" y2="174" stroke="#9a8aca" stroke-width=".5" stroke-dasharray="200" stroke-dashoffset="200" opacity=".5">
+            <animate attributeName="stroke-dashoffset" from="200" to="0" dur="1s" begin="4s" fill="freeze"/>
+          </line>
+          <line x1="40" y1="69" x2="160" y2="139" stroke="#9a8aca" stroke-width=".5" stroke-dasharray="200" stroke-dashoffset="200" opacity=".5">
+            <animate attributeName="stroke-dashoffset" from="200" to="0" dur="1s" begin="4.2s" fill="freeze"/>
+          </line>
+          <line x1="160" y1="69" x2="40" y2="139" stroke="#9a8aca" stroke-width=".5" stroke-dasharray="200" stroke-dashoffset="200" opacity=".5">
+            <animate attributeName="stroke-dashoffset" from="200" to="0" dur="1s" begin="4.4s" fill="freeze"/>
+          </line>
+          <!-- activation glow -->
+          <circle cx="100" cy="104" r="0" fill="none" stroke="#7a6aaa" stroke-width="1" opacity="0">
+            <animate attributeName="r" from="0" to="80" dur="1.5s" begin="5s" fill="freeze"/>
+            <animate attributeName="opacity" values="0;.5;.2" dur="1.5s" begin="5s" fill="freeze"/>
+          </circle>
+          <!-- label -->
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">右键放置阵眼 &rarr; 阵旗插入 &rarr; 气脉连接</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 3: Active Effect -->
+    <div class="flow-col">
+      <div class="flow-label">成型效果</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="w-shield"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <radialGradient id="w-dome" cx="50%" cy="60%" r="50%">
+              <stop offset="0%" stop-color="#7a6aaa" stop-opacity=".15"/>
+              <stop offset="80%" stop-color="#7a6aaa" stop-opacity=".05"/>
+              <stop offset="100%" stop-color="#7a6aaa" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <!-- shield dome (semi-transparent) -->
+          <ellipse cx="100" cy="110" rx="75" ry="55" fill="url(#w-dome)"/>
+          <!-- hexagonal ward lines pulsing -->
+          <polygon points="100,34 160,69 160,139 100,174 40,139 40,69" fill="none" stroke="#7a6aaa" stroke-width="2" filter="url(#w-shield)">
+            <animate attributeName="stroke-width" values="1;2.5;1" dur="2s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".5;.9;.5" dur="2s" repeatCount="indefinite"/>
+          </polygon>
+          <!-- inner hexagon -->
+          <polygon points="100,60 138,80 138,128 100,148 62,128 62,80" fill="none" stroke="#9a8aca" stroke-width="1" opacity=".3">
+            <animate attributeName="opacity" values=".2;.5;.2" dur="2.5s" repeatCount="indefinite"/>
+          </polygon>
+          <!-- 阵眼 nodes glowing -->
+          <circle cx="100" cy="34" r="4" fill="#7a6aaa" opacity=".7"><animate attributeName="opacity" values=".5;1;.5" dur="1.5s" repeatCount="indefinite"/></circle>
+          <circle cx="160" cy="69" r="4" fill="#7a6aaa" opacity=".7"><animate attributeName="opacity" values=".5;1;.5" dur="1.5s" repeatCount="indefinite" begin=".25s"/></circle>
+          <circle cx="160" cy="139" r="4" fill="#7a6aaa" opacity=".7"><animate attributeName="opacity" values=".5;1;.5" dur="1.5s" repeatCount="indefinite" begin=".5s"/></circle>
+          <circle cx="100" cy="174" r="4" fill="#7a6aaa" opacity=".7"><animate attributeName="opacity" values=".5;1;.5" dur="1.5s" repeatCount="indefinite" begin=".75s"/></circle>
+          <circle cx="40" cy="139" r="4" fill="#7a6aaa" opacity=".7"><animate attributeName="opacity" values=".5;1;.5" dur="1.5s" repeatCount="indefinite" begin="1s"/></circle>
+          <circle cx="40" cy="69" r="4" fill="#7a6aaa" opacity=".7"><animate attributeName="opacity" values=".5;1;.5" dur="1.5s" repeatCount="indefinite" begin="1.25s"/></circle>
+          <!-- center shrine block -->
+          <rect x="90" y="94" width="20" height="20" rx="2" fill="#2a1a4a" stroke="#aa99dd" stroke-width="1.5"/>
+          <text x="100" y="108" text-anchor="middle" fill="#aa99dd" font-size="8" font-family="serif">龛</text>
+          <!-- shield dome arc (top) -->
+          <path d="M 30,110 Q 100,10 170,110" fill="none" stroke="#7a6aaa" stroke-width="1" opacity=".3" stroke-dasharray="4,4">
+            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2s" repeatCount="indefinite"/>
+          </path>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">六角护盾脉冲 + 穹顶</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 4: Decay -->
+    <div class="flow-col">
+      <div class="flow-label">朽坏过程</div>
+      <div class="decay-timeline">
+        <!-- stage 1: full -->
+        <div class="decay-stage">
+          <span class="decay-label">全盛</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#7a6aaa,#9a8aca);opacity:.9"></div>
+          <span class="decay-pct">100%</span>
+        </div>
+        <!-- stage 2: 75% -->
+        <div class="decay-stage">
+          <span class="decay-label">微弱</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#6a5a9a,#7a6aaa);opacity:.65"></div>
+          <span class="decay-pct">75%</span>
+        </div>
+        <!-- stage 3: 50% -->
+        <div class="decay-stage">
+          <span class="decay-label">龟裂</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#5a4a8a,#6a5a9a);opacity:.45"></div>
+          <span class="decay-pct">50%</span>
+        </div>
+        <!-- stage 4: 25% -->
+        <div class="decay-stage">
+          <span class="decay-label">崩解</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#4a3a7a,#5a4a8a);opacity:.25"></div>
+          <span class="decay-pct">25%</span>
+        </div>
+        <!-- stage 5: gone -->
+        <div class="decay-stage">
+          <span class="decay-label">灰烬</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#333,#444);opacity:.1"></div>
+          <span class="decay-pct">0%</span>
+        </div>
+        <!-- decay SVG animation -->
+        <svg viewBox="0 0 180 100" width="180" height="100">
+          <!-- fading hex -->
+          <polygon points="90,10 140,30 140,70 90,90 40,70 40,30" fill="none" stroke="#7a6aaa" stroke-width="1.5">
+            <animate attributeName="opacity" values="1;.6;.3;.1;0" dur="6s" repeatCount="indefinite"/>
+            <animate attributeName="stroke-dasharray" values="0,0;5,2;3,5;2,8;0,20" dur="6s" repeatCount="indefinite"/>
+          </polygon>
+          <!-- cracking lines -->
+          <line x1="90" y1="50" x2="120" y2="35" stroke="#aa6666" stroke-width=".8" opacity="0">
+            <animate attributeName="opacity" values="0;0;.6;.8;0" dur="6s" repeatCount="indefinite"/>
+          </line>
+          <line x1="90" y1="50" x2="55" y2="65" stroke="#aa6666" stroke-width=".6" opacity="0">
+            <animate attributeName="opacity" values="0;0;0;.7;0" dur="6s" repeatCount="indefinite"/>
+          </line>
+          <!-- dispersing particles -->
+          <circle cx="70" cy="40" r="1.5" fill="#7a6aaa">
+            <animate attributeName="opacity" values="0;0;0;.5;0" dur="6s" repeatCount="indefinite"/>
+            <animate attributeName="cy" values="40;40;40;20;10" dur="6s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="110" cy="60" r="1" fill="#7a6aaa">
+            <animate attributeName="opacity" values="0;0;0;0;.4;0" dur="6s" repeatCount="indefinite"/>
+            <animate attributeName="cy" values="60;60;60;60;35;20" dur="6s" repeatCount="indefinite"/>
+          </circle>
+          <text x="90" y="98" text-anchor="middle" fill="#555" font-size="8" font-family="monospace">720s 自然朽坏</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- 聚灵阵  Spirit Gathering Array                       -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="array-section">
+  <div class="array-header">
+    <span class="array-name">聚灵阵</span>
+    <span class="array-en">Spirit Gathering Array &mdash; 三眼聚气，灵力汇心</span>
+  </div>
+  <div class="flow">
+    <!-- COL 1: Materials -->
+    <div class="flow-col">
+      <div class="flow-label">材料消耗</div>
+      <div class="mat-list">
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="20" rx="2" fill="#3a2a6a" stroke="#7a6aaa" stroke-width="1"/>
+            <circle cx="14" cy="14" r="5" fill="none" stroke="#aa99dd" stroke-width="1">
+              <animate attributeName="opacity" values=".4;1;.4" dur="2s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="14" cy="14" r="2" fill="#aa99dd" opacity=".6"/>
+          </svg>
+          <span class="mat-name">阵眼方块</span>
+          <span class="mat-qty">&times;3</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <circle cx="10" cy="18" r="4" fill="#5a4a3a" opacity=".7"/>
+            <circle cx="16" cy="15" r="3" fill="#6a5a4a" opacity=".6"/>
+            <circle cx="13" cy="20" r="2.5" fill="#4a3a2a" opacity=".5"/>
+            <circle cx="18" cy="19" r="2" fill="#7a6a5a" opacity=".4"/>
+          </svg>
+          <span class="mat-name">上古残土碎</span>
+          <span class="mat-qty">&times;9</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <ellipse cx="14" cy="18" rx="8" ry="4" fill="#2244aa" opacity=".3"/>
+            <ellipse cx="14" cy="16" rx="6" ry="3" fill="#3366cc" opacity=".5"/>
+            <path d="M10,14 Q14,8 18,14" fill="none" stroke="#55aaff" stroke-width="1" opacity=".6"/>
+          </svg>
+          <span class="mat-name">灵泉水</span>
+          <span class="mat-qty">&times;3</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <line x1="8" y1="24" x2="8" y2="6" stroke="#8a7a5a" stroke-width="2" stroke-linecap="round"/>
+            <polygon points="8,4 8,14 20,9" fill="#4a3a7a" stroke="#7a6aaa" stroke-width=".5" opacity=".8"/>
+          </svg>
+          <span class="mat-name">阵旗</span>
+          <span class="mat-qty">&times;1</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COL 2: Deployment -->
+    <div class="flow-col">
+      <div class="flow-label">布阵过程（俯视）</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="s-glow"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <!-- ground grid -->
+          <g stroke="#1a1a1a" stroke-width=".5">
+            <line x1="0" y1="40" x2="200" y2="40"/><line x1="0" y1="80" x2="200" y2="80"/>
+            <line x1="0" y1="120" x2="200" y2="120"/><line x1="0" y1="160" x2="200" y2="160"/>
+            <line x1="40" y1="0" x2="40" y2="200"/><line x1="80" y1="0" x2="80" y2="200"/>
+            <line x1="120" y1="0" x2="120" y2="200"/><line x1="160" y1="0" x2="160" y2="200"/>
+          </g>
+          <!-- triangle arrangement: 3 阵眼 -->
+          <!-- 阵眼 1 (top) -->
+          <rect x="94" y="38" width="12" height="12" rx="2" fill="#3a2a6a" stroke="#8888ff" stroke-width="1" opacity="0" filter="url(#s-glow)">
+            <animate attributeName="opacity" from="0" to="1" dur=".4s" begin="0s" fill="freeze"/>
+          </rect>
+          <!-- 阵眼 2 (bottom-left) -->
+          <rect x="44" y="138" width="12" height="12" rx="2" fill="#3a2a6a" stroke="#8888ff" stroke-width="1" opacity="0" filter="url(#s-glow)">
+            <animate attributeName="opacity" from="0" to="1" dur=".4s" begin=".6s" fill="freeze"/>
+          </rect>
+          <!-- 阵眼 3 (bottom-right) -->
+          <rect x="144" y="138" width="12" height="12" rx="2" fill="#3a2a6a" stroke="#8888ff" stroke-width="1" opacity="0" filter="url(#s-glow)">
+            <animate attributeName="opacity" from="0" to="1" dur=".4s" begin="1.2s" fill="freeze"/>
+          </rect>
+          <!-- connection lines (triangle) -->
+          <polygon points="100,44 50,144 150,144" fill="none" stroke="#8888ff" stroke-width="1.5" stroke-dasharray="400" stroke-dashoffset="400" filter="url(#s-glow)">
+            <animate attributeName="stroke-dashoffset" from="400" to="0" dur="1.5s" begin="1.8s" fill="freeze"/>
+          </polygon>
+          <!-- inner circle (gathering pattern) -->
+          <circle cx="100" cy="110" r="35" fill="none" stroke="#8888ff" stroke-width="1" stroke-dasharray="6,4" opacity="0">
+            <animate attributeName="opacity" from="0" to=".5" dur=".5s" begin="3s" fill="freeze"/>
+            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2s" begin="3s" repeatCount="indefinite"/>
+          </circle>
+          <!-- center convergence point -->
+          <circle cx="100" cy="110" r="0" fill="#8888ff" opacity="0" filter="url(#s-glow)">
+            <animate attributeName="r" from="0" to="8" dur="1s" begin="3.5s" fill="freeze"/>
+            <animate attributeName="opacity" values="0;.6;.4" dur="1s" begin="3.5s" fill="freeze"/>
+          </circle>
+          <!-- spiraling qi particles toward center -->
+          <circle cx="100" cy="44" r="2" fill="#aaaaff" opacity="0">
+            <animate attributeName="opacity" values="0;.7;0" dur="2s" begin="4s" repeatCount="indefinite"/>
+            <animate attributeName="cx" values="100;80;100" dur="2s" begin="4s" repeatCount="indefinite"/>
+            <animate attributeName="cy" values="44;90;110" dur="2s" begin="4s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="50" cy="144" r="2" fill="#aaaaff" opacity="0">
+            <animate attributeName="opacity" values="0;.7;0" dur="2s" begin="4.5s" repeatCount="indefinite"/>
+            <animate attributeName="cx" values="50;80;100" dur="2s" begin="4.5s" repeatCount="indefinite"/>
+            <animate attributeName="cy" values="144;120;110" dur="2s" begin="4.5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="150" cy="144" r="2" fill="#aaaaff" opacity="0">
+            <animate attributeName="opacity" values="0;.7;0" dur="2s" begin="5s" repeatCount="indefinite"/>
+            <animate attributeName="cx" values="150;120;100" dur="2s" begin="5s" repeatCount="indefinite"/>
+            <animate attributeName="cy" values="144;120;110" dur="2s" begin="5s" repeatCount="indefinite"/>
+          </circle>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">三阵眼三角布局 &rarr; 灵气螺旋汇心</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 3: Active Effect -->
+    <div class="flow-col">
+      <div class="flow-label">成型效果</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="s-conv"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <radialGradient id="s-center" cx="50%" cy="55%" r="30%">
+              <stop offset="0%" stop-color="#8888ff" stop-opacity=".4"/>
+              <stop offset="100%" stop-color="#8888ff" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <!-- triangle frame -->
+          <polygon points="100,30 40,150 160,150" fill="none" stroke="#8888ff" stroke-width="1.5" opacity=".6"/>
+          <!-- concentric circles -->
+          <circle cx="100" cy="110" r="50" fill="none" stroke="#8888ff" stroke-width=".5" stroke-dasharray="4,3" opacity=".3">
+            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="3s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="100" cy="110" r="35" fill="none" stroke="#8888ff" stroke-width=".7" stroke-dasharray="3,3" opacity=".4">
+            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="100" cy="110" r="20" fill="none" stroke="#8888ff" stroke-width="1" stroke-dasharray="2,2" opacity=".5">
+            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <!-- center glow -->
+          <circle cx="100" cy="110" r="12" fill="url(#s-center)" filter="url(#s-conv)">
+            <animate attributeName="r" values="10;14;10" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <!-- 3 阵眼 pulsing -->
+          <circle cx="100" cy="30" r="5" fill="#8888ff" opacity=".6"><animate attributeName="opacity" values=".4;.9;.4" dur="1.8s" repeatCount="indefinite"/></circle>
+          <circle cx="40" cy="150" r="5" fill="#8888ff" opacity=".6"><animate attributeName="opacity" values=".4;.9;.4" dur="1.8s" repeatCount="indefinite" begin=".6s"/></circle>
+          <circle cx="160" cy="150" r="5" fill="#8888ff" opacity=".6"><animate attributeName="opacity" values=".4;.9;.4" dur="1.8s" repeatCount="indefinite" begin="1.2s"/></circle>
+          <!-- spiraling particles -->
+          <circle r="2" fill="#aaaaff" opacity=".5">
+            <animateMotion dur="3s" repeatCount="indefinite" path="M100,110 Q140,80 100,60 Q60,80 100,110 Q140,140 100,160 Q60,140 100,110"/>
+            <animate attributeName="opacity" values=".3;.7;.3" dur="3s" repeatCount="indefinite"/>
+          </circle>
+          <circle r="1.5" fill="#bbbbff" opacity=".4">
+            <animateMotion dur="4s" repeatCount="indefinite" begin="1s" path="M100,110 Q60,80 100,60 Q140,80 100,110 Q60,140 100,160 Q140,140 100,110"/>
+            <animate attributeName="opacity" values=".2;.6;.2" dur="4s" repeatCount="indefinite" begin="1s"/>
+          </circle>
+          <circle r="1" fill="#ccccff" opacity=".3">
+            <animateMotion dur="2.5s" repeatCount="indefinite" begin="2s" path="M100,110 Q130,90 100,70 Q70,90 100,110"/>
+            <animate attributeName="opacity" values=".2;.5;.2" dur="2.5s" repeatCount="indefinite" begin="2s"/>
+          </circle>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">灵气螺旋向心汇聚</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 4: Decay -->
+    <div class="flow-col">
+      <div class="flow-label">朽坏过程</div>
+      <div class="decay-timeline">
+        <div class="decay-stage">
+          <span class="decay-label">全盛</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#6666cc,#8888ff);opacity:.9"></div>
+          <span class="decay-pct">100%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">减速</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#5555bb,#7777ee);opacity:.6"></div>
+          <span class="decay-pct">50%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">断脉</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#4444aa,#6666dd);opacity:.35"></div>
+          <span class="decay-pct">25%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">灰烬</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#333,#444);opacity:.1"></div>
+          <span class="decay-pct">0%</span>
+        </div>
+        <svg viewBox="0 0 180 120" width="180" height="120">
+          <!-- fading triangle -->
+          <polygon points="90,15 30,105 150,105" fill="none" stroke="#8888ff" stroke-width="1.5">
+            <animate attributeName="opacity" values="1;.5;.2;0" dur="5s" repeatCount="indefinite"/>
+            <animate attributeName="stroke-dasharray" values="0,0;8,4;4,8;0,20" dur="5s" repeatCount="indefinite"/>
+          </polygon>
+          <!-- spiral slowing down -->
+          <circle cx="90" cy="70" r="15" fill="none" stroke="#8888ff" stroke-width=".8" stroke-dasharray="3,3">
+            <animate attributeName="opacity" values=".5;.3;.1;0" dur="5s" repeatCount="indefinite"/>
+            <animate attributeName="r" values="15;10;5;0" dur="5s" repeatCount="indefinite"/>
+          </circle>
+          <!-- crumbling 阵眼 -->
+          <circle cx="90" cy="15" r="3" fill="#8888ff">
+            <animate attributeName="opacity" values="1;.5;.2;0" dur="5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="30" cy="105" r="3" fill="#8888ff">
+            <animate attributeName="opacity" values="1;.6;.1;0" dur="5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="150" cy="105" r="3" fill="#8888ff">
+            <animate attributeName="opacity" values="1;.4;.15;0" dur="5s" repeatCount="indefinite"/>
+          </circle>
+          <text x="90" y="118" text-anchor="middle" fill="#555" font-size="8" font-family="monospace">1200s 自然朽坏</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- 欺天阵  Heaven Deceive Array                         -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="array-section">
+  <div class="array-header">
+    <span class="array-name">欺天阵</span>
+    <span class="array-en">Heaven Deceive Array &mdash; 遮蔽天道感知，数据扭曲</span>
+  </div>
+  <div class="flow">
+    <!-- COL 1: Materials -->
+    <div class="flow-col">
+      <div class="flow-label">材料消耗</div>
+      <div class="mat-list">
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="20" rx="2" fill="#2a1a3a" stroke="#aa6688" stroke-width="1"/>
+            <circle cx="14" cy="14" r="5" fill="none" stroke="#cc88aa" stroke-width="1.5">
+              <animate attributeName="opacity" values=".3;.9;.3" dur="1.5s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="14" cy="14" r="2" fill="#cc88aa" opacity=".7"/>
+          </svg>
+          <span class="mat-name">上古阵眼方块</span>
+          <span class="mat-qty">&times;1</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <line x1="8" y1="22" x2="14" y2="6" stroke="#d4c8a0" stroke-width="2.5" stroke-linecap="round"/>
+            <line x1="14" y1="10" x2="20" y2="16" stroke="#c4b890" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="14" cy="6" r="2" fill="#e0d4b0" opacity=".6"/>
+          </svg>
+          <span class="mat-name">上古残骨</span>
+          <span class="mat-qty">&times;5</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <line x1="8" y1="24" x2="8" y2="6" stroke="#5a3a3a" stroke-width="2" stroke-linecap="round"/>
+            <polygon points="8,4 8,14 20,9" fill="#6a2a4a" stroke="#aa6688" stroke-width=".5" opacity=".8"/>
+          </svg>
+          <span class="mat-name">欺天阵旗</span>
+          <span class="mat-qty">&times;1</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COL 2: Deployment -->
+    <div class="flow-col">
+      <div class="flow-label">布阵过程（俯视）</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="d-glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="d-glitch">
+              <feTurbulence type="turbulence" baseFrequency="0.05" numOctaves="2" result="turb">
+                <animate attributeName="baseFrequency" values="0.02;0.08;0.02" dur="3s" repeatCount="indefinite"/>
+              </feTurbulence>
+              <feDisplacementMap in="SourceGraphic" in2="turb" scale="4" xChannelSelector="R" yChannelSelector="G"/>
+            </filter>
+          </defs>
+          <!-- ground grid -->
+          <g stroke="#1a1a1a" stroke-width=".5">
+            <line x1="0" y1="40" x2="200" y2="40"/><line x1="0" y1="80" x2="200" y2="80"/>
+            <line x1="0" y1="120" x2="200" y2="120"/><line x1="0" y1="160" x2="200" y2="160"/>
+            <line x1="40" y1="0" x2="40" y2="200"/><line x1="80" y1="0" x2="80" y2="200"/>
+            <line x1="120" y1="0" x2="120" y2="200"/><line x1="160" y1="0" x2="160" y2="200"/>
+          </g>
+          <!-- single 上古阵眼 (center, appears first) -->
+          <rect x="90" y="90" width="20" height="20" rx="3" fill="#2a1a3a" stroke="#aa6688" stroke-width="1.5" opacity="0" filter="url(#d-glow)">
+            <animate attributeName="opacity" from="0" to="1" dur=".5s" begin="0s" fill="freeze"/>
+          </rect>
+          <circle cx="100" cy="100" r="4" fill="#cc88aa" opacity="0">
+            <animate attributeName="opacity" from="0" to=".7" dur=".3s" begin=".5s" fill="freeze"/>
+            <animate attributeName="opacity" values=".4;.9;.4" dur="1.5s" begin="1s" repeatCount="indefinite"/>
+          </circle>
+          <!-- bone pillars placed around (5 positions) -->
+          <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur=".3s" begin="1s" fill="freeze"/>
+            <line x1="60" y1="50" x2="60" y2="42" stroke="#d4c8a0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="60" cy="41" r="2" fill="#e0d4b0" opacity=".5"/>
+          </g>
+          <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur=".3s" begin="1.4s" fill="freeze"/>
+            <line x1="140" y1="50" x2="140" y2="42" stroke="#d4c8a0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="140" cy="41" r="2" fill="#e0d4b0" opacity=".5"/>
+          </g>
+          <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur=".3s" begin="1.8s" fill="freeze"/>
+            <line x1="50" y1="140" x2="50" y2="132" stroke="#d4c8a0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="50" cy="131" r="2" fill="#e0d4b0" opacity=".5"/>
+          </g>
+          <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur=".3s" begin="2.2s" fill="freeze"/>
+            <line x1="150" y1="140" x2="150" y2="132" stroke="#d4c8a0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="150" cy="131" r="2" fill="#e0d4b0" opacity=".5"/>
+          </g>
+          <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur=".3s" begin="2.6s" fill="freeze"/>
+            <line x1="100" y1="160" x2="100" y2="152" stroke="#d4c8a0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="100" cy="151" r="2" fill="#e0d4b0" opacity=".5"/>
+          </g>
+          <!-- distortion field appears -->
+          <rect x="40" y="30" width="120" height="140" rx="6" fill="none" stroke="#aa6688" stroke-width="1" stroke-dasharray="200" stroke-dashoffset="200" opacity=".5">
+            <animate attributeName="stroke-dashoffset" from="600" to="0" dur="1.5s" begin="3s" fill="freeze"/>
+          </rect>
+          <!-- glitch overlay -->
+          <rect x="45" y="35" width="110" height="130" rx="4" fill="#6a2a4a" opacity="0" filter="url(#d-glitch)">
+            <animate attributeName="opacity" from="0" to=".08" dur="1s" begin="4s" fill="freeze"/>
+          </rect>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">上古阵眼 + 残骨围设 &rarr; 扭曲场</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 3: Active Effect -->
+    <div class="flow-col">
+      <div class="flow-label">成型效果</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="d-active-glitch">
+              <feTurbulence type="turbulence" baseFrequency="0.04" numOctaves="3" result="turb">
+                <animate attributeName="baseFrequency" values="0.02;0.1;0.02" dur="2s" repeatCount="indefinite"/>
+              </feTurbulence>
+              <feDisplacementMap in="SourceGraphic" in2="turb" scale="6" xChannelSelector="R" yChannelSelector="G"/>
+            </filter>
+          </defs>
+          <!-- distorted grid inside array -->
+          <g filter="url(#d-active-glitch)" opacity=".3">
+            <line x1="50" y1="40" x2="50" y2="170" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="80" y1="40" x2="80" y2="170" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="110" y1="40" x2="110" y2="170" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="140" y1="40" x2="140" y2="170" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="40" y1="60" x2="160" y2="60" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="40" y1="90" x2="160" y2="90" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="40" y1="120" x2="160" y2="120" stroke="#aa6688" stroke-width=".5"/>
+            <line x1="40" y1="150" x2="160" y2="150" stroke="#aa6688" stroke-width=".5"/>
+          </g>
+          <!-- outer boundary flickering -->
+          <rect x="35" y="25" width="130" height="155" rx="6" fill="none" stroke="#aa6688" stroke-width="1.5" opacity=".4">
+            <animate attributeName="opacity" values=".2;.6;.1;.5;.2" dur="1.5s" repeatCount="indefinite"/>
+          </rect>
+          <!-- corruption artifacts -->
+          <rect x="60" y="70" width="25" height="3" fill="#cc88aa" opacity=".3">
+            <animate attributeName="x" values="60;80;55;90;60" dur="2s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="0;.4;0;.3;0" dur="2s" repeatCount="indefinite"/>
+          </rect>
+          <rect x="100" y="120" width="15" height="2" fill="#cc88aa" opacity=".2">
+            <animate attributeName="x" values="100;70;110;85;100" dur="1.8s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="0;.3;0;.2;0" dur="1.8s" repeatCount="indefinite"/>
+          </rect>
+          <rect x="80" y="95" width="40" height="2" fill="#aa6688" opacity=".15">
+            <animate attributeName="width" values="40;10;30;5;40" dur="2.5s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="0;.25;0;.15;0" dur="2.5s" repeatCount="indefinite"/>
+          </rect>
+          <!-- center eye (上古阵眼) -->
+          <circle cx="100" cy="100" r="8" fill="#2a1a3a" stroke="#cc88aa" stroke-width="1.5">
+            <animate attributeName="opacity" values=".5;.9;.5" dur="1.5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="100" cy="100" r="3" fill="#cc88aa" opacity=".6">
+            <animate attributeName="r" values="2;4;2" dur="1.5s" repeatCount="indefinite"/>
+          </circle>
+          <!-- "data corruption" text fragments -->
+          <text x="65" y="55" fill="#aa6688" font-size="7" font-family="monospace" opacity="0">
+            &#x2588;&#x2591;&#x2593;&#x2592;
+            <animate attributeName="opacity" values="0;.3;0" dur="3s" repeatCount="indefinite"/>
+          </text>
+          <text x="120" y="160" fill="#aa6688" font-size="6" font-family="monospace" opacity="0">
+            &#x2591;&#x2588;&#x2592;
+            <animate attributeName="opacity" values="0;.25;0" dur="2.5s" repeatCount="indefinite" begin="1s"/>
+          </text>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">天道感知被扭曲 / 数据腐蚀</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 4: Decay -->
+    <div class="flow-col">
+      <div class="flow-label">朽坏过程</div>
+      <div class="decay-timeline">
+        <div class="decay-stage">
+          <span class="decay-label">全盛</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#8a4a6a,#aa6688);opacity:.9"></div>
+          <span class="decay-pct">100%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">失真</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#7a3a5a,#9a5a7a);opacity:.55"></div>
+          <span class="decay-pct">50%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">暴露</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#6a2a4a,#8a4a6a);opacity:.3"></div>
+          <span class="decay-pct">25%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">灰烬</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#333,#444);opacity:.1"></div>
+          <span class="decay-pct">0%</span>
+        </div>
+        <svg viewBox="0 0 180 120" width="180" height="120">
+          <!-- dissolving boundary -->
+          <rect x="30" y="10" width="120" height="90" rx="4" fill="none" stroke="#aa6688" stroke-width="1.5">
+            <animate attributeName="opacity" values="1;.5;.2;.05;0" dur="5s" repeatCount="indefinite"/>
+            <animate attributeName="stroke-dasharray" values="0,0;8,3;5,6;2,10;0,20" dur="5s" repeatCount="indefinite"/>
+          </rect>
+          <!-- glitch artifacts fading -->
+          <rect x="50" y="40" width="30" height="2" fill="#cc88aa">
+            <animate attributeName="opacity" values=".3;.15;.05;0;0" dur="5s" repeatCount="indefinite"/>
+          </rect>
+          <rect x="90" y="60" width="20" height="2" fill="#cc88aa">
+            <animate attributeName="opacity" values=".25;.1;.03;0;0" dur="5s" repeatCount="indefinite"/>
+          </rect>
+          <!-- center eye fading -->
+          <circle cx="90" cy="55" r="5" fill="#cc88aa">
+            <animate attributeName="opacity" values=".7;.4;.1;0;0" dur="5s" repeatCount="indefinite"/>
+            <animate attributeName="r" values="5;4;2;0;0" dur="5s" repeatCount="indefinite"/>
+          </circle>
+          <text x="90" y="118" text-anchor="middle" fill="#555" font-size="8" font-family="monospace">60s 极短寿命（高业力）</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- 幻阵  Illusion Array                                 -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="array-section">
+  <div class="array-header">
+    <span class="array-name">幻阵</span>
+    <span class="array-en">Illusion Array &mdash; 一次性幻象覆盖，半透明折射</span>
+  </div>
+  <div class="flow">
+    <!-- COL 1: Materials -->
+    <div class="flow-col">
+      <div class="flow-label">材料消耗</div>
+      <div class="mat-list">
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <circle cx="14" cy="14" r="8" fill="none" stroke="#9a8aca" stroke-width="1"/>
+            <circle cx="10" cy="12" r="3" fill="#8844aa" opacity=".5"/>
+            <circle cx="16" cy="16" r="2.5" fill="#aa66cc" opacity=".4"/>
+            <circle cx="14" cy="10" r="2" fill="#cc88ee" opacity=".3"/>
+          </svg>
+          <span class="mat-name">缜密色染料</span>
+          <span class="mat-qty">&times;3</span>
+        </div>
+        <div class="mat-card">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <line x1="14" y1="24" x2="14" y2="10" stroke="#5a7a4a" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="10" cy="8" r="4" fill="#4a7a3a" opacity=".6"/>
+            <circle cx="18" cy="6" r="3" fill="#5a8a4a" opacity=".5"/>
+            <circle cx="14" cy="4" r="3.5" fill="#3a6a2a" opacity=".4"/>
+          </svg>
+          <span class="mat-name">灵木</span>
+          <span class="mat-qty">&times;2</span>
+        </div>
+        <div class="mat-card" style="border-color:#4a3a7a55;background:#1a1528">
+          <svg width="28" height="28" viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="24" rx="1" fill="none" stroke="#9a8aca" stroke-width="1" stroke-dasharray="3,2"/>
+            <line x1="8" y1="10" x2="20" y2="10" stroke="#9a8aca" stroke-width=".5" opacity=".4"/>
+            <line x1="8" y1="14" x2="18" y2="14" stroke="#9a8aca" stroke-width=".5" opacity=".3"/>
+            <line x1="8" y1="18" x2="16" y2="18" stroke="#9a8aca" stroke-width=".5" opacity=".2"/>
+            <text x="14" y="25" text-anchor="middle" fill="#9a8aca" font-size="5" opacity=".5">符</text>
+          </svg>
+          <span class="mat-name" style="color:#9a8aca">产出：幻阵符</span>
+          <span class="mat-qty" style="color:#9a8aca">&times;3</span>
+        </div>
+        <div style="font-size:9px;color:#666;text-align:center;margin-top:4px;padding:4px;background:#0f0f0f;border-radius:4px">
+          工作台合成，非布阵<br/>
+          幻阵符为一次性消耗品<br/>
+          右键放置 &rarr; 覆盖区域
+        </div>
+      </div>
+    </div>
+
+    <!-- COL 2: Deployment -->
+    <div class="flow-col">
+      <div class="flow-label">布阵过程（俯视）</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="i-blur"><feGaussianBlur stdDeviation="1.5"/></filter>
+            <linearGradient id="i-shimmer" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#9a8aca" stop-opacity="0">
+                <animate attributeName="stop-opacity" values="0;.3;0" dur="3s" repeatCount="indefinite"/>
+              </stop>
+              <stop offset="50%" stop-color="#aa99dd" stop-opacity=".2">
+                <animate attributeName="stop-opacity" values=".2;.4;.2" dur="3s" repeatCount="indefinite"/>
+              </stop>
+              <stop offset="100%" stop-color="#9a8aca" stop-opacity="0">
+                <animate attributeName="stop-opacity" values="0;.3;0" dur="3s" repeatCount="indefinite"/>
+              </stop>
+            </linearGradient>
+          </defs>
+          <!-- ground grid -->
+          <g stroke="#1a1a1a" stroke-width=".5">
+            <line x1="0" y1="40" x2="200" y2="40"/><line x1="0" y1="80" x2="200" y2="80"/>
+            <line x1="0" y1="120" x2="200" y2="120"/><line x1="0" y1="160" x2="200" y2="160"/>
+            <line x1="40" y1="0" x2="40" y2="200"/><line x1="80" y1="0" x2="80" y2="200"/>
+            <line x1="120" y1="0" x2="120" y2="200"/><line x1="160" y1="0" x2="160" y2="200"/>
+          </g>
+          <!-- step 1: player holds 幻阵符 (symbol appears at click point) -->
+          <rect x="70" y="60" width="60" height="80" rx="4" fill="none" stroke="#9a8aca" stroke-width="1" stroke-dasharray="4,3" opacity="0">
+            <animate attributeName="opacity" from="0" to=".5" dur=".5s" begin="0s" fill="freeze"/>
+          </rect>
+          <!-- talisman symbol at center -->
+          <text x="100" y="105" text-anchor="middle" fill="#9a8aca" font-size="16" font-family="serif" opacity="0">
+            符
+            <animate attributeName="opacity" from="0" to=".6" dur=".4s" begin=".5s" fill="freeze"/>
+            <animate attributeName="opacity" values=".4;.7;.4" dur="2s" begin="1s" repeatCount="indefinite"/>
+          </text>
+          <!-- shimmer expanding from center -->
+          <rect x="70" y="60" width="60" height="80" rx="4" fill="url(#i-shimmer)" opacity="0">
+            <animate attributeName="opacity" from="0" to="1" dur="1s" begin="1.5s" fill="freeze"/>
+          </rect>
+          <!-- overlay covering area -->
+          <rect x="55" y="45" width="90" height="110" rx="6" fill="#9a8aca" opacity="0" filter="url(#i-blur)">
+            <animate attributeName="opacity" from="0" to=".08" dur="1.5s" begin="2.5s" fill="freeze"/>
+          </rect>
+          <!-- refraction lines -->
+          <line x1="60" y1="50" x2="140" y2="50" stroke="#aa99dd" stroke-width=".5" opacity="0" stroke-dasharray="8,4">
+            <animate attributeName="opacity" from="0" to=".3" dur=".5s" begin="3s" fill="freeze"/>
+            <animate attributeName="stroke-dashoffset" from="0" to="-24" dur="3s" begin="3s" repeatCount="indefinite"/>
+          </line>
+          <line x1="60" y1="90" x2="140" y2="90" stroke="#aa99dd" stroke-width=".5" opacity="0" stroke-dasharray="6,6">
+            <animate attributeName="opacity" from="0" to=".25" dur=".5s" begin="3.2s" fill="freeze"/>
+            <animate attributeName="stroke-dashoffset" from="0" to="18" dur="3.5s" begin="3.2s" repeatCount="indefinite"/>
+          </line>
+          <line x1="60" y1="130" x2="140" y2="130" stroke="#aa99dd" stroke-width=".5" opacity="0" stroke-dasharray="5,7">
+            <animate attributeName="opacity" from="0" to=".2" dur=".5s" begin="3.4s" fill="freeze"/>
+            <animate attributeName="stroke-dashoffset" from="0" to="-30" dur="4s" begin="3.4s" repeatCount="indefinite"/>
+          </line>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">右键放置幻阵符 &rarr; 折射覆盖</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 3: Active Effect -->
+    <div class="flow-col">
+      <div class="flow-label">成型效果</div>
+      <div class="grid-view">
+        <svg viewBox="0 0 200 200" width="220" height="220">
+          <defs>
+            <filter id="i-active-blur"><feGaussianBlur stdDeviation="2"/></filter>
+            <linearGradient id="i-shift" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#9a8aca" stop-opacity="0"/>
+              <stop offset="30%" stop-color="#aa99dd" stop-opacity=".15">
+                <animate attributeName="offset" values=".1;.5;.9;.5;.1" dur="4s" repeatCount="indefinite"/>
+              </stop>
+              <stop offset="70%" stop-color="#9a8aca" stop-opacity=".1">
+                <animate attributeName="offset" values=".5;.9;.5;.1;.5" dur="4s" repeatCount="indefinite"/>
+              </stop>
+              <stop offset="100%" stop-color="#9a8aca" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <!-- affected area boundary -->
+          <rect x="30" y="25" width="140" height="155" rx="8" fill="none" stroke="#9a8aca" stroke-width="1" opacity=".3" stroke-dasharray="6,4">
+            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="3s" repeatCount="indefinite"/>
+          </rect>
+          <!-- shimmer bands sweeping across -->
+          <rect x="30" y="25" width="140" height="155" rx="8" fill="url(#i-shift)"/>
+          <!-- "real" terrain underneath (dimmed) -->
+          <g opacity=".15">
+            <rect x="50" y="50" width="20" height="20" fill="#3a5a3a" rx="1"/>
+            <rect x="80" y="60" width="20" height="20" fill="#4a6a4a" rx="1"/>
+            <rect x="110" y="45" width="20" height="20" fill="#3a5a3a" rx="1"/>
+            <rect x="60" y="100" width="20" height="20" fill="#4a6a4a" rx="1"/>
+            <rect x="100" y="110" width="20" height="20" fill="#3a5a3a" rx="1"/>
+          </g>
+          <!-- "fake" terrain overlaid (shifted/wrong) -->
+          <g opacity=".25" filter="url(#i-active-blur)">
+            <rect x="55" y="55" width="20" height="20" fill="#5a3a5a" rx="1">
+              <animate attributeName="x" values="55;58;53;55" dur="5s" repeatCount="indefinite"/>
+            </rect>
+            <rect x="85" y="65" width="20" height="20" fill="#6a4a6a" rx="1">
+              <animate attributeName="y" values="65;62;68;65" dur="4s" repeatCount="indefinite"/>
+            </rect>
+            <rect x="115" y="50" width="20" height="20" fill="#5a3a5a" rx="1">
+              <animate attributeName="x" values="115;112;118;115" dur="6s" repeatCount="indefinite"/>
+            </rect>
+          </g>
+          <!-- sparkle points -->
+          <circle cx="70" cy="70" r="1" fill="#ccaaee" opacity="0">
+            <animate attributeName="opacity" values="0;.6;0" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="130" cy="90" r="1.2" fill="#ccaaee" opacity="0">
+            <animate attributeName="opacity" values="0;.5;0" dur="2.5s" repeatCount="indefinite" begin=".7s"/>
+          </circle>
+          <circle cx="90" cy="140" r=".8" fill="#ccaaee" opacity="0">
+            <animate attributeName="opacity" values="0;.4;0" dur="1.8s" repeatCount="indefinite" begin="1.2s"/>
+          </circle>
+          <circle cx="110" cy="60" r="1" fill="#ddbbff" opacity="0">
+            <animate attributeName="opacity" values="0;.5;0" dur="3s" repeatCount="indefinite" begin=".3s"/>
+          </circle>
+          <text x="100" y="196" text-anchor="middle" fill="#555" font-size="9" font-family="monospace">半透明折射 / 地形偏移幻象</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- COL 4: Decay -->
+    <div class="flow-col">
+      <div class="flow-label">朽坏过程</div>
+      <div class="decay-timeline">
+        <div class="decay-stage">
+          <span class="decay-label">完整</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#8a7abb,#aa99dd);opacity:.9"></div>
+          <span class="decay-pct">100%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">透明</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#7a6aaa,#9a8aca);opacity:.5"></div>
+          <span class="decay-pct">50%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">闪烁</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#6a5a9a,#8a7abb);opacity:.25"></div>
+          <span class="decay-pct">25%</span>
+        </div>
+        <div class="decay-stage">
+          <span class="decay-label">消散</span>
+          <div class="decay-bar" style="background:linear-gradient(90deg,#333,#444);opacity:.1"></div>
+          <span class="decay-pct">0%</span>
+        </div>
+        <svg viewBox="0 0 180 120" width="180" height="120">
+          <!-- shimmer rectangle fading -->
+          <rect x="30" y="10" width="120" height="85" rx="6" fill="#9a8aca" opacity=".15">
+            <animate attributeName="opacity" values=".15;.08;.03;0;0" dur="4s" repeatCount="indefinite"/>
+          </rect>
+          <!-- boundary dissolving -->
+          <rect x="30" y="10" width="120" height="85" rx="6" fill="none" stroke="#9a8aca" stroke-width="1">
+            <animate attributeName="opacity" values=".5;.3;.1;.05;0" dur="4s" repeatCount="indefinite"/>
+            <animate attributeName="stroke-dasharray" values="0,0;6,3;3,6;1,10;0,20" dur="4s" repeatCount="indefinite"/>
+          </rect>
+          <!-- sparkles winking out -->
+          <circle cx="60" cy="40" r="1.5" fill="#ccaaee">
+            <animate attributeName="opacity" values=".5;.3;0;0" dur="4s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="110" cy="55" r="1" fill="#ccaaee">
+            <animate attributeName="opacity" values=".4;.2;.05;0" dur="4s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="80" cy="70" r="1.2" fill="#ddbbff">
+            <animate attributeName="opacity" values=".3;.15;0;0" dur="4s" repeatCount="indefinite"/>
+          </circle>
+          <text x="90" y="118" text-anchor="middle" fill="#555" font-size="8" font-family="monospace">一次性，用完即消散</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- HUD 专属元素                                         -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="array-section">
+  <div class="array-header">
+    <span class="array-name">阵法师 HUD 专属</span>
+    <span class="array-en">Array Master HUD Elements</span>
+  </div>
+  <div class="hud-row">
+    <!-- Widget 1: Array Layout Screen -->
+    <div class="hud-widget" style="flex:1.5">
+      <div class="hud-widget-label">阵图布局屏 (Shift+Use)</div>
+      <svg viewBox="0 0 220 180" width="260" height="210" style="background:#080808;border:1px solid #222;border-radius:6px">
+        <!-- grid background -->
+        <g stroke="#1a1a1a" stroke-width=".3">
+          <line x1="20" y1="0" x2="20" y2="180"/><line x1="40" y1="0" x2="40" y2="180"/>
+          <line x1="60" y1="0" x2="60" y2="180"/><line x1="80" y1="0" x2="80" y2="180"/>
+          <line x1="100" y1="0" x2="100" y2="180"/><line x1="120" y1="0" x2="120" y2="180"/>
+          <line x1="140" y1="0" x2="140" y2="180"/><line x1="160" y1="0" x2="160" y2="180"/>
+          <line x1="180" y1="0" x2="180" y2="180"/><line x1="200" y1="0" x2="200" y2="180"/>
+          <line x1="0" y1="20" x2="220" y2="20"/><line x1="0" y1="40" x2="220" y2="40"/>
+          <line x1="0" y1="60" x2="220" y2="60"/><line x1="0" y1="80" x2="220" y2="80"/>
+          <line x1="0" y1="100" x2="220" y2="100"/><line x1="0" y1="120" x2="220" y2="120"/>
+          <line x1="0" y1="140" x2="220" y2="140"/><line x1="0" y1="160" x2="220" y2="160"/>
+        </g>
+        <!-- player position marker -->
+        <circle cx="110" cy="90" r="4" fill="none" stroke="#55ff55" stroke-width="1" opacity=".6"/>
+        <circle cx="110" cy="90" r="1.5" fill="#55ff55" opacity=".5"/>
+        <!-- placed 阵眼 markers -->
+        <rect x="46" y="46" width="8" height="8" rx="1" fill="#3a2a6a" stroke="#7a6aaa" stroke-width=".8"/>
+        <rect x="166" y="46" width="8" height="8" rx="1" fill="#3a2a6a" stroke="#7a6aaa" stroke-width=".8"/>
+        <rect x="106" y="136" width="8" height="8" rx="1" fill="#3a2a6a" stroke="#7a6aaa" stroke-width=".8"/>
+        <!-- preview connection lines -->
+        <line x1="50" y1="50" x2="170" y2="50" stroke="#7a6aaa" stroke-width=".5" stroke-dasharray="4,3" opacity=".4"/>
+        <line x1="170" y1="50" x2="110" y2="140" stroke="#7a6aaa" stroke-width=".5" stroke-dasharray="4,3" opacity=".4"/>
+        <line x1="110" y1="140" x2="50" y2="50" stroke="#7a6aaa" stroke-width=".5" stroke-dasharray="4,3" opacity=".4"/>
+        <!-- valid range circle -->
+        <circle cx="110" cy="90" r="70" fill="none" stroke="#7a6aaa" stroke-width=".5" stroke-dasharray="3,5" opacity=".2"/>
+        <!-- labels -->
+        <text x="5" y="12" fill="#555" font-size="7" font-family="monospace">阵图布局</text>
+        <text x="170" y="12" fill="#444" font-size="6" font-family="monospace">半径: 7格</text>
+        <text x="50" y="42" fill="#7a6aaa" font-size="6" font-family="monospace">阵眼 1</text>
+        <text x="162" y="42" fill="#7a6aaa" font-size="6" font-family="monospace">阵眼 2</text>
+        <text x="106" y="153" fill="#7a6aaa" font-size="6" font-family="monospace">阵眼 3</text>
+      </svg>
+    </div>
+
+    <!-- Widget 2: 阵眼 World Markers -->
+    <div class="hud-widget" style="flex:1">
+      <div class="hud-widget-label">阵眼世界标记</div>
+      <svg viewBox="0 0 140 120" width="160" height="140" style="background:#080808;border:1px solid #222;border-radius:6px">
+        <!-- perspective ground -->
+        <polygon points="0,120 140,120 120,60 20,60" fill="#0f0f0f" stroke="#1a1a1a" stroke-width=".5"/>
+        <!-- 阵眼 block on ground -->
+        <rect x="55" y="75" width="30" height="15" rx="1" fill="#3a2a6a" stroke="#7a6aaa" stroke-width="1"/>
+        <rect x="58" y="70" width="24" height="8" rx="1" fill="#2a1a5a" stroke="#7a6aaa" stroke-width=".5"/>
+        <!-- floating marker above -->
+        <g>
+          <line x1="70" y1="68" x2="70" y2="35" stroke="#7a6aaa" stroke-width=".5" stroke-dasharray="2,2" opacity=".4"/>
+          <!-- diamond icon -->
+          <polygon points="70,25 78,35 70,45 62,35" fill="#4a3a7a" stroke="#aa99dd" stroke-width="1" opacity=".7">
+            <animate attributeName="opacity" values=".5;.9;.5" dur="2s" repeatCount="indefinite"/>
+          </polygon>
+          <text x="70" y="38" text-anchor="middle" fill="#ddd" font-size="7" font-family="serif">眼</text>
+          <!-- floating animation -->
+          <animateTransform attributeName="transform" type="translate" values="0,0;0,-3;0,0" dur="2s" repeatCount="indefinite"/>
+        </g>
+        <text x="70" y="115" text-anchor="middle" fill="#555" font-size="7" font-family="monospace">已放置阵眼上方浮标</text>
+      </svg>
+    </div>
+
+    <!-- Widget 3: Decay Timer -->
+    <div class="hud-widget">
+      <div class="hud-widget-label">朽坏倒计时</div>
+      <svg viewBox="0 0 80 80" width="90" height="90">
+        <circle cx="40" cy="40" r="34" fill="none" stroke="#222" stroke-width="3"/>
+        <circle cx="40" cy="40" r="34" fill="none" stroke="#7a6aaa" stroke-width="3"
+          stroke-dasharray="213.6" stroke-dashoffset="0" stroke-linecap="round">
+          <animate attributeName="stroke-dashoffset" from="0" to="213.6" dur="30s" repeatCount="indefinite"/>
+        </circle>
+        <text x="40" y="37" text-anchor="middle" fill="#ccc" font-size="12" font-family="monospace">11:42</text>
+        <text x="40" y="48" text-anchor="middle" fill="#7a6aaa" font-size="7" font-family="monospace">护龛阵</text>
+      </svg>
+      <div style="font-size:9px;color:#666;text-align:center">右上角常驻<br/>阵存续时显示</div>
+    </div>
+
+    <!-- Widget 4: 天道注视 (聚灵阵 specific) -->
+    <div class="hud-widget">
+      <div class="hud-widget-label">天道注视进度</div>
+      <svg viewBox="0 0 80 60" width="100" height="75">
+        <!-- eye shape -->
+        <path d="M10,30 Q40,5 70,30 Q40,55 10,30 Z" fill="none" stroke="#cc3333" stroke-width="1.5" opacity=".6"/>
+        <!-- iris -->
+        <circle cx="40" cy="30" r="10" fill="none" stroke="#cc3333" stroke-width="1"/>
+        <!-- pupil fill (progress indicator) -->
+        <circle cx="40" cy="30" r="8" fill="#cc3333" opacity="0">
+          <animate attributeName="opacity" values="0;.4;0" dur="6s" repeatCount="indefinite"/>
+        </circle>
+        <!-- fill arc (35% progress) -->
+        <circle cx="40" cy="30" r="10" fill="none" stroke="#cc3333" stroke-width="2"
+          stroke-dasharray="22 63" stroke-dashoffset="-16" stroke-linecap="round" opacity=".7">
+          <animate attributeName="stroke-dasharray" values="0 63;22 63" dur="3s" fill="freeze"/>
+        </circle>
+        <text x="40" y="55" text-anchor="middle" fill="#cc3333" font-size="7" font-family="monospace" opacity=".6">35%</text>
+      </svg>
+      <div style="font-size:9px;color:#666;text-align:center">聚灵阵专属<br/>吸引天道注视</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

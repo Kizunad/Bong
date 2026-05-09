@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Bong · plan-zhenfa-v2 · 骨架 - Plan Overview</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card-bg: #111111;
+    --border: #222222;
+    --gold: #c9a96e;
+    --gold-dim: #8a7a4e;
+    --text: #d4d4d4;
+    --text-dim: #777;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    color: var(--gold);
+    font-size: 1.6em;
+    border-bottom: 2px solid var(--gold-dim);
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  h2 {
+    color: var(--gold);
+    font-size: 1.15em;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    padding-left: 8px;
+    border-left: 3px solid var(--gold-dim);
+  }
+  .section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td, th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--gold-dim); font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+  code {
+    background: #1a1a2e;
+    color: var(--gold);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 4px; color: var(--text-dim); font-size: 0.9em; }
+  .skill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .skill-card {
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .skill-name {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 1.0em;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .skill-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 3px;
+    font-size: 0.88em;
+  }
+  .skill-row .label {
+    color: var(--gold-dim);
+    min-width: 70px;
+    flex-shrink: 0;
+  }
+  .skill-row .val { color: var(--text); }
+  .stat-box {
+    display: inline-block;
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    margin-right: 12px;
+    margin-bottom: 8px;
+  }
+  .stat-box .stat-label { color: var(--gold-dim); font-size: 0.8em; }
+  .stat-box .stat-val { color: var(--gold); font-size: 1.3em; font-weight: 700; }
+  .dep-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+  }
+  .footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.75em;
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<h1>Bong · plan-zhenfa-v2 · 骨架</h1>
+<div class="subtitle">地师·阵法流功法**5 类阵法补全包**：护龛阵 / 聚灵阵 / 欺天阵 / 幻阵 / **跨位面阵 化虚专属**。承接 `plan-zhenfa-v1` ✅ finished（commit b82b02a0；P0/P1 诡雷 + 警戒场已实装，14 测试通过）—— v2 引入**4 大类剩余 3 类**（护龛 / 聚灵 / 欺天，v1 已搁置 Q14/Q15 拍板）+ **幻阵**（4 大类的隐蔽变体附属）+ **化虚专属跨位面阵**（worldview §三:187 化虚 ×5 凡躯重铸 + plan-tsy-dimension 联动：化虚阵法师把阵法投射到子位面，跨位面信号传递）+ **</div>
+
+<!-- Stats bar -->
+<div>
+  <div class="stat-box">
+    <div class="stat-label">阶段数</div>
+    <div class="stat-val">6</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">招式/阵法数</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">前置依赖</div>
+    <div class="stat-val">13</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">开放问题</div>
+    <div class="stat-val">7</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">测试下限</div>
+    <div class="stat-val">80</div>
+  </div>
+</div>
+
+<!-- Worldview anchors -->
+<h2>世界观锚点</h2>
+<div class="section">
+  <ul>
+    <li>`worldview.md §五.3 地师/阵法流`（line ~341-345：唯一灵龛防御 + 数时辰朽坏）</li><li>`§六:616 缜密色 — 阵法师真元有规律纹路`（诡雷威力+ + 识破他人阵法）</li><li>`§八:602-606 灵物密度阈值`（聚灵阵天道注视代价物理推导）</li><li>`§八:614-618 气运劫持</li><li>欺天阵`（"凡人畏惧天命，而我们伪造天命"——欺天阵向天道广播假劫气权重，**不是无敌**，是真元场扰动天道感应器，被识破反噬更狠）</li><li>`§十三 末法无传送`（跨位面阵不是传送，是真元投影——位面间信号传递，非物质传送）</li><li>`§三:187 化虚 ×5 凡躯重铸`（化虚级跨位面阵物理推导前提）</li><li>`§K narration 沉默`</li>
+  </ul>
+</div>
+
+<!-- Dependencies -->
+<h2>前置依赖</h2>
+<div class="section">
+  <div class="dep-grid">
+    <div>
+      <table>
+        <tr><th>依赖项</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-zhenfa-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-qi-physics-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-patch-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-craft-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-meridian-severed-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-tsy-dimension-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-tribulation-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-narrative-political-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-social-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-skill-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-multi-style-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-anqi-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-cultivation-canonical-align-v1</code></td></tr>
+
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th>反向被依赖</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-style-balance-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-tribulation-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-multi-life-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-yidao-v1</code></td></tr>
+
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Phase overview -->
+<h2>阶段总览</h2>
+<div class="section">
+  <table>
+    <tr><th>阶段</th><th>内容</th><th>验收标准</th></tr>
+    <tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P0</strong></td><td>护龛阵 + 聚灵阵 底盘（4-6 周）</td><td style="color:#888;font-size:0.85em;"></td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P1</strong></td><td>欺天阵 + 反 MMO 物理推导（4 周）</td><td style="color:#888;font-size:0.85em;"></td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P2</strong></td><td>幻阵 + 缜密色识破（3 周）</td><td style="color:#888;font-size:0.85em;"></td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P3</strong></td><td>经脉依赖 + 熟练度生长 + 化虚跨位面阵（5-6 周）</td><td style="color:#888;font-size:0.85em;"></td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P4</strong></td><td>客户端 5 动画 / 5 粒子 / 5 音效 / 7 HUD（4 周）</td><td style="color:#888;font-size:0.85em;"></td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P5</strong></td><td>v2 收口（饱和测试 + agent narration + e2e 联调）（2-3 周）</td><td style="color:#888;font-size:0.85em;"></td></tr>
+
+  </table>
+</div>
+
+<!-- Skills/Moves -->
+<h2>招式/阵法规格</h2>
+<div class="section">
+  <div class="skill-grid">
+    
+        <div class="skill-card">
+          <div class="skill-name">①「护龛阵」</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">0.5/s（</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">8s → 3s（mastery 0→100）</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**功能**：灵龛周围建反弹/阻挡场（worldview §五.3 唯一灵龛防御）</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">②「聚灵阵」</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">30</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">30s → 12s（mastery 0→100）</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**功能**：真元封进环境，常驻提升灵气（worldview §八:602-606 灵物密度阈值）</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">③「欺天阵」</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">80</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">300s → 120s（mastery 0→100</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**功能**：向天道广播假劫气权重（worldview §八:614-618 气运劫持）</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">④「幻阵」</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">10</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">5s → 2s（mastery 0→100）</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**功能**：4 大类的隐蔽变体（覆盖现有阵法的可见性谱）</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">⑤「跨位面阵」(化虚专属 / v2 新增)</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">100</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">300s → 60s（mastery 0→100）</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">**功能**：跨位面信号投射（非传送，worldview §十三）</span></div>
+        </div>
+        
+  </div>
+</div>
+
+<!-- Open questions -->
+<h2>开放问题 / 决策门</h2>
+<div class="section">
+  <ul>
+    <li>Q1 化虚跨位面阵：mastery 100 多位面同步（主 + 子1 + 子2 + 子3）是否过强？性能 / 平衡 / 物理推导哪个优先</li>
+<li>Q2 欺天阵识破概率（0.5% / 0.2%）：是否需要根据天道权重动态调整</li>
+<li>Q3 聚灵阵天道注视阈值（zone_density × 1.5 &gt; 6.0）：v1 留待 Q14 拍板，v2 需根据 lingtian 系统实测调参</li>
+<li>Q4 多个聚灵阵叠加：阵眼位置近</li>
+<li>Q5 幻阵 vs 神识扫描：是否给被扫描者主动反馈"被扫描"信号</li>
+<li>Q6 化虚跨位面阵跨周目（plan-multi-life-v1）：化虚阵法师跨周目还能维护原阵眼吗？</li>
+<li>Q7 欺天阵嫁祸 PvP：被嫁祸玩家如何感知 + 反制路径</li>
+
+  </ul>
+</div>
+
+<div class="footer">
+  plan_overview_gen.py &middot; plan-zhenfa-v2.md &middot; 骨架审阅页
+</div>
+
+</body>
+</html>

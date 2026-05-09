@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Bong · plan-tuike-v2 · 骨架 - Plan Overview</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card-bg: #111111;
+    --border: #222222;
+    --gold: #c9a96e;
+    --gold-dim: #8a7a4e;
+    --text: #d4d4d4;
+    --text-dim: #777;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    color: var(--gold);
+    font-size: 1.6em;
+    border-bottom: 2px solid var(--gold-dim);
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  h2 {
+    color: var(--gold);
+    font-size: 1.15em;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    padding-left: 8px;
+    border-left: 3px solid var(--gold-dim);
+  }
+  .section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td, th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--gold-dim); font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+  code {
+    background: #1a1a2e;
+    color: var(--gold);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 4px; color: var(--text-dim); font-size: 0.9em; }
+  .skill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .skill-card {
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .skill-name {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 1.0em;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .skill-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 3px;
+    font-size: 0.88em;
+  }
+  .skill-row .label {
+    color: var(--gold-dim);
+    min-width: 70px;
+    flex-shrink: 0;
+  }
+  .skill-row .val { color: var(--text); }
+  .stat-box {
+    display: inline-block;
+    background: #0d0d15;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    margin-right: 12px;
+    margin-bottom: 8px;
+  }
+  .stat-box .stat-label { color: var(--gold-dim); font-size: 0.8em; }
+  .stat-box .stat-val { color: var(--gold); font-size: 1.3em; font-weight: 700; }
+  .dep-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+  }
+  .footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.75em;
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<h1>Bong · plan-tuike-v2 · 骨架</h1>
+<div class="subtitle">替尸·蜕壳功法**三招完整包**：动画 / 特效 / 音效 / 装备 / 真元消耗 / 反噬 / 客户端 UI 全流程。承接 `plan-tuike-v1` ✅ finished（PR #124 commit 50cc0cc4 归档）—— v2 引入**影论假影承伤物理**（worldview §P 定律 6 + cultivation-0002 §影论）+ **物资派纯粹定调**（worldview §五:471 钱包代价不绑身体，永不 SEVERED）+ **三档伪皮 + 化虚上古级**（worldview §十六.三 一次性脆化）+ **专克毒蛊永久标记**（化虚级 hard count</div>
+
+<!-- Stats bar -->
+<div>
+  <div class="stat-box">
+    <div class="stat-label">阶段数</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">招式/阵法数</div>
+    <div class="stat-val">3</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">前置依赖</div>
+    <div class="stat-val">7</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">开放问题</div>
+    <div class="stat-val">5</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">测试下限</div>
+    <div class="stat-val">80</div>
+  </div>
+</div>
+
+<!-- Worldview anchors -->
+<h2>世界观锚点</h2>
+<div class="section">
+  <ul>
+    <li>`worldview.md §五:438-441 替尸/蜕壳流核心定义`（伪灵皮 + 蜕落带走污染）</li><li>`§五:471 物资派定调`（代价在钱包不在真元）</li><li>`§五:567 凝实色`（与器修同源——伪皮亦载体）</li><li>`§六:603-617 染色谱凝实色`（真元有形质感易附着物体，御物/暗器/伪皮真元损耗 -）</li><li>`§十六.三 上古遗物脆化`（一次性使用，化虚伪皮的物理依据）</li><li>`§十六.六 道伥反向`（参考但本 plan 不实装）</li><li>`§K narration 沉默`</li>
+  </ul>
+</div>
+
+<!-- Dependencies -->
+<h2>前置依赖</h2>
+<div class="section">
+  <div class="dep-grid">
+    <div>
+      <table>
+        <tr><th>依赖项</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <code>plan-qi-physics-patch-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-skill-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-multi-style-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-spiritwood-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-craft-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-inventory-v2</code></td></tr>
+
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th>反向被依赖</th></tr>
+        <tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#0a1a3a;color:#60a5fa;font-size:0.85em;margin-right:4px;">🆕</span> <code>plan-style-balance-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#3a2a0a;color:#fbbf24;font-size:0.85em;margin-right:4px;">⏳</span> <code>plan-tribulation-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-narrative-political-v1</code></td></tr>
+<tr><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a3a1a;color:#4ade80;font-size:0.85em;margin-right:4px;">✅</span> <code>plan-tsy-loot-v1</code></td></tr>
+
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Phase overview -->
+<h2>阶段总览</h2>
+<div class="section">
+  <table>
+    <tr><th>阶段</th><th>内容</th><th>验收标准</th></tr>
+    <tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P0</strong></td><td>决策门：3 招数值表锁定 + 4 档伪皮 spirit_quality 范围对齐 + 化虚级上古伪皮 hard counter dugu 永久标记机制设计 + §5 五决策门收口 + qi_physics 接入面定稿（K_shed / β=...</td><td style="color:#888;font-size:0.85em;">数值矩阵 + 物理公式落 plan §2 / craft-v1 协议对齐</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P1</strong></td><td>server `combat::tuike_v2::*` 3 招 logic + 影论物理（K_shed / E_shed）+ 多层叠穿管理 + 永久标记吸收（化虚级）+ 蜕落物（FalseSkinShedded → 地面物 → 10-30...</td><td style="color:#888;font-size:0.85em;">`cargo test combat::tuike_v2` 全过 / 守恒断言（K_shed 走 ledger）/ 化虚伪皮吸永久标记测试 / `grep -rcE '#\[test\]' serve...</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P2</strong></td><td>client 3 动画（着壳穿戴 / 蜕落瞬间衣物飘散 / 转移污染手指点经脉推到伪皮）+ 3 粒子（FALSE_SKIN_DON_DUST / FALSE_SKIN_SHED_BURST / 上古级蜕落特殊光效 ANCIENT_SKIN_...</td><td style="color:#888;font-size:0.85em;">render_animation.py 验证 / WSLg 实跑 3 招视觉确认 / HUD 多层叠穿渲染清晰</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P3</strong></td><td>3 音效 recipe（don_skin_low_thud / shed_skin_burst / contam_transfer_hum）+ agent 3 招 narration template + 化虚级一次烧上古伪皮的江湖传闻型叙...</td><td style="color:#888;font-size:0.85em;">narration-eval ✅ 3 招 + 化虚一战烧 3 上古的政治叙事 全过古意检测</td></tr>
+<tr><td style="white-space:nowrap;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1a1a1a;color:#6b7280;font-size:0.85em;margin-right:4px;">⬜</span> <strong>P4</strong></td><td>PVP telemetry 校准 / 凝实色 hook（PracticeLog → QiColor 凝实色累积演化）/ 跟 dugu-v2 化虚 hard counter 实战测试 / 化虚级伪皮材料经济与 plan-tsy-loot-v1...</td><td style="color:#888;font-size:0.85em;">7 流派 4×3 攻防对位替尸通过 / 化虚 hard counter 实战测试通过 / 上古级伪皮经济曲线落 telemetry</td></tr>
+
+  </table>
+</div>
+
+<!-- Skills/Moves -->
+<h2>招式/阵法规格</h2>
+<div class="section">
+  <div class="skill-grid">
+    
+        <div class="skill-card">
+          <div class="skill-name">① 着壳 — 装备伪灵皮（被动状态，非招式）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">inventory 装备槽插入 1-3 件伪皮（境界递增层数上限）。**不是战斗触发招式**，是装备状态。着壳后才能用 ②③。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">② 蜕一层 — 弃壳承伤+清污染</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">1.2 × qi_current × 0.05</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">8s</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">主动 / 受击双 trigger。承担伤害+污染，伪皮销毁。</span></div>
+        </div>
+        
+        <div class="skill-card">
+          <div class="skill-name">③ 转移污染 — 推已侵入污染到伪皮（化虚级 hard counter dugu）</div>
+          <div class="skill-row"><span class="label">真元消耗</span> <span class="val">-</span></div>
+          <div class="skill-row"><span class="label">冷却</span> <span class="val">30s（</span></div>
+          <div class="skill-row"><span class="label">核心机制</span> <span class="val">把已侵入身体经脉的 contam 主动推到当前最外层伪皮，再用 ② 蜕一层带走。</span></div>
+        </div>
+        
+  </div>
+</div>
+
+<!-- Open questions -->
+<h2>开放问题 / 决策门</h2>
+<div class="section">
+  <ul>
+    <li>#1 化虚级上古伪皮吸永久标记是 100% 还是部分？</li>
+<li>#2 蜕落物伪皮残骸的腐烂时间</li>
+<li>#3 多层叠穿同时维持 qi cost 是否线性叠加</li>
+<li>#4 上古级伪皮材料 cost</li>
+<li>#5 凝实色加成 hook 实装位置</li>
+
+  </ul>
+</div>
+
+<div class="footer">
+  plan_overview_gen.py &middot; plan-tuike-v2.md &middot; 骨架审阅页
+</div>
+
+</body>
+</html>
