@@ -438,6 +438,15 @@ mod tests {
     }
 
     #[test]
+    fn estimate_item_price_neutral_index_matches_default_entrypoint() {
+        let item = make_item(ItemRarity::Uncommon, 3, 0.6, 1.0);
+        assert_eq!(
+            estimate_item_price_for_index(&item, &neutral_price_index()),
+            estimate_item_price(&item)
+        );
+    }
+
+    #[test]
     fn estimate_item_price_durability_discount() {
         let fine = make_item(ItemRarity::Epic, 1, 0.0, 1.0);
         let broken = make_item(ItemRarity::Epic, 1, 0.0, 0.1);

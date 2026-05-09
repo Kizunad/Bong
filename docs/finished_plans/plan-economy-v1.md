@@ -178,7 +178,7 @@ P5 化虚:            骨币失意义,权力换算为天道注意力
 - `client`: `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL。
 - `server`: `cargo fmt --check` → passed。
 - `server`: `cargo clippy --all-targets -- -D warnings` → passed。
-- `server`: `cargo test` → 3214 tests passed。
+- `server`: `cargo test` → 3215 tests passed。
 
 ### 跨仓库核验
 
