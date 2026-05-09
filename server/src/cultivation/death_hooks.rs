@@ -937,4 +937,494 @@ mod tests {
         assert!((transfers[0].amount - 10.0).abs() < 1e-9);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
     }
+
+    /// 直接面向 `release_qi_amount_to_zone` 的饱和单测组——把 helper 的每条
+    /// 前置条件、overflow 分支、account-id 解析锁住在 unit 颗粒度，独立于
+    /// `on_player_terminated` 等 caller。这样后续 helper 重命名 / 重构内部
+    /// 控制流时，单测能立刻撞红，不必依赖 caller 集成测试间接覆盖。
+    mod release_qi_amount_to_zone_unit_tests {
+        use super::*;
+        use crate::qi_physics::QiAccountKind;
+
+        fn fresh_zones_with_qi(spirit_qi: f64) -> ZoneRegistry {
+            let mut zones = ZoneRegistry::fallback();
+            zones
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = spirit_qi;
+            zones
+        }
+
+        fn fresh_qi_transfer_events() -> Events<QiTransfer> {
+            Events::<QiTransfer>::default()
+        }
+
+        /// 通过临时 App 拿到一个稳定的 Entity；helper 内部不读 ECS 组件，
+        /// 只用 Entity 给 tracing / account id 做标签。
+        fn fresh_entity() -> Entity {
+            let mut app = App::new();
+            app.world_mut().spawn_empty().id()
+        }
+
+        fn overworld_dim() -> CurrentDimension {
+            CurrentDimension(DimensionKind::Overworld)
+        }
+
+        fn pos_in_spawn_zone() -> Position {
+            Position::new([8.0, 66.0, 8.0])
+        }
+
+        #[test]
+        fn returns_zero_and_emits_no_transfer_for_zero_amount() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                0.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-zero",
+            );
+            assert_eq!(accounted, 0.0);
+            assert!(events.drain().next().is_none());
+        }
+
+        #[test]
+        fn returns_zero_for_subepsilon_amount() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                QI_EPSILON / 2.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-subepsilon",
+            );
+            assert_eq!(accounted, 0.0);
+            assert!(events.drain().next().is_none());
+        }
+
+        /// NaN 不被 `<= QI_EPSILON` 截走（NaN 比较恒为 false），但会被
+        /// `qi_release_to_zone` 验证为 InvalidAmount → 路由到 overflow，
+        /// 后续 `release_qi_overflow_from` 又被 NaN 在 `<= QI_EPSILON` 拦下
+        /// （同样为 false），最终在 `QiTransfer::new` 验证 amount 处出错，
+        /// 走兜底 0.0。zone 不变，事件不发。
+        #[test]
+        fn nan_amount_falls_through_to_zero_without_emitting_transfer_or_mutating_zone() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                f64::NAN,
+                Some(&position),
+                Some(&dim),
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-nan",
+            );
+            assert_eq!(accounted, 0.0);
+            assert!(events.drain().next().is_none());
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!((zone_after - 0.2).abs() < 1e-9);
+        }
+
+        #[test]
+        fn routes_to_overflow_when_position_missing() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let dim = overworld_dim();
+            let life_record = LifeRecord::new(canonical_player_id("Mira"));
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                5.0,
+                None,
+                Some(&dim),
+                Some(&life_record),
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-no-pos",
+            );
+            assert!((accounted - 5.0).abs() < 1e-9);
+
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert_eq!(
+                collected[0].from,
+                QiAccountId::player(canonical_player_id("Mira"))
+            );
+            assert_eq!(
+                collected[0].to,
+                QiAccountId::overflow(format!("unit-no-pos:{entity:?}"))
+            );
+            assert!((collected[0].amount - 5.0).abs() < 1e-9);
+            assert_eq!(collected[0].reason, QiTransferReason::ReleaseToZone);
+
+            // 守恒：zone 不变
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!((zone_after - 0.2).abs() < 1e-9);
+        }
+
+        #[test]
+        fn routes_to_overflow_when_zone_registry_missing() {
+            let entity = fresh_entity();
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                5.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                None,
+                Some(&mut events),
+                "unit-no-zones",
+            );
+            assert!((accounted - 5.0).abs() < 1e-9);
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
+        }
+
+        #[test]
+        fn routes_to_overflow_when_current_dimension_missing() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                5.0,
+                Some(&position),
+                None, // ← no CurrentDimension
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-no-dim",
+            );
+            assert!((accounted - 5.0).abs() < 1e-9);
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
+
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!(
+                (zone_after - 0.2).abs() < 1e-9,
+                "zone qi must not change when CurrentDimension missing",
+            );
+        }
+
+        #[test]
+        fn routes_to_overflow_when_position_outside_any_zone() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            // 默认 spawn zone bounds 不包含极端坐标
+            let position = Position::new([1.0e9, 1.0e9, 1.0e9]);
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                5.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-outside-zone",
+            );
+            assert!((accounted - 5.0).abs() < 1e-9);
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
+        }
+
+        /// 玩家在 Tsy 维度 + ZoneRegistry 只有 Overworld zones：维度过滤后查不到
+        /// zone → outside-known-zone → overflow。这条用例锁定"严格按维度过滤"
+        /// 的 invariant，避免未来误改成默认 Overworld 时跨维度漏账复活。
+        #[test]
+        fn routes_to_overflow_when_dimension_does_not_match_any_zone() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let tsy_dim = CurrentDimension(DimensionKind::Tsy);
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                5.0,
+                Some(&position),
+                Some(&tsy_dim),
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-tsy-no-zone",
+            );
+            assert!((accounted - 5.0).abs() < 1e-9);
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
+            // Overworld zone 不应被改写
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!((zone_after - 0.2).abs() < 1e-9);
+        }
+
+        #[test]
+        fn happy_path_returns_accepted_emits_zone_transfer_and_writes_zone() {
+            let entity = fresh_entity();
+            let mut zones = fresh_zones_with_qi(0.2);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+            let life_record = LifeRecord::new(canonical_player_id("Mira"));
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                5.0,
+                Some(&position),
+                Some(&dim),
+                Some(&life_record),
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-happy",
+            );
+            assert!((accounted - 5.0).abs() < 1e-9);
+
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!((zone_after - (0.2 + 5.0 / QI_ZONE_UNIT_CAPACITY)).abs() < 1e-9);
+
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            let t = &collected[0];
+            assert_eq!(t.reason, QiTransferReason::ReleaseToZone);
+            assert_eq!(t.from, QiAccountId::player(canonical_player_id("Mira")));
+            assert_eq!(t.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+            assert!((t.amount - 5.0).abs() < 1e-9);
+        }
+
+        /// zone 接近 cap 时，accepted 进 zone 账户、overflow 进 Overflow 账户。
+        /// 守恒断言：accounted == accepted + overflow == 完整 input amount。
+        #[test]
+        fn cap_overflow_emits_two_transfers_zone_and_overflow_with_full_accounting() {
+            let entity = fresh_entity();
+            // 0.95 zone qi 折算 = 47.5；cap 50；剩 2.5 headroom
+            let mut zones = fresh_zones_with_qi(0.95);
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                10.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                Some(&mut zones),
+                Some(&mut events),
+                "unit-cap-overflow",
+            );
+            // 守恒：完整 amount 都被入账（一部分进 zone，一部分进 overflow）
+            assert!((accounted - 10.0).abs() < 1e-9);
+
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!((zone_after - 1.0).abs() < 1e-9);
+
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 2);
+            // 第一条进 zone：accepted = 2.5
+            assert!(matches!(collected[0].to.kind, QiAccountKind::Zone));
+            assert!((collected[0].amount - 2.5).abs() < 1e-9);
+            // 第二条进 overflow：overflow = 7.5
+            assert!(matches!(collected[1].to.kind, QiAccountKind::Overflow));
+            assert!((collected[1].amount - 7.5).abs() < 1e-9);
+            // 两条都是 ReleaseToZone reason
+            assert_eq!(collected[0].reason, QiTransferReason::ReleaseToZone);
+            assert_eq!(collected[1].reason, QiTransferReason::ReleaseToZone);
+        }
+
+        /// 缺 `Events<QiTransfer>` 资源时，overflow 路径无法 emit，按设计返回 0
+        /// （丢失，但 tracing warn 留下排错抓手）。zone 仍按 accepted 写回。
+        /// 锁住"无 transfer 资源时 overflow 不静默写 zone account 错位"的不变量。
+        #[test]
+        fn cap_overflow_without_transfer_resource_loses_overflow_returns_only_accepted() {
+            let entity = fresh_entity();
+            // 0.95 zone qi 折算 = 47.5；cap 50；剩 2.5 headroom
+            let mut zones = fresh_zones_with_qi(0.95);
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            let accounted = release_qi_amount_to_zone(
+                entity,
+                10.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                Some(&mut zones),
+                None,
+                "unit-cap-overflow-no-events",
+            );
+            // 没有 events 资源，overflow 那 7.5 走 release_qi_overflow_from 的
+            // "no qi_transfers resource" 分支返回 0；accepted 那 2.5 写到 zone
+            // 但也没 emit 事件。accounted = 2.5（accepted 部分）+ 0（overflow lost）
+            assert!((accounted - 2.5).abs() < 1e-9);
+            let zone_after = zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!((zone_after - 1.0).abs() < 1e-9, "zone clamped at 1.0");
+        }
+
+        /// account_id 解析：character_id 非空时取它。
+        #[test]
+        fn account_id_uses_character_id_when_life_record_present_and_non_blank() {
+            let entity = fresh_entity();
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+            let life_record = LifeRecord::new(canonical_player_id("Azure"));
+
+            // 走无 zone 路径触发 overflow，便于在 transfer.from 上断言 account_id
+            release_qi_amount_to_zone(
+                entity,
+                3.0,
+                Some(&position),
+                Some(&dim),
+                Some(&life_record),
+                None,
+                Some(&mut events),
+                "unit-account-id",
+            );
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert_eq!(
+                collected[0].from,
+                QiAccountId::player(canonical_player_id("Azure"))
+            );
+        }
+
+        /// account_id 解析：缺 life_record 兜底 entity:{:?}，避免空 character_id。
+        #[test]
+        fn account_id_falls_back_to_entity_when_life_record_missing() {
+            let entity = fresh_entity();
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            release_qi_amount_to_zone(
+                entity,
+                3.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                None,
+                Some(&mut events),
+                "unit-account-id-fallback",
+            );
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            // entity:{:?} 兜底
+            assert!(collected[0].from.id.starts_with("entity:"));
+            assert!(matches!(collected[0].from.kind, QiAccountKind::Player));
+        }
+
+        /// account_id 解析：character_id 全空白也走兜底。
+        #[test]
+        fn account_id_falls_back_when_character_id_blank() {
+            let entity = fresh_entity();
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+            let life_record = LifeRecord::new("   ");
+
+            release_qi_amount_to_zone(
+                entity,
+                3.0,
+                Some(&position),
+                Some(&dim),
+                Some(&life_record),
+                None,
+                Some(&mut events),
+                "unit-account-id-blank",
+            );
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 1);
+            assert!(collected[0].from.id.starts_with("entity:"));
+        }
+
+        /// `source` 参数应该如实拼到 overflow account 的 id 里，便于排查现场。
+        /// 锁住"两条不同 source 落到不同 overflow account"的细分 invariant。
+        #[test]
+        fn source_label_propagates_to_overflow_account_id() {
+            let entity = fresh_entity();
+            let mut events = fresh_qi_transfer_events();
+            let position = pos_in_spawn_zone();
+            let dim = overworld_dim();
+
+            release_qi_amount_to_zone(
+                entity,
+                1.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                None,
+                Some(&mut events),
+                "ctx-A",
+            );
+            release_qi_amount_to_zone(
+                entity,
+                1.0,
+                Some(&position),
+                Some(&dim),
+                None,
+                None,
+                Some(&mut events),
+                "ctx-B",
+            );
+            let collected: Vec<_> = events.drain().collect();
+            assert_eq!(collected.len(), 2);
+            assert!(collected[0].to.id.starts_with("ctx-A:"));
+            assert!(collected[1].to.id.starts_with("ctx-B:"));
+        }
+    }
 }
