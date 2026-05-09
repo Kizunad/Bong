@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "healer_id",
+    "active_action",
+    "queue_len",
+    "reputation",
+    "retreating"
+  ],
+  "properties": {
+    "healer_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "active_action": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "queue_len": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reputation": {
+      "type": "integer"
+    },
+    "retreating": {
+      "type": "boolean"
+    }
+  }
+}

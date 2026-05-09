@@ -1,0 +1,24 @@
+{
+  "anyOf": [
+    {
+      "const": "meridian_repair",
+      "type": "string"
+    },
+    {
+      "const": "contam_purge",
+      "type": "string"
+    },
+    {
+      "const": "emergency_resuscitate",
+      "type": "string"
+    },
+    {
+      "const": "life_extension",
+      "type": "string"
+    },
+    {
+      "const": "mass_meridian_repair",
+      "type": "string"
+    }
+  ]
+}

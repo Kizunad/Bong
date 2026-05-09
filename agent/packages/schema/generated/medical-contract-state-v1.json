@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "stranger",
+      "type": "string"
+    },
+    {
+      "const": "patient",
+      "type": "string"
+    },
+    {
+      "const": "long_term_patient",
+      "type": "string"
+    },
+    {
+      "const": "bonded",
+      "type": "string"
+    }
+  ]
+}

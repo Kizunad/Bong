@@ -13,6 +13,7 @@ import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
 import { VoidActionNarrationRuntime } from "./void-actions-runtime.js";
 import { WoliuNarrationRuntime } from "./woliu-narration.js";
+import { YidaoNarrationRuntime } from "./yidao-runtime.js";
 import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
@@ -159,6 +160,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const zhenmaiCleanup = await startZhenmaiRuntime({
     redisUrl: config.redisUrl,
   });
+  const yidaoCleanup = await startYidaoRuntime({
+    redisUrl: config.redisUrl,
+  });
   const anqiCleanup = await startAnqiRuntime({
     ...runtimeOpts,
   });
@@ -187,6 +191,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     heartDemonCleanup,
     craftCleanup,
     anqiCleanup,
+    yidaoCleanup,
     zhenmaiCleanup,
     tuikeCleanup,
     duguCleanup,
@@ -234,6 +239,33 @@ async function startPoliticalRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] political runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startYidaoRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof YidaoNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof YidaoNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new YidaoNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] yidao runtime online"))
+    .catch((error) => console.warn("[tiandao] yidao runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] yidao runtime disconnect error:", error);
     }
   };
 }

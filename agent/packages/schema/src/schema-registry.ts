@@ -262,6 +262,7 @@ import {
   ServerDataDuguPoisonStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
+  ServerDataHealerNpcAiStateV1,
   ServerDataWeaponBrokenV1,
   ServerDataWeaponEquippedV1,
   ServerDataForgeStationV1,
@@ -282,6 +283,7 @@ import {
   ServerDataTradeOfferV1,
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
+  ServerDataYidaoHudStateV1,
   BurstMeridianEventV1,
   QiColorObservedV1,
   TreasureEquippedV1,
@@ -316,6 +318,14 @@ import {
   VortexBackfireEventV1,
   VortexFieldStateV1,
 } from "./woliu.js";
+import {
+  HealerNpcAiStateV1,
+  MedicalContractStateV1,
+  YidaoEventKindV1,
+  YidaoEventV1,
+  YidaoHudStateV1,
+  YidaoSkillIdV1,
+} from "./yidao.js";
 import {
   DeceasedExposureSnapshotV1,
   DeceasedRenownSnapshotV1,
@@ -584,6 +594,14 @@ export const SCHEMA_REGISTRY = {
   falseSkinStateV1: FalseSkinStateV1,
   shedEventV1: ShedEventV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
+  yidaoSkillIdV1: YidaoSkillIdV1,
+  yidaoEventKindV1: YidaoEventKindV1,
+  medicalContractStateV1: MedicalContractStateV1,
+  yidaoEventV1: YidaoEventV1,
+  healerNpcAiStateV1: HealerNpcAiStateV1,
+  yidaoHudStateV1: YidaoHudStateV1,
+  serverDataHealerNpcAiStateV1: ServerDataHealerNpcAiStateV1,
+  serverDataYidaoHudStateV1: ServerDataYidaoHudStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -974,6 +992,17 @@ export const GENERATED_SCHEMA_FILES = {
   "shed-event-v1.json": SCHEMA_REGISTRY.shedEventV1,
   "server-data-false-skin-state-v1.json":
     SCHEMA_REGISTRY.serverDataFalseSkinStateV1,
+  "yidao-skill-id-v1.json": SCHEMA_REGISTRY.yidaoSkillIdV1,
+  "yidao-event-kind-v1.json": SCHEMA_REGISTRY.yidaoEventKindV1,
+  "medical-contract-state-v1.json":
+    SCHEMA_REGISTRY.medicalContractStateV1,
+  "yidao-event-v1.json": SCHEMA_REGISTRY.yidaoEventV1,
+  "healer-npc-ai-state-v1.json": SCHEMA_REGISTRY.healerNpcAiStateV1,
+  "yidao-hud-state-v1.json": SCHEMA_REGISTRY.yidaoHudStateV1,
+  "server-data-healer-npc-ai-state-v1.json":
+    SCHEMA_REGISTRY.serverDataHealerNpcAiStateV1,
+  "server-data-yidao-hud-state-v1.json":
+    SCHEMA_REGISTRY.serverDataYidaoHudStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7

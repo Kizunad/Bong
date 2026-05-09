@@ -44,6 +44,7 @@ export * from "./tuike.js";
 export * from "./void-actions.js";
 export * from "./woliu.js";
 export * from "./world-state.js";
+export * from "./yidao.js";
 export * from "./zone-pressure.js";
 export * from "./zong-formation.js";
 

@@ -30,5 +30,11 @@ public final class VfxBootstrap {
         registry.register(ReleaseLightningVfx.EVENT_ID,          new ReleaseLightningVfx());
         registry.register(ExhaustedGreyMistVfx.EVENT_ID,         new ExhaustedGreyMistVfx());
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
+        YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
+        registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
+        registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);
+        registry.register(YidaoPeacePulsePlayer.EMERGENCY_RESUSCITATE, yidao);
+        registry.register(YidaoPeacePulsePlayer.LIFE_EXTENSION,        yidao);
+        registry.register(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR,  yidao);
     }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "yidao_meridian_repair",
+  "layers": [
+    { "sound": "minecraft:block.amethyst_block.chime", "volume": 0.35, "pitch": 1.35, "delay_ticks": 0 },
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.18, "pitch": 1.65, "delay_ticks": 4 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

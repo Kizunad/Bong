@@ -23,6 +23,7 @@ pub mod style_telemetry;
 pub mod tuike;
 pub mod weapon;
 pub mod woliu;
+pub mod yidao;
 
 use std::path::Path;
 use valence::prelude::{
@@ -187,6 +188,7 @@ pub fn register(app: &mut App) {
             .chain(),
     );
     woliu::register(app);
+    yidao::register(app);
 
     app.add_systems(
         Update,

@@ -197,6 +197,12 @@ public final class BongHudOrchestrator {
             ));
             commands.addAll(ChargingProgressBarHud.buildCommands(screenWidth, screenHeight));
             commands.addAll(ExhaustedGreyOverlay.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(YidaoHudPlanner.buildCommands(
+                com.bong.client.yidao.YidaoHudStateStore.snapshot(),
+                widthMeasurer,
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(EdgeFeedbackHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(),
                 combatSnapshot.defenseWindowState(),

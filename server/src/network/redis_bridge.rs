@@ -33,7 +33,7 @@ use crate::schema::channels::{
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
     CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
     CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
-    CH_WORLD_STATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
+    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -80,6 +80,7 @@ use crate::schema::tuike::ShedEventV1;
 use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
+use crate::schema::yidao::YidaoEventV1;
 use crate::schema::zone_pressure::ZonePressureCrossedV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
 
@@ -174,6 +175,7 @@ pub enum RedisOutbound {
     AnqiCarrierAbrasion(CarrierAbrasionEventV1),
     AnqiContainerSwap(ContainerSwapEventV1),
     TuikeShed(ShedEventV1),
+    YidaoEvent(YidaoEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
     WantedPlayer(WantedPlayerEventV1),
     /// plan-lingtian-weather-v1 §3 / §4.4 — 天气事件起 / 落
@@ -474,6 +476,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WANTED_PLAYER,
+                payload,
+            })
+        }
+        RedisOutbound::YidaoEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize YidaoEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_YIDAO_EVENT,
                 payload,
             })
         }

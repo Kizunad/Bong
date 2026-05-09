@@ -75,6 +75,7 @@ import {
 } from "./social.js";
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
 import { FalseSkinStateV1 } from "./tuike.js";
+import { HealerNpcAiStateV1, YidaoHudStateV1 } from "./yidao.js";
 import {
   ServerDataFreshnessUpdateV1,
   ServerDataProcessingSessionV1,
@@ -223,6 +224,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("realm_vision_params"),
   Type.Literal("spiritual_sense_targets"),
   Type.Literal("false_skin_state"),
+  Type.Literal("healer_npc_ai_state"),
+  Type.Literal("yidao_hud_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -954,6 +957,26 @@ export const ServerDataFalseSkinStateV1 = Type.Object(
 );
 export type ServerDataFalseSkinStateV1 = Static<typeof ServerDataFalseSkinStateV1>;
 
+export const ServerDataHealerNpcAiStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("healer_npc_ai_state"),
+    ...HealerNpcAiStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataHealerNpcAiStateV1 = Static<typeof ServerDataHealerNpcAiStateV1>;
+
+export const ServerDataYidaoHudStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("yidao_hud_state"),
+    ...YidaoHudStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataYidaoHudStateV1 = Static<typeof ServerDataYidaoHudStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1425,6 +1448,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataDuguPoisonStateV1,
   ServerDataCarrierStateV1,
   ServerDataFalseSkinStateV1,
+  ServerDataHealerNpcAiStateV1,
+  ServerDataYidaoHudStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

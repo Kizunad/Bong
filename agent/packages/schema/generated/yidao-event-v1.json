@@ -1,0 +1,242 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "tick",
+    "medic_id",
+    "patient_ids",
+    "skill",
+    "success_count",
+    "failure_count",
+    "qi_transferred",
+    "contam_reduced",
+    "hp_restored",
+    "karma_delta",
+    "medic_qi_max_delta",
+    "patient_qi_max_delta",
+    "detail"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "meridian_heal",
+          "type": "string"
+        },
+        {
+          "const": "contam_purge",
+          "type": "string"
+        },
+        {
+          "const": "emergency_resuscitate",
+          "type": "string"
+        },
+        {
+          "const": "life_extension",
+          "type": "string"
+        },
+        {
+          "const": "mass_heal",
+          "type": "string"
+        },
+        {
+          "const": "karma_accumulation",
+          "type": "string"
+        },
+        {
+          "const": "medical_contract",
+          "type": "string"
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "medic_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "patient_ids": {
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 128,
+        "type": "string"
+      }
+    },
+    "skill": {
+      "anyOf": [
+        {
+          "const": "meridian_repair",
+          "type": "string"
+        },
+        {
+          "const": "contam_purge",
+          "type": "string"
+        },
+        {
+          "const": "emergency_resuscitate",
+          "type": "string"
+        },
+        {
+          "const": "life_extension",
+          "type": "string"
+        },
+        {
+          "const": "mass_meridian_repair",
+          "type": "string"
+        }
+      ]
+    },
+    "meridian_id": {
+      "description": "20 条经脉（12 正经 + 8 奇经）",
+      "anyOf": [
+        {
+          "const": "Lung",
+          "type": "string"
+        },
+        {
+          "const": "LargeIntestine",
+          "type": "string"
+        },
+        {
+          "const": "Stomach",
+          "type": "string"
+        },
+        {
+          "const": "Spleen",
+          "type": "string"
+        },
+        {
+          "const": "Heart",
+          "type": "string"
+        },
+        {
+          "const": "SmallIntestine",
+          "type": "string"
+        },
+        {
+          "const": "Bladder",
+          "type": "string"
+        },
+        {
+          "const": "Kidney",
+          "type": "string"
+        },
+        {
+          "const": "Pericardium",
+          "type": "string"
+        },
+        {
+          "const": "TripleEnergizer",
+          "type": "string"
+        },
+        {
+          "const": "Gallbladder",
+          "type": "string"
+        },
+        {
+          "const": "Liver",
+          "type": "string"
+        },
+        {
+          "const": "Ren",
+          "type": "string"
+        },
+        {
+          "const": "Du",
+          "type": "string"
+        },
+        {
+          "const": "Chong",
+          "type": "string"
+        },
+        {
+          "const": "Dai",
+          "type": "string"
+        },
+        {
+          "const": "YinQiao",
+          "type": "string"
+        },
+        {
+          "const": "YangQiao",
+          "type": "string"
+        },
+        {
+          "const": "YinWei",
+          "type": "string"
+        },
+        {
+          "const": "YangWei",
+          "type": "string"
+        }
+      ]
+    },
+    "success_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "failure_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "qi_transferred": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "contam_reduced": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "hp_restored": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "karma_delta": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "medic_qi_max_delta": {
+      "maximum": 0,
+      "type": "number"
+    },
+    "patient_qi_max_delta": {
+      "maximum": 0,
+      "type": "number"
+    },
+    "contract_state": {
+      "anyOf": [
+        {
+          "const": "stranger",
+          "type": "string"
+        },
+        {
+          "const": "patient",
+          "type": "string"
+        },
+        {
+          "const": "long_term_patient",
+          "type": "string"
+        },
+        {
+          "const": "bonded",
+          "type": "string"
+        }
+      ]
+    },
+    "detail": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    }
+  }
+}

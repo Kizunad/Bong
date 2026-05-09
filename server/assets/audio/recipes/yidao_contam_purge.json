@@ -1,0 +1,10 @@
+{
+  "id": "yidao_contam_purge",
+  "layers": [
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.28, "pitch": 1.55, "delay_ticks": 0 },
+    { "sound": "minecraft:block.brewing_stand.brew", "volume": 0.25, "pitch": 1.25, "delay_ticks": 3 }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

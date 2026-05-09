@@ -10,6 +10,7 @@ public enum HudRenderLayer {
     JIEMAI_RING,
     SPELL_VOLUME,
     CARRIER,
+    YIDAO,
     BOTANY,
     DERIVED_ATTR,
     TOAST,

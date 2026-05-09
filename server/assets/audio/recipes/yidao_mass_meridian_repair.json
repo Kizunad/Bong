@@ -1,0 +1,10 @@
+{
+  "id": "yidao_mass_meridian_repair",
+  "layers": [
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.35, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:block.amethyst_cluster.step", "volume": 0.3, "pitch": 1.45, "delay_ticks": 5 }
+  ],
+  "priority": 75,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}
