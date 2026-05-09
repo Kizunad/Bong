@@ -172,13 +172,13 @@ P5 化虚:            骨币失意义,权力换算为天道注意力
 
 - `agent/packages/schema`: `npm run generate` → 314 schemas exported。
 - `agent`: `npm run build` → passed。
-- `agent/packages/schema`: `npm test` → 12 files / 330 tests passed。
+- `agent/packages/schema`: `npm test` → 12 files / 331 tests passed。
 - `agent/packages/schema`: `npm run build` → passed。
 - `agent/packages/tiandao`: `npm test` → 43 files / 308 tests passed。
 - `client`: `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL。
 - `server`: `cargo fmt --check` → passed。
 - `server`: `cargo clippy --all-targets -- -D warnings` → passed。
-- `server`: `cargo test` → 3205 tests passed。
+- `server`: `cargo test` → 3214 tests passed。
 
 ### 跨仓库核验
 
