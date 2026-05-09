@@ -28,6 +28,7 @@ const {
   NPC_SPAWN,
   PLAYER_CHAT,
   POI_NOVICE_EVENT,
+  PRICE_INDEX,
   TSY_EVENT,
   WORLD_STATE,
 } = CHANNELS;
@@ -540,6 +541,61 @@ describe("redis-ipc", () => {
     expect(warn).toHaveBeenCalledWith(
       "[redis-ipc] invalid botany ecology snapshot:",
       expect.stringContaining("spirit_qi"),
+    );
+
+    warn.mockRestore();
+  });
+
+  it("observes price index events from the economy channel", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onPriceIndex(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      PRICE_INDEX,
+      JSON.stringify({
+        v: 1,
+        tick: 720_000,
+        season: "summer_to_winter",
+        supply_spirit_qi: 27.5,
+        demand_spirit_qi: 50,
+        rhythm_multiplier: 1.1,
+        market_factor: 0.9,
+        price_multiplier: 0.99,
+        sample_prices: [{ item_id: "common_good", base_price: 4, final_price: 4 }],
+      }),
+    );
+    await sub.publish(
+      PRICE_INDEX,
+      JSON.stringify({ v: 1, tick: 1, season: "bad", supply_spirit_qi: 1 }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.drainPriceIndexEvents()).toEqual([
+      expect.objectContaining({
+        tick: 720_000,
+        season: "summer_to_winter",
+      }),
+    ]);
+    expect(ipc.drainPriceIndexEvents()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[redis-ipc] invalid price index event:",
+      expect.stringContaining("season"),
     );
 
     warn.mockRestore();

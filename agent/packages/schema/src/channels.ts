@@ -21,6 +21,12 @@ export const CHANNELS = {
   /** Server → Agent: 节律相位切换事件（plan-jiezeq-v1 P4） */
   SEASON_CHANGED: "bong:season_changed",
 
+  /** Server → Agent: 骨币真元总供给月度快照（plan-economy-v1 P3） */
+  BONE_COIN_TICK: "bong:bone_coin_tick",
+
+  /** Server → Agent: 当前价格指数月度快照（plan-economy-v1 P2/P3） */
+  PRICE_INDEX: "bong:price_index",
+
   /** Server → Agent: 顿悟请求（plan-cultivation §5.5） (Pub/Sub) */
   INSIGHT_REQUEST: "bong:insight_request",
 
@@ -149,6 +155,21 @@ export const CHANNELS = {
   /** Server → Agent: 暗器投射物射空 / 蒸发（plan-anqi-v1 P2 narration） */
   ANQI_PROJECTILE_DESPAWNED: "bong:combat/projectile_despawned",
 
+  /** Server → Agent: 暗器 v2 多发齐射事件 */
+  ANQI_MULTI_SHOT: "bong:anqi/multi_shot",
+
+  /** Server → Agent: 暗器 v2 凝魂 / 破甲 / 单射注射事件 */
+  ANQI_QI_INJECTION: "bong:anqi/qi_injection",
+
+  /** Server → Agent: 暗器 v2 化虚诱饵分形事件 */
+  ANQI_ECHO_FRACTAL: "bong:anqi/echo_fractal",
+
+  /** Server → Agent: 暗器 v2 容器磨损税事件 */
+  ANQI_CARRIER_ABRASION: "bong:anqi/carrier_abrasion",
+
+  /** Server → Agent: 暗器 v2 容器切换事件 */
+  ANQI_CONTAINER_SWAP: "bong:anqi/container_swap",
+
   /** Server → Agent: 替尸 / 蜕壳流脱壳事件（plan-tuike-v1 §P1） */
   TUIKE_SHED: "bong:tuike/shed",
 
@@ -243,6 +264,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.AGENT_NARRATE,
   CHANNELS.AGENT_WORLD_MODEL,
   CHANNELS.SEASON_CHANGED,
+  CHANNELS.BONE_COIN_TICK,
+  CHANNELS.PRICE_INDEX,
   CHANNELS.INSIGHT_REQUEST,
   CHANNELS.INSIGHT_OFFER,
   CHANNELS.HEART_DEMON_REQUEST,

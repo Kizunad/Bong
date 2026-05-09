@@ -344,8 +344,9 @@ public class ClientRequestSenderTest {
         ClientRequestSender.sendSkillBarCast(2, "entity:42");
         ClientRequestSender.sendSkillBarBindSkill(1, "burst_meridian.beng_quan");
         ClientRequestSender.sendSkillBarBindClear(1);
+        ClientRequestSender.sendAnqiContainerSwitch(ClientRequestProtocol.AnqiContainerKind.QUIVER);
 
-        assertEquals(4, sent.size());
+        assertEquals(5, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals("{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}", sent.get(0).body());
         assertEquals("{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":2,\"target\":\"entity:42\"}", sent.get(1).body());
@@ -354,6 +355,7 @@ public class ClientRequestSenderTest {
             sent.get(2).body()
         );
         assertEquals("{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":null}", sent.get(3).body());
+        assertEquals("{\"type\":\"anqi_container_switch\",\"v\":1,\"to\":\"quiver\"}", sent.get(4).body());
     }
 
     @Test

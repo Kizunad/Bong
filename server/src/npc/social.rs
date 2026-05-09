@@ -17,6 +17,7 @@ use valence::prelude::{
 
 use crate::combat::components::Lifecycle;
 use crate::combat::events::DeathEvent;
+use crate::economy::{estimate_item_price_with_index, neutral_price_index, EconomyPriceIndex};
 use crate::inventory::{ItemInstance, ItemRarity};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::FactionMembership;
@@ -342,21 +343,16 @@ pub const fn rarity_base_price(rarity: ItemRarity) -> u64 {
     }
 }
 
-/// 估价单个 `ItemInstance`（骨币）。考虑：
-/// - rarity 基础价
-/// - stack_count 倍率
-/// - spirit_quality（0..=1）+50% 加成
-/// - durability（0..=1）≤0.2 时打 5 折
+/// 估价单个 `ItemInstance`（骨币），默认使用 neutral economy index。
+///
+/// 有当前市场快照时调用 `estimate_item_price_for_index`，以叠加 economy 指数。
 pub fn estimate_item_price(item: &ItemInstance) -> u64 {
-    let base = rarity_base_price(item.rarity) as f64;
-    let quality_mult = 1.0 + item.spirit_quality.clamp(0.0, 1.0) * 0.5;
-    let durability_mult = if item.durability.clamp(0.0, 1.0) <= 0.2 {
-        0.5
-    } else {
-        1.0
-    };
-    let per = base * quality_mult * durability_mult;
-    (per * item.stack_count.max(1) as f64).round().max(1.0) as u64
+    estimate_item_price_for_index(item, &neutral_price_index())
+}
+
+/// 按 economy price index 估价，供商人 / NPC 交易在有当前市场快照时调用。
+pub fn estimate_item_price_for_index(item: &ItemInstance, index: &EconomyPriceIndex) -> u64 {
+    estimate_item_price_with_index(item, rarity_base_price(item.rarity), index)
 }
 
 /// 估价一批 `ItemInstance` 的总骨币值。
@@ -439,6 +435,25 @@ mod tests {
         let plain = make_item(ItemRarity::Rare, 1, 0.0, 1.0);
         let premium = make_item(ItemRarity::Rare, 1, 1.0, 1.0);
         assert!(estimate_item_price(&premium) > estimate_item_price(&plain));
+    }
+
+    #[test]
+    fn estimate_item_price_neutral_index_matches_default_entrypoint() {
+        let item = make_item(ItemRarity::Uncommon, 3, 0.6, 1.0);
+        assert_eq!(
+            estimate_item_price_for_index(&item, &neutral_price_index()),
+            estimate_item_price(&item)
+        );
+    }
+
+    #[test]
+    fn estimate_item_price_for_index_applies_market_multiplier() {
+        let item = make_item(ItemRarity::Uncommon, 2, 0.5, 1.0);
+        let mut index = neutral_price_index();
+        index.price_multiplier = 1.25;
+
+        assert!(estimate_item_price_for_index(&item, &index) > estimate_item_price(&item));
+        assert_eq!(estimate_item_price_for_index(&item, &index), 38);
     }
 
     #[test]

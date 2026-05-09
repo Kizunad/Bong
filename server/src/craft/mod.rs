@@ -75,10 +75,10 @@ pub fn register(app: &mut App) {
     register_examples(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register example recipes: {err}");
     });
-    tracing::info!(
-        "[bong][craft] registered {} example recipe(s) (P1 baseline)",
-        registry.len()
-    );
+    register_anqi_v2_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register anqi-v2 recipes: {err}");
+    });
+    tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
     app.insert_resource(RecipeUnlockState::new());
@@ -230,6 +230,161 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
     Ok(())
 }
 
+/// plan-anqi-v2 §3：6 档暗器载体 + 3 个容器配方。
+pub fn register_anqi_v2_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    fn scroll(id: &str) -> Vec<UnlockSource> {
+        vec![UnlockSource::Scroll {
+            item_template: format!("scroll_{id}"),
+        }]
+    }
+
+    let specs = [
+        (
+            "anqi.carrier.bone_chip",
+            CraftCategory::AnqiCarrier,
+            "残骨",
+            vec![("bone".to_string(), 1)],
+            1.0,
+            60 * 20,
+            ("anqi_bone_chip".to_string(), 3),
+            CraftRequirements::default(),
+        ),
+        (
+            "anqi.carrier.mutant_bone",
+            CraftCategory::AnqiCarrier,
+            "异变兽骨",
+            vec![
+                ("mutant_beast_core".to_string(), 1),
+                ("bone".to_string(), 3),
+            ],
+            8.0,
+            8 * 60 * 20,
+            ("anqi_yibian_shougu".to_string(), 1),
+            CraftRequirements::default(),
+        ),
+        (
+            "anqi.carrier.lingmu_quiver",
+            CraftCategory::AnqiCarrier,
+            "灵木编制箭",
+            vec![("ling_mu".to_string(), 3), ("solid_qi_dye".to_string(), 1)],
+            12.0,
+            12 * 60 * 20,
+            ("anqi_lingmu_arrow".to_string(), 5),
+            CraftRequirements {
+                realm_min: Some(Realm::Induce),
+                qi_color_min: None,
+                skill_lv_min: None,
+            },
+        ),
+        (
+            "anqi.carrier.dyed_bone",
+            CraftCategory::AnqiCarrier,
+            "凝实色染色骨",
+            vec![
+                ("anqi_yibian_shougu".to_string(), 1),
+                ("solid_qi_dye".to_string(), 3),
+                ("herb_mixed".to_string(), 5),
+            ],
+            30.0,
+            30 * 60 * 20,
+            ("anqi_dyed_bone".to_string(), 1),
+            CraftRequirements {
+                realm_min: Some(Realm::Condense),
+                qi_color_min: Some((ColorKind::Solid, 0.2)),
+                skill_lv_min: None,
+            },
+        ),
+        (
+            "anqi.carrier.fenglinghe_bone",
+            CraftCategory::AnqiCarrier,
+            "封灵匣骨",
+            vec![
+                ("anqi_dyed_bone".to_string(), 1),
+                ("ancient_bone_shard".to_string(), 1),
+            ],
+            60.0,
+            60 * 60 * 20,
+            ("anqi_fenglinghe_bone".to_string(), 1),
+            CraftRequirements {
+                realm_min: Some(Realm::Solidify),
+                qi_color_min: Some((ColorKind::Solid, 0.3)),
+                skill_lv_min: None,
+            },
+        ),
+        (
+            "anqi.carrier.shanggu_bone",
+            CraftCategory::AnqiCarrier,
+            "上古残骨",
+            vec![("ancient_bone_shard".to_string(), 3)],
+            120.0,
+            120 * 60 * 20,
+            ("anqi_shanggu_bone".to_string(), 1),
+            CraftRequirements {
+                realm_min: Some(Realm::Void),
+                qi_color_min: Some((ColorKind::Solid, 0.4)),
+                skill_lv_min: None,
+            },
+        ),
+        (
+            "anqi.container.quiver",
+            CraftCategory::Container,
+            "暗器箭袋",
+            vec![
+                ("beast_leather".to_string(), 3),
+                ("solid_qi_dye".to_string(), 1),
+            ],
+            5.0,
+            5 * 60 * 20,
+            ("anqi_container_quiver".to_string(), 1),
+            CraftRequirements::default(),
+        ),
+        (
+            "anqi.container.pocket_pouch",
+            CraftCategory::Container,
+            "暗器裤袋",
+            vec![("beast_leather".to_string(), 1), ("ling_mu".to_string(), 1)],
+            2.0,
+            2 * 60 * 20,
+            ("anqi_container_pocket_pouch".to_string(), 1),
+            CraftRequirements::default(),
+        ),
+        (
+            "anqi.container.fenglinghe",
+            CraftCategory::Container,
+            "封灵匣",
+            vec![
+                ("mutant_beast_bone".to_string(), 3),
+                ("ling_mu".to_string(), 5),
+            ],
+            30.0,
+            30 * 60 * 20,
+            ("anqi_container_fenglinghe".to_string(), 1),
+            CraftRequirements {
+                realm_min: Some(Realm::Condense),
+                qi_color_min: None,
+                skill_lv_min: None,
+            },
+        ),
+    ];
+
+    for (id, category, display_name, materials, qi_cost, time_ticks, output, requirements) in specs
+    {
+        registry.register(CraftRecipe {
+            id: RecipeId::new(id),
+            category,
+            display_name: display_name.into(),
+            materials,
+            qi_cost,
+            time_ticks,
+            output,
+            requirements,
+            unlock_sources: scroll(id),
+        })?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn register_examples_covers_all_categories_except_misc() {
+    fn register_examples_covers_baseline_categories_except_misc_and_containers() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
         let categories: std::collections::HashSet<CraftCategory> =
@@ -262,6 +417,8 @@ mod tests {
         }
         // 5 个示例不该覆盖 Misc — Misc 是兜底
         assert!(!categories.contains(&CraftCategory::Misc));
+        // Container 是 anqi-v2 专项类目，不属于 craft-v1 示例基线。
+        assert!(!categories.contains(&CraftCategory::Container));
     }
 
     #[test]
@@ -314,6 +471,17 @@ mod tests {
             .expect("eclipse_needle must have qi_color gate");
         assert_eq!(kind, ColorKind::Insidious);
         assert!(share > 0.0);
+    }
+
+    #[test]
+    fn register_anqi_v2_recipes_adds_six_carriers_and_three_containers() {
+        let mut registry = CraftRegistry::new();
+        register_anqi_v2_recipes(&mut registry).unwrap();
+        assert_eq!(registry.by_category(CraftCategory::AnqiCarrier).count(), 6);
+        assert_eq!(registry.by_category(CraftCategory::Container).count(), 3);
+        assert!(registry
+            .get(&RecipeId::new("anqi.carrier.shanggu_bone"))
+            .is_some_and(|recipe| recipe.requirements.realm_min == Some(Realm::Void)));
     }
 
     #[test]

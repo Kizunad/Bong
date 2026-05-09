@@ -8,11 +8,14 @@
 pub mod channeling;
 pub mod collision;
 pub mod constants;
+pub mod container;
 pub mod distance;
 pub mod env;
 pub mod excretion;
+pub mod field;
 pub mod healing;
 pub mod ledger;
+pub mod projectile;
 pub mod release;
 pub mod tiandao;
 pub mod traits;
@@ -25,9 +28,11 @@ pub use collision::{
     qi_collision, qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm,
     CollisionOutcome,
 };
+pub use container::{abrasion_loss, AbrasionDirection, AbrasionOutcome, AnqiContainerKind};
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
+pub use field::{density_echo, EchoFractalOutcome};
 pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
     yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,
@@ -37,6 +42,10 @@ pub use ledger::{
     assert_conservation, snapshot_for_ipc, summarize_world_qi, QiAccountId, QiAccountKind,
     QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
     WorldQiSnapshot,
+};
+pub use projectile::{
+    armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,
+    ConeDispersionShot, HighDensityInjectionOutcome,
 };
 pub use release::{accumulate_zone_release, qi_release_to_zone, ZoneReleaseOutcome};
 pub use tiandao::{

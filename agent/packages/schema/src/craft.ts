@@ -25,6 +25,7 @@ export const CraftCategoryV1 = Type.Union([
   Type.Literal("tuike_skin"),
   Type.Literal("zhenfa_trap"),
   Type.Literal("tool"),
+  Type.Literal("container"),
   Type.Literal("misc"),
 ]);
 export type CraftCategoryV1 = Static<typeof CraftCategoryV1>;

@@ -10,6 +10,7 @@ import {
 import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
+import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
@@ -58,6 +59,12 @@ import {
   WeatherEventKindV1,
   WeatherEventUpdateV1,
 } from "../src/lingtian-weather.js";
+import {
+  BoneCoinTickV1,
+  PriceIndexV1,
+  validateBoneCoinTickV1Contract,
+  validatePriceIndexV1Contract,
+} from "../src/economy.js";
 import {
   RatPhaseChangeEventV1,
   validateRatPhaseChangeEventV1Contract,
@@ -175,6 +182,13 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SEASON_CHANGED);
   });
 
+  it("declares economy Redis channels", () => {
+    expect(CHANNELS.BONE_COIN_TICK).toBe("bong:bone_coin_tick");
+    expect(CHANNELS.PRICE_INDEX).toBe("bong:price_index");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.BONE_COIN_TICK);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PRICE_INDEX);
+  });
+
   it("declares pseudo vein Redis channels", () => {
     expect(CHANNELS.PSEUDO_VEIN_ACTIVE).toBe("bong:pseudo_vein:active");
     expect(CHANNELS.PSEUDO_VEIN_DISSIPATE).toBe("bong:pseudo_vein:dissipate");
@@ -257,6 +271,28 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("chat-message.sample.json");
     const result = validate(ChatMessageV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("bone-coin-tick.sample.json", () => {
+    const data = loadSample("bone-coin-tick.sample.json");
+    const result = validate(BoneCoinTickV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expectContractAccepts(
+      "BoneCoinTickV1",
+      validateBoneCoinTickV1Contract,
+      data,
+    );
+  });
+
+  it("price-index.sample.json", () => {
+    const data = loadSample("price-index.sample.json");
+    const result = validate(PriceIndexV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expectContractAccepts(
+      "PriceIndexV1",
+      validatePriceIndexV1Contract,
+      data,
+    );
   });
 
   it("pseudo-vein-snapshot.sample.json", () => {
@@ -856,6 +892,59 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("client-request.skill-bar-cast.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts anqi container switch request", () => {
+    let result = validate(ClientRequestV1, {
+      v: 1,
+      type: "anqi_container_switch",
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+
+    result = validate(ClientRequestV1, {
+      v: 1,
+      type: "anqi_container_switch",
+      to: "quiver",
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+
+    result = validate(ClientRequestV1, {
+      v: 1,
+      type: "anqi_container_switch",
+      to: "fenglinghe",
+    });
+    expect(result.ok, "combat switch must reject sealed fenglinghe container").toBe(false);
+  });
+
+  it("accepts no-target qi injection payload serialized as null", () => {
+    const result = validateQiInjectionEventV1Contract({
+      caster: "entity:caster",
+      target: null,
+      skill: "single_snipe",
+      carrier_kind: "yibian_shougu",
+      payload_qi: 12,
+      wound_qi: 18,
+      contamination_qi: 3.6,
+      overload_ratio: 0.12,
+      triggers_overload_tear: false,
+      tick: 42,
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("rejects qi injection payload without explicit target field", () => {
+    const result = validateQiInjectionEventV1Contract({
+      caster: "entity:caster",
+      skill: "single_snipe",
+      carrier_kind: "yibian_shougu",
+      payload_qi: 12,
+      wound_qi: 18,
+      contamination_qi: 3.6,
+      overload_ratio: 0.12,
+      triggers_overload_tear: false,
+      tick: 42,
+    });
+    expect(result.ok, "target must be present as entity id or null").toBe(false);
   });
 
   it("client-request.skill-config-intent.sample.json", () => {

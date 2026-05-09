@@ -157,6 +157,11 @@ import {
   WeatherEventKindV1,
   WeatherEventUpdateV1,
 } from "./lingtian-weather.js";
+import {
+  BoneCoinTickV1,
+  PriceIndexV1,
+  PriceSampleV1,
+} from "./economy.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
 import {
@@ -293,10 +298,15 @@ import {
   FullPowerReleaseV1,
 } from "./full-power.js";
 import {
+  CarrierAbrasionEventV1,
   CarrierChargedEventV1,
   CarrierImpactEventV1,
   CarrierStateV1,
+  ContainerSwapEventV1,
+  EchoFractalEventV1,
+  MultiShotEventV1,
   ProjectileDespawnedEventV1,
+  QiInjectionEventV1,
 } from "./combat-carrier.js";
 import {
   FalseSkinKindV1,
@@ -426,6 +436,9 @@ export const SCHEMA_REGISTRY = {
   weatherEventKindV1: WeatherEventKindV1,
   weatherEventDataV1: WeatherEventDataV1,
   weatherEventUpdateV1: WeatherEventUpdateV1,
+  boneCoinTickV1: BoneCoinTickV1,
+  priceSampleV1: PriceSampleV1,
+  priceIndexV1: PriceIndexV1,
   serverDataV1: ServerDataV1,
   clientPayloadV1: ClientPayloadV1,
   clientPayloadWelcomeV1: WelcomePayloadV1,
@@ -571,6 +584,11 @@ export const SCHEMA_REGISTRY = {
   carrierChargedEventV1: CarrierChargedEventV1,
   carrierImpactEventV1: CarrierImpactEventV1,
   projectileDespawnedEventV1: ProjectileDespawnedEventV1,
+  multiShotEventV1: MultiShotEventV1,
+  qiInjectionEventV1: QiInjectionEventV1,
+  echoFractalEventV1: EchoFractalEventV1,
+  carrierAbrasionEventV1: CarrierAbrasionEventV1,
+  containerSwapEventV1: ContainerSwapEventV1,
   serverDataCarrierStateV1: ServerDataCarrierStateV1,
   falseSkinKindV1: FalseSkinKindV1,
   falseSkinStateV1: FalseSkinStateV1,
@@ -773,6 +791,9 @@ export const GENERATED_SCHEMA_FILES = {
   "weather-event-kind-v1.json": SCHEMA_REGISTRY.weatherEventKindV1,
   "weather-event-data-v1.json": SCHEMA_REGISTRY.weatherEventDataV1,
   "weather-event-update-v1.json": SCHEMA_REGISTRY.weatherEventUpdateV1,
+  "bone-coin-tick-v1.json": SCHEMA_REGISTRY.boneCoinTickV1,
+  "price-sample-v1.json": SCHEMA_REGISTRY.priceSampleV1,
+  "price-index-v1.json": SCHEMA_REGISTRY.priceIndexV1,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,
   "inventory-event-v1.json": SCHEMA_REGISTRY.inventoryEventV1,
   "server-data-v1.json": SCHEMA_REGISTRY.serverDataV1,

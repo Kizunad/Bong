@@ -20,6 +20,10 @@ public class MixinKeyboardSkillKeys {
         if (client == null || client.player == null || client.currentScreen != null) {
             return;
         }
+        if (key == GLFW.GLFW_KEY_F && SkillBarKeyRouter.shouldCancelAnqiContainerKey()) {
+            ci.cancel();
+            return;
+        }
         int slot = key - GLFW.GLFW_KEY_1;
         if (slot < 0 || slot >= 9) {
             return;

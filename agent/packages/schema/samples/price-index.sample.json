@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "tick": 720000,
+  "season": "summer_to_winter",
+  "supply_spirit_qi": 27.5,
+  "demand_spirit_qi": 50,
+  "rhythm_multiplier": 1.1,
+  "market_factor": 0.9,
+  "price_multiplier": 0.99,
+  "sample_prices": [
+    {
+      "item_id": "common_good",
+      "base_price": 4,
+      "final_price": 4
+    },
+    {
+      "item_id": "uncommon_good",
+      "base_price": 12,
+      "final_price": 12
+    },
+    {
+      "item_id": "rare_good",
+      "base_price": 40,
+      "final_price": 40
+    }
+  ]
+}

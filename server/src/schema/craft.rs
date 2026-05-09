@@ -18,7 +18,7 @@ use crate::cultivation::components::{ColorKind, Realm};
 /// `craft.recipe.id` 线上格式 — 字符串透明化（与 `crate::craft::RecipeId` 等价）。
 pub type RecipeIdV1 = String;
 
-/// 6 类配方分组（与 `crate::craft::CraftCategory` 1:1）。
+/// 配方分组（与 `crate::craft::CraftCategory` 1:1）。
 /// snake_case 上线，与 client / agent 都对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +28,7 @@ pub enum CraftCategoryV1 {
     TuikeSkin,
     ZhenfaTrap,
     Tool,
+    Container,
     Misc,
 }
 
@@ -39,6 +40,7 @@ impl From<crate::craft::CraftCategory> for CraftCategoryV1 {
             crate::craft::CraftCategory::TuikeSkin => Self::TuikeSkin,
             crate::craft::CraftCategory::ZhenfaTrap => Self::ZhenfaTrap,
             crate::craft::CraftCategory::Tool => Self::Tool,
+            crate::craft::CraftCategory::Container => Self::Container,
             crate::craft::CraftCategory::Misc => Self::Misc,
         }
     }

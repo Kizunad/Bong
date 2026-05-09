@@ -367,6 +367,12 @@ public final class InventoryItem {
         return "inscription_scroll".equals(scrollKind) || itemId.startsWith("inscription_scroll_");
     }
 
+    public boolean isBoneCoin() {
+        return itemId.startsWith("bone_coin_")
+            || "fengling_bone_coin".equals(itemId)
+            || "rotten_bone_coin".equals(itemId);
+    }
+
     public String inscriptionId() {
         if (!isInscriptionScroll()) return "";
         String prefix = "inscription_scroll_";

@@ -1,0 +1,91 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "tick",
+    "season",
+    "supply_spirit_qi",
+    "demand_spirit_qi",
+    "rhythm_multiplier",
+    "market_factor",
+    "price_multiplier",
+    "sample_prices"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "season": {
+      "anyOf": [
+        {
+          "const": "summer",
+          "type": "string"
+        },
+        {
+          "const": "summer_to_winter",
+          "type": "string"
+        },
+        {
+          "const": "winter",
+          "type": "string"
+        },
+        {
+          "const": "winter_to_summer",
+          "type": "string"
+        }
+      ]
+    },
+    "supply_spirit_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "demand_spirit_qi": {
+      "exclusiveMinimum": 0,
+      "type": "number"
+    },
+    "rhythm_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "market_factor": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "price_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "sample_prices": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "item_id",
+          "base_price",
+          "final_price"
+        ],
+        "properties": {
+          "item_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "base_price": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "final_price": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

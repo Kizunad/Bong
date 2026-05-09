@@ -170,7 +170,9 @@ pub fn register(app: &mut App) {
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
-    app.insert_resource(SkillMeridianDependencies::default());
+    let mut skill_meridian_dependencies = SkillMeridianDependencies::default();
+    crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    app.insert_resource(skill_meridian_dependencies);
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());

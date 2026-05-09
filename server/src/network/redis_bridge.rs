@@ -16,13 +16,15 @@ use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
-    CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
-    CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
-    CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
-    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
-    CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT,
-    CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT,
+    CH_ANQI_CARRIER_ABRASION, CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT,
+    CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
+    CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BONE_COIN_TICK,
+    CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
+    CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS, CH_DUO_SHE_EVENT,
+    CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER,
+    CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
+    CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT,
     CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
     CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION,
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
@@ -35,7 +37,8 @@ use crate::schema::channels::{
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
-    CarrierChargedEventV1, CarrierImpactEventV1, ProjectileDespawnedEventV1,
+    CarrierAbrasionEventV1, CarrierChargedEventV1, CarrierImpactEventV1, ContainerSwapEventV1,
+    EchoFractalEventV1, MultiShotEventV1, ProjectileDespawnedEventV1, QiInjectionEventV1,
 };
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
@@ -48,6 +51,7 @@ use crate::schema::death_lifecycle::{
     AgingEventV1, DuoSheEventV1, LifespanEventV1, RebirthEventV1,
 };
 use crate::schema::dugu::DuguPoisonProgressEventV1;
+use crate::schema::economy::{BoneCoinTickV1, PriceIndexV1};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
@@ -101,6 +105,8 @@ pub enum RedisInbound {
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
     SeasonChanged(SeasonChangedV1),
+    BoneCoinTick(BoneCoinTickV1),
+    PriceIndex(PriceIndexV1),
     #[allow(dead_code)]
     PlayerChat(ChatMessageV1),
     CombatRealtime(CombatRealtimeEventV1),
@@ -163,6 +169,11 @@ pub enum RedisOutbound {
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
     ProjectileDespawned(ProjectileDespawnedEventV1),
+    AnqiMultiShot(MultiShotEventV1),
+    AnqiQiInjection(QiInjectionEventV1),
+    AnqiEchoFractal(EchoFractalEventV1),
+    AnqiCarrierAbrasion(CarrierAbrasionEventV1),
+    AnqiContainerSwap(ContainerSwapEventV1),
     TuikeShed(ShedEventV1),
     YidaoEvent(YidaoEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
@@ -395,6 +406,24 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_SEASON_CHANGED,
+                payload,
+            })
+        }
+        RedisOutbound::BoneCoinTick(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize BoneCoinTickV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BONE_COIN_TICK,
+                payload,
+            })
+        }
+        RedisOutbound::PriceIndex(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize PriceIndexV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_PRICE_INDEX,
                 payload,
             })
         }
@@ -1037,6 +1066,53 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_ANQI_PROJECTILE_DESPAWNED,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiMultiShot(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize MultiShotEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_MULTI_SHOT,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiQiInjection(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize QiInjectionEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_QI_INJECTION,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiEchoFractal(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize EchoFractalEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_ECHO_FRACTAL,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiCarrierAbrasion(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize CarrierAbrasionEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_ABRASION,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiContainerSwap(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ContainerSwapEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CONTAINER_SWAP,
                 payload,
             })
         }
@@ -1790,6 +1866,7 @@ mod redis_bridge_tests {
         DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
     };
     use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
+    use crate::schema::economy::PriceSampleV1;
     use crate::schema::forge::ForgeOutcomeBucketV1;
     use crate::schema::social::{
         ExposureKindV1, HighRenownMilestoneEventTag, HighRenownMilestoneEventV1, RenownTagV1,
@@ -1827,6 +1904,58 @@ mod redis_bridge_tests {
                     serde_json::from_str(&payload).expect("publish payload should be valid JSON");
                 assert_eq!(payload["v"], 1);
                 assert_eq!(payload["tick"], 84000);
+            }
+            other => panic!("expected PUBLISH command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_economy_telemetry_channels() {
+        let bone_tick = prepare_outbound_command(RedisOutbound::BoneCoinTick(BoneCoinTickV1 {
+            v: 1,
+            tick: 720_000,
+            season: crate::schema::world_state::SeasonV1::SummerToWinter,
+            total_spirit_qi: 27.5,
+            total_face_value: 60.0,
+            active_coin_count: 3,
+            rotten_coin_count: 1,
+            legacy_scalar_count: 7,
+            rhythm_multiplier: 1.1,
+            market_factor: 0.9,
+        }))
+        .expect("bone coin tick should publish");
+        match bone_tick {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_BONE_COIN_TICK);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+                assert_eq!(payload["season"], "summer_to_winter");
+            }
+            other => panic!("expected PUBLISH command, got {other:?}"),
+        }
+
+        let price_index = prepare_outbound_command(RedisOutbound::PriceIndex(PriceIndexV1 {
+            v: 1,
+            tick: 720_000,
+            season: crate::schema::world_state::SeasonV1::SummerToWinter,
+            supply_spirit_qi: 27.5,
+            demand_spirit_qi: 50.0,
+            rhythm_multiplier: 1.1,
+            market_factor: 0.9,
+            price_multiplier: 0.99,
+            sample_prices: vec![PriceSampleV1 {
+                item_id: "common_good".to_string(),
+                base_price: 4,
+                final_price: 4,
+            }],
+        }))
+        .expect("price index should publish");
+        match price_index {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_PRICE_INDEX);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+                assert_eq!(payload["sample_prices"][0]["item_id"], "common_good");
             }
             other => panic!("expected PUBLISH command, got {other:?}"),
         }

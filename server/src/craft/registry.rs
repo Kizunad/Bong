@@ -171,8 +171,8 @@ mod tests {
             .unwrap();
 
         let groups = r.grouped_for_ui();
-        assert_eq!(groups.len(), 6); // 6 类全在
-                                     // 第 1 组应是 AnqiCarrier（CraftCategory::ALL 排第一）
+        assert_eq!(groups.len(), CraftCategory::ALL.len());
+        // 第 1 组应是 AnqiCarrier（CraftCategory::ALL 排第一）
         assert_eq!(groups[0].0, CraftCategory::AnqiCarrier);
         assert_eq!(groups[0].1.len(), 1);
         // Tool 在 ALL 第 5 位

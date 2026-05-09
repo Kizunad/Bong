@@ -1,3 +1,4 @@
+pub mod anqi_v2;
 pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
@@ -99,6 +100,7 @@ fn attach_combat_bundle_to_joined_clients(
             DerivedAttrs::default(),
             AntiCheatCounter::default(),
             carrier::CarrierStore::default(),
+            anqi_v2::ContainerSlot::default(),
             Lifecycle {
                 character_id,
                 spawn_anchor,
@@ -123,6 +125,7 @@ fn attach_combat_bundle_to_joined_npcs(
             StatusEffects::default(),
             DerivedAttrs::default(),
             carrier::CarrierStore::default(),
+            anqi_v2::ContainerSlot::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
                 ..Default::default()
@@ -170,6 +173,7 @@ pub fn register(app: &mut App) {
     app.add_event::<needle::ShootNeedleIntent>();
     app.add_event::<needle::QiNeedleChargedEvent>();
     carrier::register(app);
+    anqi_v2::register(app);
     app.add_event::<tuike::ShedEvent>();
     app.add_event::<tuike::FalseSkinForgeRequest>();
 
