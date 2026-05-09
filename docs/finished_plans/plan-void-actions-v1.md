@@ -353,17 +353,19 @@ pub struct LifeRecord {
   - `2426f62ad`（2026-05-09）`fix(void-actions): 收紧化虚账本与屏障结算`：review 修复 SuppressTsy 半提交、ExplodeZone 预算不足增发、Barrier 退款失败重试、稳定 character_id 冷却、BarrierField 实际驱散、v18 migration 结构断言与 `VoidActionBacklash` 专用终结 cause。
   - `6fa464390`（2026-05-09）`fix(void-actions): 补客户端派发与天道背压`：review 修复 client 无世界 tick / 空 player 派发、`VoidActionStore` 原子更新、void_action 负向编码测试，以及 tiandao runtime 串行化 LLM payload 处理。
   - `2b6e89c55`（2026-05-09）`fix(void-actions): 同步化虚施法账本视图`：review 修复已有 player ledger 与 `Cultivation.qi_current` 正常漂移后第二次化虚施法被锁死的问题，v1 bridge 每次施法前改以 cultivation 视图重同步 ledger。
+  - `3c35a137e`（2026-05-09）`fix(void-actions): 持久化冷却并收紧 review 边界`：review 修复长冷却重启丢失、公开文案暴露 `actor_id`、ExplodeZone 无 ZoneRegistry 部分返还、legacy 无持久化仍成功、tiandao disconnect 丢尾包、client 空指针与证据命令歧义。
 - **测试结果**：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3103 passed。
-  - `cd server && cargo test cultivation::void` → 74 passed；`grep -rcE '#\[test\]' server/src/cultivation/void/` → 74。
-  - `cd server && cargo test cultivation::void::ledger_hooks` → 19 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3108 passed。
+  - `cd server && cargo test cultivation::void` → 77 passed；`grep -rE '#\[test\]' server/src/cultivation/void/ | wc -l` → 77。
+  - `cd server && cargo test cultivation::void::ledger_hooks` → 21 passed。
+  - `cd server && cargo test void_action_cooldowns` → 2 passed。
   - `cd server && cargo test void_action_backlash_records_dedicated_termination_cause` / `cargo test v18_migration_rejects_partial_legacy_letterbox_schema` / `cargo test serde_defaults_missing_void_action_fields_for_legacy_records` → all passed。
-  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 285 passed；schema 327 passed。
+  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 286 passed；schema 327 passed。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
   - `cd library-web && LOCAL_LIBRARY_PATH=/home/kiz/Code/Bong/.worktree/plan-void-actions-v1/docs/library npm run build` → 41 pages built。
   - `git diff --check` → clean。
 - **跨仓库核验**：
-  - server：`VoidActionIntent` 由 `ClientRequestV1::VoidAction` 入队，`resolve_void_action_intents` gate `Realm::Void` / qi / lifespan / stable character cooldown；`QiTransferReason::VoidAction` 保留 ledger 轨迹；`VoidQiReturnSchedule` 到期回流 `ExplodeZone` / `Barrier` 且失败重试；`BarrierField` 对过线道伥执行一次性半气驱散；`CultivationDeathCause::VoidActionBacklash` 走 death arbiter 并写 `void_action_backlash` 终结 cause。
+  - server：`VoidActionIntent` 由 `ClientRequestV1::VoidAction` 入队，`resolve_void_action_intents` gate `Realm::Void` / qi / lifespan / stable character cooldown；`void_action_cooldowns` SQLite 表重启回灌长冷却；`QiTransferReason::VoidAction` 保留 ledger 轨迹；`VoidQiReturnSchedule` 到期回流 `ExplodeZone` / `Barrier` 且失败重试；`BarrierField` 对过线道伥执行一次性半气驱散；`CultivationDeathCause::VoidActionBacklash` 走 death arbiter 并写 `void_action_backlash` 终结 cause。
   - agent：4 个 Redis fanout channel `bong:void_action/{suppress_tsy,explode_zone,barrier,legacy_assign}` 与 `VoidActionBroadcastV1` 对齐；runtime 串行处理 payload 并输出 `scope: "broadcast"` narration。
   - client/library：client 仅在世界 tick 可用时发 `void_action` C2S payload，Barrier 不再 fallback 到世界原点；亡者博物馆按 `life_record.void_actions` / `legacy_inheritor` 过滤与渲染化虚者。
 - **遗留 / 后续**：
