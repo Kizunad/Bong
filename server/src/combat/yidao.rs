@@ -506,7 +506,7 @@ pub fn complete_yidao_casts(world: &mut bevy_ecs::world::World) {
                 pending.mastery,
                 pending.peace_color,
                 YidaoApplyTiming {
-                    eligibility_tick: pending.started_at_tick,
+                    eligibility_tick: event.completed_at_tick,
                     now_tick: event.completed_at_tick,
                 },
             );
@@ -992,6 +992,7 @@ fn apply_mass_meridian_repair(
                     meridian.integrity = meridian.integrity.max(0.35);
                     meridian.opened = true;
                 }
+                credit_patient_qi(world, patient, qi_per_patient);
                 out.success_count += 1;
                 out.successful_patients.push(patient);
                 out.qi_transferred += qi_per_patient;
@@ -1039,12 +1040,13 @@ fn grow_healer_identity(
     if let Some(mut profile) = world.get_mut::<HealerProfile>(caster) {
         let reputation_gain = i32::try_from(success_count).unwrap_or(i32::MAX);
         profile.reputation = profile.reputation.saturating_add(reputation_gain);
+        let scalar_contract_state = success_count <= 1;
         for patient in patients.iter().copied().take(success_count as usize) {
-            contract_state = Some(record_treatment_contract(
-                &mut profile,
-                entity_wire_id(patient),
-                now_tick,
-            ));
+            let patient_contract_state =
+                record_treatment_contract(&mut profile, entity_wire_id(patient), now_tick);
+            if scalar_contract_state {
+                contract_state = Some(patient_contract_state);
+            }
         }
     }
     if let Some(mut log) = world.get_mut::<PracticeLog>(caster) {
@@ -1802,7 +1804,7 @@ mod tests {
         let medic = spawn_medic(&mut app, Realm::Spirit);
         let patient = spawn_patient(&mut app);
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(95);
+        lifecycle.enter_near_death(100);
         app.world_mut().entity_mut(patient).insert(lifecycle);
 
         let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(patient));
@@ -2009,14 +2011,24 @@ mod tests {
         );
         let profile = app.world().get::<HealerProfile>(medic).unwrap();
         assert_eq!(profile.contracts.len(), expected_successful.len());
-        let contracted_ids: Vec<&str> = profile
+        let contracted_ids: Vec<String> = profile
             .contracts
             .iter()
-            .map(|contract| contract.patient_id.as_str())
+            .map(|contract| contract.patient_id.clone())
             .collect();
-        for patient in expected_successful {
-            assert!(contracted_ids.contains(&entity_wire_id(patient).as_str()));
+        for patient in &expected_successful {
+            assert!(contracted_ids.contains(&entity_wire_id(*patient)));
+            assert!(app
+                .world()
+                .get::<Cultivation>(*patient)
+                .is_some_and(|cultivation| cultivation.qi_current > 0.0));
         }
+        let yidao_events = app
+            .world_mut()
+            .resource_mut::<Events<YidaoEvent>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(yidao_events.last().unwrap().payload.contract_state, None);
     }
 
     #[test]

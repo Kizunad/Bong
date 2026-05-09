@@ -552,8 +552,16 @@ pub fn register(app: &mut App) {
         Update,
         false_skin_state_emit::emit_false_skin_state_payloads,
     );
-    app.add_systems(Update, yidao_state_emit::emit_yidao_hud_state_payloads);
-    app.add_systems(Update, yidao_state_emit::emit_healer_npc_ai_state_payloads);
+    app.add_systems(
+        Update,
+        yidao_state_emit::emit_yidao_hud_state_payloads
+            .after(crate::combat::yidao::complete_yidao_casts),
+    );
+    app.add_systems(
+        Update,
+        yidao_state_emit::emit_healer_npc_ai_state_payloads
+            .after(crate::combat::yidao::complete_yidao_casts),
+    );
     app.add_systems(
         Update,
         crate::combat::yidao::complete_yidao_casts.after(cast_emit::tick_casts_or_interrupt),
