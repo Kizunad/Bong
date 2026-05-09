@@ -5,6 +5,7 @@ import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.network.AudioEventRouter;
 import com.bong.client.network.LocustSwarmWarningHandler;
 import com.bong.client.network.ServerDataDispatch;
@@ -90,7 +91,8 @@ public class BongNetworkHandler {
                 || dispatch.visualEffectState().isPresent()
                 || dispatch.alertToast().isPresent()
                 || dispatch.realmCollapseHudState().isPresent()
-                || dispatch.uiOpenState().isPresent()) {
+                || dispatch.uiOpenState().isPresent()
+                || dispatch.identityPanelState().isPresent()) {
                 client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
             }
         });
@@ -200,6 +202,7 @@ public class BongNetworkHandler {
         ));
         dispatch.realmCollapseHudState().ifPresent(RealmCollapseHudStateStore::replace);
         dispatch.uiOpenState().ifPresent(uiOpenState -> applyUiOpen(client, uiOpenState, envelopeType));
+        dispatch.identityPanelState().ifPresent(IdentityPanelStateStore::replace);
 
         if (client.player == null) {
             return;

@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.state.RealmCollapseHudState;
@@ -28,6 +29,7 @@ public final class ServerDataDispatch {
     private final ToastSpec alertToast;
     private final RealmCollapseHudState realmCollapseHudState;
     private final UiOpenState uiOpenState;
+    private final IdentityPanelState identityPanelState;
 
     private ServerDataDispatch(
         String routeType,
@@ -45,6 +47,42 @@ public final class ServerDataDispatch {
         RealmCollapseHudState realmCollapseHudState,
         UiOpenState uiOpenState
     ) {
+        this(
+            routeType,
+            handled,
+            logMessage,
+            legacyMessage,
+            chatMessages,
+            narrationState,
+            toastNarrationState,
+            playerStateViewModel,
+            seasonState,
+            zoneState,
+            visualEffectState,
+            alertToast,
+            realmCollapseHudState,
+            uiOpenState,
+            null
+        );
+    }
+
+    private ServerDataDispatch(
+        String routeType,
+        boolean handled,
+        String logMessage,
+        String legacyMessage,
+        List<Text> chatMessages,
+        NarrationState narrationState,
+        NarrationState toastNarrationState,
+        PlayerStateViewModel playerStateViewModel,
+        SeasonState seasonState,
+        ZoneState zoneState,
+        VisualEffectState visualEffectState,
+        ToastSpec alertToast,
+        RealmCollapseHudState realmCollapseHudState,
+        UiOpenState uiOpenState,
+        IdentityPanelState identityPanelState
+    ) {
         this.routeType = Objects.requireNonNull(routeType, "routeType");
         this.handled = handled;
         this.logMessage = Objects.requireNonNull(logMessage, "logMessage");
@@ -59,6 +97,7 @@ public final class ServerDataDispatch {
         this.alertToast = sanitizeToastSpec(alertToast);
         this.realmCollapseHudState = sanitizeRealmCollapseHudState(realmCollapseHudState);
         this.uiOpenState = sanitizeUiOpenState(uiOpenState);
+        this.identityPanelState = identityPanelState;
     }
 
     public static ServerDataDispatch handled(String routeType, String logMessage) {
@@ -183,6 +222,30 @@ public final class ServerDataDispatch {
         return new ServerDataDispatch(routeType, true, logMessage, null, List.of(), null, null, null, null, null, null, null, null, uiOpenState);
     }
 
+    public static ServerDataDispatch handledWithIdentityPanelState(
+        String routeType,
+        IdentityPanelState identityPanelState,
+        String logMessage
+    ) {
+        return new ServerDataDispatch(
+            routeType,
+            true,
+            logMessage,
+            null,
+            List.of(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Objects.requireNonNull(identityPanelState, "identityPanelState")
+        );
+    }
+
     public static ServerDataDispatch noOp(String routeType, String logMessage) {
         return new ServerDataDispatch(routeType, false, logMessage, null, List.of(), null, null, null, null, null, null, null, null, null);
     }
@@ -290,6 +353,10 @@ public final class ServerDataDispatch {
 
     public Optional<UiOpenState> uiOpenState() {
         return Optional.ofNullable(uiOpenState);
+    }
+
+    public Optional<IdentityPanelState> identityPanelState() {
+        return Optional.ofNullable(identityPanelState);
     }
 
     public record ToastSpec(String text, int color, long durationMillis) {

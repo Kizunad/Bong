@@ -16,6 +16,7 @@ import { SkillConfigSnapshotV1 } from "./skill-config.js";
 import { CarrierStateV1 } from "./combat-carrier.js";
 import { DuguPoisonStateV1 } from "./dugu.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
+import { IdentityPanelStateV1 } from "./identity.js";
 import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
   InventoryEventDroppedV1,
@@ -205,6 +206,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("social_pact"),
   Type.Literal("social_feud"),
   Type.Literal("social_renown_delta"),
+  Type.Literal("identity_panel_state"),
   Type.Literal("niche_intrusion"),
   Type.Literal("niche_guardian_fatigue"),
   Type.Literal("niche_guardian_broken"),
@@ -1256,6 +1258,18 @@ export const ServerDataTradeOfferV1 = Type.Object(
 );
 export type ServerDataTradeOfferV1 = Static<typeof ServerDataTradeOfferV1>;
 
+export const ServerDataIdentityPanelStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("identity_panel_state"),
+    ...IdentityPanelStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataIdentityPanelStateV1 = Static<
+  typeof ServerDataIdentityPanelStateV1
+>;
+
 export const ServerDataRealmVisionParamsV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1399,6 +1413,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataNicheGuardianBrokenV1,
   ServerDataSparringInviteV1,
   ServerDataTradeOfferV1,
+  ServerDataIdentityPanelStateV1,
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
 ]);

@@ -84,6 +84,7 @@ public final class ServerDataRouter {
         ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
         ContainerInteractionHandler containerInteractionHandler = new ContainerInteractionHandler();
         SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
+        IdentityPanelStateHandler identityPanelStateHandler = new IdentityPanelStateHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
             new com.bong.client.network.lingtian.LingtianSessionHandler();
         com.bong.client.network.processing.ProcessingServerDataHandler processingServerDataHandler =
@@ -180,6 +181,8 @@ public final class ServerDataRouter {
         handlers.put("niche_guardian_fatigue", socialServerDataHandler);
         handlers.put("niche_guardian_broken", socialServerDataHandler);
         handlers.put("sparring_invite", socialServerDataHandler);
+        // plan-identity-v1 P5 — 身份面板 / HUD 当前 identity 状态。
+        handlers.put("identity_panel_state", identityPanelStateHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());

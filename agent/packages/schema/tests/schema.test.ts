@@ -328,6 +328,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.identity-panel-state.sample.json", () => {
+    const data = loadSample("server-data.identity-panel-state.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.inventory-snapshot.sample.json", () => {
     const data = loadSample("server-data.inventory-snapshot.sample.json");
     const result = validate(ServerDataV1, data);

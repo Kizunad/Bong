@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
+import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 
@@ -241,6 +242,7 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
+        commands.addAll(IdentityHudCornerLabel.buildCommands(widthMeasurer, screenWidth));
 
         return List.copyOf(commands);
     }

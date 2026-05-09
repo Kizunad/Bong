@@ -118,6 +118,8 @@ public class ServerDataRouterTest {
             "niche_guardian_fatigue",
             "niche_guardian_broken",
             "sparring_invite",
+            // plan-identity-v1 P5 — 身份面板 / HUD 当前 identity 状态。
+            "identity_panel_state",
             // plan-craft-v1 P2 — 通用手搓 IPC（4 类）
             "craft_recipe_list",
             "craft_session_state",
