@@ -1,9 +1,11 @@
 package com.bong.client.inventory;
 
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.component.ItemTooltipPanel;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class InventoryItemTest {
 
@@ -65,5 +67,25 @@ public class InventoryItemTest {
 
         assertEquals(1.0, item.spiritQuality(), 1e-9);
         assertEquals(1.0, item.durability(), 1e-9);
+    }
+
+    @Test
+    void boneCoinTooltipUsesSealedQiSemantics() {
+        InventoryItem item = InventoryItem.createFull(
+            44L,
+            "bone_coin_15",
+            "封灵骨币",
+            1,
+            1,
+            0.1,
+            "common",
+            "",
+            1,
+            0.42,
+            1.0
+        );
+
+        assertTrue(item.isBoneCoin());
+        assertEquals("封灵真元 42%", ItemTooltipPanel.formatStatusLine(item));
     }
 }
