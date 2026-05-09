@@ -1,0 +1,10 @@
+{
+  "id": "yidao_life_extension",
+  "layers": [
+    { "sound": "minecraft:block.beacon.power_select", "volume": 0.45, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.32, "pitch": 1.15, "delay_ticks": 8 }
+  ],
+  "priority": 80,
+  "attenuation": "radius",
+  "category": "PLAYERS"
+}

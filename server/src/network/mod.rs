@@ -61,6 +61,7 @@ pub mod weather_bridge;
 pub mod woliu_event_bridge;
 pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
+pub mod yidao_state_emit;
 pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -551,6 +552,8 @@ pub fn register(app: &mut App) {
         Update,
         false_skin_state_emit::emit_false_skin_state_payloads,
     );
+    app.add_systems(Update, yidao_state_emit::emit_yidao_hud_state_payloads);
+    app.add_systems(Update, yidao_state_emit::emit_healer_npc_ai_state_payloads);
     app.add_systems(
         Update,
         (

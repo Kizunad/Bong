@@ -48,5 +48,6 @@ pub mod vfx_event;
 pub mod void_actions;
 pub mod woliu;
 pub mod world_state;
+pub mod yidao;
 pub mod zone_pressure;
 pub mod zong_formation;

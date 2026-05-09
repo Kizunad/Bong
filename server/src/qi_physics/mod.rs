@@ -11,6 +11,7 @@ pub mod constants;
 pub mod distance;
 pub mod env;
 pub mod excretion;
+pub mod healing;
 pub mod ledger;
 pub mod release;
 pub mod tiandao;
@@ -27,6 +28,11 @@ pub use collision::{
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
+pub use healing::{
+    contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
+    yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,
+    MassMeridianRepairOutcome, MeridianRepairOutcome,
+};
 pub use ledger::{
     assert_conservation, snapshot_for_ipc, summarize_world_qi, QiAccountId, QiAccountKind,
     QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,

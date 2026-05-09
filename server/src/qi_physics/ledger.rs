@@ -125,6 +125,8 @@ pub enum QiTransferReason {
     Crafting,
     /// plan-void-actions-v1 — 化虚世界级 action 的真元投入，必须保留 ledger 轨迹。
     VoidAction,
+    /// plan-yidao-v1 — 医者把自身真元转入患者治疗路径，守恒轨迹必须可追溯。
+    Healing,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

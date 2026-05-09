@@ -36,6 +36,7 @@ use super::social::{
 use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
+use super::yidao::{HealerNpcAiStateV1, YidaoHudStateV1};
 use crate::cultivation::components::ColorKind;
 use crate::skill::config::SkillConfigSnapshot;
 pub const SERVER_DATA_VERSION: u8 = 1;
@@ -162,6 +163,8 @@ pub enum ServerDataType {
     TradeOffer,
     RealmVisionParams,
     SpiritualSenseTargets,
+    HealerNpcAiState,
+    YidaoHudState,
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList,
     CraftSessionState,
@@ -364,6 +367,8 @@ pub enum ServerDataPayloadV1 {
     TradeOffer(TradeOfferPayloadV1),
     RealmVisionParams(RealmVisionParamsV1),
     SpiritualSenseTargets(SpiritualSenseTargetsV1),
+    HealerNpcAiState(HealerNpcAiStateV1),
+    YidaoHudState(YidaoHudStateV1),
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     /// inventory 打开时一次性推全配方表（含解锁状态）。
     CraftRecipeList(Box<RecipeListV1>),
@@ -1074,6 +1079,14 @@ enum ServerDataPayloadWireV1 {
     SpiritualSenseTargets {
         #[serde(flatten)]
         targets: SpiritualSenseTargetsV1,
+    },
+    HealerNpcAiState {
+        #[serde(flatten)]
+        state: HealerNpcAiStateV1,
+    },
+    YidaoHudState {
+        #[serde(flatten)]
+        state: YidaoHudStateV1,
     },
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList {
@@ -1850,6 +1863,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::SpiritualSenseTargets { targets } => {
                 Ok(Self::SpiritualSenseTargets(targets))
             }
+            ServerDataPayloadWireV1::HealerNpcAiState { state } => {
+                Ok(Self::HealerNpcAiState(state))
+            }
+            ServerDataPayloadWireV1::YidaoHudState { state } => Ok(Self::YidaoHudState(state)),
             ServerDataPayloadWireV1::CraftRecipeList { list } => Ok(Self::CraftRecipeList(list)),
             ServerDataPayloadWireV1::CraftSessionState { state } => {
                 Ok(Self::CraftSessionState(state))
@@ -2299,6 +2316,12 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::SpiritualSenseTargets(targets) => Self::SpiritualSenseTargets {
                 targets: targets.clone(),
             },
+            ServerDataPayloadV1::HealerNpcAiState(state) => Self::HealerNpcAiState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::YidaoHudState(state) => Self::YidaoHudState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::CraftRecipeList(list) => {
                 Self::CraftRecipeList { list: list.clone() }
             }
@@ -2546,6 +2569,8 @@ impl ServerDataPayloadV1 {
             Self::TradeOffer(..) => ServerDataType::TradeOffer,
             Self::RealmVisionParams(..) => ServerDataType::RealmVisionParams,
             Self::SpiritualSenseTargets(..) => ServerDataType::SpiritualSenseTargets,
+            Self::HealerNpcAiState(..) => ServerDataType::HealerNpcAiState,
+            Self::YidaoHudState(..) => ServerDataType::YidaoHudState,
             Self::CraftRecipeList(..) => ServerDataType::CraftRecipeList,
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
@@ -2823,6 +2848,26 @@ mod tests {
                     z: -4.0,
                     intensity: 0.75,
                 }],
+            }),
+            ServerDataPayloadV1::HealerNpcAiState(HealerNpcAiStateV1 {
+                healer_id: "npc:doctor".to_string(),
+                active_action: "triage".to_string(),
+                queue_len: 2,
+                reputation: 12,
+                retreating: false,
+            }),
+            ServerDataPayloadV1::YidaoHudState(YidaoHudStateV1 {
+                healer_id: "npc:doctor".to_string(),
+                reputation: 12,
+                peace_mastery: 48.0,
+                karma: 3.5,
+                active_skill: Some(crate::schema::yidao::YidaoSkillIdV1::MeridianRepair),
+                patient_ids: vec!["offline:Kiz".to_string()],
+                patient_hp_percent: Some(0.75),
+                patient_contam_total: Some(1.25),
+                severed_meridian_count: 1,
+                contract_count: 2,
+                mass_preview_count: 0,
             }),
             // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
             ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {

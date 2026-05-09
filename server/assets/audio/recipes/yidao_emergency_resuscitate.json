@@ -1,0 +1,10 @@
+{
+  "id": "yidao_emergency_resuscitate",
+  "layers": [
+    { "sound": "minecraft:entity.player.hurt", "volume": 0.18, "pitch": 1.45, "delay_ticks": 0 },
+    { "sound": "minecraft:block.wool.hit", "volume": 0.24, "pitch": 0.75, "delay_ticks": 2 }
+  ],
+  "priority": 65,
+  "attenuation": "radius",
+  "category": "PLAYERS"
+}
