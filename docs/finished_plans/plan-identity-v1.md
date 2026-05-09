@@ -536,6 +536,7 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 | `1d988c117` | 2026-05-09 | P5e client 面板同步 / HUD 挂接 / server-data union + sample |
 | `65876d2bc` | 2026-05-09 | Review 修复：同 tick gossip 聚合 + identity panel 冷却期刷新 |
 | `b55892a97` | 2026-05-09 | Review 修复：通缉身份发起交易时拒绝，不向目标发送 offer |
+| `125db6f40` | 2026-05-09 | Review 修复：缺少 GameTick 时不发送伪 tick identity panel state |
 
 ### 测试结果
 
