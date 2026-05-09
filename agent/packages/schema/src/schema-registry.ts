@@ -243,6 +243,9 @@ import {
   ServerDataSkillScrollUsedV1,
   ServerDataSkillXpGainV1,
   ServerDataAscensionQuotaV1,
+  ServerDataFullPowerChargingStateV1,
+  ServerDataFullPowerExhaustedStateV1,
+  ServerDataFullPowerReleaseV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,
   ServerDataTribulationStateV1,
@@ -282,6 +285,11 @@ import {
   WeaponEquippedV1,
   WeaponViewV1,
 } from "./server-data.js";
+import {
+  FullPowerChargingStateV1,
+  FullPowerExhaustedStateV1,
+  FullPowerReleaseV1,
+} from "./full-power.js";
 import {
   CarrierChargedEventV1,
   CarrierImpactEventV1,
@@ -515,6 +523,12 @@ export const SCHEMA_REGISTRY = {
   serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
   serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
   burstMeridianEventV1: BurstMeridianEventV1,
+  fullPowerChargingStateV1: FullPowerChargingStateV1,
+  fullPowerReleaseV1: FullPowerReleaseV1,
+  fullPowerExhaustedStateV1: FullPowerExhaustedStateV1,
+  serverDataFullPowerChargingStateV1: ServerDataFullPowerChargingStateV1,
+  serverDataFullPowerReleaseV1: ServerDataFullPowerReleaseV1,
+  serverDataFullPowerExhaustedStateV1: ServerDataFullPowerExhaustedStateV1,
   qiColorObservedV1: QiColorObservedV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
@@ -892,6 +906,15 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-skill-scroll-used-v1.json":
     SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
   "burst-meridian-event-v1.json": SCHEMA_REGISTRY.burstMeridianEventV1,
+  "full-power-charging-state-v1.json": SCHEMA_REGISTRY.fullPowerChargingStateV1,
+  "full-power-release-v1.json": SCHEMA_REGISTRY.fullPowerReleaseV1,
+  "full-power-exhausted-state-v1.json": SCHEMA_REGISTRY.fullPowerExhaustedStateV1,
+  "server-data-full-power-charging-state-v1.json":
+    SCHEMA_REGISTRY.serverDataFullPowerChargingStateV1,
+  "server-data-full-power-release-v1.json":
+    SCHEMA_REGISTRY.serverDataFullPowerReleaseV1,
+  "server-data-full-power-exhausted-state-v1.json":
+    SCHEMA_REGISTRY.serverDataFullPowerExhaustedStateV1,
   "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,

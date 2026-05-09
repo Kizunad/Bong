@@ -28,6 +28,7 @@ pub mod extract_emit;
 pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
+pub mod full_power_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
@@ -391,6 +392,21 @@ pub fn register(app: &mut App) {
             tuike_event_bridge::publish_tuike_shed_events
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
+    );
+    app.add_systems(
+        Update,
+        (
+            full_power_emit::emit_full_power_charging_state_payloads,
+            full_power_emit::emit_full_power_charged_orb_vfx,
+            full_power_emit::emit_full_power_charging_clear_payloads,
+            full_power_emit::emit_full_power_release_payloads,
+            full_power_emit::emit_full_power_exhausted_state_payloads,
+            full_power_emit::emit_full_power_exhausted_mist_refresh_vfx,
+        )
+            .after(crate::cultivation::full_power_strike::charge_tick_system)
+            .after(crate::cultivation::full_power_strike::apply_full_power_attack_intent_system)
+            .after(crate::cultivation::full_power_strike::exhausted_expire_system)
+            .before(vfx_event_emit::emit_vfx_event_payloads),
     );
     app.add_systems(
         Update,

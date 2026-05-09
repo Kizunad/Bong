@@ -38,6 +38,7 @@ pub mod dead_zone;
 pub mod death_hooks;
 pub mod dugu;
 pub mod forging;
+pub mod full_power_strike;
 pub mod heal;
 pub mod insight;
 pub mod insight_apply;
@@ -177,6 +178,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
     void::register(app);
+    full_power_strike::register(app);
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();

@@ -26,6 +26,9 @@ public final class VfxBootstrap {
         registry.register(FlyingSwordDemoPlayer.EVENT_ID,        new FlyingSwordDemoPlayer());
         registry.register(FormationCoreDemoPlayer.EVENT_ID,      new FormationCoreDemoPlayer());
         registry.register(BurstMeridianBengQuanPlayer.EVENT_ID,  new BurstMeridianBengQuanPlayer());
+        registry.register(ChargingOrbVfx.EVENT_ID,               new ChargingOrbVfx());
+        registry.register(ReleaseLightningVfx.EVENT_ID,          new ReleaseLightningVfx());
+        registry.register(ExhaustedGreyMistVfx.EVENT_ID,         new ExhaustedGreyMistVfx());
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
     }
 }

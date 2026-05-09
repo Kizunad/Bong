@@ -19,6 +19,7 @@ export * from "./combat-carrier.js";
 export * from "./combat-hud.js";
 export * from "./combat-event.js";
 export * from "./dugu.js";
+export * from "./full-power.js";
 export * from "./identity.js";
 export * from "./inventory.js";
 export * from "./lingtian-weather.js";

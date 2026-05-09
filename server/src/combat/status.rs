@@ -6,6 +6,7 @@ use crate::combat::components::{
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::CombatClock;
+use crate::cultivation::full_power_strike::Exhausted;
 use crate::qi_physics::constants::QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER;
 
 pub fn status_effect_apply_tick(
@@ -104,9 +105,10 @@ pub fn attribute_aggregate_tick(
         &StatusEffects,
         &mut DerivedAttrs,
         Option<&BodyRefiningMarker>,
+        Option<&Exhausted>,
     )>,
 ) {
-    for (status_effects, mut attrs, body_refining) in &mut q {
+    for (status_effects, mut attrs, body_refining, exhausted) in &mut q {
         attrs.attack_power = 1.0;
         attrs.defense_power = 1.0;
         attrs.move_speed_multiplier = 1.0;
@@ -155,6 +157,11 @@ pub fn attribute_aggregate_tick(
         if body_refining.is_some() {
             attrs.defense_power =
                 (attrs.defense_power * BODY_REFINING_DEFENSE_MULTIPLIER).clamp(0.05, 1.0);
+        }
+
+        if let Some(exhausted) = exhausted {
+            attrs.defense_power =
+                (attrs.defense_power * exhausted.defense_modifier).clamp(0.05, 1.0);
         }
     }
 }
@@ -417,6 +424,32 @@ mod tests {
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         // 1.0 / 1.3 ≈ 0.769
         assert!((attrs.defense_power - 0.769).abs() < 0.01);
+    }
+
+    #[test]
+    fn exhausted_defense_modifier_is_halved_once() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageReduction,
+                        magnitude: 0.25,
+                        remaining_ticks: 20,
+                    }],
+                },
+                DerivedAttrs::default(),
+                Exhausted::from_committed_qi(10, 100.0),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert_eq!(attrs.defense_power, 0.375);
     }
 
     #[test]

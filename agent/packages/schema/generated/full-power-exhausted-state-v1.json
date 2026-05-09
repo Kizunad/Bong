@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "caster_uuid",
+    "active",
+    "started_tick",
+    "recovery_at_tick"
+  ],
+  "properties": {
+    "caster_uuid": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "started_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "recovery_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

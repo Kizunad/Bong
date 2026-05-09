@@ -28,6 +28,7 @@ pub enum CombatAttackSourceV1 {
     Melee,
     BurstMeridian,
     QiNeedle,
+    FullPower,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

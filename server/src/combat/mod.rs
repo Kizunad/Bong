@@ -15,6 +15,7 @@ pub mod needle;
 pub mod projectile;
 pub mod rat_bite;
 pub mod raycast;
+pub mod realm_gap;
 pub mod resolve;
 pub mod status;
 pub mod style_telemetry;

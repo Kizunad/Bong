@@ -12344,6 +12344,139 @@
       "required": [
         "v",
         "type",
+        "caster_uuid",
+        "active",
+        "qi_committed",
+        "target_qi",
+        "started_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "full_power_charging_state",
+          "type": "string"
+        },
+        "caster_uuid": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "qi_committed": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "target_qi": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "started_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "caster_uuid",
+        "qi_released",
+        "tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "full_power_release",
+          "type": "string"
+        },
+        "caster_uuid": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_uuid": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "qi_released": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hit_position": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "caster_uuid",
+        "active",
+        "started_tick",
+        "recovery_at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "full_power_exhausted_state",
+          "type": "string"
+        },
+        "caster_uuid": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "started_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "recovery_at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slots",
         "cooldown_until_ms"
       ],
