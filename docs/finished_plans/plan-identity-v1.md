@@ -26,12 +26,12 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | `IdentityProfile` 数据模型 + `PlayerIdentities` Component + `IdentityRegistry` Resource + 首次进游戏 default identity 创建（弹提示选 name，默认 = MC username）+ persistence 接入 | ⬜ |
-| P1 | `/identity` slash command（list / new / switch / rename）+ `WithinOwnNiche` precondition + 切换冷却 1 game-day + `IdentitySwitchedEvent` / `IdentityCreatedEvent` | ⬜ |
-| P2 | `DuguRevealedEvent` consumer → 写 `RevealedTag::DuguRevealed`（permanent）→ `reputation_score` 公式 + 毒蛊师 -50 baseline + 切身份消除 | ⬜ |
-| P3 | `reputation_score` 4 档分级（High / Normal / Low / Wanted）+ `IdentityReactionChangedEvent` + NPC big-brain `IdentityReactionScorer` + NPC 拒交易 / 主动攻击行为分支 | ⬜ |
-| P4 | 通用 `RevealedEvent` trait + `RevealedTagKind` enum 全枚举 + 6 流派 vN+1 接入文档（本 plan 不实装各流派，仅留 hook + docs） | ⬜ |
-| P5 | NPC 间传话扩散（同 zone 概率）+ agent 接入（Wanted 档 emit `bong:wanted_player`）+ client 身份切换面板（灵龛 GUI + HUD 当前 identity 角标） | ⬜ |
+| P0 | `IdentityProfile` 数据模型 + `PlayerIdentities` Component + `IdentityRegistry` Resource + 首次进游戏 default identity 创建（弹提示选 name，默认 = MC username）+ persistence 接入 | ✅ 2026-05-08 |
+| P1 | `/identity` slash command（list / new / switch / rename）+ `WithinOwnNiche` precondition + 切换冷却 1 game-day + `IdentitySwitchedEvent` / `IdentityCreatedEvent` | ✅ 2026-05-08 |
+| P2 | `DuguRevealedEvent` consumer → 写 `RevealedTag::DuguRevealed`（permanent）→ `reputation_score` 公式 + 毒蛊师 -50 baseline + 切身份消除 | ✅ 2026-05-08 |
+| P3 | `reputation_score` 4 档分级（High / Normal / Low / Wanted）+ `IdentityReactionChangedEvent` + NPC big-brain `IdentityReactionScorer` + NPC 拒交易 / 主动攻击行为分支 | ✅ 2026-05-09 |
+| P4 | 通用 `RevealedEvent` trait + `RevealedTagKind` enum 全枚举 + 6 流派 vN+1 接入文档（本 plan 不实装各流派，仅留 hook + docs） | ✅ 2026-05-08 |
+| P5 | NPC 间传话扩散（同 zone 概率）+ agent 接入（Wanted 档 emit `bong:wanted_player`）+ client 身份切换面板（灵龛 GUI + HUD 当前 identity 角标） | ✅ 2026-05-09 |
 
 ---
 
@@ -499,14 +499,15 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 ## §10 进度日志
 
 - **2026-05-04 立项**：骨架立项。来源：worldview §十一 commit fe00532c 已正典化"身份与信誉"系统 + plan-dugu-v1 已留 `DuguRevealedEvent` stub 等 consumer + 6 流派 vN+1 等通用 RevealedEvent trait + plan-niche-defense-v1 灵龛系统协同。**关键发现**：基础组件大半已实装（plan-social-v1 finished：Renown / Anonymity / ExposureEvent / Relationship / Relationships / FactionMembership / SocialRenownDeltaEvent + dugu DuguRevealedEvent + DuguRevealedEventV1 schema），本 plan 在其上扩多 identity 包装 + 反应分级 + 切换机制。14 决议（Q1-Q12 + Q5b + Q6b）一次性闭环。
-- **2026-05-08 P0–P4 ✅ + P5 部分完成**：通过 `/consume-plan identity-v1` 8 个 atomic commit 落地（详见 Finish Evidence）。
+- **2026-05-08 P0–P4 ✅ + P5 部分完成**：通过 `/consume-plan identity-v1` 8 个 atomic commit 落地。
+- **2026-05-09 P5 ✅**：补齐 gossip、`identity_panel_state` server emit、client router/store/HUD/面板、server-data union，以及 trade/chase 直接接线；全量验证通过（详见 Finish Evidence）。
 
 ---
 
 ## Finish Evidence
 
-> 本节由 `/consume-plan` 在 worktree `auto/plan-identity-v1` 自动追加（2026-05-08）。
-> P0–P4 全部 ✅；P5 完成 wanted_player Redis pub + agent calamity 通缉段 + client HUD label 数据通路；**剩余 P5 项移交 vN+1**——具体见末尾「遗留 / 后续」。
+> 本节由 `/consume-plan` 在 worktree `auto/plan-identity-v1` 更新（2026-05-09）。
+> P0–P5 全部完成；非阻断后续仅保留 runClient 手验、per-NPC 视角缓存细化和 library 条目。
 
 ### 落地清单
 
@@ -515,9 +516,9 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 | P0 | `server/src/identity/mod.rs`（IdentityId / IdentityProfile / RevealedTag / RevealedTagKind 10 变体 / PlayerIdentities Component / IdentityRegistry Resource / reputation_score / IDENTITY_SWITCH_COOLDOWN_TICKS=24000 / attach_identity_bundle_to_joined_clients）；`server/src/persistence/identity.rs`（v17 migration + save_player_identities/load_player_identities）；`server/src/persistence/mod.rs`（CURRENT_USER_VERSION=17 + open_persistence_connection 升级 pub(crate)）|
 | P1 | `server/src/identity/events.rs`（IdentityCreatedEvent / IdentitySwitchedEvent / IdentityReactionChangedEvent）；`server/src/identity/precondition.rs`（within_own_niche + check_within_own_niche + NichePreconditionError）；`server/src/identity/command.rs`（/identity slash list/new/switch/rename + apply_* 纯函数 + IdentityCmdError 7 错误分支）；`server/src/social/mod.rs`（新增 `position_is_within_own_active_spirit_niche` 公共 helper + SpiritNicheRegistry::upsert 升级 pub(crate)）|
 | P2 | `server/src/identity/dugu_consumer.rs`（write_dugu_tag_if_absent + register；dedup by kind；P4 后 system 委派给 revealed::consume_revealed_event::<DuguRevealedEvent>）|
-| P3 | `server/src/identity/reaction.rs`（ReactionTier 4 档 + reaction_tier()/reaction_tier_of() + scorer_value/npc_declines_trade/npc_seeks_attack helpers + IdentityReactionState Component + update_identity_reaction_state system）；`server/src/identity/scorer.rs`（IdentityReactionScorer big-brain Component + identity_reaction_scorer_system）|
+| P3 | `server/src/identity/reaction.rs`（ReactionTier 4 档 + reaction_tier()/reaction_tier_of() + scorer_value/npc_declines_trade/npc_seeks_attack helpers + IdentityReactionState Component + update_identity_reaction_state system）；`server/src/identity/scorer.rs`（IdentityReactionScorer big-brain Component + identity_reaction_scorer_system）；`server/src/social/mod.rs`（Wanted/Low active identity 拒绝 trade offer）；`server/src/npc/brain.rs`（Wanted active identity 直接拉满 ChaseTargetScorer）|
 | P4 | `server/src/identity/revealed.rs`（RevealedEvent trait + DuguRevealedEvent impl + consume_revealed_event<E> 泛型 system + write_revealed_tag_if_absent helper）；`server/src/identity/README.md`（6 流派 vN+1 接入指南 + RevealedTagKind 全枚举 baseline_penalty 设计建议 + 触发条件示例 + 测试模板 + grep 抓手）|
-| P5 (部分) | `agent/packages/schema/src/identity.ts`（RevealedTagKindV1 / ReactionTierV1 / WantedPlayerEventV1 / IdentityPanelEntryV1 / IdentityPanelStateV1）；`agent/packages/schema/src/channels.ts` `WANTED_PLAYER`；`agent/packages/schema/{tests,samples,generated}/identity*`；`server/src/schema/identity.rs`（Rust serde 镜像）；`server/src/schema/channels.rs` `CH_WANTED_PLAYER`；`server/src/network/redis_bridge.rs`（RedisOutbound::WantedPlayer + match arm）；`server/src/identity/wanted_player_emit.rs`（build_wanted_player_event + emit_wanted_player_to_redis system）；`agent/packages/tiandao/src/skills/calamity.md`（通缉令段落）；`client/src/main/java/com/bong/client/identity/{IdentityPanelEntry,IdentityPanelState,IdentityPanelStateStore,IdentityHudCornerLabel}.java`（数据 + HUD label） |
+| P5 | `agent/packages/schema/src/identity.ts`（RevealedTagKindV1 / ReactionTierV1 / WantedPlayerEventV1 / IdentityPanelEntryV1 / IdentityPanelStateV1）；`agent/packages/schema/src/server-data.ts` + `generated/server-data-v1.json` + `samples/server-data.identity-panel-state.sample.json`（`identity_panel_state` server_data union）；`agent/packages/schema/src/channels.ts` `WANTED_PLAYER`；`server/src/schema/identity.rs`（Rust serde 镜像）；`server/src/schema/channels.rs` `CH_WANTED_PLAYER`；`server/src/network/redis_bridge.rs`（RedisOutbound::WantedPlayer + match arm）；`server/src/identity/wanted_player_emit.rs`（build_wanted_player_event + emit_wanted_player_to_redis system）；`server/src/identity/gossip.rs`（record_dugu_gossip_witness + npc_identity_gossip_tick）；`server/src/network/identity_panel_emit.rs`（server_data identity_panel_state CustomPayload）；`agent/packages/tiandao/src/skills/calamity.md`（通缉令段落）；`client/src/main/java/com/bong/client/identity/{IdentityPanelEntry,IdentityPanelState,IdentityPanelStateStore,IdentityHudCornerLabel,IdentityPanelScreen,IdentityPanelScreenBootstrap}.java`；`client/src/main/java/com/bong/client/network/IdentityPanelStateHandler.java`；`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java` |
 
 ### 关键 commit
 
@@ -531,19 +532,32 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 | `0206a32cd` | 2026-05-08 | P5a 身份/反应分级/通缉令 IPC schema (TS + samples) |
 | `dfb8633d9` | 2026-05-08 | P5b Rust schema mirror + bong:wanted_player Redis pub |
 | `eb58096e6` | 2026-05-08 | P5c calamity 通缉令段落 + client HUD/state classes |
+| `a15d9598c` | 2026-05-09 | P5d gossip / identity_panel_state server emit / trade + chase 直接接线 |
+| `e02dfd37a` | 2026-05-09 | P5e client 面板同步 / HUD 挂接 / server-data union + sample |
 
 ### 测试结果
 
 ```bash
-cd server && cargo fmt --check                                   # ✅
-cd server && cargo clippy --all-targets -- -D warnings           # ✅
-cd server && cargo test                                          # 2647 passed (+120 vs main 2527)
-cd agent && npm run build                                        # ✅
-cd agent/packages/schema && npm test                             # 296 passed (+13 identity.test)
-cd client && JAVA_HOME=…openjdk-17 ./gradlew test                # BUILD SUCCESSFUL，identity 7 单测全绿
+cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+# ✅ 3069 passed
+
+cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build
+# ✅ BUILD SUCCESSFUL
+
+cd agent && npm run build
+# ✅ @bong/schema tsc + @bong/tiandao tsc
+
+cd agent/packages/schema && npm run generate:check
+# ✅ generated schema artifacts are fresh (295 files)
+
+cd agent/packages/schema && npm test
+# ✅ 328 passed
+
+cd agent/packages/tiandao && npm test
+# ✅ 281 passed
 ```
 
-server 新增 identity 单测分布：
+server identity 相关新增/覆盖单测分布：
 - `identity::tests`（mod.rs）：32
 - `identity::dugu_consumer::tests`：8
 - `identity::reaction::tests`：24（含 5 system-level integration test）
@@ -554,21 +568,17 @@ server 新增 identity 单测分布：
 - `identity::wanted_player_emit::tests`：7
 - `persistence::identity::tests`：3
 - `schema::identity::tests`：5
-- 合计 **128 个 identity 相关单测**
+- 新增本轮 P5：`identity::gossip::tests` 2、`network::identity_panel_emit::tests` 2、`npc::brain::tests::chase_target_scorer_boosts_wanted_identity_even_outside_normal_range`、`social::tests::trade_offer_dispatch_rejects_target_with_wanted_identity`
 
 ### 跨仓库核验
 
-- **server**：`mod identity` 注册于 `main.rs`；`identity::register` 注册 `attach_identity_bundle_to_joined_clients`、`/identity` slash、reaction state machine、IdentityReactionScorer system、wanted_player Redis emit、`consume_revealed_event::<DuguRevealedEvent>`；`crate::schema::identity::WantedPlayerEventV1` 在 `RedisOutbound::WantedPlayer` 一线。
-- **agent**：`@bong/schema` 导出 `WantedPlayerEventV1` / `IdentityPanelStateV1` / `RevealedTagKindV1` / `ReactionTierV1`；`CHANNELS.WANTED_PLAYER = "bong:wanted_player"`；`tiandao/src/skills/calamity.md` 加 「通缉令」段。
-- **client**：`com.bong.client.identity.{IdentityPanelEntry, IdentityPanelState, IdentityPanelStateStore, IdentityHudCornerLabel}` 类齐全，HUD render command 正确发放（snapshot 空时 no-op；frozen identity 灰色 + [冷藏] 标记）。**注：client UI 仅通过编译 + 7 个单测；未通过 `./gradlew runClient` 真进游戏验证**——HUD 集成进 `BongHudOrchestrator` 的运行时挂接留 vN+1。
+- **server**：`mod identity` 注册于 `main.rs`；`identity::register` 注册 `attach_identity_bundle_to_joined_clients`、`/identity` slash、reaction state machine、IdentityReactionScorer、wanted_player Redis emit、gossip 扩散、`identity_panel_state` server_data emit、`consume_revealed_event::<DuguRevealedEvent>`；`ServerDataType::IdentityPanelState` 在 `payload_type_label()` 与 serde wire union 一线。
+- **agent**：`@bong/schema` 导出 `WantedPlayerEventV1` / `IdentityPanelStateV1` / `RevealedTagKindV1` / `ReactionTierV1`；`CHANNELS.WANTED_PLAYER = "bong:wanted_player"`；`ServerDataV1` 接受 `type: "identity_panel_state"`；`tiandao/src/skills/calamity.md` 加「通缉令」段。
+- **client**：`ServerDataRouter.createDefault()` 注册 `identity_panel_state`；`BongNetworkHandler.applyDispatch()` 写入 `IdentityPanelStateStore`；`BongHudOrchestrator` 挂 `IdentityHudCornerLabel`；`IdentityPanelScreenBootstrap` 按 O 打开 `IdentityPanelScreen`，按钮通过 `sendCommand("identity ...")` 交给 server 权威校验。
 
-### 遗留 / 后续（vN+1）
+### 遗留 / 后续（非阻断）
 
-按 plan §7 范围对照：
-
-- ⏳ **gossip 系统**：`npc_identity_gossip_tick` 同 zone 同派系概率扩散 + 接收 NPC 把 tag 加入"已知"触发 IdentityReactionChangedEvent。当前 active identity 维度的 IdentityReactionState 全局共享，per-NPC 视角 tier 缓存为 vN+1 架构升级。
-- ⏳ **`bong:identity_panel_state` CustomPayload 服务端 emit**：schema 双端已对齐 + client store 准备好；server `network/identity_panel_emit.rs` system（在 /identity 命令成功 + cooldown 边界 tick 时下发）留 vN+1。
-- ⏳ **IdentityPanelScreen owo-ui Screen**：plan §7 设计的灵龛 GUI（列表 + 切换按钮 + 创建 / 改名输入框）；当前 client 仅有数据 + HUD label，Screen 实装留 vN+1（参考 `CultivationScreen.java` 模板）。
-- ⏳ **NPC 行为分支**：plan §5 提到的 `npc::trade::accept_trade_request` 拒交易 + ChaseAction 优先级提升——本 plan 暴露 `npc_should_decline_trade`/`npc_should_seek_attack` helper + `IdentityReactionScorer` 让 NPC opt-in；未直接修改 `npc/trade.rs` 与 `npc/brain.rs::ChaseAction` 既有调度，避免破坏 plan-npc-ai-v1 / `dispatch_trade_offers` 现有流程。各 NPC archetype 配置加 scorer 留 vN+1。
-- ⏳ **plan-niche-defense-v1 协同前置**：`WithinOwnNiche` precondition 当前用 `crate::social::position_is_within_own_active_spirit_niche` —— 直接走 social mod 的 SpiritNicheRegistry。等 niche-defense-v1 推进后可以扩展（如 niche 被识破 / 摧毁后 tier reset 等耦合）。
-- ⏳ **图书馆条目**：plan 头部点名的 `peoples-XXXX 拾名录`（散修视角多身份指南）未写——library-curator agent 后续补。
+- **client 真机手验**：本轮通过 `./gradlew test build`，未跑 `./gradlew runClient`。
+- **per-NPC 视角缓存**：本轮 gossip 已按同 zone / 同 faction 扩散并触发 reaction event；若后续需要“每个 NPC 对同一玩家有不同 tier”，再加 per-NPC tier cache。
+- **plan-niche-defense-v1 协同**：`WithinOwnNiche` 当前走 social mod 的 SpiritNicheRegistry；niche 被识破 / 摧毁后的身份耦合留给 niche-defense 后续。
+- **图书馆条目**：plan 头部点名的 `peoples-XXXX 拾名录` 未写，仍由 library-curator 后续补。
