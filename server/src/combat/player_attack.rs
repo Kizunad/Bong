@@ -78,7 +78,7 @@ pub fn handle_player_attack(
             continue;
         }
 
-        let wound_kind = weapon.map(|_| WoundKind::Cut).unwrap_or(WoundKind::Blunt);
+        let wound_kind = weapon.map(weapon_wound_kind).unwrap_or(WoundKind::Blunt);
 
         cooldown.last_attack_tick = clock.tick;
 
@@ -104,6 +104,15 @@ fn weapon_reach(w: &Weapon) -> crate::combat::events::AttackReach {
         WeaponKind::Dagger => crate::combat::events::DAGGER_REACH,
         WeaponKind::Fist => FIST_REACH,
         WeaponKind::Bow => SWORD_REACH,
+    }
+}
+
+fn weapon_wound_kind(w: &Weapon) -> WoundKind {
+    use crate::combat::weapon::WeaponKind;
+    match w.weapon_kind {
+        WeaponKind::Sword | WeaponKind::Saber | WeaponKind::Dagger => WoundKind::Cut,
+        WeaponKind::Spear | WeaponKind::Bow => WoundKind::Pierce,
+        WeaponKind::Staff | WeaponKind::Fist => WoundKind::Blunt,
     }
 }
 
@@ -144,7 +153,10 @@ mod tests {
 
     fn spawn_attacker(app: &mut App, stamina: Stamina, cooldown: PlayerAttackCooldown) -> Entity {
         let (client_bundle, _helper) = create_mock_client("TestPlayer");
-        let entity = app.world_mut().spawn((client_bundle, stamina, cooldown)).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, stamina, cooldown))
+            .id();
         *app.world_mut().get_mut::<Position>(entity).unwrap() = Position::new([0.0, 0.0, 0.0]);
         entity
     }
@@ -276,5 +288,101 @@ mod tests {
             events.iter_current_update_events().next().is_none(),
             "target at distance 10 should be out of fist reach"
         );
+    }
+
+    #[test]
+    fn self_attack_ignored() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: attacker,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        assert!(
+            events.iter_current_update_events().next().is_none(),
+            "attacking self must be ignored"
+        );
+    }
+
+    #[test]
+    fn non_npc_target_ignored() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        let non_npc = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: non_npc,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        assert!(
+            events.iter_current_update_events().next().is_none(),
+            "entity without NpcMarker must not be attacked"
+        );
+    }
+
+    #[test]
+    fn near_death_target_ignored() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.enter_near_death(0);
+        let target = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 0.0, 0.0]), lifecycle))
+            .id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        assert!(
+            events.iter_current_update_events().next().is_none(),
+            "NearDeath target must not be attacked"
+        );
+    }
+
+    #[test]
+    fn weapon_wound_kind_maps_correctly() {
+        use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
+
+        let sword = Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 1,
+            template_id: "test_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 10.0,
+            quality_tier: 0,
+            durability: 100.0,
+            durability_max: 100.0,
+        };
+        assert_eq!(super::weapon_wound_kind(&sword), WoundKind::Cut);
+
+        let staff = Weapon {
+            weapon_kind: WeaponKind::Staff,
+            ..sword.clone()
+        };
+        assert_eq!(super::weapon_wound_kind(&staff), WoundKind::Blunt);
+
+        let spear = Weapon {
+            weapon_kind: WeaponKind::Spear,
+            ..sword
+        };
+        assert_eq!(super::weapon_wound_kind(&spear), WoundKind::Pierce);
     }
 }
