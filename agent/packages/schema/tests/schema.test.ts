@@ -271,6 +271,7 @@ describe("sample files pass schema validation", () => {
       attack_kind: "physical_carrier",
       k_drain: 1.5,
       self_damage_multiplier: 0.5,
+      damage_multiplier: 0.35,
       grants_amplification: true,
       expires_at_tick: 1320,
       tick: 120,

@@ -38,7 +38,8 @@ class QuickBarHudPlannerTest {
         );
 
         HudRenderCommand icon = commands.stream()
-            .filter(HudRenderCommand::isTexturedRect)
+            .filter(command -> command.isTexturedRect()
+                && "bong-client:textures/gui/skill/zhenmai_parry.png".equals(command.texturePath()))
             .findFirst()
             .orElseThrow();
         assertEquals("bong-client:textures/gui/skill/zhenmai_parry.png", icon.texturePath());

@@ -75,7 +75,7 @@ describe("ZhenmaiNarrationRuntime", () => {
 
     expect(narration).toEqual({
       scope: "player",
-      target: "zhenmai:parry|target:offline:Crimson|tick:42",
+      target: "offline:Crimson",
       text: "Crimson 被逼到贴身处才震爆，经脉护住了些，反冲却全压回血肉里。",
       style: "narration",
     });
@@ -137,7 +137,7 @@ describe("ZhenmaiNarrationRuntime", () => {
         tick: 99,
       });
       expect(narration?.text).toContain(skill.needle);
-      expect(narration?.target).toContain(`zhenmai:${skill.skill_id}`);
+      expect(narration?.target).toBe("offline:Crimson");
     }
   });
 
@@ -163,6 +163,7 @@ describe("ZhenmaiNarrationRuntime", () => {
     expect(pub.published).toHaveLength(1);
     expect(pub.published[0].channel).toBe(AGENT_NARRATE);
     const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0].target).toBe("offline:Crimson");
     expect(envelope.narrations[0].text).toContain("没有引来足够反震");
   });
 });

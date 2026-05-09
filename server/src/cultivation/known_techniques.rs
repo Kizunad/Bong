@@ -402,3 +402,33 @@ pub fn technique_definition(id: &str) -> Option<&'static TechniqueDefinition> {
         .iter()
         .find(|definition| definition.id == id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn technique_ids_match_definitions_and_default_entries() {
+        let ids = TECHNIQUE_IDS.iter().copied().collect::<BTreeSet<_>>();
+        let definitions = TECHNIQUE_DEFINITIONS
+            .iter()
+            .map(|definition| definition.id)
+            .collect::<BTreeSet<_>>();
+        let default_techniques = KnownTechniques::default();
+        let default_entries = default_techniques
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(ids, definitions);
+        assert_eq!(ids, default_entries);
+        for id in ids {
+            assert!(
+                technique_definition(id).is_some(),
+                "default technique id must have a definition: {id}"
+            );
+        }
+    }
+}

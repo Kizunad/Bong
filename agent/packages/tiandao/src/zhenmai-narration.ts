@@ -40,7 +40,6 @@ export interface ZhenmaiNarrationRuntimeConfig {
 export function renderZhenmaiNarration(event: CombatRealtimeEventV1): Narration | null {
   if (event.kind !== "combat_event" || event.defense_kind !== "jie_mai") return null;
   const effectiveness = clampNumber(event.defense_effectiveness, 0.3, 1.0);
-  const target = `zhenmai:parry|target:${event.target_id}|tick:${event.tick}`;
   const actor = shortName(event.target_id);
   let text: string;
   if (effectiveness >= 0.7) {
@@ -53,7 +52,7 @@ export function renderZhenmaiNarration(event: CombatRealtimeEventV1): Narration 
 
   const narration: Narration = {
     scope: "player",
-    target,
+    target: event.target_id,
     text,
     style: "narration",
   };
@@ -65,7 +64,6 @@ export function renderZhenmaiSkillNarration(event: ZhenmaiSkillEventV1): Narrati
   if (event.type !== "zhenmai_skill_event") return null;
   const actor = shortName(event.caster_id);
   const meridian = event.meridian_id ?? event.meridian_ids?.join("、") ?? "经脉";
-  const target = `zhenmai:${event.skill_id}|caster:${event.caster_id}|tick:${event.tick}`;
   let text: string;
   switch (event.skill_id) {
     case "parry":
@@ -92,7 +90,7 @@ export function renderZhenmaiSkillNarration(event: ZhenmaiSkillEventV1): Narrati
 
   const narration: Narration = {
     scope: "player",
-    target,
+    target: event.caster_id,
     text,
     style: "narration",
   };

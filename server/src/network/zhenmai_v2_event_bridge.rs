@@ -1,4 +1,4 @@
-use valence::prelude::{Entity, EventReader, Query, Res, UniqueId};
+use valence::prelude::{Entity, EventReader, Query, Res, Username};
 
 use crate::combat::zhenmai_v2::{
     BackfireAmplificationActiveEvent, LocalNeutralizeEvent, MeridianHardenEvent,
@@ -16,14 +16,14 @@ pub fn publish_zhenmai_skill_events(
     mut harden_events: EventReader<MeridianHardenEvent>,
     mut severed_events: EventReader<MeridianSeveredVoluntaryEvent>,
     mut amplification_events: EventReader<BackfireAmplificationActiveEvent>,
-    unique_ids: Query<&UniqueId>,
+    usernames: Query<&Username>,
 ) {
     for event in neutralize_events.read() {
         let mut payload = base_payload(
             ZhenmaiSkillIdV1::Neutralize,
             event.caster,
             event.tick,
-            &unique_ids,
+            &usernames,
         );
         payload.meridian_id = Some(meridian_id_to_string(event.meridian_id).to_string());
         send_zhenmai_payload(&redis, payload);
@@ -34,11 +34,11 @@ pub fn publish_zhenmai_skill_events(
             ZhenmaiSkillIdV1::Multipoint,
             event.defender,
             event.tick,
-            &unique_ids,
+            &usernames,
         );
         payload.target_id = event
             .attacker
-            .map(|attacker| entity_wire_id(unique_ids.get(attacker).ok(), attacker));
+            .map(|attacker| entity_wire_id(usernames.get(attacker).ok(), attacker));
         payload.attack_kind = Some(attack_kind_payload(event.attack_kind));
         payload.reflected_qi = Some(event.reflected_qi);
         send_zhenmai_payload(&redis, payload);
@@ -49,7 +49,7 @@ pub fn publish_zhenmai_skill_events(
             ZhenmaiSkillIdV1::HardenMeridian,
             event.caster,
             event.tick,
-            &unique_ids,
+            &usernames,
         );
         payload.meridian_ids = Some(
             event
@@ -67,7 +67,7 @@ pub fn publish_zhenmai_skill_events(
             ZhenmaiSkillIdV1::SeverChain,
             event.caster,
             event.tick,
-            &unique_ids,
+            &usernames,
         );
         payload.meridian_id = Some(meridian_id_to_string(event.meridian_id).to_string());
         payload.attack_kind = Some(attack_kind_payload(event.attack_kind));
@@ -82,7 +82,7 @@ pub fn publish_zhenmai_skill_events(
             event
                 .expires_at_tick
                 .saturating_sub(crate::combat::zhenmai_v2::BACKFIRE_AMPLIFICATION_TICKS),
-            &unique_ids,
+            &usernames,
         );
         payload.meridian_id = Some(meridian_id_to_string(event.meridian_id).to_string());
         payload.attack_kind = Some(attack_kind_payload(event.attack_kind));
@@ -106,19 +106,19 @@ fn base_payload(
     skill_id: ZhenmaiSkillIdV1,
     caster: Entity,
     tick: u64,
-    unique_ids: &Query<&UniqueId>,
+    usernames: &Query<&Username>,
 ) -> ZhenmaiSkillEventV1 {
     ZhenmaiSkillEventV1::new(
         skill_id,
-        entity_wire_id(unique_ids.get(caster).ok(), caster),
+        entity_wire_id(usernames.get(caster).ok(), caster),
         tick,
     )
 }
 
-fn entity_wire_id(unique_id: Option<&UniqueId>, entity: Entity) -> String {
-    unique_id
-        .map(|unique_id| format!("player:{}", unique_id.0))
-        .unwrap_or_else(|| format!("entity:{}", entity.to_bits()))
+fn entity_wire_id(username: Option<&Username>, entity: Entity) -> String {
+    username
+        .map(|username| format!("offline:{}", username.0))
+        .unwrap_or_else(|| format!("char:{}", entity.to_bits()))
 }
 
 fn attack_kind_payload(kind: ZhenmaiAttackKind) -> ZhenmaiAttackKindV1 {
@@ -190,7 +190,7 @@ mod tests {
                 assert_eq!(payload.attack_kind, Some(ZhenmaiAttackKindV1::TaintedYuan));
                 assert_eq!(payload.grants_amplification, Some(true));
                 assert_eq!(payload.tick, 42);
-                assert!(payload.caster_id.starts_with("entity:"));
+                assert!(payload.caster_id.starts_with("char:"));
             }
             other => panic!("expected zhenmai sever-chain outbound, got {other:?}"),
         }
@@ -244,13 +244,41 @@ mod tests {
                 );
                 assert_eq!(payload.reflected_qi, Some(12.5));
                 assert_eq!(payload.tick, 99);
-                assert!(payload.caster_id.starts_with("entity:"));
+                assert!(payload.caster_id.starts_with("char:"));
                 assert!(payload
                     .target_id
                     .as_deref()
-                    .is_some_and(|id| id.starts_with("entity:")));
+                    .is_some_and(|id| id.starts_with("char:")));
             }
             other => panic!("expected zhenmai multipoint outbound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_routable_offline_username_for_player_caster() {
+        let (mut app, rx_outbound) = app_with_bridge();
+        let caster = app.world_mut().spawn(Username("Azure".to_string())).id();
+
+        app.world_mut().send_event(LocalNeutralizeEvent {
+            caster,
+            meridian_id: MeridianId::Lung,
+            contam_removed: 2.0,
+            qi_spent: 8.0,
+            tick: 64,
+        });
+
+        app.update();
+
+        match rx_outbound
+            .try_recv()
+            .expect("neutralize event should publish")
+        {
+            RedisOutbound::ZhenmaiSkillEvent(payload) => {
+                assert_eq!(payload.skill_id, ZhenmaiSkillIdV1::Neutralize);
+                assert_eq!(payload.caster_id, "offline:Azure");
+                assert_eq!(payload.meridian_id.as_deref(), Some("Lung"));
+            }
+            other => panic!("expected zhenmai neutralize outbound, got {other:?}"),
         }
     }
 
