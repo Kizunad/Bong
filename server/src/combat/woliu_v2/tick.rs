@@ -145,13 +145,17 @@ pub fn vortex_v2_state_lifecycle_tick(
     orphan_passives: Query<Entity, (With<PassiveVortex>, Without<VortexV2State>)>,
 ) {
     for (entity, state) in &active_states {
-        if clock.tick < state.active_until_tick {
+        let active_expired = clock.tick >= state.active_until_tick;
+        let state_expired = clock.tick >= state.active_until_tick.max(state.cooldown_until_tick);
+        if !active_expired && !state_expired {
             continue;
         }
         let mut entity_commands = commands.entity(entity);
-        entity_commands.remove::<VortexV2State>();
-        if state.active_skill_kind == WoliuSkillId::Heart {
+        if active_expired && state.active_skill_kind == WoliuSkillId::Heart {
             entity_commands.remove::<PassiveVortex>();
+        }
+        if state_expired {
+            entity_commands.remove::<VortexV2State>();
         }
     }
     for entity in &orphan_passives {

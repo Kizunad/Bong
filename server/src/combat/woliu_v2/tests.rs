@@ -663,6 +663,33 @@ fn vortex_v2_lifecycle_removes_expired_state_and_passive_heart() {
 }
 
 #[test]
+fn vortex_v2_lifecycle_preserves_cooldown_state_after_active_window() {
+    let mut app = app(10);
+    app.add_systems(Update, super::tick::vortex_v2_state_lifecycle_tick);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::Burst);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let state = *app
+        .world()
+        .get::<VortexV2State>(actor)
+        .expect("burst cast should insert v2 state");
+    assert!(state.cooldown_until_tick > state.active_until_tick);
+
+    app.world_mut().resource_mut::<CombatClock>().tick = state.active_until_tick;
+    app.update();
+    assert!(
+        app.world().get::<VortexV2State>(actor).is_some(),
+        "v2 state should stay available while cooldown HUD still needs it"
+    );
+
+    app.world_mut().resource_mut::<CombatClock>().tick = state.cooldown_until_tick;
+    app.update();
+    assert!(app.world().get::<VortexV2State>(actor).is_none());
+}
+
+#[test]
 fn cooldown_blocks_second_cast() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);

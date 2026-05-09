@@ -47,7 +47,8 @@ pub fn emit_vortex_state_payloads(
 
     let periodic = clock.tick.is_multiple_of(TICKS_PER_SECOND);
     for (entity, mut client, username, unique_id, field, v2_state, turbulence) in &mut clients {
-        let active = field.is_some() || v2_state.is_some() || turbulence.is_some();
+        let v2_active = v2_state.is_some_and(|state| clock.tick < state.active_until_tick);
+        let active = field.is_some() || v2_active || turbulence.is_some();
         let previously_active = cache.active.get(&entity).copied().unwrap_or(false);
         if !periodic && active == previously_active {
             continue;
@@ -93,10 +94,19 @@ fn apply_woliu_v2_state_overlay(
 ) {
     let now_ms = current_unix_millis();
     if let Some(v2_state) = v2_state {
-        state.active = true;
+        let in_active_window = now_tick < v2_state.active_until_tick;
+        state.active = in_active_window;
         state.active_skill_id = v2_state.active_skill_kind.as_str().to_string();
         state.radius = v2_state.lethal_radius;
-        state.charge_progress = 1.0;
+        state.charge_progress = if in_active_window {
+            cast_progress(
+                now_tick,
+                v2_state.started_at_tick,
+                v2_state.active_until_tick,
+            )
+        } else {
+            0.0
+        };
         state.cooldown_until_ms =
             ticks_from_now_to_ms(now_ms, now_tick, v2_state.cooldown_until_tick);
         state.backfire_level = v2_state
@@ -118,6 +128,15 @@ fn apply_woliu_v2_state_overlay(
         state.turbulence_intensity = turbulence.intensity;
         state.turbulence_until_ms = turbulence_until_ms(now_ms, turbulence);
     }
+}
+
+fn cast_progress(now_tick: u64, started_at_tick: u64, active_until_tick: u64) -> f32 {
+    if active_until_tick <= started_at_tick {
+        return 1.0;
+    }
+    let elapsed = now_tick.saturating_sub(started_at_tick);
+    let total = active_until_tick - started_at_tick;
+    (elapsed as f32 / total as f32).clamp(0.0, 1.0)
 }
 
 fn ticks_from_now_to_ms(now_ms: u64, now_tick: u64, until_tick: u64) -> u64 {
@@ -159,7 +178,7 @@ mod tests {
     use crate::combat::woliu_v2::state::{TurbulenceField, VortexV2State};
     use crate::combat::woliu_v2::{BackfireLevel, WoliuSkillId};
 
-    use super::apply_woliu_v2_state_overlay;
+    use super::{apply_woliu_v2_state_overlay, cast_progress};
 
     #[test]
     fn woliu_v2_overlay_populates_vortex_state_hud_fields() {
@@ -185,11 +204,11 @@ mod tests {
             10,
         );
 
-        apply_woliu_v2_state_overlay(&mut state, Some(&v2_state), Some(&turbulence), 10);
+        apply_woliu_v2_state_overlay(&mut state, Some(&v2_state), Some(&turbulence), 25);
 
         assert!(state.active);
         assert_eq!(state.active_skill_id, "woliu.heart");
-        assert_eq!(state.charge_progress, 1.0);
+        assert_eq!(state.charge_progress, 0.5);
         assert!(state.cooldown_until_ms > 0);
         assert_eq!(state.backfire_level, "micro_tear");
         assert_eq!(state.center, [3.0, 64.0, 4.0]);
@@ -197,5 +216,37 @@ mod tests {
         assert_eq!(state.turbulence_radius, 12.0);
         assert_eq!(state.turbulence_intensity, 0.75);
         assert!(state.turbulence_until_ms > 0);
+    }
+
+    #[test]
+    fn woliu_v2_overlay_preserves_cooldown_after_active_window() {
+        let mut state = vortex_field_state_payload("entity:1".to_string(), None, 30, 0);
+        let v2_state = VortexV2State {
+            active_skill_kind: WoliuSkillId::Pull,
+            heart_passive_enabled: false,
+            lethal_radius: 0.0,
+            influence_radius: 5.0,
+            turbulence_radius: 1.0,
+            turbulence_intensity: 0.5,
+            backfire_level: None,
+            started_at_tick: 10,
+            active_until_tick: 20,
+            cooldown_until_tick: 110,
+        };
+
+        apply_woliu_v2_state_overlay(&mut state, Some(&v2_state), None, 30);
+
+        assert!(!state.active);
+        assert_eq!(state.active_skill_id, "woliu.pull");
+        assert_eq!(state.charge_progress, 0.0);
+        assert!(state.cooldown_until_ms > 0);
+    }
+
+    #[test]
+    fn woliu_v2_cast_progress_uses_cast_timeline() {
+        assert_eq!(cast_progress(10, 10, 30), 0.0);
+        assert_eq!(cast_progress(20, 10, 30), 0.5);
+        assert_eq!(cast_progress(30, 10, 30), 1.0);
+        assert_eq!(cast_progress(99, 10, 30), 1.0);
     }
 }
