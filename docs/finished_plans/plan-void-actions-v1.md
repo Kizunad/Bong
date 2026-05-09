@@ -354,13 +354,15 @@ pub struct LifeRecord {
   - `6fa464390`（2026-05-09）`fix(void-actions): 补客户端派发与天道背压`：review 修复 client 无世界 tick / 空 player 派发、`VoidActionStore` 原子更新、void_action 负向编码测试，以及 tiandao runtime 串行化 LLM payload 处理。
   - `2b6e89c55`（2026-05-09）`fix(void-actions): 同步化虚施法账本视图`：review 修复已有 player ledger 与 `Cultivation.qi_current` 正常漂移后第二次化虚施法被锁死的问题，v1 bridge 每次施法前改以 cultivation 视图重同步 ledger。
   - `3c35a137e`（2026-05-09）`fix(void-actions): 持久化冷却并收紧 review 边界`：review 修复长冷却重启丢失、公开文案暴露 `actor_id`、ExplodeZone 无 ZoneRegistry 部分返还、legacy 无持久化仍成功、tiandao disconnect 丢尾包、client 空指针与证据命令歧义。
+  - `a522a9099`（2026-05-09）`fix(void-actions): 收紧 cooldown 恢复和 review 回归`：review 收尾改用 `QI_EPSILON`、启动回灌 cooldown 失败直接 fail-fast、v19 SQLite 迁移断言 `void_action_cooldowns` 复合主键，并移除 tiandao runtime 测试中的固定 sleep。
 - **测试结果**：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3108 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3109 passed。
   - `cd server && cargo test cultivation::void` → 77 passed；`grep -rE '#\[test\]' server/src/cultivation/void/ | wc -l` → 77。
   - `cd server && cargo test cultivation::void::ledger_hooks` → 21 passed。
-  - `cd server && cargo test void_action_cooldowns` → 2 passed。
+  - `cd server && cargo test void_action_cooldowns` → 3 passed。
   - `cd server && cargo test void_action_backlash_records_dedicated_termination_cause` / `cargo test v18_migration_rejects_partial_legacy_letterbox_schema` / `cargo test serde_defaults_missing_void_action_fields_for_legacy_records` → all passed。
-  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` → tiandao 286 passed；schema 327 passed。
+  - `cd agent/packages/tiandao && npm test` → 286 passed。
+  - `cd agent && npm run build && (cd packages/schema && npm test)` → schema 327 passed。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
   - `cd library-web && LOCAL_LIBRARY_PATH=/home/kiz/Code/Bong/.worktree/plan-void-actions-v1/docs/library npm run build` → 41 pages built。
   - `git diff --check` → clean。
