@@ -6,6 +6,7 @@ use valence::prelude::{
 };
 
 use crate::lingtian::weather::{ActiveWeather, WeatherEvent};
+use crate::world::dimension::DimensionKind;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -84,6 +85,7 @@ pub enum ZoneEnvironmentLifecycleEvent {
 #[derive(Debug, Clone, Default, Resource)]
 pub struct ZoneEnvironmentRegistry {
     by_zone: HashMap<String, Vec<EnvironmentEffect>>,
+    dimension_by_zone: HashMap<String, String>,
     generation_by_zone: HashMap<String, u64>,
     dirty: HashSet<String>,
     lifecycle: Vec<ZoneEnvironmentLifecycleEvent>,
@@ -97,6 +99,9 @@ impl ZoneEnvironmentRegistry {
     #[allow(dead_code)]
     pub fn add(&mut self, zone: impl Into<String>, effect: EnvironmentEffect) {
         let zone = normalize_zone(zone.into());
+        self.dimension_by_zone
+            .entry(zone.clone())
+            .or_insert_with(|| DimensionKind::Overworld.ident_str().to_string());
         let entry = self.by_zone.entry(zone.clone()).or_default();
         let index = entry.len();
         entry.push(effect);
@@ -146,14 +151,43 @@ impl ZoneEnvironmentRegistry {
     }
 
     pub fn replace(&mut self, zone: impl Into<String>, effects: Vec<EnvironmentEffect>) {
+        self.replace_for_dimension(zone, DimensionKind::Overworld.ident_str(), effects);
+    }
+
+    pub fn replace_for_dimension(
+        &mut self,
+        zone: impl Into<String>,
+        dimension: impl Into<String>,
+        effects: Vec<EnvironmentEffect>,
+    ) {
         let zone = normalize_zone(zone.into());
-        if self.by_zone.get(&zone) == Some(&effects) {
+        let dimension = normalize_dimension(dimension.into());
+        let same_effects = self.by_zone.get(&zone) == Some(&effects);
+        let same_dimension =
+            self.dimension_by_zone.get(&zone).map(String::as_str) == Some(dimension.as_str());
+        if same_effects && same_dimension {
             return;
         }
+        self.dimension_by_zone.insert(zone.clone(), dimension);
         self.by_zone.insert(zone.clone(), effects);
         self.lifecycle
             .push(ZoneEnvironmentLifecycleEvent::Replaced { zone: zone.clone() });
         self.mark_dirty(zone);
+    }
+
+    pub fn remove_stale_zones(&mut self, live_zones: &HashSet<String>) {
+        let stale: Vec<String> = self
+            .by_zone
+            .keys()
+            .filter(|zone| !live_zones.contains(zone.as_str()))
+            .cloned()
+            .collect();
+        for zone in stale {
+            self.by_zone.remove(&zone);
+            self.lifecycle
+                .push(ZoneEnvironmentLifecycleEvent::Replaced { zone: zone.clone() });
+            self.mark_dirty(zone);
+        }
     }
 
     pub fn current(&self, zone: &str) -> &[EnvironmentEffect] {
@@ -172,10 +206,26 @@ impl ZoneEnvironmentRegistry {
             .unwrap_or_default()
     }
 
+    pub fn dimension(&self, zone: &str) -> &str {
+        let key = normalize_zone(zone);
+        self.dimension_by_zone
+            .get(key.as_str())
+            .map(String::as_str)
+            .unwrap_or_else(|| DimensionKind::Overworld.ident_str())
+    }
+
     pub fn drain_dirty(&mut self) -> Vec<String> {
         let mut dirty: Vec<String> = self.dirty.drain().collect();
         dirty.sort();
         dirty
+    }
+
+    pub fn mark_all_dirty_for_snapshot(&mut self) {
+        self.dirty.extend(self.by_zone.keys().cloned());
+    }
+
+    pub fn mark_dirty_for_retry(&mut self, zone: impl Into<String>) {
+        self.dirty.insert(normalize_zone(zone.into()));
     }
 
     pub fn drain_lifecycle(&mut self) -> Vec<ZoneEnvironmentLifecycleEvent> {
@@ -224,12 +274,18 @@ pub fn sync_zone_environment_effects(
     let Some(zones) = zones else {
         return;
     };
+    let live_zones: HashSet<String> = zones
+        .zones
+        .iter()
+        .map(|zone| normalize_zone(zone.name.as_str()))
+        .collect();
+    registry.remove_stale_zones(&live_zones);
     for zone in &zones.zones {
         let active_weather = weather
             .as_ref()
             .and_then(|active| active.current(zone.name.as_str()));
         let effects = default_effects_for_zone(zone, active_weather);
-        registry.replace(zone.name.clone(), effects);
+        registry.replace_for_dimension(zone.name.clone(), zone.dimension.ident_str(), effects);
     }
 }
 
@@ -395,6 +451,15 @@ fn normalize_zone(zone: impl AsRef<str>) -> String {
     }
 }
 
+fn normalize_dimension(dimension: impl AsRef<str>) -> String {
+    let normalized = dimension.as_ref().trim();
+    if normalized.is_empty() {
+        DimensionKind::Overworld.ident_str().to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,6 +613,53 @@ mod tests {
         registry.replace("spawn", effects);
         assert_eq!(registry.generation("spawn"), 1);
         assert!(registry.drain_dirty().is_empty());
+    }
+
+    #[test]
+    fn replace_dimension_change_marks_dirty() {
+        let mut registry = ZoneEnvironmentRegistry::new();
+        let effects = vec![all_effects()[0].clone()];
+        registry.replace("spawn", effects.clone());
+        registry.drain_dirty();
+        registry.replace_for_dimension(
+            "spawn",
+            crate::world::dimension::DimensionKind::Tsy.ident_str(),
+            effects,
+        );
+
+        assert_eq!(registry.dimension("spawn"), "bong:tsy");
+        assert_eq!(registry.generation("spawn"), 2);
+        assert_eq!(registry.drain_dirty(), vec!["spawn".to_string()]);
+    }
+
+    #[test]
+    fn mark_all_dirty_for_snapshot_does_not_bump_generation() {
+        let mut registry = ZoneEnvironmentRegistry::new();
+        registry.replace("spawn", vec![all_effects()[0].clone()]);
+        registry.drain_dirty();
+
+        registry.mark_all_dirty_for_snapshot();
+
+        assert_eq!(registry.generation("spawn"), 1);
+        assert_eq!(registry.drain_dirty(), vec!["spawn".to_string()]);
+    }
+
+    #[test]
+    fn removed_zone_marks_empty_state_dirty_and_keeps_dimension() {
+        let mut registry = ZoneEnvironmentRegistry::new();
+        registry.replace_for_dimension(
+            "tsy_test",
+            crate::world::dimension::DimensionKind::Tsy.ident_str(),
+            vec![all_effects()[0].clone()],
+        );
+        registry.drain_dirty();
+
+        registry.remove_stale_zones(&HashSet::new());
+
+        assert!(registry.current("tsy_test").is_empty());
+        assert_eq!(registry.dimension("tsy_test"), "bong:tsy");
+        assert_eq!(registry.generation("tsy_test"), 2);
+        assert_eq!(registry.drain_dirty(), vec!["tsy_test".to_string()]);
     }
 
     #[test]

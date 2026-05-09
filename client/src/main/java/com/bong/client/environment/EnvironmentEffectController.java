@@ -3,8 +3,6 @@ package com.bong.client.environment;
 import com.bong.client.BongClient;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.util.math.Vec3d;
@@ -27,7 +25,6 @@ public final class EnvironmentEffectController {
         bootstrapped = true;
         REGISTRY.registerBuiltInBehaviors();
         ClientTickEvents.END_CLIENT_TICK.register(EnvironmentEffectController::tick);
-        WorldRenderEvents.AFTER_ENTITIES.register(EnvironmentEffectController::render);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> clear());
     }
 
@@ -41,6 +38,11 @@ public final class EnvironmentEffectController {
     }
 
     public static void acceptState(ZoneEnvironmentState state) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        String currentDimension = currentDimensionId(client);
+        if (state != null && !state.matchesDimension(currentDimension)) {
+            return;
+        }
         REGISTRY.onZoneStateUpdate(state);
     }
 
@@ -65,26 +67,21 @@ public final class EnvironmentEffectController {
         Collection<ActiveEmitter> active = REGISTRY.activeNearPlayer(playerPos, DEFAULT_RADIUS);
         AUDIO.update(active, playerPos);
         EnvironmentFogController.update(active, playerPos);
-    }
-
-    private static void render(WorldRenderContext context) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        ClientPlayerEntity player = client.player;
-        if (client.world == null || player == null || context.matrixStack() == null) {
-            return;
-        }
-
-        Vec3d playerPos = player.getPos();
-        Collection<ActiveEmitter> active = REGISTRY.activeNearPlayer(playerPos, DEFAULT_RADIUS);
         for (ActiveEmitter emitter : active) {
             emitter.behavior().onTickInRadius(
-                context.matrixStack(),
                 playerPos,
                 emitter.effect(),
                 emitter.alpha(),
-                context.tickDelta()
+                1.0f
             );
         }
+    }
+
+    private static String currentDimensionId(MinecraftClient client) {
+        if (client == null || client.world == null) {
+            return null;
+        }
+        return client.world.getRegistryKey().getValue().toString();
     }
 
     public static void clear() {

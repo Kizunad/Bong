@@ -3,7 +3,8 @@ import { Type, type Static } from "@sinclair/typebox";
 import { validate, type ValidationResult } from "./validate.js";
 
 const Vec3 = Type.Tuple([Type.Number(), Type.Number(), Type.Number()]);
-const Rgb = Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]);
+const RgbChannel = Type.Integer({ minimum: 0, maximum: 255 });
+const Rgb = Type.Tuple([RgbChannel, RgbChannel, RgbChannel]);
 
 export const EnvironmentEffectV1 = Type.Union([
   Type.Object(
@@ -88,6 +89,7 @@ export type EnvironmentEffectV1 = Static<typeof EnvironmentEffectV1>;
 export const ZoneEnvironmentStateV1 = Type.Object(
   {
     v: Type.Literal(1),
+    dimension: Type.String({ minLength: 1 }),
     zone_id: Type.String({ minLength: 1 }),
     effects: Type.Array(EnvironmentEffectV1),
     generation: Type.Integer({ minimum: 0 }),

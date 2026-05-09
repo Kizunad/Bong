@@ -1,20 +1,30 @@
-use valence::prelude::{ident, Client, Query, Res, ResMut, With};
+use valence::prelude::{ident, Added, Client, Query, Res, ResMut, With};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::schema::zone_environment::ZoneEnvironmentStateV1;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::environment::ZoneEnvironmentRegistry;
 
-pub const ZONE_ENVIRONMENT_CLIENT_CHANNEL: &str = "bong:zone_environment";
+pub fn mark_zone_environment_dirty_for_new_clients(
+    new_clients: Query<(), (With<Client>, Added<Client>)>,
+    mut registry: ResMut<ZoneEnvironmentRegistry>,
+) {
+    if new_clients.iter().next().is_some() {
+        registry.mark_all_dirty_for_snapshot();
+    }
+}
 
 pub fn zone_environment_broadcast_system(
     mut registry: ResMut<ZoneEnvironmentRegistry>,
     redis: Res<RedisBridgeResource>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<(&mut Client, Option<&CurrentDimension>), With<Client>>,
 ) {
     let dirty_zones = registry.drain_dirty();
     for zone in dirty_zones {
-        let state = ZoneEnvironmentStateV1::new(
+        let dimension = registry.dimension(zone.as_str()).to_string();
+        let state = ZoneEnvironmentStateV1::new_with_dimension(
+            dimension.clone(),
             zone.clone(),
             registry.current(zone.as_str()).to_vec(),
             registry.generation(zone.as_str()),
@@ -26,6 +36,7 @@ pub fn zone_environment_broadcast_system(
                 tracing::warn!(
                     "[bong][zone_environment] dropping invalid state for zone={zone}: {error:?}"
                 );
+                registry.mark_dirty_for_retry(zone);
                 continue;
             }
         };
@@ -40,8 +51,14 @@ pub fn zone_environment_broadcast_system(
         }
 
         let mut sent = 0usize;
-        for mut client in &mut clients {
-            let _ = ZONE_ENVIRONMENT_CLIENT_CHANNEL;
+        for (mut client, current_dimension) in &mut clients {
+            let client_dimension = current_dimension
+                .map(|dimension| dimension.0)
+                .unwrap_or(DimensionKind::Overworld)
+                .ident_str();
+            if client_dimension != dimension {
+                continue;
+            }
             client.send_custom_payload(ident!("bong:zone_environment"), bytes.as_slice());
             sent += 1;
         }
@@ -92,6 +109,7 @@ mod tests {
         let RedisOutbound::ZoneEnvironmentUpdate(state) = outbound else {
             panic!("expected ZoneEnvironmentUpdate outbound");
         };
+        assert_eq!(state.dimension, "minecraft:overworld");
         assert_eq!(state.zone_id, "spawn");
         assert_eq!(state.generation, 1);
         assert_eq!(state.effects.len(), 1);

@@ -353,8 +353,10 @@ pub fn register(app: &mut App) {
             // apply system 之后跑，确保 Bevy events 已就位。
             weather_bridge::publish_weather_lifecycle_events
                 .after(crate::lingtian::weather::weather_apply_to_plot_system),
-            zone_environment_bridge::zone_environment_broadcast_system
+            zone_environment_bridge::mark_zone_environment_dirty_for_new_clients
                 .after(crate::world::environment::sync_zone_environment_effects),
+            zone_environment_bridge::zone_environment_broadcast_system
+                .after(zone_environment_bridge::mark_zone_environment_dirty_for_new_clients),
         ),
     );
     app.add_systems(

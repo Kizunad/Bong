@@ -3,6 +3,8 @@ package com.bong.client.environment;
 import com.mojang.blaze3d.systems.RenderSystem;
 
 public final class EnvironmentSkyController {
+    private static float[] previousShaderColor;
+
     private EnvironmentSkyController() {
     }
 
@@ -11,12 +13,22 @@ public final class EnvironmentSkyController {
         if (command == null) {
             return;
         }
+        previousShaderColor = RenderSystem.getShaderColor().clone();
         int rgb = command.skyColorRgb();
         RenderSystem.setShaderColor(red(rgb), green(rgb), blue(rgb), 1.0f);
     }
 
     public static void resetAfterSky() {
-        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
+        if (previousShaderColor == null || previousShaderColor.length < 4) {
+            return;
+        }
+        RenderSystem.setShaderColor(
+            previousShaderColor[0],
+            previousShaderColor[1],
+            previousShaderColor[2],
+            previousShaderColor[3]
+        );
+        previousShaderColor = null;
     }
 
     private static float red(int rgb) {

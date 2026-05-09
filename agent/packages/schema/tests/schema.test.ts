@@ -1722,11 +1722,32 @@ describe("plan-zone-environment-v1 schema", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("EnvironmentEffectV1 拒绝越界 RGB channel", () => {
+    const result = validate(EnvironmentEffectV1, {
+      kind: "fog_veil",
+      aabb_min: [0, 60, 0],
+      aabb_max: [16, 90, 16],
+      tint_rgb: [120, 132, 300],
+      density: 0.3,
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("ZoneEnvironmentStateV1 拒绝缺 generation", () => {
     const data = loadObjectSample("zone-environment-state.sample.json");
     delete data.generation;
     expectContractRejects(
       "ZoneEnvironmentStateV1.generation required",
+      validateZoneEnvironmentStateV1Contract,
+      data,
+    );
+  });
+
+  it("ZoneEnvironmentStateV1 拒绝缺 dimension", () => {
+    const data = loadObjectSample("zone-environment-state.sample.json");
+    delete data.dimension;
+    expectContractRejects(
+      "ZoneEnvironmentStateV1.dimension required",
       validateZoneEnvironmentStateV1Contract,
       data,
     );

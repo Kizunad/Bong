@@ -1,6 +1,5 @@
 package com.bong.client.environment;
 
-import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.Vec3d;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -90,7 +89,7 @@ class EnvironmentFogPlannerTest {
     }
 
     private static ActiveEmitter active(String key, long generation, EnvironmentEffect effect) {
-        EmitterBehavior noop = (MatrixStack stack, Vec3d playerPos, EnvironmentEffect ignored, float deltaTick) -> {
+        EmitterBehavior noop = (Vec3d playerPos, EnvironmentEffect ignored, float deltaTick) -> {
         };
         ActiveEmitter emitter = new ActiveEmitter(key, "spawn", effect, noop, generation);
         for (int i = 0; i < 40; i++) {

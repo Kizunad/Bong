@@ -19,7 +19,7 @@ public final class EnvironmentParticleHelper {
 
         long seed = world.getTime() ^ effect.stableKey().hashCode();
         Random random = Random.create(seed);
-        int repeats = Math.max(1, Math.round(alpha * 3.0f));
+        int repeats = repeatCount(effect, alpha);
         for (int i = 0; i < repeats; i++) {
             if (effect instanceof EnvironmentEffect.TornadoColumn tornado) {
                 spawnTornado(world, tornado, random, alpha, tickDelta);
@@ -54,8 +54,9 @@ public final class EnvironmentParticleHelper {
         double x = effect.centerX() + Math.cos(angle) * radius;
         double z = effect.centerZ() + Math.sin(angle) * radius;
         double y = effect.centerY() + layer;
-        world.addParticle(ParticleTypes.CLOUD, x, y, z, 0.0, 0.02 * alpha, 0.0);
-        world.addParticle(ParticleTypes.LARGE_SMOKE, x, y + 0.5, z, 0.0, 0.01 * alpha, 0.0);
+        double lift = 0.02 * alpha * clampedIntensity(effect);
+        world.addParticle(ParticleTypes.CLOUD, x, y, z, 0.0, lift, 0.0);
+        world.addParticle(ParticleTypes.LARGE_SMOKE, x, y + 0.5, z, 0.0, lift * 0.5, 0.0);
     }
 
     private static void spawnLightning(
@@ -130,7 +131,16 @@ public final class EnvironmentParticleHelper {
         double x = lerp(effect.minX(), effect.maxX(), random.nextDouble());
         double y = lerp(effect.minY(), effect.maxY(), random.nextDouble());
         double z = lerp(effect.minZ(), effect.maxZ(), random.nextDouble());
-        world.addParticle(ParticleTypes.SMOKE, x, y, z, 0.0, 0.002 * alpha, 0.0);
+        double shimmer = 0.002 * alpha * clampedIntensity(effect);
+        world.addParticle(
+            ParticleTypes.SMOKE,
+            x,
+            y,
+            z,
+            (random.nextDouble() - 0.5) * shimmer,
+            shimmer,
+            (random.nextDouble() - 0.5) * shimmer
+        );
     }
 
     private static void spawnSnow(
@@ -147,5 +157,17 @@ public final class EnvironmentParticleHelper {
 
     private static double lerp(double min, double max, double t) {
         return min + (max - min) * t;
+    }
+
+    static int repeatCountForTests(EnvironmentEffect effect, float alpha) {
+        return repeatCount(effect, alpha);
+    }
+
+    private static int repeatCount(EnvironmentEffect effect, float alpha) {
+        return Math.max(1, (int) Math.round(alpha * 3.0f * clampedIntensity(effect)));
+    }
+
+    private static double clampedIntensity(EnvironmentEffect effect) {
+        return Math.max(0.1, Math.min(4.0, effect.renderIntensity()));
     }
 }

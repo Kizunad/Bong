@@ -22,6 +22,9 @@ public class MixinFogPerZone {
         float tickDelta,
         CallbackInfo ci
     ) {
+        if (fogType != BackgroundRenderer.FogType.FOG_TERRAIN || thickFog) {
+            return;
+        }
         EnvironmentFogController.applyFog();
     }
 }

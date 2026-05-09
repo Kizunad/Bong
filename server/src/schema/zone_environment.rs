@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::common::MAX_PAYLOAD_BYTES;
+use crate::world::dimension::DimensionKind;
 use crate::world::environment::EnvironmentEffect;
 
 pub const ZONE_ENVIRONMENT_STATE_VERSION: u8 = 1;
@@ -19,6 +20,7 @@ pub enum ZoneEnvironmentBuildError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ZoneEnvironmentStateV1 {
     pub v: u8,
+    pub dimension: String,
     pub zone_id: String,
     pub effects: Vec<EnvironmentEffectV1>,
     pub generation: u64,
@@ -30,8 +32,23 @@ impl ZoneEnvironmentStateV1 {
         effects: Vec<EnvironmentEffectV1>,
         generation: u64,
     ) -> Self {
+        Self::new_with_dimension(
+            DimensionKind::Overworld.ident_str(),
+            zone_id,
+            effects,
+            generation,
+        )
+    }
+
+    pub fn new_with_dimension(
+        dimension: impl Into<String>,
+        zone_id: impl Into<String>,
+        effects: Vec<EnvironmentEffectV1>,
+        generation: u64,
+    ) -> Self {
         Self {
             v: ZONE_ENVIRONMENT_STATE_VERSION,
+            dimension: dimension.into(),
             zone_id: zone_id.into(),
             effects,
             generation,
@@ -48,6 +65,11 @@ impl ZoneEnvironmentStateV1 {
         if self.zone_id.trim().is_empty() {
             return Err(ZoneEnvironmentBuildError::InvalidState(
                 "zone_id must not be blank".to_string(),
+            ));
+        }
+        if self.dimension.trim().is_empty() {
+            return Err(ZoneEnvironmentBuildError::InvalidState(
+                "dimension must not be blank".to_string(),
             ));
         }
         Ok(())
@@ -95,6 +117,7 @@ mod tests {
     fn state_serializes_tagged_effect_union() {
         let json = serde_json::to_value(sample_state()).expect("serialize");
         assert_eq!(json["v"], 1);
+        assert_eq!(json["dimension"], "minecraft:overworld");
         assert_eq!(json["zone_id"], "spawn");
         assert_eq!(json["generation"], 7);
         assert_eq!(json["effects"][0]["kind"], "tornado_column");
@@ -113,6 +136,15 @@ mod tests {
     #[test]
     fn state_rejects_blank_zone_id() {
         let state = ZoneEnvironmentStateV1::new("", Vec::new(), 0);
+        assert!(matches!(
+            state.validate(),
+            Err(ZoneEnvironmentBuildError::InvalidState(_))
+        ));
+    }
+
+    #[test]
+    fn state_rejects_blank_dimension() {
+        let state = ZoneEnvironmentStateV1::new_with_dimension("", "spawn", Vec::new(), 0);
         assert!(matches!(
             state.validate(),
             Err(ZoneEnvironmentBuildError::InvalidState(_))

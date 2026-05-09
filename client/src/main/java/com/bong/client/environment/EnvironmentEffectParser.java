@@ -16,6 +16,10 @@ public final class EnvironmentEffectParser {
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             int version = readInt(root, "v");
+            if (version != 1) {
+                return ParseResult.error("unsupported zone environment version: " + version);
+            }
+            String dimension = readString(root, "dimension");
             String zoneId = readString(root, "zone_id");
             long generation = readLong(root, "generation");
             JsonArray rawEffects = root.getAsJsonArray("effects");
@@ -26,7 +30,7 @@ public final class EnvironmentEffectParser {
             for (JsonElement element : rawEffects) {
                 effects.add(parseEffect(element.getAsJsonObject()));
             }
-            ZoneEnvironmentState state = new ZoneEnvironmentState(version, zoneId, effects, generation);
+            ZoneEnvironmentState state = new ZoneEnvironmentState(version, dimension, zoneId, effects, generation);
             if (!state.valid()) {
                 return ParseResult.error("invalid zone environment state");
             }
@@ -160,14 +164,18 @@ public final class EnvironmentEffectParser {
         if (array == null || array.size() != 3) {
             throw new IllegalArgumentException(field + " must be rgb tuple");
         }
-        int r = clampColor(array.get(0).getAsInt());
-        int g = clampColor(array.get(1).getAsInt());
-        int b = clampColor(array.get(2).getAsInt());
+        int r = readColorChannel(array, 0, field);
+        int g = readColorChannel(array, 1, field);
+        int b = readColorChannel(array, 2, field);
         return (r << 16) | (g << 8) | b;
     }
 
-    private static int clampColor(int channel) {
-        return Math.max(0, Math.min(255, channel));
+    private static int readColorChannel(JsonArray array, int index, String field) {
+        int channel = array.get(index).getAsInt();
+        if (channel < 0 || channel > 255) {
+            throw new IllegalArgumentException(field + " channel out of range: " + channel);
+        }
+        return channel;
     }
 
     public record ParseResult(ZoneEnvironmentState state, String error) {

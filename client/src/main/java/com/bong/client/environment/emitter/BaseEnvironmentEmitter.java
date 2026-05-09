@@ -3,13 +3,11 @@ package com.bong.client.environment.emitter;
 import com.bong.client.environment.EmitterBehavior;
 import com.bong.client.environment.EnvironmentEffect;
 import com.bong.client.environment.EnvironmentParticleHelper;
-import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.Vec3d;
 
 abstract class BaseEnvironmentEmitter implements EmitterBehavior {
     @Override
     public final void onTickInRadius(
-        MatrixStack stack,
         Vec3d playerPos,
         EnvironmentEffect effect,
         float deltaTick
@@ -19,7 +17,6 @@ abstract class BaseEnvironmentEmitter implements EmitterBehavior {
 
     @Override
     public final void onTickInRadius(
-        MatrixStack stack,
         Vec3d playerPos,
         EnvironmentEffect effect,
         float alpha,

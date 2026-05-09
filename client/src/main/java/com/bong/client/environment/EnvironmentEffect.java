@@ -45,6 +45,10 @@ public sealed interface EnvironmentEffect
         return viewRadius();
     }
 
+    default double renderIntensity() {
+        return 1.0;
+    }
+
     record TornadoColumn(
         double centerX,
         double centerY,
@@ -70,7 +74,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + centerX + "," + centerY + "," + centerZ + "," + radius + "," + height + "," + particleDensity;
+            return kind() + ":" + centerX + "," + centerY + "," + centerZ + "," + radius + "," + height;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return particleDensity;
         }
 
         @Override
@@ -117,7 +126,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + centerX + "," + centerY + "," + centerZ + "," + radius + "," + strikeRatePerMin;
+            return kind() + ":" + centerX + "," + centerY + "," + centerZ + "," + radius;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return Math.max(0.25, strikeRatePerMin / 2.0);
         }
 
         @Override
@@ -154,7 +168,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ + "," + density;
+            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return density;
         }
 
         @Override
@@ -200,7 +219,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ + "," + tintRgb + "," + density;
+            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return density;
         }
 
         @Override
@@ -283,7 +307,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ + "," + density + "," + glow;
+            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return Math.max(density, glow);
         }
 
         @Override
@@ -328,7 +357,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ + "," + distortionStrength;
+            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return distortionStrength;
         }
 
         @Override
@@ -376,7 +410,12 @@ public sealed interface EnvironmentEffect
 
         @Override
         public String stableKey() {
-            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ + "," + density + "," + windX + "," + windY + "," + windZ;
+            return kind() + ":" + minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ;
+        }
+
+        @Override
+        public double renderIntensity() {
+            return density;
         }
 
         @Override
