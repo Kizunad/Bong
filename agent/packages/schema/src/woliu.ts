@@ -12,6 +12,13 @@ export const VortexFieldStateV1 = Type.Object(
     env_qi_at_cast: Type.Number({ minimum: -1, maximum: 1 }),
     maintain_remaining_ticks: Type.Integer({ minimum: 0 }),
     intercepted_count: Type.Integer({ minimum: 0 }),
+    active_skill_id: Type.String(),
+    charge_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    cooldown_until_ms: Type.Integer({ minimum: 0 }),
+    backfire_level: Type.String(),
+    turbulence_radius: Type.Number({ minimum: 0 }),
+    turbulence_intensity: Type.Number({ minimum: 0, maximum: 1 }),
+    turbulence_until_ms: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
 );

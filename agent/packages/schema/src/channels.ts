@@ -146,6 +146,15 @@ export const CHANNELS = {
   /** Server → Agent: 截脉 v2 五招叙事事件 */
   ZHENMAI_SKILL_EVENT: "bong:zhenmai/skill_event",
 
+  /** Server → Agent: 涡流 v2 五招 cast 流水（plan-woliu-v2 P3） */
+  WOLIU_V2_CAST: "bong:woliu_v2/cast",
+
+  /** Server → Agent: 涡流 v2 反噬分级流水（plan-woliu-v2 P3） */
+  WOLIU_V2_BACKFIRE: "bong:woliu_v2/backfire",
+
+  /** Server → Agent: 涡流 v2 紊流场生成/叙事流水（plan-woliu-v2 P3） */
+  WOLIU_V2_TURBULENCE: "bong:woliu_v2/turbulence",
+
   /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
   DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
 
@@ -312,6 +321,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.WOLIU_BACKFIRE,
   CHANNELS.WOLIU_PROJECTILE_DRAINED,
   CHANNELS.WOLIU_VORTEX_STATE,
+  CHANNELS.WOLIU_V2_CAST,
+  CHANNELS.WOLIU_V2_BACKFIRE,
+  CHANNELS.WOLIU_V2_TURBULENCE,
   CHANNELS.YIDAO_EVENT,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,

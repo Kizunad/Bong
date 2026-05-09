@@ -48,6 +48,7 @@ pub mod tuike;
 pub mod vfx_event;
 pub mod void_actions;
 pub mod woliu;
+pub mod woliu_v2;
 pub mod world_state;
 pub mod yidao;
 pub mod zhenmai_v2;

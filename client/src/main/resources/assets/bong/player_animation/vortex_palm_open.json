@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "vortex_palm_open",
+  "description": "woliu-v2 palm opens outward, wrist sinks, torso compresses around a low-pressure center.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 12,
+    "stopTick": 15,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.45, "yaw": -0.18, "roll": -0.10, "bend": 0.85, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.45, "yaw": 0.18, "roll": 0.10, "bend": 0.85, "axis": 3.1415927 } },
+      { "tick": 5, "easing": "INOUTSINE", "body": { "y": -0.045, "z": -0.035 } },
+      { "tick": 5, "easing": "INOUTSINE", "torso": { "pitch": -0.08 } },
+      { "tick": 5, "easing": "INOUTSINE", "head": { "pitch": 0.08 } },
+      { "tick": 5, "easing": "INOUTSINE", "rightArm": { "pitch": -1.05, "yaw": -0.35, "roll": -0.32, "bend": 1.20, "axis": 3.1415927 } },
+      { "tick": 5, "easing": "INOUTSINE", "leftArm": { "pitch": -1.05, "yaw": 0.35, "roll": 0.32, "bend": 1.20, "axis": 3.1415927 } },
+      { "tick": 12, "easing": "OUTSINE", "body": { "y": -0.025, "z": 0.02 } },
+      { "tick": 12, "easing": "OUTSINE", "torso": { "pitch": 0.06 } },
+      { "tick": 12, "easing": "OUTSINE", "rightArm": { "pitch": -0.92, "yaw": -0.48, "roll": -0.55, "bend": 0.72, "axis": 3.1415927 } },
+      { "tick": 12, "easing": "OUTSINE", "leftArm": { "pitch": -0.92, "yaw": 0.48, "roll": 0.55, "bend": 0.72, "axis": 3.1415927 } }
+    ]
+  }
+}

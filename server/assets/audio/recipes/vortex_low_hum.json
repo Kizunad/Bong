@@ -1,0 +1,10 @@
+{
+  "id": "vortex_low_hum",
+  "layers": [
+    { "sound": "minecraft:block.beacon.activate", "volume": 0.5, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.wither.hurt", "volume": 0.2, "pitch": 0.5, "delay_ticks": 2 }
+  ],
+  "priority": 62,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

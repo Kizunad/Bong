@@ -409,6 +409,9 @@ pub fn register(app: &mut App) {
             anqi_event_bridge::publish_qi_injection_events,
             anqi_event_bridge::publish_echo_fractal_events,
             anqi_event_bridge::publish_container_events,
+            woliu_event_bridge::publish_woliu_v2_cast_events,
+            woliu_event_bridge::publish_woliu_v2_backfire_events,
+            woliu_event_bridge::publish_woliu_v2_turbulence_events,
         ),
     );
     app.add_systems(
@@ -487,6 +490,7 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_tribulation_animation_triggers
                 .after(crate::cultivation::tribulation::start_tribulation_system)
                 .after(crate::cultivation::tribulation::tribulation_failure_system),
+            vfx_animation_trigger::emit_woliu_v2_visual_triggers,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
@@ -501,6 +505,7 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_forge_audio_triggers,
             audio_trigger::emit_botany_audio_triggers,
             audio_trigger::emit_lingtian_audio_triggers,
+            audio_trigger::emit_woliu_v2_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),

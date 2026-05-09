@@ -15,6 +15,7 @@ use valence::prelude::{
 
 use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
+use crate::combat::woliu_v2::state::TurbulenceExposure;
 use crate::cultivation::full_power_strike::Exhausted;
 use crate::qi_physics::regen_from_zone;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -63,6 +64,7 @@ pub fn qi_regen_and_zone_drain_tick(
         Option<&LifespanComponent>,
         Option<&StatusEffects>,
         Option<&Exhausted>,
+        Option<&TurbulenceExposure>,
     )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -81,6 +83,7 @@ pub fn qi_regen_and_zone_drain_tick(
         lifespan,
         statuses,
         exhausted,
+        turbulence,
     ) in players.iter_mut()
     {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
@@ -137,9 +140,15 @@ pub fn qi_regen_and_zone_drain_tick(
             .map(|state| state.qi_recovery_modifier)
             .unwrap_or(1.0)
             .clamp(0.05, 1.0);
+        let turbulence_multiplier = turbulence
+            .map(|exposure| exposure.absorption_multiplier())
+            .unwrap_or(1.0);
         let (gain, drain) = compute_regen(
             zone.spirit_qi,
-            rate * wind_candle_multiplier * humility_multiplier * exhausted_multiplier,
+            rate * wind_candle_multiplier
+                * humility_multiplier
+                * exhausted_multiplier
+                * turbulence_multiplier,
             avg_integrity,
             qi_room,
         );
@@ -391,6 +400,44 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert!((exhausted_qi - normal_qi * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn turbulence_exposure_blocks_qi_regen() {
+        fn run_once(turbulence: Option<crate::combat::woliu_v2::state::TurbulenceExposure>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if let Some(exposure) = turbulence {
+                entity.insert(exposure);
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let normal_qi = run_once(None);
+        let turbulent_qi = run_once(Some(
+            crate::combat::woliu_v2::state::TurbulenceExposure::new(Entity::from_raw(99), 1.0, 1),
+        ));
+
+        assert!(normal_qi > 0.0);
+        assert_eq!(turbulent_qi, 0.0);
     }
 
     #[test]

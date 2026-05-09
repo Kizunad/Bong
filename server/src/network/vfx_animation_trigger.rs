@@ -8,6 +8,7 @@ use valence::prelude::{Client, EventReader, EventWriter, Position, Query, Unique
 
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
+use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed};
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -21,6 +22,7 @@ const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
 const ANIM_HIT_RECOIL: &str = "bong:hit_recoil";
 const ANIM_BREAKTHROUGH_BURST: &str = "bong:breakthrough_burst";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
+const WOLIU_PRIORITY: u16 = 1300;
 
 const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
@@ -141,6 +143,45 @@ pub fn emit_tribulation_animation_triggers(
             &players,
             &mut vfx_events,
         );
+    }
+}
+
+pub fn emit_woliu_v2_visual_triggers(
+    mut casts: EventReader<VortexCastEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in casts.read() {
+        emit_play_for_entity(
+            event.caster,
+            event.visual.animation_id,
+            WOLIU_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+        vfx_events.send(VfxEventRequest::new(
+            event.center,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: event.visual.particle_id.to_string(),
+                origin: [event.center.x, event.center.y, event.center.z],
+                direction: None,
+                color: Some(color_for_woliu_skill(event.skill).to_string()),
+                strength: Some(event.turbulence_radius.clamp(0.0, 30.0) / 30.0),
+                count: Some(12),
+                duration_ticks: Some(42),
+            },
+        ));
+    }
+}
+
+fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
+    match skill {
+        WoliuSkillId::Hold => "#244872",
+        WoliuSkillId::Burst => "#4078A8",
+        WoliuSkillId::Mouth => "#1E2440",
+        WoliuSkillId::Pull => "#382058",
+        WoliuSkillId::Heart => "#100818",
     }
 }
 

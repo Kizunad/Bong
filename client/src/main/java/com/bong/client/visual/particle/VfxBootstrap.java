@@ -48,5 +48,6 @@ public final class VfxBootstrap {
             new net.minecraft.util.Identifier("bong", "jiemai_sever_flash"),
             new SwordQiSlashPlayer()
         );
+        registry.register(VortexSpiralPlayer.EVENT_ID,           new VortexSpiralPlayer());
     }
 }

@@ -12739,7 +12739,14 @@
         "delta",
         "env_qi_at_cast",
         "maintain_remaining_ticks",
-        "intercepted_count"
+        "intercepted_count",
+        "active_skill_id",
+        "charge_progress",
+        "cooldown_until_ms",
+        "backfire_level",
+        "turbulence_radius",
+        "turbulence_intensity",
+        "turbulence_until_ms"
       ],
       "properties": {
         "v": {
@@ -12793,6 +12800,34 @@
           "type": "integer"
         },
         "intercepted_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "active_skill_id": {
+          "type": "string"
+        },
+        "charge_progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "cooldown_until_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "backfire_level": {
+          "type": "string"
+        },
+        "turbulence_radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "turbulence_intensity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "turbulence_until_ms": {
           "minimum": 0,
           "type": "integer"
         }

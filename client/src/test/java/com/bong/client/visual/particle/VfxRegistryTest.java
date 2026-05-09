@@ -141,6 +141,8 @@ public class VfxRegistryTest {
             "bootstrap should register zhenmai neutralize dust");
         assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_sever_flash")),
             "bootstrap should register zhenmai sever flash");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.EVENT_ID),
+            "bootstrap should register vortex_spiral");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 

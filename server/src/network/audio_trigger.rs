@@ -10,6 +10,7 @@ use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
 use crate::botany::components::HarvestTerminalEvent;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::CombatEvent;
+use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::LifeRecord;
@@ -354,6 +355,28 @@ pub fn emit_lingtian_audio_triggers(
     }
     for event in replenishes.read() {
         emit_play_at_block(&mut audio, "plot_replenish", event.player, event.pos, 1.0);
+    }
+}
+
+pub fn emit_woliu_v2_audio_triggers(
+    mut casts: EventReader<VortexCastEvent>,
+    positions: Query<&Position>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for event in casts.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|position| position.get())
+            .unwrap_or(event.center);
+        emit_play(
+            &mut audio,
+            event.visual.sound_recipe_id,
+            event.caster,
+            origin,
+            Some(event.skill.as_str().to_string()),
+            1.0,
+            0.0,
+        );
     }
 }
 

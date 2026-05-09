@@ -34,6 +34,7 @@ public final class BongParticles {
     public static final DefaultParticleType ENLIGHTENMENT_DUST  = FabricParticleTypes.simple();
     public static final DefaultParticleType TRIBULATION_SPARK   = FabricParticleTypes.simple();
     public static final DefaultParticleType FLYING_SWORD_TRAIL  = FabricParticleTypes.simple();
+    public static final DefaultParticleType VORTEX_SPIRAL       = FabricParticleTypes.simple();
 
     // SpriteProvider 缓存，由 Factory 注册回调注入，VfxPlayer 通过它取 sprite。
     public static volatile SpriteProvider swordQiTrailSprites;
@@ -45,6 +46,7 @@ public final class BongParticles {
     public static volatile SpriteProvider enlightenmentDustSprites;
     public static volatile SpriteProvider tribulationSparkSprites;
     public static volatile SpriteProvider flyingSwordTrailSprites;
+    public static volatile SpriteProvider vortexSpiralSprites;
 
     private BongParticles() {
     }
@@ -60,6 +62,7 @@ public final class BongParticles {
         reg("enlightenment_dust",  ENLIGHTENMENT_DUST);
         reg("tribulation_spark",   TRIBULATION_SPARK);
         reg("flying_sword_trail",  FLYING_SWORD_TRAIL);
+        reg("vortex_spiral",       VORTEX_SPIRAL);
     }
 
     /** Client 侧：注册 Factory，抓住 SpriteProvider 引用。 */
@@ -74,6 +77,7 @@ public final class BongParticles {
         pfr.register(QI_AURA,             provider -> { qiAuraSprites            = provider; return spriteFactory(provider); });
         pfr.register(RUNE_CHAR,           provider -> { runeCharSprites          = provider; return spriteFactory(provider); });
         pfr.register(ENLIGHTENMENT_DUST,  provider -> { enlightenmentDustSprites = provider; return spriteFactory(provider); });
+        pfr.register(VORTEX_SPIRAL,       provider -> { vortexSpiralSprites      = provider; return vortexSpiralFactory(provider); });
     }
 
     private static void reg(String id, DefaultParticleType type) {
@@ -109,6 +113,14 @@ public final class BongParticles {
     private static net.minecraft.client.particle.ParticleFactory<DefaultParticleType> spriteFactory(SpriteProvider provider) {
         return (type, world, x, y, z, vx, vy, vz) -> {
             BongSpriteParticle p = new BongSpriteParticle(world, x, y, z, vx, vy, vz);
+            p.setSpritePublic(provider.getSprite(world.random));
+            return p;
+        };
+    }
+
+    private static net.minecraft.client.particle.ParticleFactory<DefaultParticleType> vortexSpiralFactory(SpriteProvider provider) {
+        return (type, world, x, y, z, vx, vy, vz) -> {
+            VortexSpiralParticle p = new VortexSpiralParticle(world, x, y, z, vx, vy, vz, x, y, z);
             p.setSpritePublic(provider.getSprite(world.random));
             return p;
         };

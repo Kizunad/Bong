@@ -23,6 +23,7 @@ pub mod style_telemetry;
 pub mod tuike;
 pub mod weapon;
 pub mod woliu;
+pub mod woliu_v2;
 pub mod yidao;
 pub mod zhenmai_v2;
 
@@ -190,6 +191,7 @@ pub fn register(app: &mut App) {
     );
     woliu::register(app);
     yidao::register(app);
+    woliu_v2::register(app);
     zhenmai_v2::register(app);
 
     app.add_systems(

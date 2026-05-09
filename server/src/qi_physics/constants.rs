@@ -14,6 +14,20 @@ pub const QI_NEGATIVE_FIELD_K: f64 = 1.0;
 pub const QI_NEGATIVE_FIELD_MIN_RADIUS_BLOCKS: f64 = 1.0;
 /// worldview §四：涡流反向获利上限。
 pub const QI_DRAIN_CLAMP: f64 = 0.50;
+/// plan-woliu-v2 §0/#4：涡流搅拌器默认吸入比例，保留给后续 telemetry 校准。
+pub const VORTEX_ABSORPTION_RATIO_BASE: f64 = 0.01;
+/// plan-woliu-v2 §0：涡流搅拌器默认甩回环境比例。
+pub const VORTEX_SWIRL_RATIO_BASE: f64 = 0.99;
+/// plan-woliu-v2 §0：紊流场基础自然耗散率（每秒）。
+pub const VORTEX_TURBULENCE_DECAY_PER_SEC: f64 = 0.05;
+/// plan-woliu-v2 §0：紊流场内灵物/丹材保质期加速倍率。
+pub const VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER: f64 = 3.0;
+/// plan-woliu-v2 §0：紊流场内静坐修炼吸收倍率。
+pub const VORTEX_TURBULENCE_ABSORPTION_MULTIPLIER: f64 = 0.0;
+/// plan-woliu-v2 §0：紊流场内战斗真元注入精度倍率。
+pub const VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER: f64 = 0.5;
+/// plan-woliu-v2 §0：紊流场内护体真气额外消耗比例。
+pub const VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS: f64 = 0.20;
 /// worldview §九：骨币半衰参考，约 13 天。
 pub const QI_HALFLIFE_REFERENCE_DAYS: f64 = 13.0;
 /// plan-shelflife-v1：死域保质期衰减倍率，保持旧曲线三倍加速。
@@ -78,3 +92,17 @@ pub const QI_ZHENMAI_PARRY_RECOVERY_TICKS: u64 = 10;
 pub const QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER: f32 = 0.7;
 /// 数值断言默认容忍度。
 pub const QI_EPSILON: f64 = 1e-6;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vortex_stir_ratios_close_conservation_budget() {
+        let total = VORTEX_ABSORPTION_RATIO_BASE + VORTEX_SWIRL_RATIO_BASE;
+        assert!(
+            (total - 1.0).abs() < 1e-12,
+            "woliu stir ratios must sum to 1.0 for qi conservation, got {total}"
+        );
+    }
+}
