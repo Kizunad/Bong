@@ -58,24 +58,25 @@ SPAWN_PLAIN_DECORATIONS = (
         kind="flower",
         blocks=("grass",),
         size_range=(1, 1),
-        rarity=0.75,
-        notes="草甸短草：spawn 平原最常见的地表覆盖。",
+        rarity=0.20,
+        notes="草甸短草：末法新手平原零星点缀（rarity 从 0.75 → 0.20，原值"
+              "vanilla 草甸般密集，违和）。",
     ),
     DecorationSpec(
         name="meadow_dandelion",
         kind="flower",
         blocks=("dandelion",),
         size_range=(1, 1),
-        rarity=0.30,
-        notes="蒲公英：草甸点缀。",
+        rarity=0.08,
+        notes="蒲公英：偶现点缀（原 0.30 → 0.08）。",
     ),
     DecorationSpec(
         name="meadow_poppy",
         kind="flower",
         blocks=("poppy",),
         size_range=(1, 1),
-        rarity=0.25,
-        notes="虞美人：花林群系点缀。",
+        rarity=0.06,
+        notes="虞美人：花林群系点缀（原 0.25 → 0.06）。",
     ),
     # Fallen log + grave mound — 半成品视觉装饰，用 ground_cover_id 引用
     DecorationSpec(
@@ -399,11 +400,11 @@ def fill_spawn_plain_tile(
     gc_dandelion = global_decoration_id("spawn_plain", 6)
     gc_poppy = global_decoration_id("spawn_plain", 7)
 
-    # 草甸密度中（0.30 + 0.20·heartland）。配合 server 端 cluster gate 与
-    # rarity 0.75，最终 visible 密度约 25–35%，足以"看着是草甸"但不刺眼。
-    # 水塘 / 非土质表面（podzol/gravel/coarse_dirt）上不长。
-    gc_density = np.clip(0.30 + heartland * 0.20 + inner_meadow * 0.05, 0.0, 0.55)
-    gc_density = np.where(lingquan_bump > 0.0, np.maximum(gc_density, 0.45), gc_density)
+    # 末法新手平原：草甸稀疏感（不是 vanilla 一片绿）。原 0.30-0.55 配合
+    # rarity 0.75 太密，回退至 0.05-0.15；lingquan_bump 周围保留小幅抬升做
+    # 灵泉环绕 hint。
+    gc_density = np.clip(0.05 + heartland * 0.08 + inner_meadow * 0.02, 0.0, 0.15)
+    gc_density = np.where(lingquan_bump > 0.0, np.maximum(gc_density, 0.20), gc_density)
     on_grass = (surface_id == grass_id) | (surface_id == podzol_id)
     gc_density = np.where(on_grass, gc_density, 0.0)
     gc_density = np.where(water_level >= 0.0, 0.0, gc_density)

@@ -217,7 +217,9 @@ def fill_wilderness_tile(
         gc_dandelion = global_decoration_id("wilderness", 3)
 
         gc_cloud = fbm_2d(wx, wz, scale=140.0, octaves=3, seed=911)
-        gc_density = np.clip(0.55 + gc_cloud * 0.20, 0.0, 0.85)
+        # 末法荒野：草本极稀疏，cluster gate 配合呈零星点缀（之前 0.55-0.85
+        # 像普通 vanilla 草甸，违和）。
+        gc_density = np.clip(0.10 + gc_cloud * 0.10, 0.0, 0.20)
         gc_density = np.where(scar > 0.82, 0.0, gc_density)
         gc_density = np.where(drainage < 0.09, gc_density * 0.4, gc_density)
         # 只在 grass/coarse 表面铺，gravel/stone 表面不长（surface_id 已经定）
