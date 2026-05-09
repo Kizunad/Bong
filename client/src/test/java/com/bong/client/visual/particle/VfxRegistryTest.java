@@ -125,6 +125,16 @@ public class VfxRegistryTest {
             "bootstrap should register realm_collapse_boundary");
         assertTrue(VfxRegistry.instance().contains(FrostBreathPlayer.EVENT_ID),
             "bootstrap should register frost_breath");
+        assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MERIDIAN_REPAIR),
+            "bootstrap should register yidao_meridian_repair");
+        assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.CONTAM_PURGE),
+            "bootstrap should register yidao_contam_purge");
+        assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.EMERGENCY_RESUSCITATE),
+            "bootstrap should register yidao_emergency_resuscitate");
+        assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.LIFE_EXTENSION),
+            "bootstrap should register yidao_life_extension");
+        assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR),
+            "bootstrap should register yidao_mass_meridian_repair");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 
