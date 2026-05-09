@@ -143,6 +143,9 @@ export const CHANNELS = {
   /** Server → Client/Agent: 涡流持涡 HUD 状态（plan-woliu-v1 §8） */
   WOLIU_VORTEX_STATE: "bong:woliu/vortex_state",
 
+  /** Server → Agent: 截脉 v2 五招叙事事件 */
+  ZHENMAI_SKILL_EVENT: "bong:zhenmai/skill_event",
+
   /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
   DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
 
@@ -333,6 +336,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ALCHEMY_INSIGHT,
   CHANNELS.WANTED_PLAYER,
   CHANNELS.MERIDIAN_SEVERED,
+  CHANNELS.ZHENMAI_SKILL_EVENT,
   CHANNELS.CRAFT_OUTCOME,
   CHANNELS.CRAFT_RECIPE_UNLOCKED,
 ] as const;

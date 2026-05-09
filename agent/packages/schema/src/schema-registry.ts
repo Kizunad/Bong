@@ -318,6 +318,7 @@ import {
   VortexBackfireEventV1,
   VortexFieldStateV1,
 } from "./woliu.js";
+import { ZhenmaiSkillEventV1 } from "./zhenmai-v2.js";
 import {
   HealerNpcAiStateV1,
   MedicalContractStateV1,
@@ -572,6 +573,7 @@ export const SCHEMA_REGISTRY = {
   vortexFieldStateV1: VortexFieldStateV1,
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
+  zhenmaiSkillEventV1: ZhenmaiSkillEventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
   duguPoisonStateV1: DuguPoisonStateV1,
   duguPoisonProgressEventV1: DuguPoisonProgressEventV1,

@@ -46,6 +46,7 @@ export * from "./woliu.js";
 export * from "./world-state.js";
 export * from "./yidao.js";
 export * from "./zone-pressure.js";
+export * from "./zhenmai-v2.js";
 export * from "./zong-formation.js";
 
 // Validation & registry
