@@ -4,7 +4,16 @@ import { CHANNELS } from "@bong/schema";
 import { AnqiNarrationRuntime, type AnqiNarrationRuntimeClient } from "../src/anqi-narration.js";
 import type { LlmClient } from "../src/llm.js";
 
-const { AGENT_NARRATE, ANQI_CARRIER_IMPACT, ANQI_PROJECTILE_DESPAWNED } = CHANNELS;
+const {
+  AGENT_NARRATE,
+  ANQI_CARRIER_IMPACT,
+  ANQI_PROJECTILE_DESPAWNED,
+  ANQI_MULTI_SHOT,
+  ANQI_QI_INJECTION,
+  ANQI_ECHO_FRACTAL,
+  ANQI_CARRIER_ABRASION,
+  ANQI_CONTAINER_SWAP,
+} = CHANNELS;
 
 class FakePubSub implements AnqiNarrationRuntimeClient {
   public published: Array<{ channel: string; message: string }> = [];
@@ -59,7 +68,15 @@ describe("AnqiNarrationRuntime", () => {
 
     await runtime.connect();
 
-    expect(sub.subscribedChannels).toEqual([ANQI_CARRIER_IMPACT, ANQI_PROJECTILE_DESPAWNED]);
+    expect(sub.subscribedChannels).toEqual([
+      ANQI_CARRIER_IMPACT,
+      ANQI_PROJECTILE_DESPAWNED,
+      ANQI_MULTI_SHOT,
+      ANQI_QI_INJECTION,
+      ANQI_ECHO_FRACTAL,
+      ANQI_CARRIER_ABRASION,
+      ANQI_CONTAINER_SWAP,
+    ]);
   });
 
   it("publishes LLM narration for a carrier impact", async () => {
@@ -134,5 +151,98 @@ describe("AnqiNarrationRuntime", () => {
     expect(String(envelope.narrations[0].text)).toContain("射空");
     expect(runtime.stats.llmFailures).toBe(1);
     expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("falls back for anqi-v2 echo fractal events", async () => {
+    const pub = new FakePubSub();
+    const runtime = new AnqiNarrationRuntime({
+      llm: {
+        async chat() {
+          throw new Error("offline");
+        },
+      },
+      model: "mock",
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      ANQI_ECHO_FRACTAL,
+      JSON.stringify({
+        caster: "entity:void",
+        carrier_kind: "shanggu_bone",
+        local_qi_density: 9,
+        threshold: 0.3,
+        echo_count: 30,
+        damage_per_echo: 2,
+        tick: 240,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0].target).toBe("anqi:echo|caster:entity:void|tick:240");
+    expect(String(envelope.narrations[0].text)).toContain("30 支 echo");
+  });
+
+  it("falls back with a valid narration contract for container abrasion", async () => {
+    const pub = new FakePubSub();
+    const runtime = new AnqiNarrationRuntime({
+      llm: {
+        async chat() {
+          throw new Error("offline");
+        },
+      },
+      model: "mock",
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      ANQI_CARRIER_ABRASION,
+      JSON.stringify({
+        carrier: "entity:needle",
+        container: "quiver",
+        direction: "store",
+        lost_qi: 2.5,
+        after_qi: 47.5,
+        tick: 260,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toMatchObject({
+      scope: "broadcast",
+      target: "anqi:abrasion|carrier:entity:needle|tick:260",
+      style: "system_warning",
+    });
+  });
+
+  it("rejects malformed anqi-v2 payloads", async () => {
+    const pub = new FakePubSub();
+    const runtime = new AnqiNarrationRuntime({
+      llm: makeLlm(""),
+      model: "mock",
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      ANQI_QI_INJECTION,
+      JSON.stringify({
+        caster: "entity:a",
+        skill: "unknown",
+      }),
+    );
+
+    expect(pub.published).toHaveLength(0);
+    expect(runtime.stats.rejectedContract).toBe(1);
   });
 });
