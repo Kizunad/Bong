@@ -522,7 +522,9 @@ fn apply_yidao_effect(
             now_tick,
         );
     }
-    emit_yidao_event(world, caster, skill, now_tick, &outcome);
+    if outcome.success_count > 0 || outcome.failure_count > 0 {
+        emit_yidao_event(world, caster, skill, now_tick, &outcome);
+    }
     outcome
 }
 
@@ -641,7 +643,13 @@ fn apply_emergency_resuscitate(
     let Ok(calc) = emergency_stabilize(cultivation.qi_max, hp_max, mastery) else {
         return YidaoApplyOutcome::default();
     };
-    if !debit_caster_qi(world, caster, calc.qi_cost) {
+    let valid_lifecycle = world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
+        lifecycle.state == LifecycleState::NearDeath
+            && lifecycle.last_death_tick.is_some_and(|death_tick| {
+                now_tick <= death_tick.saturating_add(calc.dying_window_ticks)
+            })
+    });
+    if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost) {
         return YidaoApplyOutcome::default();
     }
     let mut restored = 0.0_f32;
@@ -654,14 +662,7 @@ fn apply_emergency_resuscitate(
         restored = wounds.health_current - before;
     }
     if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(patient) {
-        if lifecycle.state == LifecycleState::NearDeath {
-            let in_window = lifecycle.last_death_tick.is_none_or(|death_tick| {
-                now_tick <= death_tick.saturating_add(calc.dying_window_ticks)
-            });
-            if in_window {
-                lifecycle.revive(now_tick);
-            }
-        }
+        lifecycle.revive(now_tick);
     }
     emit_qi_transfer(world, caster, patient, calc.qi_cost);
     YidaoApplyOutcome {
@@ -692,7 +693,7 @@ fn apply_life_extension(
         lifecycle.state == LifecycleState::NearDeath
             && lifecycle
                 .last_death_tick
-                .is_none_or(|death_tick| now_tick <= death_tick.saturating_add(calc.window_ticks))
+                .is_some_and(|death_tick| now_tick <= death_tick.saturating_add(calc.window_ticks))
     });
     if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost.min(cultivation.qi_max)) {
         return YidaoApplyOutcome::default();
@@ -1407,6 +1408,43 @@ mod tests {
     }
 
     #[test]
+    fn emergency_resuscitate_requires_active_near_death_window() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Induce);
+        let patient = spawn_patient(&mut app);
+        app.world_mut().entity_mut(patient).insert(Wounds {
+            health_current: 0.0,
+            health_max: 100.0,
+            entries: vec![crate::combat::components::Wound {
+                location: crate::combat::components::BodyPart::Chest,
+                kind: crate::combat::components::WoundKind::Cut,
+                severity: 0.8,
+                bleeding_per_sec: 8.0,
+                created_at_tick: 90,
+                inflicted_by: None,
+            }],
+        });
+        app.world_mut().entity_mut(patient).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            last_death_tick: None,
+            ..Default::default()
+        });
+
+        let result = resolve_emergency_resuscitate_skill(app.world_mut(), medic, 2, Some(patient));
+
+        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert_eq!(
+            app.world().get::<Wounds>(patient).unwrap().health_current,
+            0.0
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(medic).unwrap().qi_current,
+            300.0
+        );
+        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
+    }
+
+    #[test]
     fn life_extension_requires_spirit_realm_and_pays_permanent_costs() {
         let mut app = app_with_yidao();
         let medic = spawn_medic(&mut app, Realm::Spirit);
@@ -1425,6 +1463,32 @@ mod tests {
         assert!(app.world().get::<Cultivation>(medic).unwrap().qi_max < 300.0);
         assert!(app.world().get::<Cultivation>(patient).unwrap().qi_max < 100.0);
         assert!(app.world().get::<Karma>(medic).unwrap().weight > 0.0);
+    }
+
+    #[test]
+    fn life_extension_requires_death_tick_before_emitting_event() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Spirit);
+        let patient = spawn_patient(&mut app);
+        app.world_mut().entity_mut(patient).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            last_death_tick: None,
+            ..Default::default()
+        });
+
+        let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(patient));
+
+        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert_eq!(
+            app.world().get::<Lifecycle>(patient).unwrap().state,
+            LifecycleState::NearDeath
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(medic).unwrap().qi_current,
+            300.0
+        );
+        assert_eq!(app.world().get::<Cultivation>(medic).unwrap().qi_max, 300.0);
+        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
     }
 
     #[test]
