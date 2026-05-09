@@ -364,7 +364,7 @@ pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
 
 - [x] caster 周围生成蓄力球粒子（半径 1 格，越蓄越大越亮）
 - [x] 周围 N 格内其他玩家可见（PVP 反制窗口的视觉提示——worldview "低境者反制时机"）
-- [x] CustomPayload `bong:charging_state` 同步：`{ caster_uuid, qi_committed, target_qi, started_tick }`
+- [x] ServerData `full_power_charging_state` 同步：`{ caster_uuid, qi_committed, target_qi, started_tick }`；VFX `bong:charging_orb` 广播给周围玩家
 - [x] 周围玩家可看到"某修士在蓄力大招"——可决策是否打断 / 逃跑 / 反制
 
 ### `ReleaseLightningVfx`（释放瞬间）
@@ -463,8 +463,8 @@ pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
 
 - `cargo fmt --check`（server）通过。
 - `cargo clippy --all-targets -- -D warnings`（server）通过。
-- `cargo test`（server，rebase 到最新 `origin/main` 后）通过：`3187 passed; 0 failed`。
-- `cargo test full_power`（server，review 修复后）通过：`15 passed; 0 failed`。
+- `cargo test`（server，rebase 到最新 `origin/main` 并处理复看意见后）通过：`3190 passed; 0 failed`。
+- `cargo test full_power`（server，review 修复后）通过：`18 passed; 0 failed`。
 - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）通过。
 - `npm run build`（agent）通过：`@bong/schema` + `@bong/tiandao` TypeScript build。
 - `npm test -w @bong/schema` 通过：`327 passed; 0 failed`。

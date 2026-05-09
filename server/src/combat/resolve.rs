@@ -4388,6 +4388,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn full_power_attack_source_uses_prepaid_qi_without_second_spend() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1550 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "FullPowerUser",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(Cultivation {
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        });
+        let target = spawn_player(
+            &mut app,
+            "FullPowerTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1549,
+            reach: FIST_REACH,
+            qi_invest: 80.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::FullPower,
+            debug_command: None,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(attacker)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            60.0,
+            "FullPower source is already paid by release handler and must not spend qi again"
+        );
+        assert!(
+            !app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "prepaid full power attack should still resolve when qi_invest exceeds remaining qi"
+        );
+    }
+
     /// 端到端验证 NPC↔NPC 互殴走 shared resolver：使用 `npc_runtime_bundle`
     /// 的真实形态（**无 LifeRecord**）双方交叉 `AttackIntent`，断言 Wounds
     /// 写入 + 致命伤触发 DeathEvent。既有测试用 test-only helper 挂了

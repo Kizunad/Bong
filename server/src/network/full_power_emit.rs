@@ -1,7 +1,8 @@
 use valence::prelude::{
-    Changed, Client, Entity, EventReader, EventWriter, Position, Query, UniqueId, With,
+    Changed, Client, Entity, EventReader, EventWriter, Position, Query, Res, UniqueId, With,
 };
 
+use crate::combat::CombatClock;
 use crate::cultivation::full_power_strike::{
     ChargeInterruptedEvent, ChargingState, Exhausted, ExhaustedExpiredEvent, FullPowerReleasedEvent,
 };
@@ -17,6 +18,8 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 const CHARGING_ORB_EVENT_ID: &str = "bong:charging_orb";
 const RELEASE_LIGHTNING_EVENT_ID: &str = "bong:release_lightning";
 const EXHAUSTED_GREY_MIST_EVENT_ID: &str = "bong:exhausted_grey_mist";
+const CHARGING_ORB_REFRESH_TICKS: u64 = 4;
+const EXHAUSTED_MIST_REFRESH_TICKS: u64 = 20;
 
 pub fn emit_full_power_charging_state_payloads(
     charging_q: Query<(Entity, &ChargingState, Option<&UniqueId>), Changed<ChargingState>>,
@@ -38,19 +41,22 @@ pub fn emit_full_power_charging_state_payloads(
         );
 
         if let Ok(position) = position_q.get(entity) {
-            let origin = position.get();
-            vfx_events.send(VfxEventRequest::new(
-                origin,
-                VfxEventPayloadV1::SpawnParticle {
-                    event_id: CHARGING_ORB_EVENT_ID.to_string(),
-                    origin: [origin.x, origin.y + 1.0, origin.z],
-                    direction: None,
-                    color: Some("#C43CFF".to_string()),
-                    strength: Some(charge_strength(charging)),
-                    count: Some(10),
-                    duration_ticks: Some(8),
-                },
-            ));
+            send_charging_orb_vfx(charging, position, &mut vfx_events);
+        }
+    }
+}
+
+pub fn emit_full_power_charged_orb_vfx(
+    clock: Res<CombatClock>,
+    charging_q: Query<(&ChargingState, &Position)>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    if clock.tick % CHARGING_ORB_REFRESH_TICKS != 0 {
+        return;
+    }
+    for (charging, position) in &charging_q {
+        if is_fully_charged(charging) {
+            send_charging_orb_vfx(charging, position, &mut vfx_events);
         }
     }
 }
@@ -142,19 +148,7 @@ pub fn emit_full_power_exhausted_state_payloads(
         );
 
         if let Ok(position) = positions.get(event.caster) {
-            let origin = position.get();
-            vfx_events.send(VfxEventRequest::new(
-                origin,
-                VfxEventPayloadV1::SpawnParticle {
-                    event_id: EXHAUSTED_GREY_MIST_EVENT_ID.to_string(),
-                    origin: [origin.x, origin.y + 0.8, origin.z],
-                    direction: None,
-                    color: Some("#7D7782".to_string()),
-                    strength: Some(0.65),
-                    count: Some(12),
-                    duration_ticks: Some(40),
-                },
-            ));
+            send_exhausted_mist_vfx(position, &mut vfx_events);
         }
     }
 
@@ -169,6 +163,22 @@ pub fn emit_full_power_exhausted_state_payloads(
             }),
             &mut clients,
         );
+    }
+}
+
+pub fn emit_full_power_exhausted_mist_refresh_vfx(
+    clock: Res<CombatClock>,
+    exhausted_q: Query<(&Exhausted, &Position)>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    if clock.tick % EXHAUSTED_MIST_REFRESH_TICKS != 0 {
+        return;
+    }
+    for (exhausted, position) in &exhausted_q {
+        if clock.tick == exhausted.started_at_tick || clock.tick >= exhausted.recovery_at_tick {
+            continue;
+        }
+        send_exhausted_mist_vfx(position, &mut vfx_events);
     }
 }
 
@@ -223,6 +233,46 @@ fn charge_strength(charging: &ChargingState) -> f32 {
         return 0.1;
     }
     (charging.qi_committed / charging.target_qi).clamp(0.1, 1.0) as f32
+}
+
+fn is_fully_charged(charging: &ChargingState) -> bool {
+    charging.target_qi > f64::EPSILON && charging.qi_committed + f64::EPSILON >= charging.target_qi
+}
+
+fn send_charging_orb_vfx(
+    charging: &ChargingState,
+    position: &Position,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: CHARGING_ORB_EVENT_ID.to_string(),
+            origin: [origin.x, origin.y + 1.0, origin.z],
+            direction: None,
+            color: Some("#C43CFF".to_string()),
+            strength: Some(charge_strength(charging)),
+            count: Some(10),
+            duration_ticks: Some(8),
+        },
+    ));
+}
+
+fn send_exhausted_mist_vfx(position: &Position, vfx_events: &mut EventWriter<VfxEventRequest>) {
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: EXHAUSTED_GREY_MIST_EVENT_ID.to_string(),
+            origin: [origin.x, origin.y + 0.8, origin.z],
+            direction: None,
+            color: Some("#7D7782".to_string()),
+            strength: Some(0.65),
+            count: Some(12),
+            duration_ticks: Some(40),
+        },
+    ));
 }
 
 #[cfg(test)]
@@ -343,6 +393,58 @@ mod tests {
                 if event.qi_released == 120.0 && event.tick == 42
         ));
         assert!(observer_payloads.is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn fully_charged_orb_vfx_refreshes_after_state_stops_changing() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 24 });
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_full_power_charged_orb_vfx);
+
+        let (caster, _helper) = spawn_mock_client(&mut app, "Caster");
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 150.0,
+            target_qi: 150.0,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn exhausted_mist_vfx_refreshes_while_exhausted() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 40 });
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_full_power_exhausted_mist_refresh_vfx);
+
+        let (caster, _helper) = spawn_mock_client(&mut app, "Caster");
+        app.world_mut().entity_mut(caster).insert(Exhausted {
+            started_at_tick: 10,
+            recovery_at_tick: 200,
+            qi_recovery_modifier: 0.5,
+            defense_modifier: 0.5,
+        });
+
+        app.update();
+
         assert_eq!(
             app.world()
                 .resource::<Events<VfxEventRequest>>()
