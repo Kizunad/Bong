@@ -11,7 +11,7 @@ pub const RESOURCE_PACK_SHA1_ENV: &str = "BONG_RESOURCE_PACK_SHA1";
 pub const RESOURCE_PACK_FORCED_ENV: &str = "BONG_RESOURCE_PACK_FORCED";
 
 pub const DEFAULT_RESOURCE_PACK_URL: &str =
-    "https://raw.githubusercontent.com/Kizunad/Bong/6b39e905d97e5f2371e69ff5cf5daf5b54d1f255/client/resourcepack/bong-mineral-v1.zip";
+    "https://raw.githubusercontent.com/Kizunad/Bong/22fd031aa13f9eda2ec382f3515f4741e8d19aa3/client/resourcepack/bong-mineral-v1.zip";
 pub const DEFAULT_RESOURCE_PACK_SHA1: &str = "4b4215c149d4202942a3fb1936f54a7e817db8b4";
 const DEFAULT_RESOURCE_PACK_PROMPT: &str =
     "Bong 矿物贴图资源包；拒绝后仍可游玩，但矿石显示为 vanilla 贴图。";
