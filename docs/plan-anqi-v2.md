@@ -1,4 +1,4 @@
-# Bong · plan-anqi-v2 · 骨架
+# Bong · plan-anqi-v2
 
 器修·暗器流功法**五招完整包**：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 载体磨损 / 多容器 / 客户端 UI 全流程。承接 `plan-anqi-v1` ✅ finished（PR + 2026-05-04 commit；P0 单射狙击 + 异变兽骨单档载体 + hand-slot 已实装）—— v2 引入**6 档载体全开**（残骨 → 异变兽骨 → 灵木 → 凝实色染色骨 → 封灵匣骨 → 上古残骨）+ **多发齐射**（散花扇形 + 凝魂注射多目标）+ **凝魂注射 / 破甲注射 / 诱饵战术** 三种新功法 + **多容器**（箭袋 / 裤袋 / 封灵匣，入囊 ↔ 出囊磨损税）+ **化虚专属诱饵分形**（worldview §P 真元浓度场扰动，一发兽骨在化虚境真元场内分裂为 N 个 echo 载体，全部独立飞行；**不是分身无敌**，是真实 N 弹道、可被范围伤害挡住任意一支）+ **5 招完整规格**（单射狙击 / 多发齐射 / 凝魂注射 / 破甲注射 / 诱饵分形），无境界 gate 只有威力门坎。
 
@@ -434,3 +434,8 @@ HUD 组件（plan-HUD-v1 接入）：
 
 - 2026-05-06：骨架创建。承接 plan-anqi-v1 ✅ finished（PR + commit 2026-05-04）。v2 范围明确：6 档载体 + 多发齐射 + 凝魂 / 破甲注射 + 化虚诱饵分形 + 多容器 + 磨损税 + 经脉依赖 + 熟练度生长。化虚专属诱饵分形走 worldview §P 真元浓度场扰动物理推导（**不是无敌分身**，30 echo 真实碰撞可被范围伤害挡住）。物资派定调（钱包代价换战场远射），与体修血肉派 / 毒蛊脏真元 / 替尸物理免疫一次性区分。
 - 2026-05-07：经脉依赖正名。原"中冲脉 / 精微脉 / 阳明脉 / 化虚通脉"四条编造名核查后**全部不在 `MeridianId` enum 标准 20 条经脉里**（`server/src/cultivation/components.rs:49-72` = 12 正经 + 8 奇经）。修订映射：② 中冲脉→`Pericardium`（中冲是心包经井穴非脉）/ ③ 精微脉→`Spleen`（水谷精微由脾运化）/ ④ 阳明脉→`LargeIntestine`（手三阳偏力）/ ⑤ 化虚通脉→`Du`（worldview §201 "化虚后 20 经脉全开"明示无第 21 条特殊脉，§597 任督=统御 → 化虚专属能力归督脉）。① 单射狙击的"手三阴之一"为 worldview §593 原话，保留。
+- **2026-05-09**：升 active（`git mv docs/plans-skeleton/plan-anqi-v2.md → docs/plan-anqi-v2.md`）。触发条件：
+  - **plan-qi-physics-patch-v1 ✅ finished**（PR #162，2026-05-08）—— ρ=0.30 + W 矩阵 + cone_dispersion / high_density_inject / armor_penetrate / density_echo / abrasion_loss 算子接入路径就位
+  - **plan-anqi-v1 ✅** + **plan-craft-v1 ✅** + **plan-meridian-severed-v1 ✅** + **plan-tsy-loot-v1 ✅** —— 6 档载体 + 5 经脉依赖 + 异变兽骨掉落全前置 ✅
+  - 用户 2026-05-09 拍板**音效/特效/HUD 区分硬约束 + 招式独立 icon**：5 招（单射狙击 / 多发齐射 / 凝魂注射 / 破甲注射 / 诱饵分形）cast 必须各自携带差异化 animation + particle + SFX + HUD 反馈（§5 已表格化，验收硬约束化）+ **hotbar/SkillBar 槽位 PNG icon 每招独立**（不同载体档位 + 容器选择也走差异化 icon —— 6 档载体 × 3 容器，即 "残骨单射" / "兽骨齐射" / "灵木凝魂" 等子状态各自 icon overlay；走 `client/.../hud/SkillSlotRenderer.java` + 新增 `LoadoutIconLayer`，资源走 `/gen-image item` 批量），化虚诱饵分形特殊处理（30 echo 视觉 = 主弹道 PNG + 半透 echo 副 sprite），P4/P5 验收必须含视觉/听觉差异化回归 + icon 显示回归 + 多容器切换暴露窗口的 HUD overlay 回归
+  - 下一步：进 P0（单射狙击 P0 校准 + ρ=0.30 接入 + 6 档载体补完 + 多容器骨架），收口 §7 七决策门

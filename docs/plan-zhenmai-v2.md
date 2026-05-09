@@ -1,4 +1,4 @@
-# Bong · plan-zhenmai-v2 · 骨架
+# Bong · plan-zhenmai-v2
 
 截脉·震爆功法**五招完整包**：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 反噬 / 客户端 UI 全流程。承接 `plan-zhenmai-v1` ✅ finished（PR #122 commit 1ae7fd88 归档；P0 极限弹反已实装于 plan-combat-no_ui）—— v2 引入**音论物理**（worldview §P 定律 5 + cultivation-0002 §音论）+ **血肉反应装甲**（worldview §五:432-436 用血条保真元）+ **化虚专属绝脉断链**（worldview §四:319 主动 SEVERED 一条经脉，60s 内对选定攻击类型**反震效率 ×3**，K_drain 破例 0.5 → 1.5；**不是免疫**，受击仍命中但反震高效）+ **5 招完整规格**（极限弹反 / 局部中和 / 多点反震 / 护脉 / 绝脉断链），无境界 gate 只有威力门坎。
 
@@ -535,3 +535,8 @@ PracticeLog 累积驱动 QiColor **暴烈色**（worldview §六:619）演化，
   - 反制 dugu 倒蚀仍可（反吸 dugu 真元 + 受伤减半），但 dugu 倒蚀的永久标记仍生效（受全额命中）
   - SelectiveImmunity component 改名 BackfireAmplification，移除"全免疫 flag"
   - SelectiveImmunityActiveEvent 改名 BackfireAmplificationActiveEvent
+- **2026-05-09**：升 active（`git mv docs/plans-skeleton/plan-zhenmai-v2.md → docs/plan-zhenmai-v2.md`）。触发条件：
+  - **plan-qi-physics-patch-v1 ✅ finished**（PR #162，2026-05-08）—— W 矩阵 + R_jiemai + β=0.6 + SEVERED 写入 MeridianSystem 全部底盘就位
+  - **plan-meridian-severed-v1 ✅ finished** + **plan-cultivation-canonical-align-v1 ✅** + **plan-skill-v1 ✅** —— 经脉拓扑 / SEVERED 持久化 / 熟练度生长机制全前置 ✅
+  - 用户 2026-05-09 拍板**音效/特效/HUD 区分硬约束 + 招式独立 icon**：5 招（极限弹反 / 局部中和 / 多点反震 / 护脉 / 绝脉断链）cast 必须各自携带差异化 animation + particle + SFX + HUD 反馈（对位 §P 音论：单点 vs 多点 vs 接触面分布的视觉物理表达），**hotbar/SkillBar 槽位 PNG icon 每招独立**（走 `client/.../hud/SkillSlotRenderer.java`，资源用 `/gen-image item` 生成，化虚级用更高分辨率 + 染色描边），P4/P5 验收必须含视觉/听觉差异化回归 + icon 显示回归
+  - 下一步：进 P0（极限弹反迁入 + R_jiemai + 反噬阶梯 SEVERED 写入），同步收口 §5 七决策门 + Finish Evidence 模板
