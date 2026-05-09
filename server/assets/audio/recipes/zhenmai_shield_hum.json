@@ -1,0 +1,10 @@
+{
+  "id": "zhenmai_shield_hum",
+  "layers": [
+    { "sound": "minecraft:block.beacon.activate", "volume": 0.4, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:block.note_block.bass", "volume": 0.2, "pitch": 0.8, "delay_ticks": 3 }
+  ],
+  "priority": 80,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

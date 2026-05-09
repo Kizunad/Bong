@@ -24,6 +24,7 @@ pub mod tuike;
 pub mod weapon;
 pub mod woliu;
 pub mod yidao;
+pub mod zhenmai_v2;
 
 use std::path::Path;
 use valence::prelude::{
@@ -189,6 +190,7 @@ pub fn register(app: &mut App) {
     );
     woliu::register(app);
     yidao::register(app);
+    zhenmai_v2::register(app);
 
     app.add_systems(
         Update,

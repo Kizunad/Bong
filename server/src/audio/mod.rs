@@ -171,14 +171,18 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            29,
-            "plan §3 MVP recipes plus narration, locust, and yidao cues should contain 29 recipes"
+            33,
+            "plan §3 MVP recipes plus narration, locust, yidao, and zhenmai-v2 cues should contain 33 recipes"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
         assert!(registry.get("tribulation_thunder_distant").is_some());
         assert!(registry.get("skill_lv_up").is_some());
         assert!(registry.get("yidao_meridian_repair").is_some());
+        assert!(registry.get("zhenmai_parry_thud").is_some());
+        assert!(registry.get("zhenmai_neutralize_hiss").is_some());
+        assert!(registry.get("zhenmai_shield_hum").is_some());
+        assert!(registry.get("zhenmai_sever_crack").is_some());
     }
 
     #[test]

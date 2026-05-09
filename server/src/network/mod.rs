@@ -62,6 +62,7 @@ pub mod woliu_event_bridge;
 pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
 pub mod yidao_state_emit;
+pub mod zhenmai_v2_event_bridge;
 pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -394,6 +395,7 @@ pub fn register(app: &mut App) {
             anqi_event_bridge::publish_projectile_despawned_events,
             woliu_event_bridge::publish_woliu_backfire_events,
             woliu_event_bridge::publish_projectile_qi_drained_events,
+            zhenmai_v2_event_bridge::publish_zhenmai_skill_events,
             dugu_event_bridge::publish_dugu_poison_progress_events
                 .after(crate::cultivation::dugu::dugu_poison_tick),
             tuike_event_bridge::publish_tuike_shed_events
