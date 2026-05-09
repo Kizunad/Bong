@@ -37,6 +37,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "spawn",
     "stamina set <value:float>",
     "summon rat",
+    "summon whale",
     "top",
     "tptree <tree:string>",
     "tpzone <zone:string>",

@@ -6,8 +6,8 @@
 
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, Entity, EventReader, Position, Query, Update, With,
-    Without,
+    bevy_ecs, App, Client, Commands, Component, Entity, EntityLayerId, EventReader, Position,
+    Query, Update, With, Without,
 };
 
 use crate::combat::events::DeathEvent;
@@ -48,15 +48,22 @@ fn pick_narration<'a>(pool: &'a [&'a str], seed: u64) -> &'a str {
 }
 
 /// 任何挂着 `WhaleSpawnNarrationPending` 的鲸 → 广播 spawn 叙事 → 清标记。
+/// 仅向同一 `EntityLayerId`（dimension）的玩家广播，避免跨维度泄露叙事。
 pub fn whale_spawn_narration_system(
     mut commands: Commands,
-    pending: Query<(Entity, &Position), With<WhaleSpawnNarrationPending>>,
-    mut clients: Query<(&Position, &mut Client), Without<WhaleSpawnNarrationPending>>,
+    pending: Query<(Entity, &Position, &EntityLayerId), With<WhaleSpawnNarrationPending>>,
+    mut clients: Query<
+        (&Position, &EntityLayerId, &mut Client),
+        Without<WhaleSpawnNarrationPending>,
+    >,
 ) {
-    for (whale, whale_pos) in &pending {
+    for (whale, whale_pos, whale_layer) in &pending {
         let line = pick_narration(&SPAWN_NARRATIONS, whale.to_bits());
         let origin = whale_pos.get();
-        for (client_pos, mut client) in clients.iter_mut() {
+        for (client_pos, client_layer, mut client) in clients.iter_mut() {
+            if client_layer.0 != whale_layer.0 {
+                continue;
+            }
             if client_pos.get().distance(origin) <= NARRATION_HEARING_RADIUS_BLOCKS {
                 client.send_chat_message(line.to_string());
             }
@@ -67,14 +74,14 @@ pub fn whale_spawn_narration_system(
     }
 }
 
-/// DeathEvent → 若死的是 FaunaTag::Whale → 广播 death 叙事。
+/// DeathEvent → 若死的是 FaunaTag::Whale → 同 layer 附近玩家广播 death 叙事。
 pub fn whale_death_narration_system(
     mut deaths: EventReader<DeathEvent>,
-    whales: Query<(&FaunaTag, &Position)>,
-    mut clients: Query<(&Position, &mut Client)>,
+    whales: Query<(&FaunaTag, &Position, &EntityLayerId)>,
+    mut clients: Query<(&Position, &EntityLayerId, &mut Client)>,
 ) {
     for event in deaths.read() {
-        let Ok((tag, whale_pos)) = whales.get(event.target) else {
+        let Ok((tag, whale_pos, whale_layer)) = whales.get(event.target) else {
             continue;
         };
         if tag.beast_kind != BeastKind::Whale {
@@ -82,7 +89,10 @@ pub fn whale_death_narration_system(
         }
         let line = pick_narration(&DEATH_NARRATIONS, event.at_tick);
         let origin = whale_pos.get();
-        for (client_pos, mut client) in clients.iter_mut() {
+        for (client_pos, client_layer, mut client) in clients.iter_mut() {
+            if client_layer.0 != whale_layer.0 {
+                continue;
+            }
             if client_pos.get().distance(origin) <= NARRATION_HEARING_RADIUS_BLOCKS {
                 client.send_chat_message(line.to_string());
             }

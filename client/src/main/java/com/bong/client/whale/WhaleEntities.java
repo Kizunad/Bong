@@ -39,20 +39,20 @@ public final class WhaleEntities {
         EntityType<WhaleEntity> type = whale();
         int rawId = Registries.ENTITY_TYPE.getRawId(type);
         if (rawId != EXPECTED_RAW_ID) {
+            // 不再 throw —— mod 加载顺序差异在不同 modpack 都可能让 raw id 偏移，
+            // 把 client 整个干掉太重；改成显著 ERROR 日志，让 whale 自己渲染错位
+            // （或不渲染），其余 mod 仍可玩。运维或修 mod 顺序即可恢复对齐。
             LOGGER.error(
-                "[bong][whale] raw_id 失配：{} 期望 {}，实际 {}。检查 BongClient 注册顺序，"
-                    + "新 EntityType 必须排在 WhaleRenderBootstrap.register() 之后。",
+                "[bong][whale] raw_id MISMATCH：{} 期望 {}，实际 {}。"
+                    + "server 的 WHALE_ENTITY_KIND 不再与本端对齐 —— 鲸将无法正确渲染/动作。"
+                    + "修复方法：检查 BongClient onInitializeClient 中 EntityType 注册顺序，"
+                    + "新 EntityType 必须排在 WhaleRenderBootstrap.register() 之后；"
+                    + "或调整 server WHALE_ENTITY_KIND 与本端 raw_id 一致。",
                 WHALE_ID,
                 EXPECTED_RAW_ID,
                 rawId
             );
-            throw new IllegalStateException(
-                "bong:whale raw_id mismatch: expected "
-                    + EXPECTED_RAW_ID
-                    + " but got "
-                    + rawId
-                    + " (server's WHALE_ENTITY_KIND will not align — refusing to start)"
-            );
+            return;
         }
         LOGGER.info(
             "[bong][whale] registered EntityType {} raw_id={} (matches server's WHALE_ENTITY_KIND)",

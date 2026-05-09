@@ -15,7 +15,7 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::entity::NoGravity;
-use valence::entity::phantom::PhantomEntityBundle;
+use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{
     bevy_ecs, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, Look, Position,
 };
@@ -170,9 +170,13 @@ pub fn spawn_whale_npc_at(
 ) -> Entity {
     let yaw_init = 0.0_f32;
     let entity = commands
-        .spawn(PhantomEntityBundle {
-            // ⚠️ 必须用自定义 EntityKind，不是 EntityKind::PHANTOM —— 否则
-            // client 会把它当 vanilla phantom 渲染（不是 GeckoLib whale）。
+        // 用 MarkerEntityBundle（最小 Entity-only bundle，无 Living/Mob/Phantom）
+        // 来匹配 client 端 `WhaleEntity extends Entity`（非 LivingEntity）。
+        // 之前用 PhantomEntityBundle 会把 phantom 专属 tracked components
+        // (PhantomEntity / Size / FlyingEntity / Mob / Living / Health 等) 一起挂上，
+        // server 序列化 metadata 时可能向 client 发未注册的 DataTracker 索引，
+        // 触发 "Data value id is too big" 协议异常。Marker 只带 base Entity 字段。
+        .spawn(MarkerEntityBundle {
             kind: WHALE_ENTITY_KIND,
             layer: EntityLayerId(layer),
             position: Position::new([home_position.x, home_position.y, home_position.z]),
@@ -250,7 +254,11 @@ mod tests {
     }
 
     #[test]
-    fn spawn_whale_uses_custom_entity_kind_not_phantom() {
+    fn spawn_whale_uses_custom_entity_kind_not_phantom_or_marker() {
+        // 鲸用 ID 125（自定义 EntityKind）：绝不能等于 vanilla phantom(71)
+        // 也不能漏过 marker(默认 bundle 的 kind)。bundle 是 MarkerEntityBundle
+        // 是为了精简 tracked components 与 client `WhaleEntity extends Entity`
+        // 对齐，但 kind 必须显式 override 成 125。
         let scenario = ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
@@ -262,10 +270,10 @@ mod tests {
         );
         app.world_mut().flush();
 
-        // 鲸用 ID 125（自定义 EntityKind），绝不能等于 vanilla EntityKind::PHANTOM(71)
         let kind = app.world().get::<EntityKind>(whale).copied();
         assert_eq!(kind, Some(WHALE_ENTITY_KIND));
         assert_ne!(kind, Some(EntityKind::PHANTOM));
+        assert_ne!(kind, Some(EntityKind::MARKER));
         assert_eq!(WHALE_ENTITY_KIND.get(), 125);
     }
 

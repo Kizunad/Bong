@@ -35,11 +35,21 @@ function exportTexture(data, mType) {
   }
   try {
     for (let t = 0; t < data["textures"].length; t++) {
-      let textureName = data["textures"][t]["name"];
-      let textureData = data["textures"][t]["source"].replace(
-        "data:image/png;base64,",
-        ""
-      );
+      const texture = data["textures"][t];
+      // 防御每条 texture 条目：bbmodel 偶尔含外链/空槽，跳过即可不要 panic
+      if (
+        !texture ||
+        typeof texture.name !== "string" ||
+        typeof texture.source !== "string" ||
+        !texture.source.startsWith("data:image/png;base64,")
+      ) {
+        console.warn(
+          "bbmodel: invalid or external texture entry at index " + t + ", skipping"
+        );
+        continue;
+      }
+      const textureName = texture.name;
+      const textureData = texture.source.slice("data:image/png;base64,".length);
       if (fs.existsSync("RP/textures/" + mType + "/") == false) {
         fs.mkdirSync("RP/textures/" + mType + "/", { recursive: true });
       }
@@ -148,7 +158,7 @@ function compileGroup(data, group) {
         console.warn("bbmodel: element with UUID " + child + " not found, skipping");
         continue;
       }
-      if (element.type !== "locator") {
+      if (element.type === "cube") {
         let cube = compileCube(data, element, bone);
         cubes.push(cube);
       } else if (element.type === "locator") {
@@ -174,6 +184,16 @@ function compileGroup(data, group) {
         } else {
           locators[key] = offset;
         }
+      } else {
+        // bbmodel 偶尔含 mesh / null_object 等非 cube/locator 类型；
+        // compileCube 会直接 deref element.to[0..2] panic，所以跳过。
+        console.warn(
+          "bbmodel: unsupported element type '" +
+            element.type +
+            "' at uuid " +
+            element.uuid +
+            ", skipping"
+        );
       }
     }
   }
