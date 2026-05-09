@@ -1,0 +1,37 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "caster_uuid",
+    "active",
+    "started_tick",
+    "recovery_at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "full_power_exhausted_state",
+      "type": "string"
+    },
+    "caster_uuid": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "started_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "recovery_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

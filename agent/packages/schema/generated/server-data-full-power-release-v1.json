@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "caster_uuid",
+    "qi_released",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "full_power_release",
+      "type": "string"
+    },
+    "caster_uuid": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_uuid": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "qi_released": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "hit_position": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    }
+  }
+}

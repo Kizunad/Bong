@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "caster_uuid",
+    "active",
+    "qi_committed",
+    "target_qi",
+    "started_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "full_power_charging_state",
+      "type": "string"
+    },
+    "caster_uuid": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "qi_committed": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "target_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "started_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

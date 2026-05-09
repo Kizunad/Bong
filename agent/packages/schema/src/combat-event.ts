@@ -37,6 +37,7 @@ export const CombatAttackSourceV1 = Type.Union([
   Type.Literal("melee"),
   Type.Literal("burst_meridian"),
   Type.Literal("qi_needle"),
+  Type.Literal("full_power"),
 ]);
 export type CombatAttackSourceV1 = Static<typeof CombatAttackSourceV1>;
 

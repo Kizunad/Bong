@@ -145,6 +145,9 @@ pub enum ServerDataType {
     AscensionQuota,
     HeartDemonOffer,
     BurstMeridianEvent,
+    FullPowerChargingState,
+    FullPowerRelease,
+    FullPowerExhaustedState,
     SocialAnonymity,
     SocialExposure,
     SocialPact,
@@ -343,6 +346,9 @@ pub enum ServerDataPayloadV1 {
     AscensionQuota(AscensionQuotaV1),
     HeartDemonOffer(HeartDemonOfferV1),
     BurstMeridianEvent(BurstMeridianEventV1),
+    FullPowerChargingState(FullPowerChargingStateV1),
+    FullPowerRelease(FullPowerReleaseV1),
+    FullPowerExhaustedState(FullPowerExhaustedStateV1),
     SocialAnonymity(SocialAnonymityPayloadV1),
     SocialExposure(SocialExposureEventV1),
     SocialPact(SocialPactEventV1),
@@ -549,6 +555,37 @@ pub struct BurstMeridianEventV1 {
     pub tick: u64,
     pub overload_ratio: f64,
     pub integrity_snapshot: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FullPowerChargingStateV1 {
+    pub caster_uuid: String,
+    pub active: bool,
+    pub qi_committed: f64,
+    pub target_qi: f64,
+    pub started_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FullPowerReleaseV1 {
+    pub caster_uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_uuid: Option<String>,
+    pub qi_released: f64,
+    pub tick: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hit_position: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FullPowerExhaustedStateV1 {
+    pub caster_uuid: String,
+    pub active: bool,
+    pub started_tick: u64,
+    pub recovery_at_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -952,6 +989,18 @@ enum ServerDataPayloadWireV1 {
     BurstMeridianEvent {
         #[serde(flatten)]
         event: BurstMeridianEventV1,
+    },
+    FullPowerChargingState {
+        #[serde(flatten)]
+        state: FullPowerChargingStateV1,
+    },
+    FullPowerRelease {
+        #[serde(flatten)]
+        event: FullPowerReleaseV1,
+    },
+    FullPowerExhaustedState {
+        #[serde(flatten)]
+        state: FullPowerExhaustedStateV1,
     },
     SocialAnonymity {
         #[serde(flatten)]
@@ -1684,6 +1733,18 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 validate_burst_meridian_event(&event)?;
                 Ok(Self::BurstMeridianEvent(event))
             }
+            ServerDataPayloadWireV1::FullPowerChargingState { state } => {
+                validate_full_power_charging_state(&state)?;
+                Ok(Self::FullPowerChargingState(state))
+            }
+            ServerDataPayloadWireV1::FullPowerRelease { event } => {
+                validate_full_power_release(&event)?;
+                Ok(Self::FullPowerRelease(event))
+            }
+            ServerDataPayloadWireV1::FullPowerExhaustedState { state } => {
+                validate_full_power_exhausted_state(&state)?;
+                Ok(Self::FullPowerExhaustedState(state))
+            }
             ServerDataPayloadWireV1::SocialAnonymity { payload } => {
                 Ok(Self::SocialAnonymity(payload))
             }
@@ -2159,6 +2220,15 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::BurstMeridianEvent(event) => Self::BurstMeridianEvent {
                 event: event.clone(),
             },
+            ServerDataPayloadV1::FullPowerChargingState(state) => Self::FullPowerChargingState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::FullPowerRelease(event) => Self::FullPowerRelease {
+                event: event.clone(),
+            },
+            ServerDataPayloadV1::FullPowerExhaustedState(state) => Self::FullPowerExhaustedState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::SocialAnonymity(payload) => Self::SocialAnonymity {
                 payload: payload.clone(),
             },
@@ -2247,6 +2317,50 @@ fn validate_burst_meridian_event(event: &BurstMeridianEventV1) -> Result<(), Str
     }
     if !event.integrity_snapshot.is_finite() || !(0.0..=1.0).contains(&event.integrity_snapshot) {
         return Err("BurstMeridianEventV1.integrity_snapshot must be finite in 0..=1".to_string());
+    }
+    Ok(())
+}
+
+fn validate_full_power_charging_state(state: &FullPowerChargingStateV1) -> Result<(), String> {
+    if state.caster_uuid.is_empty() {
+        return Err("FullPowerChargingStateV1.caster_uuid must not be empty".to_string());
+    }
+    if !state.qi_committed.is_finite() || state.qi_committed < 0.0 {
+        return Err("FullPowerChargingStateV1.qi_committed must be finite and >= 0".to_string());
+    }
+    if !state.target_qi.is_finite() || state.target_qi < 0.0 {
+        return Err("FullPowerChargingStateV1.target_qi must be finite and >= 0".to_string());
+    }
+    Ok(())
+}
+
+fn validate_full_power_release(event: &FullPowerReleaseV1) -> Result<(), String> {
+    if event.caster_uuid.is_empty() {
+        return Err("FullPowerReleaseV1.caster_uuid must not be empty".to_string());
+    }
+    if event.target_uuid.as_deref().is_some_and(str::is_empty) {
+        return Err("FullPowerReleaseV1.target_uuid must not be empty when present".to_string());
+    }
+    if !event.qi_released.is_finite() || event.qi_released < 0.0 {
+        return Err("FullPowerReleaseV1.qi_released must be finite and >= 0".to_string());
+    }
+    if event
+        .hit_position
+        .is_some_and(|pos| pos.iter().any(|v| !v.is_finite()))
+    {
+        return Err("FullPowerReleaseV1.hit_position must be finite when present".to_string());
+    }
+    Ok(())
+}
+
+fn validate_full_power_exhausted_state(state: &FullPowerExhaustedStateV1) -> Result<(), String> {
+    if state.caster_uuid.is_empty() {
+        return Err("FullPowerExhaustedStateV1.caster_uuid must not be empty".to_string());
+    }
+    if state.active && state.recovery_at_tick < state.started_tick {
+        return Err(
+            "FullPowerExhaustedStateV1.recovery_at_tick must be >= started_tick".to_string(),
+        );
     }
     Ok(())
 }
@@ -2403,6 +2517,9 @@ impl ServerDataPayloadV1 {
             Self::AscensionQuota(..) => ServerDataType::AscensionQuota,
             Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
             Self::BurstMeridianEvent(..) => ServerDataType::BurstMeridianEvent,
+            Self::FullPowerChargingState(..) => ServerDataType::FullPowerChargingState,
+            Self::FullPowerRelease(..) => ServerDataType::FullPowerRelease,
+            Self::FullPowerExhaustedState(..) => ServerDataType::FullPowerExhaustedState,
             Self::SocialAnonymity(..) => ServerDataType::SocialAnonymity,
             Self::SocialExposure(..) => ServerDataType::SocialExposure,
             Self::SocialPact(..) => ServerDataType::SocialPact,
@@ -2634,6 +2751,26 @@ mod tests {
                 tick: 12,
                 overload_ratio: 1.5,
                 integrity_snapshot: 0.9,
+            }),
+            ServerDataPayloadV1::FullPowerChargingState(FullPowerChargingStateV1 {
+                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                active: true,
+                qi_committed: 150.0,
+                target_qi: 600.0,
+                started_tick: 12,
+            }),
+            ServerDataPayloadV1::FullPowerRelease(FullPowerReleaseV1 {
+                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                target_uuid: Some("00000000-0000-0000-0000-000000000002".to_string()),
+                qi_released: 600.0,
+                tick: 24,
+                hit_position: Some([8.0, 66.0, 8.0]),
+            }),
+            ServerDataPayloadV1::FullPowerExhaustedState(FullPowerExhaustedStateV1 {
+                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                active: true,
+                started_tick: 24,
+                recovery_at_tick: 1224,
             }),
             ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
                 observer: "offline:Kiz".to_string(),
