@@ -1,5 +1,7 @@
 package com.bong.client.network;
 
+import com.bong.client.combat.UnifiedEvent;
+import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.state.NarrationState;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -43,6 +45,7 @@ public final class NarrationHandler implements ServerDataHandler {
         }
 
         List<Text> chatMessages = validNarrations.stream()
+            .filter(parsed -> parsed.chatText() != null)
             .map(ParsedNarration::chatText)
             .toList();
         NarrationState latestNarrationState = validNarrations.get(validNarrations.size() - 1).state();
@@ -94,7 +97,7 @@ public final class NarrationHandler implements ServerDataHandler {
 
         return new ParsedNarration(
             narrationState,
-            createChatText(narrationState, isKnownStyle(styleName))
+            chatTextFor(narrationState, isKnownStyle(styleName))
         );
     }
 
@@ -131,7 +134,28 @@ public final class NarrationHandler implements ServerDataHandler {
             case PERCEPTION -> prefixedText("[感知] ", Formatting.GRAY, false, narrationState.text());
             case NARRATION -> prefixedText("[叙事] ", Formatting.WHITE, false, narrationState.text());
             case ERA_DECREE -> prefixedText("[时代法旨] ", Formatting.GOLD, true, narrationState.text());
+            case POLITICAL_JIANGHU -> prefixedText("[江湖传闻] ", Formatting.DARK_AQUA, false, narrationState.text());
         };
+    }
+
+    private static Text chatTextFor(NarrationState narrationState, boolean knownStyle) {
+        if (isZonePoliticalNarration(narrationState)) {
+            UnifiedEventStore.stream().publish(
+                UnifiedEvent.Channel.SOCIAL,
+                UnifiedEvent.Priority.P2_NORMAL,
+                "political_jianghu:" + narrationState.target().orElse("zone"),
+                "[江湖传闻] " + narrationState.text(),
+                UnifiedEvent.Channel.SOCIAL.defaultColor(),
+                System.currentTimeMillis()
+            );
+            return null;
+        }
+        return createChatText(narrationState, knownStyle);
+    }
+
+    private static boolean isZonePoliticalNarration(NarrationState narrationState) {
+        return narrationState.style() == NarrationState.Style.POLITICAL_JIANGHU
+            && narrationState.scope() == NarrationState.Scope.ZONE;
     }
 
     private static Text prefixedText(String prefix, Formatting formatting, boolean boldPrefix, String body) {

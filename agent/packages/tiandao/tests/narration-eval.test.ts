@@ -11,6 +11,8 @@ import {
   scoreNarration,
   buildNarrationReport,
   parseNarrationEvaluationsFromText,
+  checkAnonymityViolation,
+  scorePoliticalNarration,
 } from "../src/narration-eval.js";
 import { DEFAULT_MODEL, runTick } from "../src/runtime.js";
 import { createZeroErrorBreakdown, type TelemetrySink, type TickMetrics } from "../src/telemetry.js";
@@ -208,5 +210,66 @@ describe("narration evaluation", () => {
     );
     expect(rendered).toContain("samples=1");
     expect(rendered).toContain("perception");
+  });
+
+  it("scores political narration with jianghu voice highly", () => {
+    const text = padNarrationWindow(
+      "江湖有传，血谷旧怨又添一笔，市井只说两名修士各自收刀入袖；云气渐低，后势未明，旁人听罢只把灯挑暗。",
+    );
+
+    const score = scorePoliticalNarration(text, {
+      unexposedIdentities: ["玄锋"],
+    });
+
+    expect(score.hasJianghuVoice).toBe(true);
+    expect(score.noModernPoliticalTerms).toBe(true);
+    expect(score.anonymityOk).toBe(true);
+    expect(score.score).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it("penalizes political narration without jianghu voice", () => {
+    const strong = padNarrationWindow(
+      "江湖有传，山川气脉今朝微偏，众修旧账渐深，后势将起；闻者不问名姓，只知灯下又多一行血字。",
+    );
+    const plain = padNarrationWindow(
+      "山川气脉今朝微偏，众修旧账渐深，后势将起；旁人不问名姓，只知灯下又多一行血字。",
+    );
+
+    expect(scorePoliticalNarration(strong).score - scorePoliticalNarration(plain).score).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it("penalizes modern political terms in political narration", () => {
+    const text = padNarrationWindow(
+      "江湖有传，某修士在山中建立政府与议会，众修将以投票定夺旧怨；市井闻者皆笑，此事后势未明。",
+    );
+
+    const score = scorePoliticalNarration(text);
+
+    expect(score.noModernPoliticalTerms).toBe(false);
+    expect(score.score).toBeLessThan(0.6);
+  });
+
+  it("penalizes naming unexposed identities but allows exposed names", () => {
+    const text = padNarrationWindow(
+      "江湖有传，玄锋之名已过诸渊，市井将把旧账添入灯下；后势未明，闻者只问此名何时再现。",
+    );
+
+    expect(checkAnonymityViolation(text, { unexposedIdentities: ["玄锋"] })).toBe(true);
+    expect(
+      scorePoliticalNarration(text, {
+        exposedIdentities: ["玄锋"],
+        unexposedIdentities: ["玄锋"],
+      }).anonymityOk,
+    ).toBe(true);
+    expect(
+      scorePoliticalNarration(text, {
+        unexposedIdentities: ["玄锋"],
+      }).score,
+    ).toBeLessThan(
+      scorePoliticalNarration(text, {
+        exposedIdentities: ["玄锋"],
+        unexposedIdentities: ["玄锋"],
+      }).score,
+    );
   });
 });

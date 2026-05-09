@@ -20,10 +20,10 @@ use crate::schema::channels::{
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
     CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
-    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
-    CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH,
-    CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
+    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT,
+    CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT,
+    CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
     CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION,
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
@@ -61,8 +61,9 @@ use crate::schema::skill::{
     SkillCapChangedPayloadV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1, SkillXpGainPayloadV1,
 };
 use crate::schema::social::{
-    NicheGuardianBrokenV1, NicheGuardianFatigueV1, NicheIntrusionEventV1, SocialExposureEventV1,
-    SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
+    HighRenownMilestoneEventV1, NicheGuardianBrokenV1, NicheGuardianFatigueV1,
+    NicheIntrusionEventV1, SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1,
+    SocialRenownDeltaV1,
 };
 use crate::schema::spirit_eye::{
     SpiritEyeDiscoveredV1, SpiritEyeMigrateV1, SpiritEyeUsedForBreakthroughV1,
@@ -149,6 +150,7 @@ pub enum RedisOutbound {
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
     NicheIntrusion(NicheIntrusionEventV1),
+    HighRenownMilestone(HighRenownMilestoneEventV1),
     NicheGuardianFatigue(NicheGuardianFatigueV1),
     NicheGuardianBroken(NicheGuardianBrokenV1),
     SpiritEyeMigrate(SpiritEyeMigrateV1),
@@ -896,6 +898,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_SOCIAL_NICHE_INTRUSION,
+                payload,
+            })
+        }
+        RedisOutbound::HighRenownMilestone(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize HighRenownMilestoneEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_HIGH_RENOWN_MILESTONE,
                 payload,
             })
         }
@@ -1650,7 +1663,7 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
     let style = expect_string_field(object, "style", context.as_str())?;
     if !matches!(
         style,
-        "system_warning" | "perception" | "narration" | "era_decree"
+        "system_warning" | "perception" | "narration" | "era_decree" | "political_jianghu"
     ) {
         return Err(ValidationError::new(format!(
             "{context}.style has unsupported value `{style}`"
@@ -1663,7 +1676,15 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
                 "{context}.kind must be a string when present"
             )));
         };
-        if kind != "death_insight" {
+        if !matches!(
+            kind,
+            "death_insight"
+                | "niche_intrusion"
+                | "niche_intrusion_by_npc"
+                | "npc_farm_pressure"
+                | "scattered_cultivator"
+                | "political_jianghu"
+        ) {
             return Err(ValidationError::new(format!(
                 "{context}.kind has unsupported value `{kind}`"
             )));
@@ -1759,7 +1780,9 @@ mod redis_bridge_tests {
     };
     use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
     use crate::schema::forge::ForgeOutcomeBucketV1;
-    use crate::schema::social::{ExposureKindV1, RenownTagV1};
+    use crate::schema::social::{
+        ExposureKindV1, HighRenownMilestoneEventTag, HighRenownMilestoneEventV1, RenownTagV1,
+    };
     use crate::schema::spirit_eye::{
         SpiritEyeMigrateReasonV1, SpiritEyeMigrateV1, SpiritEyePositionV1,
     };
@@ -2864,6 +2887,33 @@ mod redis_bridge_tests {
                 let v: Value = serde_json::from_str(payload.as_str()).unwrap();
                 assert_eq!(v["notoriety_delta"], 10);
                 assert_eq!(v["tags_added"][0]["tag"], "戮道者");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let milestone = prepare_outbound_command(RedisOutbound::HighRenownMilestone(
+            HighRenownMilestoneEventV1 {
+                v: 1,
+                event: HighRenownMilestoneEventTag::HighRenownMilestone,
+                player_uuid: "11111111-1111-1111-1111-111111111111".to_string(),
+                char_id: "offline:kiz".to_string(),
+                identity_id: 0,
+                identity_display_name: "玄锋".to_string(),
+                fame: 1000,
+                milestone: 1000,
+                identity_exposed: true,
+                tick: 24_000,
+                zone: Some("spawn".to_string()),
+            },
+        ))
+        .expect("high renown milestone should serialize");
+        match milestone {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_HIGH_RENOWN_MILESTONE);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["event"], "high_renown_milestone");
+                assert_eq!(v["identity_display_name"], "玄锋");
+                assert_eq!(v["milestone"], 1000);
             }
             other => panic!("expected publish, got {other:?}"),
         }

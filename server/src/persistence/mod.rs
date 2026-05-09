@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 19;
+const CURRENT_USER_VERSION: i32 = 20;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1401,6 +1401,31 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 20 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS high_renown_milestones (
+                player_uuid TEXT NOT NULL,
+                char_id TEXT NOT NULL,
+                identity_id INTEGER NOT NULL CHECK (identity_id >= 0),
+                milestone INTEGER NOT NULL CHECK (milestone >= 0),
+                emitted_at_tick INTEGER NOT NULL CHECK (emitted_at_tick >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (player_uuid, identity_id, milestone)
+            );
+            CREATE INDEX IF NOT EXISTS idx_high_renown_milestones_char
+            ON high_renown_milestones (char_id, identity_id, milestone);
+            ",
+        )?;
+        assert_high_renown_milestones_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 20;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1576,6 +1601,42 @@ fn assert_void_action_cooldowns_schema_ready(
             io::Error::other(format!(
                 "v19 migration completed but void_action_cooldowns primary key mismatch: expected character_id,kind got {primary_key:?}"
             )),
+        )));
+    }
+    Ok(())
+}
+
+fn assert_high_renown_milestones_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "high_renown_milestones")?;
+    let required = [
+        "player_uuid",
+        "char_id",
+        "identity_id",
+        "milestone",
+        "emitted_at_tick",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v20 migration completed but high_renown_milestones column {missing} missing"
+            )),
+        )));
+    }
+    let index_exists: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_high_renown_milestones_char'",
+        [],
+        |row| row.get(0),
+    )?;
+    if index_exists != 1 {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other("v20 migration completed but high_renown_milestones index missing"),
         )));
     }
     Ok(())

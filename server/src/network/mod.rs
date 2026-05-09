@@ -2092,6 +2092,7 @@ fn narration_style_to_wire_value(style: &NarrationStyle) -> &'static str {
         NarrationStyle::Perception => "perception",
         NarrationStyle::Narration => "narration",
         NarrationStyle::EraDecree => "era_decree",
+        NarrationStyle::PoliticalJianghu => "political_jianghu",
     }
 }
 
@@ -3039,7 +3040,7 @@ mod tests {
     mod narration_tests {
         use super::*;
         use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
-        use crate::schema::common::{NarrationScope, NarrationStyle};
+        use crate::schema::common::{NarrationKind, NarrationScope, NarrationStyle};
         use crate::schema::narration::{Narration, NarrationV1};
         use crate::skill::components::SkillId;
         use crate::world::zone::Zone;
@@ -3484,6 +3485,34 @@ mod tests {
                 payloads.len(),
                 1,
                 "duplicate narration payload should be dropped by short-window dedupe"
+            );
+        }
+
+        #[test]
+        fn duplicate_political_narration_payload_is_deduped_within_window() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (_alice, mut alice_helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            let narration = Narration {
+                scope: NarrationScope::Broadcast,
+                target: None,
+                text: "江湖有传，血谷旧怨又添一笔。".to_string(),
+                style: NarrationStyle::PoliticalJianghu,
+                kind: Some(NarrationKind::PoliticalJianghu),
+            };
+
+            enqueue_single_narration(&tx_inbound, narration.clone());
+            enqueue_single_narration(&tx_inbound, narration);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            assert_eq!(
+                payloads.len(),
+                1,
+                "duplicate political narration payload should still use the server dedupe resource"
             );
         }
     }

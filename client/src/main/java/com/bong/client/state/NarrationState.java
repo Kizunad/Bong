@@ -111,7 +111,8 @@ public final class NarrationState {
         SYSTEM_WARNING("system_warning", 5_000),
         PERCEPTION("perception", 0),
         NARRATION("narration", 0),
-        ERA_DECREE("era_decree", 8_000);
+        ERA_DECREE("era_decree", 8_000),
+        POLITICAL_JIANGHU("political_jianghu", 0);
 
         private final String wireName;
         private final int toastDurationMillis;
