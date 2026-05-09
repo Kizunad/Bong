@@ -533,20 +533,20 @@ PracticeLog 累积驱动 QiColor **暴烈色**（worldview §六:619）演化，
 
 ### 关键 commit
 
-- `896ca3d468d27b75708d237c1833fa87eb14b6fd` / 2026-05-09 / `plan-zhenmai-v2: 实装截脉五招服务端契约`
-- `2f206f2bed6f2aa81e45b4581fed472dbc9c88e7` / 2026-05-09 / `plan-zhenmai-v2: 接入截脉叙事契约`
-- `ec156b8816b485239d05b6333fe3bc6d265faf62` / 2026-05-09 / `plan-zhenmai-v2: 补齐客户端截脉反馈资产`
-- `3438bf6ab376cbd1019d407233bd39384ae73cc5` / 2026-05-09 / `test(world): 串行化 bootstrap 环境变量测试`
-- `89264ce344fd63c4310277eaa3721cb7f8581bf4` / 2026-05-09 / `归档 plan-zhenmai-v2：截脉五招闭环`
-- `ea7a1862c058a47e402290ec96f1a9e0ae228463` / 2026-05-09 / `plan-zhenmai-v2: 修复 qi_physics 与断脉依赖接入`
-- `be10f2503d636078a5e83b755c4d0f2be7985855` / 2026-05-09 / `plan-zhenmai-v2: 修复截脉 review 语义回归`
+- `ef39cc167b358fab7f1882c86f7da0f0693972a1` / 2026-05-09 / `plan-zhenmai-v2: 实装截脉五招服务端契约`
+- `a4793754a00329d51167563b650a9479795f8bdd` / 2026-05-09 / `plan-zhenmai-v2: 接入截脉叙事契约`
+- `05573dc184df7f4727d49ebcd28099841e4506ee` / 2026-05-09 / `plan-zhenmai-v2: 补齐客户端截脉反馈资产`
+- `ecdd4d6e8331c32d68b060fc0a3de54733edcc4f` / 2026-05-09 / `test(world): 串行化 bootstrap 环境变量测试`
+- `80ce0bff1d6aa63cfc845d5c01a58944fff72be8` / 2026-05-09 / `归档 plan-zhenmai-v2：截脉五招闭环`
+- `ba5986c8e9358e5bf454c960ee8a59a0fb2bfd8f` / 2026-05-09 / `plan-zhenmai-v2: 修复 qi_physics 与断脉依赖接入`
+- `0e4f5a3e1c80a016573573865dc97e612027874e` / 2026-05-09 / `plan-zhenmai-v2: 修复截脉 review 语义回归`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 3273 passed / 0 failed。
-- `cd server && cargo test zhenmai_v2`：通过，35 passed / 0 failed / 3238 filtered out。
-- `cd server && cargo test resolver_applies_backfire_amplification_to_defender_incoming_damage`：通过，1 passed / 0 failed / 3272 filtered out。
-- `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过；schema 12 files / 332 tests，tiandao 43 files / 310 tests。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 3326 passed / 0 failed。
+- `cd server && cargo test zhenmai_v2`：通过，35 passed / 0 failed / 3291 filtered out。
+- `cd server && cargo test resolver_applies_backfire_amplification_to_defender_incoming_damage`：通过，1 passed / 0 failed / 3325 filtered out。
+- `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过；schema 13 files / 338 tests，tiandao 44 files / 317 tests。
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`：通过。
 - `git diff --check`：通过。
 
@@ -558,7 +558,7 @@ PracticeLog 累积驱动 QiColor **暴烈色**（worldview §六:619）演化，
 
 ### 遗留 / 后续
 
-- 原计划 §4.5 写的是 `server/src/combat/zhenmai_v2/` 目录 100+ 单测；本 PR 实际采用单文件 `server/src/combat/zhenmai_v2.rs` + bridge/qi_physics/Redis 回归，共 35 个 `zhenmai_v2` 过滤测试，并由全量 `cargo test` 3273 个测试兜底。未把测试数量硬凑到 100。
+- 原计划 §4.5 写的是 `server/src/combat/zhenmai_v2/` 目录 100+ 单测；本 PR 实际采用单文件 `server/src/combat/zhenmai_v2.rs` + bridge/qi_physics/Redis 回归，共 35 个 `zhenmai_v2` 过滤测试，并由全量 `cargo test` 3326 个测试兜底。未把测试数量硬凑到 100。
 - 未做 SEVERED 跨 server restart 持久化实测、WSLg `runClient`、`render_animation.py`、真实 PVP telemetry、dugu 倒蚀实战录像或长期数值校准；当前覆盖为资源存在、HUD texture command、VFX 注册、server 事件与 agent narration 合同。
 - 多点反震和护脉反噬阶梯目前只落了 qi/s、HP/contam 与减伤主路径，未把 MICRO_TEAR / TORN 阶梯完整实体化。
 - `ParryWindowHud` / `MeridianContamHud` / `ShieldedMeridianHud` / `SeveredMeridianListHud` 四个专用 HUD 组件没有在本 PR 内完整新建；本 PR 先落 hotbar icon、cast VFX/audio/animation 与 Redis narration 链路。

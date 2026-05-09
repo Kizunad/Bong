@@ -1736,12 +1736,14 @@ mod tests {
                 ContamSource {
                     amount: 20.0,
                     color: ColorKind::Insidious,
+                    meridian_id: None,
                     attacker_id: None,
                     introduced_at: 1,
                 },
                 ContamSource {
                     amount: 10.0,
                     color: ColorKind::Violent,
+                    meridian_id: None,
                     attacker_id: None,
                     introduced_at: 2,
                 },
