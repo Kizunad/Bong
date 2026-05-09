@@ -17,15 +17,16 @@ use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
     CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
-    CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
-    CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
-    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
-    CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT,
-    CH_POI_NOVICE_EVENT, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT,
-    CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
-    CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION,
-    CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_ARMOR_DURABILITY_CHANGED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT,
+    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT,
+    CH_DUGU_POISON_PROGRESS, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME,
+    CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE,
+    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
+    CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
+    CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
@@ -48,6 +49,7 @@ use crate::schema::death_lifecycle::{
     AgingEventV1, DuoSheEventV1, LifespanEventV1, RebirthEventV1,
 };
 use crate::schema::dugu::DuguPoisonProgressEventV1;
+use crate::schema::economy::{BoneCoinTickV1, PriceIndexV1};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
@@ -100,6 +102,8 @@ pub enum RedisInbound {
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
     SeasonChanged(SeasonChangedV1),
+    BoneCoinTick(BoneCoinTickV1),
+    PriceIndex(PriceIndexV1),
     #[allow(dead_code)]
     PlayerChat(ChatMessageV1),
     CombatRealtime(CombatRealtimeEventV1),
@@ -393,6 +397,24 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_SEASON_CHANGED,
+                payload,
+            })
+        }
+        RedisOutbound::BoneCoinTick(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize BoneCoinTickV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BONE_COIN_TICK,
+                payload,
+            })
+        }
+        RedisOutbound::PriceIndex(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize PriceIndexV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_PRICE_INDEX,
                 payload,
             })
         }
@@ -1779,6 +1801,7 @@ mod redis_bridge_tests {
         DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
     };
     use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
+    use crate::schema::economy::PriceSampleV1;
     use crate::schema::forge::ForgeOutcomeBucketV1;
     use crate::schema::social::{
         ExposureKindV1, HighRenownMilestoneEventTag, HighRenownMilestoneEventV1, RenownTagV1,
@@ -1816,6 +1839,58 @@ mod redis_bridge_tests {
                     serde_json::from_str(&payload).expect("publish payload should be valid JSON");
                 assert_eq!(payload["v"], 1);
                 assert_eq!(payload["tick"], 84000);
+            }
+            other => panic!("expected PUBLISH command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_economy_telemetry_channels() {
+        let bone_tick = prepare_outbound_command(RedisOutbound::BoneCoinTick(BoneCoinTickV1 {
+            v: 1,
+            tick: 720_000,
+            season: crate::schema::world_state::SeasonV1::SummerToWinter,
+            total_spirit_qi: 27.5,
+            total_face_value: 60.0,
+            active_coin_count: 3,
+            rotten_coin_count: 1,
+            legacy_scalar_count: 7,
+            rhythm_multiplier: 1.1,
+            market_factor: 0.9,
+        }))
+        .expect("bone coin tick should publish");
+        match bone_tick {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_BONE_COIN_TICK);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+                assert_eq!(payload["season"], "summer_to_winter");
+            }
+            other => panic!("expected PUBLISH command, got {other:?}"),
+        }
+
+        let price_index = prepare_outbound_command(RedisOutbound::PriceIndex(PriceIndexV1 {
+            v: 1,
+            tick: 720_000,
+            season: crate::schema::world_state::SeasonV1::SummerToWinter,
+            supply_spirit_qi: 27.5,
+            demand_spirit_qi: 50.0,
+            rhythm_multiplier: 1.1,
+            market_factor: 0.9,
+            price_multiplier: 0.99,
+            sample_prices: vec![PriceSampleV1 {
+                item_id: "common_good".to_string(),
+                base_price: 4,
+                final_price: 4,
+            }],
+        }))
+        .expect("price index should publish");
+        match price_index {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_PRICE_INDEX);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+                assert_eq!(payload["sample_prices"][0]["item_id"], "common_good");
             }
             other => panic!("expected PUBLISH command, got {other:?}"),
         }

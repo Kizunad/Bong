@@ -15,6 +15,8 @@ mod cultivation;
 #[allow(dead_code)]
 mod death_lifecycle;
 #[allow(dead_code)]
+mod economy;
+#[allow(dead_code)]
 mod fauna;
 #[allow(dead_code)]
 mod forge;
@@ -128,6 +130,7 @@ fn run_server() {
     lingtian::register(&mut app);
     mineral::register(&mut app);
     shelflife::register(&mut app);
+    economy::register(&mut app);
     npc::register(&mut app);
     zhenfa::register(&mut app);
     network::register(&mut app);

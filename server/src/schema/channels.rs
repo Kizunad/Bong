@@ -5,6 +5,8 @@ pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
 pub const CH_AGENT_WORLD_MODEL: &str = "bong:agent_world_model";
 pub const CH_SEASON_CHANGED: &str = "bong:season_changed";
+pub const CH_BONE_COIN_TICK: &str = "bong:bone_coin_tick";
+pub const CH_PRICE_INDEX: &str = "bong:price_index";
 
 // 修炼 (plan-cultivation-v1 §6.1)
 pub const CH_INSIGHT_REQUEST: &str = "bong:insight_request";
@@ -153,6 +155,8 @@ mod tests {
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
         assert_eq!(CH_SEASON_CHANGED, "bong:season_changed");
+        assert_eq!(CH_BONE_COIN_TICK, "bong:bone_coin_tick");
+        assert_eq!(CH_PRICE_INDEX, "bong:price_index");
         assert_eq!(CH_INSIGHT_REQUEST, "bong:insight_request");
         assert_eq!(CH_INSIGHT_OFFER, "bong:insight_offer");
         assert_eq!(CH_HEART_DEMON_REQUEST, "bong:heart_demon_request");

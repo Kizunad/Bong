@@ -17,6 +17,7 @@ use valence::prelude::{
 
 use crate::combat::components::Lifecycle;
 use crate::combat::events::DeathEvent;
+use crate::economy::{estimate_item_price_with_index, neutral_price_index, EconomyPriceIndex};
 use crate::inventory::{ItemInstance, ItemRarity};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::FactionMembership;
@@ -348,15 +349,12 @@ pub const fn rarity_base_price(rarity: ItemRarity) -> u64 {
 /// - spirit_quality（0..=1）+50% 加成
 /// - durability（0..=1）≤0.2 时打 5 折
 pub fn estimate_item_price(item: &ItemInstance) -> u64 {
-    let base = rarity_base_price(item.rarity) as f64;
-    let quality_mult = 1.0 + item.spirit_quality.clamp(0.0, 1.0) * 0.5;
-    let durability_mult = if item.durability.clamp(0.0, 1.0) <= 0.2 {
-        0.5
-    } else {
-        1.0
-    };
-    let per = base * quality_mult * durability_mult;
-    (per * item.stack_count.max(1) as f64).round().max(1.0) as u64
+    estimate_item_price_for_index(item, &neutral_price_index())
+}
+
+/// 按 economy price index 估价，供商人 / NPC 交易在有当前市场快照时调用。
+pub fn estimate_item_price_for_index(item: &ItemInstance, index: &EconomyPriceIndex) -> u64 {
+    estimate_item_price_with_index(item, rarity_base_price(item.rarity), index)
 }
 
 /// 估价一批 `ItemInstance` 的总骨币值。
