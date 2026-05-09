@@ -161,7 +161,7 @@ pub struct LayerSchema {
 - 关键 commit：
   - `b44883da5`（2026-05-09）`terrain: 补齐 layer 按名查询接口`
 - 测试结果：
-  - `cargo test raster::tests` 通过（9 passed; 3015 filtered out）。
+  - `cargo test raster::tests` 通过（9 passed; 3063 filtered out）。
   - `cargo fmt --check` 通过。
   - `cargo clippy --all-targets -- -D warnings` 通过。
   - `cargo test` 通过（3072 passed; 0 failed）。
