@@ -360,3 +360,39 @@ function scorePoliticalNarration(narration: string, context: PoliticalContext): 
 ## §9 进度日志
 
 - **2026-05-04 立项**：骨架立项。来源：journey-v1 §G "agent: era_decree 全服可见的'政治叙事'已支持；缺：基于 social graph 的政治 narration（派生 plan-narrative-political-v1）"。**关键发现**：tiandao 11 skill 没有 social-graph 政治 skill；narrative-v1 ✅ 已提供基础设施（NarrationDedupeResource / narration-eval）；social-v1 ✅ 提供完整事件源（feud / pact / mentorship / Exposure）；identity-v1（刚立 active）将 emit wanted_player；niche-defense-v1（active ⏳ ~5%）将 emit niche_destroyed。本 plan 是**江湖传闻型叙事**，与 era_decree（天道宣告时代）/ calamity（因果劫罚）/ mutation（环境变化）形成第 4 个叙事维度——**人际层面**。10 决议（Q1-Q10）一次性闭环。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0/P1 agent political runtime**：新增 `agent/packages/tiandao/src/skills/political.md` 与 `agent/packages/tiandao/src/political-narration.ts`，在 `agent/packages/tiandao/src/main.ts` 启动 `PoliticalNarrationRuntime`；订阅 `bong:social/feud`、`bong:social/pact`、`bong:social/niche_intrusion`、`bong:wanted_player`、`bong:high_renown_milestone` 五类事件，统一输出 `style/kind = "political_jianghu"` 的 `bong:agent_narrate`。
+- **P2 throttle/dedupe**：`PoliticalNarrationThrottleStore` 与 `POLITICAL_THROTTLE_MS = 5 * 60 * 1000` 落在 `agent/packages/tiandao/src/political-narration.ts`；通缉、高声名 1000、灵龛入侵走 `bypassThrottle`。server 侧既有 `NarrationDedupeResource` 已接受 `NarrationStyle::PoliticalJianghu` / `NarrationKind::PoliticalJianghu`，并新增 political duplicate 回归。
+- **P3 narration-eval**：`agent/packages/tiandao/src/narration-eval.ts` 新增 `JIANGHU_VOICE_RE`、`MODERN_POLITICAL_TERMS_BLACKLIST`、`checkAnonymityViolation()`、`scorePoliticalNarration()`；runtime 解析 LLM 输出时会对现代政治词和未暴露 identity 提名回退到匿名 fallback。
+- **P4 schema/server milestone**：`agent/packages/schema/src/social.ts`、`server/src/schema/social.rs` 新增 `HighRenownMilestoneEventV1`；`server/src/schema/channels.rs` / `agent/packages/schema/src/channels.ts` 新增 `bong:high_renown_milestone`；`server/src/social/high_renown_tracker.rs` 新增 `HighRenownMilestoneTracker`、`emit_high_renown_milestone_system`、`MILESTONE_THRESHOLDS = [100, 500, 1000]`，并通过 SQLite `high_renown_milestones` 表持久化已发阈值。
+- **P4 client 分流**：`client/src/main/java/com/bong/client/state/NarrationState.java` 支持 `POLITICAL_JIANGHU`；`client/src/main/java/com/bong/client/network/NarrationHandler.java` 将 broadcast political 送 ChatHud，将 zone political 送 `UnifiedEventStore` social event stream。
+
+### 关键 commit
+
+- `ec7d838832c00f100666b2f43cfa551219b5118d` · 2026-05-09 · `feat(narrative): 接入江湖政治传闻叙事`
+
+### 测试结果
+
+- `agent/`：`npm run build` ✅
+- `agent/`：`npm run generate:check -w @bong/schema` ✅ 296 generated schema files fresh
+- `agent/`：`npm test -w @bong/schema` ✅ 12 files / 327 tests passed
+- `agent/`：`npm test -w @bong/tiandao` ✅ 41 files / 293 tests passed
+- `client/`：`JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build` ✅ BUILD SUCCESSFUL
+- `server/`：`cargo fmt --check` ✅
+- `server/`：`cargo clippy --all-targets -- -D warnings` ✅
+- `server/`：`cargo test` ✅ 3067 passed / 0 failed
+
+### 跨仓库核验
+
+- **server**：`HighRenownMilestoneTracker`、`emit_high_renown_milestone_system`、`RedisOutbound::HighRenownMilestone`、`CH_HIGH_RENOWN_MILESTONE`、`NarrationStyle::PoliticalJianghu`、`NarrationKind::PoliticalJianghu`。
+- **agent/schema**：`CHANNELS.HIGH_RENOWN_MILESTONE`、`HighRenownMilestoneEventV1`、`validateHighRenownMilestoneEventV1Contract()`、`PoliticalNarrationRuntime`、`PoliticalNarrationThrottleStore`、`POLITICAL_EVENT_CHANNELS`、`scorePoliticalNarration()`。
+- **client**：`NarrationState.Style.POLITICAL_JIANGHU`、`NarrationHandler.chatTextFor()`、`UnifiedEventStore.stream().publish(... Channel.SOCIAL ...)`。
+
+### 遗留 / 后续
+
+- `bong:niche_destroyed` 与 `bong:wanted_player` 仍由对应协同 plan 负责真实上游 emit；本 plan 已按最终 Redis 契约消费并覆盖 dummy / schema / runtime 路径。
+- mentorship、派系战、师徒决裂、婚约等更宽 political 事件按原计划留给 vN+1。
