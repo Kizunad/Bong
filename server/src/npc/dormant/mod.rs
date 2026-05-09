@@ -10,9 +10,15 @@ use valence::prelude::{
     bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Startup, Update,
 };
 
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
-use crate::cultivation::life_record::LifeRecord;
-use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
+use crate::cultivation::breakthrough::{
+    breakthrough_qi_cost, next_realm, try_breakthrough, BreakthroughError, BreakthroughSuccess,
+    RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH, MIN_ZONE_QI_TO_GUYUAN,
+};
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::lifespan::{
+    DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
+};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::npc::faction::FactionMembership;
 use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
@@ -392,6 +398,10 @@ fn dormant_global_tick_system(
         if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
             apply_dormant_regen(snapshot, zones, ledger);
         }
+        let zone_qi = zones
+            .as_deref()
+            .and_then(|zones| dormant_zone_qi(snapshot, zones));
+        let _ = advance_dormant_breakthrough(snapshot, zone_qi, tick);
 
         if snapshot.lifespan.is_expired() {
             if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
@@ -577,12 +587,17 @@ fn move_toward(current: DVec3, target: DVec3, max_step: f64) -> DVec3 {
 }
 
 fn deterministic_unit(char_id: &str, salt: u64) -> f64 {
+    let hash = deterministic_hash(char_id, salt);
+    (hash & 0xffff) as f64 / 65_535.0
+}
+
+fn deterministic_hash(char_id: &str, salt: u64) -> u64 {
     let mut hash = salt ^ 0x9E37_79B9_7F4A_7C15;
     for byte in char_id.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     }
-    (hash & 0xffff) as f64 / 65_535.0
+    hash
 }
 
 pub fn apply_dormant_regen(
@@ -644,6 +659,76 @@ pub fn apply_dormant_regen(
     Some(transfer)
 }
 
+fn dormant_zone_qi(snapshot: &NpcDormantSnapshot, zones: &ZoneRegistry) -> Option<f64> {
+    zones
+        .find_zone(snapshot.dimension, snapshot.position_vec())
+        .map(|zone| zone.spirit_qi)
+}
+
+pub fn advance_dormant_breakthrough(
+    snapshot: &mut NpcDormantSnapshot,
+    zone_qi: Option<f64>,
+    tick: u64,
+) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
+    let mut roll = XorshiftRoll(deterministic_hash(&snapshot.char_id, tick));
+    advance_dormant_breakthrough_with_roll(snapshot, zone_qi, tick, &mut roll)
+}
+
+fn advance_dormant_breakthrough_with_roll<R: RollSource>(
+    snapshot: &mut NpcDormantSnapshot,
+    zone_qi: Option<f64>,
+    tick: u64,
+    roll: &mut R,
+) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
+    let next = next_realm(snapshot.cultivation.realm)?;
+    if next == Realm::Void {
+        return None;
+    }
+    if snapshot.cultivation.qi_current < breakthrough_qi_cost(next) {
+        return None;
+    }
+    let required_zone_qi = if next == Realm::Solidify {
+        MIN_ZONE_QI_TO_GUYUAN
+    } else {
+        MIN_ZONE_QI_TO_BREAKTHROUGH
+    };
+    if zone_qi? < required_zone_qi {
+        return None;
+    }
+
+    let result = try_breakthrough(
+        &mut snapshot.cultivation,
+        &mut snapshot.meridian_system,
+        0.0,
+        roll,
+    );
+    match result {
+        Ok(success) => {
+            snapshot
+                .shared_lifespan
+                .apply_cap(LifespanCapTable::for_realm(success.to));
+            snapshot
+                .life_record
+                .push(BiographyEntry::BreakthroughSucceeded {
+                    realm: success.to,
+                    tick,
+                });
+            Some(Ok(success))
+        }
+        Err(BreakthroughError::RolledFailure { severity }) => {
+            snapshot
+                .life_record
+                .push(BiographyEntry::BreakthroughFailed {
+                    realm_target: next,
+                    severity,
+                    tick,
+                });
+            Some(Err(BreakthroughError::RolledFailure { severity }))
+        }
+        Err(error) => Some(Err(error)),
+    }
+}
+
 pub fn release_dormant_qi_to_zone(
     snapshot: &mut NpcDormantSnapshot,
     zones: &mut ZoneRegistry,
@@ -702,6 +787,7 @@ fn dormant_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{MeridianId, Realm};
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -749,6 +835,21 @@ mod tests {
             last_dormant_tick_processed: 0,
             initial_qi: 0.1,
             qi_ledger_net: 0.0,
+        }
+    }
+
+    struct FixedRoll(f64);
+
+    impl RollSource for FixedRoll {
+        fn roll_unit(&mut self) -> f64 {
+            self.0
+        }
+    }
+
+    fn open_regular_meridians(snapshot: &mut NpcDormantSnapshot, count: usize) {
+        for id in MeridianId::REGULAR.into_iter().take(count) {
+            let meridian = snapshot.meridian_system.get_mut(id);
+            meridian.opened = true;
         }
     }
 
@@ -817,6 +918,42 @@ mod tests {
                 .spirit_qi
                 > 0.8
         );
+    }
+
+    #[test]
+    fn dormant_breakthrough_uses_cultivation_rules_below_duxu() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.realm = Realm::Awaken;
+        snapshot.cultivation.qi_current = 20.0;
+        snapshot.cultivation.qi_max = 100.0;
+        open_regular_meridians(&mut snapshot, 3);
+        let mut roll = FixedRoll(0.0);
+
+        let result = advance_dormant_breakthrough_with_roll(
+            &mut snapshot,
+            Some(MIN_ZONE_QI_TO_BREAKTHROUGH),
+            1200,
+            &mut roll,
+        )
+        .expect("eligible dormant NPC should attempt breakthrough")
+        .expect("fixed low roll should pass");
+
+        assert_eq!(result.to, Realm::Induce);
+        assert_eq!(snapshot.cultivation.realm, Realm::Induce);
+        assert_eq!(snapshot.cultivation.qi_current, 12.0);
+        assert_eq!(
+            snapshot.shared_lifespan.cap_by_realm,
+            LifespanCapTable::INDUCE
+        );
+        assert!(snapshot.life_record.biography.iter().any(|entry| {
+            matches!(
+                entry,
+                BiographyEntry::BreakthroughSucceeded {
+                    realm: Realm::Induce,
+                    tick: 1200
+                }
+            )
+        }));
     }
 
     #[test]
