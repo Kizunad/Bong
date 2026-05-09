@@ -271,9 +271,26 @@ describe("sample files pass schema validation", () => {
       attack_kind: "physical_carrier",
       k_drain: 1.5,
       self_damage_multiplier: 0.5,
-      damage_multiplier: 0.35,
       grants_amplification: true,
       expires_at_tick: 1320,
+      tick: 120,
+    };
+    expect(validate(ZhenmaiSkillEventV1, data).ok).toBe(true);
+    expectContractAccepts(
+      "ZhenmaiSkillEventV1",
+      validateZhenmaiSkillEventV1Contract,
+      data,
+    );
+  });
+
+  it("accepts zhenmai harden_meridian migrated damage multiplier", () => {
+    const data = {
+      v: 1,
+      type: "zhenmai_skill_event",
+      skill_id: "harden_meridian",
+      caster_id: "offline:Azure",
+      meridian_ids: ["Lung"],
+      damage_multiplier: 0.35,
       tick: 120,
     };
     expect(validate(ZhenmaiSkillEventV1, data).ok).toBe(true);

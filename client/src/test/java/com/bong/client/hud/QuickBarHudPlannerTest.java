@@ -42,7 +42,8 @@ class QuickBarHudPlannerTest {
                 && "bong-client:textures/gui/skill/zhenmai_parry.png".equals(command.texturePath()))
             .findFirst()
             .orElseThrow();
-        assertEquals("bong-client:textures/gui/skill/zhenmai_parry.png", icon.texturePath());
+        assertEquals(QuickBarHudPlanner.SLOT_SIZE - 2 * QuickBarHudPlanner.ICON_INSET, icon.width());
+        assertEquals(QuickBarHudPlanner.SLOT_SIZE - 2 * QuickBarHudPlanner.ICON_INSET, icon.height());
     }
 
     @Test
