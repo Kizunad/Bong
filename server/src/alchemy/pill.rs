@@ -137,6 +137,7 @@ pub fn consume_pill(
     contam.entries.push(ContamSource {
         amount: effect.toxin_amount,
         color: effect.toxin_color,
+        meridian_id: None,
         attacker_id: None,
         introduced_at: now_tick,
     });
@@ -157,6 +158,7 @@ pub fn consume_pill(
                 contam.entries.push(ContamSource {
                     amount: extra,
                     color: effect.toxin_color,
+                    meridian_id: None,
                     attacker_id: None,
                     introduced_at: now_tick,
                 });
@@ -277,12 +279,14 @@ mod tests {
         contam.entries.push(ContamSource {
             amount: 0.6,
             color: ColorKind::Mellow,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 0,
         });
         contam.entries.push(ContamSource {
             amount: 0.5,
             color: ColorKind::Mellow,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 1,
         });
@@ -297,6 +301,7 @@ mod tests {
         contam.entries.push(ContamSource {
             amount: 2.0,
             color: ColorKind::Mellow,
+            meridian_id: None,
             attacker_id: Some("offline:Attacker".into()), // 战斗来源
             introduced_at: 0,
         });
@@ -310,6 +315,7 @@ mod tests {
         contam.entries.push(ContamSource {
             amount: 1.5, // 超 0.5
             color: ColorKind::Violent,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 0,
         });
@@ -323,6 +329,7 @@ mod tests {
         contam.entries.push(ContamSource {
             amount: 0.8,
             color: ColorKind::Violent,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 0,
         });

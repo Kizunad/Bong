@@ -25,14 +25,14 @@ use valence::prelude::App;
 
 pub use channeling::{qi_channeling, qi_channeling_transfer, ChannelDirection, ChannelingOutcome};
 pub use collision::{
-    qi_collision, qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm,
-    CollisionOutcome,
+    flow_modifier, qi_collision, qi_negative_field_drain_ratio,
+    qi_woliu_vortex_field_strength_for_realm, reverse_clamp, CollisionOutcome, QI_ZHENMAI_BETA,
 };
 pub use container::{abrasion_loss, AbrasionDirection, AbrasionOutcome, AnqiContainerKind};
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
-pub use field::{density_echo, EchoFractalOutcome};
+pub use field::{density_echo, multi_point_dispersion, sever_meridian, EchoFractalOutcome};
 pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
     yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,

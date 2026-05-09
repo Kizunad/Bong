@@ -186,6 +186,7 @@ mod tests {
         let mut c = ContamSource {
             amount: 1.0,
             color: ColorKind::Sharp,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 0,
         };
@@ -198,6 +199,7 @@ mod tests {
         let mut c = ContamSource {
             amount: 1.0,
             color: ColorKind::Sharp,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 0,
         };
@@ -210,6 +212,7 @@ mod tests {
         let mut c = ContamSource {
             amount: 0.05,
             color: ColorKind::Sharp,
+            meridian_id: None,
             attacker_id: None,
             introduced_at: 0,
         };
@@ -240,6 +243,7 @@ mod tests {
                     entries: vec![ContamSource {
                         amount: 1.0,
                         color: ColorKind::Mellow,
+                        meridian_id: None,
                         attacker_id: None,
                         introduced_at: 1,
                     }],
@@ -270,6 +274,7 @@ mod tests {
                     entries: vec![ContamSource {
                         amount: 1.0,
                         color: ColorKind::Mellow,
+                        meridian_id: None,
                         attacker_id: None,
                         introduced_at: 1,
                     }],
@@ -323,6 +328,7 @@ mod tests {
                 entries: vec![ContamSource {
                     amount: 1.0,
                     color: ColorKind::Mellow,
+                    meridian_id: None,
                     attacker_id: None,
                     introduced_at: 1,
                 }],
@@ -366,6 +372,7 @@ mod tests {
                     entries: vec![ContamSource {
                         amount: 1.0,
                         color: ColorKind::Mellow,
+                        meridian_id: None,
                         attacker_id: None,
                         introduced_at: 1,
                     }],
@@ -402,6 +409,7 @@ mod tests {
                     entries: vec![ContamSource {
                         amount: 1.0,
                         color: ColorKind::Mellow,
+                        meridian_id: None,
                         attacker_id: None,
                         introduced_at: 1,
                     }],

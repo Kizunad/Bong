@@ -33,7 +33,8 @@ use crate::schema::channels::{
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
     CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
     CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
-    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
+    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENMAI_SKILL_EVENT, CH_ZONE_PRESSURE_CROSSED,
+    CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -81,6 +82,7 @@ use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::yidao::YidaoEventV1;
+use crate::schema::zhenmai_v2::ZhenmaiSkillEventV1;
 use crate::schema::zone_pressure::ZonePressureCrossedV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
 
@@ -166,6 +168,7 @@ pub enum RedisOutbound {
     DuguPoisonProgress(DuguPoisonProgressEventV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
+    ZhenmaiSkillEvent(ZhenmaiSkillEventV1),
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
     ProjectileDespawned(ProjectileDespawnedEventV1),
@@ -1027,6 +1030,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::ZhenmaiSkillEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ZhenmaiSkillEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ZHENMAI_SKILL_EVENT,
+                payload,
+            })
+        }
         RedisOutbound::DuguPoisonProgress(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
@@ -1874,6 +1886,7 @@ mod redis_bridge_tests {
     use crate::schema::spirit_eye::{
         SpiritEyeMigrateReasonV1, SpiritEyeMigrateV1, SpiritEyePositionV1,
     };
+    use crate::schema::zhenmai_v2::{ZhenmaiAttackKindV1, ZhenmaiSkillIdV1};
     use serde_json::json;
     use tokio::task;
 
@@ -1976,6 +1989,34 @@ mod redis_bridge_tests {
                 assert_eq!(payload["player"], "offline:Steve");
             }
             other => panic!("expected RPUSH command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_zhenmai_skill_event_on_skill_channel() {
+        let mut event =
+            ZhenmaiSkillEventV1::new(ZhenmaiSkillIdV1::SeverChain, "entity:7".to_string(), 42);
+        event.meridian_id = Some("Heart".to_string());
+        event.attack_kind = Some(ZhenmaiAttackKindV1::TaintedYuan);
+        event.k_drain = Some(1.5);
+        event.self_damage_multiplier = Some(0.5);
+
+        let command = prepare_outbound_command(RedisOutbound::ZhenmaiSkillEvent(event))
+            .expect("zhenmai skill payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ZHENMAI_SKILL_EVENT);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("zhenmai payload should be valid JSON");
+                assert_eq!(payload["type"], "zhenmai_skill_event");
+                assert_eq!(payload["skill_id"], "sever_chain");
+                assert_eq!(payload["meridian_id"], "Heart");
+                assert_eq!(payload["attack_kind"], "tainted_yuan");
+                assert_eq!(payload["k_drain"], 1.5);
+                assert_eq!(payload["self_damage_multiplier"], 0.5);
+            }
+            other => panic!("expected zhenmai PUBLISH command, got {other:?}"),
         }
     }
 

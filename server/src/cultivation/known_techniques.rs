@@ -28,7 +28,7 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 17] = [
+const TECHNIQUE_IDS: [&str; 20] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -36,6 +36,9 @@ const TECHNIQUE_IDS: [&str; 17] = [
     "bao_mai.full_power_charge",
     "bao_mai.full_power_release",
     "zhenmai.parry",
+    "zhenmai.neutralize",
+    "zhenmai.multipoint",
+    "zhenmai.harden",
     "zhenmai.sever_chain",
     "woliu.vortex",
     "dugu.shoot_needle",
@@ -69,7 +72,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 17] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 20] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -172,32 +175,77 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 17] = [
     },
     TechniqueDefinition {
         id: "zhenmai.parry",
-        display_name: "截脉震爆",
+        display_name: "极限弹反",
         grade: "yellow",
-        description: "受击前短时预备，皮下震爆异种真元，以半息僵直换污染减免。",
-        required_realm: "Induce",
+        description: "受击前短时预备，皮下震爆异种真元，以血肉自伤换接触式反震。",
+        required_realm: "Awaken",
         required_meridians: &[TechniqueRequiredMeridian {
             channel: "Lung",
             min_health: 0.01,
         }],
-        qi_cost: 5.0,
+        qi_cost: 8.0,
         cast_ticks: 1,
-        cooldown_ticks: 10,
+        cooldown_ticks: 600,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/zhenmai_parry.png",
+        icon_texture: "bong-client:textures/gui/skill/zhenmai_parry.png",
+    },
+    TechniqueDefinition {
+        id: "zhenmai.neutralize",
+        display_name: "局部中和",
+        grade: "yellow",
+        description: "点按一条经脉，以自身真元亏损清掉异种污染余响。",
+        required_realm: "Awaken",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.01,
+        }],
+        qi_cost: 18.0,
+        cast_ticks: 4,
+        cooldown_ticks: 200,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/skill/zhenmai_neutralize.png",
+    },
+    TechniqueDefinition {
+        id: "zhenmai.multipoint",
+        display_name: "多点反震",
+        grade: "profound",
+        description: "展开多处皮下震爆点，群战接触时分散反震并承担小额自伤。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 12.0,
+        cast_ticks: 6,
+        cooldown_ticks: 600,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/skill/zhenmai_multipoint.png",
+    },
+    TechniqueDefinition {
+        id: "zhenmai.harden",
+        display_name: "护脉",
+        grade: "profound",
+        description: "临时硬化选定经脉，降低经脉伤损但持续消耗真元。",
+        required_realm: "Awaken",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.01,
+        }],
+        qi_cost: 8.0,
+        cast_ticks: 5,
+        cooldown_ticks: 300,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/skill/zhenmai_harden.png",
     },
     TechniqueDefinition {
         id: "zhenmai.sever_chain",
         display_name: "绝脉断链",
         grade: "yellow",
-        description: "按配置锁定一条经脉与反震类型，真实断链结算由 zhenmai-v2 接入。",
-        required_realm: "Induce",
+        description: "主动永久断一条经脉；通灵以上获得 60s 指定攻击类型反震放大。",
+        required_realm: "Awaken",
         required_meridians: &[],
-        qi_cost: 5.0,
-        cast_ticks: 1,
-        cooldown_ticks: 20,
+        qi_cost: 50.0,
+        cast_ticks: 8,
+        cooldown_ticks: 1200,
         range: 1.0,
-        icon_texture: "bong:textures/gui/skill/zhenmai_sever_chain.png",
+        icon_texture: "bong-client:textures/gui/skill/zhenmai_sever_chain.png",
     },
     TechniqueDefinition {
         id: "woliu.vortex",
@@ -353,4 +401,34 @@ pub fn technique_definition(id: &str) -> Option<&'static TechniqueDefinition> {
     TECHNIQUE_DEFINITIONS
         .iter()
         .find(|definition| definition.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn technique_ids_match_definitions_and_default_entries() {
+        let ids = TECHNIQUE_IDS.iter().copied().collect::<BTreeSet<_>>();
+        let definitions = TECHNIQUE_DEFINITIONS
+            .iter()
+            .map(|definition| definition.id)
+            .collect::<BTreeSet<_>>();
+        let default_techniques = KnownTechniques::default();
+        let default_entries = default_techniques
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(ids, definitions);
+        assert_eq!(ids, default_entries);
+        for id in ids {
+            assert!(
+                technique_definition(id).is_some(),
+                "default technique id must have a definition: {id}"
+            );
+        }
+    }
 }

@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "zhenmai_neutralize",
+  "description": "zhenmai v2 neutralize: two-finger meridian press.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 6,
+    "stopTick": 8,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.35, "yaw": -0.1 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.2 } },
+      { "tick": 3, "easing": "INOUTSINE", "rightArm": { "pitch": -1.0, "yaw": -0.35, "bend": 0.25 } },
+      { "tick": 3, "easing": "INOUTSINE", "head": { "pitch": 0.08 } },
+      { "tick": 6, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "bend": 0.0 } },
+      { "tick": 6, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0 } },
+      { "tick": 6, "easing": "INOUTSINE", "head": { "pitch": 0.0 } }
+    ]
+  }
+}

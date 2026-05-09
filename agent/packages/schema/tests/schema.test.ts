@@ -116,6 +116,10 @@ import {
   WorldStateV1,
   validateWorldStateV1Contract,
 } from "../src/world-state.js";
+import {
+  ZhenmaiSkillEventV1,
+  validateZhenmaiSkillEventV1Contract,
+} from "../src/zhenmai-v2.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const samplesDir = join(__dirname, "..", "samples");
@@ -251,6 +255,48 @@ describe("sample files pass schema validation", () => {
     expectContractAccepts(
       "RatPhaseChangeEventV1",
       validateRatPhaseChangeEventV1Contract,
+      data,
+    );
+  });
+
+  it("declares zhenmai-v2 skill event channel and contract", () => {
+    expect(CHANNELS.ZHENMAI_SKILL_EVENT).toBe("bong:zhenmai/skill_event");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZHENMAI_SKILL_EVENT);
+    const data = {
+      v: 1,
+      type: "zhenmai_skill_event",
+      skill_id: "sever_chain",
+      caster_id: "player:00000000-0000-0000-0000-000000000001",
+      meridian_id: "Du",
+      attack_kind: "physical_carrier",
+      k_drain: 1.5,
+      self_damage_multiplier: 0.5,
+      grants_amplification: true,
+      expires_at_tick: 1320,
+      tick: 120,
+    };
+    expect(validate(ZhenmaiSkillEventV1, data).ok).toBe(true);
+    expectContractAccepts(
+      "ZhenmaiSkillEventV1",
+      validateZhenmaiSkillEventV1Contract,
+      data,
+    );
+  });
+
+  it("accepts zhenmai harden_meridian migrated damage multiplier", () => {
+    const data = {
+      v: 1,
+      type: "zhenmai_skill_event",
+      skill_id: "harden_meridian",
+      caster_id: "offline:Azure",
+      meridian_ids: ["Lung"],
+      damage_multiplier: 0.35,
+      tick: 120,
+    };
+    expect(validate(ZhenmaiSkillEventV1, data).ok).toBe(true);
+    expectContractAccepts(
+      "ZhenmaiSkillEventV1",
+      validateZhenmaiSkillEventV1Contract,
       data,
     );
   });

@@ -165,13 +165,15 @@ use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tic
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
+    let mut skill_meridian_dependencies = SkillMeridianDependencies::default();
+    crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
     app.insert_resource(skill_registry::init_registry());
-    let mut skill_meridian_dependencies = SkillMeridianDependencies::default();
-    crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     app.insert_resource(skill_meridian_dependencies);
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());

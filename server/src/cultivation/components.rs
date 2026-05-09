@@ -211,6 +211,8 @@ impl Meridian {
 pub struct ContamSource {
     pub amount: f64,
     pub color: ColorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meridian_id: Option<MeridianId>,
     #[serde(default)]
     pub attacker_id: Option<String>,
     pub introduced_at: u64,
@@ -486,6 +488,7 @@ mod tests {
         let source = ContamSource {
             amount: 2.5,
             color: ColorKind::Violent,
+            meridian_id: Some(MeridianId::Lung),
             attacker_id: Some(canonical_player_id("Alice")),
             introduced_at: 77,
         };
@@ -495,6 +498,7 @@ mod tests {
             serde_json::from_str(&json).expect("contam source should deserialize");
 
         assert_eq!(decoded.attacker_id.as_deref(), Some("offline:Alice"));
+        assert_eq!(decoded.meridian_id, Some(MeridianId::Lung));
         assert_eq!(decoded.introduced_at, 77);
     }
 

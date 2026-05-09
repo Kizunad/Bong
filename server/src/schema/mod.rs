@@ -50,5 +50,6 @@ pub mod void_actions;
 pub mod woliu;
 pub mod world_state;
 pub mod yidao;
+pub mod zhenmai_v2;
 pub mod zone_pressure;
 pub mod zong_formation;

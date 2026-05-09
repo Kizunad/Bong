@@ -809,6 +809,7 @@ fn projectile_tick_system(
             contamination.entries.push(ContamSource {
                 amount: f64::from(contam_amount),
                 color: flight.qi_color,
+                meridian_id: None,
                 attacker_id: Some(attacker_id.clone()),
                 introduced_at: clock.tick,
             });

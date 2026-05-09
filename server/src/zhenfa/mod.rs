@@ -913,6 +913,7 @@ fn apply_trigger_snapshots(
                     contamination.entries.push(ContamSource {
                         amount: contam_delta,
                         color: snapshot.color_main,
+                        meridian_id: None,
                         attacker_id: Some(snapshot.owner_player_id.clone()),
                         introduced_at: tick,
                     });
@@ -1145,6 +1146,7 @@ fn apply_backlash(
         contamination.entries.push(ContamSource {
             amount: contam_delta,
             color: ColorKind::Turbid,
+            meridian_id: None,
             attacker_id: Some(format!("zhenfa_backlash:{:?}", player)),
             introduced_at: tick,
         });

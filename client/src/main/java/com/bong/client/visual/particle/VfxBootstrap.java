@@ -36,5 +36,17 @@ public final class VfxBootstrap {
         registry.register(YidaoPeacePulsePlayer.EMERGENCY_RESUSCITATE, yidao);
         registry.register(YidaoPeacePulsePlayer.LIFE_EXTENSION,        yidao);
         registry.register(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR,  yidao);
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "jiemai_burst_blood"),
+            new SwordQiSlashPlayer()
+        );
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "jiemai_neutralize_dust"),
+            new SwordQiSlashPlayer()
+        );
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "jiemai_sever_flash"),
+            new SwordQiSlashPlayer()
+        );
     }
 }

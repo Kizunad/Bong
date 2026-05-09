@@ -9,6 +9,8 @@ use super::env::EnvField;
 use super::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use super::traits::{StyleAttack, StyleDefense};
 
+pub const QI_ZHENMAI_BETA: f64 = 0.6;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollisionOutcome {
     pub attenuated_qi: f64,
@@ -42,6 +44,26 @@ pub fn qi_negative_field_drain_ratio(field_intensity: f64, distance_blocks: f64)
 
     let effective_radius = distance_blocks.max(QI_NEGATIVE_FIELD_MIN_RADIUS_BLOCKS);
     (field_intensity * QI_NEGATIVE_FIELD_K / effective_radius.powi(2)).clamp(0.0, 1.0)
+}
+
+/// 截脉音论反震基础算子：输入真元 × 反震效率 × 流派对位权重 × β。
+pub fn reverse_clamp(incoming_qi: f64, k_drain: f64, style_weight: f64, beta: f64) -> f64 {
+    if !incoming_qi.is_finite()
+        || !k_drain.is_finite()
+        || !style_weight.is_finite()
+        || !beta.is_finite()
+    {
+        return 0.0;
+    }
+    (incoming_qi.max(0.0) * k_drain.max(0.0) * style_weight.max(0.0) * beta.max(0.0)).max(0.0)
+}
+
+/// 经脉硬化对 incoming damage flow 的修正算子。
+pub fn flow_modifier(base_multiplier: f32, harden_multiplier: f32) -> f32 {
+    if !base_multiplier.is_finite() || !harden_multiplier.is_finite() {
+        return 1.0;
+    }
+    (base_multiplier.max(0.0) * harden_multiplier.max(0.0)).max(0.0)
 }
 
 pub fn qi_collision(
@@ -288,6 +310,23 @@ mod tests {
         assert_eq!(qi_negative_field_drain_ratio(0.8, -1.0), 0.8);
         assert_eq!(qi_negative_field_drain_ratio(0.8, f64::NAN), 0.0);
         assert_eq!(qi_negative_field_drain_ratio(2.0, 0.0), 1.0);
+    }
+
+    #[test]
+    fn reverse_clamp_applies_zhenmai_beta_and_weight() {
+        assert!((reverse_clamp(100.0, 0.5, 0.7, QI_ZHENMAI_BETA) - 21.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reverse_clamp_rejects_invalid_inputs() {
+        assert_eq!(reverse_clamp(f64::NAN, 0.5, 0.7, QI_ZHENMAI_BETA), 0.0);
+        assert_eq!(reverse_clamp(100.0, -0.5, 0.7, QI_ZHENMAI_BETA), 0.0);
+    }
+
+    #[test]
+    fn flow_modifier_multiplies_incoming_damage_factors() {
+        assert_eq!(flow_modifier(0.8, 0.25), 0.2);
+        assert_eq!(flow_modifier(f32::NAN, 0.25), 1.0);
     }
 
     #[test]

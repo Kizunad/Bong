@@ -1,0 +1,276 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "skill_id",
+    "caster_id",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "zhenmai_skill_event",
+      "type": "string"
+    },
+    "skill_id": {
+      "anyOf": [
+        {
+          "const": "parry",
+          "type": "string"
+        },
+        {
+          "const": "neutralize",
+          "type": "string"
+        },
+        {
+          "const": "multipoint",
+          "type": "string"
+        },
+        {
+          "const": "harden_meridian",
+          "type": "string"
+        },
+        {
+          "const": "sever_chain",
+          "type": "string"
+        }
+      ]
+    },
+    "caster_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "meridian_id": {
+      "description": "20 条经脉（12 正经 + 8 奇经）",
+      "anyOf": [
+        {
+          "const": "Lung",
+          "type": "string"
+        },
+        {
+          "const": "LargeIntestine",
+          "type": "string"
+        },
+        {
+          "const": "Stomach",
+          "type": "string"
+        },
+        {
+          "const": "Spleen",
+          "type": "string"
+        },
+        {
+          "const": "Heart",
+          "type": "string"
+        },
+        {
+          "const": "SmallIntestine",
+          "type": "string"
+        },
+        {
+          "const": "Bladder",
+          "type": "string"
+        },
+        {
+          "const": "Kidney",
+          "type": "string"
+        },
+        {
+          "const": "Pericardium",
+          "type": "string"
+        },
+        {
+          "const": "TripleEnergizer",
+          "type": "string"
+        },
+        {
+          "const": "Gallbladder",
+          "type": "string"
+        },
+        {
+          "const": "Liver",
+          "type": "string"
+        },
+        {
+          "const": "Ren",
+          "type": "string"
+        },
+        {
+          "const": "Du",
+          "type": "string"
+        },
+        {
+          "const": "Chong",
+          "type": "string"
+        },
+        {
+          "const": "Dai",
+          "type": "string"
+        },
+        {
+          "const": "YinQiao",
+          "type": "string"
+        },
+        {
+          "const": "YangQiao",
+          "type": "string"
+        },
+        {
+          "const": "YinWei",
+          "type": "string"
+        },
+        {
+          "const": "YangWei",
+          "type": "string"
+        }
+      ]
+    },
+    "meridian_ids": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "description": "20 条经脉（12 正经 + 8 奇经）",
+        "anyOf": [
+          {
+            "const": "Lung",
+            "type": "string"
+          },
+          {
+            "const": "LargeIntestine",
+            "type": "string"
+          },
+          {
+            "const": "Stomach",
+            "type": "string"
+          },
+          {
+            "const": "Spleen",
+            "type": "string"
+          },
+          {
+            "const": "Heart",
+            "type": "string"
+          },
+          {
+            "const": "SmallIntestine",
+            "type": "string"
+          },
+          {
+            "const": "Bladder",
+            "type": "string"
+          },
+          {
+            "const": "Kidney",
+            "type": "string"
+          },
+          {
+            "const": "Pericardium",
+            "type": "string"
+          },
+          {
+            "const": "TripleEnergizer",
+            "type": "string"
+          },
+          {
+            "const": "Gallbladder",
+            "type": "string"
+          },
+          {
+            "const": "Liver",
+            "type": "string"
+          },
+          {
+            "const": "Ren",
+            "type": "string"
+          },
+          {
+            "const": "Du",
+            "type": "string"
+          },
+          {
+            "const": "Chong",
+            "type": "string"
+          },
+          {
+            "const": "Dai",
+            "type": "string"
+          },
+          {
+            "const": "YinQiao",
+            "type": "string"
+          },
+          {
+            "const": "YangQiao",
+            "type": "string"
+          },
+          {
+            "const": "YinWei",
+            "type": "string"
+          },
+          {
+            "const": "YangWei",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "attack_kind": {
+      "anyOf": [
+        {
+          "const": "real_yuan",
+          "type": "string"
+        },
+        {
+          "const": "physical_carrier",
+          "type": "string"
+        },
+        {
+          "const": "tainted_yuan",
+          "type": "string"
+        },
+        {
+          "const": "array",
+          "type": "string"
+        }
+      ]
+    },
+    "reflected_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "k_drain": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "damage_multiplier": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "self_damage_multiplier": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "grants_amplification": {
+      "type": "boolean"
+    },
+    "expires_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

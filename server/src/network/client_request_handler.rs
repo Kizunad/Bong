@@ -2096,7 +2096,7 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 mod tests {
     use super::*;
     use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
-    use crate::cultivation::components::Realm;
+    use crate::cultivation::components::{MeridianSystem, Realm};
     use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
@@ -2553,6 +2553,7 @@ mod tests {
         app.add_event::<crate::combat::events::AttackIntent>();
         app.add_event::<crate::cultivation::burst_meridian::BurstMeridianEvent>();
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
         app.add_event::<BreakthroughRequest>();
         app.add_event::<ForgeRequest>();
         app.add_event::<InsightChosen>();
@@ -2580,6 +2581,12 @@ mod tests {
         app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
         app.add_event::<crate::combat::events::CombatEvent>();
         app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MultiPointBackfireEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MeridianHardenEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MeridianSeveredVoluntaryEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::BackfireAmplificationActiveEvent>();
+        app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
         app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
         app.add_systems(
             Update,
@@ -4445,6 +4452,13 @@ mod tests {
             skill_bar,
             QuickSlotBindings::default(),
             empty_inventory(),
+            Cultivation {
+                realm: Realm::Void,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
         ));
 
         app.world_mut()

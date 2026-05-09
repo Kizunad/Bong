@@ -1,3 +1,4 @@
+use super::collision::reverse_clamp;
 use super::{finite_non_negative, QiPhysicsError};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,6 +31,28 @@ pub fn density_echo(
     })
 }
 
+/// 截脉多点接触的音论分散算子。
+///
+/// `points` 当前只作为调用侧的物理语义输入保留：v2 数值表已经把多点分散后的
+/// `k_drain` 降到低于单点弹反，因此这里不再次按点数折减，避免重复惩罚。
+pub fn multi_point_dispersion(
+    incoming_qi: f64,
+    k_drain: f64,
+    style_weight: f64,
+    beta: f64,
+    _points: u8,
+) -> f64 {
+    reverse_clamp(incoming_qi, k_drain, style_weight, beta)
+}
+
+/// 主动 SEVERED 经脉换反震效率的破例算子。
+pub fn sever_meridian(normal_clamp: f64, amplification_multiplier: f64) -> f64 {
+    if !normal_clamp.is_finite() || !amplification_multiplier.is_finite() {
+        return 0.0;
+    }
+    (normal_clamp.max(0.0) * amplification_multiplier.max(0.0)).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +69,15 @@ mod tests {
         let out = density_echo(9.0, 0.3, 60.0, 100).unwrap();
         assert_eq!(out.echo_count, 90);
         assert!((out.threshold - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn multipoint_dispersion_reuses_reverse_clamp_without_second_point_penalty() {
+        assert!((multi_point_dispersion(50.0, 0.2, 0.5, 0.6, 5) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sever_meridian_triples_normal_half_clamp_for_void_zhenmai() {
+        assert_eq!(sever_meridian(0.5, 3.0), 1.5);
     }
 }

@@ -1,19 +1,22 @@
 use serde_json::json;
 use valence::entity::Look;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, ParamSet, Position, Query,
-    Res, ResMut, Username, With,
+    bevy_ecs, Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, ParamSet,
+    Position, Query, Res, ResMut, Username, With,
 };
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::jiemai::{
     jiemai_apply_effects, jiemai_effectiveness, jiemai_fov_check, jiemai_prep_window,
-    jiemai_qi_cost_for_realm,
 };
 use crate::combat::status::has_active_status;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::weapon::{Weapon, WeaponBroken};
+use crate::combat::zhenmai_v2::{
+    self, BackfireAmplification, MeridianHardenActive, MultiPointActive,
+};
 use crate::combat::CombatClock;
 use crate::combat::{
     components::{
@@ -42,9 +45,9 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{
-    QI_ZHENMAI_CONCUSSION_BASE_SEVERITY, QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC,
-    QI_ZHENMAI_PARRY_RECOVERY_TICKS,
+    QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC, QI_ZHENMAI_PARRY_RECOVERY_TICKS,
 };
+use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer};
 use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -114,6 +117,9 @@ type CombatTargetItem<'a> = (
     Option<&'a mut FalseSkin>,
     Option<&'a mut DerivedAttrs>,
     Option<&'a mut PracticeLog>,
+    Option<&'a mut MultiPointActive>,
+    Option<&'a MeridianHardenActive>,
+    Option<&'a BackfireAmplification>,
 );
 type CombatAttackerItem<'a> = (
     &'a mut Cultivation,
@@ -130,6 +136,17 @@ type DefenseResponderItem<'a> = (
     Option<&'a FalseSkin>,
 );
 type PositionLookItem<'a> = (&'a Position, Option<&'a Look>);
+
+/// 事件写出参数合并，避免 Bevy 0.14 顶层 SystemParam 数量上限。
+#[derive(SystemParam)]
+pub struct CombatResolveEventWriters<'w> {
+    status_effect_intents: EventWriter<'w, ApplyStatusEffectIntent>,
+    out_events: EventWriter<'w, CombatEvent>,
+    qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
+    multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
+    death_events: EventWriter<'w, DeathEvent>,
+    durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
+}
 
 pub fn apply_defense_intents(
     mut defenses: EventReader<DefenseIntent>,
@@ -150,7 +167,7 @@ pub fn apply_defense_intents(
         }) {
             continue;
         }
-        if jiemai_qi_cost_for_realm(cultivation.realm).is_none() {
+        if zhenmai_v2::parry_qi_cost_for_realm(cultivation.realm).is_none() {
             continue;
         }
 
@@ -183,10 +200,7 @@ pub fn resolve_attack_intents(
     statuses: Query<&StatusEffects>,
     sparring_sessions: Query<&crate::social::components::SparringState>,
     mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
-    mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
-    mut out_events: EventWriter<CombatEvent>,
-    mut death_events: EventWriter<DeathEvent>,
-    mut durability_changed_tx: EventWriter<InventoryDurabilityChangedEvent>,
+    mut event_writers: CombatResolveEventWriters,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
     weapon_break: (
         Query<&mut Weapon>,
@@ -337,6 +351,9 @@ pub fn resolve_attack_intents(
             false_skin,
             defender_attrs,
             defender_practice_log,
+            mut multipoint_active,
+            harden_active,
+            backfire_amplification,
         )) = target_query.get_mut(target_entity)
         else {
             continue;
@@ -368,14 +385,65 @@ pub fn resolve_attack_intents(
                     .unwrap_or(1.0)
             }
         };
+        let zhenmai_attack_kind =
+            zhenmai_v2::attack_kind_for_source(intent.source, intent.wound_kind);
+        let harden_damage_multiplier = harden_active
+            .map(|active| flow_modifier(1.0, active.damage_multiplier))
+            .unwrap_or(1.0);
+        let backfire_incoming_damage_multiplier = backfire_amplification
+            .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
+            .map(|active| active.incoming_damage_multiplier)
+            .unwrap_or(1.0);
         let damage = (hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
             * damage_multiplier
             * attacker_damage_multiplier
             * defender_damage_multiplier
-            * weapon_multiplier)
+            * weapon_multiplier
+            * harden_damage_multiplier
+            * backfire_incoming_damage_multiplier)
             .max(1.0);
         let was_alive = wounds.health_current > 0.0;
+        let mut pending_reflected_qi = 0.0_f64;
+        if let Some(active) = multipoint_active.as_deref_mut() {
+            let reflected =
+                zhenmai_v2::multipoint_contact(active, f64::from(hit_qi), zhenmai_attack_kind);
+            pending_reflected_qi += reflected;
+            if let Some(events) = event_writers.multipoint_backfires.as_deref_mut() {
+                events.send(zhenmai_v2::MultiPointBackfireEvent {
+                    defender: target_entity,
+                    attacker: Some(intent.attacker),
+                    attack_kind: zhenmai_attack_kind,
+                    contact_index: active.contact_count,
+                    reflected_qi: reflected,
+                    tick: clock.tick,
+                });
+            }
+            zhenmai_v2::apply_self_damage(&mut wounds, active.self_damage_per_contact);
+        }
+        if let Some(active) = backfire_amplification
+            .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
+        {
+            pending_reflected_qi +=
+                zhenmai_v2::reflected_qi(f64::from(hit_qi), active.k_drain, zhenmai_attack_kind);
+        }
+        if pending_reflected_qi > f64::EPSILON {
+            if let Some(transfer) = zhenmai_v2::backfire_transfer(
+                QiAccountId::player(attacker_id.clone()),
+                QiAccountId::player(target_id.clone()),
+                pending_reflected_qi,
+            ) {
+                if let Some(events) = event_writers.qi_transfers.as_deref_mut() {
+                    events.send(transfer);
+                }
+            }
+            let attacker = intent.attacker;
+            commands.add(
+                move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                    zhenmai_v2::apply_reflected_qi(world, attacker, pending_reflected_qi);
+                },
+            );
+        }
 
         // plan-weapon-v1 §6.3：命中一次 → 耐久扣减。
         // 若耐久归零收集 broken info,下面统一 commands 操作(避免与 mut borrow 冲突)。
@@ -492,7 +560,7 @@ pub fn resolve_attack_intents(
                 crate::tools::damage_main_hand_tool(
                     intent.attacker,
                     &mut inventory,
-                    &mut durability_changed_tx,
+                    &mut event_writers.durability_changed_tx,
                     tool.durability_cost_ratio_per_use(),
                 );
             }
@@ -528,7 +596,7 @@ pub fn resolve_attack_intents(
                 .as_ref()
                 .is_some_and(|window| clock.tick < window.expires_at_tick());
 
-            let qi_cost = jiemai_qi_cost_for_realm(defender_cultivation.realm);
+            let qi_cost = zhenmai_v2::parry_qi_cost_for_realm(defender_cultivation.realm);
             let fov_ok = jiemai_fov_check(
                 attacker_position,
                 target_position,
@@ -549,7 +617,8 @@ pub fn resolve_attack_intents(
 
                 let before = emitted_contam_delta;
                 let effectiveness = jiemai_effectiveness(distance);
-                let mut concussion_severity = QI_ZHENMAI_CONCUSSION_BASE_SEVERITY;
+                let mut concussion_severity =
+                    zhenmai_v2::parry_self_damage_for_realm(defender_cultivation.realm);
                 jiemai_apply_effects(
                     effectiveness,
                     &mut emitted_contam_delta,
@@ -640,7 +709,7 @@ pub fn resolve_attack_intents(
                                     next_ratio,
                                 ) {
                                     Ok(update) => {
-                                        durability_changed_tx.send(
+                                        event_writers.durability_changed_tx.send(
                                             InventoryDurabilityChangedEvent {
                                                 entity: target_entity,
                                                 revision: update.revision,
@@ -705,6 +774,9 @@ pub fn resolve_attack_intents(
             contamination.entries.push(ContamSource {
                 amount: emitted_contam_delta,
                 color: ColorKind::Mellow,
+                meridian_id: Some(crate::cultivation::dugu::body_part_to_meridian(
+                    hit_probe.body_part,
+                )),
                 attacker_id: Some(attacker_id.clone()),
                 introduced_at: clock.tick,
             });
@@ -717,35 +789,41 @@ pub fn resolve_attack_intents(
         wounds.entries.push(wound);
 
         if wound_bleeding > 0.0 {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Bleeding,
-                magnitude: wound_bleeding,
-                duration_ticks: u64::MAX,
-                issued_at_tick: clock.tick,
-            });
+            event_writers
+                .status_effect_intents
+                .send(ApplyStatusEffectIntent {
+                    target: target_entity,
+                    kind: StatusEffectKind::Bleeding,
+                    magnitude: wound_bleeding,
+                    duration_ticks: u64::MAX,
+                    issued_at_tick: clock.tick,
+                });
         }
 
         if matches!(hit_probe.body_part, BodyPart::LegL | BodyPart::LegR)
             && wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD
         {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Slowed,
-                magnitude: 0.4,
-                duration_ticks: LEG_SLOWED_DURATION_TICKS,
-                issued_at_tick: clock.tick,
-            });
+            event_writers
+                .status_effect_intents
+                .send(ApplyStatusEffectIntent {
+                    target: target_entity,
+                    kind: StatusEffectKind::Slowed,
+                    magnitude: 0.4,
+                    duration_ticks: LEG_SLOWED_DURATION_TICKS,
+                    issued_at_tick: clock.tick,
+                });
         }
 
         if hit_probe.body_part == BodyPart::Head && wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Stunned,
-                magnitude: 1.0,
-                duration_ticks: HEAD_STUN_DURATION_TICKS,
-                issued_at_tick: clock.tick,
-            });
+            event_writers
+                .status_effect_intents
+                .send(ApplyStatusEffectIntent {
+                    target: target_entity,
+                    kind: StatusEffectKind::Stunned,
+                    magnitude: 1.0,
+                    duration_ticks: HEAD_STUN_DURATION_TICKS,
+                    issued_at_tick: clock.tick,
+                });
         }
 
         if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut meridians) {
@@ -794,7 +872,7 @@ pub fn resolve_attack_intents(
             decay
         );
 
-        out_events.send(CombatEvent {
+        event_writers.out_events.send(CombatEvent {
             attacker: intent.attacker,
             target: target_entity,
             resolved_at_tick: clock.tick,
@@ -859,7 +937,7 @@ pub fn resolve_attack_intents(
                 wounds.health_current = (wounds.health_max.max(1.0) * 0.05).max(1.0);
                 crate::social::conclude_sparring_defeat(
                     &mut commands,
-                    &mut status_effect_intents,
+                    &mut event_writers.status_effect_intents,
                     target_entity,
                     intent.attacker,
                     clock.tick,
@@ -883,7 +961,7 @@ pub fn resolve_attack_intents(
             let attacker_player_id = attacker_id
                 .starts_with("offline:")
                 .then(|| attacker_id.clone());
-            death_events.send(DeathEvent {
+            event_writers.death_events.send(DeathEvent {
                 target: target_entity,
                 cause: format!("{action_label}:{attacker_id}"),
                 attacker: Some(intent.attacker),
@@ -1121,9 +1199,7 @@ mod tests {
         ApplyStatusEffectIntent, AttackIntent, AttackSource, DefenseKind, StatusEffectKind,
         FIST_REACH,
     };
-    use crate::combat::jiemai::{
-        jiemai_contam_multiplier_for_effectiveness, jiemai_qi_cost_for_realm,
-    };
+    use crate::combat::jiemai::jiemai_contam_multiplier_for_effectiveness;
     use crate::cultivation::components::{
         Contamination, CrackCause, Cultivation, MeridianId, MeridianSystem, Realm,
     };
@@ -2651,7 +2727,7 @@ mod tests {
         assert!((expected_effectiveness - 0.3).abs() < 1e-6);
         assert_eq!(
             cultivation.qi_current,
-            20.0 - jiemai_qi_cost_for_realm(Realm::Induce).unwrap()
+            20.0 - zhenmai_v2::parry_qi_cost_for_realm(Realm::Induce).unwrap()
         );
         assert!(state.incoming_window.is_none());
         assert_eq!(wounds.entries.len(), 2);
@@ -3280,6 +3356,105 @@ mod tests {
         assert!(
             (reduced_wounds.health_current - (reduced_wounds.health_max - reduced_damage)).abs()
                 < 0.001
+        );
+    }
+
+    #[test]
+    fn resolver_applies_backfire_amplification_to_defender_incoming_damage() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1360 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let baseline_attacker = spawn_player(
+            &mut app,
+            "AzureBaseBackfire",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let amplified_attacker = spawn_player(
+            &mut app,
+            "AzureAmpBackfire",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let baseline_target = spawn_player(
+            &mut app,
+            "CrimsonBaseBackfire",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let amplified_target = spawn_player(
+            &mut app,
+            "CrimsonAmpBackfire",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut()
+            .entity_mut(amplified_target)
+            .insert(BackfireAmplification {
+                meridian_id: MeridianId::Du,
+                attack_kind: crate::combat::zhenmai_v2::ZhenmaiAttackKind::RealYuan,
+                started_at_tick: 1300,
+                expires_at_tick: 1400,
+                k_drain: 1.5,
+                incoming_damage_multiplier: 0.5,
+            });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: baseline_attacker,
+            target: Some(baseline_target),
+            issued_at_tick: 1359,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: amplified_attacker,
+            target: Some(amplified_target),
+            issued_at_tick: 1359,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        let baseline_damage = events[0].damage;
+        let amplified_damage = events[1].damage;
+
+        assert!(
+            amplified_damage < baseline_damage,
+            "backfire amplification should reduce only the holder's incoming damage"
+        );
+        assert!(
+            amplified_damage >= 1.0,
+            "backfire amplification is not immunity; main hit still lands"
         );
     }
 

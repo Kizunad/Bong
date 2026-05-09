@@ -2,11 +2,13 @@ import {
   CHANNELS,
   type CombatRealtimeEventV1,
   type Narration,
+  type ZhenmaiSkillEventV1,
   validateCombatRealtimeEventV1Contract,
   validateNarrationV1Contract,
+  validateZhenmaiSkillEventV1Contract,
 } from "@bong/schema";
 
-const { COMBAT_REALTIME, AGENT_NARRATE } = CHANNELS;
+const { COMBAT_REALTIME, ZHENMAI_SKILL_EVENT, AGENT_NARRATE } = CHANNELS;
 
 export interface ZhenmaiNarrationRuntimeClient {
   subscribe(channel: string): Promise<unknown>;
@@ -38,7 +40,6 @@ export interface ZhenmaiNarrationRuntimeConfig {
 export function renderZhenmaiNarration(event: CombatRealtimeEventV1): Narration | null {
   if (event.kind !== "combat_event" || event.defense_kind !== "jie_mai") return null;
   const effectiveness = clampNumber(event.defense_effectiveness, 0.3, 1.0);
-  const target = `zhenmai:parry|target:${event.target_id}|tick:${event.tick}`;
   const actor = shortName(event.target_id);
   let text: string;
   if (effectiveness >= 0.7) {
@@ -51,7 +52,45 @@ export function renderZhenmaiNarration(event: CombatRealtimeEventV1): Narration 
 
   const narration: Narration = {
     scope: "player",
-    target,
+    target: event.target_id,
+    text,
+    style: "narration",
+  };
+  const validation = validateNarrationV1Contract({ v: 1, narrations: [narration] });
+  return validation.ok ? narration : null;
+}
+
+export function renderZhenmaiSkillNarration(event: ZhenmaiSkillEventV1): Narration | null {
+  if (event.type !== "zhenmai_skill_event") return null;
+  const actor = shortName(event.caster_id);
+  const meridian = event.meridian_id ?? event.meridian_ids?.join("、") ?? "经脉";
+  let text: string;
+  switch (event.skill_id) {
+    case "parry":
+      text = `${actor} 把血肉绷成一面短盾，等接触那一瞬反震回去。`;
+      break;
+    case "neutralize":
+      text = `${actor} 指尖点住 ${meridian}，异种真元被一寸寸磨散，自己也亏去一口清气。`;
+      break;
+    case "multipoint":
+      text = `${actor} 周身数处皮下齐震，来劲被分到各处，血雾一闪即灭。`;
+      break;
+    case "harden_meridian":
+      text = `${actor} 把 ${meridian} 暂时绷硬，真元在脉壁上低鸣。`;
+      break;
+    case "sever_chain":
+      text = event.grants_amplification === false
+        ? `${actor} 自断 ${meridian}，断处空响，却没有引来足够反震。`
+        : `${actor} 按断 ${meridian}，断隙里生出一条反震路，六十息内只赌这一线。`;
+      break;
+    default:
+      text = `${actor} 运起截脉法，血肉里响过一声短促回音。`;
+      break;
+  }
+
+  const narration: Narration = {
+    scope: "player",
+    target: event.caster_id,
     text,
     style: "narration",
   };
@@ -73,8 +112,8 @@ export class ZhenmaiNarrationRuntime {
   };
 
   private readonly onMessage = (channel: string, message: string): void => {
-    if (channel !== COMBAT_REALTIME) return;
-    void this.handlePayload(message);
+    if (channel !== COMBAT_REALTIME && channel !== ZHENMAI_SKILL_EVENT) return;
+    void this.handlePayload(channel, message);
   };
 
   constructor(config: ZhenmaiNarrationRuntimeConfig) {
@@ -86,10 +125,11 @@ export class ZhenmaiNarrationRuntime {
   async connect(): Promise<void> {
     if (this.connected) return;
     await this.sub.subscribe(COMBAT_REALTIME);
+    await this.sub.subscribe(ZHENMAI_SKILL_EVENT);
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
-    this.logger.info(`[zhenmai-runtime] subscribed to ${COMBAT_REALTIME}`);
+    this.logger.info(`[zhenmai-runtime] subscribed to ${COMBAT_REALTIME}, ${ZHENMAI_SKILL_EVENT}`);
   }
 
   async disconnect(): Promise<void> {
@@ -100,7 +140,9 @@ export class ZhenmaiNarrationRuntime {
     this.pub.disconnect();
   }
 
-  async handlePayload(message: string): Promise<void> {
+  async handlePayload(channelOrMessage: string, maybeMessage?: string): Promise<void> {
+    const channel = maybeMessage === undefined ? COMBAT_REALTIME : channelOrMessage;
+    const message = maybeMessage === undefined ? channelOrMessage : maybeMessage;
     let parsed: unknown;
     try {
       parsed = JSON.parse(message);
@@ -110,15 +152,14 @@ export class ZhenmaiNarrationRuntime {
       return;
     }
 
-    const validation = validateCombatRealtimeEventV1Contract(parsed);
-    if (!validation.ok) {
+    const narration = this.renderPayload(channel, parsed);
+    if (narration === undefined) {
       this.stats.rejectedContract += 1;
-      this.logger.warn("[zhenmai-runtime] invalid combat event:", validation.errors.join("; "));
+      this.logger.warn("[zhenmai-runtime] invalid payload on channel:", channel);
       return;
     }
     this.stats.received += 1;
 
-    const narration = renderZhenmaiNarration(parsed as CombatRealtimeEventV1);
     if (!narration) {
       this.stats.ignored += 1;
       return;
@@ -130,6 +171,18 @@ export class ZhenmaiNarrationRuntime {
     } catch (error) {
       this.logger.warn("[zhenmai-runtime] publish failed:", error);
     }
+  }
+
+  private renderPayload(channel: string, parsed: unknown): Narration | null | undefined {
+    if (channel === COMBAT_REALTIME) {
+      const validation = validateCombatRealtimeEventV1Contract(parsed);
+      return validation.ok ? renderZhenmaiNarration(parsed as CombatRealtimeEventV1) : undefined;
+    }
+    if (channel === ZHENMAI_SKILL_EVENT) {
+      const validation = validateZhenmaiSkillEventV1Contract(parsed);
+      return validation.ok ? renderZhenmaiSkillNarration(parsed as ZhenmaiSkillEventV1) : undefined;
+    }
+    return undefined;
   }
 }
 

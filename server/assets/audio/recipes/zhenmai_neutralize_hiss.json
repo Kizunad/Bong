@@ -1,0 +1,10 @@
+{
+  "id": "zhenmai_neutralize_hiss",
+  "layers": [
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.4, "pitch": 1.0, "delay_ticks": 0 },
+    { "sound": "minecraft:block.sculk_sensor.clicking", "volume": 0.2, "pitch": 1.4, "delay_ticks": 2 }
+  ],
+  "priority": 82,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}
