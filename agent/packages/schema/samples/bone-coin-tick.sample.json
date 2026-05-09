@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "tick": 720000,
+  "season": "summer_to_winter",
+  "total_spirit_qi": 27.5,
+  "total_face_value": 60,
+  "active_coin_count": 3,
+  "rotten_coin_count": 1,
+  "legacy_scalar_count": 7,
+  "rhythm_multiplier": 1.1,
+  "market_factor": 0.9
+}

@@ -10,6 +10,7 @@ import {
   validateNpcDeathV1Contract,
   validateNpcSpawnedV1Contract,
   validatePoiSpawnedEventV1Contract,
+  validatePriceIndexV1Contract,
   validateRatPhaseChangeEventV1Contract,
   validateTrespassEventV1Contract,
   validateTsyNpcSpawnedV1Contract,
@@ -28,6 +29,7 @@ import type {
   NpcDeathV1,
   NpcSpawnedV1,
   PoiSpawnedEventV1,
+  PriceIndexV1,
   RatPhaseChangeEventV1,
   ChatMessageV1,
   TrespassEventV1,
@@ -45,6 +47,7 @@ const {
   AGENT_NARRATE,
   AGENT_WORLD_MODEL,
   PLAYER_CHAT,
+  PRICE_INDEX,
   TSY_EVENT,
   NPC_SPAWN,
   NPC_DEATH,
@@ -90,6 +93,7 @@ const NPC_EVENT_BUFFER_LIMIT = 128;
 const ALCHEMY_EVENT_BUFFER_LIMIT = 128;
 const POI_NOVICE_EVENT_BUFFER_LIMIT = 128;
 const CROSS_SYSTEM_EVENT_BUFFER_LIMIT = 256;
+const ECONOMY_EVENT_BUFFER_LIMIT = 64;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
 export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
@@ -149,6 +153,7 @@ const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   SPIRIT_EYE_DISCOVERED,
   SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
   SEASON_CHANGED,
+  PRICE_INDEX,
 ];
 const CROSS_SYSTEM_EVENT_CHANNEL_SET = new Set<string>(CROSS_SYSTEM_EVENT_CHANNELS);
 
@@ -205,6 +210,7 @@ export class RedisIpc {
   private latestAlchemyEvents: AlchemyRuntimeEventV1[] = [];
   private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
   private latestRatPhaseEvents: RatPhaseChangeEventV1[] = [];
+  private latestPriceIndexEvents: PriceIndexV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
@@ -214,6 +220,7 @@ export class RedisIpc {
   private alchemyEventCallbacks: Array<(event: AlchemyRuntimeEventV1) => void> = [];
   private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
   private ratPhaseEventCallbacks: Array<(event: RatPhaseChangeEventV1) => void> = [];
+  private priceIndexCallbacks: Array<(event: PriceIndexV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
   private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
@@ -257,6 +264,11 @@ export class RedisIpc {
 
     if (channel === RAT_PHASE_EVENT) {
       this.handleRatPhaseEventMessage(message);
+      return;
+    }
+
+    if (channel === PRICE_INDEX) {
+      this.handlePriceIndexMessage(message);
       return;
     }
 
@@ -491,6 +503,31 @@ export class RedisIpc {
     }
   }
 
+  private handlePriceIndexMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validatePriceIndexV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid price index event:", result.errors.join("; "));
+        return;
+      }
+      this.recordPriceIndexEvent(data as PriceIndexV1);
+      this.recordCrossSystemEvent({ channel: PRICE_INDEX, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse price index event:", e);
+    }
+  }
+
+  private recordPriceIndexEvent(event: PriceIndexV1): void {
+    this.latestPriceIndexEvents.push(event);
+    if (this.latestPriceIndexEvents.length > ECONOMY_EVENT_BUFFER_LIMIT) {
+      this.latestPriceIndexEvents = this.latestPriceIndexEvents.slice(-ECONOMY_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.priceIndexCallbacks) {
+      cb(event);
+    }
+  }
+
   private handleCrossSystemEventMessage(channel: ChannelName, message: string): void {
     try {
       this.recordCrossSystemEvent({ channel, payload: JSON.parse(message) as unknown });
@@ -591,6 +628,16 @@ export class RedisIpc {
 
   onRatPhaseEvent(cb: (event: RatPhaseChangeEventV1) => void): void {
     this.ratPhaseEventCallbacks.push(cb);
+  }
+
+  drainPriceIndexEvents(): PriceIndexV1[] {
+    const events = [...this.latestPriceIndexEvents];
+    this.latestPriceIndexEvents = [];
+    return events;
+  }
+
+  onPriceIndex(cb: (event: PriceIndexV1) => void): void {
+    this.priceIndexCallbacks.push(cb);
   }
 
   getLatestCrossSystemEvents(): CrossSystemRuntimeEventV1[] {

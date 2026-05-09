@@ -5,6 +5,7 @@ import type {
   ChatSignal,
   Command,
   Narration,
+  PriceIndexV1,
   RatPhaseChangeEventV1,
   WorldStateV1,
   ZonePressureCrossedV1,
@@ -19,6 +20,7 @@ import type { AgentDecisionWithMetadata } from "./agent.js";
 import { mergeChatSignals, processChatBatch } from "./chat-processor.js";
 import { CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE } from "./context.js";
 import { EcologyAnalyzer } from "./ecology-analyzer.js";
+import { EconomyAnalyzer } from "./economy-analyzer.js";
 import {
   LocustSwarmNarrationTracker,
   type LocustSwarmDecision,
@@ -120,6 +122,7 @@ export interface RuntimeRedis {
   getLatestState(): WorldStateV1 | null;
   loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
   drainRatPhaseEvents?(): RatPhaseChangeEventV1[];
+  drainPriceIndexEvents?(): PriceIndexV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
   drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
@@ -732,6 +735,41 @@ async function processEcologyEvents(args: {
   }
 }
 
+async function processEconomyEvents(args: {
+  redis: RuntimeRedis;
+  economyAnalyzer: EconomyAnalyzer;
+  logger: Pick<typeof console, "warn">;
+}): Promise<void> {
+  const { redis, economyAnalyzer, logger } = args;
+  const events = redis.drainPriceIndexEvents?.() ?? [];
+  if (events.length === 0) {
+    return;
+  }
+
+  const narrations: Narration[] = [];
+  let sourceTick = 0;
+  for (const event of events) {
+    sourceTick = Math.max(sourceTick, event.tick);
+    narrations.push(...economyAnalyzer.ingestPriceIndex(event));
+  }
+
+  if (narrations.length === 0) {
+    return;
+  }
+
+  try {
+    await redis.publishNarrations({
+      narrations,
+      metadata: {
+        sourceTick,
+        correlationId: `economy:${sourceTick}`,
+      },
+    });
+  } catch (error) {
+    logger.warn("[tiandao] failed to publish economy narration:", error);
+  }
+}
+
 export async function processLocustSwarmEvents(args: {
   redis: RuntimeRedis;
   state: WorldStateV1;
@@ -821,6 +859,7 @@ export async function runRuntime(
   const telemetrySink = deps.telemetrySink ?? createDefaultTelemetrySink({ logger });
   const qiColorNarrationTracker = new QiColorNarrationTracker();
   const ecologyAnalyzer = new EcologyAnalyzer();
+  const economyAnalyzer = new EconomyAnalyzer();
   const locustSwarmTracker = new LocustSwarmNarrationTracker();
 
   logger.log(
@@ -941,6 +980,11 @@ export async function runRuntime(
           redis,
           worldModel,
           ecologyAnalyzer,
+          logger,
+        });
+        await processEconomyEvents({
+          redis,
+          economyAnalyzer,
           logger,
         });
 
