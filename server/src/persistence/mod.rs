@@ -590,7 +590,7 @@ fn bootstrap_persistence_system(
                 "[bong][persistence] hydrated {count} void-action cooldown(s) from sqlite"
             ),
             Ok(_) => {}
-            Err(error) => tracing::warn!(
+            Err(error) => panic!(
                 "[bong][persistence] failed to hydrate void-action cooldowns at {}: {error}",
                 settings.db_path().display()
             ),
@@ -1558,6 +1558,23 @@ fn assert_void_action_cooldowns_schema_ready(
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             io::Error::other(format!(
                 "v19 migration completed but void_action_cooldowns column {missing} missing"
+            )),
+        )));
+    }
+    let mut statement = transaction.prepare("PRAGMA table_info(void_action_cooldowns)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [("character_id".to_owned(), 1), ("kind".to_owned(), 2)];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v19 migration completed but void_action_cooldowns primary key mismatch: expected character_id,kind got {primary_key:?}"
             )),
         )));
     }
@@ -5463,6 +5480,37 @@ mod persistence_tests {
 
         bootstrap_sqlite(&db_path, "server-run-test")
             .expect_err("partial void_action_cooldowns schema must block v19 migration");
+
+        let connection = Connection::open(&db_path).expect("db should reopen");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, 18);
+    }
+
+    #[test]
+    fn v19_migration_rejects_void_action_cooldowns_without_composite_primary_key() {
+        let db_path = database_path("v19-void-action-cooldowns-bad-primary-key");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE void_action_cooldowns (
+                    character_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    ready_at_tick INTEGER NOT NULL CHECK (ready_at_tick >= 0),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                PRAGMA user_version = 18;
+                ",
+            )
+            .expect("bad cooldown table should be created");
+        drop(connection);
+
+        bootstrap_sqlite(&db_path, "server-run-test")
+            .expect_err("void_action_cooldowns must keep composite primary key");
 
         let connection = Connection::open(&db_path).expect("db should reopen");
         let user_version: i32 = connection

@@ -169,7 +169,7 @@ describe("VoidActionNarrationRuntime", () => {
     await runtime.connect();
     sub.emit(VOID_ACTION_BARRIER, JSON.stringify(payload("barrier")));
     sub.emit(VOID_ACTION_BARRIER, JSON.stringify({ ...payload("barrier"), at_tick: 43 }));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await runtime.disconnect();
 
     expect(pub.published).toHaveLength(2);
     expect(maxInFlight).toBe(1);

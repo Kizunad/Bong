@@ -12,7 +12,9 @@ use crate::cultivation::tick::CultivationClock;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::npc::tsy_hostile::{DaoxiangInstinctCooldown, TsyHostileMarker};
 use crate::persistence::{persist_void_action_cooldown, PersistenceSettings};
-use crate::qi_physics::{QiAccountId, QiTransfer, WorldQiAccount, WorldQiBudget};
+use crate::qi_physics::{
+    constants::QI_EPSILON, QiAccountId, QiTransfer, WorldQiAccount, WorldQiBudget,
+};
 use crate::schema::void_actions::{VoidActionBroadcastV1, VoidActionRequestV1};
 use crate::world::tsy_lifecycle::{TsyLifecycle, TsyZoneStateRegistry};
 use crate::world::zone::ZoneRegistry;
@@ -89,7 +91,7 @@ pub fn precheck_void_action(
     if input.realm != Realm::Void {
         return Err(VoidActionError::RealmTooLow);
     }
-    if input.qi_current + f64::EPSILON < kind.qi_cost() {
+    if input.qi_current + QI_EPSILON < kind.qi_cost() {
         return Err(VoidActionError::QiInsufficient);
     }
     if input.lifespan_remaining_years < kind.lifespan_cost_years() as f64 {
