@@ -4,6 +4,8 @@
 //! 后续 plan-tribulation-v1 P5 可把劫雷实体作为 target，复用本模块的
 //! `FullPowerAttackIntent` 结算。
 
+use std::collections::HashSet;
+
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, Event, EventReader, EventWriter,
     IntoSystemConfigs, Position, Query, Res, UniqueId, Update,
@@ -315,7 +317,11 @@ pub fn charge_interrupt_system(
     mut cultivations: Query<&mut Cultivation>,
     mut interrupted: EventWriter<ChargeInterruptedEvent>,
 ) {
+    let mut interrupted_this_tick = HashSet::new();
     for event in combat_events.read() {
+        if !interrupted_this_tick.insert(event.target) {
+            continue;
+        }
         let Ok(charging) = charging_q.get(event.target) else {
             continue;
         };
@@ -709,6 +715,46 @@ mod tests {
             .unwrap();
         assert_eq!(event.qi_refunded, 60.0);
         assert_eq!(event.qi_lost, 40.0);
+    }
+
+    #[test]
+    fn charge_interrupted_by_multiple_hits_refunds_once() {
+        let mut app = app();
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor(&mut app, Realm::Induce, 50.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 100.0,
+            target_qi: 200.0,
+        });
+        app.add_systems(Update, charge_interrupt_system);
+        for _ in 0..2 {
+            app.world_mut().send_event(CombatEvent {
+                attacker,
+                target: caster,
+                resolved_at_tick: 10,
+                body_part: crate::combat::components::BodyPart::Chest,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                damage: 1.0,
+                contam_delta: 0.0,
+                description: "test hit".to_string(),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+        }
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            110.0
+        );
+        let events = app.world().resource::<Events<ChargeInterruptedEvent>>();
+        assert_eq!(events.iter_current_update_events().count(), 1);
     }
 
     #[test]

@@ -25,7 +25,8 @@ pub fn emit_full_power_charging_state_payloads(
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for (entity, charging, unique_id) in &charging_q {
-        broadcast_server_data(
+        send_server_data_to_entity(
+            entity,
             ServerDataPayloadV1::FullPowerChargingState(FullPowerChargingStateV1 {
                 caster_uuid: actor_id(entity, unique_id),
                 active: true,
@@ -61,10 +62,10 @@ pub fn emit_full_power_charging_clear_payloads(
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for event in released.read() {
-        broadcast_charging_clear(event.caster, event.at_tick, &ids, &mut clients);
+        send_charging_clear(event.caster, event.at_tick, &ids, &mut clients);
     }
     for event in interrupted.read() {
-        broadcast_charging_clear(event.caster, event.at_tick, &ids, &mut clients);
+        send_charging_clear(event.caster, event.at_tick, &ids, &mut clients);
     }
 }
 
@@ -79,7 +80,8 @@ pub fn emit_full_power_release_payloads(
         let target_uuid = event
             .target
             .map(|target| actor_id(target, ids.get(target).ok()));
-        broadcast_server_data(
+        send_server_data_to_entity(
+            event.caster,
             ServerDataPayloadV1::FullPowerRelease(FullPowerReleaseV1 {
                 caster_uuid: actor_id(event.caster, ids.get(event.caster).ok()),
                 target_uuid,
@@ -128,7 +130,8 @@ pub fn emit_full_power_exhausted_state_payloads(
         let Ok(exhausted) = exhausted_q.get(event.caster) else {
             continue;
         };
-        broadcast_server_data(
+        send_server_data_to_entity(
+            event.caster,
             ServerDataPayloadV1::FullPowerExhaustedState(FullPowerExhaustedStateV1 {
                 caster_uuid: actor_id(event.caster, ids.get(event.caster).ok()),
                 active: true,
@@ -156,7 +159,8 @@ pub fn emit_full_power_exhausted_state_payloads(
     }
 
     for event in expired.read() {
-        broadcast_server_data(
+        send_server_data_to_entity(
+            event.entity,
             ServerDataPayloadV1::FullPowerExhaustedState(FullPowerExhaustedStateV1 {
                 caster_uuid: actor_id(event.entity, ids.get(event.entity).ok()),
                 active: false,
@@ -168,13 +172,14 @@ pub fn emit_full_power_exhausted_state_payloads(
     }
 }
 
-fn broadcast_charging_clear(
+fn send_charging_clear(
     entity: Entity,
     tick: u64,
     ids: &Query<&UniqueId>,
     clients: &mut Query<&mut Client, With<Client>>,
 ) {
-    broadcast_server_data(
+    send_server_data_to_entity(
+        entity,
         ServerDataPayloadV1::FullPowerChargingState(FullPowerChargingStateV1 {
             caster_uuid: actor_id(entity, ids.get(entity).ok()),
             active: false,
@@ -186,7 +191,8 @@ fn broadcast_charging_clear(
     );
 }
 
-fn broadcast_server_data(
+fn send_server_data_to_entity(
+    entity: Entity,
     payload: ServerDataPayloadV1,
     clients: &mut Query<&mut Client, With<Client>>,
 ) {
@@ -200,9 +206,10 @@ fn broadcast_server_data(
         }
     };
 
-    for mut client in clients.iter_mut() {
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
-    }
+    let Ok(mut client) = clients.get_mut(entity) else {
+        return;
+    };
+    send_server_data_payload(&mut client, payload_bytes.as_slice());
 }
 
 fn actor_id(entity: Entity, unique_id: Option<&UniqueId>) -> String {
@@ -216,4 +223,132 @@ fn charge_strength(charging: &ChargingState) -> f32 {
         return 0.1;
     }
     (charging.qi_committed / charging.target_qi).clamp(0.1, 1.0) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use valence::prelude::{App, Events, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn spawn_mock_client(app: &mut App, name: &str) -> (Entity, MockClientHelper) {
+        let (bundle, helper) = create_mock_client(name);
+        let entity = app.world_mut().spawn(bundle).id();
+        (entity, helper)
+    }
+
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+    }
+
+    fn collect_full_power_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataPayloadV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
+                .expect("server data payload should decode");
+            match payload.payload {
+                ServerDataPayloadV1::FullPowerChargingState(state) => {
+                    payloads.push(ServerDataPayloadV1::FullPowerChargingState(state));
+                }
+                ServerDataPayloadV1::FullPowerRelease(event) => {
+                    payloads.push(ServerDataPayloadV1::FullPowerRelease(event));
+                }
+                ServerDataPayloadV1::FullPowerExhaustedState(state) => {
+                    payloads.push(ServerDataPayloadV1::FullPowerExhaustedState(state));
+                }
+                _ => {}
+            }
+        }
+        payloads
+    }
+
+    #[test]
+    fn charging_state_is_sent_only_to_caster_but_vfx_is_global() {
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_full_power_charging_state_payloads);
+
+        let (caster, mut caster_helper) = spawn_mock_client(&mut app, "Caster");
+        let (_observer, mut observer_helper) = spawn_mock_client(&mut app, "Observer");
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 75.0,
+            target_qi: 150.0,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let caster_payloads = collect_full_power_payloads(&mut caster_helper);
+        let observer_payloads = collect_full_power_payloads(&mut observer_helper);
+        assert_eq!(caster_payloads.len(), 1);
+        assert!(matches!(
+            &caster_payloads[0],
+            ServerDataPayloadV1::FullPowerChargingState(state)
+                if state.active && state.qi_committed == 75.0 && state.target_qi == 150.0
+        ));
+        assert!(observer_payloads.is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn release_payload_is_sent_only_to_caster_but_vfx_is_global() {
+        let mut app = App::new();
+        app.add_event::<FullPowerReleasedEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_full_power_release_payloads);
+
+        let (caster, mut caster_helper) = spawn_mock_client(&mut app, "Caster");
+        let (target, mut observer_helper) = spawn_mock_client(&mut app, "Observer");
+        app.world_mut().send_event(FullPowerReleasedEvent {
+            caster,
+            target: Some(target),
+            qi_released: 120.0,
+            at_tick: 42,
+            hit_position: Some([1.0, 65.0, 1.0]),
+            realm_gap_tier: None,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let caster_payloads = collect_full_power_payloads(&mut caster_helper);
+        let observer_payloads = collect_full_power_payloads(&mut observer_helper);
+        assert_eq!(caster_payloads.len(), 1);
+        assert!(matches!(
+            &caster_payloads[0],
+            ServerDataPayloadV1::FullPowerRelease(event)
+                if event.qi_released == 120.0 && event.tick == 42
+        ));
+        assert!(observer_payloads.is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .count(),
+            1
+        );
+    }
 }

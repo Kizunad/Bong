@@ -401,6 +401,7 @@ pub fn register(app: &mut App) {
             full_power_emit::emit_full_power_release_payloads,
             full_power_emit::emit_full_power_exhausted_state_payloads,
         )
+            .after(crate::cultivation::full_power_strike::apply_full_power_attack_intent_system)
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
     app.add_systems(
