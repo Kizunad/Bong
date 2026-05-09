@@ -14,6 +14,10 @@ public final class RealmCollapseHudStateStore {
         snapshot = next == null ? RealmCollapseHudState.empty() : next;
     }
 
+    public static void clearOnDisconnect() {
+        replace(RealmCollapseHudState.empty());
+    }
+
     public static void resetForTests() {
         snapshot = RealmCollapseHudState.empty();
     }

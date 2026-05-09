@@ -22,6 +22,7 @@ import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
 import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -54,6 +55,12 @@ public class BongNetworkHandler {
         registerVfxEventChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
+        // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
+        // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
+        // 的 "域崩撤离 48s" 倒计时跨 session 续命。
+        ClientPlayConnectionEvents.DISCONNECT.register(
+            (handler, client) -> client.execute(RealmCollapseHudStateStore::clearOnDisconnect)
+        );
     }
 
     private static void registerServerDataChannel() {
