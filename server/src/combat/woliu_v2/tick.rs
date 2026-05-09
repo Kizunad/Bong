@@ -1,4 +1,4 @@
-use valence::prelude::{Commands, DVec3, Entity, EventWriter, Position, Query, Res, With};
+use valence::prelude::{Commands, DVec3, Entity, EventWriter, Position, Query, Res, With, Without};
 
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::CombatClock;
@@ -10,7 +10,7 @@ use super::events::{
     BackfireCauseV2, BackfireLevel, TurbulenceFieldDecayed, VortexBackfireEventV2, WoliuSkillId,
 };
 use super::physics::turbulence_decay_step;
-use super::state::{TurbulenceExposure, TurbulenceField, VortexV2State};
+use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
 
 const VOID_HEART_TRIBULATION_TICKS: u64 = 30 * TICKS_PER_SECOND;
 
@@ -132,6 +132,27 @@ pub fn heart_active_backfire_tick(
             overflow_qi: 0.0,
             tick: clock.tick,
         });
+    }
+}
+
+pub fn vortex_v2_state_lifecycle_tick(
+    clock: Res<CombatClock>,
+    mut commands: Commands,
+    active_states: Query<(Entity, &VortexV2State)>,
+    orphan_passives: Query<Entity, (With<PassiveVortex>, Without<VortexV2State>)>,
+) {
+    for (entity, state) in &active_states {
+        if clock.tick < state.active_until_tick {
+            continue;
+        }
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.remove::<VortexV2State>();
+        if state.active_skill_kind == WoliuSkillId::Heart {
+            entity_commands.remove::<PassiveVortex>();
+        }
+    }
+    for entity in &orphan_passives {
+        commands.entity(entity).remove::<PassiveVortex>();
     }
 }
 

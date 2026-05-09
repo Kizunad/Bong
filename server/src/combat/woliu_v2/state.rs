@@ -15,6 +15,7 @@ pub struct VortexV2State {
     pub turbulence_intensity: f32,
     pub backfire_level: Option<BackfireLevel>,
     pub started_at_tick: u64,
+    pub active_until_tick: u64,
     pub cooldown_until_tick: u64,
 }
 

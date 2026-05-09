@@ -3,7 +3,7 @@ use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut};
 use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
-    Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+    ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -220,9 +220,11 @@ pub fn resolve_woliu_v2_skill(
             apply_backfire_to_hand_meridians(&mut meridians, level);
         }
     }
+    record_stir_contamination(world, caster, stir.contamination_gain, now_tick);
 
     let center = position.get();
     let cooldown_until_tick = now_tick.saturating_add(spec.cooldown_ticks);
+    let active_until_tick = now_tick.saturating_add(spec.duration_ticks);
     if spec.turbulence_radius > 0.0 || skill == WoliuSkillId::Heart {
         world.entity_mut(caster).insert(VortexV2State {
             active_skill_kind: skill,
@@ -233,6 +235,7 @@ pub fn resolve_woliu_v2_skill(
             turbulence_intensity: turbulence_intensity(&spec, stir),
             backfire_level: backfire.map(|(level, _)| level),
             started_at_tick: now_tick,
+            active_until_tick,
             cooldown_until_tick,
         });
     }
@@ -373,6 +376,30 @@ fn emit_cast_events(
 fn send_event_if_present<T: valence::prelude::Event>(world: &mut bevy_ecs::world::World, event: T) {
     if let Some(mut events) = world.get_resource_mut::<Events<T>>() {
         events.send(event);
+    }
+}
+
+fn record_stir_contamination(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    contamination_gain: f64,
+    now_tick: u64,
+) {
+    if !contamination_gain.is_finite() || contamination_gain <= f64::EPSILON {
+        return;
+    }
+    let source = ContamSource {
+        amount: contamination_gain,
+        color: ColorKind::Intricate,
+        attacker_id: None,
+        introduced_at: now_tick,
+    };
+    if let Some(mut contamination) = world.get_mut::<Contamination>(caster) {
+        contamination.entries.push(source);
+    } else {
+        world.entity_mut(caster).insert(Contamination {
+            entries: vec![source],
+        });
     }
 }
 

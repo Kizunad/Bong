@@ -121,7 +121,12 @@ fn apply_woliu_v2_state_overlay(
 }
 
 fn ticks_from_now_to_ms(now_ms: u64, now_tick: u64, until_tick: u64) -> u64 {
-    now_ms.saturating_add(until_tick.saturating_sub(now_tick).saturating_mul(50))
+    let millis_per_tick = 1_000_u64 / TICKS_PER_SECOND.max(1);
+    now_ms.saturating_add(
+        until_tick
+            .saturating_sub(now_tick)
+            .saturating_mul(millis_per_tick),
+    )
 }
 
 fn turbulence_until_ms(now_ms: u64, turbulence: &TurbulenceField) -> u64 {
@@ -168,6 +173,7 @@ mod tests {
             turbulence_intensity: 0.8,
             backfire_level: Some(BackfireLevel::MicroTear),
             started_at_tick: 10,
+            active_until_tick: 40,
             cooldown_until_tick: 110,
         };
         let turbulence = TurbulenceField::new(

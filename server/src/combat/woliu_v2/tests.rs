@@ -2,7 +2,9 @@ use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
 use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+};
 use crate::cultivation::meridian::severed::{
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
@@ -26,7 +28,7 @@ use super::physics::{
 use super::skills::{
     declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill, skill_spec, visual_for,
 };
-use super::state::{TurbulenceExposure, TurbulenceField, VortexV2State};
+use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
 
 fn realm_case(index: usize) -> Realm {
     match index % 6 {
@@ -304,6 +306,28 @@ fn resolve_hold_emits_cast_xp_and_qi_transfers() {
 }
 
 #[test]
+fn resolve_hold_persists_stir_contamination_gain() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let contamination = app.world().get::<Contamination>(actor).unwrap();
+    let entry = contamination
+        .entries
+        .last()
+        .expect("stir should persist contamination gain");
+    assert!(entry.amount > 0.0);
+    assert_eq!(
+        entry.color,
+        crate::cultivation::components::ColorKind::Intricate
+    );
+    assert_eq!(entry.introduced_at, 10);
+}
+
+#[test]
 fn startup_declares_lung_dependency_for_all_woliu_v2_skills() {
     let mut app = App::new();
     app.insert_resource(SkillMeridianDependencies::default());
@@ -528,6 +552,30 @@ fn void_heart_tribulation_waits_for_runtime_active_duration() {
         .find(|event| event.cause == BackfireCauseV2::VoidHeartTribulation)
         .expect("void heart should trigger tribulation after 30 active seconds");
     assert_eq!(event.level, BackfireLevel::Severed);
+}
+
+#[test]
+fn vortex_v2_lifecycle_removes_expired_state_and_passive_heart() {
+    let mut app = app(10);
+    app.add_systems(Update, super::tick::vortex_v2_state_lifecycle_tick);
+    let actor = spawn_actor(&mut app, Realm::Void, 1_000.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 4, None, WoliuSkillId::Heart);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let active_until_tick = app
+        .world()
+        .get::<VortexV2State>(actor)
+        .expect("heart cast should insert v2 state")
+        .active_until_tick;
+    assert!(app.world().get::<PassiveVortex>(actor).is_some());
+
+    app.world_mut().resource_mut::<CombatClock>().tick = active_until_tick;
+    app.update();
+
+    assert!(app.world().get::<VortexV2State>(actor).is_none());
+    assert!(app.world().get::<PassiveVortex>(actor).is_none());
 }
 
 #[test]

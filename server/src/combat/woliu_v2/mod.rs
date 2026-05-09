@@ -26,6 +26,7 @@ pub fn register(app: &mut App) {
             tick::turbulence_decay_tick,
             tick::update_turbulence_exposure_tick.after(tick::turbulence_decay_tick),
             tick::heart_active_backfire_tick.after(tick::update_turbulence_exposure_tick),
+            tick::vortex_v2_state_lifecycle_tick.after(tick::heart_active_backfire_tick),
         ),
     );
 }

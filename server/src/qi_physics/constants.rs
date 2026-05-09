@@ -92,3 +92,17 @@ pub const QI_ZHENMAI_PARRY_RECOVERY_TICKS: u64 = 10;
 pub const QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER: f32 = 0.7;
 /// 数值断言默认容忍度。
 pub const QI_EPSILON: f64 = 1e-6;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vortex_stir_ratios_close_conservation_budget() {
+        let total = VORTEX_ABSORPTION_RATIO_BASE + VORTEX_SWIRL_RATIO_BASE;
+        assert!(
+            (total - 1.0).abs() < 1e-12,
+            "woliu stir ratios must sum to 1.0 for qi conservation, got {total}"
+        );
+    }
+}
