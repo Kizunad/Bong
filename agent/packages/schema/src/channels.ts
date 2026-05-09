@@ -155,6 +155,9 @@ export const CHANNELS = {
   /** Server → Client/Agent: 伪皮 HUD 状态（plan-tuike-v1 §P0） */
   TUIKE_FALSE_SKIN_STATE: "bong:tuike/false_skin_state",
 
+  /** Server → Agent: 医道治疗 / 业力 / 医患结契事件（plan-yidao-v1） */
+  YIDAO_EVENT: "bong:yidao/event",
+
   /** Server → Agent: 伪灵脉活动快照（plan-terrain-pseudo-vein-v1 §6.1） */
   PSEUDO_VEIN_ACTIVE: "bong:pseudo_vein:active",
 
@@ -283,6 +286,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.WOLIU_BACKFIRE,
   CHANNELS.WOLIU_PROJECTILE_DRAINED,
   CHANNELS.WOLIU_VORTEX_STATE,
+  CHANNELS.YIDAO_EVENT,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,
   CHANNELS.ZONG_CORE_ACTIVATED,

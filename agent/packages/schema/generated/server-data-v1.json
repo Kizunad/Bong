@@ -12999,6 +12999,169 @@
       "required": [
         "v",
         "type",
+        "healer_id",
+        "active_action",
+        "queue_len",
+        "reputation",
+        "retreating"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "healer_npc_ai_state",
+          "type": "string"
+        },
+        "healer_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "active_action": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "queue_len": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reputation": {
+          "type": "integer"
+        },
+        "retreating": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "healer_id",
+        "reputation",
+        "peace_mastery",
+        "karma",
+        "active_skill",
+        "patient_ids",
+        "patient_hp_percent",
+        "patient_contam_total",
+        "severed_meridian_count",
+        "contract_count",
+        "mass_preview_count"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "yidao_hud_state",
+          "type": "string"
+        },
+        "healer_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "reputation": {
+          "type": "integer"
+        },
+        "peace_mastery": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "karma": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "active_skill": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "const": "meridian_repair",
+                  "type": "string"
+                },
+                {
+                  "const": "contam_purge",
+                  "type": "string"
+                },
+                {
+                  "const": "emergency_resuscitate",
+                  "type": "string"
+                },
+                {
+                  "const": "life_extension",
+                  "type": "string"
+                },
+                {
+                  "const": "mass_meridian_repair",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "patient_ids": {
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "patient_hp_percent": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "patient_contam_total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "severed_meridian_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "contract_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mass_preview_count": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {

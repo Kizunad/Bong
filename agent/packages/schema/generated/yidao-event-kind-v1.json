@@ -1,0 +1,32 @@
+{
+  "anyOf": [
+    {
+      "const": "meridian_heal",
+      "type": "string"
+    },
+    {
+      "const": "contam_purge",
+      "type": "string"
+    },
+    {
+      "const": "emergency_resuscitate",
+      "type": "string"
+    },
+    {
+      "const": "life_extension",
+      "type": "string"
+    },
+    {
+      "const": "mass_heal",
+      "type": "string"
+    },
+    {
+      "const": "karma_accumulation",
+      "type": "string"
+    },
+    {
+      "const": "medical_contract",
+      "type": "string"
+    }
+  ]
+}
