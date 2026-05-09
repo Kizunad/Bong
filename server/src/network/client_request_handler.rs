@@ -22,6 +22,7 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
+use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot, Wounds,
@@ -97,6 +98,7 @@ use crate::player::state::{
 };
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
 use crate::qi_physics::qi_targeted_item_wear_fraction;
+use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
@@ -390,6 +392,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeStationPlace { v, .. }
             | ClientRequestV1::ChargeCarrier { v, .. }
             | ClientRequestV1::ThrowCarrier { v, .. }
+            | ClientRequestV1::AnqiContainerSwitch { v, .. }
             | ClientRequestV1::CraftStart { v, .. }
             | ClientRequestV1::CraftCancel { v } => *v,
         };
@@ -1181,6 +1184,26 @@ pub fn handle_client_request_payloads(
                         issued_at_tick: combat_clock.tick,
                     });
                 }
+            }
+            ClientRequestV1::AnqiContainerSwitch { to, .. } => {
+                let target_container = to.map(map_anqi_container_kind);
+                let entity = ev.client;
+                let tick = combat_clock.tick;
+                commands.add(move |world: &mut bevy_ecs::world::World| {
+                    let switched = if let Some(to) = target_container {
+                        switch_container_slot(world, entity, to, tick)
+                    } else {
+                        cycle_container_slot(world, entity, tick)
+                    };
+                    if switched.is_none() {
+                        tracing::warn!(
+                            ?entity,
+                            ?target_container,
+                            tick,
+                            "rejected anqi container switch request"
+                        );
+                    }
+                });
             }
             ClientRequestV1::UseQuickSlot { slot, .. } => {
                 handle_use_quick_slot(
@@ -5278,6 +5301,21 @@ fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1)
     match slot {
         crate::schema::client_request::AnqiCarrierSlotV1::MainHand => CarrierSlot::MainHand,
         crate::schema::client_request::AnqiCarrierSlotV1::OffHand => CarrierSlot::OffHand,
+    }
+}
+
+fn map_anqi_container_kind(
+    kind: crate::schema::combat_carrier::AnqiContainerKindV1,
+) -> AnqiContainerKind {
+    match kind {
+        crate::schema::combat_carrier::AnqiContainerKindV1::HandSlot => AnqiContainerKind::HandSlot,
+        crate::schema::combat_carrier::AnqiContainerKindV1::Quiver => AnqiContainerKind::Quiver,
+        crate::schema::combat_carrier::AnqiContainerKindV1::PocketPouch => {
+            AnqiContainerKind::PocketPouch
+        }
+        crate::schema::combat_carrier::AnqiContainerKindV1::Fenglinghe => {
+            AnqiContainerKind::Fenglinghe
+        }
     }
 }
 

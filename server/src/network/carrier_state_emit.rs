@@ -122,7 +122,7 @@ pub fn carrier_state_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::carrier::{BondKind, CarrierImprint, CarrierSlot};
+    use crate::combat::carrier::{BondKind, CarrierImprint, CarrierKind, CarrierSlot};
     use crate::cultivation::components::{ColorKind, Realm};
 
     #[test]
@@ -151,6 +151,7 @@ mod tests {
             imprints_by_instance: HashMap::from([(
                 9,
                 CarrierImprint {
+                    carrier_kind: CarrierKind::YibianShougu,
                     qi_amount: 20.0,
                     qi_amount_initial: 40.0,
                     qi_color: ColorKind::Solid,
@@ -158,6 +159,7 @@ mod tests {
                     half_life_min: 120.0,
                     decay_started_at_tick: 0,
                     bond_kind: BondKind::HandheldCarrier,
+                    injection_kind: None,
                 },
             )]),
         };

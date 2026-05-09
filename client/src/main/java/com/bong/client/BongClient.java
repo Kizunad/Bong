@@ -8,6 +8,7 @@ import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.debug.BongAnimCommand;
+import com.bong.client.debug.BongHudCommand;
 import com.bong.client.debug.BongSpawnParticleCommand;
 import com.bong.client.debug.BongVfxCommand;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
@@ -74,6 +75,7 @@ public class BongClient implements ClientModInitializer {
         BongPunchCombo.bootstrap();
         SoundRecipePlayer.bootstrap();
         BongAnimCommand.register();
+        BongHudCommand.register();
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
         BotanyPlantRenderBootstrap.register();
@@ -86,6 +88,6 @@ public class BongClient implements ClientModInitializer {
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
 
-        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /spawnp commands active.");
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /bonghud /spawnp commands active.");
     }
 }

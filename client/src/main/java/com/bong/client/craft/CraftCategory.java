@@ -1,7 +1,7 @@
 package com.bong.client.craft;
 
 /**
- * plan-craft-v1 §3 — 6 类配方分组。
+ * plan-craft-v1 §3 + plan-anqi-v2 — 配方分组。
  * 与 server `craft::CraftCategory` / IPC `CraftCategoryV1` 1:1 镜像。
  */
 public enum CraftCategory {
@@ -10,6 +10,7 @@ public enum CraftCategory {
     TUIKE_SKIN("tuike_skin", "伪皮 / 替尸"),
     ZHENFA_TRAP("zhenfa_trap", "阵法预埋件"),
     TOOL("tool", "凡器"),
+    CONTAINER("container", "容器 / 装具"),
     MISC("misc", "其它");
 
     private final String wire;

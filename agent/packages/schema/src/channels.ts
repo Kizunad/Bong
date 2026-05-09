@@ -155,6 +155,21 @@ export const CHANNELS = {
   /** Server → Agent: 暗器投射物射空 / 蒸发（plan-anqi-v1 P2 narration） */
   ANQI_PROJECTILE_DESPAWNED: "bong:combat/projectile_despawned",
 
+  /** Server → Agent: 暗器 v2 多发齐射事件 */
+  ANQI_MULTI_SHOT: "bong:anqi/multi_shot",
+
+  /** Server → Agent: 暗器 v2 凝魂 / 破甲 / 单射注射事件 */
+  ANQI_QI_INJECTION: "bong:anqi/qi_injection",
+
+  /** Server → Agent: 暗器 v2 化虚诱饵分形事件 */
+  ANQI_ECHO_FRACTAL: "bong:anqi/echo_fractal",
+
+  /** Server → Agent: 暗器 v2 容器磨损税事件 */
+  ANQI_CARRIER_ABRASION: "bong:anqi/carrier_abrasion",
+
+  /** Server → Agent: 暗器 v2 容器切换事件 */
+  ANQI_CONTAINER_SWAP: "bong:anqi/container_swap",
+
   /** Server → Agent: 替尸 / 蜕壳流脱壳事件（plan-tuike-v1 §P1） */
   TUIKE_SHED: "bong:tuike/shed",
 

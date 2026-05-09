@@ -659,6 +659,23 @@ export const ThrowCarrierRequestV1 = Type.Object(
 );
 export type ThrowCarrierRequestV1 = Static<typeof ThrowCarrierRequestV1>;
 
+export const AnqiCombatContainerKindV1 = Type.Union([
+  Type.Literal("hand_slot"),
+  Type.Literal("quiver"),
+  Type.Literal("pocket_pouch"),
+]);
+export type AnqiCombatContainerKindV1 = Static<typeof AnqiCombatContainerKindV1>;
+
+export const AnqiContainerSwitchRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("anqi_container_switch"),
+    to: Type.Optional(AnqiCombatContainerKindV1),
+  },
+  { additionalProperties: false },
+);
+export type AnqiContainerSwitchRequestV1 = Static<typeof AnqiContainerSwitchRequestV1>;
+
 export const ZhenfaKindV1 = Type.Union([
   Type.Literal("trap"),
   Type.Literal("ward"),
@@ -891,6 +908,7 @@ export const ClientRequestV1 = Type.Union([
   TradeOfferResponseRequestV1,
   ChargeCarrierRequestV1,
   ThrowCarrierRequestV1,
+  AnqiContainerSwitchRequestV1,
   ZhenfaPlaceRequestV1,
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,

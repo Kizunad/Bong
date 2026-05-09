@@ -11,11 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SkillBarKeyRouterTest {
     private final List<Integer> sent = new ArrayList<>();
+    private int containerSwitches;
 
     @BeforeEach
     void setUp() {
         SkillBarStore.resetForTests();
         CastStateStore.resetForTests();
+        containerSwitches = 0;
     }
 
     @AfterEach
@@ -56,5 +58,17 @@ class SkillBarKeyRouterTest {
         assertEquals(SkillBarKeyRouter.RouteResult.COOLDOWN_BLOCKED,
             SkillBarKeyRouter.route(0, 1000L, sent::add));
         assertEquals(List.of(), sent);
+    }
+
+    @Test
+    void anqiContainerSwitchOnlyRoutesWhenAnqiSkillIsConfigured() {
+        assertEquals(SkillBarKeyRouter.RouteResult.PASS_THROUGH,
+            SkillBarKeyRouter.routeAnqiContainerSwitch(() -> containerSwitches++));
+        assertEquals(0, containerSwitches);
+
+        SkillBarStore.updateSlot(0, SkillBarEntry.skill("anqi.multi_shot", "多发齐射", 900, 4000, ""));
+        assertEquals(SkillBarKeyRouter.RouteResult.CONTAINER_SWITCH_SENT,
+            SkillBarKeyRouter.routeAnqiContainerSwitch(() -> containerSwitches++));
+        assertEquals(1, containerSwitches);
     }
 }

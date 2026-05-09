@@ -91,6 +91,11 @@ pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
 pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
 pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
+pub const CH_ANQI_MULTI_SHOT: &str = "bong:anqi/multi_shot";
+pub const CH_ANQI_QI_INJECTION: &str = "bong:anqi/qi_injection";
+pub const CH_ANQI_ECHO_FRACTAL: &str = "bong:anqi/echo_fractal";
+pub const CH_ANQI_CARRIER_ABRASION: &str = "bong:anqi/carrier_abrasion";
+pub const CH_ANQI_CONTAINER_SWAP: &str = "bong:anqi/container_swap";
 pub const CH_TUIKE_SHED: &str = "bong:tuike/shed";
 pub const CH_TUIKE_FALSE_SKIN_STATE: &str = "bong:tuike/false_skin_state";
 

@@ -258,6 +258,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeThrowCarrier(slot, x, y, z, power));
     }
 
+    public static void sendAnqiContainerSwitch() {
+        dispatch(ClientRequestProtocol.encodeAnqiContainerSwitch());
+    }
+
+    public static void sendAnqiContainerSwitch(ClientRequestProtocol.AnqiContainerKind to) {
+        dispatch(ClientRequestProtocol.encodeAnqiContainerSwitch(to));
+    }
+
     public static void sendJiemai() {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }

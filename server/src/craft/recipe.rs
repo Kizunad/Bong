@@ -10,7 +10,8 @@
 //!   * **qi_cost 走 ledger** — `start_craft` 内 `WorldQiAccount::transfer`
 //!     与 `Crafting` reason，禁止 plan 内 `cultivation.qi_current -= cost`
 //!
-//! §5 决策门 #1 = A（保留 6 类）。
+//! §5 决策门 #1 = A（保留 6 类）。plan-anqi-v2 追加 Container 类目，
+//! 用于箭袋 / 裤袋 / 封灵匣这类非载体但同属流派装备的配方。
 
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +70,8 @@ pub enum CraftCategory {
     ZhenfaTrap,
     /// 凡器（采药刀 / 刮刀 / 镰刀），tools 流派
     Tool,
+    /// 容器 / 装具（箭袋、裤袋、封灵匣等）。
+    Container,
     /// 兜底类别。新流派 plan 应明确选 5 类之一，避免堆 Misc
     Misc,
 }
@@ -81,18 +84,20 @@ impl CraftCategory {
             Self::TuikeSkin => "tuike_skin",
             Self::ZhenfaTrap => "zhenfa_trap",
             Self::Tool => "tool",
+            Self::Container => "container",
             Self::Misc => "misc",
         }
     }
 
     /// UI 左列表分组顺序固定（§5 决策门 #2 = A，按类别分组 + 字母）。
     /// 客户端不应自行打乱该顺序，否则解锁状态视觉跟服务端不一致。
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::AnqiCarrier,
         Self::DuguPotion,
         Self::TuikeSkin,
         Self::ZhenfaTrap,
         Self::Tool,
+        Self::Container,
         Self::Misc,
     ];
 }
@@ -346,11 +351,15 @@ mod tests {
     #[test]
     fn category_str_stable_and_all_unique() {
         let strs: Vec<&str> = CraftCategory::ALL.iter().map(|c| c.as_str()).collect();
-        // 6 类必须各不相同 — UI 分组依赖 str id 做 key
+        // 类目必须各不相同 — UI 分组依赖 str id 做 key
         let mut sorted = strs.clone();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(sorted.len(), 6, "expected 6 unique category str ids");
+        assert_eq!(
+            sorted.len(),
+            CraftCategory::ALL.len(),
+            "expected unique category str ids"
+        );
         // 顺序固定（不能因为 enum order 改变破坏 UI 分组顺序）
         assert_eq!(
             strs,
@@ -360,6 +369,7 @@ mod tests {
                 "tuike_skin",
                 "zhenfa_trap",
                 "tool",
+                "container",
                 "misc"
             ]
         );

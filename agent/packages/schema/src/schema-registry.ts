@@ -296,10 +296,15 @@ import {
   FullPowerReleaseV1,
 } from "./full-power.js";
 import {
+  CarrierAbrasionEventV1,
   CarrierChargedEventV1,
   CarrierImpactEventV1,
   CarrierStateV1,
+  ContainerSwapEventV1,
+  EchoFractalEventV1,
+  MultiShotEventV1,
   ProjectileDespawnedEventV1,
+  QiInjectionEventV1,
 } from "./combat-carrier.js";
 import {
   FalseSkinKindV1,
@@ -569,6 +574,11 @@ export const SCHEMA_REGISTRY = {
   carrierChargedEventV1: CarrierChargedEventV1,
   carrierImpactEventV1: CarrierImpactEventV1,
   projectileDespawnedEventV1: ProjectileDespawnedEventV1,
+  multiShotEventV1: MultiShotEventV1,
+  qiInjectionEventV1: QiInjectionEventV1,
+  echoFractalEventV1: EchoFractalEventV1,
+  carrierAbrasionEventV1: CarrierAbrasionEventV1,
+  containerSwapEventV1: ContainerSwapEventV1,
   serverDataCarrierStateV1: ServerDataCarrierStateV1,
   falseSkinKindV1: FalseSkinKindV1,
   falseSkinStateV1: FalseSkinStateV1,

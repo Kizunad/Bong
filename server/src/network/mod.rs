@@ -402,6 +402,15 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            anqi_event_bridge::publish_multi_shot_events,
+            anqi_event_bridge::publish_qi_injection_events,
+            anqi_event_bridge::publish_echo_fractal_events,
+            anqi_event_bridge::publish_container_events,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             full_power_emit::emit_full_power_charging_state_payloads,
             full_power_emit::emit_full_power_charged_orb_vfx,
             full_power_emit::emit_full_power_charging_clear_payloads,

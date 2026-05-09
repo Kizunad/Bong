@@ -189,6 +189,12 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(AnqiHudPlanner.buildCommands(
+                AnqiHudStateStore.snapshot(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(ChargingProgressBarHud.buildCommands(screenWidth, screenHeight));
             commands.addAll(ExhaustedGreyOverlay.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(EdgeFeedbackHudPlanner.buildCommands(
