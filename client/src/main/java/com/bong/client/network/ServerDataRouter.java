@@ -76,6 +76,7 @@ public final class ServerDataRouter {
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
         BurstMeridianHandler burstMeridianHandler = new BurstMeridianHandler();
+        FullPowerStateHandler fullPowerStateHandler = new FullPowerStateHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
@@ -136,6 +137,9 @@ public final class ServerDataRouter {
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
         handlers.put("burst_meridian_event", burstMeridianHandler);
+        handlers.put("full_power_charging_state", fullPowerStateHandler);
+        handlers.put("full_power_release", fullPowerStateHandler);
+        handlers.put("full_power_exhausted_state", fullPowerStateHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);

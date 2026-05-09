@@ -191,6 +191,29 @@ pub struct NicheGuardianBrokenV1 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct HighRenownMilestoneEventV1 {
+    pub v: u8,
+    pub event: HighRenownMilestoneEventTag,
+    pub player_uuid: String,
+    pub char_id: String,
+    pub identity_id: u32,
+    pub identity_display_name: String,
+    pub fame: i32,
+    pub milestone: u32,
+    pub identity_exposed: bool,
+    pub tick: u64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub zone: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HighRenownMilestoneEventTag {
+    HighRenownMilestone,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SparringInvitePayloadV1 {
     pub invite_id: String,
     pub initiator: String,
@@ -249,5 +272,28 @@ mod tests {
         assert_eq!(snapshot.exposed_to_count, 0);
         assert!(snapshot.relationships.is_empty());
         assert!(snapshot.faction_membership.is_none());
+    }
+
+    #[test]
+    fn high_renown_milestone_serializes_contract_fields() {
+        let payload = HighRenownMilestoneEventV1 {
+            v: 1,
+            event: HighRenownMilestoneEventTag::HighRenownMilestone,
+            player_uuid: "7a8f80c2-82ad-5d7c-a0dd-b3c1b7d2e1a1".to_string(),
+            char_id: "offline:xuanfeng".to_string(),
+            identity_id: 0,
+            identity_display_name: "玄锋".to_string(),
+            fame: 1000,
+            milestone: 1000,
+            identity_exposed: true,
+            tick: 96_000,
+            zone: Some("blood_valley".to_string()),
+        };
+
+        let json = serde_json::to_value(payload).expect("milestone should serialize");
+        assert_eq!(json["event"], "high_renown_milestone");
+        assert_eq!(json["identity_display_name"], "玄锋");
+        assert_eq!(json["milestone"], 1000);
+        assert_eq!(json["zone"], "blood_valley");
     }
 }

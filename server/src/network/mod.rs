@@ -28,6 +28,7 @@ pub mod extract_emit;
 pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
+pub mod full_power_emit;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
@@ -397,6 +398,21 @@ pub fn register(app: &mut App) {
             tuike_event_bridge::publish_tuike_shed_events
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
+    );
+    app.add_systems(
+        Update,
+        (
+            full_power_emit::emit_full_power_charging_state_payloads,
+            full_power_emit::emit_full_power_charged_orb_vfx,
+            full_power_emit::emit_full_power_charging_clear_payloads,
+            full_power_emit::emit_full_power_release_payloads,
+            full_power_emit::emit_full_power_exhausted_state_payloads,
+            full_power_emit::emit_full_power_exhausted_mist_refresh_vfx,
+        )
+            .after(crate::cultivation::full_power_strike::charge_tick_system)
+            .after(crate::cultivation::full_power_strike::apply_full_power_attack_intent_system)
+            .after(crate::cultivation::full_power_strike::exhausted_expire_system)
+            .before(vfx_event_emit::emit_vfx_event_payloads),
     );
     app.add_systems(
         Update,
@@ -2098,6 +2114,7 @@ fn narration_style_to_wire_value(style: &NarrationStyle) -> &'static str {
         NarrationStyle::Perception => "perception",
         NarrationStyle::Narration => "narration",
         NarrationStyle::EraDecree => "era_decree",
+        NarrationStyle::PoliticalJianghu => "political_jianghu",
     }
 }
 
@@ -3045,7 +3062,7 @@ mod tests {
     mod narration_tests {
         use super::*;
         use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
-        use crate::schema::common::{NarrationScope, NarrationStyle};
+        use crate::schema::common::{NarrationKind, NarrationScope, NarrationStyle};
         use crate::schema::narration::{Narration, NarrationV1};
         use crate::skill::components::SkillId;
         use crate::world::zone::Zone;
@@ -3490,6 +3507,34 @@ mod tests {
                 payloads.len(),
                 1,
                 "duplicate narration payload should be dropped by short-window dedupe"
+            );
+        }
+
+        #[test]
+        fn duplicate_political_narration_payload_is_deduped_within_window() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (_alice, mut alice_helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            let narration = Narration {
+                scope: NarrationScope::Broadcast,
+                target: None,
+                text: "江湖有传，血谷旧怨又添一笔。".to_string(),
+                style: NarrationStyle::PoliticalJianghu,
+                kind: Some(NarrationKind::PoliticalJianghu),
+            };
+
+            enqueue_single_narration(&tx_inbound, narration.clone());
+            enqueue_single_narration(&tx_inbound, narration);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            assert_eq!(
+                payloads.len(),
+                1,
+                "duplicate political narration payload should still use the server dedupe resource"
             );
         }
     }

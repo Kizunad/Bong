@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "caster_uuid",
+    "active",
+    "qi_committed",
+    "target_qi",
+    "started_tick"
+  ],
+  "properties": {
+    "caster_uuid": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "qi_committed": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "target_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "started_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

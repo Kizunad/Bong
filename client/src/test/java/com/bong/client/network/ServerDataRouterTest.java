@@ -62,6 +62,10 @@ public class ServerDataRouterTest {
             "unlocks_sync",
             "event_stream_push",
             "burst_meridian_event",
+            // plan-baomai-v2 P2 — 爆脉全力一击蓄力 / 释放 / 虚脱 HUD 推送。
+            "full_power_charging_state",
+            "full_power_release",
+            "full_power_exhausted_state",
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
             "weapon_broken",

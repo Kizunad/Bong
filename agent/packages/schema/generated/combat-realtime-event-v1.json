@@ -105,6 +105,10 @@
         {
           "const": "qi_needle",
           "type": "string"
+        },
+        {
+          "const": "full_power",
+          "type": "string"
         }
       ]
     },

@@ -542,7 +542,7 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 
 ```bash
 cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-# ✅ 3175 passed
+# ✅ 3207 passed
 
 cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build
 # ✅ BUILD SUCCESSFUL

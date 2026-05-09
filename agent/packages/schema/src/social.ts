@@ -230,6 +230,24 @@ export const NicheGuardianBrokenV1 = Type.Object(
 );
 export type NicheGuardianBrokenV1 = Static<typeof NicheGuardianBrokenV1>;
 
+export const HighRenownMilestoneEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    event: Type.Literal("high_renown_milestone"),
+    player_uuid: Type.String(),
+    char_id: Type.String(),
+    identity_id: Type.Integer({ minimum: 0 }),
+    identity_display_name: Type.String(),
+    fame: Type.Integer(),
+    milestone: Type.Integer({ minimum: 0 }),
+    identity_exposed: Type.Boolean(),
+    tick: Type.Integer({ minimum: 0 }),
+    zone: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type HighRenownMilestoneEventV1 = Static<typeof HighRenownMilestoneEventV1>;
+
 export const SparringInvitePayloadV1 = Type.Object(
   {
     invite_id: Type.String(),
@@ -286,4 +304,10 @@ export function validateSocialRenownDeltaV1Contract(data: unknown): ValidationRe
 
 export function validateNicheIntrusionEventV1Contract(data: unknown): ValidationResult {
   return validate(NicheIntrusionEventV1, data);
+}
+
+export function validateHighRenownMilestoneEventV1Contract(
+  data: unknown,
+): ValidationResult {
+  return validate(HighRenownMilestoneEventV1, data);
 }

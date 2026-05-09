@@ -263,6 +263,7 @@ fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttac
         crate::combat::events::AttackSource::Melee => CombatAttackSourceV1::Melee,
         crate::combat::events::AttackSource::BurstMeridian => CombatAttackSourceV1::BurstMeridian,
         crate::combat::events::AttackSource::QiNeedle => CombatAttackSourceV1::QiNeedle,
+        crate::combat::events::AttackSource::FullPower => CombatAttackSourceV1::FullPower,
     }
 }
 

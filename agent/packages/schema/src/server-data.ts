@@ -79,6 +79,11 @@ import {
   ServerDataFreshnessUpdateV1,
   ServerDataProcessingSessionV1,
 } from "./processing.js";
+import {
+  FullPowerChargingStateV1,
+  FullPowerExhaustedStateV1,
+  FullPowerReleaseV1,
+} from "./full-power.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -172,6 +177,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
   Type.Literal("burst_meridian_event"),
+  Type.Literal("full_power_charging_state"),
+  Type.Literal("full_power_release"),
+  Type.Literal("full_power_exhausted_state"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
   Type.Literal("skill_config_snapshot"),
@@ -842,6 +850,40 @@ export const BurstMeridianEventV1 = Type.Object(
 );
 export type BurstMeridianEventV1 = Static<typeof BurstMeridianEventV1>;
 
+export const ServerDataFullPowerChargingStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("full_power_charging_state"),
+    ...FullPowerChargingStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataFullPowerChargingStateV1 = Static<
+  typeof ServerDataFullPowerChargingStateV1
+>;
+
+export const ServerDataFullPowerReleaseV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("full_power_release"),
+    ...FullPowerReleaseV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataFullPowerReleaseV1 = Static<typeof ServerDataFullPowerReleaseV1>;
+
+export const ServerDataFullPowerExhaustedStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("full_power_exhausted_state"),
+    ...FullPowerExhaustedStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataFullPowerExhaustedStateV1 = Static<
+  typeof ServerDataFullPowerExhaustedStateV1
+>;
+
 export const ServerDataSkillBarConfigV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1373,6 +1415,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
   BurstMeridianEventV1,
+  ServerDataFullPowerChargingStateV1,
+  ServerDataFullPowerReleaseV1,
+  ServerDataFullPowerExhaustedStateV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,

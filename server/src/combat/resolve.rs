@@ -256,8 +256,10 @@ pub fn resolve_attack_intents(
                 );
             }
 
-            if intent.source != AttackSource::BurstMeridian
-                && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
+            if !matches!(
+                intent.source,
+                AttackSource::BurstMeridian | AttackSource::FullPower
+            ) && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
             {
                 if intent.debug_command.is_none() {
                     record_anticheat_violation(
@@ -306,7 +308,10 @@ pub fn resolve_attack_intents(
                 continue;
             };
 
-            if intent.source != AttackSource::BurstMeridian {
+            if !matches!(
+                intent.source,
+                AttackSource::BurstMeridian | AttackSource::FullPower
+            ) {
                 attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
                     .clamp(0.0, attacker_cultivation.qi_max);
             }
@@ -908,6 +913,7 @@ fn attack_source_label(source: AttackSource) -> &'static str {
         AttackSource::Melee => "attack_intent",
         AttackSource::BurstMeridian => "burst_meridian_attack",
         AttackSource::QiNeedle => "qi_needle",
+        AttackSource::FullPower => "full_power_strike",
     }
 }
 
@@ -4379,6 +4385,66 @@ mod tests {
         assert!(
             !app.world().resource::<Events<CombatEvent>>().is_empty(),
             "prepaid burst attack should still resolve even when qi_invest exceeds remaining qi"
+        );
+    }
+
+    #[test]
+    fn full_power_attack_source_uses_prepaid_qi_without_second_spend() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1550 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "FullPowerUser",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(Cultivation {
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        });
+        let target = spawn_player(
+            &mut app,
+            "FullPowerTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1549,
+            reach: FIST_REACH,
+            qi_invest: 80.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::FullPower,
+            debug_command: None,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(attacker)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            60.0,
+            "FullPower source is already paid by release handler and must not spend qi again"
+        );
+        assert!(
+            !app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "prepaid full power attack should still resolve when qi_invest exceeds remaining qi"
         );
     }
 

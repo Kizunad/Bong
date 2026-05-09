@@ -1,5 +1,6 @@
 pub mod components;
 pub mod events;
+pub mod high_renown_tracker;
 pub mod niche_defense;
 
 use std::collections::{HashMap, HashSet};
@@ -147,6 +148,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<SparringInviteRegistry>();
     app.init_resource::<TradeOfferRegistry>();
     app.init_resource::<SpiritNicheRegistry>();
+    high_renown_tracker::register(app);
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
     app.add_event::<SocialMentorshipEvent>();

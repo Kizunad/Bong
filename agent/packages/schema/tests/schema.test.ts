@@ -93,6 +93,7 @@ import {
   NicheGuardianBrokenV1,
   NicheGuardianFatigueV1,
   NicheIntrusionEventV1,
+  HighRenownMilestoneEventV1,
   SocialPactEventV1,
   SocialRenownDeltaV1,
 } from "../src/social.js";
@@ -144,9 +145,11 @@ describe("sample files pass schema validation", () => {
     expect(CHANNELS.SOCIAL_FEUD).toBe("bong:social/feud");
     expect(CHANNELS.SOCIAL_RENOWN_DELTA).toBe("bong:social/renown_delta");
     expect(CHANNELS.SOCIAL_NICHE_INTRUSION).toBe("bong:social/niche_intrusion");
+    expect(CHANNELS.HIGH_RENOWN_MILESTONE).toBe("bong:high_renown_milestone");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_EXPOSURE);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_RENOWN_DELTA);
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_NICHE_INTRUSION);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.HIGH_RENOWN_MILESTONE);
   });
 
   it("declares alchemy Redis channels", () => {
@@ -1013,6 +1016,12 @@ describe("sample files pass schema validation", () => {
     ).toBe(true);
     expect(
       validate(NicheGuardianBrokenV1, loadSample("niche-guardian-broken.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(
+        HighRenownMilestoneEventV1,
+        loadSample("high-renown-milestone-event.sample.json"),
+      ).ok,
     ).toBe(true);
   });
 });

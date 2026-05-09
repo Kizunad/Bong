@@ -15,6 +15,7 @@ use valence::prelude::{
 
 use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
+use crate::cultivation::full_power_strike::Exhausted;
 use crate::qi_physics::regen_from_zone;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -61,6 +62,7 @@ pub fn qi_regen_and_zone_drain_tick(
         Option<&QiColor>,
         Option<&LifespanComponent>,
         Option<&StatusEffects>,
+        Option<&Exhausted>,
     )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -69,8 +71,17 @@ pub fn qi_regen_and_zone_drain_tick(
         return;
     };
 
-    for (entity, pos, current_dim, meridians, mut cultivation, qi_color, lifespan, statuses) in
-        players.iter_mut()
+    for (
+        entity,
+        pos,
+        current_dim,
+        meridians,
+        mut cultivation,
+        qi_color,
+        lifespan,
+        statuses,
+        exhausted,
+    ) in players.iter_mut()
     {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
         // 时按 Overworld 处理（NPC 暂未跨位面）。Player 在 spawn 时一定带
@@ -122,9 +133,13 @@ pub fn qi_regen_and_zone_drain_tick(
             1.0
         };
         let humility_multiplier = statuses.map(humility_qi_recovery_multiplier).unwrap_or(1.0);
+        let exhausted_multiplier = exhausted
+            .map(|state| state.qi_recovery_modifier)
+            .unwrap_or(1.0)
+            .clamp(0.05, 1.0);
         let (gain, drain) = compute_regen(
             zone.spirit_qi,
-            rate * wind_candle_multiplier * humility_multiplier,
+            rate * wind_candle_multiplier * humility_multiplier * exhausted_multiplier,
             avg_integrity,
             qi_room,
         );
@@ -340,6 +355,42 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert!((wind_candle_qi - normal_qi * 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn exhausted_qi_recovery_is_halved() {
+        fn run_once(exhausted: Option<Exhausted>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if let Some(state) = exhausted {
+                entity.insert(state);
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let normal_qi = run_once(None);
+        let exhausted_qi = run_once(Some(Exhausted::from_committed_qi(0, 50.0)));
+
+        assert!(normal_qi > 0.0);
+        assert!((exhausted_qi - normal_qi * 0.5).abs() < 1e-6);
     }
 
     #[test]

@@ -47,4 +47,14 @@ describe("tiandao skill prompts", () => {
     expect(era).toContain("默认不使用工具");
     expect(era).toContain("默认无工具");
   });
+
+  it("loads political jianghu prompt with anonymity and blacklist rules", () => {
+    const political = readFileSync(resolve(skillsDir, "political.md"), "utf-8");
+
+    expect(political).toContain("江湖传声筒");
+    expect(political).toContain("political_jianghu");
+    expect(political).toContain("匿名约束");
+    expect(political).toContain("政府");
+    expect(political).toContain("纯 JSON");
+  });
 });

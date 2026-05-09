@@ -247,6 +247,10 @@
                           {
                             "const": "era_decree",
                             "type": "string"
+                          },
+                          {
+                            "const": "political_jianghu",
+                            "type": "string"
                           }
                         ]
                       },
@@ -270,6 +274,10 @@
                           },
                           {
                             "const": "scattered_cultivator",
+                            "type": "string"
+                          },
+                          {
+                            "const": "political_jianghu",
                             "type": "string"
                           }
                         ]

@@ -49,6 +49,7 @@ pub enum AttackSource {
     Melee,
     BurstMeridian,
     QiNeedle,
+    FullPower,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]

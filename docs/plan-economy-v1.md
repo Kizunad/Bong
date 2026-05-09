@@ -1,4 +1,4 @@
-# Bong · plan-economy-v1 · 骨架
+# Bong · plan-economy-v1
 
 骨币半衰期 + 末法节律影响价格 + 100h 经济曲线。承接 worldview §九经济与 §十七末法节律。**plan-gameplay-journey-v1 §E 多处依赖**。
 
@@ -144,3 +144,7 @@ P5 化虚:            骨币失意义,权力换算为天道注意力
 - 2026-05-05 (上午)：首次"文档↔代码"核验对齐。发现 P0 已落地、字段名 `spirit_quality` 取代了草案的 `remaining_qi`、shelflife 线性归零和 worldview "半衰期" 描述形式不同效果近似。P1 启动前曾设 §1.5 三选一裁决（shelflife 线性 / 指数半衰 / BoneCoin 独立 decay）
 - 2026-05-05 (下午)：上钻——audit 全库发现 worldview §二「真元极易挥发」是 9 类 plan 的同源现象（骨币/食材/距离/异体排斥/吸力/节律/末法残土/灵田漏液/搜刮磨损），各 plan 拍数才是问题根源。立 **`plan-qi-physics-v1`** 物理底盘骨架；本 plan §1.5 三选一**全部废弃**，P1 改为"等底盘算子 + 注册 ContainerKind::SealedInBone"。"死亡时携带骨币" 也归底盘 `EnvField.tsy_intensity` 处置
 - 2026-05-05 (下午-2)：qi-physics 骨架补"压强法则"为第二公理（worldview §二 line 20 / §三 line 32）。骨币逸散物理下限 = 当地 zone 浓度而非 0；shelflife 现行"归零到 0"违反 worldview，P2 迁移修复。同步本 plan §0「持有=贬值」补地点制约推导（聚灵阵保值/废地渐近基底/死域真归零，对应 §十六.三 "满灵骨币变普通骨头"），§1.5 末段补 shelflife 违反正典提示
+- **2026-05-09**：升 active（`git mv docs/plans-skeleton/plan-economy-v1.md → docs/plan-economy-v1.md`）。触发条件：
+  - **plan-qi-physics-patch-v1 ✅ finished**（PR #162，2026-05-08）—— `qi_excretion(ContainerKind::SealedInBone, env)` 底盘已就位，骨币 shelflife 已切走压强法则 clamp 路径，本 plan §1.5 三选一裁决无解的最大障碍清除
+  - P0 已实装（PR #105 commit `c5895641`）+ P1 上钻已收口 → 直接进 P2（节律 × 价格指数）
+  - 下一步：等 plan-lingtian-weather-v1 汐转期 API 完整暴露后，启动 P2「价格指数 = base × 节律乘数」实装；同步收口 §4 三个未决（节律检测依赖 / 商人 AI 化 / 价格指数尺度）

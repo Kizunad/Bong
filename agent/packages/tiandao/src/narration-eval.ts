@@ -13,6 +13,9 @@ const TICK_LOG_PREFIX = "[tiandao:tick] ";
 const MODERN_SLANG_RE =
   /(?:\b(?:ok|lol|bro|buff|nerf|gg|wtf|xp)\b|恭喜|注意|警告|小心|等级提升|哈哈|666|牛(?:啊|了)?|服了|离谱|刷怪|yyds|233)/iu;
 const OMEN_RE = /(?:预兆|先兆|暗示|伏笔|将|欲|渐|未几|不日|下一轮|后势|后续|且看|宜早|将至|将起|或将)/u;
+export const JIANGHU_VOICE_RE = /(?:江湖|传|道是|市井|山中|闻者|相传|有人道|外有声|画影|消息|传至|流传|耳闻)/u;
+export const MODERN_POLITICAL_TERMS_BLACKLIST =
+  /(?:政府|党派|选举|投票|民主|议会|总统|主席|内阁|联邦|国家|政权)/u;
 
 const BASE_STYLE_KEYWORDS = [
   "诸",
@@ -65,6 +68,16 @@ const STYLE_KEYWORDS: Record<NarrationStyle, readonly string[]> = {
     "宣告",
     "末法",
   ],
+  political_jianghu: [
+    "江湖",
+    "传",
+    "市井",
+    "山中",
+    "闻者",
+    "相传",
+    "画影",
+    "消息",
+  ],
 };
 
 const NARRATION_ISSUE_ORDER = [
@@ -79,6 +92,7 @@ const STYLE_ORDER: readonly NarrationStyle[] = [
   "perception",
   "narration",
   "era_decree",
+  "political_jianghu",
 ];
 
 const SCORE_BUCKETS = [
@@ -97,6 +111,17 @@ export interface NarrationScore {
   noModernSlang: boolean;
   styleMatch: boolean;
   score: number;
+}
+
+export interface PoliticalNarrationContext {
+  exposedIdentities?: Iterable<string>;
+  unexposedIdentities?: Iterable<string>;
+}
+
+export interface PoliticalNarrationScore extends NarrationScore {
+  hasJianghuVoice: boolean;
+  noModernPoliticalTerms: boolean;
+  anonymityOk: boolean;
 }
 
 export interface NarrationEvaluation extends NarrationScore {
@@ -159,6 +184,50 @@ export function scoreNarration(text: string, style: NarrationStyle): NarrationSc
     noModernSlang,
     styleMatch,
     score,
+  };
+}
+
+export function checkAnonymityViolation(
+  narration: string,
+  context: PoliticalNarrationContext = {},
+): boolean {
+  const exposed = [...normalizeIdentitySet(context.exposedIdentities)].sort(
+    (left, right) => right.length - left.length,
+  );
+  const unexposed = normalizeIdentitySet(context.unexposedIdentities);
+  let scrubbedNarration = narration;
+
+  for (const name of exposed) {
+    scrubbedNarration = scrubbedNarration.split(name).join("");
+  }
+
+  for (const name of unexposed) {
+    if (name.length > 0 && scrubbedNarration.includes(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function scorePoliticalNarration(
+  narration: string,
+  context: PoliticalNarrationContext = {},
+): PoliticalNarrationScore {
+  const baseScore = scoreNarration(narration, "political_jianghu");
+  const hasJianghuVoice = JIANGHU_VOICE_RE.test(narration);
+  const noModernPoliticalTerms = !MODERN_POLITICAL_TERMS_BLACKLIST.test(narration);
+  const anonymityOk = !checkAnonymityViolation(narration, context);
+  const penalty =
+    (hasJianghuVoice ? 0 : 0.3) +
+    (noModernPoliticalTerms ? 0 : 0.5) +
+    (anonymityOk ? 0 : 0.6);
+
+  return {
+    ...baseScore,
+    hasJianghuVoice,
+    noModernPoliticalTerms,
+    anonymityOk,
+    score: roundScore(baseScore.score - penalty),
   };
 }
 
@@ -441,6 +510,16 @@ function normalizeNarrationEvaluation(candidate: unknown): NarrationEvaluation |
     textLength: typeof candidate.textLength === "number" ? candidate.textLength : countNarrationCharacters(text),
     issues,
   };
+}
+
+function normalizeIdentitySet(values: Iterable<string> | undefined): Set<string> {
+  const normalized = new Set<string>();
+  if (!values) return normalized;
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed) normalized.add(trimmed);
+  }
+  return normalized;
 }
 
 async function readNarrationEvaluationsFromFiles(filePaths: string[]): Promise<NarrationEvaluation[]> {

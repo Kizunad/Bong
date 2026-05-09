@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "event": "high_renown_milestone",
+  "player_uuid": "7a8f80c2-82ad-5d7c-a0dd-b3c1b7d2e1a1",
+  "char_id": "offline:xuanfeng",
+  "identity_id": 0,
+  "identity_display_name": "玄锋",
+  "fame": 1000,
+  "milestone": 1000,
+  "identity_exposed": true,
+  "tick": 96000,
+  "zone": "blood_valley"
+}
