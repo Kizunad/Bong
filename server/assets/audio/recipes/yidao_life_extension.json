@@ -5,6 +5,6 @@
     { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.32, "pitch": 1.15, "delay_ticks": 8 }
   ],
   "priority": 80,
-  "attenuation": "radius",
-  "category": "PLAYERS"
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
 }

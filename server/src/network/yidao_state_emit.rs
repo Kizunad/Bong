@@ -4,9 +4,9 @@ use valence::prelude::{Client, Entity, Local, Query, Username};
 
 use crate::combat::components::Casting;
 use crate::combat::yidao::{
-    entity_wire_id, HealerProfile, HealingMastery, KarmaCounter, CONTAM_PURGE_SKILL_ID,
-    EMERGENCY_RESUSCITATE_SKILL_ID, LIFE_EXTENSION_SKILL_ID, MASS_MERIDIAN_REPAIR_SKILL_ID,
-    MERIDIAN_REPAIR_SKILL_ID,
+    entity_wire_id, healer_npc_decision, HealerNpcAction, HealerProfile, HealingMastery,
+    KarmaCounter, CONTAM_PURGE_SKILL_ID, EMERGENCY_RESUSCITATE_SKILL_ID, LIFE_EXTENSION_SKILL_ID,
+    MASS_MERIDIAN_REPAIR_SKILL_ID, MERIDIAN_REPAIR_SKILL_ID,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -15,16 +15,18 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::yidao::{HealerNpcAiStateV1, YidaoHudStateV1, YidaoSkillIdV1};
 
+type YidaoHudEmitItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Username,
+    Option<&'a HealerProfile>,
+    Option<&'a HealingMastery>,
+    Option<&'a KarmaCounter>,
+    Option<&'a Casting>,
+);
+
 pub fn emit_yidao_hud_state_payloads(
-    mut clients: Query<(
-        Entity,
-        &mut Client,
-        &Username,
-        Option<&HealerProfile>,
-        Option<&HealingMastery>,
-        Option<&KarmaCounter>,
-        Option<&Casting>,
-    )>,
+    mut clients: Query<YidaoHudEmitItem<'_>>,
     mut previous: Local<HashMap<Entity, YidaoHudStateV1>>,
 ) {
     for (entity, mut client, username, profile, mastery, karma, casting) in &mut clients {
@@ -111,16 +113,15 @@ fn build_healer_npc_ai_state(
     profile: &HealerProfile,
     casting: Option<&Casting>,
 ) -> HealerNpcAiStateV1 {
-    let active_action = active_skill_from_casting(casting)
-        .map(yidao_action_label)
-        .unwrap_or("idle")
-        .to_string();
+    let action = active_skill_from_casting(casting)
+        .map(healer_action_from_skill)
+        .unwrap_or_else(|| healer_npc_decision(1.0, 0, 0.0, false, false, false).action);
     HealerNpcAiStateV1 {
         healer_id: entity_wire_id(healer),
-        active_action,
+        active_action: healer_action_label(action).to_string(),
         queue_len: profile.contracts.len().min(u32::MAX as usize) as u32,
         reputation: profile.reputation,
-        retreating: false,
+        retreating: action == HealerNpcAction::Retreat,
     }
 }
 
@@ -145,13 +146,25 @@ fn active_skill_from_casting(casting: Option<&Casting>) -> Option<YidaoSkillIdV1
     }
 }
 
-fn yidao_action_label(skill: YidaoSkillIdV1) -> &'static str {
+fn healer_action_from_skill(skill: YidaoSkillIdV1) -> HealerNpcAction {
     match skill {
-        YidaoSkillIdV1::MeridianRepair => "meridian_repair",
-        YidaoSkillIdV1::ContamPurge => "contam_purge",
-        YidaoSkillIdV1::EmergencyResuscitate => "emergency_resuscitate",
-        YidaoSkillIdV1::LifeExtension => "life_extension",
-        YidaoSkillIdV1::MassMeridianRepair => "mass_meridian_repair",
+        YidaoSkillIdV1::MeridianRepair | YidaoSkillIdV1::MassMeridianRepair => {
+            HealerNpcAction::MeridianRepair
+        }
+        YidaoSkillIdV1::ContamPurge => HealerNpcAction::ContamPurge,
+        YidaoSkillIdV1::EmergencyResuscitate => HealerNpcAction::EmergencyResuscitate,
+        YidaoSkillIdV1::LifeExtension => HealerNpcAction::LifeExtension,
+    }
+}
+
+fn healer_action_label(action: HealerNpcAction) -> &'static str {
+    match action {
+        HealerNpcAction::EmergencyResuscitate => "emergency_resuscitate",
+        HealerNpcAction::LifeExtension => "life_extension",
+        HealerNpcAction::ContamPurge => "contam_purge",
+        HealerNpcAction::MeridianRepair => "meridian_repair",
+        HealerNpcAction::Retreat => "retreat",
+        HealerNpcAction::Idle => "idle",
     }
 }
 

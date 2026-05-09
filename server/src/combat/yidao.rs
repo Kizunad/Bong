@@ -50,14 +50,6 @@ pub enum YidaoSkillId {
 }
 
 impl YidaoSkillId {
-    pub const ALL: [Self; 5] = [
-        Self::MeridianRepair,
-        Self::ContamPurge,
-        Self::EmergencyResuscitate,
-        Self::LifeExtension,
-        Self::MassMeridianRepair,
-    ];
-
     pub fn skill_id(self) -> &'static str {
         match self {
             Self::MeridianRepair => MERIDIAN_REPAIR_SKILL_ID,
@@ -232,19 +224,10 @@ impl HealingMastery {
     }
 }
 
-#[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Component, Default, Serialize, Deserialize, PartialEq)]
 pub struct HealerProfile {
     pub reputation: i32,
     pub contracts: Vec<MedicalContract>,
-}
-
-impl Default for HealerProfile {
-    fn default() -> Self {
-        Self {
-            reputation: 0,
-            contracts: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -672,7 +655,7 @@ fn apply_emergency_resuscitate(
     }
     if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(patient) {
         if lifecycle.state == LifecycleState::NearDeath {
-            let in_window = lifecycle.last_death_tick.map_or(true, |death_tick| {
+            let in_window = lifecycle.last_death_tick.is_none_or(|death_tick| {
                 now_tick <= death_tick.saturating_add(calc.dying_window_ticks)
             });
             if in_window {
@@ -707,9 +690,9 @@ fn apply_life_extension(
     };
     let valid_lifecycle = world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
         lifecycle.state == LifecycleState::NearDeath
-            && lifecycle.last_death_tick.map_or(true, |death_tick| {
-                now_tick <= death_tick.saturating_add(calc.window_ticks)
-            })
+            && lifecycle
+                .last_death_tick
+                .is_none_or(|death_tick| now_tick <= death_tick.saturating_add(calc.window_ticks))
     });
     if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost.min(cultivation.qi_max)) {
         return YidaoApplyOutcome::default();
@@ -1305,7 +1288,13 @@ mod tests {
     fn register_skills_adds_all_five_resolvers() {
         let mut registry = SkillRegistry::default();
         register_skills(&mut registry);
-        for skill in YidaoSkillId::ALL {
+        for skill in [
+            YidaoSkillId::MeridianRepair,
+            YidaoSkillId::ContamPurge,
+            YidaoSkillId::EmergencyResuscitate,
+            YidaoSkillId::LifeExtension,
+            YidaoSkillId::MassMeridianRepair,
+        ] {
             assert!(
                 registry.lookup(skill.skill_id()).is_some(),
                 "{skill:?} missing"

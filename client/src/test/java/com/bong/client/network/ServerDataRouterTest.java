@@ -101,6 +101,9 @@ public class ServerDataRouterTest {
             // plan-lingtian-process-v1 P3 — 加工进度 / freshness UI tag 推送。
             "processing_session",
             "freshness_update",
+            // plan-yidao-v1 — 医者 NPC AI / 医道 HUD 状态推送。
+            "healer_npc_ai_state",
+            "yidao_hud_state",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。
             "skill_xp_gain",
             "skill_lv_up",

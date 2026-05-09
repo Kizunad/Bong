@@ -5,6 +5,6 @@
     { "sound": "minecraft:block.beacon.ambient", "volume": 0.18, "pitch": 1.65, "delay_ticks": 4 }
   ],
   "priority": 55,
-  "attenuation": "radius",
-  "category": "PLAYERS"
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
 }

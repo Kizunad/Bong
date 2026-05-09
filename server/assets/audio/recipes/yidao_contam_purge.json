@@ -5,6 +5,6 @@
     { "sound": "minecraft:block.brewing_stand.brew", "volume": 0.25, "pitch": 1.25, "delay_ticks": 3 }
   ],
   "priority": 50,
-  "attenuation": "radius",
-  "category": "PLAYERS"
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
 }
