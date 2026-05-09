@@ -5,6 +5,8 @@ const fs = require("fs");
 // 单次 glob 处理所有 *.bbmodel：parse 一次后按后缀做模型 + 贴图导出，最后删源。
 // 避免上游三路并发 glob 撞上 unlinkSync 删除源文件、贴图偶发丢失（PR-177 review）。
 glob("RP/models/**/*.bbmodel", null, function (er, files) {
+  if (er) throw er;
+  if (!files) return;
   files.forEach(function (file) {
     fs.readFile(file, "utf8", function (err, data) {
       if (err) throw err;
@@ -25,17 +27,31 @@ glob("RP/models/**/*.bbmodel", null, function (er, files) {
 });
 
 function exportTexture(data, mType) {
+  // 防御：缺失 textures 字段时直接跳过，不要靠 catch 兜底
+  // （上游空 catch 会把 IO/权限错误也吞掉，掩盖真实问题）。
+  if (!data || !Array.isArray(data["textures"]) || data["textures"].length === 0) {
+    console.log("No textures in bbmodel, skipping " + mType + " export");
+    return;
+  }
   try {
     for (let t = 0; t < data["textures"].length; t++) {
       let textureName = data["textures"][t]["name"];
-      let textureData = data["textures"][t]["source"].replace("data:image/png;base64,", "");
+      let textureData = data["textures"][t]["source"].replace(
+        "data:image/png;base64,",
+        ""
+      );
       if (fs.existsSync("RP/textures/" + mType + "/") == false) {
         fs.mkdirSync("RP/textures/" + mType + "/", { recursive: true });
       }
-      fs.writeFileSync("RP/textures/" + mType + "/" + textureName + ".png", textureData, "base64");
-  }
-} catch {
-    console.log("No textures found");
+      fs.writeFileSync(
+        "RP/textures/" + mType + "/" + textureName + ".png",
+        textureData,
+        "base64"
+      );
+    }
+  } catch (e) {
+    console.error("Texture export failed for " + mType + ":", e.message);
+    throw e;
   }
 }
 
@@ -128,6 +144,10 @@ function compileGroup(data, group) {
   for (let child of group.children) {
     if (!(child instanceof Object)) {
       let element = data.elements.find((element) => element.uuid === child);
+      if (!element) {
+        console.warn("bbmodel: element with UUID " + child + " not found, skipping");
+        continue;
+      }
       if (element.type !== "locator") {
         let cube = compileCube(data, element, bone);
         cubes.push(cube);
@@ -296,15 +316,17 @@ function calculateVisibleBox(data) {
     radius = 0;
   }
   let width = Math.ceil((radius * 2) / 16);
-  width = Math.max(width, data.visible_box[0]);
+  // 防御：bbmodel 有时不导出 visible_box，落 [0,0,0] 让 max/min 退化为本身。
+  const vb = Array.isArray(data.visible_box) ? data.visible_box : [0, 0, 0];
+  width = Math.max(width, vb[0]);
 
   //Height
   let y_min = Math.floor(visible_box.min.y / 16);
   let y_max = Math.ceil(visible_box.max.y / 16);
   if (y_min === Infinity) y_min = 0;
   if (y_max === Infinity) y_max = 0;
-  y_min = Math.min(y_min, data.visible_box[2] - data.visible_box[1] / 2);
-  y_max = Math.max(y_max, data.visible_box[2] + data.visible_box[1] / 2);
+  y_min = Math.min(y_min, vb[2] - vb[1] / 2);
+  y_max = Math.max(y_max, vb[2] + vb[1] / 2);
 
   return [width, y_max - y_min, (y_max + y_min) / 2];
 }
