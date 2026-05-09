@@ -72,6 +72,15 @@ class EnvironmentEffectRegistryTest {
     }
 
     @Test
+    void tornadoColumnZeroDensityStillCullsSafely() {
+        EnvironmentEffect.TornadoColumn tornado =
+            new EnvironmentEffect.TornadoColumn(0.0, 64.0, 0.0, 8.0, 48.0, 0.0);
+
+        assertTrue(tornado.isNear(new Vec3d(2.0, 70.0, 2.0), 80.0));
+        assertFalse(tornado.isNear(new Vec3d(200.0, 70.0, 200.0), 80.0));
+    }
+
+    @Test
     void fogVeilAabbCullingAtCorners() {
         EnvironmentEffect.FogVeil fog = fog();
 
@@ -95,6 +104,27 @@ class EnvironmentEffectRegistryTest {
         }
 
         assertTrue(registry.activeEmitters().isEmpty());
+    }
+
+    @Test
+    void perfEightConcurrentEffectsInView() {
+        EnvironmentEffectRegistry registry = registry();
+        Vec3d player = new Vec3d(8.0, 70.0, 8.0);
+        registry.onZoneStateUpdate(state(
+            1,
+            new EnvironmentEffect.TornadoColumn(8.0, 64.0, 8.0, 8.0, 48.0, 0.5),
+            new EnvironmentEffect.LightningPillar(8.0, 64.0, 8.0, 4.0, 2.0),
+            new EnvironmentEffect.AshFall(0.0, 60.0, 0.0, 16.0, 90.0, 16.0, 0.4),
+            fog(),
+            new EnvironmentEffect.DustDevil(8.0, 64.0, 8.0, 4.0, 24.0),
+            new EnvironmentEffect.EmberDrift(0.0, 60.0, 0.0, 16.0, 90.0, 16.0, 0.3, 0.6),
+            new EnvironmentEffect.HeatHaze(0.0, 60.0, 0.0, 16.0, 90.0, 16.0, 0.25),
+            new EnvironmentEffect.SnowDrift(0.0, 60.0, 0.0, 16.0, 90.0, 16.0, 0.5, 0.5, 0.0, -0.25)
+        ));
+
+        registry.tickFade(player, 80.0);
+
+        assertEquals(8, registry.activeNearPlayer(player, 80.0).size());
     }
 
     @Test

@@ -9,8 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EnvironmentFogPlannerTest {
     @AfterEach
@@ -69,6 +71,22 @@ class EnvironmentFogPlannerTest {
 
         assertEquals(1, applied.size());
         assertEquals(0x788494, applied.get(0).fogColorRgb());
+    }
+
+    @Test
+    void audioLoopStartsAndStopsWhenPlayerEntersFogVeil() {
+        EnvironmentAudioLoopState.clear();
+        EnvironmentAudioController controller = new EnvironmentAudioController();
+        ActiveEmitter emitter = active("fog-loop", 1, fog(0x788494, 0.5));
+        String flag = "zone_env:" + emitter.key().hashCode();
+
+        controller.update(List.of(emitter), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(1, controller.activeLoopCountForTests());
+        assertTrue(EnvironmentAudioLoopState.isActive(flag));
+
+        controller.update(List.of(), new Vec3d(200.0, 70.0, 200.0));
+        assertEquals(0, controller.activeLoopCountForTests());
+        assertFalse(EnvironmentAudioLoopState.isActive(flag));
     }
 
     private static ActiveEmitter active(String key, long generation, EnvironmentEffect effect) {

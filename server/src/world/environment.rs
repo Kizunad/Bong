@@ -613,6 +613,14 @@ mod tests {
     }
 
     #[test]
+    fn tribulation_zone_seed_contains_lightning_and_fog() {
+        let effects = default_effects_for_zone(&zone("tribulation_peak"), None);
+        let kinds: HashSet<&str> = effects.iter().map(EnvironmentEffect::kind).collect();
+        assert!(kinds.contains("lightning_pillar"));
+        assert!(kinds.contains("fog_veil"));
+    }
+
+    #[test]
     fn weather_blizzard_adds_snow_drift() {
         let effects = default_effects_for_zone(&zone("spawn"), Some(WeatherEvent::Blizzard));
         assert_eq!(effects.len(), 1);
