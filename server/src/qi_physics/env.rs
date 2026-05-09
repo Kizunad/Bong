@@ -1,6 +1,10 @@
 use crate::cultivation::components::ColorKind;
 
-use super::constants::{QI_RHYTHM_NEUTRAL, QI_TSY_DRAIN_FACTOR, QI_TSY_DRAIN_NONLINEAR_EXPONENT};
+use super::constants::{
+    QI_RHYTHM_NEUTRAL, QI_TSY_DRAIN_FACTOR, QI_TSY_DRAIN_NONLINEAR_EXPONENT,
+    VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER, VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS,
+    VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContainerKind {
@@ -8,6 +12,7 @@ pub enum ContainerKind {
     LooseInPill,
     WieldedInWeapon,
     AmbientField,
+    TurbulentField,
     SealedAncientRelic,
 }
 
@@ -19,11 +24,12 @@ impl ContainerKind {
             Self::WieldedInWeapon => 0.35,
             Self::LooseInPill => 0.55,
             Self::AmbientField => 1.0,
+            Self::TurbulentField => 1.0,
         }
     }
 
     pub fn allows_reverse_pressure(self) -> bool {
-        matches!(self, Self::AmbientField)
+        matches!(self, Self::AmbientField | Self::TurbulentField)
     }
 }
 
@@ -89,6 +95,7 @@ pub struct EnvField {
     pub rhythm_multiplier: f64,
     pub tsy_intensity: f64,
     pub ambient_pressure: f64,
+    pub turbulence_intensity: f64,
 }
 
 impl EnvField {
@@ -107,6 +114,15 @@ impl EnvField {
         }
     }
 
+    pub fn with_turbulence(mut self, intensity: f64) -> Self {
+        self.turbulence_intensity = if intensity.is_finite() {
+            intensity.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self
+    }
+
     pub fn rhythm_factor(self) -> f64 {
         if self.rhythm_multiplier.is_finite() && self.rhythm_multiplier > 0.0 {
             self.rhythm_multiplier
@@ -119,6 +135,20 @@ impl EnvField {
         let intensity = self.tsy_intensity.clamp(0.0, 1.0);
         1.0 + QI_TSY_DRAIN_FACTOR * intensity.powf(QI_TSY_DRAIN_NONLINEAR_EXPONENT)
     }
+
+    pub fn turbulence_shelflife_factor(self) -> f64 {
+        1.0 + self.turbulence_intensity.clamp(0.0, 1.0)
+            * (VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER - 1.0)
+    }
+
+    pub fn turbulence_cast_precision_factor(self) -> f64 {
+        1.0 - self.turbulence_intensity.clamp(0.0, 1.0)
+            * (1.0 - VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER)
+    }
+
+    pub fn turbulence_defense_drain_factor(self) -> f64 {
+        1.0 + self.turbulence_intensity.clamp(0.0, 1.0) * VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS
+    }
 }
 
 impl Default for EnvField {
@@ -128,6 +158,7 @@ impl Default for EnvField {
             rhythm_multiplier: QI_RHYTHM_NEUTRAL,
             tsy_intensity: 0.0,
             ambient_pressure: 0.0,
+            turbulence_intensity: 0.0,
         }
     }
 }
@@ -147,6 +178,7 @@ mod tests {
     #[test]
     fn ambient_field_allows_reverse_pressure() {
         assert!(ContainerKind::AmbientField.allows_reverse_pressure());
+        assert!(ContainerKind::TurbulentField.allows_reverse_pressure());
         assert!(!ContainerKind::SealedInBone.allows_reverse_pressure());
     }
 
@@ -170,5 +202,13 @@ mod tests {
     #[test]
     fn default_env_is_neutral_not_starved() {
         assert_eq!(EnvField::default().local_zone_qi, 0.5);
+    }
+
+    #[test]
+    fn turbulence_field_applies_woliu_v2_multipliers() {
+        let env = EnvField::default().with_turbulence(1.0);
+        assert_eq!(env.turbulence_shelflife_factor(), 3.0);
+        assert_eq!(env.turbulence_cast_precision_factor(), 0.5);
+        assert_eq!(env.turbulence_defense_drain_factor(), 1.2);
     }
 }

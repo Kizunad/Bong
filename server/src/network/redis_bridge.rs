@@ -33,8 +33,8 @@ use crate::schema::channels::{
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
     CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
     CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
-    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENMAI_SKILL_EVENT, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED,
+    CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE,
+    CH_YIDAO_EVENT, CH_ZHENMAI_SKILL_EVENT, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -80,6 +80,7 @@ use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
 use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
+use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCastV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::yidao::YidaoEventV1;
 use crate::schema::zhenmai_v2::ZhenmaiSkillEventV1;
@@ -168,6 +169,9 @@ pub enum RedisOutbound {
     DuguPoisonProgress(DuguPoisonProgressEventV1),
     VortexBackfire(VortexBackfireEventV1),
     ProjectileQiDrained(ProjectileQiDrainedEventV1),
+    WoliuV2Cast(WoliuSkillCastV1),
+    WoliuV2Backfire(WoliuBackfireV1),
+    WoliuV2Turbulence(TurbulenceFieldV1),
     ZhenmaiSkillEvent(ZhenmaiSkillEventV1),
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
@@ -1036,6 +1040,33 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_ZHENMAI_SKILL_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::WoliuV2Cast(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize WoliuSkillCastV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_WOLIU_V2_CAST,
+                payload,
+            })
+        }
+        RedisOutbound::WoliuV2Backfire(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize WoliuBackfireV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_WOLIU_V2_BACKFIRE,
+                payload,
+            })
+        }
+        RedisOutbound::WoliuV2Turbulence(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TurbulenceFieldV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_WOLIU_V2_TURBULENCE,
                 payload,
             })
         }

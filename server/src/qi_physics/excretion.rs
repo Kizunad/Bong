@@ -23,7 +23,8 @@ pub fn qi_excretion(
     let rate = QI_AMBIENT_EXCRETION_PER_SEC
         * container.seal_multiplier()
         * env.rhythm_factor()
-        * env.tsy_drain_factor();
+        * env.tsy_drain_factor()
+        * env.turbulence_shelflife_factor();
     let leaked_ratio = 1.0 - (-rate * elapsed_secs).exp();
     let leaked = pressure_delta * leaked_ratio.clamp(0.0, 1.0);
 
@@ -142,5 +143,17 @@ mod tests {
         let (gain, drain) = regen_from_zone(0.001, 1_000_000.0, 1.0, 1_000_000.0);
         assert_eq!(drain, 0.001);
         assert_eq!(gain, 0.001 * QI_ZONE_UNIT_CAPACITY);
+    }
+
+    #[test]
+    fn turbulence_speeds_excretion_without_changing_pressure_floor() {
+        let calm = qi_excretion_loss(1.0, ContainerKind::AmbientField, 60.0, EnvField::new(0.2));
+        let turbulent = qi_excretion_loss(
+            1.0,
+            ContainerKind::TurbulentField,
+            60.0,
+            EnvField::new(0.2).with_turbulence(1.0),
+        );
+        assert!(turbulent > calm * 2.5);
     }
 }
