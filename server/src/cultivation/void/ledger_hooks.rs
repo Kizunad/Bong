@@ -151,12 +151,14 @@ fn apply_due_qi_return(
 ) -> Result<(), ScheduledQiReturn> {
     match entry.kind {
         VoidActionKind::ExplodeZone => {
+            let Some(zones) = zones else {
+                return Err(entry);
+            };
+            let Some(zone) = zones.iter_mut().find(|zone| zone.name == entry.zone_id) else {
+                return Err(entry);
+            };
+            zone.spirit_qi = 0.0;
             budget.current_total += entry.amount;
-            if let Some(zones) = zones {
-                if let Some(zone) = zones.iter_mut().find(|zone| zone.name == entry.zone_id) {
-                    zone.spirit_qi = 0.0;
-                }
-            }
         }
         VoidActionKind::Barrier => {
             let from = QiAccountId::zone(format!("barrier:{}", entry.zone_id));
@@ -491,6 +493,49 @@ mod tests {
             }],
         );
         assert_eq!(zones[0].spirit_qi, 0.0);
+    }
+
+    #[test]
+    fn due_explode_return_without_zone_registry_retries_without_refund() {
+        let mut budget = WorldQiBudget::from_total(1_000.0);
+        let mut accounts = WorldQiAccount::default();
+        budget.current_total = 700.0;
+        let entry = ScheduledQiReturn {
+            kind: VoidActionKind::ExplodeZone,
+            owner_id: "a".to_string(),
+            zone_id: "spawn".to_string(),
+            amount: 300.0,
+            due_tick: 20,
+        };
+
+        let failed = apply_due_qi_return(&mut budget, &mut accounts, None, entry.clone())
+            .expect_err("explode return needs ZoneRegistry to zero target zone");
+
+        assert_eq!(failed, entry);
+        assert_eq!(budget.current_total, 700.0);
+    }
+
+    #[test]
+    fn due_explode_return_missing_zone_retries_without_refund() {
+        let mut budget = WorldQiBudget::from_total(1_000.0);
+        let mut accounts = WorldQiAccount::default();
+        budget.current_total = 700.0;
+        let mut zones = vec![zone("other", 1.0)];
+        let entry = ScheduledQiReturn {
+            kind: VoidActionKind::ExplodeZone,
+            owner_id: "a".to_string(),
+            zone_id: "spawn".to_string(),
+            amount: 300.0,
+            due_tick: 20,
+        };
+
+        let failed =
+            apply_due_qi_return(&mut budget, &mut accounts, Some(&mut zones), entry.clone())
+                .expect_err("missing target zone should retry without partial refund");
+
+        assert_eq!(failed, entry);
+        assert_eq!(budget.current_total, 700.0);
+        assert_eq!(zones[0].spirit_qi, 1.0);
     }
 
     #[test]

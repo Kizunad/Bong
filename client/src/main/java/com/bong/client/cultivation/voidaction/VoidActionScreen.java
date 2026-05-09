@@ -94,7 +94,7 @@ public final class VoidActionScreen extends Screen {
             }
             case LEGACY_ASSIGN -> false;
         };
-        if (sent && mc.currentScreen == this) {
+        if (sent && mc != null && mc.currentScreen == this) {
             mc.setScreen(null);
         }
     }

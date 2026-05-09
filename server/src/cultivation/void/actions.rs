@@ -11,7 +11,7 @@ use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::npc::tsy_hostile::{DaoxiangInstinctCooldown, TsyHostileMarker};
-use crate::persistence::PersistenceSettings;
+use crate::persistence::{persist_void_action_cooldown, PersistenceSettings};
 use crate::qi_physics::{QiAccountId, QiTransfer, WorldQiAccount, WorldQiBudget};
 use crate::schema::void_actions::{VoidActionBroadcastV1, VoidActionRequestV1};
 use crate::world::tsy_lifecycle::{TsyLifecycle, TsyZoneStateRegistry};
@@ -201,6 +201,7 @@ pub fn resolve_void_action_intents(
             VoidActionRequestV1::SuppressTsy { zone_id } => cast_suppress_tsy(
                 intent.caster,
                 &actor_id,
+                &actor_name,
                 &mut cultivation,
                 &mut lifespan,
                 &mut life_record,
@@ -215,6 +216,7 @@ pub fn resolve_void_action_intents(
             VoidActionRequestV1::ExplodeZone { zone_id } => cast_explode_zone(
                 intent.caster,
                 &actor_id,
+                &actor_name,
                 &mut cultivation,
                 &mut lifespan,
                 &mut life_record,
@@ -229,6 +231,7 @@ pub fn resolve_void_action_intents(
             VoidActionRequestV1::Barrier { zone_id, geometry } => cast_barrier(
                 intent.caster,
                 &actor_id,
+                &actor_name,
                 &mut cultivation,
                 &mut lifespan,
                 &mut life_record,
@@ -247,6 +250,7 @@ pub fn resolve_void_action_intents(
                 message,
             } => cast_legacy_assign(
                 &actor_id,
+                &actor_name,
                 &mut life_record,
                 inheritor_id,
                 item_instance_ids.clone(),
@@ -259,6 +263,24 @@ pub fn resolve_void_action_intents(
         match result {
             Ok(outcome) => {
                 cooldowns.set_used(&actor_id, kind, now_tick);
+                let ready_at_tick = cooldowns.ready_at(&actor_id, kind);
+                if ready_at_tick > now_tick {
+                    if let Some(settings) = settings.as_deref() {
+                        if let Err(error) =
+                            persist_void_action_cooldown(settings, &actor_id, kind, ready_at_tick)
+                        {
+                            tracing::warn!(
+                                "[bong][void-action] failed to persist cooldown for {actor_id}/{:?}: {error}",
+                                kind
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            "[bong][void-action] no persistence settings; cooldown for {actor_id}/{:?} remains memory-only",
+                            kind
+                        );
+                    }
+                }
                 let payload = VoidActionBroadcastV1::new(
                     kind,
                     actor_id.clone(),
@@ -304,6 +326,7 @@ struct VoidActionOutcome {
 fn cast_suppress_tsy(
     caster: Entity,
     actor_id: &str,
+    actor_name: &str,
     cultivation: &mut Cultivation,
     lifespan: &mut LifespanComponent,
     life_record: &mut LifeRecord,
@@ -373,7 +396,7 @@ fn cast_suppress_tsy(
         tick: now_tick,
     });
     Ok(VoidActionOutcome {
-        public_text: format!("{actor_id} 镇住 {zone_id}，坍缩渊退回衰竭。"),
+        public_text: format!("{actor_name} 镇住 {zone_id}，坍缩渊退回衰竭。"),
         caused_death,
     })
 }
@@ -382,6 +405,7 @@ fn cast_suppress_tsy(
 fn cast_explode_zone(
     caster: Entity,
     actor_id: &str,
+    actor_name: &str,
     cultivation: &mut Cultivation,
     lifespan: &mut LifespanComponent,
     life_record: &mut LifeRecord,
@@ -430,7 +454,7 @@ fn cast_explode_zone(
         tick: now_tick,
     });
     Ok(VoidActionOutcome {
-        public_text: format!("{actor_id} 引爆 {zone_id}，灵机暴涨后六月归零。"),
+        public_text: format!("{actor_name} 引爆 {zone_id}，灵机暴涨后六月归零。"),
         caused_death,
     })
 }
@@ -439,6 +463,7 @@ fn cast_explode_zone(
 fn cast_barrier(
     caster: Entity,
     actor_id: &str,
+    actor_name: &str,
     cultivation: &mut Cultivation,
     lifespan: &mut LifespanComponent,
     life_record: &mut LifeRecord,
@@ -490,13 +515,15 @@ fn cast_barrier(
         tick: now_tick,
     });
     Ok(VoidActionOutcome {
-        public_text: format!("{actor_id} 在 {zone_id} 立下化虚障，道伥过线折其半气。"),
+        public_text: format!("{actor_name} 在 {zone_id} 立下化虚障，道伥过线折其半气。"),
         caused_death,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cast_legacy_assign(
     actor_id: &str,
+    actor_name: &str,
     life_record: &mut LifeRecord,
     inheritor_id: &str,
     item_instance_ids: Vec<u64>,
@@ -509,13 +536,12 @@ fn cast_legacy_assign(
     }
     let letterbox =
         LegacyLetterbox::new(actor_id, inheritor_id, item_instance_ids, message, now_tick);
-    if let Some(settings) = settings {
-        if let Err(error) = persist_legacy_letterbox(settings, &letterbox) {
-            tracing::warn!(
-                "[bong][void-action] failed to persist legacy letterbox for {actor_id}: {error}"
-            );
-            return Err(VoidActionError::LegacyPersistFailed);
-        }
+    let settings = settings.ok_or(VoidActionError::LegacyPersistFailed)?;
+    if let Err(error) = persist_legacy_letterbox(settings, &letterbox) {
+        tracing::warn!(
+            "[bong][void-action] failed to persist legacy letterbox for {actor_id}: {error}"
+        );
+        return Err(VoidActionError::LegacyPersistFailed);
     }
     apply_legacy_assignment(life_record, letterbox);
     life_record.push(BiographyEntry::VoidAction {
@@ -526,7 +552,7 @@ fn cast_legacy_assign(
         tick: now_tick,
     });
     Ok(VoidActionOutcome {
-        public_text: format!("{actor_id} 留下临终遗令，道统指向 {inheritor_id}。"),
+        public_text: format!("{actor_name} 留下临终遗令，道统指向 {inheritor_id}。"),
         caused_death: false,
     })
 }
@@ -647,6 +673,26 @@ mod tests {
             precheck_void_action(VoidActionKind::LegacyAssign, input),
             Ok(())
         );
+    }
+
+    #[test]
+    fn legacy_assign_requires_persistence_settings_before_mutating_life_record() {
+        let mut life_record = LifeRecord::new("offline:Void");
+
+        let result = cast_legacy_assign(
+            "offline:Void",
+            "Void",
+            &mut life_record,
+            "offline:Heir",
+            vec![1001],
+            Some("留给后来人".to_string()),
+            42,
+            None,
+        );
+
+        assert_eq!(result, Err(VoidActionError::LegacyPersistFailed));
+        assert!(life_record.legacy_letterbox.is_none());
+        assert!(life_record.biography.is_empty());
     }
 
     #[test]

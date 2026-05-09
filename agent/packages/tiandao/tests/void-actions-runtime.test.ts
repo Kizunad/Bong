@@ -174,4 +174,43 @@ describe("VoidActionNarrationRuntime", () => {
     expect(pub.published).toHaveLength(2);
     expect(maxInFlight).toBe(1);
   });
+
+  it("drains queued payloads before disconnecting", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    let release: (() => void) | undefined;
+    const releaseChat = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted: (() => void) | undefined;
+    const chatStarted = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const llm: LlmClient = {
+      async chat() {
+        markStarted?.();
+        await releaseChat;
+        return JSON.stringify({ text: "虚风已过。", style: "narration" });
+      },
+    };
+    const runtime = new VoidActionNarrationRuntime({
+      llm,
+      model: "mock",
+      sub,
+      pub,
+      logger: { info: vi.fn(), warn: vi.fn() },
+      systemPrompt: "test",
+    });
+
+    await runtime.connect();
+    sub.emit(VOID_ACTION_BARRIER, JSON.stringify(payload("barrier")));
+    await chatStarted;
+    const disconnecting = runtime.disconnect();
+    expect(pub.published).toHaveLength(0);
+    if (!release) throw new Error("chat release handle was not initialized");
+    release();
+    await disconnecting;
+
+    expect(pub.published).toHaveLength(1);
+  });
 });

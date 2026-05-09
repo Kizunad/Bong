@@ -195,6 +195,9 @@ export class VoidActionNarrationRuntime {
   async disconnect(): Promise<void> {
     this.connected = false;
     this.sub.off?.("message", this.onMessage);
+    await this.pending.catch((error: unknown) => {
+      this.logger.warn("[void-actions-runtime] draining queued payload failed:", error);
+    });
     await this.sub.unsubscribe();
     this.sub.disconnect();
     this.pub.disconnect();

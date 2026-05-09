@@ -79,7 +79,7 @@ public class ClientRequestProtocolTest {
     void rejectsVoidActionLegacyAssignWithNegativeItemId() {
         assertThrows(
             IllegalArgumentException.class,
-            () -> ClientRequestProtocol.encodeVoidActionLegacyAssign("heir", List.of(-1L), null)
+            () -> ClientRequestProtocol.encodeVoidActionLegacyAssign("heir", List.of(-1L), "留给后来人")
         );
     }
 

@@ -44,6 +44,16 @@ impl VoidActionKind {
         }
     }
 
+    pub fn from_wire_name(value: &str) -> Option<Self> {
+        match value {
+            "suppress_tsy" => Some(Self::SuppressTsy),
+            "explode_zone" => Some(Self::ExplodeZone),
+            "barrier" => Some(Self::Barrier),
+            "legacy_assign" => Some(Self::LegacyAssign),
+            _ => None,
+        }
+    }
+
     pub const fn qi_cost(self) -> f64 {
         match self {
             Self::SuppressTsy => SUPPRESS_TSY_QI_COST,
@@ -239,6 +249,11 @@ mod tests {
         assert_eq!(VoidActionKind::ExplodeZone.wire_name(), "explode_zone");
         assert_eq!(VoidActionKind::Barrier.wire_name(), "barrier");
         assert_eq!(VoidActionKind::LegacyAssign.wire_name(), "legacy_assign");
+        assert_eq!(
+            VoidActionKind::from_wire_name("suppress_tsy"),
+            Some(VoidActionKind::SuppressTsy)
+        );
+        assert_eq!(VoidActionKind::from_wire_name("unknown"), None);
     }
 
     #[test]
