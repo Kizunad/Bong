@@ -151,10 +151,6 @@ pub fn resolve_woliu_v2_skill(
     {
         return rejected(CastRejectReason::OnCooldown);
     }
-    if skill == WoliuSkillId::Pull && target.is_none() {
-        return rejected(CastRejectReason::InvalidTarget);
-    }
-
     let Some(position) = world.get::<Position>(caster).copied() else {
         return rejected(CastRejectReason::InvalidTarget);
     };
@@ -163,6 +159,15 @@ pub fn resolve_woliu_v2_skill(
     };
 
     let spec = skill_spec(skill, cultivation.realm);
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|dimension| dimension.0)
+        .unwrap_or(DimensionKind::Overworld);
+    let center = match cast_center(world, position.get(), dimension, target, skill, spec) {
+        Ok(center) => center,
+        Err(reason) => return rejected(reason),
+    };
+
     let cost = spec.total_qi_cost();
     if cultivation.qi_current + f64::EPSILON < cost {
         return rejected(CastRejectReason::QiInsufficient);
@@ -180,14 +185,10 @@ pub fn resolve_woliu_v2_skill(
         meridians.sum_capacity().max(1.0)
     };
 
-    let dimension = world
-        .get::<CurrentDimension>(caster)
-        .map(|dimension| dimension.0)
-        .unwrap_or(DimensionKind::Overworld);
     let zone_context = current_zone_context(
         world.get_resource::<ZoneRegistry>(),
         dimension,
-        position.get(),
+        center,
         spec.turbulence_radius,
     );
     let contamination = contamination_ratio(world.get::<Contamination>(caster), cultivation.qi_max);
@@ -225,7 +226,6 @@ pub fn resolve_woliu_v2_skill(
     }
     record_stir_contamination(world, caster, stir.contamination_gain, now_tick);
 
-    let center = position.get();
     let cooldown_until_tick = now_tick.saturating_add(spec.cooldown_ticks);
     let active_until_tick = now_tick.saturating_add(spec.duration_ticks);
     if spec.turbulence_radius > 0.0 || skill == WoliuSkillId::Heart {
@@ -349,7 +349,7 @@ fn emit_cast_events(
                 .unwrap_or(0.0);
             let displacement = pull_displacement_blocks(caster_qi, target_qi, spec.pull_force);
             if let Some(actual_displacement) =
-                apply_pull_displacement(world, caster, target, displacement)
+                apply_pull_displacement(world, caster, target, displacement, spec.influence_radius)
             {
                 send_event_if_present(
                     world,
@@ -385,6 +385,7 @@ fn apply_pull_displacement(
     caster: Entity,
     target: Entity,
     displacement_blocks: f32,
+    max_radius: f32,
 ) -> Option<f32> {
     if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
         return None;
@@ -410,12 +411,84 @@ fn apply_pull_displacement(
     if !distance.is_finite() || distance <= f64::EPSILON {
         return None;
     }
+    if distance > f64::from(max_radius.max(0.0)) + f64::EPSILON {
+        return None;
+    }
     let step = f64::from(displacement_blocks).min(distance);
     if step <= f64::EPSILON {
         return None;
     }
     target_pos.set(current + offset / distance * step);
     Some(step as f32)
+}
+
+fn cast_center(
+    world: &bevy_ecs::world::World,
+    caster_pos: DVec3,
+    caster_dim: DimensionKind,
+    target: Option<Entity>,
+    skill: WoliuSkillId,
+    spec: WoliuSkillSpec,
+) -> Result<DVec3, CastRejectReason> {
+    match skill {
+        WoliuSkillId::Mouth => match target {
+            Some(target) => validated_target_position(
+                world,
+                caster_pos,
+                caster_dim,
+                target,
+                spec.influence_radius,
+                false,
+            ),
+            None => Ok(caster_pos),
+        },
+        WoliuSkillId::Pull => {
+            let target = target.ok_or(CastRejectReason::InvalidTarget)?;
+            validated_target_position(
+                world,
+                caster_pos,
+                caster_dim,
+                target,
+                spec.influence_radius,
+                true,
+            )?;
+            Ok(caster_pos)
+        }
+        _ => Ok(caster_pos),
+    }
+}
+
+fn validated_target_position(
+    world: &bevy_ecs::world::World,
+    caster_pos: DVec3,
+    caster_dim: DimensionKind,
+    target: Entity,
+    max_radius: f32,
+    require_qi: bool,
+) -> Result<DVec3, CastRejectReason> {
+    if require_qi
+        && !world
+            .get::<Cultivation>(target)
+            .is_some_and(|cultivation| cultivation.qi_current > f64::EPSILON)
+    {
+        return Err(CastRejectReason::InvalidTarget);
+    }
+    let target_dim = world
+        .get::<CurrentDimension>(target)
+        .map(|dimension| dimension.0)
+        .ok_or(CastRejectReason::InvalidTarget)?;
+    if target_dim != caster_dim {
+        return Err(CastRejectReason::InvalidTarget);
+    }
+    let target_pos = world
+        .get::<Position>(target)
+        .map(|position| position.get())
+        .ok_or(CastRejectReason::InvalidTarget)?;
+    let distance = caster_pos.distance(target_pos);
+    if !distance.is_finite() || distance > f64::from(max_radius.max(0.0)) + f64::EPSILON {
+        return Err(CastRejectReason::InvalidTarget);
+    }
+    Ok(target_pos)
 }
 
 fn send_event_if_present<T: valence::prelude::Event>(world: &mut bevy_ecs::world::World, event: T) {

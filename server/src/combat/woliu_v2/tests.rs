@@ -525,6 +525,141 @@ fn resolve_pull_rejects_missing_target_without_cooldown() {
 }
 
 #[test]
+fn resolve_pull_rejects_target_without_position_before_cooldown() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = app
+        .world_mut()
+        .spawn((
+            Cultivation {
+                realm: Realm::Induce,
+                qi_current: 20.0,
+                qi_max: 1_000.0,
+                ..Default::default()
+            },
+            CurrentDimension(DimensionKind::Overworld),
+        ))
+        .id();
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 1, Some(target), WoliuSkillId::Pull);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert!(!app
+        .world()
+        .get::<SkillBarBindings>(actor)
+        .unwrap()
+        .is_on_cooldown(1, 10));
+}
+
+#[test]
+fn resolve_pull_rejects_out_of_range_target_without_cooldown() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 20.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([20.0, 66.0, 8.0]);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 1, Some(target), WoliuSkillId::Pull);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert!(!app
+        .world()
+        .get::<SkillBarBindings>(actor)
+        .unwrap()
+        .is_on_cooldown(1, 10));
+}
+
+#[test]
+fn resolve_pull_rejects_zero_qi_target_without_cooldown() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 0.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 1, Some(target), WoliuSkillId::Pull);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert!(!app
+        .world()
+        .get::<SkillBarBindings>(actor)
+        .unwrap()
+        .is_on_cooldown(1, 10));
+}
+
+#[test]
+fn resolve_mouth_uses_target_position_as_cast_center() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 20.0);
+    let target_pos = DVec3::new(10.0, 66.0, 8.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set(target_pos);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 2, Some(target), WoliuSkillId::Mouth);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let event = app
+        .world()
+        .resource::<Events<VortexCastEvent>>()
+        .iter_current_update_events()
+        .next()
+        .unwrap();
+    assert!(event.center.distance(target_pos) < f64::EPSILON);
+}
+
+#[test]
+fn resolve_mouth_rejects_out_of_range_target_without_cooldown() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 20.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([20.0, 66.0, 8.0]);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 2, Some(target), WoliuSkillId::Mouth);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert!(!app
+        .world()
+        .get::<SkillBarBindings>(actor)
+        .unwrap()
+        .is_on_cooldown(2, 10));
+}
+
+#[test]
 fn resolve_pull_emits_displacement_for_target() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
