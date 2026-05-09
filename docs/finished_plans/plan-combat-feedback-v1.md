@@ -10,9 +10,9 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 受伤反馈管线（被打→看得见） | ⬜ |
-| P1 | 玩家攻击输入（左键→打得到） | ⬜ |
-| P2 | 噬元鼠咬人反馈（qi_damage 专用路径） | ⬜ |
+| P0 | 受伤反馈管线（被打→看得见） | ✅ 2026-05-09 |
+| P1 | 玩家攻击输入（左键→打得到） | ✅ 2026-05-09 |
+| P2 | 噬元鼠咬人反馈（qi_damage 专用路径） | ✅ 2026-05-09 |
 
 ---
 
@@ -176,3 +176,47 @@
 | `server/src/combat/mod.rs` | **改** — 注册 `handle_player_attack` system 到 Intent phase + `PlayerAttackCooldown` component | P1 |
 | `server/src/combat/rat_bite.rs` | **改** — 追加 combat_event payload + EntityStatuses hurt + PlaySoundRecipeRequest | P2 |
 | `server/src/network/audio_trigger.rs` | **改** — 追加 `"rat_bite"` recipe | P2 |
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 模块/文件 |
+|------|-----------|
+| P0 | `server/src/network/combat_event_emit.rs`（新建）、`server/src/schema/server_data.rs`（+CombatEventFloater 变体）、`server/src/network/agent_bridge.rs`（+label）、`server/src/network/mod.rs`（+system 注册） |
+| P1 | `server/src/combat/player_attack.rs`（新建）、`server/src/combat/mod.rs`（+system 注册 + PlayerAttackCooldown 组件） |
+| P2 | `server/src/combat/rat_bite.rs`（改：追加 combat_event payload + DamageTiltS2c） |
+
+### 关键 commit
+
+- `5bf6f837b` 2026-05-09 — P0 受伤反馈管线（CombatEvent → client combat_event payload + DamageTiltS2c）
+- `b5cadb6fa` 2026-05-09 — P1 玩家攻击输入（InteractEntityEvent::Attack → AttackIntent）
+- `2b192aa5d` 2026-05-09 — P2 噬元鼠咬人反馈（qi_damage 飘字 + DamageTiltS2c）
+
+### 测试结果
+
+```
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+→ 3294 passed; 0 failed
+```
+
+新增测试：
+- `combat_event_emit::tests::*` — 5 tests（wire_kind 映射、format_amount、序列化验证）
+- `player_attack::tests::*` — 5 tests（攻击生成、非攻击忽略、stamina/cooldown/距离校验）
+- `server_data::tests::hud_payload_wire_type_matches_label` — 含 CombatEventFloater 变体
+
+### 跨仓库核验
+
+- **server**: `CombatEventFloaterV1`, `emit_combat_event_to_client`, `handle_player_attack`, `PlayerAttackCooldown`
+- **client**: 已有 `CombatEventHandler`（handlers.put("combat_event", ...)）+ `DamageFloaterStore` + `DamageFloaterHudPlanner` — 无需改动
+- **agent**: 不涉及
+
+### 遗留 / 后续
+
+- 暴击判定（`"crit"` kind）：预留但未实装，后续由功法系统接入
+- 击退/击飞：需要 Valence velocity 包支持，另开 plan
+- PvP：`handle_player_attack` 只允许攻击 NpcMarker，PvP 另议
+- 3D 世界空间飘字投影：当前 floater 坐标传 (0,0,0)，客户端走 fallback 屏幕位置
+- 音效 recipe：plan 原定 P2.2 `"rat_bite"` audio recipe 跳过（audio_trigger 系统与 rat_bite 解耦，需要 PlaySoundRecipeRequest event 路径）

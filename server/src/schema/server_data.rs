@@ -170,6 +170,7 @@ pub enum ServerDataType {
     CraftSessionState,
     CraftOutcome,
     RecipeUnlocked,
+    CombatEventFloater,
 }
 
 #[derive(Debug, Clone)]
@@ -381,6 +382,24 @@ pub enum ServerDataPayloadV1 {
     CraftOutcome(CraftOutcomeV1),
     /// 三渠道解锁广播（残卷 / 师承 / 顿悟），客户端弹解锁通知。
     RecipeUnlocked(RecipeUnlockedV1),
+    CombatEventFloater(CombatEventFloaterV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombatEventFloaterV1 {
+    pub events: Vec<CombatEventFloaterEntryV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombatEventFloaterEntryV1 {
+    pub kind: String,
+    pub amount: f32,
+    pub text: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1109,6 +1128,9 @@ enum ServerDataPayloadWireV1 {
     RecipeUnlocked {
         #[serde(flatten)]
         event: RecipeUnlockedV1,
+    },
+    CombatEvent {
+        events: Vec<CombatEventFloaterEntryV1>,
     },
 }
 
@@ -1880,6 +1902,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::CraftOutcome { outcome } => Ok(Self::CraftOutcome(outcome)),
             ServerDataPayloadWireV1::RecipeUnlocked { event } => Ok(Self::RecipeUnlocked(event)),
+            ServerDataPayloadWireV1::CombatEvent { events } => {
+                Ok(Self::CombatEventFloater(CombatEventFloaterV1 { events }))
+            }
         }
     }
 }
@@ -2343,6 +2368,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::RecipeUnlocked(event) => Self::RecipeUnlocked {
                 event: event.clone(),
             },
+            ServerDataPayloadV1::CombatEventFloater(floater) => Self::CombatEvent {
+                events: floater.events.clone(),
+            },
         }
     }
 }
@@ -2584,6 +2612,7 @@ impl ServerDataPayloadV1 {
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
             Self::RecipeUnlocked(..) => ServerDataType::RecipeUnlocked,
+            Self::CombatEventFloater(..) => ServerDataType::CombatEventFloater,
         }
     }
 }
@@ -2919,6 +2948,16 @@ mod tests {
                 },
                 unlocked_at_tick: 8000,
                 ts: 1234567,
+            }),
+            ServerDataPayloadV1::CombatEventFloater(CombatEventFloaterV1 {
+                events: vec![CombatEventFloaterEntryV1 {
+                    kind: "hit".to_string(),
+                    amount: 5.0,
+                    text: "5".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                }],
             }),
         ];
 

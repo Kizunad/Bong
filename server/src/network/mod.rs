@@ -12,6 +12,7 @@ pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
 pub mod combat_bridge;
+pub mod combat_event_emit;
 pub mod combat_hud_state_emit;
 pub mod command_executor;
 pub mod craft_emit;
@@ -621,6 +622,11 @@ pub fn register(app: &mut App) {
             weapon_equipped_emit::emit_weapon_broken_payloads,
             treasure_equipped_emit::emit_treasure_equipped_payloads,
         ),
+    );
+    app.add_systems(
+        Update,
+        combat_event_emit::emit_combat_event_to_client
+            .after(crate::combat::resolve::resolve_attack_intents),
     );
     app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);
     app.add_systems(Update, dugu_state_emit::emit_dugu_poison_state_payloads);

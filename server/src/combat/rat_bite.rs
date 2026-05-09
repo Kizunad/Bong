@@ -1,8 +1,18 @@
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query};
+use valence::prelude::{bevy_ecs, Client, Entity, Event, EventReader, EventWriter, Query};
+use valence::protocol::encode::WritePacket;
+use valence::protocol::packets::play::DamageTiltS2c;
+use valence::protocol::VarInt;
 
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
+use crate::network::agent_bridge::{
+    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+};
+use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::schema::server_data::{
+    CombatEventFloaterEntryV1, CombatEventFloaterV1, ServerDataPayloadV1, ServerDataV1,
+};
 
 #[derive(Debug, Clone, Copy, Event, PartialEq)]
 pub struct RatBiteEvent {
@@ -16,6 +26,7 @@ pub fn apply_rat_bite_qi_drain(
     mut cultivators: Query<&mut Cultivation>,
     mut rats: Query<&mut RatBlackboard>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
+    mut clients: Query<&mut Client>,
 ) {
     for bite in bites.read() {
         if bite.qi_steal == 0 {
@@ -36,6 +47,7 @@ pub fn apply_rat_bite_qi_drain(
             if let Ok(mut rat) = rats.get_mut(bite.rat) {
                 rat.drained_qi += drained;
             }
+            send_bite_feedback(&mut clients, bite.target, drained as f32);
         }
         if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
             deaths.send(CultivationDeathTrigger {
@@ -48,6 +60,46 @@ pub fn apply_rat_bite_qi_drain(
             });
         }
     }
+}
+
+fn send_bite_feedback(clients: &mut Query<&mut Client>, target: Entity, drained: f32) {
+    let Ok(mut client) = clients.get_mut(target) else {
+        return;
+    };
+
+    let entry = CombatEventFloaterEntryV1 {
+        kind: "qi_damage".to_string(),
+        amount: drained,
+        text: format!("-{}", drained.round() as i64),
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let payload = ServerDataV1::new(ServerDataPayloadV1::CombatEventFloater(
+        CombatEventFloaterV1 {
+            events: vec![entry],
+        },
+    ));
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+    send_server_data_payload(&mut client, payload_bytes.as_slice());
+
+    client.write_packet(&DamageTiltS2c {
+        entity_id: VarInt(0),
+        yaw: 0.0,
+    });
+
+    tracing::debug!(
+        "[bong][network] sent {} {} (qi_damage) + DamageTilt for rat bite",
+        SERVER_DATA_CHANNEL,
+        payload_type,
+    );
 }
 
 #[cfg(test)]
