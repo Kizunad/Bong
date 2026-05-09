@@ -12,11 +12,11 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
     ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
 };
-use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{
     lifespan_tick_rate_multiplier, LifespanCapTable, LifespanComponent,
 };
+use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
