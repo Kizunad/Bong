@@ -73,6 +73,7 @@ pub struct LayerSchema {
 - u8 layer 调用 `sample_layer_f32` → 返回 `None`
 - 不存在的 layer 名 → 返回 `None`
 - 在 wilderness（无 tile）但 layer 已在 schema → 返回 layer 的 `safe_default`（与 `sample()` wilderness fallback 行为一致）
+- 旧兼容 adapter `sample_layer(...)->Option<f32>` 保持 botany-v2 既有语义：未知 layer 或无 tile → `None`；有 tile 时才把 f32/u8 layer 转成 `f32`
 
 ---
 
@@ -155,19 +156,22 @@ pub struct LayerSchema {
 - 落地清单：
   - P0：`server/src/world/terrain/raster.rs` 新增 `LayerExportType` / `LayerSchema` / `LAYER_SCHEMAS`（39 条，镜像 `worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY`）、`TerrainProvider::sample_layer_f32`、`TerrainProvider::sample_layer_u8`、`TerrainProvider::layer_names`。
   - P0：补齐 `TileFields` / `ColumnSample` 对 `spirit_eye_candidates`、`realm_collapse_mask`、`zongmen_origin_id`、`mineral_density`、`mineral_kind` 的读取与 wilderness default。
-  - P0：保留旧 `TerrainProvider::sample_layer(...)->Option<f32>` 作为 botany-v2 兼容 adapter，同时新 API 对 f32/u8 类型错配返回 `None`。
+  - P0：保留旧 `TerrainProvider::sample_layer(...)->Option<f32>` 作为 botany-v2 兼容 adapter；旧 adapter 保持无 tile 返回 `None`，新 `sample_layer_f32` / `sample_layer_u8` 对无 tile 返回 schema safe_default。
   - P0：新增 `server/src/world/terrain/layer_registry_fixture.json`，Rust 单测读取 fixture 对照 schema 名称、类型和 safe_default。
+  - P0：新增 `worldgen/scripts/terrain_gen/dump_layer_registry.py` 和 `worldgen/tests/test_layer_registry_fixture.py`，由 Python `LAYER_REGISTRY` 直接 dump 并断言与 Rust fixture 完全一致。
   - P1：下游接入现实已核验：`docs/finished_plans/plan-botany-v2.md` 记录 P0 已使用旧 `TerrainProvider::sample_layer` / `server/src/botany/env_lock.rs::env_sample_layer`；`docs/finished_plans/plan-mineral-v2.md` 记录 `plan-terrain-layer-query-v1` 是 P6 `fossil_bbox` 共享 layer 前置。两者已归档，本 PR 未越权改其他 docs。
 - 关键 commit：
   - `b44883da5`（2026-05-09）`terrain: 补齐 layer 按名查询接口`
+  - `c9fee0cb5`（2026-05-09）`terrain: 修正 layer 查询兼容语义`
 - 测试结果：
   - `cargo test raster::tests` 通过（9 passed; 3063 filtered out）。
+  - `python3 -m unittest discover -s tests -p 'test_layer_registry_fixture.py'` 通过（2 tests）。
   - `cargo fmt --check` 通过。
   - `cargo clippy --all-targets -- -D warnings` 通过。
   - `cargo test` 通过（3072 passed; 0 failed）。
 - 跨仓库核验：
   - server：`TerrainProvider::sample_layer_f32` / `sample_layer_u8` / `layer_names` / `LayerSchema` / `LayerExportType` 均落在 `server/src/world/terrain/raster.rs`；`ColumnSample` / `TileFields` / `wilderness::sample` 已同步新增 layer fallback。
-  - worldgen：schema fixture 由 `worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY` 当前 39 条导出；Rust 测试断言名称、`export_type`、`safe_default` 对齐。
+  - worldgen：schema fixture 由 `worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY` 当前 39 条导出；Rust 测试断言名称、`export_type`、`safe_default` 对齐，Python unittest 断言 dump JSON 与 `server/src/world/terrain/layer_registry_fixture.json` 完全一致。
   - agent/client：本 plan 为 server-side terrain adapter，不新增 IPC schema、Redis key 或 client payload。
 - 遗留 / 后续：
   - `LayerSchema` 不镜像 `blend_mode`，因为 Rust runtime 当前不消费该字段；仍以 Python `LAYER_REGISTRY` 为 source of truth。
