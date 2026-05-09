@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "vortex_spiral_stance",
+  "description": "woliu-v2 spiral stance for pull and heart vortex, both hands orbit the body center.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 20,
+    "stopTick": 24,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": -0.02 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "yaw": -0.10, "pitch": -0.04 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.70, "yaw": -0.55, "roll": -0.35, "bend": 1.05, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -1.12, "yaw": 0.28, "roll": 0.18, "bend": 1.18, "axis": 3.1415927 } },
+      { "tick": 7, "easing": "INOUTSINE", "body": { "y": -0.055, "z": -0.035 } },
+      { "tick": 7, "easing": "INOUTSINE", "torso": { "yaw": 0.16, "pitch": -0.10 } },
+      { "tick": 7, "easing": "INOUTSINE", "rightArm": { "pitch": -1.20, "yaw": -0.15, "roll": -0.05, "bend": 1.35, "axis": 3.1415927 } },
+      { "tick": 7, "easing": "INOUTSINE", "leftArm": { "pitch": -0.62, "yaw": 0.58, "roll": 0.42, "bend": 0.92, "axis": 3.1415927 } },
+      { "tick": 14, "easing": "INOUTSINE", "torso": { "yaw": -0.18, "pitch": -0.02 } },
+      { "tick": 14, "easing": "INOUTSINE", "rightArm": { "pitch": -0.60, "yaw": -0.62, "roll": -0.48, "bend": 0.86, "axis": 3.1415927 } },
+      { "tick": 14, "easing": "INOUTSINE", "leftArm": { "pitch": -1.28, "yaw": 0.12, "roll": 0.02, "bend": 1.42, "axis": 3.1415927 } },
+      { "tick": 20, "easing": "OUTSINE", "body": { "y": -0.03, "z": 0.01 } },
+      { "tick": 20, "easing": "OUTSINE", "torso": { "yaw": 0.0, "pitch": 0.0 } },
+      { "tick": 20, "easing": "OUTSINE", "rightArm": { "pitch": -0.85, "yaw": -0.34, "roll": -0.28, "bend": 1.00, "axis": 3.1415927 } },
+      { "tick": 20, "easing": "OUTSINE", "leftArm": { "pitch": -0.85, "yaw": 0.34, "roll": 0.28, "bend": 1.00, "axis": 3.1415927 } }
+    ]
+  }
+}

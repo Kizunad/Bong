@@ -19,7 +19,14 @@ public final class VortexStateHandler implements ServerDataHandler {
             (float) readDouble(payload, "delta", 0d),
             (float) readDouble(payload, "env_qi_at_cast", 0d),
             readLong(payload, "maintain_remaining_ticks", 0L),
-            (int) Math.min(Integer.MAX_VALUE, readLong(payload, "intercepted_count", 0L))
+            (int) Math.min(Integer.MAX_VALUE, readLong(payload, "intercepted_count", 0L)),
+            readString(payload, "active_skill_id", readString(payload, "skill_id", "")),
+            (float) readDouble(payload, "charge_progress", 0d),
+            readLong(payload, "cooldown_until_ms", 0L),
+            readString(payload, "backfire_level", ""),
+            (float) readDouble(payload, "turbulence_radius", 0d),
+            (float) readDouble(payload, "turbulence_intensity", 0d),
+            readLong(payload, "turbulence_until_ms", 0L)
         );
         VortexStateStore.replace(next);
         return ServerDataDispatch.handled(
@@ -53,5 +60,14 @@ public final class VortexStateHandler implements ServerDataHandler {
         if (!p.isNumber()) return fallback;
         long value = p.getAsLong();
         return value < 0 ? fallback : value;
+    }
+
+    private static String readString(JsonObject obj, String field, String fallback) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        if (!p.isString()) return fallback;
+        String value = p.getAsString();
+        return value == null ? fallback : value;
     }
 }

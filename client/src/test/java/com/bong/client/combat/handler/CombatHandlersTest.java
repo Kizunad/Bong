@@ -87,7 +87,11 @@ class CombatHandlersTest {
         String json = """
             {"v":1,"type":"vortex_state","caster":"player:test","active":true,
              "center":[1,64,2],"radius":1.5,"delta":0.25,"env_qi_at_cast":0.9,
-             "maintain_remaining_ticks":80,"intercepted_count":3}""";
+             "maintain_remaining_ticks":80,"intercepted_count":3,
+             "active_skill_id":"woliu.heart","charge_progress":0.5,
+             "cooldown_until_ms":9000,"backfire_level":"micro_tear",
+             "turbulence_radius":12,"turbulence_intensity":0.75,
+             "turbulence_until_ms":12000}""";
         ServerDataDispatch dispatch = new VortexStateHandler().handle(parse(json));
         assertTrue(dispatch.handled());
         VortexStateStore.State state = VortexStateStore.snapshot();
@@ -96,6 +100,13 @@ class CombatHandlersTest {
         assertEquals(0.25f, state.delta(), 1e-5);
         assertEquals(80L, state.maintainRemainingTicks());
         assertEquals(3, state.interceptedCount());
+        assertEquals("woliu.heart", state.activeSkillId());
+        assertEquals(0.5f, state.chargeProgress(), 1e-5);
+        assertEquals(9000L, state.cooldownUntilMs());
+        assertEquals("micro_tear", state.backfireLevel());
+        assertEquals(12f, state.turbulenceRadius(), 1e-5);
+        assertEquals(0.75f, state.turbulenceIntensity(), 1e-5);
+        assertEquals(12000L, state.turbulenceUntilMs());
     }
 
     @Test

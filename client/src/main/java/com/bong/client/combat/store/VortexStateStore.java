@@ -8,9 +8,26 @@ public final class VortexStateStore {
         float delta,
         float envQiAtCast,
         long maintainRemainingTicks,
-        int interceptedCount
+        int interceptedCount,
+        String activeSkillId,
+        float chargeProgress,
+        long cooldownUntilMs,
+        String backfireLevel,
+        float turbulenceRadius,
+        float turbulenceIntensity,
+        long turbulenceUntilMs
     ) {
-        public static final State NONE = new State(false, 0f, 0f, 0f, 0L, 0);
+        public State {
+            activeSkillId = activeSkillId == null ? "" : activeSkillId;
+            chargeProgress = Math.max(0f, Math.min(1f, chargeProgress));
+            cooldownUntilMs = Math.max(0L, cooldownUntilMs);
+            backfireLevel = backfireLevel == null ? "" : backfireLevel;
+            turbulenceRadius = Math.max(0f, turbulenceRadius);
+            turbulenceIntensity = Math.max(0f, Math.min(1f, turbulenceIntensity));
+            turbulenceUntilMs = Math.max(0L, turbulenceUntilMs);
+        }
+
+        public static final State NONE = new State(false, 0f, 0f, 0f, 0L, 0, "", 0f, 0L, "", 0f, 0f, 0L);
     }
 
     private static volatile State snapshot = State.NONE;

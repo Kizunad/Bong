@@ -1,5 +1,7 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.CastState;
+import com.bong.client.combat.QuickSlotConfig;
 import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarEntry;
 import org.junit.jupiter.api.Test;
@@ -7,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -88,5 +91,57 @@ class QuickBarHudPlannerTest {
                 "zhenmai skill icon resource should exist: " + icon
             );
         }
+    }
+
+    @Test
+    void skillSlotUsesConfiguredIconTexture() {
+        SkillBarConfig skills = SkillBarConfig.of(
+            new SkillBarEntry[] {
+                SkillBarEntry.skill(
+                    "woliu.hold",
+                    "持涡",
+                    50,
+                    500,
+                    "bong:textures/gui/skill/woliu_hold.png"
+                )
+            },
+            new long[9]
+        );
+
+        List<HudRenderCommand> commands = QuickBarHudPlanner.buildCommands(
+            QuickSlotConfig.empty(),
+            skills,
+            0,
+            CastState.idle(),
+            List.of(),
+            1_000L,
+            960,
+            540
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isTexturedRect()
+            && cmd.texturePath().equals("bong:textures/gui/skill/woliu_hold.png")));
+        assertFalse(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().equals("持")));
+    }
+
+    @Test
+    void skillSlotFallsBackToShortTextWithoutIcon() {
+        SkillBarConfig skills = SkillBarConfig.of(
+            new SkillBarEntry[] { SkillBarEntry.skill("woliu.burst", "瞬涡", 50, 500, "") },
+            new long[9]
+        );
+
+        List<HudRenderCommand> commands = QuickBarHudPlanner.buildCommands(
+            QuickSlotConfig.empty(),
+            skills,
+            0,
+            CastState.idle(),
+            List.of(),
+            1_000L,
+            960,
+            540
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().equals("瞬涡")));
     }
 }

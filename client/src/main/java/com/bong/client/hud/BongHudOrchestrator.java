@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
+import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
@@ -194,6 +195,12 @@ public final class BongHudOrchestrator {
                 nowMillis,
                 screenWidth,
                 screenHeight
+            ));
+            commands.addAll(WoliuV2HudPlanner.buildCommands(
+                VortexStateStore.snapshot(),
+                screenWidth,
+                screenHeight,
+                nowMillis
             ));
             commands.addAll(ChargingProgressBarHud.buildCommands(screenWidth, screenHeight));
             commands.addAll(ExhaustedGreyOverlay.buildCommands(screenWidth, screenHeight, nowMillis));
