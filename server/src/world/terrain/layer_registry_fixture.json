@@ -1,0 +1,197 @@
+[
+  {
+    "name": "height",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "surface_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "subsurface_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "water_level",
+    "export_type": "float32",
+    "safe_default": -1.0
+  },
+  {
+    "name": "biome_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "feature_mask",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "boundary_weight",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "rift_axis_sdf",
+    "export_type": "float32",
+    "safe_default": 99.0
+  },
+  {
+    "name": "portal_anchor_sdf",
+    "export_type": "float32",
+    "safe_default": 999.0
+  },
+  {
+    "name": "rim_edge_mask",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "fracture_mask",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "cave_mask",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "ceiling_height",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "entrance_mask",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "neg_pressure",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "ruin_density",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "qi_density",
+    "export_type": "float32",
+    "safe_default": 0.12
+  },
+  {
+    "name": "mofa_decay",
+    "export_type": "float32",
+    "safe_default": 0.4
+  },
+  {
+    "name": "qi_vein_flow",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "spirit_eye_candidates",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "realm_collapse_mask",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "sky_island_mask",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "sky_island_base_y",
+    "export_type": "float32",
+    "safe_default": 9999.0
+  },
+  {
+    "name": "sky_island_thickness",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "underground_tier",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "cavern_floor_y",
+    "export_type": "float32",
+    "safe_default": 9999.0
+  },
+  {
+    "name": "flora_density",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "flora_variant_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "ground_cover_density",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "ground_cover_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "zongmen_origin_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "mineral_density",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "mineral_kind",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "fossil_bbox",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "anomaly_intensity",
+    "export_type": "float32",
+    "safe_default": 0.0
+  },
+  {
+    "name": "anomaly_kind",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "tsy_presence",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "tsy_origin_id",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  },
+  {
+    "name": "tsy_depth_tier",
+    "export_type": "uint8",
+    "safe_default": 0.0
+  }
+]

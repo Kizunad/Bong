@@ -8,6 +8,88 @@ use valence::prelude::{BiomeId, BiomeRegistry, BlockState, Ident, Resource};
 
 use super::wilderness;
 
+// Keep this Rust mirror in lockstep with
+// worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayerExportType {
+    F32,
+    U8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayerSchema {
+    pub name: &'static str,
+    pub export_type: LayerExportType,
+    pub safe_default_f32: Option<f32>,
+    pub safe_default_u8: Option<u8>,
+}
+
+const fn f32_layer(name: &'static str, safe_default: f32) -> LayerSchema {
+    LayerSchema {
+        name,
+        export_type: LayerExportType::F32,
+        safe_default_f32: Some(safe_default),
+        safe_default_u8: None,
+    }
+}
+
+const fn u8_layer(name: &'static str, safe_default: u8) -> LayerSchema {
+    LayerSchema {
+        name,
+        export_type: LayerExportType::U8,
+        safe_default_f32: None,
+        safe_default_u8: Some(safe_default),
+    }
+}
+
+const LAYER_SCHEMAS: &[LayerSchema] = &[
+    f32_layer("height", 0.0),
+    u8_layer("surface_id", 0),
+    u8_layer("subsurface_id", 0),
+    f32_layer("water_level", -1.0),
+    u8_layer("biome_id", 0),
+    f32_layer("feature_mask", 0.0),
+    f32_layer("boundary_weight", 0.0),
+    f32_layer("rift_axis_sdf", 99.0),
+    f32_layer("portal_anchor_sdf", 999.0),
+    f32_layer("rim_edge_mask", 0.0),
+    f32_layer("fracture_mask", 0.0),
+    f32_layer("cave_mask", 0.0),
+    f32_layer("ceiling_height", 0.0),
+    f32_layer("entrance_mask", 0.0),
+    f32_layer("neg_pressure", 0.0),
+    f32_layer("ruin_density", 0.0),
+    f32_layer("qi_density", 0.12),
+    f32_layer("mofa_decay", 0.40),
+    f32_layer("qi_vein_flow", 0.0),
+    u8_layer("spirit_eye_candidates", 0),
+    u8_layer("realm_collapse_mask", 0),
+    f32_layer("sky_island_mask", 0.0),
+    f32_layer("sky_island_base_y", 9999.0),
+    f32_layer("sky_island_thickness", 0.0),
+    u8_layer("underground_tier", 0),
+    f32_layer("cavern_floor_y", 9999.0),
+    f32_layer("flora_density", 0.0),
+    u8_layer("flora_variant_id", 0),
+    f32_layer("ground_cover_density", 0.0),
+    u8_layer("ground_cover_id", 0),
+    u8_layer("zongmen_origin_id", 0),
+    f32_layer("mineral_density", 0.0),
+    u8_layer("mineral_kind", 0),
+    u8_layer("fossil_bbox", 0),
+    f32_layer("anomaly_intensity", 0.0),
+    u8_layer("anomaly_kind", 0),
+    u8_layer("tsy_presence", 0),
+    u8_layer("tsy_origin_id", 0),
+    u8_layer("tsy_depth_tier", 0),
+];
+
+fn layer_schema(layer_name: &str) -> Option<&'static LayerSchema> {
+    LAYER_SCHEMAS
+        .iter()
+        .find(|schema| schema.name == layer_name)
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds2D {
@@ -48,6 +130,8 @@ pub struct ColumnSample {
     pub qi_density: f32,
     pub mofa_decay: f32,
     pub qi_vein_flow: f32,
+    pub spirit_eye_candidates: u8,
+    pub realm_collapse_mask: u8,
     // --- vertical-dimension layers (2D rasters encoding 3D structure) ---
     /// 0..1 likelihood this column hosts a floating isle above. Gate on >= 0.2.
     pub sky_island_mask: f32,
@@ -71,6 +155,12 @@ pub struct ColumnSample {
     /// Global decoration id for ground cover (0 = none). Same palette as
     /// flora_variant_id; convention is to point at kind="flower" specs.
     pub ground_cover_id: u8,
+    /// Overworld sect-ruin origin discriminator; 0 means no sect origin.
+    pub zongmen_origin_id: u8,
+    /// 0..1 likelihood a mineral ore-block occupies this column.
+    pub mineral_density: f32,
+    /// Global mineral id written by the worldgen mineral palette; 0 = none.
+    pub mineral_kind: u8,
     /// 0 none, 1 whalefall outer ribs/periphery, 2 mineral-rich core.
     pub fossil_bbox: u8,
     // --- event / anomaly layers ---
@@ -191,6 +281,8 @@ struct TileFields {
     qi_density: Option<Mmap>,
     mofa_decay: Option<Mmap>,
     qi_vein_flow: Option<Mmap>,
+    spirit_eye_candidates: Option<Mmap>,
+    realm_collapse_mask: Option<Mmap>,
     sky_island_mask: Option<Mmap>,
     sky_island_base_y: Option<Mmap>,
     sky_island_thickness: Option<Mmap>,
@@ -200,6 +292,9 @@ struct TileFields {
     flora_variant_id: Option<Mmap>,
     ground_cover_density: Option<Mmap>,
     ground_cover_id: Option<Mmap>,
+    zongmen_origin_id: Option<Mmap>,
+    mineral_density: Option<Mmap>,
+    mineral_kind: Option<Mmap>,
     fossil_bbox: Option<Mmap>,
     anomaly_intensity: Option<Mmap>,
     anomaly_kind: Option<Mmap>,
@@ -617,6 +712,8 @@ impl TerrainProvider {
             qi_density: read_optional_f32(&tile.qi_density, index, 0.12),
             mofa_decay: read_optional_f32(&tile.mofa_decay, index, 0.40),
             qi_vein_flow: read_optional_f32(&tile.qi_vein_flow, index, 0.0),
+            spirit_eye_candidates: read_optional_u8(&tile.spirit_eye_candidates, index, 0),
+            realm_collapse_mask: read_optional_u8(&tile.realm_collapse_mask, index, 0),
             sky_island_mask: read_optional_f32(&tile.sky_island_mask, index, 0.0),
             sky_island_base_y: read_optional_f32(&tile.sky_island_base_y, index, 9999.0),
             sky_island_thickness: read_optional_f32(&tile.sky_island_thickness, index, 0.0),
@@ -626,6 +723,9 @@ impl TerrainProvider {
             flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
             ground_cover_density: read_optional_f32(&tile.ground_cover_density, index, 0.0),
             ground_cover_id: read_optional_u8(&tile.ground_cover_id, index, 0),
+            zongmen_origin_id: read_optional_u8(&tile.zongmen_origin_id, index, 0),
+            mineral_density: read_optional_f32(&tile.mineral_density, index, 0.0),
+            mineral_kind: read_optional_u8(&tile.mineral_kind, index, 0),
             fossil_bbox: read_optional_u8(&tile.fossil_bbox, index, 0),
             anomaly_intensity: read_optional_f32(&tile.anomaly_intensity, index, 0.0),
             anomaly_kind: read_optional_u8(&tile.anomaly_kind, index, 0),
@@ -635,47 +735,53 @@ impl TerrainProvider {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn layer_names() -> &'static [LayerSchema] {
+        LAYER_SCHEMAS
+    }
+
+    #[allow(dead_code)]
+    pub fn sample_layer_f32(&self, world_x: i32, world_z: i32, layer_name: &str) -> Option<f32> {
+        let schema = layer_schema(layer_name)?;
+        let fallback = schema.safe_default_f32?;
+        let Some((tile, index)) = self.tile_and_index(world_x, world_z) else {
+            return Some(fallback);
+        };
+
+        Some(read_tile_layer_f32(tile, index, layer_name, fallback))
+    }
+
+    #[allow(dead_code)]
+    pub fn sample_layer_u8(&self, world_x: i32, world_z: i32, layer_name: &str) -> Option<u8> {
+        let schema = layer_schema(layer_name)?;
+        let fallback = schema.safe_default_u8?;
+        let Some((tile, index)) = self.tile_and_index(world_x, world_z) else {
+            return Some(fallback);
+        };
+
+        Some(read_tile_layer_u8(tile, index, layer_name, fallback))
+    }
+
     pub fn sample_layer(&self, world_x: i32, world_z: i32, layer_name: &str) -> Option<f32> {
+        let schema = layer_schema(layer_name)?;
         let (tile, index) = self.tile_and_index(world_x, world_z)?;
-        match layer_name {
-            "height" => Some(read_f32(&tile.height, index)),
-            "water_level" => Some(read_f32(&tile.water_level, index)),
-            "feature_mask" => Some(read_f32(&tile.feature_mask, index)),
-            "boundary_weight" => Some(read_f32(&tile.boundary_weight, index)),
-            "rift_axis_sdf" => read_optional_f32_strict(&tile.rift_axis_sdf, index),
-            "portal_anchor_sdf" => read_optional_f32_strict(&tile.portal_anchor_sdf, index),
-            "rim_edge_mask" => read_optional_f32_strict(&tile.rim_edge_mask, index),
-            "cave_mask" => read_optional_f32_strict(&tile.cave_mask, index),
-            "ceiling_height" => read_optional_f32_strict(&tile.ceiling_height, index),
-            "entrance_mask" => read_optional_f32_strict(&tile.entrance_mask, index),
-            "fracture_mask" => read_optional_f32_strict(&tile.fracture_mask, index),
-            "neg_pressure" => read_optional_f32_strict(&tile.neg_pressure, index),
-            "ruin_density" => read_optional_f32_strict(&tile.ruin_density, index),
-            "qi_density" => read_optional_f32_strict(&tile.qi_density, index),
-            "mofa_decay" => read_optional_f32_strict(&tile.mofa_decay, index),
-            "qi_vein_flow" => read_optional_f32_strict(&tile.qi_vein_flow, index),
-            "sky_island_mask" => read_optional_f32_strict(&tile.sky_island_mask, index),
-            "sky_island_base_y" => read_optional_f32_strict(&tile.sky_island_base_y, index),
-            "sky_island_thickness" => read_optional_f32_strict(&tile.sky_island_thickness, index),
-            "underground_tier" => {
-                read_optional_u8_strict(&tile.underground_tier, index).map(f32::from)
-            }
-            "cavern_floor_y" => read_optional_f32_strict(&tile.cavern_floor_y, index),
-            "flora_density" => read_optional_f32_strict(&tile.flora_density, index),
-            "flora_variant_id" => {
-                read_optional_u8_strict(&tile.flora_variant_id, index).map(f32::from)
-            }
-            "ground_cover_density" => read_optional_f32_strict(&tile.ground_cover_density, index),
-            "ground_cover_id" => {
-                read_optional_u8_strict(&tile.ground_cover_id, index).map(f32::from)
-            }
-            "fossil_bbox" => read_optional_u8_strict(&tile.fossil_bbox, index).map(f32::from),
-            "anomaly_intensity" => read_optional_f32_strict(&tile.anomaly_intensity, index),
-            "anomaly_kind" => read_optional_u8_strict(&tile.anomaly_kind, index).map(f32::from),
-            "tsy_presence" => read_optional_u8_strict(&tile.tsy_presence, index).map(f32::from),
-            "tsy_origin_id" => read_optional_u8_strict(&tile.tsy_origin_id, index).map(f32::from),
-            "tsy_depth_tier" => read_optional_u8_strict(&tile.tsy_depth_tier, index).map(f32::from),
-            _ => None,
+        match schema.export_type {
+            LayerExportType::F32 => Some(read_tile_layer_f32(
+                tile,
+                index,
+                layer_name,
+                schema
+                    .safe_default_f32
+                    .expect("f32 schema should carry f32 default"),
+            )),
+            LayerExportType::U8 => Some(f32::from(read_tile_layer_u8(
+                tile,
+                index,
+                layer_name,
+                schema
+                    .safe_default_u8
+                    .expect("u8 schema should carry u8 default"),
+            ))),
         }
     }
 
@@ -687,6 +793,57 @@ impl TerrainProvider {
         let local_z = world_z.rem_euclid(self.tile_size) as usize;
         let index = local_z * self.tile_size as usize + local_x;
         Some((tile, index))
+    }
+}
+
+fn read_tile_layer_f32(tile: &TileFields, index: usize, layer_name: &str, fallback: f32) -> f32 {
+    match layer_name {
+        "height" => read_f32(&tile.height, index),
+        "water_level" => read_f32(&tile.water_level, index),
+        "feature_mask" => read_f32(&tile.feature_mask, index),
+        "boundary_weight" => read_f32(&tile.boundary_weight, index),
+        "rift_axis_sdf" => read_optional_f32(&tile.rift_axis_sdf, index, fallback),
+        "portal_anchor_sdf" => read_optional_f32(&tile.portal_anchor_sdf, index, fallback),
+        "rim_edge_mask" => read_optional_f32(&tile.rim_edge_mask, index, fallback),
+        "fracture_mask" => read_optional_f32(&tile.fracture_mask, index, fallback),
+        "cave_mask" => read_optional_f32(&tile.cave_mask, index, fallback),
+        "ceiling_height" => read_optional_f32(&tile.ceiling_height, index, fallback),
+        "entrance_mask" => read_optional_f32(&tile.entrance_mask, index, fallback),
+        "neg_pressure" => read_optional_f32(&tile.neg_pressure, index, fallback),
+        "ruin_density" => read_optional_f32(&tile.ruin_density, index, fallback),
+        "qi_density" => read_optional_f32(&tile.qi_density, index, fallback),
+        "mofa_decay" => read_optional_f32(&tile.mofa_decay, index, fallback),
+        "qi_vein_flow" => read_optional_f32(&tile.qi_vein_flow, index, fallback),
+        "sky_island_mask" => read_optional_f32(&tile.sky_island_mask, index, fallback),
+        "sky_island_base_y" => read_optional_f32(&tile.sky_island_base_y, index, fallback),
+        "sky_island_thickness" => read_optional_f32(&tile.sky_island_thickness, index, fallback),
+        "cavern_floor_y" => read_optional_f32(&tile.cavern_floor_y, index, fallback),
+        "flora_density" => read_optional_f32(&tile.flora_density, index, fallback),
+        "ground_cover_density" => read_optional_f32(&tile.ground_cover_density, index, fallback),
+        "mineral_density" => read_optional_f32(&tile.mineral_density, index, fallback),
+        "anomaly_intensity" => read_optional_f32(&tile.anomaly_intensity, index, fallback),
+        _ => unreachable!("schema export type should match f32 layer"),
+    }
+}
+
+fn read_tile_layer_u8(tile: &TileFields, index: usize, layer_name: &str, fallback: u8) -> u8 {
+    match layer_name {
+        "surface_id" => read_u8(&tile.surface_id, index),
+        "subsurface_id" => read_u8(&tile.subsurface_id, index),
+        "biome_id" => read_u8(&tile.biome_id, index),
+        "spirit_eye_candidates" => read_optional_u8(&tile.spirit_eye_candidates, index, fallback),
+        "realm_collapse_mask" => read_optional_u8(&tile.realm_collapse_mask, index, fallback),
+        "underground_tier" => read_optional_u8(&tile.underground_tier, index, fallback),
+        "flora_variant_id" => read_optional_u8(&tile.flora_variant_id, index, fallback),
+        "ground_cover_id" => read_optional_u8(&tile.ground_cover_id, index, fallback),
+        "zongmen_origin_id" => read_optional_u8(&tile.zongmen_origin_id, index, fallback),
+        "mineral_kind" => read_optional_u8(&tile.mineral_kind, index, fallback),
+        "fossil_bbox" => read_optional_u8(&tile.fossil_bbox, index, fallback),
+        "anomaly_kind" => read_optional_u8(&tile.anomaly_kind, index, fallback),
+        "tsy_presence" => read_optional_u8(&tile.tsy_presence, index, fallback),
+        "tsy_origin_id" => read_optional_u8(&tile.tsy_origin_id, index, fallback),
+        "tsy_depth_tier" => read_optional_u8(&tile.tsy_depth_tier, index, fallback),
+        _ => unreachable!("schema export type should match u8 layer"),
     }
 }
 
@@ -713,6 +870,18 @@ impl TileFields {
             qi_density: map_optional_layer(tile_dir, layers, "qi_density", area4)?,
             mofa_decay: map_optional_layer(tile_dir, layers, "mofa_decay", area4)?,
             qi_vein_flow: map_optional_layer(tile_dir, layers, "qi_vein_flow", area4)?,
+            spirit_eye_candidates: map_optional_layer(
+                tile_dir,
+                layers,
+                "spirit_eye_candidates",
+                tile_area,
+            )?,
+            realm_collapse_mask: map_optional_layer(
+                tile_dir,
+                layers,
+                "realm_collapse_mask",
+                tile_area,
+            )?,
             sky_island_mask: map_optional_layer(tile_dir, layers, "sky_island_mask", area4)?,
             sky_island_base_y: map_optional_layer(tile_dir, layers, "sky_island_base_y", area4)?,
             sky_island_thickness: map_optional_layer(
@@ -732,6 +901,14 @@ impl TileFields {
                 area4,
             )?,
             ground_cover_id: map_optional_layer(tile_dir, layers, "ground_cover_id", tile_area)?,
+            zongmen_origin_id: map_optional_layer(
+                tile_dir,
+                layers,
+                "zongmen_origin_id",
+                tile_area,
+            )?,
+            mineral_density: map_optional_layer(tile_dir, layers, "mineral_density", area4)?,
+            mineral_kind: map_optional_layer(tile_dir, layers, "mineral_kind", tile_area)?,
             fossil_bbox: map_optional_layer(tile_dir, layers, "fossil_bbox", tile_area)?,
             anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
             anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,
@@ -806,14 +983,6 @@ fn read_optional_u8(bytes: &Option<Mmap>, index: usize, fallback: u8) -> u8 {
         .unwrap_or(fallback)
 }
 
-fn read_optional_f32_strict(bytes: &Option<Mmap>, index: usize) -> Option<f32> {
-    bytes.as_ref().map(|mmap| read_f32(mmap, index))
-}
-
-fn read_optional_u8_strict(bytes: &Option<Mmap>, index: usize) -> Option<u8> {
-    bytes.as_ref().map(|mmap| read_u8(mmap, index))
-}
-
 fn block_state_from_name(name: &str) -> Result<BlockState, String> {
     match name {
         "stone" => Ok(BlockState::STONE),
@@ -878,4 +1047,321 @@ pub fn raster_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, St
                 manifest_path.display()
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+    use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const TILE_SIZE: i32 = 2;
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Debug, Deserialize)]
+    struct RegistryFixtureEntry {
+        name: String,
+        export_type: String,
+        safe_default: f32,
+    }
+
+    struct RasterFixture {
+        provider: Option<TerrainProvider>,
+        root: PathBuf,
+    }
+
+    impl RasterFixture {
+        fn provider(&self) -> &TerrainProvider {
+            self.provider
+                .as_ref()
+                .expect("fixture provider should be present until drop")
+        }
+    }
+
+    impl Drop for RasterFixture {
+        fn drop(&mut self) {
+            self.provider.take();
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn registry_fixture() -> Vec<RegistryFixtureEntry> {
+        serde_json::from_str(include_str!("layer_registry_fixture.json"))
+            .expect("layer registry fixture should be valid JSON")
+    }
+
+    fn build_fixture() -> RasterFixture {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).expect("test raster tile dir should be creatable");
+        let tile_area = (TILE_SIZE * TILE_SIZE) as usize;
+
+        for (index, schema) in LAYER_SCHEMAS.iter().enumerate() {
+            let path = tile_dir.join(format!("{}.bin", schema.name));
+            match schema.export_type {
+                LayerExportType::F32 => write_f32_layer(&path, test_f32_value(index), tile_area),
+                LayerExportType::U8 => write_u8_layer(&path, test_u8_value(index), tile_area),
+            }
+        }
+
+        let layers = LAYER_SCHEMAS
+            .iter()
+            .map(|schema| schema.name.to_string())
+            .collect::<Vec<_>>();
+        let tile = TileFields::load(&tile_dir, &layers, tile_area)
+            .expect("test raster fields should load");
+        let mut tiles = HashMap::new();
+        tiles.insert((0, 0), tile);
+
+        let provider = TerrainProvider {
+            tiles,
+            tile_size: TILE_SIZE,
+            world_bounds: Bounds2D {
+                min_x: 0,
+                max_x: TILE_SIZE - 1,
+                min_z: 0,
+                max_z: TILE_SIZE - 1,
+            },
+            surface_palette: vec![BlockState::STONE; 64],
+            biome_palette: vec![BiomeId::DEFAULT; 64],
+            default_wilderness_biome: BiomeId::DEFAULT,
+            forest_wilderness_biome: BiomeId::DEFAULT,
+            river_wilderness_biome: BiomeId::DEFAULT,
+            pois: Vec::new(),
+            anomaly_kinds: HashMap::new(),
+            decoration_palette: Vec::new(),
+            abyssal_tier_floor_y: HashMap::new(),
+            fossil_bboxes: Vec::new(),
+        };
+
+        RasterFixture {
+            provider: Some(provider),
+            root,
+        }
+    }
+
+    fn unique_temp_dir() -> PathBuf {
+        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bong-raster-layer-query-{}-{nanos}-{counter}",
+            std::process::id()
+        ))
+    }
+
+    fn write_f32_layer(path: &Path, value: f32, tile_area: usize) {
+        let mut bytes = Vec::with_capacity(tile_area * 4);
+        for _ in 0..tile_area {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        fs::write(path, bytes).expect("test f32 layer should be writable");
+    }
+
+    fn write_u8_layer(path: &Path, value: u8, tile_area: usize) {
+        fs::write(path, vec![value; tile_area]).expect("test u8 layer should be writable");
+    }
+
+    fn test_f32_value(index: usize) -> f32 {
+        1000.25 + index as f32
+    }
+
+    fn test_u8_value(index: usize) -> u8 {
+        u8::try_from(index + 1).expect("test layer index should fit in u8")
+    }
+
+    fn assert_f32_eq(actual: f32, expected: f32, layer_name: &str) {
+        assert!(
+            (actual - expected).abs() < f32::EPSILON,
+            "layer {layer_name} expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn layer_names_size_matches_python_registry_fixture() {
+        let fixture = registry_fixture();
+        assert_eq!(TerrainProvider::layer_names().len(), fixture.len());
+
+        for (schema, expected) in TerrainProvider::layer_names().iter().zip(fixture.iter()) {
+            assert_eq!(schema.name, expected.name);
+            match schema.export_type {
+                LayerExportType::F32 => {
+                    assert_eq!(expected.export_type, "float32");
+                    assert_eq!(schema.safe_default_f32, Some(expected.safe_default));
+                    assert_eq!(schema.safe_default_u8, None);
+                }
+                LayerExportType::U8 => {
+                    assert_eq!(expected.export_type, "uint8");
+                    assert!(
+                        expected.safe_default.is_finite(),
+                        "uint8 layer {} safe_default should be finite",
+                        expected.name
+                    );
+                    assert_eq!(
+                        expected.safe_default.fract(),
+                        0.0,
+                        "uint8 layer {} safe_default should be an integer before casting",
+                        expected.name
+                    );
+                    assert!(
+                        (0.0..=u8::MAX as f32).contains(&expected.safe_default),
+                        "uint8 layer {} safe_default should fit in u8",
+                        expected.name
+                    );
+                    assert_eq!(schema.safe_default_f32, None);
+                    assert_eq!(schema.safe_default_u8, Some(expected.safe_default as u8));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn layer_names_no_duplicates() {
+        let mut names = HashSet::new();
+        for schema in TerrainProvider::layer_names() {
+            assert!(
+                names.insert(schema.name),
+                "duplicate terrain layer schema name {}",
+                schema.name
+            );
+        }
+    }
+
+    #[test]
+    fn sample_layer_f32_known_layers_return_tile_values() {
+        let fixture = build_fixture();
+        let provider = fixture.provider();
+
+        for (index, schema) in TerrainProvider::layer_names().iter().enumerate() {
+            if schema.export_type != LayerExportType::F32 {
+                continue;
+            }
+            let actual = provider
+                .sample_layer_f32(1, 1, schema.name)
+                .expect("known f32 layer should return a value");
+            assert_f32_eq(actual, test_f32_value(index), schema.name);
+        }
+    }
+
+    #[test]
+    fn sample_layer_u8_known_layers_return_tile_values() {
+        let fixture = build_fixture();
+        let provider = fixture.provider();
+
+        for (index, schema) in TerrainProvider::layer_names().iter().enumerate() {
+            if schema.export_type != LayerExportType::U8 {
+                continue;
+            }
+            let actual = provider
+                .sample_layer_u8(1, 1, schema.name)
+                .expect("known u8 layer should return a value");
+            assert_eq!(actual, test_u8_value(index), "layer {}", schema.name);
+        }
+    }
+
+    #[test]
+    fn sample_layer_unknown_names_return_none() {
+        let fixture = build_fixture();
+        let provider = fixture.provider();
+
+        assert_eq!(provider.sample_layer_f32(1, 1, "missing_layer"), None);
+        assert_eq!(provider.sample_layer_u8(1, 1, "missing_layer"), None);
+        assert_eq!(provider.sample_layer(1, 1, "missing_layer"), None);
+    }
+
+    #[test]
+    fn sample_layer_rejects_export_type_mismatch() {
+        let fixture = build_fixture();
+        let provider = fixture.provider();
+
+        assert_eq!(provider.sample_layer_f32(1, 1, "surface_id"), None);
+        assert_eq!(provider.sample_layer_u8(1, 1, "height"), None);
+    }
+
+    #[test]
+    fn sample_layer_wilderness_returns_schema_safe_defaults() {
+        let provider = TerrainProvider::empty_for_tests();
+
+        for schema in TerrainProvider::layer_names() {
+            match schema.export_type {
+                LayerExportType::F32 => {
+                    let actual = provider
+                        .sample_layer_f32(2048, 2048, schema.name)
+                        .expect("known wilderness f32 layer should return default");
+                    assert_f32_eq(
+                        actual,
+                        schema
+                            .safe_default_f32
+                            .expect("f32 schema should carry f32 default"),
+                        schema.name,
+                    );
+                }
+                LayerExportType::U8 => {
+                    let actual = provider
+                        .sample_layer_u8(2048, 2048, schema.name)
+                        .expect("known wilderness u8 layer should return default");
+                    assert_eq!(
+                        actual,
+                        schema
+                            .safe_default_u8
+                            .expect("u8 schema should carry u8 default"),
+                        "layer {}",
+                        schema.name
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            provider.sample_layer(2048, 2048, "height"),
+            None,
+            "compatibility adapter should preserve missing-tile None semantics"
+        );
+        assert_eq!(
+            provider.sample_layer(2048, 2048, "surface_id"),
+            None,
+            "compatibility adapter should preserve missing-tile None semantics"
+        );
+    }
+
+    #[test]
+    fn sample_layer_out_of_tile_bounds_returns_schema_safe_defaults() {
+        let fixture = build_fixture();
+        let provider = fixture.provider();
+
+        assert_eq!(provider.sample_layer_f32(2, 0, "height"), Some(0.0));
+        assert_eq!(provider.sample_layer_u8(2, 0, "surface_id"), Some(0));
+        assert_eq!(provider.sample_layer(2, 0, "height"), None);
+        assert_eq!(provider.sample_layer(2, 0, "surface_id"), None);
+    }
+
+    #[test]
+    fn sample_layer_compatibility_adapter_exposes_both_export_types() {
+        let fixture = build_fixture();
+        let provider = fixture.provider();
+
+        let height_index = TerrainProvider::layer_names()
+            .iter()
+            .position(|schema| schema.name == "height")
+            .expect("height schema should exist");
+        let surface_index = TerrainProvider::layer_names()
+            .iter()
+            .position(|schema| schema.name == "surface_id")
+            .expect("surface_id schema should exist");
+
+        assert_eq!(
+            provider.sample_layer(1, 1, "height"),
+            Some(test_f32_value(height_index))
+        );
+        assert_eq!(
+            provider.sample_layer(1, 1, "surface_id"),
+            Some(f32::from(test_u8_value(surface_index)))
+        );
+    }
 }
