@@ -17,16 +17,13 @@ pub fn emit_identity_panel_state_payloads(
     mut clients: Query<IdentityPanelClientQueryItem<'_>, With<Client>>,
     game_tick: Option<Res<GameTick>>,
 ) {
-    let cooldown_refresh_enabled = game_tick.is_some();
-    let now_tick = game_tick.as_deref().map(|tick| tick.0 as u64).unwrap_or(0);
+    let Some(game_tick) = game_tick.as_deref() else {
+        return;
+    };
+    let now_tick = game_tick.0 as u64;
     for (identities, mut client) in clients.iter_mut() {
         let identity_changed = identities.is_added() || identities.is_changed();
-        if !should_emit_identity_panel_state(
-            &identities,
-            now_tick,
-            identity_changed,
-            cooldown_refresh_enabled,
-        ) {
+        if !should_emit_identity_panel_state(&identities, now_tick, identity_changed) {
             continue;
         }
         let state = build_identity_panel_state(&identities, now_tick);
@@ -47,12 +44,11 @@ fn should_emit_identity_panel_state(
     identities: &PlayerIdentities,
     now_tick: u64,
     identity_changed: bool,
-    cooldown_refresh_enabled: bool,
 ) -> bool {
     if identity_changed {
         return true;
     }
-    if !cooldown_refresh_enabled || identities.last_switch_tick == 0 {
+    if identities.last_switch_tick == 0 {
         return false;
     }
     if now_tick % IDENTITY_PANEL_COOLDOWN_REFRESH_INTERVAL_TICKS != 0 {
@@ -149,34 +145,12 @@ mod tests {
         let mut identities = PlayerIdentities::with_default("kiz", 0);
         identities.last_switch_tick = 101;
 
-        assert!(should_emit_identity_panel_state(
-            &identities,
-            120,
-            false,
-            true
-        ));
-        assert!(!should_emit_identity_panel_state(
-            &identities,
-            119,
-            false,
-            true
-        ));
-        assert!(should_emit_identity_panel_state(
-            &identities,
-            24_120,
-            false,
-            true
-        ));
+        assert!(should_emit_identity_panel_state(&identities, 120, false));
+        assert!(!should_emit_identity_panel_state(&identities, 119, false));
+        assert!(should_emit_identity_panel_state(&identities, 24_120, false));
         assert!(!should_emit_identity_panel_state(
             &identities,
             24_140,
-            false,
-            true
-        ));
-        assert!(!should_emit_identity_panel_state(
-            &identities,
-            120,
-            false,
             false
         ));
     }
@@ -185,12 +159,7 @@ mod tests {
     fn panel_state_still_emits_on_identity_change() {
         let identities = PlayerIdentities::with_default("kiz", 0);
 
-        assert!(should_emit_identity_panel_state(
-            &identities,
-            119,
-            true,
-            false
-        ));
+        assert!(should_emit_identity_panel_state(&identities, 119, true));
     }
 
     #[test]
