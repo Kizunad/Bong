@@ -55,4 +55,11 @@ class LoadoutIconLayerTest {
 
         assertTrue(commands.isEmpty());
     }
+
+    @Test
+    void nullEntryKeepsQuickBarTextFallbackAvailable() {
+        List<HudRenderCommand> commands = LoadoutIconLayer.buildSkillIconCommands(null, 10, 20, 16);
+
+        assertTrue(commands.isEmpty());
+    }
 }

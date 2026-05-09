@@ -15,10 +15,11 @@ public final class LoadoutIconLayer {
         int size
     ) {
         List<HudRenderCommand> out = new ArrayList<>();
-        if (entry == null || entry.iconTexture().isBlank()) {
+        String iconTexture = entry == null ? null : entry.iconTexture();
+        if (iconTexture == null || iconTexture.isBlank()) {
             return out;
         }
-        out.add(HudRenderCommand.texture(HudRenderLayer.QUICK_BAR, entry.iconTexture(), x, y, size, size, 0xFFFFFFFF));
+        out.add(HudRenderCommand.texture(HudRenderLayer.QUICK_BAR, iconTexture, x, y, size, size, 0xFFFFFFFF));
         appendAnqiOverlay(out, entry.id(), x, y, size);
         return out;
     }

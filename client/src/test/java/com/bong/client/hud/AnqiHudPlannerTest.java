@@ -74,4 +74,17 @@ class AnqiHudPlannerTest {
 
         assertTrue(commands.isEmpty());
     }
+
+    @Test
+    void directRecordInputIsClampedAndNullSafe() {
+        List<HudRenderCommand> commands = AnqiHudPlanner.buildCommands(
+            new AnqiHudState(2.0f, Float.NaN, 0, null, 0f, NOW + 500L),
+            NOW,
+            320,
+            180
+        );
+
+        assertEquals(4, commands.size());
+        assertTrue(commands.stream().allMatch(cmd -> cmd.width() >= 0 && cmd.height() >= 0));
+    }
 }

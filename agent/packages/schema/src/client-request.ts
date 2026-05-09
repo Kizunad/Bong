@@ -12,7 +12,6 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { AlchemyInterventionV1, BlockPosV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
-import { AnqiContainerKindV1 } from "./combat-carrier.js";
 import { SkillConfigV1 } from "./skill-config.js";
 import {
   CancelSearchRequestV1,
@@ -660,11 +659,18 @@ export const ThrowCarrierRequestV1 = Type.Object(
 );
 export type ThrowCarrierRequestV1 = Static<typeof ThrowCarrierRequestV1>;
 
+export const AnqiCombatContainerKindV1 = Type.Union([
+  Type.Literal("hand_slot"),
+  Type.Literal("quiver"),
+  Type.Literal("pocket_pouch"),
+]);
+export type AnqiCombatContainerKindV1 = Static<typeof AnqiCombatContainerKindV1>;
+
 export const AnqiContainerSwitchRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("anqi_container_switch"),
-    to: Type.Optional(AnqiContainerKindV1),
+    to: Type.Optional(AnqiCombatContainerKindV1),
   },
   { additionalProperties: false },
 );

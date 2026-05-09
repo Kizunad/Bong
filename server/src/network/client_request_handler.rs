@@ -1190,10 +1190,18 @@ pub fn handle_client_request_payloads(
                 let entity = ev.client;
                 let tick = combat_clock.tick;
                 commands.add(move |world: &mut bevy_ecs::world::World| {
-                    if let Some(to) = target_container {
-                        let _ = switch_container_slot(world, entity, to, tick);
+                    let switched = if let Some(to) = target_container {
+                        switch_container_slot(world, entity, to, tick)
                     } else {
-                        let _ = cycle_container_slot(world, entity, tick);
+                        cycle_container_slot(world, entity, tick)
+                    };
+                    if switched.is_none() {
+                        tracing::warn!(
+                            ?entity,
+                            ?target_container,
+                            tick,
+                            "rejected anqi container switch request"
+                        );
                     }
                 });
             }

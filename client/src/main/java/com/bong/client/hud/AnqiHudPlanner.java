@@ -23,10 +23,12 @@ public final class AnqiHudPlanner {
         if (state == null || !state.active(nowMillis) || screenWidth <= 0 || screenHeight <= 0) {
             return out;
         }
-        if (state.aimProgress() > 0f) appendAim(out, screenWidth, screenHeight, state.aimProgress());
-        if (state.chargeProgress() > 0f) appendCharge(out, screenWidth, screenHeight, state.chargeProgress());
+        float aimProgress = AnqiHudState.clamp01(state.aimProgress());
+        float chargeProgress = AnqiHudState.clamp01(state.chargeProgress());
+        if (aimProgress > 0f) appendAim(out, screenWidth, screenHeight, aimProgress);
+        if (chargeProgress > 0f) appendCharge(out, screenWidth, screenHeight, chargeProgress);
         if (state.echoCount() > 0) appendEcho(out, screenWidth, screenHeight, state.echoCount());
-        if (!state.abrasionContainer().isBlank()) {
+        if (state.hasAbrasionContainer()) {
             appendAbrasion(out, screenWidth, screenHeight, state.abrasionContainer(), state.abrasionQiPayload());
         }
         return out;

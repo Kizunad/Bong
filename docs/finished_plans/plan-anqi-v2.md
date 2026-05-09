@@ -445,28 +445,28 @@ HUD 组件（plan-HUD-v1 接入）：
 ### 落地清单
 
 - **server / qi_physics**：新增 `qi_physics::projectile::{cone_dispersion, high_density_inject, armor_penetrate}`、`qi_physics::field::density_echo`、`qi_physics::container::abrasion_loss`，并在 `qi_physics::mod` 导出，统一暗器 v2 的散射、注射、穿甲、分形和容器磨损入口。
-- **server / combat**：新增 `combat::anqi_v2`，注册 5 招 `AnqiSkillId`、`AnqiMastery`、`ContainerSlot`、`MultiShotEvent` / `QiInjectionEvent` / `ArmorPierceEvent` / `EchoFractalEvent` / `CarrierAbrasionEvent` / `ContainerSwapEvent` / `DecoyDeployEvent`；`combat::carrier::CarrierKind` 扩为 6 档载体并追加 `InjectionKind`。`anqi_container_switch` 已接入 client request，F 键循环触发 `ContainerSwapEvent`，非 hand-slot 施放会按 `abrasion_loss` 发出 `CarrierAbrasionEvent` 并使用扣税后的 payload。
+- **server / combat**：新增 `combat::anqi_v2`，注册 5 招 `AnqiSkillId`、`AnqiMastery`、`ContainerSlot`、`MultiShotEvent` / `QiInjectionEvent` / `ArmorPierceEvent` / `EchoFractalEvent` / `CarrierAbrasionEvent` / `ContainerSwapEvent` / `DecoyDeployEvent`；`combat::carrier::CarrierKind` 扩为 6 档载体并追加 `InjectionKind`。`anqi_container_switch` 已接入 client request，F 键循环触发 `ContainerSwapEvent`，非 hand-slot 施放会按 `abrasion_loss` 发出 `CarrierAbrasionEvent` 并使用扣税后的 payload；施放前会校验匹配 charged carrier / imprint，避免空手生产暗器事件。
 - **server / craft + items**：`server/assets/items/anqi.toml` 增加 6 档载体、charged 变体和 3 容器；`craft` 新增 `Container` 类目并注册 6 个载体配方 + 3 个容器配方。`spirit_quality_initial` 保持 item registry 合法范围 `0..=1`，并有 asset load 回归覆盖。
 - **server / cultivation + schema bridge**：5 招 technique 注册到 known techniques / skill registry / 经脉依赖；新增 anqi-v2 Redis channel 常量、Rust IPC payload、`RedisOutbound::AnqiMultiShot` / `AnqiQiInjection` / `AnqiEchoFractal` / `AnqiCarrierAbrasion` / `AnqiContainerSwap`，并接入 `anqi_event_bridge`。
-- **agent/schema + tiandao**：TS schema 增加 anqi-v2 channels、carrier kind、multi-shot / qi-injection / echo-fractal / abrasion / container-swap contracts，并登记 schema registry；`QiInjectionEventV1.target` 接受 server `Option<String>` 序列化出的 `null`；`AnqiNarrationRuntime` 订阅 v1 + v2 暗器事件，提供 multi-shot、qi-injection、echo-fractal、container abrasion、container swap fallback narration。
+- **agent/schema + tiandao**：TS schema 增加 anqi-v2 channels、carrier kind、multi-shot / qi-injection / echo-fractal / abrasion / container-swap contracts，并登记 schema registry；`QiInjectionEventV1.target` 必填且接受 server `Option<String>` 序列化出的 `null`；`anqi_container_switch.to` 仅允许 combat-swappable 容器；`AnqiNarrationRuntime` 订阅 v1 + v2 暗器事件，提供 multi-shot、qi-injection、echo-fractal、container abrasion、container swap fallback narration。
 - **client HUD + command**：新增 `AnqiHudState` / `AnqiHudStateStore` / `AnqiHudPlanner` / `LoadoutIconLayer` / `BongHudCommand`；`BongClient` 注册 `/bonghud`，`BongHudOrchestrator` 接入暗器 HUD，`QuickBarHudPlanner` 对 skill slot 优先渲染 `iconTexture`，无图标时保留文字 fallback；技能栏存在 `anqi.*` 技能时 F 键发送 `anqi_container_switch` 用于容器栏生产路径，否则透传原版副手键。
 
 ### 测试结果
 
 - `cd server && cargo fmt --check`
 - `cd server && cargo clippy --all-targets -- -D warnings`
-- `cd server && cargo test`：3251 passed
-- `cd server && cargo test -q anqi -- --nocapture`：15 passed
+- `cd server && cargo test`：3252 passed
+- `cd server && cargo test -q anqi -- --nocapture`：16 passed
 - `cd server && cargo test -q inventory::tests::loads_item_registry_from_assets -- --nocapture`：1 passed
 - `cd agent && npm ci`
 - `cd agent && npm run build`
-- `cd agent && npm test -w @bong/schema`：333 passed
+- `cd agent && npm test -w @bong/schema`：334 passed
 - `cd agent && npm test -w @bong/tiandao`：312 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test --tests "com.bong.client.combat.SkillBarKeyRouterTest" --tests "com.bong.client.network.ClientRequestProtocolTest" --tests "com.bong.client.network.ClientRequestSenderTest"`：BUILD SUCCESSFUL
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build`：BUILD SUCCESSFUL
 
 ### 回归锚点
 
-- Rust：`anqi_v2` 覆盖 5 招注册 / 经脉阻断 / mastery / cooldown / physics 事件、容器切换暴露窗口、F 键循环入口对应的 swap 事件、非 hand-slot draw 磨损事件；`qi_physics` 覆盖散射、注射、穿甲、分形和磨损税；`craft` 覆盖 6 载体 + 3 容器注册；`inventory` 覆盖 anqi item asset 合法加载。
-- TypeScript：schema generated-artifact check 未漂移；`anqi-narration.test.ts` 覆盖 v2 channel 订阅、`target: null` 的 qi-injection、echo fallback、abrasion fallback 合法 narration contract 和 malformed payload reject。
-- Client：`AnqiHudPlannerTest` 覆盖准星收紧、蓄力条、echo 计数、磨损 tooltip；`LoadoutIconLayerTest` 覆盖招式 icon 与 echo 副标记；`BongHudCommandTest` 覆盖 `/bonghud aim_enclose | charge_ring | echo_count | abrasion_tooltip | clear` 参数树；`SkillBarKeyRouterTest` 覆盖无暗器技能时 F 键透传、有 `anqi.*` 技能时发送容器切换；`ClientRequestProtocolTest` / `ClientRequestSenderTest` 覆盖 `anqi_container_switch` JSON。
+- Rust：`anqi_v2` 覆盖 5 招注册 / 经脉阻断 / mastery / cooldown / physics 事件、容器切换暴露窗口、F 键循环入口对应的 swap 事件、非 hand-slot draw 磨损事件、缺少 charged carrier 时拒绝施放；`qi_physics` 覆盖散射、注射、穿甲、分形和磨损税；`craft` 覆盖 6 载体 + 3 容器注册；`inventory` 覆盖 anqi item asset 合法加载。
+- TypeScript：schema generated-artifact check 未漂移；`anqi-narration.test.ts` 覆盖 v2 channel 订阅、`target: null` 的 qi-injection、echo fallback、abrasion fallback 合法 narration contract 和 malformed payload reject；schema 单测覆盖缺失 `target` 拒绝与 `fenglinghe` combat switch 拒绝。
+- Client：`AnqiHudPlannerTest` 覆盖准星收紧、蓄力条、echo 计数、磨损 tooltip、越界 progress 钳制和 null 安全；`LoadoutIconLayerTest` 覆盖招式 icon、echo 副标记和空 entry fallback；`BongHudCommandTest` 覆盖 `/bonghud aim_enclose | charge_ring | echo_count | abrasion_tooltip | clear` 参数树；`SkillBarKeyRouterTest` 覆盖无暗器技能时 F 键透传、有 `anqi.*` 技能时发送容器切换；`ClientRequestProtocolTest` / `ClientRequestSenderTest` 覆盖 `anqi_container_switch` JSON 和 `fenglinghe` 客户端拒绝。

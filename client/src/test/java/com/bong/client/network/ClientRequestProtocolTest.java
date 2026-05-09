@@ -486,6 +486,10 @@ public class ClientRequestProtocolTest {
             "{\"type\":\"anqi_container_switch\",\"v\":1,\"to\":\"quiver\"}",
             ClientRequestProtocol.encodeAnqiContainerSwitch(ClientRequestProtocol.AnqiContainerKind.QUIVER)
         );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeAnqiContainerSwitch(ClientRequestProtocol.AnqiContainerKind.FENGLINGHE)
+        );
     }
 
     @Test

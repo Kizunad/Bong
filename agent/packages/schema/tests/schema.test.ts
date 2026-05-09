@@ -907,6 +907,13 @@ describe("sample files pass schema validation", () => {
       to: "quiver",
     });
     expect(result.ok, result.errors.join("; ")).toBe(true);
+
+    result = validate(ClientRequestV1, {
+      v: 1,
+      type: "anqi_container_switch",
+      to: "fenglinghe",
+    });
+    expect(result.ok, "combat switch must reject sealed fenglinghe container").toBe(false);
   });
 
   it("accepts no-target qi injection payload serialized as null", () => {
@@ -923,6 +930,21 @@ describe("sample files pass schema validation", () => {
       tick: 42,
     });
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("rejects qi injection payload without explicit target field", () => {
+    const result = validateQiInjectionEventV1Contract({
+      caster: "entity:caster",
+      skill: "single_snipe",
+      carrier_kind: "yibian_shougu",
+      payload_qi: 12,
+      wound_qi: 18,
+      contamination_qi: 3.6,
+      overload_ratio: 0.12,
+      triggers_overload_tear: false,
+      tick: 42,
+    });
+    expect(result.ok, "target must be present as entity id or null").toBe(false);
   });
 
   it("client-request.skill-config-intent.sample.json", () => {

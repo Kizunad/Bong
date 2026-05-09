@@ -861,6 +861,9 @@ public final class ClientRequestProtocol {
         if (to == null) {
             return encodeAnqiContainerSwitch();
         }
+        if (to == AnqiContainerKind.FENGLINGHE) {
+            throw new IllegalArgumentException("fenglinghe cannot be switched during combat");
+        }
         JsonObject obj = envelope("anqi_container_switch");
         obj.addProperty("to", to.wireName());
         return obj.toString();

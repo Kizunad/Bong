@@ -2588,10 +2588,6 @@
             {
               "const": "pocket_pouch",
               "type": "string"
-            },
-            {
-              "const": "fenglinghe",
-              "type": "string"
             }
           ]
         }

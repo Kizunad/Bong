@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, App, Entity, Event, Resource};
 
-use crate::combat::carrier::{CarrierKind, InjectionKind};
+use crate::combat::carrier::{BondKind, CarrierKind, CarrierStore, InjectionKind};
 use crate::combat::components::SkillBarBindings;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SkillMeridianDependencies};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillFn, SkillRegistry};
+use crate::inventory::{PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND};
 use crate::qi_physics::{
     abrasion_loss, armor_penetrate, cone_dispersion, density_echo, high_density_inject,
     AbrasionDirection, AnqiContainerKind, ArmorPenetrationOutcome, ConeDispersionShot,
@@ -441,6 +442,11 @@ fn resolve_anqi_skill(
             reason: CastRejectReason::InRecovery,
         };
     }
+    if !has_loaded_carrier(world, caster, skill, container_slot.active) {
+        return CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget,
+        };
+    }
 
     let qi_cost = cultivation.qi_max * skill.qi_ratio();
     if cultivation.qi_current + f64::EPSILON < qi_cost {
@@ -666,6 +672,56 @@ pub fn blocked_meridian(
     }
 }
 
+fn has_loaded_carrier(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill: AnqiSkillId,
+    container: AnqiContainerKind,
+) -> bool {
+    let required = skill.carrier_kind();
+    let Some(store) = world.get::<CarrierStore>(caster) else {
+        return false;
+    };
+
+    match container {
+        AnqiContainerKind::HandSlot => world
+            .get::<PlayerInventory>(caster)
+            .is_some_and(|inventory| has_equipped_charged_carrier(inventory, store, required)),
+        AnqiContainerKind::Quiver | AnqiContainerKind::PocketPouch => store
+            .imprints_by_instance
+            .values()
+            .any(|imprint| imprint_matches_skill(imprint, required)),
+        AnqiContainerKind::Fenglinghe => false,
+    }
+}
+
+fn has_equipped_charged_carrier(
+    inventory: &PlayerInventory,
+    store: &CarrierStore,
+    required: CarrierKind,
+) -> bool {
+    [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND]
+        .into_iter()
+        .any(|slot| {
+            inventory.equipped.get(slot).is_some_and(|item| {
+                item.template_id == required.charged_template_id()
+                    && store
+                        .imprints_by_instance
+                        .get(&item.instance_id)
+                        .is_some_and(|imprint| imprint_matches_skill(imprint, required))
+            })
+        })
+}
+
+fn imprint_matches_skill(
+    imprint: &crate::combat::carrier::CarrierImprint,
+    required: CarrierKind,
+) -> bool {
+    imprint.carrier_kind == required
+        && imprint.bond_kind == BondKind::HandheldCarrier
+        && imprint.qi_amount > f32::EPSILON
+}
+
 pub fn cast_ticks_for(skill: AnqiSkillId, mastery: u8) -> u32 {
     let ratio = f64::from(mastery.min(100)) / 100.0;
     let min_ratio = match skill {
@@ -706,7 +762,70 @@ fn realm_rank(realm: Realm) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::carrier::CarrierImprint;
     use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
+    use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity};
+    use std::collections::HashMap;
+
+    fn charged_item(instance_id: u64, kind: CarrierKind) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: kind.charged_template_id().to_string(),
+            display_name: kind.charged_template_id().to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.2,
+            rarity: ItemRarity::Uncommon,
+            description: kind.charged_template_id().to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn charged_inventory_and_store(
+        instance_id: u64,
+        kind: CarrierKind,
+    ) -> (PlayerInventory, CarrierStore) {
+        let mut equipped = HashMap::new();
+        equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            charged_item(instance_id, kind),
+        );
+        let inventory = PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: Vec::new(),
+            equipped,
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
+        };
+        let mut store = CarrierStore::default();
+        store.imprints_by_instance.insert(
+            instance_id,
+            CarrierImprint {
+                carrier_kind: kind,
+                qi_amount: 25.0,
+                qi_amount_initial: 25.0,
+                qi_color: crate::cultivation::components::ColorKind::Solid,
+                source_realm: Realm::Awaken,
+                half_life_min: kind.half_life_min(),
+                decay_started_at_tick: 0,
+                bond_kind: BondKind::HandheldCarrier,
+                injection_kind: Some(InjectionKind::Snipe),
+            },
+        );
+        (inventory, store)
+    }
 
     #[test]
     fn skill_specs_bind_to_distinct_carriers() {
@@ -818,7 +937,7 @@ mod tests {
     }
 
     #[test]
-    fn quiver_cast_emits_draw_abrasion_and_uses_taxed_payload() {
+    fn anqi_skill_requires_matching_charged_carrier() {
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(CombatClock { tick: 200 });
         world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
@@ -832,6 +951,42 @@ mod tests {
                     ..Default::default()
                 },
                 SkillBarBindings::default(),
+                ContainerSlot::default(),
+            ))
+            .id();
+
+        let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::InvalidTarget
+            }
+        );
+        assert_eq!(world.get::<Cultivation>(caster).unwrap().qi_current, 100.0);
+        let injections = world.resource::<bevy_ecs::event::Events<QiInjectionEvent>>();
+        assert_eq!(injections.get_reader().read(injections).count(), 0);
+    }
+
+    #[test]
+    fn quiver_cast_emits_draw_abrasion_and_uses_taxed_payload() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 200 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        let (inventory, store) =
+            charged_inventory_and_store(7, AnqiSkillId::SingleSnipe.carrier_kind());
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                inventory,
+                store,
                 ContainerSlot {
                     active: AnqiContainerKind::Quiver,
                     switching_until_tick: 0,

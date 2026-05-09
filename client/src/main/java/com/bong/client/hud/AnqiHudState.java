@@ -14,7 +14,11 @@ public record AnqiHudState(
 
     public boolean active(long nowMillis) {
         return expiresAtMillis > nowMillis
-            && (aimProgress > 0f || chargeProgress > 0f || echoCount > 0 || !abrasionContainer.isBlank());
+            && (aimProgress > 0f || chargeProgress > 0f || echoCount > 0 || hasAbrasionContainer());
+    }
+
+    public boolean hasAbrasionContainer() {
+        return abrasionContainer != null && !abrasionContainer.isBlank();
     }
 
     public static AnqiHudState aim(float progress, long nowMillis, long durationMillis) {
