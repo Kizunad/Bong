@@ -532,8 +532,8 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 | `0206a32cd` | 2026-05-08 | P5a 身份/反应分级/通缉令 IPC schema (TS + samples) |
 | `dfb8633d9` | 2026-05-08 | P5b Rust schema mirror + bong:wanted_player Redis pub |
 | `eb58096e6` | 2026-05-08 | P5c calamity 通缉令段落 + client HUD/state classes |
-| `a15d9598c` | 2026-05-09 | P5d gossip / identity_panel_state server emit / trade + chase 直接接线 |
-| `e02dfd37a` | 2026-05-09 | P5e client 面板同步 / HUD 挂接 / server-data union + sample |
+| `01533cb59` | 2026-05-09 | P5d gossip / identity_panel_state server emit / trade + chase 直接接线 |
+| `1d988c117` | 2026-05-09 | P5e client 面板同步 / HUD 挂接 / server-data union + sample |
 
 ### 测试结果
 
