@@ -1,11 +1,7 @@
 use valence::prelude::{bevy_ecs, DVec3, Entity};
 
 use crate::qi_physics::constants::VORTEX_TURBULENCE_DECAY_PER_SEC;
-#[cfg(test)]
-use crate::qi_physics::constants::{
-    VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER, VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS,
-    VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER,
-};
+use crate::qi_physics::EnvField;
 
 use super::events::{BackfireLevel, WoliuSkillId};
 
@@ -54,29 +50,39 @@ impl TurbulenceField {
             remaining_swirl_qi: swirl_qi.max(0.0),
         }
     }
+}
 
-    #[cfg(test)]
-    pub fn absorption_multiplier(self) -> f32 {
-        if self.intensity > 0.0 {
-            0.0
-        } else {
-            1.0
+#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
+pub struct TurbulenceExposure {
+    pub source: Entity,
+    pub intensity: f32,
+    pub until_tick: u64,
+}
+
+impl TurbulenceExposure {
+    pub fn new(source: Entity, intensity: f32, until_tick: u64) -> Self {
+        Self {
+            source,
+            intensity: intensity.clamp(0.0, 1.0),
+            until_tick,
         }
     }
 
-    #[cfg(test)]
-    pub fn cast_precision_multiplier(self) -> f32 {
-        1.0 - self.intensity * (1.0 - VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER as f32)
+    pub fn env_field(self) -> EnvField {
+        EnvField::default().with_turbulence(f64::from(self.intensity))
     }
 
-    #[cfg(test)]
-    pub fn shelflife_multiplier(self) -> f32 {
-        1.0 + self.intensity * (VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER as f32 - 1.0)
+    pub fn absorption_multiplier(self) -> f64 {
+        self.env_field().turbulence_absorption_factor()
     }
 
-    #[cfg(test)]
-    pub fn defense_drain_multiplier(self) -> f32 {
-        1.0 + self.intensity * VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS as f32
+    pub fn cast_precision_multiplier(self) -> f64 {
+        self.env_field().turbulence_cast_precision_factor()
+    }
+
+    #[allow(dead_code)]
+    pub fn defense_drain_multiplier(self) -> f64 {
+        self.env_field().turbulence_defense_drain_factor()
     }
 }
 

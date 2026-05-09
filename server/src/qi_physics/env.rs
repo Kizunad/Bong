@@ -2,8 +2,8 @@ use crate::cultivation::components::ColorKind;
 
 use super::constants::{
     QI_RHYTHM_NEUTRAL, QI_TSY_DRAIN_FACTOR, QI_TSY_DRAIN_NONLINEAR_EXPONENT,
-    VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER, VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS,
-    VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER,
+    VORTEX_TURBULENCE_ABSORPTION_MULTIPLIER, VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER,
+    VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS, VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -141,6 +141,11 @@ impl EnvField {
             * (VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER - 1.0)
     }
 
+    pub fn turbulence_absorption_factor(self) -> f64 {
+        1.0 - self.turbulence_intensity.clamp(0.0, 1.0)
+            * (1.0 - VORTEX_TURBULENCE_ABSORPTION_MULTIPLIER)
+    }
+
     pub fn turbulence_cast_precision_factor(self) -> f64 {
         1.0 - self.turbulence_intensity.clamp(0.0, 1.0)
             * (1.0 - VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER)
@@ -208,6 +213,7 @@ mod tests {
     fn turbulence_field_applies_woliu_v2_multipliers() {
         let env = EnvField::default().with_turbulence(1.0);
         assert_eq!(env.turbulence_shelflife_factor(), 3.0);
+        assert_eq!(env.turbulence_absorption_factor(), 0.0);
         assert_eq!(env.turbulence_cast_precision_factor(), 0.5);
         assert_eq!(env.turbulence_defense_drain_factor(), 1.2);
     }

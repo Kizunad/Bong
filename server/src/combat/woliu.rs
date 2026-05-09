@@ -805,6 +805,13 @@ pub fn vortex_field_state_payload(
             env_qi_at_cast: 0.0,
             maintain_remaining_ticks: 0,
             intercepted_count,
+            active_skill_id: String::new(),
+            charge_progress: 0.0,
+            cooldown_until_ms: 0,
+            backfire_level: String::new(),
+            turbulence_radius: 0.0,
+            turbulence_intensity: 0.0,
+            turbulence_until_ms: 0,
         };
     };
     let elapsed = now_tick.saturating_sub(field.cast_at_tick);
@@ -818,6 +825,13 @@ pub fn vortex_field_state_payload(
         env_qi_at_cast: field.env_qi_at_cast,
         maintain_remaining_ticks: remaining,
         intercepted_count,
+        active_skill_id: String::new(),
+        charge_progress: if remaining > 0 { 1.0 } else { 0.0 },
+        cooldown_until_ms: 0,
+        backfire_level: String::new(),
+        turbulence_radius: 0.0,
+        turbulence_intensity: 0.0,
+        turbulence_until_ms: 0,
     }
 }
 

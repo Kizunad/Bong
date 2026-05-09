@@ -22,6 +22,8 @@ pub const VORTEX_SWIRL_RATIO_BASE: f64 = 0.99;
 pub const VORTEX_TURBULENCE_DECAY_PER_SEC: f64 = 0.05;
 /// plan-woliu-v2 §0：紊流场内灵物/丹材保质期加速倍率。
 pub const VORTEX_TURBULENCE_SHELFLIFE_MULTIPLIER: f64 = 3.0;
+/// plan-woliu-v2 §0：紊流场内静坐修炼吸收倍率。
+pub const VORTEX_TURBULENCE_ABSORPTION_MULTIPLIER: f64 = 0.0;
 /// plan-woliu-v2 §0：紊流场内战斗真元注入精度倍率。
 pub const VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER: f64 = 0.5;
 /// plan-woliu-v2 §0：紊流场内护体真气额外消耗比例。

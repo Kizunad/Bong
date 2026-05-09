@@ -11,7 +11,7 @@ pub use events::{
 };
 pub use skills::register_skills;
 
-use valence::prelude::{App, Update};
+use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
 
 pub fn register(app: &mut App) {
     app.add_event::<VortexCastEvent>();
@@ -19,7 +19,15 @@ pub fn register(app: &mut App) {
     app.add_event::<TurbulenceFieldSpawned>();
     app.add_event::<TurbulenceFieldDecayed>();
     app.add_event::<EntityDisplacedByVortexPull>();
-    app.add_systems(Update, tick::turbulence_decay_tick);
+    app.add_systems(Startup, skills::declare_woliu_v2_meridian_dependencies);
+    app.add_systems(
+        Update,
+        (
+            tick::turbulence_decay_tick,
+            tick::update_turbulence_exposure_tick.after(tick::turbulence_decay_tick),
+            tick::heart_active_backfire_tick.after(tick::update_turbulence_exposure_tick),
+        ),
+    );
 }
 
 #[cfg(test)]

@@ -10,6 +10,13 @@ pub struct VortexFieldStateV1 {
     pub env_qi_at_cast: f32,
     pub maintain_remaining_ticks: u64,
     pub intercepted_count: u32,
+    pub active_skill_id: String,
+    pub charge_progress: f32,
+    pub cooldown_until_ms: u64,
+    pub backfire_level: String,
+    pub turbulence_radius: f32,
+    pub turbulence_intensity: f32,
+    pub turbulence_until_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

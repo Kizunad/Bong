@@ -1,8 +1,13 @@
-use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position};
+use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut};
 
 use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+};
+use crate::cultivation::meridian::severed::{
+    check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
+};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::skill::components::SkillId;
@@ -20,13 +25,14 @@ use super::events::{
 use super::physics::{
     contamination_ratio, pull_displacement_blocks, stir_99_1, StirInput, StirOutcome,
 };
-use super::state::{PassiveVortex, TurbulenceField, VortexV2State};
+use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
 
 pub const WOLIU_HOLD_SKILL_ID: &str = "woliu.hold";
 pub const WOLIU_BURST_SKILL_ID: &str = "woliu.burst";
 pub const WOLIU_MOUTH_SKILL_ID: &str = "woliu.mouth";
 pub const WOLIU_PULL_SKILL_ID: &str = "woliu.pull";
 pub const WOLIU_HEART_SKILL_ID: &str = "woliu.heart";
+pub const WOLIU_REQUIRED_MERIDIANS: [MeridianId; 1] = [MeridianId::Lung];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WoliuSkillSpec {
@@ -69,6 +75,18 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(WOLIU_MOUTH_SKILL_ID, cast_mouth);
     registry.register(WOLIU_PULL_SKILL_ID, cast_pull);
     registry.register(WOLIU_HEART_SKILL_ID, cast_heart);
+}
+
+pub fn declare_woliu_v2_meridian_dependencies(mut deps: ResMut<SkillMeridianDependencies>) {
+    for skill_id in [
+        WOLIU_HOLD_SKILL_ID,
+        WOLIU_BURST_SKILL_ID,
+        WOLIU_MOUTH_SKILL_ID,
+        WOLIU_PULL_SKILL_ID,
+        WOLIU_HEART_SKILL_ID,
+    ] {
+        deps.declare(skill_id, WOLIU_REQUIRED_MERIDIANS.to_vec());
+    }
 }
 
 pub fn cast_hold(
@@ -146,30 +164,45 @@ pub fn resolve_woliu_v2_skill(
     if cultivation.qi_current + f64::EPSILON < cost {
         return rejected(CastRejectReason::QiInsufficient);
     }
+    let meridian_capacity = {
+        let Some(meridians) = world.get::<MeridianSystem>(caster) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let severed = world.get::<MeridianSeveredPermanent>(caster);
+        if let Err(blocking) =
+            check_meridian_runtime_integrity(&WOLIU_REQUIRED_MERIDIANS, meridians, severed)
+        {
+            return rejected(CastRejectReason::MeridianSevered(Some(blocking)));
+        }
+        meridians.sum_capacity().max(1.0)
+    };
 
     let dimension = world
         .get::<CurrentDimension>(caster)
         .map(|dimension| dimension.0)
         .unwrap_or(DimensionKind::Overworld);
-    let env_qi = current_env_qi(
+    let zone_context = current_zone_context(
         world.get_resource::<ZoneRegistry>(),
         dimension,
         position.get(),
+        spec.turbulence_radius,
     );
     let contamination = contamination_ratio(world.get::<Contamination>(caster), cultivation.qi_max);
-    let meridian_capacity = world
-        .get::<MeridianSystem>(caster)
-        .map(|meridians| meridians.sum_capacity().max(1.0))
-        .unwrap_or(cultivation.qi_max.max(1.0));
+    let turbulence_cast_precision = world
+        .get::<TurbulenceExposure>(caster)
+        .map(|exposure| exposure.cast_precision_multiplier())
+        .unwrap_or(1.0);
 
     let stir = stir_99_1(StirInput {
-        total_drained: spec.total_drained() * env_qi.max(0.0),
+        total_drained: spec.total_drained()
+            * zone_context.env_qi.max(0.0)
+            * turbulence_cast_precision,
         realm: cultivation.realm,
         contamination_ratio: contamination,
         meridian_flow_capacity: meridian_capacity,
         dt_seconds: spec.duration_seconds().max(0.05),
     });
-    let forced = forced_backfire(skill, dimension, spec.duration_seconds());
+    let forced = forced_backfire(skill, dimension, 0.0);
     let overflow_level = backfire_level_for_overflow(stir.overflow, cultivation.qi_max)
         .map(|level| (level, BackfireCauseV2::MeridianOverflow));
     let backfire = forced.or(overflow_level);
@@ -224,7 +257,16 @@ pub fn resolve_woliu_v2_skill(
     }
 
     emit_cast_events(
-        world, caster, target, skill, spec, stir, backfire, center, now_tick,
+        world,
+        caster,
+        target,
+        skill,
+        spec,
+        stir,
+        backfire,
+        &zone_context,
+        center,
+        now_tick,
     );
 
     CastResult::Started {
@@ -242,6 +284,7 @@ fn emit_cast_events(
     spec: WoliuSkillSpec,
     stir: StirOutcome,
     backfire: Option<(BackfireLevel, BackfireCauseV2)>,
+    zone_context: &ZoneContext,
     center: DVec3,
     now_tick: u64,
 ) {
@@ -310,7 +353,7 @@ fn emit_cast_events(
             );
         }
     }
-    for transfer in build_stir_transfers(caster, skill, stir) {
+    for transfer in build_stir_transfers(caster, zone_context, stir) {
         send_event_if_present(world, transfer);
     }
     send_event_if_present(
@@ -333,36 +376,50 @@ fn send_event_if_present<T: valence::prelude::Event>(world: &mut bevy_ecs::world
     }
 }
 
+#[derive(Debug, Clone)]
+struct ZoneContext {
+    env_qi: f64,
+    source_zone: String,
+    swirl_zones: Vec<String>,
+}
+
 fn build_stir_transfers(
     caster: Entity,
-    skill: WoliuSkillId,
+    zone_context: &ZoneContext,
     stir: StirOutcome,
-) -> impl Iterator<Item = QiTransfer> {
-    let zone = QiAccountId::zone(format!("woliu_v2:{}:{}", skill.as_str(), caster.to_bits()));
+) -> Vec<QiTransfer> {
+    let zone = QiAccountId::zone(zone_context.source_zone.clone());
     let player = QiAccountId::player(format!("entity:{}", caster.to_bits()));
-    let turbulence = QiAccountId::zone(format!(
-        "woliu_v2_turbulence:{}:{}",
-        skill.as_str(),
-        caster.to_bits()
-    ));
-    let absorbed = QiTransfer::new(
+    let mut transfers = Vec::with_capacity(1 + zone_context.swirl_zones.len());
+    if let Ok(absorbed) = QiTransfer::new(
         zone.clone(),
         player,
         stir.actual_absorbed,
         QiTransferReason::Channeling,
-    )
-    .ok();
-    let swirl = QiTransfer::new(
-        zone,
-        turbulence,
-        stir.rotational_swirl,
-        QiTransferReason::Channeling,
-    )
-    .ok();
-    [absorbed, swirl]
-        .into_iter()
-        .flatten()
-        .filter(|transfer| transfer.amount > f64::EPSILON)
+    ) {
+        if absorbed.amount > f64::EPSILON {
+            transfers.push(absorbed);
+        }
+    }
+    let swirl_targets = if zone_context.swirl_zones.is_empty() {
+        vec![zone_context.source_zone.clone()]
+    } else {
+        zone_context.swirl_zones.clone()
+    };
+    let swirl_share = stir.rotational_swirl / swirl_targets.len() as f64;
+    for target_zone in swirl_targets {
+        if let Ok(swirl) = QiTransfer::new(
+            zone.clone(),
+            QiAccountId::zone(target_zone),
+            swirl_share,
+            QiTransferReason::Channeling,
+        ) {
+            if swirl.amount > f64::EPSILON {
+                transfers.push(swirl);
+            }
+        }
+    }
+    transfers
 }
 
 fn turbulence_intensity(spec: &WoliuSkillSpec, stir: StirOutcome) -> f32 {
@@ -373,11 +430,39 @@ fn turbulence_intensity(spec: &WoliuSkillSpec, stir: StirOutcome) -> f32 {
         as f32
 }
 
-fn current_env_qi(zones: Option<&ZoneRegistry>, dimension: DimensionKind, position: DVec3) -> f64 {
-    zones
-        .and_then(|zones| zones.find_zone(dimension, position))
-        .map(|zone| zone.spirit_qi)
-        .unwrap_or(0.9)
+fn current_zone_context(
+    zones: Option<&ZoneRegistry>,
+    dimension: DimensionKind,
+    position: DVec3,
+    turbulence_radius: f32,
+) -> ZoneContext {
+    let Some(zones) = zones else {
+        return ZoneContext {
+            env_qi: 0.9,
+            source_zone: "spawn".to_string(),
+            swirl_zones: vec!["spawn".to_string()],
+        };
+    };
+    let source = zones.find_zone(dimension, position);
+    let source_zone = source
+        .map(|zone| zone.name.clone())
+        .unwrap_or_else(|| "spawn".to_string());
+    let radius = f64::from(turbulence_radius.max(0.0));
+    let mut swirl_zones: Vec<String> = zones
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == dimension)
+        .filter(|zone| zone.contains(position) || zone.center().distance(position) <= radius)
+        .map(|zone| zone.name.clone())
+        .collect();
+    if !swirl_zones.iter().any(|zone| zone == &source_zone) {
+        swirl_zones.push(source_zone.clone());
+    }
+    ZoneContext {
+        env_qi: source.map(|zone| zone.spirit_qi).unwrap_or(0.9),
+        source_zone,
+        swirl_zones,
+    }
 }
 
 fn rejected(reason: CastRejectReason) -> CastResult {

@@ -2660,6 +2660,13 @@ mod tests {
                 env_qi_at_cast: 0.9,
                 maintain_remaining_ticks: 80,
                 intercepted_count: 1,
+                active_skill_id: "woliu.hold".to_string(),
+                charge_progress: 1.0,
+                cooldown_until_ms: 0,
+                backfire_level: String::new(),
+                turbulence_radius: 1.0,
+                turbulence_intensity: 0.5,
+                turbulence_until_ms: 0,
             }),
             ServerDataPayloadV1::FalseSkinState(FalseSkinStateV1 {
                 target_id: "offline:Azure".to_string(),

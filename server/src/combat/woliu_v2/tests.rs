@@ -1,12 +1,16 @@
-use valence::prelude::{App, DVec3, Entity, Events, Position};
+use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
-use crate::combat::components::SkillBarBindings;
+use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::meridian::severed::{
+    MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
+};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
-use crate::qi_physics::{QiTransfer, QiTransferReason};
+use crate::qi_physics::{QiAccountKind, QiTransfer, QiTransferReason};
 use crate::skill::events::SkillXpGain;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::{default_spawn_bounds, Zone, ZoneRegistry};
 
 use super::backfire::{
     apply_backfire_to_hand_meridians, backfire_level_for_overflow, forced_backfire,
@@ -19,8 +23,10 @@ use super::physics::{
     lethal_and_influence_radius, pull_displacement_blocks, realm_absorption_rate, stir_99_1,
     turbulence_decay_step, StirInput,
 };
-use super::skills::{resolve_woliu_v2_skill, skill_spec, visual_for};
-use super::state::{TurbulenceField, VortexV2State};
+use super::skills::{
+    declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill, skill_spec, visual_for,
+};
+use super::state::{TurbulenceExposure, TurbulenceField, VortexV2State};
 
 fn realm_case(index: usize) -> Realm {
     match index % 6 {
@@ -85,6 +91,43 @@ fn spawn_actor(app: &mut App, realm: Realm, qi_current: f64) -> Entity {
             CurrentDimension(DimensionKind::Overworld),
         ))
         .id()
+}
+
+fn open_all_meridians(app: &mut App, actor: Entity, capacity: f64) {
+    let mut meridians = app.world_mut().get_mut::<MeridianSystem>(actor).unwrap();
+    for meridian in meridians.iter_mut() {
+        meridian.opened = true;
+        meridian.integrity = 1.0;
+        meridian.flow_capacity = capacity;
+    }
+}
+
+fn two_zone_registry() -> ZoneRegistry {
+    let (spawn_min, spawn_max) = default_spawn_bounds();
+    ZoneRegistry {
+        zones: vec![
+            Zone {
+                name: "spawn".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (spawn_min, spawn_max),
+                spirit_qi: 0.9,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: vec![DVec3::new(8.0, 66.0, 8.0)],
+                blocked_tiles: Vec::new(),
+            },
+            Zone {
+                name: "nearby_training_ring".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(19.0, 64.0, 7.0), DVec3::new(21.0, 80.0, 9.0)),
+                spirit_qi: 0.7,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: vec![DVec3::new(20.0, 66.0, 8.0)],
+                blocked_tiles: Vec::new(),
+            },
+        ],
+    }
 }
 
 #[test]
@@ -189,12 +232,12 @@ fn turbulence_decay_returns_qi_to_static_zone_over_time() {
 }
 
 #[test]
-fn turbulence_field_effects_match_plan_multipliers() {
-    let field = TurbulenceField::new(Entity::from_raw(1), DVec3::ZERO, 10.0, 1.0, 100.0, 0);
-    assert_eq!(field.absorption_multiplier(), 0.0);
-    assert_eq!(field.cast_precision_multiplier(), 0.5);
-    assert_eq!(field.shelflife_multiplier(), 3.0);
-    assert_eq!(field.defense_drain_multiplier(), 1.2);
+fn turbulence_exposure_effects_match_plan_multipliers() {
+    let exposure = TurbulenceExposure::new(Entity::from_raw(1), 1.0, 1);
+    assert_eq!(exposure.absorption_multiplier(), 0.0);
+    assert_eq!(exposure.cast_precision_multiplier(), 0.5);
+    assert_eq!(exposure.env_field().turbulence_shelflife_factor(), 3.0);
+    assert_eq!(exposure.defense_drain_multiplier(), 1.2);
 }
 
 #[test]
@@ -261,6 +304,132 @@ fn resolve_hold_emits_cast_xp_and_qi_transfers() {
 }
 
 #[test]
+fn startup_declares_lung_dependency_for_all_woliu_v2_skills() {
+    let mut app = App::new();
+    app.insert_resource(SkillMeridianDependencies::default());
+    app.add_systems(Startup, declare_woliu_v2_meridian_dependencies);
+
+    app.update();
+
+    let deps = app.world().resource::<SkillMeridianDependencies>();
+    for skill in WoliuSkillId::ALL {
+        assert_eq!(deps.lookup(skill.as_str()), &[MeridianId::Lung]);
+    }
+}
+
+#[test]
+fn resolve_rejects_when_lung_meridian_is_permanently_severed() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    let mut severed = MeridianSeveredPermanent::default();
+    severed.insert(MeridianId::Lung, SeveredSource::BackfireOverload, 10);
+    app.world_mut().entity_mut(actor).insert(severed);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
+        }
+    );
+}
+
+#[test]
+fn turbulence_field_projects_runtime_exposure_to_overlapping_targets() {
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 42 });
+    app.add_systems(Update, super::tick::update_turbulence_exposure_tick);
+    let source = app
+        .world_mut()
+        .spawn((CurrentDimension(DimensionKind::Overworld),))
+        .id();
+    app.world_mut()
+        .entity_mut(source)
+        .insert(TurbulenceField::new(
+            source,
+            DVec3::new(8.0, 66.0, 8.0),
+            3.0,
+            1.0,
+            100.0,
+            42,
+        ));
+    let target = app
+        .world_mut()
+        .spawn((
+            Cultivation::default(),
+            Position::new([9.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ))
+        .id();
+
+    app.update();
+
+    let exposure = app
+        .world()
+        .get::<TurbulenceExposure>(target)
+        .expect("overlapping cultivator should receive turbulence exposure");
+    assert_eq!(exposure.source, source);
+    assert_eq!(exposure.absorption_multiplier(), 0.0);
+    assert_eq!(exposure.cast_precision_multiplier(), 0.5);
+    assert_eq!(exposure.defense_drain_multiplier(), 1.2);
+}
+
+#[test]
+fn turbulence_exposure_halves_woliu_cast_precision_output() {
+    fn swirl_for(exposure: Option<TurbulenceExposure>) -> f32 {
+        let mut app = app(10);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        open_all_meridians(&mut app, actor, 10_000.0);
+        if let Some(exposure) = exposure {
+            app.world_mut().entity_mut(actor).insert(exposure);
+        }
+
+        let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+        assert!(matches!(result, CastResult::Started { .. }));
+        let swirl_qi = app
+            .world()
+            .resource::<Events<VortexCastEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("cast should emit vortex event")
+            .swirl_qi;
+        swirl_qi
+    }
+
+    let normal = swirl_for(None);
+    let exposed = swirl_for(Some(TurbulenceExposure::new(Entity::from_raw(99), 1.0, 11)));
+
+    assert!(normal > 0.0);
+    assert!((exposed - normal * 0.5).abs() < 1e-5);
+}
+
+#[test]
+fn stir_transfers_use_registered_zone_accounts_instead_of_synthetic_turbulence_sink() {
+    let mut app = app(10);
+    app.insert_resource(two_zone_registry());
+    let actor = spawn_actor(&mut app, Realm::Void, 1_000.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let transfers: Vec<_> = app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .collect();
+    assert!(transfers
+        .iter()
+        .any(|transfer| transfer.to.kind == QiAccountKind::Zone
+            && transfer.to.id == "nearby_training_ring"));
+    assert!(!transfers.iter().any(|transfer| {
+        transfer.to.kind == QiAccountKind::Zone && transfer.to.id.starts_with("woliu_v2_turbulence")
+    }));
+}
+
+#[test]
 fn resolve_rejects_qi_insufficient_without_cooldown() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Awaken, 1.0);
@@ -313,6 +482,52 @@ fn resolve_heart_in_tsy_emits_severed_backfire() {
         .unwrap();
     assert_eq!(event.level, BackfireLevel::Severed);
     assert_eq!(event.cause, BackfireCauseV2::TsyNegativeField);
+}
+
+#[test]
+fn void_heart_tribulation_waits_for_runtime_active_duration() {
+    let started_at = 100;
+    let mut app = app(started_at);
+    app.add_systems(Update, super::tick::heart_active_backfire_tick);
+    let actor = spawn_actor(&mut app, Realm::Void, 1_000.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 4, None, WoliuSkillId::Heart);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert!(app
+        .world()
+        .get::<VortexV2State>(actor)
+        .is_some_and(|state| state.backfire_level.is_none()));
+    assert_eq!(
+        app.world()
+            .resource::<Events<VortexBackfireEventV2>>()
+            .iter_current_update_events()
+            .filter(|event| event.cause == BackfireCauseV2::VoidHeartTribulation)
+            .count(),
+        0
+    );
+
+    app.world_mut().resource_mut::<CombatClock>().tick = started_at + 30 * TICKS_PER_SECOND - 1;
+    app.update();
+    assert_eq!(
+        app.world()
+            .resource::<Events<VortexBackfireEventV2>>()
+            .iter_current_update_events()
+            .filter(|event| event.cause == BackfireCauseV2::VoidHeartTribulation)
+            .count(),
+        0
+    );
+
+    app.world_mut().resource_mut::<CombatClock>().tick = started_at + 30 * TICKS_PER_SECOND;
+    app.update();
+    let event = app
+        .world()
+        .resource::<Events<VortexBackfireEventV2>>()
+        .iter_current_update_events()
+        .find(|event| event.cause == BackfireCauseV2::VoidHeartTribulation)
+        .expect("void heart should trigger tribulation after 30 active seconds");
+    assert_eq!(event.level, BackfireLevel::Severed);
 }
 
 #[test]
