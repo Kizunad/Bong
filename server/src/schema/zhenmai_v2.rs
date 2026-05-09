@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const ZHENMAI_SKILL_EVENT_TYPE: &str = "zhenmai_skill_event";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZhenmaiSkillIdV1 {
@@ -40,6 +42,8 @@ pub struct ZhenmaiSkillEventV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub k_drain: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub damage_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub self_damage_multiplier: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grants_amplification: Option<bool>,
@@ -52,7 +56,7 @@ impl ZhenmaiSkillEventV1 {
     pub fn new(skill_id: ZhenmaiSkillIdV1, caster_id: String, tick: u64) -> Self {
         Self {
             v: 1,
-            event_type: "zhenmai_skill_event".to_string(),
+            event_type: ZHENMAI_SKILL_EVENT_TYPE.to_string(),
             skill_id,
             caster_id,
             target_id: None,
@@ -61,6 +65,7 @@ impl ZhenmaiSkillEventV1 {
             attack_kind: None,
             reflected_qi: None,
             k_drain: None,
+            damage_multiplier: None,
             self_damage_multiplier: None,
             grants_amplification: None,
             expires_at_tick: None,

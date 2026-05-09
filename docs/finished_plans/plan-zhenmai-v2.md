@@ -523,10 +523,11 @@ PracticeLog 累积驱动 QiColor **暴烈色**（worldview §六:619）演化，
 
 ### 落地清单
 
-- **P0 决策面**：`server/src/combat/zhenmai_v2.rs` 固化 5 招 ID、7 境界 profile、`ZHENMAI_BETA = 0.6`、W 矩阵 `style_weight`、SkillConfig 读取与 `backfire_kind` 解析；"60s 选择性免疫"按 2026-05-06 修订落为 `BackfireAmplification`，受击仍结算伤害，只放大反震效率并降低自身伤害倍率。
-- **P1 server 五招**：`resolve_parry` / `resolve_neutralize` / `resolve_multipoint` / `resolve_harden` / `resolve_sever_chain` 注册到 `SkillRegistry`，并接入 `KnownTechniques`、`PracticeLog`、`SkillXpGain`、`Casting.skill_config` 快照、`MeridianSeveredPermanent` 与 `MeridianSeveredEvent`。`combat::resolve` 接入多点反震、护脉减伤、断脉反震放大与 `QiTransfer`。
-- **P1 IPC / schema**：新增 `server/src/schema/zhenmai_v2.rs`、`server/src/network/zhenmai_v2_event_bridge.rs`、`CH_ZHENMAI_SKILL_EVENT` 与 `RedisOutbound::ZhenmaiSkillEvent`，覆盖局部中和、多点反震、护脉、绝脉断链、反震放大 payload。
-- **P2 client 反馈**：`QuickBarHudPlanner` 支持 skill `iconTexture` 直绘，新增 5 个 `bong-client:textures/gui/skill/zhenmai_*.png`、5 个 `player_animation/zhenmai_*.json`，`VfxBootstrap` 注册 `jiemai_burst_blood` / `jiemai_neutralize_dust` / `jiemai_sever_flash`。
+- **P0 决策面**：`server/src/combat/zhenmai_v2.rs` 固化 5 招 ID、6 档生产 `Realm` profile（plan 文本的"半步化虚"未进现有 `Realm` enum，生产侧折叠到 `Realm::Spirit`/`Realm::Void` 两档高境）、W 矩阵 `style_weight`、SkillConfig 读取与 `backfire_kind` 解析；"60s 选择性免疫"按 2026-05-06 修订落为 `BackfireAmplification`，受击仍结算伤害，只放大反震效率并降低自身伤害倍率。
+- **P1 qi_physics / server 五招**：截脉 β=0.6、反震、护脉 flow、多点分散、绝脉放大迁入 `qi_physics::{QI_ZHENMAI_BETA, reverse_clamp, flow_modifier, multi_point_dispersion, sever_meridian}`，`zhenmai_v2` 只负责招式编排。`resolve_parry` / `resolve_neutralize` / `resolve_multipoint` / `resolve_harden` / `resolve_sever_chain` 注册到 `SkillRegistry`，并接入 `KnownTechniques`、`PracticeLog`、`SkillXpGain`、`Casting.skill_config` 快照、`MeridianSeveredPermanent` 与 `MeridianSeveredEvent`。
+- **P1 断脉依赖**：`SkillMeridianDependencies` 在 cultivation register 与 zhenmai register 中声明 5 招依赖；resolver 前检查已 SEVERED 经脉并返回 `CastRejectReason::MeridianSevered`。绝脉断链额外检查 SkillConfig 选定经脉，避免重复断同一条。
+- **P1 IPC / schema**：新增 `server/src/schema/zhenmai_v2.rs`、`server/src/network/zhenmai_v2_event_bridge.rs`、`CH_ZHENMAI_SKILL_EVENT` 与 `RedisOutbound::ZhenmaiSkillEvent`，覆盖局部中和、多点反震、护脉、绝脉断链、反震放大 payload；护脉事件使用 `damage_multiplier`，不再把经脉减伤写进 `self_damage_multiplier`。
+- **P2 client 反馈**：`QuickBarHudPlanner` 支持 skill `iconTexture` 直绘，新增 5 个 `bong-client:textures/gui/skill/zhenmai_*.png`、5 个 `player_animation/zhenmai_*.json`，`VfxBootstrap` 注册 `jiemai_burst_blood` / `jiemai_neutralize_dust` / `jiemai_sever_flash`。三个 VFX event 目前复用 `SwordQiSlashPlayer` 作为占位 player，尚未做专用粒子 player。
 - **P3 音效 / narration**：新增 4 个 server audio recipe：`zhenmai_parry_thud` / `zhenmai_neutralize_hiss` / `zhenmai_shield_hum` / `zhenmai_sever_crack`；agent `ZhenmaiNarrationRuntime` 同时订阅 `COMBAT_REALTIME` 与 `ZHENMAI_SKILL_EVENT`，覆盖 5 招叙事模板与断脉无应分支。
 - **P4 最小闭环**：cast 时记录 `ColorKind::Violent` practice 与 combat skill XP；PVP telemetry、dugu 实战对位和长期暴烈色 passive 数值校准未在本 PR 内宣称完成，列入后续。
 
@@ -536,24 +537,27 @@ PracticeLog 累积驱动 QiColor **暴烈色**（worldview §六:619）演化，
 - `2f206f2bed6f2aa81e45b4581fed472dbc9c88e7` / 2026-05-09 / `plan-zhenmai-v2: 接入截脉叙事契约`
 - `ec156b8816b485239d05b6333fe3bc6d265faf62` / 2026-05-09 / `plan-zhenmai-v2: 补齐客户端截脉反馈资产`
 - `3438bf6ab376cbd1019d407233bd39384ae73cc5` / 2026-05-09 / `test(world): 串行化 bootstrap 环境变量测试`
+- `89264ce344fd63c4310277eaa3721cb7f8581bf4` / 2026-05-09 / `归档 plan-zhenmai-v2：截脉五招闭环`
+- PR review 修复 commit：补 qi_physics 算子、断脉依赖、护脉 `damage_multiplier` 与绝脉断链长冷却（见 PR #175 最新提交）。
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 3261 passed / 0 failed。
-- `cd server && cargo test zhenmai_v2`：通过，29 passed / 0 failed / 3232 filtered out。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 3270 passed / 0 failed。
+- `cd server && cargo test zhenmai_v2`：通过，33 passed / 0 failed / 3237 filtered out。
 - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过；schema 12 files / 332 tests，tiandao 43 files / 310 tests。
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`：通过。
 - `git diff --check`：通过。
 
 ### 跨仓库核验
 
-- **server**：`combat::zhenmai_v2::{ZhenmaiSkillId, BackfireAmplification, MultiPointActive, MeridianHardenActive}`；`register_skills`；`MeridianSeveredPermanent` 写入；`schema::zhenmai_v2::ZhenmaiSkillEventV1`；`network::zhenmai_v2_event_bridge::publish_zhenmai_skill_events`；`CH_ZHENMAI_SKILL_EVENT`。
-- **agent**：`agent/packages/schema/src/zhenmai-v2.ts`；`CHANNELS.ZHENMAI_SKILL_EVENT`；`SCHEMA_REGISTRY.zhenmaiSkillEventV1`；`renderZhenmaiSkillNarration`；runtime 订阅 skill-event channel。
-- **client**：`QuickBarHudPlanner` icon texture 渲染；`QuickBarHudPlannerTest.zhenmaiSkillIconsExistAsClientResources`；`VfxBootstrap` 三个截脉 VFX event；5 个 player animation JSON；5 个 skill icon PNG。
+- **server**：`combat::zhenmai_v2::{ZhenmaiSkillId, BackfireAmplification, MultiPointActive, MeridianHardenActive}`；`register_skills`；`declare_meridian_dependencies`；`qi_physics::{collision, field}` 截脉算子；`MeridianSeveredPermanent` 写入；`schema::zhenmai_v2::ZhenmaiSkillEventV1`；`network::zhenmai_v2_event_bridge::publish_zhenmai_skill_events`；`CH_ZHENMAI_SKILL_EVENT`。
+- **agent**：`agent/packages/schema/src/zhenmai-v2.ts`；`CHANNELS.ZHENMAI_SKILL_EVENT`；`SCHEMA_REGISTRY.zhenmaiSkillEventV1`；`damage_multiplier` / `self_damage_multiplier` 双字段兼容；`renderZhenmaiSkillNarration`；runtime 订阅 skill-event channel。
+- **client**：`QuickBarHudPlanner` icon texture 渲染；`QuickBarHudPlannerTest.zhenmaiSkillIconsExistAsClientResources`；`VfxBootstrap` 三个截脉 VFX event；5 个 player animation JSON；5 个 skill icon PNG；VFX player 仍是 `SwordQiSlashPlayer` 占位复用。
 
 ### 遗留 / 后续
 
-- 原计划 §4.5 写的是 `server/src/combat/zhenmai_v2/` 目录 100+ 单测；本 PR 实际采用单文件 `server/src/combat/zhenmai_v2.rs` + bridge/Redis 回归，共 29 个 `zhenmai_v2` 过滤测试，并由全量 `cargo test` 3261 个测试兜底。未把测试数量硬凑到 100。
-- 未做 WSLg `runClient`、`render_animation.py`、真实 PVP telemetry、dugu 倒蚀实战录像或长期数值校准；当前覆盖为资源存在、HUD texture command、VFX 注册、server 事件与 agent narration 合同。
+- 原计划 §4.5 写的是 `server/src/combat/zhenmai_v2/` 目录 100+ 单测；本 PR 实际采用单文件 `server/src/combat/zhenmai_v2.rs` + bridge/qi_physics/Redis 回归，共 33 个 `zhenmai_v2` 过滤测试，并由全量 `cargo test` 3270 个测试兜底。未把测试数量硬凑到 100。
+- 未做 SEVERED 跨 server restart 持久化实测、WSLg `runClient`、`render_animation.py`、真实 PVP telemetry、dugu 倒蚀实战录像或长期数值校准；当前覆盖为资源存在、HUD texture command、VFX 注册、server 事件与 agent narration 合同。
+- 多点反震和护脉反噬阶梯目前只落了 qi/s、HP/contam 与减伤主路径，未把 MICRO_TEAR / TORN 阶梯完整实体化。
 - `ParryWindowHud` / `MeridianContamHud` / `ShieldedMeridianHud` / `SeveredMeridianListHud` 四个专用 HUD 组件没有在本 PR 内完整新建；本 PR 先落 hotbar icon、cast VFX/audio/animation 与 Redis narration 链路。
 - 暴烈色 passive_buff 通用化、plan-style-balance-v1 截脉矩阵长期校准、plan-tribulation-v1 化虚断脉天道注视、plan-multi-life-v1 断脉跨周目策略、上古接经术恢复与医道 NPC 仍留后续 plan。

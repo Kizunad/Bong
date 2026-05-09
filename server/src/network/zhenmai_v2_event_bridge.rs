@@ -62,7 +62,7 @@ pub fn publish_zhenmai_skill_events(
                 .map(|id| meridian_id_to_string(*id).to_string())
                 .collect(),
         );
-        payload.self_damage_multiplier = Some(event.damage_multiplier);
+        payload.damage_multiplier = Some(event.damage_multiplier);
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::ZhenmaiSkillEvent(payload));
@@ -252,6 +252,31 @@ mod tests {
                     .is_some_and(|id| id.starts_with("entity:")));
             }
             other => panic!("expected zhenmai multipoint outbound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_harden_damage_multiplier_without_self_damage_semantics() {
+        let (mut app, rx_outbound) = app_with_bridge();
+        let caster = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(MeridianHardenEvent {
+            caster,
+            meridian_ids: vec![MeridianId::Lung],
+            damage_multiplier: 0.35,
+            tick: 77,
+        });
+
+        app.update();
+
+        match rx_outbound.try_recv().expect("harden event should publish") {
+            RedisOutbound::ZhenmaiSkillEvent(payload) => {
+                assert_eq!(payload.skill_id, ZhenmaiSkillIdV1::HardenMeridian);
+                assert_eq!(payload.damage_multiplier, Some(0.35));
+                assert_eq!(payload.self_damage_multiplier, None);
+                assert_eq!(payload.meridian_ids, Some(vec!["Lung".to_string()]));
+            }
+            other => panic!("expected zhenmai harden outbound, got {other:?}"),
         }
     }
 }

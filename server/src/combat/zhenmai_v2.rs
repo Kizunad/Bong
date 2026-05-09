@@ -18,7 +18,8 @@ use crate::cultivation::components::{
     ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
 };
 use crate::cultivation::meridian::severed::{
-    enforce_severed_state, MeridianSeveredEvent, MeridianSeveredPermanent, SeveredSource,
+    check_meridian_dependencies, enforce_severed_state, MeridianSeveredEvent,
+    MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
@@ -27,6 +28,7 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_DRAIN_CLAMP;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::{multi_point_dispersion, reverse_clamp, sever_meridian, QI_ZHENMAI_BETA};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::config::SkillConfigStore;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -39,11 +41,9 @@ pub const HARDEN_SKILL_ID: &str = "zhenmai.harden";
 pub const SEVER_CHAIN_SKILL_ID: &str = "zhenmai.sever_chain";
 
 pub const BACKFIRE_AMPLIFICATION_TICKS: u64 = 60 * TICKS_PER_SECOND;
+pub const SEVER_CHAIN_COOLDOWN_TICKS: u64 = 20 * 60 * TICKS_PER_SECOND;
 pub const PARRY_QI_COST: f64 = 8.0;
-pub const ZHENMAI_BETA: f64 = 0.6;
 pub const NORMAL_DRAIN_CLAMP: f64 = QI_DRAIN_CLAMP;
-pub const VOID_SEVER_CHAIN_DRAIN: f64 = 1.5;
-pub const SPIRIT_SEVER_CHAIN_DRAIN: f64 = 1.2;
 
 const PARRY_ANIM_ID: &str = "bong:zhenmai_parry";
 const NEUTRALIZE_ANIM_ID: &str = "bong:zhenmai_neutralize";
@@ -270,6 +270,16 @@ pub struct JiemaiBackfireBloodSpray {
 }
 
 pub fn register(app: &mut App) {
+    if let Some(mut dependencies) = app
+        .world_mut()
+        .get_resource_mut::<SkillMeridianDependencies>()
+    {
+        declare_meridian_dependencies(&mut dependencies);
+    } else {
+        let mut dependencies = SkillMeridianDependencies::default();
+        declare_meridian_dependencies(&mut dependencies);
+        app.insert_resource(dependencies);
+    }
     app.add_event::<LocalNeutralizeEvent>();
     app.add_event::<MultiPointBackfireEvent>();
     app.add_event::<MeridianHardenEvent>();
@@ -293,6 +303,15 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(MULTIPOINT_SKILL_ID, resolve_multipoint);
     registry.register(HARDEN_SKILL_ID, resolve_harden);
     registry.register(SEVER_CHAIN_SKILL_ID, resolve_sever_chain);
+}
+
+pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencies) {
+    dependencies.declare(PARRY_SKILL_ID, vec![MeridianId::Lung]);
+    dependencies.declare(NEUTRALIZE_SKILL_ID, vec![MeridianId::Lung]);
+    dependencies.declare(MULTIPOINT_SKILL_ID, vec![MeridianId::Lung]);
+    dependencies.declare(HARDEN_SKILL_ID, vec![MeridianId::Lung]);
+    // 绝脉断链还会检查 SkillConfig 选定的动态经脉；这里注册空依赖用于显式声明。
+    dependencies.declare(SEVER_CHAIN_SKILL_ID, Vec::new());
 }
 
 pub fn parry_profile(realm: Realm, skill_lv: u8) -> ParryProfile {
@@ -390,13 +409,13 @@ pub fn harden_profile(realm: Realm, skill_lv: u8) -> HardenProfile {
 pub fn sever_chain_profile(realm: Realm) -> SeverChainProfile {
     match realm {
         Realm::Void => SeverChainProfile {
-            k_drain: VOID_SEVER_CHAIN_DRAIN,
+            k_drain: sever_meridian(NORMAL_DRAIN_CLAMP, 3.0),
             self_damage_multiplier: 0.5,
             qi_cost: 50.0,
             grants_amplification: true,
         },
         Realm::Spirit => SeverChainProfile {
-            k_drain: SPIRIT_SEVER_CHAIN_DRAIN,
+            k_drain: sever_meridian(NORMAL_DRAIN_CLAMP, 2.4),
             self_damage_multiplier: 0.7,
             qi_cost: 60.0,
             grants_amplification: true,
@@ -434,7 +453,7 @@ pub fn attack_kind_for_source(
 }
 
 pub fn reflected_qi(hit_qi: f64, k_drain: f64, kind: ZhenmaiAttackKind) -> f64 {
-    (hit_qi.max(0.0) * k_drain.max(0.0) * style_weight(kind) * ZHENMAI_BETA).max(0.0)
+    reverse_clamp(hit_qi, k_drain, style_weight(kind), QI_ZHENMAI_BETA)
 }
 
 pub fn backfire_transfer(
@@ -463,6 +482,9 @@ fn resolve_parry(
     }
     if is_control_locked(world, caster) {
         return rejected(CastRejectReason::InRecovery);
+    }
+    if let Err(reason) = check_static_meridian_dependencies(world, caster, PARRY_SKILL_ID) {
+        return rejected(reason);
     }
     let Some(realm) = world.get::<Cultivation>(caster).map(|c| c.realm) else {
         return rejected(CastRejectReason::RealmTooLow);
@@ -515,6 +537,9 @@ fn resolve_neutralize(
     let now_tick = now_tick(world);
     if skill_on_cooldown(world, caster, slot, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
+    }
+    if let Err(reason) = check_static_meridian_dependencies(world, caster, NEUTRALIZE_SKILL_ID) {
+        return rejected(reason);
     }
     let Some(realm) = world.get::<Cultivation>(caster).map(|c| c.realm) else {
         return rejected(CastRejectReason::RealmTooLow);
@@ -586,6 +611,9 @@ fn resolve_multipoint(
     if world.get::<MultiPointActive>(caster).is_some() {
         return rejected(CastRejectReason::InRecovery);
     }
+    if let Err(reason) = check_static_meridian_dependencies(world, caster, MULTIPOINT_SKILL_ID) {
+        return rejected(reason);
+    }
     let Some(realm) = world.get::<Cultivation>(caster).map(|c| c.realm) else {
         return rejected(CastRejectReason::RealmTooLow);
     };
@@ -642,6 +670,9 @@ fn resolve_harden(
     let now_tick = now_tick(world);
     if skill_on_cooldown(world, caster, slot, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
+    }
+    if let Err(reason) = check_static_meridian_dependencies(world, caster, HARDEN_SKILL_ID) {
+        return rejected(reason);
     }
     let Some(realm) = world.get::<Cultivation>(caster).map(|c| c.realm) else {
         return rejected(CastRejectReason::RealmTooLow);
@@ -724,6 +755,9 @@ fn resolve_sever_chain(
     if skill_on_cooldown(world, caster, slot, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
+    if let Err(reason) = check_static_meridian_dependencies(world, caster, SEVER_CHAIN_SKILL_ID) {
+        return rejected(reason);
+    }
     let Some(realm) = world.get::<Cultivation>(caster).map(|c| c.realm) else {
         return rejected(CastRejectReason::RealmTooLow);
     };
@@ -788,14 +822,14 @@ fn resolve_sever_chain(
         slot,
         SEVER_CHAIN_SKILL_ID,
         8,
-        BACKFIRE_AMPLIFICATION_TICKS,
+        SEVER_CHAIN_COOLDOWN_TICKS,
         now_tick,
     );
     set_skill_cooldown(
         world,
         caster,
         slot,
-        now_tick.saturating_add(BACKFIRE_AMPLIFICATION_TICKS),
+        now_tick.saturating_add(SEVER_CHAIN_COOLDOWN_TICKS),
     );
     record_practice(world, caster, ZhenmaiSkillId::SeverChain);
     emit_skill_feedback(
@@ -808,7 +842,7 @@ fn resolve_sever_chain(
         18,
     );
     CastResult::Started {
-        cooldown_ticks: BACKFIRE_AMPLIFICATION_TICKS,
+        cooldown_ticks: SEVER_CHAIN_COOLDOWN_TICKS,
         anim_duration_ticks: 8,
     }
 }
@@ -844,7 +878,13 @@ pub fn multipoint_contact(
     kind: ZhenmaiAttackKind,
 ) -> f64 {
     active.contact_count = active.contact_count.saturating_add(1);
-    reflected_qi(hit_qi, active.k_drain, kind)
+    multi_point_dispersion(
+        hit_qi,
+        active.k_drain,
+        style_weight(kind),
+        QI_ZHENMAI_BETA,
+        active.points,
+    )
 }
 
 fn multipoint_duration_tick(
@@ -857,7 +897,9 @@ fn multipoint_duration_tick(
             commands.entity(entity).remove::<MultiPointActive>();
             continue;
         }
-        if clock.tick > active.started_at_tick && clock.tick % TICKS_PER_SECOND == 0 {
+        if clock.tick > active.started_at_tick
+            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+        {
             if let Some(mut cultivation) = cultivation {
                 cultivation.qi_current =
                     (cultivation.qi_current - active.qi_per_second).clamp(0.0, cultivation.qi_max);
@@ -879,7 +921,9 @@ fn harden_duration_tick(
             commands.entity(entity).remove::<MeridianHardenActive>();
             continue;
         }
-        if clock.tick > active.started_at_tick && clock.tick % TICKS_PER_SECOND == 0 {
+        if clock.tick > active.started_at_tick
+            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+        {
             if let Some(mut cultivation) = cultivation {
                 cultivation.qi_current =
                     (cultivation.qi_current - active.qi_per_second).clamp(0.0, cultivation.qi_max);
@@ -993,6 +1037,21 @@ fn skill_config_snapshot(
     let player_id = canonical_player_id(username.0.as_str());
     let store = world.get_resource::<SkillConfigStore>()?;
     store.config_for(player_id.as_str(), skill_id).cloned()
+}
+
+fn check_static_meridian_dependencies(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+) -> Result<(), CastRejectReason> {
+    let Some(table) = world.get_resource::<SkillMeridianDependencies>() else {
+        return Ok(());
+    };
+    check_meridian_dependencies(
+        table.lookup(skill_id),
+        world.get::<MeridianSeveredPermanent>(caster),
+    )
+    .map_err(|id| CastRejectReason::MeridianSevered(Some(id)))
 }
 
 fn is_control_locked(world: &bevy_ecs::world::World, caster: Entity) -> bool {
@@ -1209,6 +1268,9 @@ mod tests {
     fn app_with_events() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
+        let mut dependencies = SkillMeridianDependencies::default();
+        declare_meridian_dependencies(&mut dependencies);
+        app.insert_resource(dependencies);
         app.add_event::<crate::combat::events::DefenseIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<VfxEventRequest>();
@@ -1267,6 +1329,26 @@ mod tests {
             configured_sever_chain(app.world(), entity),
             Some((meridian, kind))
         );
+    }
+
+    fn mark_severed(app: &mut App, entity: Entity, meridian: MeridianId) {
+        app.world_mut()
+            .get_mut::<MeridianSeveredPermanent>(entity)
+            .unwrap()
+            .insert(meridian, SeveredSource::VoluntarySever, 99);
+    }
+
+    #[test]
+    fn declare_meridian_dependencies_registers_all_five_skills() {
+        let mut dependencies = SkillMeridianDependencies::default();
+        declare_meridian_dependencies(&mut dependencies);
+
+        assert!(dependencies.is_declared(PARRY_SKILL_ID));
+        assert!(dependencies.is_declared(NEUTRALIZE_SKILL_ID));
+        assert!(dependencies.is_declared(MULTIPOINT_SKILL_ID));
+        assert!(dependencies.is_declared(HARDEN_SKILL_ID));
+        assert!(dependencies.is_declared(SEVER_CHAIN_SKILL_ID));
+        assert_eq!(dependencies.lookup(PARRY_SKILL_ID), &[MeridianId::Lung]);
     }
 
     #[test]
@@ -1495,6 +1577,20 @@ mod tests {
     }
 
     #[test]
+    fn resolve_parry_rejects_declared_severed_meridian() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Induce, 20.0);
+        mark_severed(&mut app, entity, MeridianId::Lung);
+
+        assert_eq!(
+            resolve_parry(app.world_mut(), entity, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
+            }
+        );
+    }
+
+    #[test]
     fn resolve_neutralize_removes_contam_with_realm_cap() {
         let mut app = app_with_events();
         let entity = caster(&mut app, Realm::Condense, 100.0);
@@ -1527,6 +1623,20 @@ mod tests {
     }
 
     #[test]
+    fn resolve_multipoint_rejects_declared_severed_meridian() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Solidify, 100.0);
+        mark_severed(&mut app, entity, MeridianId::Lung);
+
+        assert_eq!(
+            resolve_multipoint(app.world_mut(), entity, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
+            }
+        );
+    }
+
+    #[test]
     fn resolve_harden_inserts_selected_meridian_component() {
         let mut app = app_with_events();
         let entity = caster(&mut app, Realm::Void, 100.0);
@@ -1548,10 +1658,13 @@ mod tests {
             MeridianId::Du,
             ZhenmaiAttackKind::PhysicalCarrier,
         );
-        assert!(matches!(
+        assert_eq!(
             resolve_sever_chain(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
+            CastResult::Started {
+                cooldown_ticks: SEVER_CHAIN_COOLDOWN_TICKS,
+                anim_duration_ticks: 8
+            }
+        );
         assert!(app
             .world()
             .get::<MeridianSeveredPermanent>(entity)

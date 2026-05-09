@@ -32,6 +32,7 @@ export const ZhenmaiSkillEventV1 = Type.Object(
     attack_kind: Type.Optional(ZhenmaiAttackKindV1),
     reflected_qi: Type.Optional(Type.Number({ minimum: 0 })),
     k_drain: Type.Optional(Type.Number({ minimum: 0 })),
+    damage_multiplier: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
     self_damage_multiplier: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
     grants_amplification: Type.Optional(Type.Boolean()),
     expires_at_tick: Type.Optional(Type.Integer({ minimum: 0 })),

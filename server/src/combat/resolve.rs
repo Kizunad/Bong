@@ -47,7 +47,7 @@ use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{
     QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC, QI_ZHENMAI_PARRY_RECOVERY_TICKS,
 };
-use crate::qi_physics::{QiAccountId, QiTransfer};
+use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer};
 use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -388,7 +388,7 @@ pub fn resolve_attack_intents(
         let zhenmai_attack_kind =
             zhenmai_v2::attack_kind_for_source(intent.source, intent.wound_kind);
         let harden_damage_multiplier = harden_active
-            .map(|active| active.damage_multiplier)
+            .map(|active| flow_modifier(1.0, active.damage_multiplier))
             .unwrap_or(1.0);
         let backfire_damage_multiplier = backfire_amplification
             .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
