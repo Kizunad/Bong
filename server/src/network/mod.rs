@@ -556,6 +556,10 @@ pub fn register(app: &mut App) {
     app.add_systems(Update, yidao_state_emit::emit_healer_npc_ai_state_payloads);
     app.add_systems(
         Update,
+        crate::combat::yidao::complete_yidao_casts.after(cast_emit::tick_casts_or_interrupt),
+    );
+    app.add_systems(
+        Update,
         (
             combat_hud_state_emit::emit_combat_hud_state_payloads,
             wounds_snapshot_emit::emit_wounds_snapshot_payloads,
@@ -567,9 +571,9 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
-                .after(cast_emit::tick_casts_or_interrupt),
+                .after(crate::combat::yidao::complete_yidao_casts),
             skillbar_config_emit::emit_skillbar_config_payloads
-                .after(cast_emit::tick_casts_or_interrupt),
+                .after(crate::combat::yidao::complete_yidao_casts),
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events),

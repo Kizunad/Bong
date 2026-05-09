@@ -269,6 +269,24 @@ pub struct YidaoEvent {
     pub payload: YidaoEventV1,
 }
 
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct YidaoCastCompleteEvent {
+    pub caster: Entity,
+    pub slot: u8,
+    pub skill_id: String,
+    pub completed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Component, PartialEq)]
+struct PendingYidaoCast {
+    slot: u8,
+    skill: YidaoSkillId,
+    patients: Vec<Entity>,
+    mastery: f64,
+    peace_color: bool,
+    started_at_tick: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HealerNpcDecision {
     pub action: HealerNpcAction,
@@ -287,6 +305,7 @@ pub enum HealerNpcAction {
 
 pub fn register(app: &mut valence::prelude::App) {
     app.add_event::<YidaoEvent>();
+    app.add_event::<YidaoCastCompleteEvent>();
 }
 
 pub fn register_skills(registry: &mut SkillRegistry) {
@@ -425,8 +444,7 @@ pub fn resolve_yidao_skill(
         vec![patient]
     };
 
-    insert_casting(world, caster, slot, spec, cast_ticks, now_tick);
-    let outcome = apply_yidao_effect(
+    if !can_apply_yidao_effect(
         world,
         caster,
         &patients,
@@ -434,29 +452,206 @@ pub fn resolve_yidao_skill(
         mastery,
         peace_color,
         now_tick,
-    );
-    if outcome.success_count == 0 && outcome.failure_count == 0 {
-        world.entity_mut(caster).remove::<Casting>();
+    ) {
         return rejected(CastRejectReason::InvalidTarget);
     }
-    if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(spec.cooldown_ticks));
-    }
-    emit_yidao_vfx_audio(
-        world,
-        caster,
-        patients.first().copied().unwrap_or(caster),
-        spec,
-    );
+
+    world.entity_mut(caster).insert(PendingYidaoCast {
+        slot,
+        skill,
+        patients,
+        mastery,
+        peace_color,
+        started_at_tick: now_tick,
+    });
+    insert_casting(world, caster, slot, spec, cast_ticks, now_tick);
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
         anim_duration_ticks: cast_ticks as u32,
     }
 }
 
+pub fn complete_yidao_casts(world: &mut bevy_ecs::world::World) {
+    let completed = {
+        let Some(mut events) = world.get_resource_mut::<Events<YidaoCastCompleteEvent>>() else {
+            return;
+        };
+        events.drain().collect::<Vec<_>>()
+    };
+
+    for event in completed {
+        let Some(pending) = world.get::<PendingYidaoCast>(event.caster).cloned() else {
+            continue;
+        };
+        if pending.slot != event.slot || pending.skill.skill_id() != event.skill_id {
+            continue;
+        }
+
+        let spec = yidao_skill_spec(pending.skill);
+        let patients = valid_completion_patients(world, event.caster, &pending, spec.range_m);
+        if can_apply_yidao_effect(
+            world,
+            event.caster,
+            &patients,
+            pending.skill,
+            pending.mastery,
+            pending.peace_color,
+            pending.started_at_tick,
+        ) {
+            let outcome = apply_yidao_effect(
+                world,
+                event.caster,
+                &patients,
+                pending.skill,
+                pending.mastery,
+                pending.peace_color,
+                YidaoApplyTiming {
+                    eligibility_tick: pending.started_at_tick,
+                    now_tick: event.completed_at_tick,
+                },
+            );
+            if outcome.success_count > 0 || outcome.failure_count > 0 {
+                emit_yidao_vfx_audio(
+                    world,
+                    event.caster,
+                    patients.first().copied().unwrap_or(event.caster),
+                    spec,
+                );
+            }
+        }
+        world.entity_mut(event.caster).remove::<PendingYidaoCast>();
+    }
+
+    let mut stale = Vec::new();
+    let mut query = world.query_filtered::<Entity, bevy_ecs::query::With<PendingYidaoCast>>();
+    for entity in query.iter(world) {
+        if world.get::<Casting>(entity).is_none() {
+            stale.push(entity);
+        }
+    }
+    for entity in stale {
+        world.entity_mut(entity).remove::<PendingYidaoCast>();
+    }
+}
+
+fn valid_completion_patients(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    pending: &PendingYidaoCast,
+    range_m: f64,
+) -> Vec<Entity> {
+    pending
+        .patients
+        .iter()
+        .copied()
+        .filter(|patient| is_patient_in_range(world, caster, *patient, range_m))
+        .collect()
+}
+
+fn can_apply_yidao_effect(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    patients: &[Entity],
+    skill: YidaoSkillId,
+    mastery: f64,
+    peace_color: bool,
+    now_tick: u64,
+) -> bool {
+    let Some(cultivation) = world.get::<Cultivation>(caster) else {
+        return false;
+    };
+    let Some(patient) = patients.first().copied() else {
+        return false;
+    };
+    match skill {
+        YidaoSkillId::MeridianRepair => {
+            first_repairable_meridian(world, patient).is_some()
+                && meridian_repair(cultivation.qi_max, cultivation.realm, mastery, peace_color)
+                    .is_ok_and(|calc| has_qi(cultivation, calc.qi_cost))
+        }
+        YidaoSkillId::ContamPurge => {
+            let contamination_total = world
+                .get::<Contamination>(patient)
+                .map(contamination_total)
+                .unwrap_or_default();
+            contamination_total > f64::EPSILON
+                && contam_purge(
+                    cultivation.qi_max,
+                    contamination_total,
+                    cultivation.realm,
+                    mastery,
+                    peace_color,
+                )
+                .is_ok_and(|calc| has_qi(cultivation, calc.qi_cost))
+        }
+        YidaoSkillId::EmergencyResuscitate => {
+            let hp_max = world
+                .get::<Wounds>(patient)
+                .map(|wounds| wounds.health_max)
+                .unwrap_or(100.0);
+            emergency_stabilize(cultivation.qi_max, hp_max, mastery).is_ok_and(|calc| {
+                valid_emergency_lifecycle(world, patient, now_tick, calc.dying_window_ticks)
+                    && has_qi(cultivation, calc.qi_cost)
+            })
+        }
+        YidaoSkillId::LifeExtension => life_extend(cultivation.qi_max, mastery, peace_color)
+            .is_ok_and(|calc| {
+                valid_life_extension_lifecycle(world, patient, now_tick, calc.window_ticks)
+                    && has_qi(cultivation, calc.qi_cost.min(cultivation.qi_max))
+            }),
+        YidaoSkillId::MassMeridianRepair => {
+            let density = local_qi_density_for_mass_repair(world, caster);
+            mass_meridian_repair(density, cultivation.realm, mastery, peace_color).is_ok_and(
+                |calc| {
+                    calc.capacity > 0
+                        && has_qi(cultivation, cultivation.qi_max)
+                        && patients
+                            .iter()
+                            .copied()
+                            .take(usize::try_from(calc.capacity).unwrap_or(usize::MAX))
+                            .any(|patient| first_repairable_meridian(world, patient).is_some())
+                },
+            )
+        }
+    }
+}
+
+fn has_qi(cultivation: &Cultivation, amount: f64) -> bool {
+    amount > f64::EPSILON && cultivation.qi_current + f64::EPSILON >= amount
+}
+
+fn valid_emergency_lifecycle(
+    world: &bevy_ecs::world::World,
+    patient: Entity,
+    now_tick: u64,
+    window_ticks: u64,
+) -> bool {
+    world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
+        lifecycle.state == LifecycleState::NearDeath
+            && lifecycle
+                .last_death_tick
+                .is_some_and(|death_tick| now_tick <= death_tick.saturating_add(window_ticks))
+    })
+}
+
+fn valid_life_extension_lifecycle(
+    world: &bevy_ecs::world::World,
+    patient: Entity,
+    now_tick: u64,
+    window_ticks: u64,
+) -> bool {
+    world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
+        lifecycle.state == LifecycleState::NearDeath
+            && lifecycle
+                .last_death_tick
+                .is_some_and(|death_tick| now_tick <= death_tick.saturating_add(window_ticks))
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct YidaoApplyOutcome {
     patient_ids: Vec<String>,
+    successful_patients: Vec<Entity>,
     meridian_id: Option<MeridianId>,
     success_count: u32,
     failure_count: u32,
@@ -470,10 +665,17 @@ struct YidaoApplyOutcome {
     detail: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct YidaoApplyTiming {
+    eligibility_tick: u64,
+    now_tick: u64,
+}
+
 impl Default for YidaoApplyOutcome {
     fn default() -> Self {
         Self {
             patient_ids: Vec::new(),
+            successful_patients: Vec::new(),
             meridian_id: None,
             success_count: 0,
             failure_count: 0,
@@ -496,37 +698,59 @@ fn apply_yidao_effect(
     skill: YidaoSkillId,
     mastery: f64,
     peace_color: bool,
-    now_tick: u64,
+    timing: YidaoApplyTiming,
 ) -> YidaoApplyOutcome {
     let mut outcome = match skill {
-        YidaoSkillId::MeridianRepair => {
-            apply_meridian_repair(world, caster, patients[0], mastery, peace_color, now_tick)
-        }
+        YidaoSkillId::MeridianRepair => apply_meridian_repair(
+            world,
+            caster,
+            patients[0],
+            mastery,
+            peace_color,
+            timing.now_tick,
+        ),
         YidaoSkillId::ContamPurge => {
             apply_contam_purge(world, caster, patients[0], mastery, peace_color)
         }
-        YidaoSkillId::EmergencyResuscitate => {
-            apply_emergency_resuscitate(world, caster, patients[0], mastery, now_tick)
-        }
-        YidaoSkillId::LifeExtension => {
-            apply_life_extension(world, caster, patients[0], mastery, peace_color, now_tick)
-        }
-        YidaoSkillId::MassMeridianRepair => {
-            apply_mass_meridian_repair(world, caster, patients, mastery, peace_color, now_tick)
-        }
-    };
-    if outcome.success_count > 0 {
-        outcome.contract_state = grow_healer_identity(
+        YidaoSkillId::EmergencyResuscitate => apply_emergency_resuscitate(
+            world,
+            caster,
+            patients[0],
+            mastery,
+            timing.eligibility_tick,
+            timing.now_tick,
+        ),
+        YidaoSkillId::LifeExtension => apply_life_extension(
+            world,
+            caster,
+            patients[0],
+            mastery,
+            peace_color,
+            timing.eligibility_tick,
+            timing.now_tick,
+        ),
+        YidaoSkillId::MassMeridianRepair => apply_mass_meridian_repair(
             world,
             caster,
             patients,
+            mastery,
+            peace_color,
+            timing.now_tick,
+        ),
+    };
+    if outcome.success_count > 0 {
+        let successful_patients = outcome.successful_patients.clone();
+        outcome.contract_state = grow_healer_identity(
+            world,
+            caster,
+            &successful_patients,
             skill,
             outcome.success_count,
-            now_tick,
+            timing.now_tick,
         );
     }
     if outcome.success_count > 0 || outcome.failure_count > 0 {
-        emit_yidao_event(world, caster, skill, now_tick, &outcome);
+        emit_yidao_event(world, caster, skill, timing.now_tick, &outcome);
     }
     outcome
 }
@@ -575,6 +799,7 @@ fn apply_meridian_repair(
             }
             credit_patient_qi(world, patient, calc.qi_cost);
             emit_qi_transfer(world, caster, patient, calc.qi_cost);
+            out.successful_patients.push(patient);
             out.success_count = 1;
         }
         AcupointRepairOutcome::Failed => {
@@ -622,6 +847,7 @@ fn apply_contam_purge(
     emit_qi_transfer(world, caster, patient, calc.qi_cost);
     YidaoApplyOutcome {
         patient_ids: vec![entity_wire_id(patient)],
+        successful_patients: vec![patient],
         success_count: 1,
         qi_transferred: calc.qi_cost,
         contam_reduced: calc.purge_amount,
@@ -635,6 +861,7 @@ fn apply_emergency_resuscitate(
     caster: Entity,
     patient: Entity,
     mastery: f64,
+    eligibility_tick: u64,
     now_tick: u64,
 ) -> YidaoApplyOutcome {
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -647,12 +874,8 @@ fn apply_emergency_resuscitate(
     let Ok(calc) = emergency_stabilize(cultivation.qi_max, hp_max, mastery) else {
         return YidaoApplyOutcome::default();
     };
-    let valid_lifecycle = world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
-        lifecycle.state == LifecycleState::NearDeath
-            && lifecycle.last_death_tick.is_some_and(|death_tick| {
-                now_tick <= death_tick.saturating_add(calc.dying_window_ticks)
-            })
-    });
+    let valid_lifecycle =
+        valid_emergency_lifecycle(world, patient, eligibility_tick, calc.dying_window_ticks);
     if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost) {
         return YidaoApplyOutcome::default();
     }
@@ -671,6 +894,7 @@ fn apply_emergency_resuscitate(
     emit_qi_transfer(world, caster, patient, calc.qi_cost);
     YidaoApplyOutcome {
         patient_ids: vec![entity_wire_id(patient)],
+        successful_patients: vec![patient],
         success_count: 1,
         qi_transferred: calc.qi_cost,
         hp_restored: restored,
@@ -685,6 +909,7 @@ fn apply_life_extension(
     patient: Entity,
     mastery: f64,
     peace_color: bool,
+    eligibility_tick: u64,
     now_tick: u64,
 ) -> YidaoApplyOutcome {
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -693,12 +918,8 @@ fn apply_life_extension(
     let Ok(calc) = life_extend(cultivation.qi_max, mastery, peace_color) else {
         return YidaoApplyOutcome::default();
     };
-    let valid_lifecycle = world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
-        lifecycle.state == LifecycleState::NearDeath
-            && lifecycle
-                .last_death_tick
-                .is_some_and(|death_tick| now_tick <= death_tick.saturating_add(calc.window_ticks))
-    });
+    let valid_lifecycle =
+        valid_life_extension_lifecycle(world, patient, eligibility_tick, calc.window_ticks);
     if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost.min(cultivation.qi_max)) {
         return YidaoApplyOutcome::default();
     }
@@ -715,6 +936,7 @@ fn apply_life_extension(
     emit_qi_transfer(world, caster, patient, calc.qi_cost.min(cultivation.qi_max));
     YidaoApplyOutcome {
         patient_ids: vec![entity_wire_id(patient)],
+        successful_patients: vec![patient],
         success_count: 1,
         qi_transferred: calc.qi_cost.min(cultivation.qi_max),
         karma_delta: calc.medic_karma_delta,
@@ -749,6 +971,7 @@ fn apply_mass_meridian_repair(
         ..Default::default()
     };
     let max_patients = usize::try_from(calc.capacity).unwrap_or(usize::MAX);
+    let qi_per_patient = cultivation.qi_max / patients.len().max(1) as f64;
     for patient in patients.iter().copied().take(max_patients) {
         let Some(meridian_id) = first_repairable_meridian(world, patient) else {
             continue;
@@ -770,12 +993,9 @@ fn apply_mass_meridian_repair(
                     meridian.opened = true;
                 }
                 out.success_count += 1;
-                emit_qi_transfer(
-                    world,
-                    caster,
-                    patient,
-                    cultivation.qi_max / patients.len().max(1) as f64,
-                );
+                out.successful_patients.push(patient);
+                out.qi_transferred += qi_per_patient;
+                emit_qi_transfer(world, caster, patient, qi_per_patient);
             }
             AcupointRepairOutcome::Failed => {
                 out.failure_count += 1;
@@ -789,7 +1009,6 @@ fn apply_mass_meridian_repair(
         let karma = calc.medic_karma_delta_per_patient * n;
         apply_qi_max_loss(world, caster, qi_loss);
         add_karma(world, caster, karma);
-        out.qi_transferred = cultivation.qi_max;
         out.karma_delta = karma;
         out.medic_qi_max_delta = -qi_loss;
     }
@@ -1108,7 +1327,13 @@ fn collect_mass_repair_patients(
             break;
         }
     }
-    patients.sort_by_key(|entity| entity.to_bits());
+    if explicit_target.is_some() && !patients.is_empty() {
+        let explicit = patients[0];
+        patients[1..].sort_by_key(|entity| entity.to_bits());
+        patients[0] = explicit;
+    } else {
+        patients.sort_by_key(|entity| entity.to_bits());
+    }
     patients.truncate(capacity as usize);
     patients
 }
@@ -1240,6 +1465,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<YidaoEvent>();
+        app.add_event::<YidaoCastCompleteEvent>();
         app.add_event::<QiTransfer>();
         app.add_event::<VfxEventRequest>();
         app.add_event::<PlaySoundRecipeRequest>();
@@ -1267,6 +1493,23 @@ mod tests {
                 Position::new([0.0, 64.0, 0.0]),
             ))
             .id()
+    }
+
+    fn complete_pending_yidao(app: &mut App, caster: Entity) {
+        let casting = app.world().get::<Casting>(caster).unwrap().clone();
+        let skill_id = casting.skill_id.clone().unwrap();
+        let completed_at_tick = casting
+            .started_at_tick
+            .saturating_add(casting.duration_ticks);
+        app.world_mut()
+            .resource_mut::<Events<YidaoCastCompleteEvent>>()
+            .send(YidaoCastCompleteEvent {
+                caster,
+                slot: casting.slot,
+                skill_id,
+                completed_at_tick,
+            });
+        complete_yidao_casts(app.world_mut());
     }
 
     fn spawn_patient(app: &mut App) -> Entity {
@@ -1327,6 +1570,15 @@ mod tests {
         let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
 
         assert!(matches!(result, CastResult::Started { .. }));
+        assert!(app
+            .world()
+            .get::<MeridianSeveredPermanent>(patient)
+            .unwrap()
+            .is_severed(MeridianId::Lung));
+        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
+
+        complete_pending_yidao(&mut app, medic);
+
         assert!(!app
             .world()
             .get::<MeridianSeveredPermanent>(patient)
@@ -1363,6 +1615,38 @@ mod tests {
         let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
 
         assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
+    }
+
+    #[test]
+    fn interrupted_yidao_cast_does_not_apply_effect() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+        app.world_mut().entity_mut(medic).insert(HealingMastery {
+            meridian_repair: 100.0,
+            ..Default::default()
+        });
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        app.world_mut().entity_mut(medic).remove::<Casting>();
+        complete_yidao_casts(app.world_mut());
+
+        assert!(app.world().get::<PendingYidaoCast>(medic).is_none());
+        assert!(app
+            .world()
+            .get::<MeridianSeveredPermanent>(patient)
+            .unwrap()
+            .is_severed(MeridianId::Lung));
         assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
     }
 
@@ -1421,6 +1705,16 @@ mod tests {
                 .get::<Contamination>(patient)
                 .map(contamination_total)
                 .unwrap_or_default(),
+            30.0
+        );
+
+        complete_pending_yidao(&mut app, medic);
+
+        assert_eq!(
+            app.world()
+                .get::<Contamination>(patient)
+                .map(contamination_total)
+                .unwrap_or_default(),
             0.0
         );
     }
@@ -1449,6 +1743,13 @@ mod tests {
         let result = resolve_emergency_resuscitate_skill(app.world_mut(), medic, 2, Some(patient));
 
         assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(
+            app.world().get::<Lifecycle>(patient).unwrap().state,
+            LifecycleState::NearDeath
+        );
+
+        complete_pending_yidao(&mut app, medic);
+
         let wounds = app.world().get::<Wounds>(patient).unwrap();
         assert!(wounds.health_current > 0.0);
         assert_eq!(wounds.entries[0].bleeding_per_sec, 0.0);
@@ -1507,6 +1808,13 @@ mod tests {
         let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(patient));
 
         assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(
+            app.world().get::<Lifecycle>(patient).unwrap().state,
+            LifecycleState::NearDeath
+        );
+
+        complete_pending_yidao(&mut app, medic);
+
         assert_eq!(
             app.world().get::<Lifecycle>(patient).unwrap().state,
             LifecycleState::Alive
@@ -1594,6 +1902,8 @@ mod tests {
             resolve_mass_meridian_repair_skill(app.world_mut(), medic, 4, Some(patients[0]));
 
         assert!(matches!(result, CastResult::Started { .. }));
+        complete_pending_yidao(&mut app, medic);
+
         let repaired = patients
             .iter()
             .filter(|patient| {
@@ -1606,6 +1916,107 @@ mod tests {
             .count();
         assert_eq!(repaired, 3);
         assert!(app.world().get::<Cultivation>(medic).unwrap().qi_max < 300.0);
+    }
+
+    #[test]
+    fn mass_meridian_repair_preserves_explicit_target_under_capacity() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        let earlier = spawn_patient(&mut app);
+        let explicit = spawn_patient(&mut app);
+        for patient in [earlier, explicit] {
+            let mut severed = MeridianSeveredPermanent::default();
+            severed.insert(
+                MeridianId::Lung,
+                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                1,
+            );
+            app.world_mut().entity_mut(patient).insert(severed);
+        }
+
+        let patients = collect_mass_repair_patients(app.world_mut(), medic, Some(explicit), 1, 5.0);
+
+        assert_eq!(patients, vec![explicit]);
+    }
+
+    #[test]
+    fn mass_meridian_repair_counts_only_successful_patient_transfers() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        let mut patients = Vec::new();
+        for meridian in [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney] {
+            let patient = spawn_patient(&mut app);
+            let mut severed = MeridianSeveredPermanent::default();
+            severed.insert(
+                meridian,
+                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                1,
+            );
+            app.world_mut().entity_mut(patient).insert(severed);
+            patients.push((patient, meridian));
+        }
+        let threshold = mass_meridian_repair(
+            local_qi_density_for_mass_repair(app.world(), medic),
+            Realm::Void,
+            0.0,
+            true,
+        )
+        .unwrap()
+        .success_threshold;
+        let tick = (0..10_000)
+            .find(|tick| {
+                let success_count = patients
+                    .iter()
+                    .filter(|(patient, meridian)| {
+                        deterministic_success_roll(medic, *patient, *meridian, *tick) < threshold
+                    })
+                    .count();
+                (1..patients.len()).contains(&success_count)
+            })
+            .expect("partial success tick");
+        let expected_successful: Vec<Entity> = patients
+            .iter()
+            .filter_map(|(patient, meridian)| {
+                (deterministic_success_roll(medic, *patient, *meridian, tick) < threshold)
+                    .then_some(*patient)
+            })
+            .collect();
+        let patient_entities: Vec<Entity> = patients.iter().map(|(patient, _)| *patient).collect();
+
+        let outcome = apply_yidao_effect(
+            app.world_mut(),
+            medic,
+            &patient_entities,
+            YidaoSkillId::MassMeridianRepair,
+            0.0,
+            true,
+            YidaoApplyTiming {
+                eligibility_tick: tick,
+                now_tick: tick,
+            },
+        );
+
+        assert_eq!(outcome.success_count as usize, expected_successful.len());
+        assert_eq!(
+            outcome.failure_count as usize,
+            patient_entities.len() - expected_successful.len()
+        );
+        assert!(
+            (outcome.qi_transferred
+                - (300.0 / patient_entities.len() as f64) * expected_successful.len() as f64)
+                .abs()
+                < f64::EPSILON
+        );
+        let profile = app.world().get::<HealerProfile>(medic).unwrap();
+        assert_eq!(profile.contracts.len(), expected_successful.len());
+        let contracted_ids: Vec<&str> = profile
+            .contracts
+            .iter()
+            .map(|contract| contract.patient_id.as_str())
+            .collect();
+        for patient in expected_successful {
+            assert!(contracted_ids.contains(&entity_wire_id(patient).as_str()));
+        }
     }
 
     #[test]

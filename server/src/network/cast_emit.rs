@@ -20,6 +20,7 @@ use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
 };
 use crate::combat::events::StatusEffectKind;
+use crate::combat::yidao::YidaoCastCompleteEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     recover_current_qi, Contamination, Cultivation, MeridianSystem,
@@ -64,6 +65,7 @@ pub fn tick_casts_or_interrupt(
     mut commands: Commands,
     item_registry: Res<ItemRegistry>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut yidao_complete_events: EventWriter<YidaoCastCompleteEvent>,
     mut clients: Query<CastTickQueryItem<'_>>,
 ) {
     for (
@@ -182,6 +184,18 @@ pub fn tick_casts_or_interrupt(
         // 自然完成
         if clock.tick >= casting.started_at_tick + casting.duration_ticks {
             commands.entity(entity).remove::<Casting>();
+            if let Some(skill_id) = casting
+                .skill_id
+                .as_deref()
+                .filter(|skill_id| skill_id.starts_with("yidao."))
+            {
+                yidao_complete_events.send(YidaoCastCompleteEvent {
+                    caster: entity,
+                    slot: casting.slot,
+                    skill_id: skill_id.to_string(),
+                    completed_at_tick: clock.tick,
+                });
+            }
             // 1) 消耗：物品快捷槽找到绑定 instance_id，stack -= 1；技能栏只进入冷却。
             let mut effect_to_apply: Option<ItemEffect> = None;
             if casting.source == CastSource::QuickSlot {

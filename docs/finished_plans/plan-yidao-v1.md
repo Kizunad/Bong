@@ -480,7 +480,7 @@ HUD 组件（plan-HUD-v1 接入）：
 ### 落地清单
 
 - **Server / qi_physics**：`server/src/qi_physics/healing.rs` 落地接经、排异、急救、续命、群体接经 5 个治疗算子；`server/src/qi_physics/ledger.rs` 增加 `QiTransferReason::Healing`。
-- **Server / combat**：`server/src/combat/yidao.rs` 注册 `yidao.meridian_repair`、`yidao.contam_purge`、`yidao.emergency_resuscitate`、`yidao.life_extension`、`yidao.mass_meridian_repair` 5 招，接入 SEVERED 经脉修复、污染排异、NearDeath 急救、续命永久代价、化虚群体接经、`HealerProfile`、`HealingMastery`、`KarmaCounter`、医患 treatment contract 与医者 NPC 决策；review 修复确认失败接经不声明 qi transfer、续命拒绝自目标、mastery 按 cast 增长而信誉 / 契约按成功患者记录。
+- **Server / combat**：`server/src/combat/yidao.rs` 注册 `yidao.meridian_repair`、`yidao.contam_purge`、`yidao.emergency_resuscitate`、`yidao.life_extension`、`yidao.mass_meridian_repair` 5 招，接入 SEVERED 经脉修复、污染排异、NearDeath 急救、续命永久代价、化虚群体接经、`HealerProfile`、`HealingMastery`、`KarmaCounter`、医患 treatment contract 与医者 NPC 决策；review 修复确认失败接经不声明 qi transfer、续命拒绝自目标、mastery 按 cast 增长而信誉 / 契约按成功患者记录，并把医道治疗效果延后到 `Casting` 完成事件后结算，中断 cast 不再产生治疗结果。
 - **Server / IPC**：`server/src/schema/yidao.rs`、`server/src/schema/channels.rs`、`server/src/network/redis_bridge.rs` 新增 `YidaoEventV1` 与 `bong:yidao/event`；`server/src/network/yidao_state_emit.rs` 下发 `HealerNpcAiStateV1` / `YidaoHudStateV1`，并在 review 修复中补齐迟到客户端稳定快照与 HUD 空投影清理路径。
 - **Server / audio**：`server/assets/audio/recipes/yidao_*.json` 新增 5 个医道音效 recipe，并由 `server/src/audio/mod.rs` 默认加载测试固定。
 - **Agent / schema**：`agent/packages/schema/src/yidao.ts`、`server-data.ts`、`channels.ts`、`schema-registry.ts` 增加 `YidaoEventV1`、`YidaoSkillIdV1`、`MedicalContractStateV1`、`HealerNpcAiStateV1`、`YidaoHudStateV1`，并生成对应 JSON schema。
@@ -500,9 +500,9 @@ HUD 组件（plan-HUD-v1 接入）：
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
-- `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ `3248 passed; 0 failed`
-- `cd server && cargo test yidao` ✅ `19 passed; 0 failed`
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && CARGO_BUILD_JOBS=1 cargo test` ✅ `3251 passed; 0 failed`
+- `cd server && CARGO_BUILD_JOBS=1 cargo test yidao` ✅ `22 passed; 0 failed`
 - `cd server && cargo test healing` ✅ `7 passed; 0 failed`
 - `cd agent && npm run generate -w @bong/schema` ✅，生成物无未提交漂移
 - `cd agent && npm run build` ✅
