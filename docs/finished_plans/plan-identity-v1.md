@@ -534,12 +534,13 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 | `eb58096e6` | 2026-05-08 | P5c calamity 通缉令段落 + client HUD/state classes |
 | `01533cb59` | 2026-05-09 | P5d gossip / identity_panel_state server emit / trade + chase 直接接线 |
 | `1d988c117` | 2026-05-09 | P5e client 面板同步 / HUD 挂接 / server-data union + sample |
+| `65876d2bc` | 2026-05-09 | Review 修复：同 tick gossip 聚合 + identity panel 冷却期刷新 |
 
 ### 测试结果
 
 ```bash
 cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-# ✅ 3172 passed
+# ✅ 3175 passed
 
 cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build
 # ✅ BUILD SUCCESSFUL
@@ -568,7 +569,7 @@ server identity 相关新增/覆盖单测分布：
 - `identity::wanted_player_emit::tests`：7
 - `persistence::identity::tests`：3
 - `schema::identity::tests`：5
-- 新增本轮 P5：`identity::gossip::tests` 2、`network::identity_panel_emit::tests` 2、`npc::brain::tests::chase_target_scorer_boosts_wanted_identity_even_outside_normal_range`、`social::tests::trade_offer_dispatch_rejects_target_with_wanted_identity`
+- 新增本轮 P5：`identity::gossip::tests` 3、`network::identity_panel_emit::tests` 4、`npc::brain::tests::chase_target_scorer_boosts_wanted_identity_even_outside_normal_range`、`social::tests::trade_offer_dispatch_rejects_target_with_wanted_identity`
 
 ### 跨仓库核验
 
