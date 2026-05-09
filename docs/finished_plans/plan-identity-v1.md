@@ -539,7 +539,7 @@ pub fn consume_revealed_event<E: RevealedEvent>(
 
 ```bash
 cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-# ✅ 3069 passed
+# ✅ 3172 passed
 
 cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build
 # ✅ BUILD SUCCESSFUL
@@ -548,13 +548,13 @@ cd agent && npm run build
 # ✅ @bong/schema tsc + @bong/tiandao tsc
 
 cd agent/packages/schema && npm run generate:check
-# ✅ generated schema artifacts are fresh (295 files)
+# ✅ generated schema artifacts are fresh (304 files)
 
 cd agent/packages/schema && npm test
 # ✅ 328 passed
 
 cd agent/packages/tiandao && npm test
-# ✅ 281 passed
+# ✅ 286 passed
 ```
 
 server identity 相关新增/覆盖单测分布：
