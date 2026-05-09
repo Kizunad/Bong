@@ -838,6 +838,7 @@ export const GENERATED_SCHEMA_FILES = {
   "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
+  "zhenmai-skill-event-v1.json": SCHEMA_REGISTRY.zhenmaiSkillEventV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
   "style-balance-telemetry-event-v1.json":

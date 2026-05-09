@@ -26,9 +26,7 @@ pub fn publish_zhenmai_skill_events(
             &unique_ids,
         );
         payload.meridian_id = Some(meridian_id_to_string(event.meridian_id).to_string());
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenmaiSkillEvent(payload));
+        send_zhenmai_payload(&redis, payload);
     }
 
     for event in multipoint_events.read() {
@@ -43,9 +41,7 @@ pub fn publish_zhenmai_skill_events(
             .map(|attacker| entity_wire_id(unique_ids.get(attacker).ok(), attacker));
         payload.attack_kind = Some(attack_kind_payload(event.attack_kind));
         payload.reflected_qi = Some(event.reflected_qi);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenmaiSkillEvent(payload));
+        send_zhenmai_payload(&redis, payload);
     }
 
     for event in harden_events.read() {
@@ -63,9 +59,7 @@ pub fn publish_zhenmai_skill_events(
                 .collect(),
         );
         payload.damage_multiplier = Some(event.damage_multiplier);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenmaiSkillEvent(payload));
+        send_zhenmai_payload(&redis, payload);
     }
 
     for event in severed_events.read() {
@@ -78,9 +72,7 @@ pub fn publish_zhenmai_skill_events(
         payload.meridian_id = Some(meridian_id_to_string(event.meridian_id).to_string());
         payload.attack_kind = Some(attack_kind_payload(event.attack_kind));
         payload.grants_amplification = Some(event.grants_amplification);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenmaiSkillEvent(payload));
+        send_zhenmai_payload(&redis, payload);
     }
 
     for event in amplification_events.read() {
@@ -97,9 +89,16 @@ pub fn publish_zhenmai_skill_events(
         payload.k_drain = Some(event.k_drain);
         payload.self_damage_multiplier = Some(event.self_damage_multiplier);
         payload.expires_at_tick = Some(event.expires_at_tick);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenmaiSkillEvent(payload));
+        send_zhenmai_payload(&redis, payload);
+    }
+}
+
+fn send_zhenmai_payload(redis: &RedisBridgeResource, payload: ZhenmaiSkillEventV1) {
+    if let Err(error) = redis
+        .tx_outbound
+        .send(RedisOutbound::ZhenmaiSkillEvent(payload))
+    {
+        tracing::warn!("[bong][zhenmai] failed to queue zhenmai skill event: {error}");
     }
 }
 

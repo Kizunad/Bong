@@ -390,9 +390,9 @@ pub fn resolve_attack_intents(
         let harden_damage_multiplier = harden_active
             .map(|active| flow_modifier(1.0, active.damage_multiplier))
             .unwrap_or(1.0);
-        let backfire_damage_multiplier = backfire_amplification
+        let backfire_incoming_damage_multiplier = backfire_amplification
             .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
-            .map(|active| active.self_damage_multiplier)
+            .map(|active| active.incoming_damage_multiplier)
             .unwrap_or(1.0);
         let damage = (hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
@@ -401,8 +401,9 @@ pub fn resolve_attack_intents(
             * defender_damage_multiplier
             * weapon_multiplier
             * harden_damage_multiplier
-            * backfire_damage_multiplier)
+            * backfire_incoming_damage_multiplier)
             .max(1.0);
+        let was_alive = wounds.health_current > 0.0;
         let mut pending_reflected_qi = 0.0_f64;
         if let Some(active) = multipoint_active.as_deref_mut() {
             let reflected =
@@ -443,7 +444,6 @@ pub fn resolve_attack_intents(
                 },
             );
         }
-        let was_alive = wounds.health_current > 0.0;
 
         // plan-weapon-v1 §6.3：命中一次 → 耐久扣减。
         // 若耐久归零收集 broken info,下面统一 commands 操作(避免与 mut borrow 冲突)。
@@ -774,6 +774,9 @@ pub fn resolve_attack_intents(
             contamination.entries.push(ContamSource {
                 amount: emitted_contam_delta,
                 color: ColorKind::Mellow,
+                meridian_id: Some(crate::cultivation::dugu::body_part_to_meridian(
+                    hit_probe.body_part,
+                )),
                 attacker_id: Some(attacker_id.clone()),
                 introduced_at: clock.tick,
             });
@@ -3353,6 +3356,105 @@ mod tests {
         assert!(
             (reduced_wounds.health_current - (reduced_wounds.health_max - reduced_damage)).abs()
                 < 0.001
+        );
+    }
+
+    #[test]
+    fn resolver_applies_backfire_amplification_to_defender_incoming_damage() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1360 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let baseline_attacker = spawn_player(
+            &mut app,
+            "AzureBaseBackfire",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let amplified_attacker = spawn_player(
+            &mut app,
+            "AzureAmpBackfire",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let baseline_target = spawn_player(
+            &mut app,
+            "CrimsonBaseBackfire",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let amplified_target = spawn_player(
+            &mut app,
+            "CrimsonAmpBackfire",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut()
+            .entity_mut(amplified_target)
+            .insert(BackfireAmplification {
+                meridian_id: MeridianId::Du,
+                attack_kind: crate::combat::zhenmai_v2::ZhenmaiAttackKind::RealYuan,
+                started_at_tick: 1300,
+                expires_at_tick: 1400,
+                k_drain: 1.5,
+                incoming_damage_multiplier: 0.5,
+            });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: baseline_attacker,
+            target: Some(baseline_target),
+            issued_at_tick: 1359,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: amplified_attacker,
+            target: Some(amplified_target),
+            issued_at_tick: 1359,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        let baseline_damage = events[0].damage;
+        let amplified_damage = events[1].damage;
+
+        assert!(
+            amplified_damage < baseline_damage,
+            "backfire amplification should reduce only the holder's incoming damage"
+        );
+        assert!(
+            amplified_damage >= 1.0,
+            "backfire amplification is not immunity; main hit still lands"
         );
     }
 

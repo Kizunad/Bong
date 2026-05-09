@@ -64,7 +64,9 @@ class QuickBarHudPlannerTest {
             240
         );
 
-        assertTrue(commands.stream().anyMatch(HudRenderCommand::isText));
+        assertTrue(commands.stream()
+            .filter(HudRenderCommand::isText)
+            .anyMatch(command -> "护脉".equals(command.text())));
     }
 
     @Test

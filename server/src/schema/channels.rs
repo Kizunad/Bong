@@ -210,6 +210,7 @@ mod tests {
         assert_eq!(CH_WOLIU_BACKFIRE, "bong:woliu/backfire");
         assert_eq!(CH_WOLIU_PROJECTILE_DRAINED, "bong:woliu/projectile_drained");
         assert_eq!(CH_WOLIU_VORTEX_STATE, "bong:woliu/vortex_state");
+        assert_eq!(CH_ZHENMAI_SKILL_EVENT, "bong:zhenmai/skill_event");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
         assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
         assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");

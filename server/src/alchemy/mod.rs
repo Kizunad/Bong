@@ -621,6 +621,7 @@ mod integration_tests {
                 .push(crate::cultivation::components::ContamSource {
                     amount: 0.2,
                     color: ColorKind::Mellow,
+                    meridian_id: None,
                     attacker_id: None,
                     introduced_at: 1100,
                 });

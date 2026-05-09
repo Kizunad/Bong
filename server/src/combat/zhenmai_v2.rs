@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, Position, Query, Res, UniqueId,
-    Update, Username,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, IntoSystemConfigs, Position, Query,
+    Res, UniqueId, Update, Username,
 };
 
 use crate::combat::components::{
@@ -12,7 +12,7 @@ use crate::combat::components::{
 };
 use crate::combat::events::{AttackSource, StatusEffectKind};
 use crate::combat::status::has_active_status;
-use crate::combat::CombatClock;
+use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -174,7 +174,7 @@ pub struct HardenProfile {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SeverChainProfile {
     pub k_drain: f64,
-    pub self_damage_multiplier: f32,
+    pub incoming_damage_multiplier: f32,
     pub qi_cost: f64,
     pub grants_amplification: bool,
 }
@@ -206,7 +206,8 @@ pub struct BackfireAmplification {
     pub started_at_tick: u64,
     pub expires_at_tick: u64,
     pub k_drain: f64,
-    pub self_damage_multiplier: f32,
+    #[serde(alias = "self_damage_multiplier")]
+    pub incoming_damage_multiplier: f32,
 }
 
 impl BackfireAmplification {
@@ -293,7 +294,8 @@ pub fn register(app: &mut App) {
             multipoint_duration_tick,
             harden_duration_tick,
             amplification_duration_tick,
-        ),
+        )
+            .in_set(CombatSystemSet::Physics),
     );
 }
 
@@ -410,20 +412,20 @@ pub fn sever_chain_profile(realm: Realm) -> SeverChainProfile {
     match realm {
         Realm::Void => SeverChainProfile {
             k_drain: sever_meridian(NORMAL_DRAIN_CLAMP, 3.0),
-            self_damage_multiplier: 0.5,
+            incoming_damage_multiplier: 0.5,
             qi_cost: 50.0,
             grants_amplification: true,
         },
         Realm::Spirit => SeverChainProfile {
             k_drain: sever_meridian(NORMAL_DRAIN_CLAMP, 2.4),
-            self_damage_multiplier: 0.7,
+            incoming_damage_multiplier: 0.7,
             qi_cost: 60.0,
             grants_amplification: true,
         },
         _ => SeverChainProfile {
             k_drain: 0.0,
-            self_damage_multiplier: 1.0,
-            qi_cost: 0.0,
+            incoming_damage_multiplier: 1.0,
+            qi_cost: 50.0,
             grants_amplification: false,
         },
     }
@@ -551,7 +553,7 @@ fn resolve_neutralize(
     if is_meridian_severed(world, caster, meridian_id) {
         return rejected(CastRejectReason::MeridianSevered(Some(meridian_id)));
     }
-    let removable = contamination_total(world, caster).min(profile.max_percent);
+    let removable = contamination_for_meridian(world, caster, meridian_id).min(profile.max_percent);
     if removable <= f64::EPSILON {
         return rejected(CastRejectReason::InvalidTarget);
     }
@@ -559,7 +561,7 @@ fn resolve_neutralize(
     if !spend_qi(world, caster, qi_cost) {
         return rejected(CastRejectReason::QiInsufficient);
     }
-    let removed = reduce_contamination(world, caster, removable);
+    let removed = reduce_contamination_for_meridian(world, caster, meridian_id, removable);
     world.send_event(LocalNeutralizeEvent {
         caster,
         meridian_id,
@@ -804,7 +806,7 @@ fn resolve_sever_chain(
             started_at_tick: now_tick,
             expires_at_tick: now_tick.saturating_add(BACKFIRE_AMPLIFICATION_TICKS),
             k_drain: profile.k_drain,
-            self_damage_multiplier: profile.self_damage_multiplier,
+            incoming_damage_multiplier: profile.incoming_damage_multiplier,
         };
         world.entity_mut(caster).insert(amplification.clone());
         world.send_event(BackfireAmplificationActiveEvent {
@@ -812,7 +814,7 @@ fn resolve_sever_chain(
             meridian_id,
             attack_kind,
             k_drain: amplification.k_drain,
-            self_damage_multiplier: amplification.self_damage_multiplier,
+            self_damage_multiplier: amplification.incoming_damage_multiplier,
             expires_at_tick: amplification.expires_at_tick,
         });
     }
@@ -1076,20 +1078,38 @@ fn spend_qi(world: &mut bevy_ecs::world::World, caster: Entity, amount: f64) -> 
     true
 }
 
-fn contamination_total(world: &bevy_ecs::world::World, caster: Entity) -> f64 {
+fn contamination_for_meridian(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    meridian_id: MeridianId,
+) -> f64 {
     world
         .get::<Contamination>(caster)
-        .map(|c| c.entries.iter().map(|entry| entry.amount.max(0.0)).sum())
+        .map(|c| {
+            c.entries
+                .iter()
+                .filter(|entry| entry.meridian_id == Some(meridian_id))
+                .map(|entry| entry.amount.max(0.0))
+                .sum()
+        })
         .unwrap_or(0.0)
 }
 
-fn reduce_contamination(world: &mut bevy_ecs::world::World, caster: Entity, amount: f64) -> f64 {
+fn reduce_contamination_for_meridian(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    meridian_id: MeridianId,
+    amount: f64,
+) -> f64 {
     let Some(mut contamination) = world.get_mut::<Contamination>(caster) else {
         return 0.0;
     };
     let mut remaining = amount.max(0.0);
     let mut removed = 0.0;
     for entry in &mut contamination.entries {
+        if entry.meridian_id != Some(meridian_id) {
+            continue;
+        }
         if remaining <= f64::EPSILON {
             break;
         }
@@ -1503,7 +1523,7 @@ mod tests {
             started_at_tick: 10,
             expires_at_tick: 30,
             k_drain: 1.5,
-            self_damage_multiplier: 0.5,
+            incoming_damage_multiplier: 0.5,
         };
         assert!(active.active_for(ZhenmaiAttackKind::Array, 29));
         assert!(!active.active_for(ZhenmaiAttackKind::Array, 30));
@@ -1598,6 +1618,7 @@ mod tests {
             entries: vec![ContamSource {
                 amount: 10.0,
                 color: ColorKind::Insidious,
+                meridian_id: Some(MeridianId::Lung),
                 attacker_id: None,
                 introduced_at: 1,
             }],
@@ -1608,6 +1629,40 @@ mod tests {
         ));
         let contam = app.world().get::<Contamination>(entity).unwrap();
         assert_eq!(contam.entries[0].amount, 6.0);
+    }
+
+    #[test]
+    fn resolve_neutralize_keeps_other_meridian_contamination() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Condense, 100.0);
+        app.world_mut().entity_mut(entity).insert(Contamination {
+            entries: vec![
+                ContamSource {
+                    amount: 6.0,
+                    color: ColorKind::Insidious,
+                    meridian_id: Some(MeridianId::Lung),
+                    attacker_id: None,
+                    introduced_at: 1,
+                },
+                ContamSource {
+                    amount: 5.0,
+                    color: ColorKind::Turbid,
+                    meridian_id: Some(MeridianId::Heart),
+                    attacker_id: None,
+                    introduced_at: 1,
+                },
+            ],
+        });
+
+        assert!(matches!(
+            resolve_neutralize(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        let contam = app.world().get::<Contamination>(entity).unwrap();
+        assert!(contam
+            .entries
+            .iter()
+            .any(|entry| entry.meridian_id == Some(MeridianId::Heart) && entry.amount == 5.0));
     }
 
     #[test]
@@ -1687,6 +1742,34 @@ mod tests {
             resolve_sever_chain(app.world_mut(), entity, 0, None),
             CastResult::Started { .. }
         ));
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            0.0
+        );
         assert!(app.world().get::<BackfireAmplification>(entity).is_none());
+    }
+
+    #[test]
+    fn resolve_sever_chain_below_spirit_still_requires_qi_cost() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Condense, 49.0);
+        configure_sever_chain(
+            &mut app,
+            entity,
+            MeridianId::Ren,
+            ZhenmaiAttackKind::RealYuan,
+        );
+
+        assert_eq!(
+            resolve_sever_chain(app.world_mut(), entity, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::QiInsufficient
+            }
+        );
+        assert!(!app
+            .world()
+            .get::<MeridianSeveredPermanent>(entity)
+            .unwrap()
+            .is_severed(MeridianId::Ren));
     }
 }

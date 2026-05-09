@@ -154,6 +154,7 @@ pub fn apply_completion_hazards(
                     contamination.entries.push(ContamSource {
                         amount: contamination_amount(*wound),
                         color: ColorKind::Insidious,
+                        meridian_id: None,
                         attacker_id: Some("botany_v2_hazard".to_string()),
                         introduced_at: now_tick,
                     });

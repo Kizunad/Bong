@@ -168,6 +168,7 @@ pub fn apply_bare_hand_butcher_hazard(
     contamination.entries.push(ContamSource {
         amount: 0.4,
         color: ColorKind::Turbid,
+        meridian_id: None,
         attacker_id: Some("fauna_butcher_hazard".to_string()),
         introduced_at: now_tick,
     });
