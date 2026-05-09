@@ -25,5 +25,6 @@ public enum HudRenderLayer {
     TRIBULATION,
     NEAR_DEATH,
     TSY_EXTRACT,
-    REALM_COLLAPSE
+    REALM_COLLAPSE,
+    MERIDIAN_OPEN
 }

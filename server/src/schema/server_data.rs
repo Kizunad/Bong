@@ -238,6 +238,9 @@ pub enum ServerDataPayloadV1 {
         qi_color_chaotic: bool,
         qi_color_hunyuan: bool,
         practice_weights: Vec<PracticeWeightV1>,
+        /// 当前冲脉目标的数组下标（0..19，与 opened/open_progress 等并行数组一致）。
+        /// None 表示未设定目标。
+        target_meridian: Option<u8>,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -698,6 +701,8 @@ enum ServerDataPayloadWireV1 {
         qi_color_hunyuan: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         practice_weights: Vec<PracticeWeightV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_meridian: Option<u8>,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -1494,6 +1499,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_chaotic,
                 qi_color_hunyuan,
                 practice_weights,
+                target_meridian,
             } => Ok(Self::CultivationDetail {
                 realm,
                 opened,
@@ -1511,6 +1517,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_chaotic,
                 qi_color_hunyuan,
                 practice_weights,
+                target_meridian,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -1959,6 +1966,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_chaotic,
                 qi_color_hunyuan,
                 practice_weights,
+                target_meridian,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 opened: opened.clone(),
@@ -1976,6 +1984,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_chaotic: *qi_color_chaotic,
                 qi_color_hunyuan: *qi_color_hunyuan,
                 practice_weights: practice_weights.clone(),
+                target_meridian: *target_meridian,
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -2996,6 +3005,7 @@ mod tests {
                 weight: 42.0,
                 ratio: 0.7,
             }],
+            target_meridian: Some(4),
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -3016,6 +3026,7 @@ mod tests {
                 qi_color_main,
                 qi_color_secondary,
                 practice_weights,
+                target_meridian,
                 ..
             } => {
                 assert_eq!(opened.len(), 20);
@@ -3032,6 +3043,7 @@ mod tests {
                 assert_eq!(qi_color_secondary, Some(ColorKind::Heavy));
                 assert_eq!(practice_weights[0].color, ColorKind::Intricate);
                 assert_eq!(practice_weights[0].weight, 42.0);
+                assert_eq!(target_meridian, Some(4));
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }

@@ -35,6 +35,7 @@ public final class MeridianBody {
     private final boolean qiColorChaotic;
     private final boolean qiColorHunyuan;
     private final Map<ColorKind, Double> qiColorPracticeWeights;
+    private final MeridianChannel targetMeridian;
 
     private MeridianBody(Builder b) {
         this.channels = Collections.unmodifiableMap(new EnumMap<>(b.channels));
@@ -60,6 +61,7 @@ public final class MeridianBody {
         this.qiColorPracticeWeights = b.qiColorPracticeWeights.isEmpty()
             ? Map.of()
             : Collections.unmodifiableMap(new EnumMap<>(b.qiColorPracticeWeights));
+        this.targetMeridian = b.targetMeridian;
     }
 
     public ChannelState channel(MeridianChannel ch) { return channels.get(ch); }
@@ -81,6 +83,8 @@ public final class MeridianBody {
     public boolean qiColorChaotic() { return qiColorChaotic; }
     public boolean qiColorHunyuan() { return qiColorHunyuan; }
     public Map<ColorKind, Double> qiColorPracticeWeights() { return qiColorPracticeWeights; }
+    /** 当前冲脉目标，null 表示未设定。 */
+    public MeridianChannel targetMeridian() { return targetMeridian; }
     /** 某条经脉当前裂痕条目数；未记录则返回 0。 */
     public int cracksFor(MeridianChannel ch) {
         Integer n = cracksCount.get(ch);
@@ -152,6 +156,7 @@ public final class MeridianBody {
         private boolean qiColorChaotic = false;
         private boolean qiColorHunyuan = false;
         private final EnumMap<ColorKind, Double> qiColorPracticeWeights = new EnumMap<>(ColorKind.class);
+        private MeridianChannel targetMeridian = null;
 
         private Builder() {}
 
@@ -217,6 +222,11 @@ public final class MeridianBody {
             this.qiColorSecondary = secondary;
             this.qiColorChaotic = chaotic;
             this.qiColorHunyuan = hunyuan;
+            return this;
+        }
+
+        public Builder targetMeridian(MeridianChannel target) {
+            this.targetMeridian = target;
             return this;
         }
 
