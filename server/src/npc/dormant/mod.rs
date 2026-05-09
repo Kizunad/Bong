@@ -1,0 +1,776 @@
+//! NPC dormant data plane.
+//!
+//! v1 keeps a deliberately small two-state model: live ECS entities stay
+//! hydrated, far NPCs move into this resource and are advanced in batches.
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+use valence::prelude::{bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Update};
+
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
+use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
+use crate::npc::faction::FactionMembership;
+use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
+use crate::npc::loot::default_loot_for_archetype;
+use crate::npc::loot::NpcLootTable;
+use crate::npc::movement::GameTick;
+use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index, seed_position_for_zone};
+use crate::qi_physics::{
+    qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
+use crate::social::components::CharId;
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::ZoneRegistry;
+
+pub const NPC_DORMANT_REDIS_KEY: &str = "bong:npc/dormant";
+pub const HYDRATE_RADIUS_BLOCKS: f64 = 64.0;
+pub const DEHYDRATE_RADIUS_BLOCKS: f64 = 256.0;
+pub const DORMANT_ZONE_ABSORPTION_RADIUS_BLOCKS: f64 = 64.0;
+
+#[derive(Clone, Debug, Resource)]
+pub struct NpcVirtualizationConfig {
+    pub hydrate_radius_blocks: f64,
+    pub dehydrate_radius_blocks: f64,
+    pub transition_interval_ticks: u32,
+    pub dormant_tick_interval_ticks: u32,
+    pub dormant_aging_rate_multiplier: f64,
+    pub max_hydrated_count: usize,
+    pub max_dormant_count: usize,
+    /// Test and batch-run escape hatch. Runtime keeps no-player worlds hydrated
+    /// until seed paths can create dormant NPCs directly.
+    pub dehydrate_without_players: bool,
+}
+
+impl Default for NpcVirtualizationConfig {
+    fn default() -> Self {
+        Self {
+            hydrate_radius_blocks: HYDRATE_RADIUS_BLOCKS,
+            dehydrate_radius_blocks: DEHYDRATE_RADIUS_BLOCKS,
+            transition_interval_ticks: 20,
+            dormant_tick_interval_ticks: 20 * 60,
+            dormant_aging_rate_multiplier: 0.3,
+            max_hydrated_count: 200,
+            max_dormant_count: 5000,
+            dehydrate_without_players: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Resource)]
+pub struct DormantRoguePopulationSeedConfig {
+    pub target_count: u32,
+    pub resource_fraction: f32,
+    pub resource_spirit_qi_threshold: f64,
+    pub max_initial_age_ratio: f64,
+}
+
+impl Default for DormantRoguePopulationSeedConfig {
+    fn default() -> Self {
+        let target_count = std::env::var("BONG_DORMANT_ROGUE_SEED_COUNT")
+            .ok()
+            .and_then(|raw| raw.parse::<u32>().ok())
+            .unwrap_or(1000);
+        Self {
+            target_count,
+            resource_fraction: 0.8,
+            resource_spirit_qi_threshold: 0.4,
+            max_initial_age_ratio: 0.8,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantPatrolSnapshot {
+    pub home_zone: String,
+    pub anchor_index: usize,
+    pub current_target: [f64; 3],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DormantBehaviorIntent {
+    Wander { drift_radius: f64 },
+    PatrolToward { target: [f64; 3] },
+    FleeFrom { source: [f64; 3], until_tick: u64 },
+    Cultivate { zone: String },
+    Retire { destination: [f64; 3] },
+}
+
+impl DormantBehaviorIntent {
+    pub fn for_archetype(archetype: NpcArchetype, patrol: Option<&DormantPatrolSnapshot>) -> Self {
+        match archetype {
+            NpcArchetype::Rogue | NpcArchetype::Disciple => patrol
+                .map(|patrol| Self::Cultivate {
+                    zone: patrol.home_zone.clone(),
+                })
+                .unwrap_or(Self::Wander {
+                    drift_radius: 120.0,
+                }),
+            NpcArchetype::Beast | NpcArchetype::GuardianRelic => patrol
+                .map(|patrol| Self::PatrolToward {
+                    target: patrol.current_target,
+                })
+                .unwrap_or(Self::Wander { drift_radius: 80.0 }),
+            _ => Self::Wander {
+                drift_radius: 120.0,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NpcDormantSnapshot {
+    pub char_id: CharId,
+    pub archetype: NpcArchetype,
+    pub dimension: DimensionKind,
+    pub zone_name: String,
+    pub position: [f64; 3],
+    pub cultivation: Cultivation,
+    pub meridian_system: MeridianSystem,
+    pub meridian_severed: MeridianSeveredPermanent,
+    pub contamination: Contamination,
+    pub lifespan: NpcLifespan,
+    pub shared_lifespan: LifespanComponent,
+    pub lifespan_extension_ledger: LifespanExtensionLedger,
+    pub death_registry: DeathRegistry,
+    pub life_record: LifeRecord,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub faction: Option<FactionMembership>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub patrol: Option<DormantPatrolSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub loot_table: Option<NpcLootTable>,
+    pub intent: DormantBehaviorIntent,
+    pub dormant_since_tick: u64,
+    pub last_dormant_tick_processed: u64,
+    pub initial_qi: f64,
+    pub qi_ledger_net: f64,
+}
+
+impl NpcDormantSnapshot {
+    pub fn position_vec(&self) -> DVec3 {
+        dvec3_from_array(self.position)
+    }
+
+    pub fn set_position_vec(&mut self, pos: DVec3) {
+        self.position = vec3_to_array(pos);
+    }
+
+    pub fn realm_label(&self) -> String {
+        format!("{:?}", self.cultivation.realm).to_ascii_lowercase()
+    }
+
+    pub fn faction_id_label(&self) -> Option<String> {
+        self.faction
+            .as_ref()
+            .map(|membership| membership.faction_id.as_str().to_string())
+    }
+}
+
+#[derive(Clone, Debug, Default, Resource, Serialize, Deserialize)]
+pub struct NpcDormantStore {
+    pub snapshots: HashMap<CharId, NpcDormantSnapshot>,
+    pub by_archetype: HashMap<NpcArchetype, Vec<CharId>>,
+    pub by_zone: HashMap<String, Vec<CharId>>,
+}
+
+impl NpcDormantStore {
+    pub fn len(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+
+    pub fn insert(&mut self, snapshot: NpcDormantSnapshot) -> Option<NpcDormantSnapshot> {
+        let previous = self.snapshots.insert(snapshot.char_id.clone(), snapshot);
+        self.rebuild_indexes();
+        previous
+    }
+
+    pub fn remove(&mut self, char_id: &str) -> Option<NpcDormantSnapshot> {
+        let removed = self.snapshots.remove(char_id);
+        if removed.is_some() {
+            self.rebuild_indexes();
+        }
+        removed
+    }
+
+    pub fn contains(&self, char_id: &str) -> bool {
+        self.snapshots.contains_key(char_id)
+    }
+
+    #[cfg(test)]
+    pub fn ids_by_archetype(&self, archetype: NpcArchetype) -> &[CharId] {
+        self.by_archetype
+            .get(&archetype)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    #[cfg(test)]
+    pub fn ids_by_zone(&self, zone_name: &str) -> &[CharId] {
+        self.by_zone
+            .get(zone_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn sorted_snapshots(&self) -> Vec<&NpcDormantSnapshot> {
+        let mut values = self.snapshots.values().collect::<Vec<_>>();
+        values.sort_by(|left, right| left.char_id.cmp(&right.char_id));
+        values
+    }
+
+    pub fn rebuild_indexes(&mut self) {
+        self.by_archetype.clear();
+        self.by_zone.clear();
+        for snapshot in self.snapshots.values() {
+            self.by_archetype
+                .entry(snapshot.archetype)
+                .or_default()
+                .push(snapshot.char_id.clone());
+            self.by_zone
+                .entry(snapshot.zone_name.clone())
+                .or_default()
+                .push(snapshot.char_id.clone());
+        }
+        for ids in self.by_archetype.values_mut() {
+            ids.sort();
+        }
+        for ids in self.by_zone.values_mut() {
+            ids.sort();
+        }
+    }
+
+    pub fn to_redis_hash_payloads(&self) -> Result<Vec<(String, String)>, serde_json::Error> {
+        self.sorted_snapshots()
+            .into_iter()
+            .map(|snapshot| {
+                serde_json::to_string(snapshot).map(|payload| (snapshot.char_id.clone(), payload))
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Event, PartialEq, Eq)]
+pub struct DormantSeveredAt {
+    pub char_id: CharId,
+    pub meridian_id: crate::cultivation::components::MeridianId,
+}
+
+pub fn register(app: &mut App) {
+    tracing::info!("[bong][npc] registering dormant NPC store and batch tick");
+    app.init_resource::<NpcDormantStore>()
+        .insert_resource(NpcVirtualizationConfig::default())
+        .insert_resource(DormantRoguePopulationSeedConfig::default())
+        .add_event::<DormantSeveredAt>()
+        .add_systems(
+            Update,
+            (
+                seed_initial_dormant_population_on_startup,
+                dormant_global_tick_system,
+            ),
+        );
+}
+
+pub fn current_tick(game_tick: Option<&GameTick>) -> u64 {
+    game_tick.map(|tick| u64::from(tick.0)).unwrap_or_default()
+}
+
+pub fn should_run_interval(tick: u64, interval: u32) -> bool {
+    let interval = interval.max(1) as u64;
+    tick == 0 || tick.is_multiple_of(interval)
+}
+
+pub fn vec3_to_array(pos: DVec3) -> [f64; 3] {
+    [pos.x, pos.y, pos.z]
+}
+
+pub fn dvec3_from_array(pos: [f64; 3]) -> DVec3 {
+    DVec3::new(pos[0], pos[1], pos[2])
+}
+
+pub fn planar_distance(left: DVec3, right: DVec3) -> f64 {
+    let dx = left.x - right.x;
+    let dz = left.z - right.z;
+    (dx * dx + dz * dz).sqrt()
+}
+
+fn dormant_global_tick_system(
+    game_tick: Option<Res<GameTick>>,
+    config: Res<NpcVirtualizationConfig>,
+    mut store: ResMut<NpcDormantStore>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut death_notices: EventWriter<NpcDeathNotice>,
+) {
+    let tick = current_tick(game_tick.as_deref());
+    if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
+        return;
+    }
+    let mut ids = store.snapshots.keys().cloned().collect::<Vec<_>>();
+    ids.sort();
+
+    let mut expired = Vec::new();
+    for char_id in ids {
+        let Some(snapshot) = store.snapshots.get_mut(&char_id) else {
+            continue;
+        };
+        let elapsed_ticks = if tick > snapshot.last_dormant_tick_processed {
+            tick - snapshot.last_dormant_tick_processed
+        } else {
+            u64::from(config.dormant_tick_interval_ticks.max(1))
+        };
+        snapshot.last_dormant_tick_processed = tick;
+        advance_dormant_position(snapshot, elapsed_ticks);
+        snapshot.lifespan.age_ticks +=
+            elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
+
+        if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+            apply_dormant_regen(snapshot, zones, ledger);
+        }
+
+        if snapshot.lifespan.is_expired() {
+            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+                release_dormant_qi_to_zone(snapshot, zones, ledger);
+            }
+            death_notices.send(dormant_death_notice(snapshot));
+            expired.push(char_id);
+        }
+    }
+
+    for char_id in expired {
+        store.snapshots.remove(&char_id);
+    }
+    if !store.snapshots.is_empty() {
+        store.rebuild_indexes();
+    }
+}
+
+fn seed_initial_dormant_population_on_startup(
+    game_tick: Option<Res<GameTick>>,
+    config: Res<NpcVirtualizationConfig>,
+    seed_config: Res<DormantRoguePopulationSeedConfig>,
+    mut store: ResMut<NpcDormantStore>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+    mut seeded: valence::prelude::Local<bool>,
+) {
+    if *seeded || seed_config.target_count == 0 {
+        return;
+    }
+    if !store.is_empty() {
+        *seeded = true;
+        return;
+    }
+    let Some(zone_registry) = zone_registry.as_deref() else {
+        return;
+    };
+    if zone_registry.zones.is_empty() {
+        return;
+    }
+
+    let capacity = config.max_dormant_count.saturating_sub(store.len());
+    let target_count = seed_config.target_count.min(capacity as u32);
+    if target_count == 0 {
+        *seeded = true;
+        return;
+    }
+
+    let (resource_zones, background_zones) = classify_zones_by_qi(
+        &zone_registry.zones,
+        seed_config.resource_spirit_qi_threshold,
+    );
+    let resource_target =
+        ((target_count as f32) * seed_config.resource_fraction.clamp(0.0, 1.0)).round() as u32;
+    let tick = current_tick(game_tick.as_deref());
+
+    for index in 0..target_count {
+        let zone_candidates = if index < resource_target && !resource_zones.is_empty() {
+            &resource_zones
+        } else if !background_zones.is_empty() {
+            &background_zones
+        } else {
+            &resource_zones
+        };
+        if zone_candidates.is_empty() {
+            break;
+        }
+
+        let zone = zone_candidates[(index as usize) % zone_candidates.len()];
+        let snapshot =
+            dormant_rogue_seed_snapshot(zone, index, tick, seed_config.max_initial_age_ratio);
+        store.snapshots.insert(snapshot.char_id.clone(), snapshot);
+    }
+    store.rebuild_indexes();
+    *seeded = true;
+    tracing::info!(
+        "[bong][npc] seeded {} dormant rogue NPC snapshots",
+        store.len()
+    );
+}
+
+fn dormant_rogue_seed_snapshot(
+    zone: &crate::world::zone::Zone,
+    index: u32,
+    tick: u64,
+    max_initial_age_ratio: f64,
+) -> NpcDormantSnapshot {
+    let archetype = NpcArchetype::Rogue;
+    let (position, patrol_target) = seed_position_for_zone(zone, index);
+    let char_id = format!("dormant:rogue:{index}");
+    let cultivation = Cultivation::default();
+    let lifespan = NpcLifespan::new(
+        initial_age_for_index(
+            index,
+            archetype.default_max_age_ticks(),
+            max_initial_age_ratio,
+        ),
+        archetype.default_max_age_ticks(),
+    );
+    let patrol = Some(DormantPatrolSnapshot {
+        home_zone: zone.name.clone(),
+        anchor_index: index as usize,
+        current_target: vec3_to_array(patrol_target),
+    });
+    let intent = DormantBehaviorIntent::for_archetype(archetype, patrol.as_ref());
+
+    NpcDormantSnapshot {
+        char_id: char_id.clone(),
+        archetype,
+        dimension: zone.dimension,
+        zone_name: zone.name.clone(),
+        position: vec3_to_array(position),
+        cultivation: cultivation.clone(),
+        meridian_system: MeridianSystem::default(),
+        meridian_severed: MeridianSeveredPermanent::default(),
+        contamination: Contamination::default(),
+        lifespan,
+        shared_lifespan: LifespanComponent::for_realm(cultivation.realm),
+        lifespan_extension_ledger: LifespanExtensionLedger::default(),
+        death_registry: DeathRegistry::new(char_id.clone()),
+        life_record: LifeRecord::new(char_id),
+        faction: None,
+        patrol,
+        loot_table: Some(default_loot_for_archetype(archetype)),
+        intent,
+        dormant_since_tick: tick,
+        last_dormant_tick_processed: tick,
+        initial_qi: cultivation.qi_current,
+        qi_ledger_net: 0.0,
+    }
+}
+
+pub fn advance_dormant_position(snapshot: &mut NpcDormantSnapshot, elapsed_ticks: u64) {
+    let seconds = elapsed_ticks as f64 / 20.0;
+    let current = snapshot.position_vec();
+    let next = match &snapshot.intent {
+        DormantBehaviorIntent::Wander { drift_radius } => {
+            let seed = deterministic_unit(snapshot.char_id.as_str(), elapsed_ticks);
+            let angle = seed * std::f64::consts::TAU;
+            let step = seconds.clamp(0.0, 60.0);
+            let drift_cap = drift_radius.max(0.0);
+            DVec3::new(
+                current.x + angle.cos() * step.min(drift_cap),
+                current.y,
+                current.z + angle.sin() * step.min(drift_cap),
+            )
+        }
+        DormantBehaviorIntent::PatrolToward { target }
+        | DormantBehaviorIntent::Retire {
+            destination: target,
+        } => move_toward(current, dvec3_from_array(*target), seconds.max(0.0)),
+        DormantBehaviorIntent::FleeFrom { source, .. } => {
+            let source = dvec3_from_array(*source);
+            let away = current - source;
+            let length = (away.x * away.x + away.z * away.z).sqrt();
+            if length <= f64::EPSILON {
+                current
+            } else {
+                let step = seconds.max(0.0);
+                DVec3::new(
+                    current.x + away.x / length * step,
+                    current.y,
+                    current.z + away.z / length * step,
+                )
+            }
+        }
+        DormantBehaviorIntent::Cultivate { .. } => current,
+    };
+    snapshot.set_position_vec(next);
+}
+
+fn move_toward(current: DVec3, target: DVec3, max_step: f64) -> DVec3 {
+    let dx = target.x - current.x;
+    let dz = target.z - current.z;
+    let distance = (dx * dx + dz * dz).sqrt();
+    if distance <= f64::EPSILON || max_step >= distance {
+        return DVec3::new(target.x, current.y, target.z);
+    }
+    DVec3::new(
+        current.x + dx / distance * max_step,
+        current.y,
+        current.z + dz / distance * max_step,
+    )
+}
+
+fn deterministic_unit(char_id: &str, salt: u64) -> f64 {
+    let mut hash = salt ^ 0x9E37_79B9_7F4A_7C15;
+    for byte in char_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    }
+    (hash & 0xffff) as f64 / 65_535.0
+}
+
+pub fn apply_dormant_regen(
+    snapshot: &mut NpcDormantSnapshot,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+) -> Option<QiTransfer> {
+    let pos = snapshot.position_vec();
+    let zone_name = zones
+        .find_zone(snapshot.dimension, pos)
+        .filter(|zone| planar_distance(zone.center(), pos) <= DORMANT_ZONE_ABSORPTION_RADIUS_BLOCKS)
+        .map(|zone| zone.name.clone())?;
+    let zone = zones.find_zone_mut(zone_name.as_str())?;
+    if zone.spirit_qi <= 0.0 {
+        return None;
+    }
+
+    let rate = snapshot.meridian_system.sum_rate().max(0.1);
+    let integrity_count = snapshot.meridian_system.iter().count() as f64;
+    let avg_integrity = if integrity_count > 0.0 {
+        snapshot
+            .meridian_system
+            .iter()
+            .map(|meridian| meridian.integrity)
+            .sum::<f64>()
+            / integrity_count
+    } else {
+        1.0
+    };
+    let room = (snapshot.cultivation.qi_max - snapshot.cultivation.qi_current).max(0.0);
+    let (gain, drain) = regen_from_zone(zone.spirit_qi, rate, avg_integrity, room);
+    if gain <= 0.0 || drain <= 0.0 {
+        return None;
+    }
+
+    let zone_account = QiAccountId::zone(zone.name.clone());
+    let npc_account = QiAccountId::npc(snapshot.char_id.clone());
+    ledger
+        .set_balance(zone_account.clone(), zone.spirit_qi.max(0.0))
+        .ok()?;
+    ledger
+        .set_balance(
+            npc_account.clone(),
+            snapshot.cultivation.qi_current.max(0.0),
+        )
+        .ok()?;
+    let transfer = QiTransfer::new(
+        zone_account,
+        npc_account.clone(),
+        gain,
+        QiTransferReason::CultivationRegen,
+    )
+    .ok()?;
+    ledger.transfer(transfer.clone()).ok()?;
+
+    snapshot.cultivation.qi_current = ledger.balance(&npc_account);
+    snapshot.qi_ledger_net += gain;
+    zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
+    Some(transfer)
+}
+
+pub fn release_dormant_qi_to_zone(
+    snapshot: &mut NpcDormantSnapshot,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+) -> Option<QiTransfer> {
+    let pos = snapshot.position_vec();
+    let zone_name = zones
+        .find_zone(snapshot.dimension, pos)
+        .map(|zone| zone.name.clone())
+        .or_else(|| Some(snapshot.zone_name.clone()))?;
+    let zone = zones.find_zone_mut(zone_name.as_str())?;
+    let amount = snapshot.cultivation.qi_current.max(0.0);
+    if amount <= 0.0 {
+        return None;
+    }
+
+    let npc_account = QiAccountId::npc(snapshot.char_id.clone());
+    let zone_account = QiAccountId::zone(zone.name.clone());
+    ledger.set_balance(npc_account.clone(), amount).ok()?;
+    ledger
+        .set_balance(zone_account.clone(), zone.spirit_qi.max(0.0))
+        .ok()?;
+    let outcome =
+        qi_release_to_zone(amount, npc_account, zone_account, zone.spirit_qi, 1.0).ok()?;
+    let transfer = outcome.transfer?;
+    ledger.transfer(transfer.clone()).ok()?;
+    zone.spirit_qi = outcome.zone_after.clamp(-1.0, 1.0);
+    snapshot.cultivation.qi_current = 0.0;
+    snapshot.qi_ledger_net -= outcome.accepted;
+    Some(transfer)
+}
+
+fn dormant_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
+    let life_record_snapshot = {
+        let summary = snapshot.life_record.recent_summary_text(8);
+        if summary.is_empty() {
+            None
+        } else {
+            Some(summary)
+        }
+    };
+    NpcDeathNotice {
+        npc_id: snapshot.char_id.clone(),
+        archetype: snapshot.archetype,
+        reason: NpcDeathReason::NaturalAging,
+        faction_id: snapshot
+            .faction
+            .as_ref()
+            .map(|membership| membership.faction_id),
+        life_record_snapshot,
+        age_ticks: snapshot.lifespan.age_ticks,
+        max_age_ticks: snapshot.lifespan.max_age_ticks,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
+
+    fn zone() -> Zone {
+        Zone {
+            name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 128.0, 100.0)),
+            spirit_qi: 0.8,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: vec![DVec3::new(10.0, 64.0, 10.0)],
+            blocked_tiles: Vec::new(),
+        }
+    }
+
+    fn snapshot(char_id: &str, pos: DVec3) -> NpcDormantSnapshot {
+        let cultivation = Cultivation {
+            qi_current: 0.1,
+            qi_max: 1.0,
+            ..Default::default()
+        };
+        NpcDormantSnapshot {
+            char_id: char_id.to_string(),
+            archetype: NpcArchetype::Rogue,
+            dimension: DimensionKind::Overworld,
+            zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            position: vec3_to_array(pos),
+            cultivation: cultivation.clone(),
+            meridian_system: MeridianSystem::default(),
+            meridian_severed: MeridianSeveredPermanent::default(),
+            contamination: Contamination::default(),
+            lifespan: NpcLifespan::new(0.0, 1_000.0),
+            shared_lifespan: LifespanComponent::for_realm(cultivation.realm),
+            lifespan_extension_ledger: LifespanExtensionLedger::default(),
+            death_registry: DeathRegistry::new(char_id),
+            life_record: LifeRecord::new(char_id),
+            faction: None,
+            patrol: None,
+            loot_table: None,
+            intent: DormantBehaviorIntent::Cultivate {
+                zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            },
+            dormant_since_tick: 0,
+            last_dormant_tick_processed: 0,
+            initial_qi: 0.1,
+            qi_ledger_net: 0.0,
+        }
+    }
+
+    #[test]
+    fn store_indexes_by_archetype_and_zone() {
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
+        store.insert(snapshot("npc_b", DVec3::new(11.0, 64.0, 10.0)));
+
+        assert_eq!(
+            store.ids_by_archetype(NpcArchetype::Rogue),
+            &["npc_a".to_string(), "npc_b".to_string()]
+        );
+        assert_eq!(
+            store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME),
+            &["npc_a".to_string(), "npc_b".to_string()]
+        );
+    }
+
+    #[test]
+    fn dormant_regen_moves_qi_through_ledger() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger)
+            .expect("dormant regen should emit a transfer");
+
+        assert_eq!(transfer.from, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert_eq!(transfer.to, QiAccountId::npc("npc_a"));
+        assert!(snapshot.cultivation.qi_current > 0.1);
+        assert!(
+            zones
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                < 0.8
+        );
+        assert!(
+            (snapshot.qi_ledger_net - transfer.amount).abs() < f64::EPSILON,
+            "qi_ledger_net must audit the same amount as the ledger transfer"
+        );
+    }
+
+    #[test]
+    fn expired_dormant_npc_releases_qi_to_zone() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.qi_current = 0.4;
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = release_dormant_qi_to_zone(&mut snapshot, &mut zones, &mut ledger)
+            .expect("death release should emit a transfer");
+
+        assert_eq!(transfer.from, QiAccountId::npc("npc_a"));
+        assert_eq!(transfer.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert_eq!(snapshot.cultivation.qi_current, 0.0);
+        assert!(
+            zones
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                > 0.8
+        );
+    }
+
+    #[test]
+    fn redis_payload_roundtrips_snapshot() {
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
+
+        let payloads = store.to_redis_hash_payloads().expect("serialize");
+        assert_eq!(payloads[0].0, "npc_a");
+        let decoded: NpcDormantSnapshot =
+            serde_json::from_str(payloads[0].1.as_str()).expect("deserialize");
+        assert_eq!(decoded.char_id, "npc_a");
+        assert_eq!(decoded.position, [10.0, 64.0, 10.0]);
+    }
+}

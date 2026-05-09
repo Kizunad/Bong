@@ -7,6 +7,7 @@
 
 #![allow(dead_code)]
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
 use crate::npc::lifecycle::NpcArchetype;
@@ -15,7 +16,7 @@ use crate::npc::lifecycle::NpcArchetype;
 // but not yet wired into the live death/drop pipeline.
 /// 单条掉落条目：模板 ID + 基础掉率（0..=1）+ 数量范围。
 /// 每次 roll 独立判定：`roll < chance` 命中 → 产出 `min..=max` 堆叠数。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NpcLootEntry {
     pub template_id: String,
     pub chance: f32,
@@ -40,7 +41,7 @@ impl NpcLootEntry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Component)]
+#[derive(Clone, Debug, PartialEq, Component, Serialize, Deserialize)]
 pub struct NpcLootTable {
     pub archetype: NpcArchetype,
     pub entries: Vec<NpcLootEntry>,

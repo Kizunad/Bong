@@ -60,6 +60,7 @@ impl WorldQiBudget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum QiAccountKind {
     Player,
+    Npc,
     Zone,
     Container,
     Rift,
@@ -83,6 +84,10 @@ impl QiAccountId {
 
     pub fn player(id: impl Into<String>) -> Self {
         Self::new(QiAccountKind::Player, id)
+    }
+
+    pub fn npc(id: impl Into<String>) -> Self {
+        Self::new(QiAccountKind::Npc, id)
     }
 
     pub fn zone(id: impl Into<String>) -> Self {

@@ -1,8 +1,10 @@
 pub mod brain;
 pub mod brain_rat;
+pub mod dormant;
 pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
+pub mod hydrate;
 pub mod intrusion_npc;
 pub mod lifecycle;
 pub mod lingtian_pressure;
@@ -31,7 +33,7 @@ use valence::prelude::App;
 
 pub fn register(app: &mut App) {
     tracing::info!(
-        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/farming/movement/navigator/scenario/lingtian_pressure/territory systems"
+        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/farming/movement/navigator/scenario/lingtian_pressure/territory/dormant systems"
     );
     perf::register(app);
     spatial::register(app);
@@ -45,9 +47,11 @@ pub fn register(app: &mut App) {
     sync::register(app);
     brain::register(app);
     brain_rat::register(app);
+    dormant::register(app);
     farming_brain::register(app);
     tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator
+    hydrate::register(app);
     navigator::register(app);
     scenario::register(app);
     lingtian_pressure::register(app);
