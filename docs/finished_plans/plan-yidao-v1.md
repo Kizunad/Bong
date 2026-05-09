@@ -474,3 +474,46 @@ HUD 组件（plan-HUD-v1 接入）：
   - **plan-skill-v1 ✅** + **plan-craft-v1 ✅** + **plan-multi-style-v1 ✅** + **plan-alchemy-v1 ✅** + **plan-npc-ai-v1 ✅** + **plan-social-v1 ✅** —— 全部 6 个前置都已 finished
   - 用户 2026-05-09 拍板**音效/特效/HUD 区分硬约束**：5 招 cast 必须各自携带差异化 animation + particle + SFX + HUD 反馈（接经穴位针 vs 排异灸火 vs CPR 按压 vs 续命咏唱 vs 化虚群体环阵），§5 已覆盖；P0/P1/P4 验收必须包含视觉/听觉差异化回归测试，单方向 stub 实装不收
   - 下一步：进 P0（接经术 + 排异加速 + 平和色养成 底盘 4-6 周），同步与 yidao-v1 §7 九开放问题逐一收口
+
+## Finish Evidence
+
+### 落地清单
+
+- **Server / qi_physics**：`server/src/qi_physics/healing.rs` 落地接经、排异、急救、续命、群体接经 5 个治疗算子；`server/src/qi_physics/ledger.rs` 增加 `QiTransferReason::Healing`。
+- **Server / combat**：`server/src/combat/yidao.rs` 注册 `yidao.meridian_repair`、`yidao.contam_purge`、`yidao.emergency_resuscitate`、`yidao.life_extension`、`yidao.mass_meridian_repair` 5 招，接入 SEVERED 经脉修复、污染排异、NearDeath 急救、续命永久代价、化虚群体接经、`HealerProfile`、`HealingMastery`、`KarmaCounter`、医患 treatment contract 与医者 NPC 决策。
+- **Server / IPC**：`server/src/schema/yidao.rs`、`server/src/schema/channels.rs`、`server/src/network/redis_bridge.rs` 新增 `YidaoEventV1` 与 `bong:yidao/event`；`server/src/network/yidao_state_emit.rs` 下发 `HealerNpcAiStateV1` / `YidaoHudStateV1`。
+- **Server / audio**：`server/assets/audio/recipes/yidao_*.json` 新增 5 个医道音效 recipe，并由 `server/src/audio/mod.rs` 默认加载测试固定。
+- **Agent / schema**：`agent/packages/schema/src/yidao.ts`、`server-data.ts`、`channels.ts`、`schema-registry.ts` 增加 `YidaoEventV1`、`YidaoSkillIdV1`、`MedicalContractStateV1`、`HealerNpcAiStateV1`、`YidaoHudStateV1`，并生成对应 JSON schema。
+- **Agent / tiandao**：`agent/packages/tiandao/src/yidao-runtime.ts` 与 `main.ts` 接入医道事件订阅和 5 招叙事渲染。
+- **Client / HUD 与视觉**：`client/src/main/java/com/bong/client/yidao/*`、`YidaoHudPlanner.java`、`BongHudOrchestrator.java`、`ServerDataRouter.java` 接入医道 HUD / 医者 NPC AI 状态；`YidaoPeacePulsePlayer.java` 与 `VfxBootstrap.java` 注册 5 个平和色 VFX。
+
+### 关键 commit
+
+- `7981cd4a4` · 2026-05-09 · `feat(server): 落地医道五招与下发契约`
+- `0ef8e3529` · 2026-05-09 · `feat(agent): 接入医道 schema 与叙事运行时`
+- `124f01443` · 2026-05-09 · `feat(client): 渲染医道 HUD 与平和色视听反馈`
+- `3a811d57e` · 2026-05-09 · `fix(yidao): 收紧音效契约与 HUD 下发测试`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test` ✅ `3239 passed; 0 failed`
+- `cd agent && npm run generate -w @bong/schema` ✅，生成物无未提交漂移
+- `cd agent && npm run build` ✅
+- `cd agent && npm test -w @bong/schema` ✅ `13 files / 331 tests passed`
+- `cd agent && npm test -w @bong/tiandao` ✅ `43 files / 308 tests passed`
+- `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build` ✅ `BUILD SUCCESSFUL`
+- `git diff --check` ✅
+
+### 跨仓库核验
+
+- **Server**：`YidaoEventV1`、`HealerNpcAiStateV1`、`YidaoHudStateV1`、`CH_YIDAO_EVENT`、`RedisOutbound::YidaoEvent`、`ServerDataPayloadV1::HealerNpcAiState`、`ServerDataPayloadV1::YidaoHudState`。
+- **Agent**：`CHANNELS.YIDAO_EVENT = "bong:yidao/event"`、`YidaoNarrationRuntime`、`validateYidaoEventV1Contract`、`validateHealerNpcAiStateV1Contract`、`validateYidaoHudStateV1Contract`。
+- **Client**：`YidaoServerDataHandler`、`YidaoHudStateStore`、`YidaoNpcAiStateStore`、`YidaoHudPlanner`、`YidaoPeacePulsePlayer`、`healer_npc_ai_state` / `yidao_hud_state` 路由。
+- **5 招差异化资源**：`bong:yidao_meridian_repair`、`bong:yidao_contam_purge`、`bong:yidao_emergency_resuscitate`、`bong:yidao_life_extension`、`bong:yidao_mass_meridian_repair`；对应 `yidao_*.json` audio recipe 已纳入默认 registry。
+
+### 遗留 / 后续
+
+- `docs/library/` 属于 library-curator 责任域，plan 流水线未主动回写 `peoples-0007 医者列传` 或 `cultivation-0002 §针灸论`。
+- 业力深链、业障劫叙事、跨周目继承与亚流派扩展留给 `plan-tribulation-v1`、`plan-multi-life-v1`、`plan-yidao-v2` 继续深化；本 v1 已提供 `KarmaCounter`、`YidaoEventV1` 与医道 contract state 的运行时接入面。
