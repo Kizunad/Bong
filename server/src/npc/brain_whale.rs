@@ -114,6 +114,11 @@ fn whale_drift_action_system(
 
 /// 把 Position 朝 controller.target 推进 cruise_speed，叠加 Y 正弦震荡，
 /// 同步 Look.yaw 到运动方向。target=None 时整体 no-op。
+///
+/// **baseline 与 visible Y 分离**：用 `controller.baseline_y` 做 Y 收敛 lerp，
+/// 不读 `Position.y`（含上轮 sin 偏移）—— 避免 sin 偏移被当成漂移误差累积。
+/// 当 amp > cruise_speed 时旧实现会单方向爬出 target.y 数十块；新实现 baseline
+/// 永远收敛 target.y，sin 仅作可见层震荡。
 fn whale_flight_system(
     mut whales: Query<(&mut Position, &mut Look, &mut WhaleFlightController), With<NpcMarker>>,
 ) {
@@ -123,14 +128,16 @@ fn whale_flight_system(
             continue;
         };
         let here = position.get();
-        let next_pos = step_position_toward(
+        let (next_pos, next_baseline_y) = step_position_toward(
             here,
+            controller.baseline_y,
             target,
             controller.cruise_speed,
             controller.y_oscillation_amplitude,
             controller.oscillation_phase_ticks,
             controller.y_oscillation_period_ticks,
         );
+        controller.baseline_y = next_baseline_y;
 
         // yaw：朝向运动方向；MC 约定 yaw=0 看向 +Z，atan2(-dx, dz) 度数
         let dx = next_pos.x - here.x;
@@ -143,16 +150,22 @@ fn whale_flight_system(
     }
 }
 
-/// 单步运动：从 here 朝 target XZ 方向走 cruise_speed 块；Y = target.y +
-/// 正弦震荡。如果 XZ 步长会超过到 target 的距离，截到 target XZ 上。
+/// 单步运动：XZ 朝 target 走 cruise_speed；baseline_y 朝 target.y 走 cruise_speed；
+/// 可见 Y = baseline_y + sin(phase) * amp。
+///
+/// 返回 `(next_visible_pos, next_baseline_y)`。调用方写回 Position 与
+/// `controller.baseline_y`。
+///
+/// 关键：用独立 baseline_y 而非 here.y 推进 Y，避免上轮 sin 偏移被当作误差累积。
 pub fn step_position_toward(
     here: DVec3,
+    baseline_y: f64,
     target: DVec3,
     cruise_speed: f64,
     y_amplitude: f64,
     phase_ticks: u64,
     period_ticks: u64,
-) -> DVec3 {
+) -> (DVec3, f64) {
     let dx = target.x - here.x;
     let dz = target.z - here.z;
     let xz_dist = (dx * dx + dz * dz).sqrt();
@@ -162,17 +175,18 @@ pub fn step_position_toward(
         let factor = cruise_speed / xz_dist;
         (here.x + dx * factor, here.z + dz * factor)
     };
-    // Y 走"基础值平滑趋向 target.y" + 正弦震荡。基础 Y 用与 XZ 同步的插值
-    // 确保不会停留在错误高度。
-    let dy = target.y - here.y;
-    let next_base_y = if dy.abs() <= cruise_speed {
+    let dy = target.y - baseline_y;
+    let next_baseline_y = if dy.abs() <= cruise_speed {
         target.y
     } else {
-        here.y + dy.signum() * cruise_speed
+        baseline_y + dy.signum() * cruise_speed
     };
     let phase = (phase_ticks % period_ticks) as f64 / period_ticks as f64;
     let osc = (phase * std::f64::consts::TAU).sin() * y_amplitude;
-    DVec3::new(next_x, next_base_y + osc, next_z)
+    (
+        DVec3::new(next_x, next_baseline_y + osc, next_z),
+        next_baseline_y,
+    )
 }
 
 #[cfg(test)]
@@ -196,7 +210,7 @@ mod tests {
     fn step_position_toward_moves_xz_by_cruise_speed_when_far() {
         let here = DVec3::new(0.0, 80.0, 0.0);
         let target = DVec3::new(100.0, 80.0, 0.0); // 100 块远
-        let next = step_position_toward(here, target, 0.5, 0.0, 0, 200);
+        let (next, _baseline) = step_position_toward(here, 80.0, target, 0.5, 0.0, 0, 200);
         assert!(
             (next.x - 0.5).abs() < 1e-9,
             "x must advance by exact cruise"
@@ -212,7 +226,7 @@ mod tests {
         let here = DVec3::new(0.0, 80.0, 0.0);
         let target = DVec3::new(0.3, 80.0, 0.0);
         // cruise 0.5 > 距离 0.3 → 直接落到 target 而非冲过头
-        let next = step_position_toward(here, target, 0.5, 0.0, 0, 200);
+        let (next, _baseline) = step_position_toward(here, 80.0, target, 0.5, 0.0, 0, 200);
         assert!(
             (next.x - 0.3).abs() < 1e-9,
             "must snap to target.x not overshoot"
@@ -224,13 +238,13 @@ mod tests {
         // amp=6 period=200，phase=0 → sin(0)=0 → no offset
         let here = DVec3::new(0.0, 80.0, 0.0);
         let target = DVec3::new(0.0, 80.0, 0.0); // 已到位
-        let n0 = step_position_toward(here, target, 0.5, 6.0, 0, 200);
+        let (n0, _) = step_position_toward(here, 80.0, target, 0.5, 6.0, 0, 200);
         assert!((n0.y - 80.0).abs() < 1e-9, "phase 0 → osc 0");
         // phase=50 (1/4 period) → sin(π/2) = 1 → +amp
-        let n_quarter = step_position_toward(here, target, 0.5, 6.0, 50, 200);
+        let (n_quarter, _) = step_position_toward(here, 80.0, target, 0.5, 6.0, 50, 200);
         assert!((n_quarter.y - 86.0).abs() < 1e-9, "phase 1/4 → +amp");
         // phase=150 (3/4 period) → sin(3π/2) = -1 → -amp
-        let n_three_quarter = step_position_toward(here, target, 0.5, 6.0, 150, 200);
+        let (n_three_quarter, _) = step_position_toward(here, 80.0, target, 0.5, 6.0, 150, 200);
         assert!((n_three_quarter.y - 74.0).abs() < 1e-9, "phase 3/4 → -amp");
     }
 
@@ -240,7 +254,7 @@ mod tests {
         let here = DVec3::new(0.0, 80.0, 0.0);
         let target = DVec3::new(0.0, 80.0, 0.0);
         for phase in [0u64, 50, 100, 150, 199] {
-            let n = step_position_toward(here, target, 0.5, 0.0, phase, 200);
+            let (n, _) = step_position_toward(here, 80.0, target, 0.5, 0.0, phase, 200);
             assert!(
                 (n.y - 80.0).abs() < 1e-9,
                 "phase {phase} amp=0 must give y=80"
@@ -253,8 +267,38 @@ mod tests {
         // 边界：here == target XZ → next 等于 target.xz（Y 仍可能有 osc）
         let here = DVec3::new(0.0, 80.0, 0.0);
         let target = DVec3::new(0.0, 80.0, 0.0);
-        let next = step_position_toward(here, target, 0.5, 0.0, 0, 200);
+        let (next, baseline) = step_position_toward(here, 80.0, target, 0.5, 0.0, 0, 200);
         assert_eq!(next, DVec3::new(0.0, 80.0, 0.0));
+        assert_eq!(baseline, 80.0, "baseline at target stays target.y");
+    }
+
+    #[test]
+    fn step_position_toward_baseline_does_not_drift_under_oscillation() {
+        // 回归 PR-177 codex P1：amp > cruise_speed 时旧实现把上轮 sin 偏移当
+        // baseline lerp 输入，导致 baseline 单方向爬出 target.y。新实现 baseline
+        // 独立 → 1000 tick 后 baseline 必须仍锁在 target.y。
+        let target = DVec3::new(0.0, 80.0, 0.0);
+        let mut here = DVec3::new(0.0, 80.0, 0.0);
+        let mut baseline = 80.0;
+        let amp = DEFAULT_Y_OSCILLATION_AMPLITUDE; // 1.25 > cruise 0.15 → 旧实现命中漂移
+        let cruise = DEFAULT_CRUISE_SPEED;
+        let period = DEFAULT_Y_OSCILLATION_PERIOD_TICKS;
+        for phase in 0..1000u64 {
+            let (next, next_baseline) =
+                step_position_toward(here, baseline, target, cruise, amp, phase, period);
+            here = next;
+            baseline = next_baseline;
+        }
+        assert!(
+            (baseline - 80.0).abs() < 1e-9,
+            "baseline {baseline} drifted from target.y=80 (旧 here.y 反推 bug 回归)"
+        );
+        // visible Y 也必须始终 ≤ ±amp 范围（不会逃逸）
+        let dy = (here.y - 80.0).abs();
+        assert!(
+            dy <= amp + 1e-9,
+            "visible Y |dy|={dy} > amp={amp} after 1000 ticks (有累积漂移)"
+        );
     }
 
     // ---- Action transitions（state machine pin 测试） ----
@@ -334,10 +378,12 @@ mod tests {
         // 饱和：连续 50 tick 应单调减少到 target 的 XZ 距离
         let target = DVec3::new(20.0, 80.0, 0.0);
         let mut here = DVec3::new(0.0, 80.0, 0.0);
+        let mut baseline = 80.0;
         let mut last_dist = ((target.x - here.x).powi(2) + (target.z - here.z).powi(2)).sqrt();
         for tick in 0..50 {
-            let next = step_position_toward(
+            let (next, next_baseline) = step_position_toward(
                 here,
+                baseline,
                 target,
                 DEFAULT_CRUISE_SPEED,
                 0.0, // 关闭震荡，纯 XZ 进度
@@ -351,6 +397,7 @@ mod tests {
             );
             last_dist = dist;
             here = next;
+            baseline = next_baseline;
         }
     }
 
@@ -360,8 +407,9 @@ mod tests {
         let here = DVec3::new(0.0, 80.0, 0.0);
         let target = DVec3::new(0.0, 80.0, 0.0);
         for phase in 0..1000u64 {
-            let next = step_position_toward(
+            let (next, _) = step_position_toward(
                 here,
+                80.0,
                 target,
                 DEFAULT_CRUISE_SPEED,
                 DEFAULT_Y_OSCILLATION_AMPLITUDE,

@@ -20,6 +20,15 @@ public final class WhaleEntities {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong/whale");
     public static final Identifier WHALE_ID = new Identifier("bong", "whale");
 
+    /**
+     * 协议契约 raw id —— 与 server 的 {@code WHALE_ENTITY_KIND::new(125)} 对齐。
+     *
+     * <p>Fabric 注册顺序敏感：BongClient 先 botany_plant_v2 (raw_id=124) → whale (125)。
+     * 任何新 EntityType 插队都会让此值偏移，{@link #register()} 启动时硬校验、不一致直接抛
+     * {@link IllegalStateException} fail-fast，避免错位拖到运行时显化（鲸渲染成猪 / 协议异常）。
+     */
+    public static final int EXPECTED_RAW_ID = 125;
+
     private WhaleEntities() {}
 
     public static EntityType<WhaleEntity> whale() {
@@ -29,8 +38,24 @@ public final class WhaleEntities {
     public static void register() {
         EntityType<WhaleEntity> type = whale();
         int rawId = Registries.ENTITY_TYPE.getRawId(type);
+        if (rawId != EXPECTED_RAW_ID) {
+            LOGGER.error(
+                "[bong][whale] raw_id 失配：{} 期望 {}，实际 {}。检查 BongClient 注册顺序，"
+                    + "新 EntityType 必须排在 WhaleRenderBootstrap.register() 之后。",
+                WHALE_ID,
+                EXPECTED_RAW_ID,
+                rawId
+            );
+            throw new IllegalStateException(
+                "bong:whale raw_id mismatch: expected "
+                    + EXPECTED_RAW_ID
+                    + " but got "
+                    + rawId
+                    + " (server's WHALE_ENTITY_KIND will not align — refusing to start)"
+            );
+        }
         LOGGER.info(
-            "[bong][whale] registered EntityType {} raw_id={} (server's WHALE_ENTITY_KIND must equal this)",
+            "[bong][whale] registered EntityType {} raw_id={} (matches server's WHALE_ENTITY_KIND)",
             WHALE_ID,
             rawId
         );

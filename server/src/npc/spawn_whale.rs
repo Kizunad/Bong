@@ -85,6 +85,12 @@ impl WhaleBlackboard {
 ///
 /// 不复用 `Navigator`：Navigator 是 A* 地面寻路，飞行无寻路需求，直接走
 /// 朝向插值 + 正弦 Y 震荡更符合"鲸飘在天上"的视觉直觉。
+///
+/// **baseline_y 与 visible Y 的关系**：`Position.y` 是叠加 sin 震荡后的可见高度；
+/// 如果用 `Position.y` 反推 baseline 会把上轮 sin 偏移当成漂移误差，造成累积偏移
+/// （issue：当 amp > cruise_speed 时 baseline 会单方向爬出 target.y 数十块）。
+/// 所以单独存 `baseline_y`：flight system 用它做 baseline lerp，最终 `Position.y =
+/// baseline_y + sin(phase) * amp` —— 震荡只影响表象，不污染收敛。
 #[derive(Debug, Clone, Component)]
 pub struct WhaleFlightController {
     /// 当前 drift 目标（XZ 平面 + 基础 Y）。None 时 system 静止。
@@ -97,6 +103,9 @@ pub struct WhaleFlightController {
     pub y_oscillation_amplitude: f64,
     /// Y 震荡周期（tick）。
     pub y_oscillation_period_ticks: u64,
+    /// 不含 sin 震荡的"基础"Y 高度，flight system 持续推进它收敛到 target.y。
+    /// 可见 `Position.y = baseline_y + sin(phase) * amp`。
+    pub baseline_y: f64,
 }
 
 impl Default for WhaleFlightController {
@@ -107,6 +116,7 @@ impl Default for WhaleFlightController {
             oscillation_phase_ticks: 0,
             y_oscillation_amplitude: DEFAULT_Y_OSCILLATION_AMPLITUDE,
             y_oscillation_period_ticks: DEFAULT_Y_OSCILLATION_PERIOD_TICKS,
+            baseline_y: 0.0,
         }
     }
 }
@@ -184,7 +194,11 @@ pub fn spawn_whale_npc_at(
             FaunaTag::new(BeastKind::Whale),
             NpcLodTier::Dormant,
             WhaleBlackboard::new(home_position, wander_radius_xz),
-            WhaleFlightController::default(),
+            WhaleFlightController {
+                // baseline_y 必须等于初始 Y，否则首 tick visible Y 会跳到 0+sin(0)=0
+                baseline_y: home_position.y,
+                ..Default::default()
+            },
             // 标记：narration system 下一 tick 读这个 → 广播 spawn 叙事 → 移除标记
             WhaleSpawnNarrationPending,
         ))
@@ -365,6 +379,11 @@ mod tests {
         );
         assert_eq!(ctrl.cruise_speed, DEFAULT_CRUISE_SPEED);
         assert_eq!(ctrl.oscillation_phase_ticks, 0);
+        // baseline_y 必须等于 home Y（80），否则首 tick visible Y 会从 0 跳到 home
+        assert_eq!(
+            ctrl.baseline_y, 80.0,
+            "spawn 时 baseline_y 应该 = home_position.y，而不是 default 0"
+        );
     }
 
     #[test]
