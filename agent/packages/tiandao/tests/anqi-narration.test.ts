@@ -187,6 +187,44 @@ describe("AnqiNarrationRuntime", () => {
     expect(String(envelope.narrations[0].text)).toContain("30 支 echo");
   });
 
+  it("accepts no-target qi injection events", async () => {
+    const pub = new FakePubSub();
+    const runtime = new AnqiNarrationRuntime({
+      llm: {
+        async chat() {
+          throw new Error("offline");
+        },
+      },
+      model: "mock",
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      ANQI_QI_INJECTION,
+      JSON.stringify({
+        caster: "entity:caster",
+        target: null,
+        skill: "single_snipe",
+        carrier_kind: "yibian_shougu",
+        payload_qi: 12,
+        wound_qi: 18,
+        contamination_qi: 3.6,
+        overload_ratio: 0.12,
+        triggers_overload_tear: false,
+        tick: 250,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0].target).toBe(
+      "anqi:inject|caster:entity:caster|target:未知目标|skill:single_snipe|tick:250",
+    );
+  });
+
   it("falls back with a valid narration contract for container abrasion", async () => {
     const pub = new FakePubSub();
     const runtime = new AnqiNarrationRuntime({

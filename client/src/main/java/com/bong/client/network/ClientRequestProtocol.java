@@ -52,6 +52,23 @@ public final class ClientRequestProtocol {
     /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
     public enum TemperBeat { L, H, F }
 
+    public enum AnqiContainerKind {
+        HAND_SLOT("hand_slot"),
+        QUIVER("quiver"),
+        POCKET_POUCH("pocket_pouch"),
+        FENGLINGHE("fenglinghe");
+
+        private final String wireName;
+
+        AnqiContainerKind(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
     public enum ZhenfaKind {
         TRAP("trap"),
         WARD("ward");
@@ -833,6 +850,19 @@ public final class ClientRequestProtocol {
         dir.add(z);
         obj.add("dir_unit", dir);
         obj.addProperty("power", power);
+        return obj.toString();
+    }
+
+    public static String encodeAnqiContainerSwitch() {
+        return envelope("anqi_container_switch").toString();
+    }
+
+    public static String encodeAnqiContainerSwitch(AnqiContainerKind to) {
+        if (to == null) {
+            return encodeAnqiContainerSwitch();
+        }
+        JsonObject obj = envelope("anqi_container_switch");
+        obj.addProperty("to", to.wireName());
         return obj.toString();
     }
 

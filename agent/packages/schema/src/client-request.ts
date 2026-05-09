@@ -12,6 +12,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { AlchemyInterventionV1, BlockPosV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
+import { AnqiContainerKindV1 } from "./combat-carrier.js";
 import { SkillConfigV1 } from "./skill-config.js";
 import {
   CancelSearchRequestV1,
@@ -659,6 +660,16 @@ export const ThrowCarrierRequestV1 = Type.Object(
 );
 export type ThrowCarrierRequestV1 = Static<typeof ThrowCarrierRequestV1>;
 
+export const AnqiContainerSwitchRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("anqi_container_switch"),
+    to: Type.Optional(AnqiContainerKindV1),
+  },
+  { additionalProperties: false },
+);
+export type AnqiContainerSwitchRequestV1 = Static<typeof AnqiContainerSwitchRequestV1>;
+
 export const ZhenfaKindV1 = Type.Union([
   Type.Literal("trap"),
   Type.Literal("ward"),
@@ -891,6 +902,7 @@ export const ClientRequestV1 = Type.Union([
   TradeOfferResponseRequestV1,
   ChargeCarrierRequestV1,
   ThrowCarrierRequestV1,
+  AnqiContainerSwitchRequestV1,
   ZhenfaPlaceRequestV1,
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,

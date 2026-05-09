@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::alchemy::AlchemyInterventionV1;
+use super::combat_carrier::AnqiContainerKindV1;
 use super::inventory::{EquipSlotV1, InventoryLocationV1};
 use super::tuike::FalseSkinKindV1;
 use super::void_actions::VoidActionRequestV1;
@@ -292,6 +293,13 @@ pub enum ClientRequestV1 {
         slot: AnqiCarrierSlotV1,
         dir_unit: [f32; 3],
         power: f32,
+    },
+    /// plan-anqi-v2 §4：切换暗器活跃容器。`to = None` 表示 F 键循环到下一个
+    /// 可战斗切换容器；指定 `fenglinghe` 会被 combat 模块按暴露窗口规则拒绝。
+    AnqiContainerSwitch {
+        v: u8,
+        #[serde(default)]
+        to: Option<AnqiContainerKindV1>,
     },
     /// plan-HUD-v1 §4 / §11.3 触发 F1-F9 快捷使用槽。
     /// server 校验后插入 `Casting` Component，回推 `cast_sync(Casting)`；
@@ -724,6 +732,26 @@ mod tests {
             !serialized.contains("target"),
             "target None should be omitted: {serialized}"
         );
+    }
+
+    #[test]
+    fn anqi_container_switch_roundtrip() {
+        let cycle_json = r#"{"type":"anqi_container_switch","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(cycle_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::AnqiContainerSwitch { v: 1, to: None }
+        ));
+
+        let direct_json = r#"{"type":"anqi_container_switch","v":1,"to":"quiver"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(direct_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::AnqiContainerSwitch {
+                v: 1,
+                to: Some(AnqiContainerKindV1::Quiver),
+            }
+        ));
     }
 
     #[test]

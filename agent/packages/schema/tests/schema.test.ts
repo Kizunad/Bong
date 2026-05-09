@@ -10,6 +10,7 @@ import {
 import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
+import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
@@ -890,6 +891,37 @@ describe("sample files pass schema validation", () => {
   it("client-request.skill-bar-cast.sample.json", () => {
     const data = loadSample("client-request.skill-bar-cast.sample.json");
     const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts anqi container switch request", () => {
+    let result = validate(ClientRequestV1, {
+      v: 1,
+      type: "anqi_container_switch",
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+
+    result = validate(ClientRequestV1, {
+      v: 1,
+      type: "anqi_container_switch",
+      to: "quiver",
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts no-target qi injection payload serialized as null", () => {
+    const result = validateQiInjectionEventV1Contract({
+      caster: "entity:caster",
+      target: null,
+      skill: "single_snipe",
+      carrier_kind: "yibian_shougu",
+      payload_qi: 12,
+      wound_qi: 18,
+      contamination_qi: 3.6,
+      overload_ratio: 0.12,
+      triggers_overload_tear: false,
+      tick: 42,
+    });
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

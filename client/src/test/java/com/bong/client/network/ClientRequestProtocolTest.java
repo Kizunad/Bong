@@ -478,6 +478,14 @@ public class ClientRequestProtocolTest {
             "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":3,\"binding\":null}",
             ClientRequestProtocol.encodeSkillBarBindClear(3)
         );
+        assertEquals(
+            "{\"type\":\"anqi_container_switch\",\"v\":1}",
+            ClientRequestProtocol.encodeAnqiContainerSwitch()
+        );
+        assertEquals(
+            "{\"type\":\"anqi_container_switch\",\"v\":1,\"to\":\"quiver\"}",
+            ClientRequestProtocol.encodeAnqiContainerSwitch(ClientRequestProtocol.AnqiContainerKind.QUIVER)
+        );
     }
 
     @Test

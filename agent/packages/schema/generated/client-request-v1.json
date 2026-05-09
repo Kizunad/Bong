@@ -2564,6 +2564,44 @@
       "type": "object",
       "required": [
         "v",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "anqi_container_switch",
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "const": "hand_slot",
+              "type": "string"
+            },
+            {
+              "const": "quiver",
+              "type": "string"
+            },
+            {
+              "const": "pocket_pouch",
+              "type": "string"
+            },
+            {
+              "const": "fenglinghe",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
         "type",
         "x",
         "y",

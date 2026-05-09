@@ -118,7 +118,7 @@ export type MultiShotEventV1 = Static<typeof MultiShotEventV1>;
 export const QiInjectionEventV1 = Type.Object(
   {
     caster: Type.String({ minLength: 1 }),
-    target: Type.Optional(Type.String({ minLength: 1 })),
+    target: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
     skill: AnqiSkillKindV1,
     carrier_kind: CarrierKindV1,
     payload_qi: Type.Number({ minimum: 0 }),

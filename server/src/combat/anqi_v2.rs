@@ -10,9 +10,9 @@ use crate::cultivation::components::{Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SkillMeridianDependencies};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillFn, SkillRegistry};
 use crate::qi_physics::{
-    armor_penetrate, cone_dispersion, density_echo, high_density_inject, AbrasionDirection,
-    AnqiContainerKind, ArmorPenetrationOutcome, ConeDispersionShot, EchoFractalOutcome,
-    HighDensityInjectionOutcome,
+    abrasion_loss, armor_penetrate, cone_dispersion, density_echo, high_density_inject,
+    AbrasionDirection, AnqiContainerKind, ArmorPenetrationOutcome, ConeDispersionShot,
+    EchoFractalOutcome, HighDensityInjectionOutcome,
 };
 
 pub const ANQI_SINGLE_SNIPE_SKILL_ID: &str = "anqi.single_snipe";
@@ -20,6 +20,7 @@ pub const ANQI_MULTI_SHOT_SKILL_ID: &str = "anqi.multi_shot";
 pub const ANQI_SOUL_INJECT_SKILL_ID: &str = "anqi.soul_inject";
 pub const ANQI_ARMOR_PIERCE_SKILL_ID: &str = "anqi.armor_pierce";
 pub const ANQI_ECHO_FRACTAL_SKILL_ID: &str = "anqi.echo_fractal";
+pub const CONTAINER_SWITCH_EXPOSURE_TICKS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -168,6 +169,18 @@ impl Default for ContainerSlot {
     }
 }
 
+impl ContainerSlot {
+    pub fn next_combat_container(self) -> AnqiContainerKind {
+        match self.active {
+            AnqiContainerKind::HandSlot => AnqiContainerKind::Quiver,
+            AnqiContainerKind::Quiver => AnqiContainerKind::PocketPouch,
+            AnqiContainerKind::PocketPouch | AnqiContainerKind::Fenglinghe => {
+                AnqiContainerKind::HandSlot
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct MultiShotEvent {
     pub caster: Entity,
@@ -254,6 +267,56 @@ pub fn register(app: &mut App) {
     app.add_event::<CarrierAbrasionEvent>();
     app.add_event::<ContainerSwapEvent>();
     app.add_event::<DecoyDeployEvent>();
+}
+
+pub fn switch_container_slot(
+    world: &mut bevy_ecs::world::World,
+    carrier: Entity,
+    to: AnqiContainerKind,
+    tick: u64,
+) -> Option<ContainerSlot> {
+    if !to.allows_combat_swap() {
+        return None;
+    }
+
+    let mut slot = world
+        .get::<ContainerSlot>(carrier)
+        .copied()
+        .unwrap_or_default();
+    if slot.active == to {
+        return Some(slot);
+    }
+
+    let from = slot.active;
+    slot.active = to;
+    slot.switching_until_tick = tick.saturating_add(CONTAINER_SWITCH_EXPOSURE_TICKS);
+    world.entity_mut(carrier).insert(slot);
+
+    if let Some(mut events) =
+        world.get_resource_mut::<bevy_ecs::event::Events<ContainerSwapEvent>>()
+    {
+        events.send(ContainerSwapEvent {
+            carrier,
+            from,
+            to,
+            switching_until_tick: slot.switching_until_tick,
+            tick,
+        });
+    }
+
+    Some(slot)
+}
+
+pub fn cycle_container_slot(
+    world: &mut bevy_ecs::world::World,
+    carrier: Entity,
+    tick: u64,
+) -> Option<ContainerSlot> {
+    let current = world
+        .get::<ContainerSlot>(carrier)
+        .copied()
+        .unwrap_or_default();
+    switch_container_slot(world, carrier, current.next_combat_container(), tick)
 }
 
 pub fn register_skills(registry: &mut SkillRegistry) {
@@ -369,6 +432,15 @@ fn resolve_anqi_skill(
             reason: CastRejectReason::MeridianSevered(Some(blocked)),
         };
     }
+    let container_slot = world
+        .get::<ContainerSlot>(caster)
+        .copied()
+        .unwrap_or_default();
+    if container_slot.switching_until_tick > now_tick {
+        return CastResult::Rejected {
+            reason: CastRejectReason::InRecovery,
+        };
+    }
 
     let qi_cost = cultivation.qi_max * skill.qi_ratio();
     if cultivation.qi_current + f64::EPSILON < qi_cost {
@@ -397,12 +469,15 @@ fn resolve_anqi_skill(
         mastery.grant_cast_xp(skill);
     }
 
+    let payload_qi =
+        draw_payload_after_abrasion(world, caster, container_slot.active, qi_cost, now_tick);
     emit_skill_event(
         world,
         caster,
         target,
         skill,
-        qi_cost,
+        payload_qi,
+        cultivation.qi_max,
         cultivation.realm,
         mastery,
         color_matched,
@@ -419,13 +494,41 @@ fn resolve_anqi_skill(
     }
 }
 
+fn draw_payload_after_abrasion(
+    world: &mut bevy_ecs::world::World,
+    carrier: Entity,
+    container: AnqiContainerKind,
+    qi_payload: f64,
+    tick: u64,
+) -> f64 {
+    let Ok(outcome) = abrasion_loss(qi_payload, container, AbrasionDirection::Draw) else {
+        return qi_payload;
+    };
+    if container != AnqiContainerKind::HandSlot {
+        if let Some(mut events) =
+            world.get_resource_mut::<bevy_ecs::event::Events<CarrierAbrasionEvent>>()
+        {
+            events.send(CarrierAbrasionEvent {
+                carrier,
+                container,
+                direction: AbrasionDirection::Draw,
+                lost_qi: outcome.lost_qi,
+                after_qi: outcome.after_qi,
+                tick,
+            });
+        }
+    }
+    outcome.after_qi
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_skill_event(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     target: Option<Entity>,
     skill: AnqiSkillId,
-    qi_cost: f64,
+    payload_qi: f64,
+    caster_qi_max: f64,
     realm: Realm,
     mastery: u8,
     color_matched: bool,
@@ -436,7 +539,7 @@ fn emit_skill_event(
             if let Some(mut events) =
                 world.get_resource_mut::<bevy_ecs::event::Events<QiInjectionEvent>>()
             {
-                if let Ok(outcome) = high_density_inject(qi_cost, qi_cost / 0.25, true, mastery) {
+                if let Ok(outcome) = high_density_inject(payload_qi, caster_qi_max, true, mastery) {
                     events.send(QiInjectionEvent {
                         caster,
                         target,
@@ -468,7 +571,7 @@ fn emit_skill_event(
                 world.get_resource_mut::<bevy_ecs::event::Events<QiInjectionEvent>>()
             {
                 if let Ok(outcome) =
-                    high_density_inject(qi_cost, qi_cost / 0.35, color_matched, mastery)
+                    high_density_inject(payload_qi, caster_qi_max, color_matched, mastery)
                 {
                     events.send(QiInjectionEvent {
                         caster,
@@ -486,7 +589,7 @@ fn emit_skill_event(
                 world.get_resource_mut::<bevy_ecs::event::Events<ArmorPierceEvent>>()
             {
                 if let Ok(outcome) = armor_penetrate(
-                    qi_cost,
+                    payload_qi,
                     0.75,
                     realm,
                     mastery,
@@ -510,7 +613,7 @@ fn emit_skill_event(
             if let Ok(outcome) = density_echo(
                 config.local_void_density,
                 config.echo_threshold,
-                qi_cost,
+                payload_qi,
                 mastery,
             ) {
                 if let Some(mut events) =
@@ -673,5 +776,118 @@ mod tests {
         assert!(
             cooldown_for(AnqiSkillId::MultiShot, 100) < cooldown_for(AnqiSkillId::MultiShot, 0)
         );
+    }
+
+    #[test]
+    fn container_cycle_emits_swap_event_and_exposure_window() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(bevy_ecs::event::Events::<ContainerSwapEvent>::default());
+        let carrier = world.spawn(ContainerSlot::default()).id();
+
+        let slot = cycle_container_slot(&mut world, carrier, 120).unwrap();
+
+        assert_eq!(slot.active, AnqiContainerKind::Quiver);
+        assert_eq!(
+            slot.switching_until_tick,
+            120 + CONTAINER_SWITCH_EXPOSURE_TICKS
+        );
+        let events = world.resource::<bevy_ecs::event::Events<ContainerSwapEvent>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].from, AnqiContainerKind::HandSlot);
+        assert_eq!(emitted[0].to, AnqiContainerKind::Quiver);
+    }
+
+    #[test]
+    fn switching_to_fenglinghe_is_rejected_in_combat_window() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(bevy_ecs::event::Events::<ContainerSwapEvent>::default());
+        let carrier = world.spawn(ContainerSlot::default()).id();
+
+        assert_eq!(
+            switch_container_slot(&mut world, carrier, AnqiContainerKind::Fenglinghe, 120),
+            None
+        );
+
+        assert_eq!(
+            world.get::<ContainerSlot>(carrier).copied().unwrap().active,
+            AnqiContainerKind::HandSlot
+        );
+        let events = world.resource::<bevy_ecs::event::Events<ContainerSwapEvent>>();
+        assert_eq!(events.get_reader().read(events).count(), 0);
+    }
+
+    #[test]
+    fn quiver_cast_emits_draw_abrasion_and_uses_taxed_payload() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 200 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                ContainerSlot {
+                    active: AnqiContainerKind::Quiver,
+                    switching_until_tick: 0,
+                },
+            ))
+            .id();
+
+        let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
+
+        assert!(matches!(result, CastResult::Started { .. }));
+        let abrasions = world.resource::<bevy_ecs::event::Events<CarrierAbrasionEvent>>();
+        let abrasion_events: Vec<_> = abrasions.get_reader().read(abrasions).cloned().collect();
+        assert_eq!(abrasion_events.len(), 1);
+        assert_eq!(abrasion_events[0].container, AnqiContainerKind::Quiver);
+        assert_eq!(abrasion_events[0].direction, AbrasionDirection::Draw);
+        assert!((abrasion_events[0].lost_qi - 1.25).abs() <= f64::EPSILON);
+        assert!((abrasion_events[0].after_qi - 23.75).abs() <= f64::EPSILON);
+
+        let injections = world.resource::<bevy_ecs::event::Events<QiInjectionEvent>>();
+        let injection_events: Vec<_> = injections.get_reader().read(injections).cloned().collect();
+        assert_eq!(injection_events.len(), 1);
+        assert!((injection_events[0].outcome.payload_qi - 23.75).abs() <= f64::EPSILON);
+        assert!((injection_events[0].outcome.overload_ratio - 0.2375).abs() <= f64::EPSILON);
+    }
+
+    #[test]
+    fn switching_window_blocks_release() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 200 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                ContainerSlot {
+                    active: AnqiContainerKind::Quiver,
+                    switching_until_tick: 205,
+                },
+            ))
+            .id();
+
+        let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::InRecovery
+            }
+        );
+        let abrasions = world.resource::<bevy_ecs::event::Events<CarrierAbrasionEvent>>();
+        assert_eq!(abrasions.get_reader().read(abrasions).count(), 0);
     }
 }
