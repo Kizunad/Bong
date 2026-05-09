@@ -26,6 +26,16 @@ repositories {
         name = "Felnull's maven"
         url = 'https://maven.felnull.dev/'
     }
+    // GeckoLib 官方 maven（Cloudsmith）。同时托管 com.eliotlash.mclib，
+    // 但 GeckoLib 自己已经 include 了 mclib，消费者无需单独依赖。
+    maven {
+        name = "GeckoLib"
+        url = 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/'
+        content {
+            includeGroup "software.bernie.geckolib"
+            includeGroup "com.eliotlash.mclib"
+        }
+    }
     mavenCentral()
 }
 
@@ -52,6 +62,15 @@ dependencies {
     // 加载链，让 vanilla ItemRenderer 直接吃 OBJ + MTL。Fabric 1.20.1 client-only，MIT。
     // 路径 X 加载器（docs/plan-weapon-v1.md §5.3）。include 把它 JarJar 进输出 jar。
     include modImplementation("dev.felnull:special-model-loader:${project.sml_version}")
+
+    // GeckoLib 4.x by Gecko/Eliot/etc: Bedrock geo.json + animation.json 渲染 + 驱动框架，
+    // 用于带骨骼链的复杂实体（鲸/龙等递归尾椎，PlayerAnimator 只动玩家骨骼覆盖不到）。
+    // Maven artifact 名带 MC 版本：geckolib-fabric-1.20.1（同样的 group 在 1.20.4/1.20.6
+    // 分支会发不同 artifact 名 geckolib-fabric-1.20.4），见 GeckoLib build.gradle archivesName。
+    // mclib 已被 GeckoLib 自己 JarJar，consumer 不需要单独依赖。MIT。
+    // include 把它 JarJar 进输出 jar，与现有 PlayerAnimator/SML 模式一致；如果以后想和
+    // 其他装了 GeckoLib 的 mod 共存，应去掉 include 改成纯 modImplementation 让用户单装。
+    include modImplementation("software.bernie.geckolib:geckolib-fabric-${project.minecraft_version}:${project.geckolib_version}")
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'

@@ -1439,6 +1439,7 @@ fn beast_kind_from_command(command: &Command) -> Option<BeastKind> {
         "spider" => Some(BeastKind::Spider),
         "hybrid_beast" => Some(BeastKind::HybridBeast),
         "void_distorted" => Some(BeastKind::VoidDistorted),
+        "whale" => Some(BeastKind::Whale),
         _ => None,
     }
 }

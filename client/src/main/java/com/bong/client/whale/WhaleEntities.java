@@ -1,0 +1,56 @@
+package com.bong.client.whale;
+
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.SpawnGroup;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.Registry;
+import net.minecraft.util.Identifier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * EntityType registry holder for {@code bong:whale}.
+ *
+ * <p>Phase B-1：仅在客户端注册，配 /whale-debug 本地生成做渲染验证。
+ * Phase B-2 server 端 Valence 自定义 EntityKind 接入时，必须保证 server
+ * 用的协议数值 ID 与本注册的 raw id 对齐（Fabric registry 按注册顺序
+ * 分配，所以 BongClient 调用顺序敏感）。
+ */
+public final class WhaleEntities {
+    private static final Logger LOGGER = LoggerFactory.getLogger("bong/whale");
+    public static final Identifier WHALE_ID = new Identifier("bong", "whale");
+
+    private WhaleEntities() {}
+
+    public static EntityType<WhaleEntity> whale() {
+        return Holder.WHALE;
+    }
+
+    public static void register() {
+        EntityType<WhaleEntity> type = whale();
+        int rawId = Registries.ENTITY_TYPE.getRawId(type);
+        LOGGER.info(
+            "[bong][whale] registered EntityType {} raw_id={} (server's WHALE_ENTITY_KIND must equal this)",
+            WHALE_ID,
+            rawId
+        );
+    }
+
+    private static final class Holder {
+        // 视觉边界 ~5.4×2.3×8.6 块（geo.json 内坐标 X86×Y37×Z137）。dimensions 给
+        // 略大点的 hitbox 防 frustum cull。trackingRange 加大到 256 因为这是空中
+        // 大体型，远距离才进视野。
+        private static final EntityType<WhaleEntity> WHALE = Registry.register(
+            Registries.ENTITY_TYPE,
+            WHALE_ID,
+            EntityType.Builder
+                .create(WhaleEntity::new, SpawnGroup.MISC)
+                .setDimensions(9.0f, 3.0f)
+                .maxTrackingRange(256)
+                .trackingTickInterval(3)
+                .disableSaving()
+                .disableSummon()
+                .build(WHALE_ID.toString())
+        );
+    }
+}

@@ -11,6 +11,7 @@ pub mod top;
 pub mod tptree;
 pub mod tpzone;
 pub mod tsy_spawn;
+pub mod whale;
 pub mod wound;
 pub mod zones;
 
@@ -32,6 +33,7 @@ pub fn register(app: &mut App) {
     npc_scenario::register(app);
     preview_tp::register(app);
     rat::register(app);
+    whale::register(app);
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 pub mod brain;
 pub mod brain_rat;
+pub mod brain_whale;
 pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
@@ -21,10 +22,12 @@ pub mod social;
 pub mod spatial;
 pub mod spawn;
 pub mod spawn_rat;
+pub mod spawn_whale;
 pub mod sync;
 pub mod territory;
 pub mod tribulation;
 pub mod tsy_hostile;
+pub mod whale_narration;
 pub mod zong_keeper;
 
 use valence::prelude::App;
@@ -45,6 +48,8 @@ pub fn register(app: &mut App) {
     sync::register(app);
     brain::register(app);
     brain_rat::register(app);
+    brain_whale::register(app);
+    whale_narration::register(app);
     farming_brain::register(app);
     tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator
