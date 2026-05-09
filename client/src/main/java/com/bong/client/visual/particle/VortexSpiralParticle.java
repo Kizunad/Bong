@@ -16,12 +16,15 @@ public final class VortexSpiralParticle extends BongRibbonParticle {
         double z,
         double velocityX,
         double velocityY,
-        double velocityZ
+        double velocityZ,
+        double centerX,
+        double centerY,
+        double centerZ
     ) {
         super(world, x, y, z, velocityX, velocityY, velocityZ, 20);
-        this.centerX = x;
-        this.centerY = y;
-        this.centerZ = z;
+        this.centerX = centerX;
+        this.centerY = centerY;
+        this.centerZ = centerZ;
         this.maxAge = 36;
         this.setRibbonWidth(0.10, 0.015);
         this.setAlpha(0.82f);

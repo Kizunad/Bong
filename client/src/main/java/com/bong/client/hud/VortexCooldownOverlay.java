@@ -17,7 +17,8 @@ public final class VortexCooldownOverlay {
     ) {
         if (state == null || state.cooldownUntilMs() <= nowMillis) return List.of();
         long remainingMs = state.cooldownUntilMs() - nowMillis;
-        int seconds = (int) Math.ceil(remainingMs / 1000.0);
+        long secondsLong = remainingMs / 1000L + (remainingMs % 1000L == 0L ? 0L : 1L);
+        int seconds = (int) Math.min(Integer.MAX_VALUE, secondsLong);
         String text = "涡流 " + seconds + "s";
         int x = Math.max(8, (screenWidth - 56) / 2);
         int y = Math.max(16, screenHeight - 96);

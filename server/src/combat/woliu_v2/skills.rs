@@ -151,6 +151,9 @@ pub fn resolve_woliu_v2_skill(
     {
         return rejected(CastRejectReason::OnCooldown);
     }
+    if skill == WoliuSkillId::Pull && target.is_none() {
+        return rejected(CastRejectReason::InvalidTarget);
+    }
 
     let Some(position) = world.get::<Position>(caster).copied() else {
         return rejected(CastRejectReason::InvalidTarget);
@@ -345,16 +348,19 @@ fn emit_cast_events(
                 .map(|c| c.qi_current)
                 .unwrap_or(0.0);
             let displacement = pull_displacement_blocks(caster_qi, target_qi, spec.pull_force);
-            apply_pull_displacement(world, caster, target, displacement);
-            send_event_if_present(
-                world,
-                EntityDisplacedByVortexPull {
-                    caster,
-                    target,
-                    displacement_blocks: displacement,
-                    tick: now_tick,
-                },
-            );
+            if let Some(actual_displacement) =
+                apply_pull_displacement(world, caster, target, displacement)
+            {
+                send_event_if_present(
+                    world,
+                    EntityDisplacedByVortexPull {
+                        caster,
+                        target,
+                        displacement_blocks: actual_displacement,
+                        tick: now_tick,
+                    },
+                );
+            }
         }
     }
     for transfer in build_stir_transfers(caster, zone_context, stir) {
@@ -379,13 +385,13 @@ fn apply_pull_displacement(
     caster: Entity,
     target: Entity,
     displacement_blocks: f32,
-) {
+) -> Option<f32> {
     if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
-        return;
+        return None;
     }
-    let Some(caster_pos) = world.get::<Position>(caster).map(|position| position.get()) else {
-        return;
-    };
+    let caster_pos = world
+        .get::<Position>(caster)
+        .map(|position| position.get())?;
     let caster_dim = world
         .get::<CurrentDimension>(caster)
         .map(|dimension| dimension.0)
@@ -395,19 +401,21 @@ fn apply_pull_displacement(
         .map(|dimension| dimension.0)
         .unwrap_or_default();
     if target_dim != caster_dim {
-        return;
+        return None;
     }
-    let Some(mut target_pos) = world.get_mut::<Position>(target) else {
-        return;
-    };
+    let mut target_pos = world.get_mut::<Position>(target)?;
     let current = target_pos.get();
     let offset = caster_pos - current;
     let distance = offset.length();
     if !distance.is_finite() || distance <= f64::EPSILON {
-        return;
+        return None;
     }
     let step = f64::from(displacement_blocks).min(distance);
+    if step <= f64::EPSILON {
+        return None;
+    }
     target_pos.set(current + offset / distance * step);
+    Some(step as f32)
 }
 
 fn send_event_if_present<T: valence::prelude::Event>(world: &mut bevy_ecs::world::World, event: T) {

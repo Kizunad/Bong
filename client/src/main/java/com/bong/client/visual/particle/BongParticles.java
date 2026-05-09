@@ -120,7 +120,7 @@ public final class BongParticles {
 
     private static net.minecraft.client.particle.ParticleFactory<DefaultParticleType> vortexSpiralFactory(SpriteProvider provider) {
         return (type, world, x, y, z, vx, vy, vz) -> {
-            VortexSpiralParticle p = new VortexSpiralParticle(world, x, y, z, vx, vy, vz);
+            VortexSpiralParticle p = new VortexSpiralParticle(world, x, y, z, vx, vy, vz, x, y, z);
             p.setSpritePublic(provider.getSprite(world.random));
             return p;
         };

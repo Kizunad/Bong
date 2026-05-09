@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WoliuV2HudPlannerTest {
@@ -37,5 +38,29 @@ class WoliuV2HudPlannerTest {
     @Test
     void emptyStateDoesNotEmitVortexHud() {
         assertTrue(WoliuV2HudPlanner.buildCommands(VortexStateStore.State.NONE, 960, 540, 1_000L).isEmpty());
+    }
+
+    @Test
+    void cooldownOverlayClampsExtremeRemainingSeconds() {
+        VortexStateStore.State state = new VortexStateStore.State(
+            false,
+            0f,
+            0f,
+            0f,
+            0L,
+            0,
+            "",
+            0f,
+            Long.MAX_VALUE,
+            "",
+            0f,
+            0f,
+            0L
+        );
+
+        List<HudRenderCommand> commands = VortexCooldownOverlay.buildCommands(state, 960, 540, 0L);
+
+        assertEquals(1, commands.size());
+        assertEquals("涡流 2147483647s", commands.get(0).text());
     }
 }

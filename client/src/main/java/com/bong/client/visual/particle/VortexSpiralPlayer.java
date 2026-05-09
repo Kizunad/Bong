@@ -44,7 +44,10 @@ public final class VortexSpiralPlayer implements VfxPlayer {
                 z,
                 -Math.sin(angle) * 0.035,
                 (world.random.nextDouble() - 0.5) * 0.012,
-                Math.cos(angle) * 0.035
+                Math.cos(angle) * 0.035,
+                ox,
+                oy,
+                oz
             );
             particle.setAngularVelocity(0.055 + strength * 0.08);
             particle.setColor(r, g, b);

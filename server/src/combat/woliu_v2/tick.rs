@@ -70,6 +70,9 @@ pub fn update_turbulence_exposure_tick(
             if target == field.caster || target == field_entity {
                 continue;
             }
+            if field.remaining_swirl_qi <= f32::EPSILON {
+                continue;
+            }
             if dimension_kind(field_dim) != target_dim {
                 continue;
             }

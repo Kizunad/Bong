@@ -400,6 +400,39 @@ fn turbulence_field_projects_runtime_exposure_to_overlapping_targets() {
 }
 
 #[test]
+fn depleted_turbulence_field_does_not_project_runtime_exposure() {
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 42 });
+    app.add_systems(Update, super::tick::update_turbulence_exposure_tick);
+    let source = app
+        .world_mut()
+        .spawn((CurrentDimension(DimensionKind::Overworld),))
+        .id();
+    app.world_mut()
+        .entity_mut(source)
+        .insert(TurbulenceField::new(
+            source,
+            DVec3::new(8.0, 66.0, 8.0),
+            3.0,
+            1.0,
+            0.0,
+            42,
+        ));
+    let target = app
+        .world_mut()
+        .spawn((
+            Cultivation::default(),
+            Position::new([9.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ))
+        .id();
+
+    app.update();
+
+    assert!(app.world().get::<TurbulenceExposure>(target).is_none());
+}
+
+#[test]
 fn turbulence_exposure_halves_woliu_cast_precision_output() {
     fn swirl_for(exposure: Option<TurbulenceExposure>) -> f32 {
         let mut app = app(10);
@@ -472,6 +505,26 @@ fn resolve_rejects_qi_insufficient_without_cooldown() {
 }
 
 #[test]
+fn resolve_pull_rejects_missing_target_without_cooldown() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::Pull);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert!(!app
+        .world()
+        .get::<SkillBarBindings>(actor)
+        .unwrap()
+        .is_on_cooldown(1, 10));
+}
+
+#[test]
 fn resolve_pull_emits_displacement_for_target() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
@@ -498,6 +551,25 @@ fn resolve_pull_emits_displacement_for_target() {
             .get()
             .distance(DVec3::new(8.0, 66.0, 8.0))
             < f64::EPSILON
+    );
+}
+
+#[test]
+fn resolve_pull_skips_displacement_event_when_target_does_not_move() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 20.0);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 1, Some(target), WoliuSkillId::Pull);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world()
+            .resource::<Events<EntityDisplacedByVortexPull>>()
+            .iter_current_update_events()
+            .count(),
+        0
     );
 }
 
