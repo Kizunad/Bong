@@ -476,6 +476,10 @@ fn resolve_pull_emits_displacement_for_target() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
     let target = spawn_actor(&mut app, Realm::Induce, 20.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([13.0, 66.0, 8.0]);
     let result =
         resolve_woliu_v2_skill(app.world_mut(), actor, 1, Some(target), WoliuSkillId::Pull);
     assert!(matches!(result, CastResult::Started { .. }));
@@ -487,6 +491,14 @@ fn resolve_pull_emits_displacement_for_target() {
         .unwrap();
     assert_eq!(displacement.target, target);
     assert!(displacement.displacement_blocks > 0.0);
+    assert!(
+        app.world()
+            .get::<Position>(target)
+            .unwrap()
+            .get()
+            .distance(DVec3::new(8.0, 66.0, 8.0))
+            < f64::EPSILON
+    );
 }
 
 #[test]

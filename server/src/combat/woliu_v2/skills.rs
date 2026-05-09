@@ -345,6 +345,7 @@ fn emit_cast_events(
                 .map(|c| c.qi_current)
                 .unwrap_or(0.0);
             let displacement = pull_displacement_blocks(caster_qi, target_qi, spec.pull_force);
+            apply_pull_displacement(world, caster, target, displacement);
             send_event_if_present(
                 world,
                 EntityDisplacedByVortexPull {
@@ -371,6 +372,42 @@ fn emit_cast_events(
             },
         },
     );
+}
+
+fn apply_pull_displacement(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    target: Entity,
+    displacement_blocks: f32,
+) {
+    if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
+        return;
+    }
+    let Some(caster_pos) = world.get::<Position>(caster).map(|position| position.get()) else {
+        return;
+    };
+    let caster_dim = world
+        .get::<CurrentDimension>(caster)
+        .map(|dimension| dimension.0)
+        .unwrap_or_default();
+    let target_dim = world
+        .get::<CurrentDimension>(target)
+        .map(|dimension| dimension.0)
+        .unwrap_or_default();
+    if target_dim != caster_dim {
+        return;
+    }
+    let Some(mut target_pos) = world.get_mut::<Position>(target) else {
+        return;
+    };
+    let current = target_pos.get();
+    let offset = caster_pos - current;
+    let distance = offset.length();
+    if !distance.is_finite() || distance <= f64::EPSILON {
+        return;
+    }
+    let step = f64::from(displacement_blocks).min(distance);
+    target_pos.set(current + offset / distance * step);
 }
 
 fn send_event_if_present<T: valence::prelude::Event>(world: &mut bevy_ecs::world::World, event: T) {
