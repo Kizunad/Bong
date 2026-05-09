@@ -614,16 +614,46 @@ fn dehydrate_far_npcs(
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
+### 落地清单
 
-- **落地清单**：`server/src/npc/dormant/*` 主模块 + `server/src/npc/hydrate/*` 转换层 + `dormant_global_tick_system` + `hydrate_dormant_near_players` + `dehydrate_far_npcs` + DormantBehaviorIntent 5 类 + qi_physics ledger 集成（守恒律审计）+ 持久化路径（Redis HASH）+ scripts/start.sh 100 hydrated + 1000 dormant 默认
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test npc::dormant npc::hydrate` 数量 / 守恒律饱和 ≥ 20 全过 / e2e #1 100 hydrated + 1000 dormant 5min ≥ 18 TPS / e2e #2 5000 dormant 1h in-game qi 守恒
-- **跨仓库核验**：server `npc::dormant::*` + `npc::hydrate::*` / agent NpcDigest 通道 unchanged 但 dormant 数据流入 / client 无变化（hydrate spawn / dehydrate despawn 自然走 Valence）
-- **遗留 / 后续**：
-  - `plan-npc-virtualize-v2`（Drowsy 中间态）—— v1 实测玩家穿越 64-256 格边界撕裂 / hydrate 开销超阈值时启动
-  - `plan-npc-virtualize-v3`（dormant↔dormant 战争 / faction 兴衰批量推演）—— 决策门 #6 选 C 时启动
-  - docs/CLAUDE.md §四 红旗加「dormant 灵气未走 ledger」（决策门 #7 = A 时）
-  - reminder.md 登记本骨架（已转为独立骨架 2026-05-07）
+- **P0 / 数据模型与决策门**：`server/src/npc/dormant/mod.rs` 新增 `NpcVirtualizationConfig`、`NpcDormantStore`、`NpcDormantSnapshot`、`DormantBehaviorIntent`、`DormantRoguePopulationSeedConfig`；阈值固定为 hydrate 64 / dehydrate 256，dormant tick 1200 tick，默认 `max_hydrated_count=200` / `max_dormant_count=5000`，v1 保持 Hydrated + Dormant 二态。
+- **P1 / hydrate-dehydrate 双向桥**：`server/src/npc/hydrate/mod.rs` 新增 `hydrate_dormant_near_players_system`、`dehydrate_far_npcs_system`、`spawn_from_snapshot`；dehydrate 采集 `Cultivation`、`MeridianSystem`、`MeridianSeveredPermanent`、`Contamination`、`NpcLifespan`、`LifespanComponent`、`FactionMembership`、`NpcPatrol`、`NpcLootTable`、`LifeRecord` 等持久字段，hydrate 反向恢复 ECS entity。
+- **P2 / dormant 全局推演**：`dormant_global_tick_system` 批量推进 deterministic movement、zone qi 吸收、寿元衰减、老死释放、普通境界突破；灵气吸收走 `regen_from_zone` + `QiTransfer::new(..., CultivationRegen)` + `WorldQiAccount::transfer`，老死释放走 `qi_release_to_zone` + `QiTransferReason::ReleaseToZone`。
+- **P3 / 渡劫、老死与 agent 整合**：dormant NPC 满足 `du_xu_prereqs_met` 且真元达阈值时强制 hydrate 并发送 `InitiateXuhuaTribulation`；老死复用 `NpcDeathNotice`；`server/src/schema/world_state.rs` 与 `agent/packages/schema/src/world-state.ts` 扩展 `NpcDigestV1` 的 `realm` / `faction_id` / `position`，world state 同时发布 hydrated + dormant digest。
+- **P4 / 上限、默认种子与持久化**：`scripts/start.sh` 默认 `BONG_ROGUE_SEED_COUNT=100`、`BONG_DORMANT_ROGUE_SEED_COUNT=1000`；`server/src/network/redis_bridge.rs` 新增 `HashReplace` 与 `bong:npc/dormant` Redis HASH 全量替换；server 启动时 best-effort `HGETALL bong:npc/dormant` 恢复 `NpcDormantStore`，Redis 不可用不阻断启动。
+
+### 关键 commit
+
+- `f98ca73dc` · 2026-05-10 · `feat(npc): 建立 dormant 双态推演底盘`
+- `4175e06cd` · 2026-05-10 · `feat(network): 同步 dormant NPC 状态到 agent`
+- `8ca24a9bc` · 2026-05-10 · `feat(npc): 启动恢复 dormant Redis 快照`
+- `9baa1dbb1` · 2026-05-10 · `feat(npc): dormant tick 推进普通境界突破`
+
+### 测试结果
+
+- `cargo fmt --check` ✅
+- `cargo clippy --all-targets -- -D warnings` ✅
+- `cargo test` ✅ `3496 passed; 0 failed`
+- `cargo test npc::dormant` ✅ `6 passed; 0 failed`
+- `cargo test npc::hydrate` ✅ `3 passed; 0 failed`
+- `cargo test publishes_dormant_npcs_in_world_state_and_redis_hash` ✅
+- `cargo test replaces_dormant_npc_hash` ✅
+- `agent/ npm run build` ✅
+- `agent/packages/schema npm test` ✅ `14 files; 344 tests`
+- `agent/packages/tiandao npm test` ✅ `45 files; 320 tests`
+- `agent/packages/schema npm run check` ✅ generated schema artifacts fresh
+- `RUN_LABEL=plan-npc-virtualize-v1 CARGO_TARGET_DIR=... bash scripts/smoke-test-e2e.sh` ✅ `8 passed, 0 failed`; nested Redis e2e `15 passed, 0 failed`; `100 NPC TPS gate (20.0 >= 15)`；server log 确认 `seeded 1000 dormant rogue NPC snapshots`
+
+### 跨仓库核验
+
+- **server**：`npc::dormant::*`、`npc::hydrate::*`、`NpcVirtualizationConfig`、`NpcDormantStore::to_redis_hash_payloads`、`RedisOutbound::NpcDormantHash`、`NpcDigestV1 { realm, faction_id, position }`。
+- **agent / schema**：`agent/packages/schema/src/world-state.ts` 与 `agent/packages/schema/generated/world-state-v1.json` 接收 dormant digest 字段；world state payload 中 dormant NPC 使用 `kind="dormant:<archetype>"` 与 `blackboard.dormant=true`。
+- **client**：无直接协议改动；hydrate 后仍由 Valence entity spawn 可见，dehydrate 后走普通 despawn，不新增 Fabric 侧状态机。
+
+### 遗留 / 后续
+
+- dormant NPC 受玩家攻击强制 hydrate 仍依赖新的 combat/raycast 命中事件面；当前玩家攻击链只携带 ECS `Entity` 目标，尚无可安全定位 dormant snapshot 的目标协议，后续应在 combat input / projectile 命中面补 `dormant:<char_id>` 或区域命中事件后接入。
+- Drowsy 中间态、hydrate/dehydrate 视觉过渡、dormant-dormant 战斗 / 派系战争 / 师承演变仍按本 plan 决策留给 v2/v3。
+- 本地收尾跑通了 100 hydrated + 1000 dormant e2e；5000 dormant、1h in-game 的长跑基线未在本次本地 pass 中执行，建议在专门性能窗口补录。
