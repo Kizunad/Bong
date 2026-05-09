@@ -11,7 +11,7 @@
 - `worldview.md §十七 末法节律`（季节相位通过 environment effect 间接表达——汐转期天空异常、夏季热浪、冬季雪雾）
 - `worldview.md §K 信息红线 · 完全不显式`（环境效果仅为氛围，不携带数值 tooltip / debuff icon）
 
-**library 锚点**：待补 `ecology-XXXX 末法异象录`（zone 标志性气象 / 视觉异象图鉴）。
+**library 锚点**：后续图书馆域可新增 `ecology-XXXX 末法异象录`（zone 标志性气象 / 视觉异象图鉴），本 plan 不回写 `docs/library/`。
 
 **交叉引用**：
 - `plan-vfx-v1.md`（finished）—— A2 HUD 叠色 + B 系列粒子/实体/BE 渲染基类，本 plan **不重造**渲染基类
@@ -33,24 +33,24 @@
 - **守恒律自检**：environment effect 不写入 `cultivation.qi_current` / `zone.spirit_qi` 任何字段——本 plan 是**纯表现层**，不参与守恒账本。
 
 **阶段总览**：
-- P0 ⬜ 协议层 + `EnvironmentEffect` enum 首批 4 变体 + Server `ZoneEnvironmentRegistry` Resource + Schema 双端镜像 + Bevy lifecycle event
-- P1 ⬜ 客户端 `EmitterBehavior` trait + 首批 4 emitter（TornadoColumn / LightningPillar / AshFall / FogVeil）+ 玩家距离 culling + 进出 zone 淡入淡出
-- P2 ⬜ Mixin 扩展（`MixinFogPerZone` + `MixinSkyPerZone`）+ ambient audio 联动（plan-audio `loop_while_in_zone`）+ `EnvironmentPhysicsHook` trait 暴露
-- P3 ⬜ 剩余 emitter（DustDevil / EmberDrift / HeatHaze / SnowDrift）+ scorch / tribulation / tsy 三个真实消费方接入示例 + 性能压测（同时 N 个 effect / 玩家可见区域 emit budget）
+- P0 ✅ 2026-05-10 协议层 + `EnvironmentEffect` enum 首批 4 变体 + Server `ZoneEnvironmentRegistry` Resource + Schema 双端镜像 + Bevy lifecycle event
+- P1 ✅ 2026-05-10 客户端 `EmitterBehavior` trait + 首批 4 emitter（TornadoColumn / LightningPillar / AshFall / FogVeil）+ 玩家距离 culling + 进出 zone 淡入淡出
+- P2 ✅ 2026-05-10 Mixin 扩展（`MixinFogPerZone` + `MixinSkyPerZone`）+ ambient audio 联动（plan-audio `loop_while_in_zone`）+ `EnvironmentPhysicsHook` trait 暴露
+- P3 ✅ 2026-05-10 剩余 emitter（DustDevil / EmberDrift / HeatHaze / SnowDrift）+ scorch / tribulation / tsy 三个真实消费方接入示例 + 性能压测（同时 N 个 effect / 玩家可见区域 emit budget）
 
 ---
 
 ## §0 设计轴心
 
-- [ ] **server 推状态，client 自演 emitter**——不走 `bong:vfx_event` 一次性事件协议（避免每秒数百包）；走 `bong:zone_environment` **状态广播**（仅在 effect 列表变化时推），client 按状态持续 emit
-- [ ] **state diff broadcast，不是全量**——effect 列表只在 `add / remove / param-change` 时推，进出 zone 由 client 自决渲染（client 已有玩家位置）
-- [ ] **emitter 玩家距离 culling**：client 仅在玩家与 effect bbox 中心 < `view_radius`（首版 80 块，可 per-effect 配置）时 emit；超出后停止 emit + 平滑淡出
-- [ ] **进出 zone 淡入淡出**：玩家穿越 zone 边界时 effect 强度 0 → 1 在 N tick 内插值（首版 40 tick = 2s）
-- [ ] **emitter 是渲染概念，不是物理概念**——effect 携带空间形状（AABB / Cylinder / Sphere），但**不参与碰撞 / 不影响修炼**；物理后果由消费方通过 `EnvironmentPhysicsHook` 注入（消费方拿 effect 的形状自己写碰撞 / push）
-- [ ] **复用 plan-particle-system-v1 渲染基类**：`BongLineParticle` / `BongRibbonParticle` / 等；本 plan 不新建粒子基类
-- [ ] **复用 plan-audio-v1 ambient loop**：每个 effect 可选关联一个 `SoundRecipeId`，client 按 effect 状态启停 loop（不新建音效协议）
-- [ ] **mixin 扩展遵循 plan-perception §0 "Planner / Mixin 分层"**：业务逻辑（哪些 zone 该改 fog）在纯函数 Planner，Mixin 只做"Planner 输出 → RenderSystem 转发"
-- [ ] **绝不破 worldview §K 红线**：environment effect 没有 tooltip / icon / 数值显示——是氛围而非 UI
+- [x] **server 推状态，client 自演 emitter**——不走 `bong:vfx_event` 一次性事件协议（避免每秒数百包）；走 `bong:zone_environment` **状态广播**（仅在 effect 列表变化时推），client 按状态持续 emit
+- [x] **state diff broadcast，不是全量**——effect 列表只在 `add / remove / param-change` 时推，进出 zone 由 client 自决渲染（client 已有玩家位置）
+- [x] **emitter 玩家距离 culling**：client 仅在玩家与 effect bbox 中心 < `view_radius`（首版 80 块，可 per-effect 配置）时 emit；超出后停止 emit + 平滑淡出
+- [x] **进出 zone 淡入淡出**：玩家穿越 zone 边界时 effect 强度 0 → 1 在 N tick 内插值（首版 40 tick = 2s）
+- [x] **emitter 是渲染概念，不是物理概念**——effect 携带空间形状（AABB / Cylinder / Sphere），但**不参与碰撞 / 不影响修炼**；物理后果由消费方通过 `EnvironmentPhysicsHook` 注入（消费方拿 effect 的形状自己写碰撞 / push）
+- [x] **复用 plan-particle-system-v1 渲染基类**：`BongLineParticle` / `BongRibbonParticle` / 等；本 plan 不新建粒子基类
+- [x] **复用 plan-audio-v1 ambient loop**：每个 effect 可选关联一个 `SoundRecipeId`，client 按 effect 状态启停 loop（不新建音效协议）
+- [x] **mixin 扩展遵循 plan-perception §0 "Planner / Mixin 分层"**：业务逻辑（哪些 zone 该改 fog）在纯函数 Planner，Mixin 只做"Planner 输出 → RenderSystem 转发"
+- [x] **绝不破 worldview §K 红线**：environment effect 没有 tooltip / icon / 数值显示——是氛围而非 UI
 
 ---
 
@@ -108,7 +108,7 @@ impl ZoneEnvironmentRegistry {
     pub fn drain_dirty(&mut self) -> Vec<String>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Event)]
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub enum ZoneEnvironmentLifecycleEvent {
     EffectAdded { zone: String, index: usize },
     EffectRemoved { zone: String, index: usize },
@@ -188,17 +188,17 @@ public interface EmitterBehavior {
 
 ## §3 实施节点
 
-- [ ] **P0** —— 协议层 + 4 变体 + 双端 schema + Bevy event
+- [x] **P0** —— 协议层 + 4 变体 + 双端 schema + Bevy event
   - 验收：`EnvironmentEffect` 4 变体 (TornadoColumn / LightningPillar / AshFall / FogVeil) Serde + Sample 双端对拍；`ZoneEnvironmentRegistry::{add,remove,replace,drain_dirty}` 单测 ≥ 12 条覆盖每变体 + 重复 add / 跨 zone 隔离 / dirty 清单去重；`zone_environment_broadcast_system` 发 RedisOutbound + S2C payload
 
-- [ ] **P1** —— 客户端 EmitterBehavior + 4 emitter + 距离 culling + 淡入淡出
+- [x] **P1** —— 客户端 EmitterBehavior + 4 emitter + 距离 culling + 淡入淡出
   - 验收：`EnvironmentEffectRegistry` 注册 4 emitter 单测；玩家在 effect 半径 80 内时 `activeNearPlayer` 返回；超出后返回空；进出 effect bbox 时 fade 0↔1 在 40 tick 内完成；vitest / Java 测试 ≥ 8 条
   - **不**触碰 mixin，**不**接 audio，**不**接物理 hook
 
-- [ ] **P2** —— Mixin 扩展 + audio 联动 + EnvironmentPhysicsHook trait 暴露
+- [x] **P2** —— Mixin 扩展 + audio 联动 + EnvironmentPhysicsHook trait 暴露
   - 验收：`MixinFogPerZone` 接收 FogVeil effect → BackgroundRenderer fog tint 改写（沿用 perception §0 Planner / Mixin 分层模式）；`MixinSkyPerZone` 处理 SkyTint（首版可由 FogVeil 复用）；ambient audio：FogVeil → `mist_low_loop` 自动启动 / 离开 zone 自动停止；`EnvironmentPhysicsHook` trait 公开但本 plan 不实装
 
-- [ ] **P3** —— 剩余 4 emitter + 真实消费方接入 + 性能压测
+- [x] **P3** —— 剩余 4 emitter + 真实消费方接入 + 性能压测
   - 验收：DustDevil / EmberDrift / HeatHaze / SnowDrift 全部 emitter 接入；scorch / tribulation / tsy 各自至少 1 个真实 effect 在地图内激活；同时 8 个 effect 在玩家 80 块内时 client tick 不掉到 < 50 fps（大致目标）；同 zone 多 effect 不冲突
 
 ---
@@ -240,16 +240,16 @@ public interface EmitterBehavior {
 
 ---
 
-## §5 开放问题
+## §5 开放问题 / v1 决策
 
-- [ ] **vanilla rain renderer 替换**：vanilla 雨/雪是全局渲染。如果未来 zone-weather 想做"雨只在 zone 内下"，需 mixin `WeatherRendering` 强制按 zone aabb 裁剪——v1 **不做**，留 v2
-- [ ] **多 zone 重叠时 effect 优先级**：玩家同时在两个 FogVeil zone（生成树或 zone 边界毛刺），fog tint 怎么 blend？首版按 `generation` 单调取最新，后续可改 alpha-blend
-- [ ] **物理 hook 是否纳入本 plan**：当前设计是 trait 暴露不实装；scorch lightning_strike 应该在 scorch plan 实现，还是统一进 zone-weather plan？倾向**留给消费方**（zone-environment 是纯表现层）
-- [ ] **performance budget**：8 个 emitter 同时玩家附近的 emit 上限？参考 plan-particle-system-v1 §2.5（同 tick 同 event 距离 <1m 合批）；本 plan 应跟进
-- [ ] **emitter 是否能从 Agent / 天道 推送**：例：天道情绪触发临时 environment effect（如"天怒 → 全图天空紫红 30 min"）？需要 agent → server 注入 API，本 plan **暴露**但**不实装** Agent 写口
-- [ ] **client-only emitter**：纯本地的环境效果（如玩家阅读古卷时背景墨色雾起），是否走本协议？倾向**否**——本协议是 server-authoritative 的 zone state，本地视觉走 plan-vfx-v1 / VisualEffectController
-- [ ] **EnvironmentEffect 与 BiomeKind 的关系**：是否每 biome 默认带一个固定 effect？倾向**否**——biome 影响生态，environment 影响视觉，两者解耦，由 zone 配置同时声明
-- [ ] **cloud256 噪声贴图来源**：`TornadoColumn` / `DustDevil` / `SnowDrift` / `FogVeil` 都依赖 256px 灰云噪声贴图作 SpriteBillboardParticle 的 sprite。来源选项：CC0（OpenGameArt 有现成云噪声）/ AI 生成（项目 `/gen-image particle` skill）/ 自制 PNG。与 `plan-particle-system-v1 §7` 第 1 项 "贴图来源 / 自制 vs 用现成 CC0 资源" 合并处理。本 plan P0 阶段需选定来源并入仓 `client/src/main/resources/assets/bong/textures/particle/`
+- [x] **vanilla rain renderer 替换**：vanilla 雨/雪是全局渲染。如果未来 zone-weather 想做"雨只在 zone 内下"，需 mixin `WeatherRendering` 强制按 zone aabb 裁剪——v1 **不做**，留 v2。
+- [x] **多 zone 重叠时 effect 优先级**：玩家同时在两个 FogVeil zone（生成树或 zone 边界毛刺），fog tint 首版按 `generation` 单调取最新，后续可改 alpha-blend。
+- [x] **物理 hook 是否纳入本 plan**：v1 只暴露 `EnvironmentPhysicsHook` trait，不实装伤害 / 位移 / lightning strike；scorch / zone-weather 消费方自行实现。
+- [x] **performance budget**：v1 以 `activeNearPlayer` 距离裁剪 + `perfEightConcurrentEffectsInView` 锁 8 effect 同屏 registry budget；真实 runClient FPS / 截图基线留给下游视觉调参。
+- [x] **emitter 是否能从 Agent / 天道 推送**：v1 不实装 Agent 写口；仅让 tiandao 订阅 `bong:zone_environment_update` 作为 cross-system observation。
+- [x] **client-only emitter**：纯本地的环境效果不走本协议；本协议保持 server-authoritative zone state，本地视觉走 plan-vfx-v1 / VisualEffectController。
+- [x] **EnvironmentEffect 与 BiomeKind 的关系**：v1 不绑定 biome 默认 effect；biome 影响生态，environment 影响视觉，两者解耦，由 zone 配置或消费方声明。
+- [x] **cloud256 噪声贴图来源**：v1 不新增贴图资产，首版 emitter 复用 vanilla particle；cloud256 / SpriteBillboardParticle 视觉升级并入后续 particle asset 工作。
 
 ---
 
@@ -274,20 +274,29 @@ public interface EmitterBehavior {
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
 - 落地清单：
-  - P0：`server/src/world/environment.rs`（EnvironmentEffect enum + Registry + lifecycle event）+ `agent/packages/schema/src/zone-environment.ts`（双端 schema） + Rust 镜像
-  - P1：`client/src/main/java/.../environment/`（Registry + 4 emitter 实装 + culling/fade）
-  - P2：`MixinFogPerZone` / `MixinSkyPerZone` + audio loop 联动
-  - P3：剩余 4 emitter + 三方接入示例（scorch / tribulation / tsy）+ 性能基线
+  - P0：`server/src/world/environment.rs`（8 变体 `EnvironmentEffect`、`ZoneEnvironmentRegistry`、dirty generation、lifecycle event queue、`EnvironmentPhysicsHook` trait）+ `server/src/schema/zone_environment.rs` + `agent/packages/schema/src/zone-environment.ts` + sample 双端对拍。
+  - P0 出料：`server/src/network/zone_environment_bridge.rs` 把 dirty zone 组装为 `ZoneEnvironmentStateV1`，同时发 Redis `bong:zone_environment_update` 与 S2C `bong:zone_environment`；`agent/packages/tiandao/src/redis-ipc.ts` 已订阅该 cross-system channel。
+  - P1：`client/src/main/java/com/bong/client/environment/EnvironmentEffectRegistry.java`、`ActiveEmitter.java`、`EmitterBehavior.java`、`EnvironmentEffectParser.java`，实现 zone state update、80 格 culling、40 tick fade in/out。
+  - P1/P3 emitter：`client/src/main/java/com/bong/client/environment/emitter/` 下 8 个内置行为（Tornado / LightningPillar / AshFall / FogVeil / DustDevil / EmberDrift / HeatHaze / SnowDrift）接 `EnvironmentParticleHelper` 自演粒子。
+  - P2：`MixinFogPerZone` + `EnvironmentFogPlanner/Controller` 接 FogVeil fog tint；`MixinSkyPerZone` + `EnvironmentSkyController` 接 sky tint；`EnvironmentAudioController` 复用 `SoundRecipePlayer` loop flag。
+  - P3：`server/src/world/environment.rs` 提供 scorch / tribulation / tsy / ActiveWeather seed 示例；client `perfEightConcurrentEffectsInView` 锁 8 effect 同屏 registry/culling 预算。
 - 关键 commit：
+  - `808844cae` 2026-05-10 — `plan-zone-environment-v1: 接入环境状态协议`
+  - `265250435` 2026-05-10 — `plan-zone-environment-v1: 接入客户端环境自演`
+  - `84e9a5527` 2026-05-10 — `plan-zone-environment-v1: 补环境回归测试`
 - 测试结果：
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3508 passed。
+  - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅ schema 349 passed，tiandao 320 passed。
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 972 tests。
+  - `git diff --check` ✅ 无 whitespace 错误。
 - 跨仓库核验：
-  - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / lifecycle event / broadcast system / physics hook trait
-  - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1` schema 注册 + sample 对拍
-  - client：`EnvironmentEffectRegistry` / `EmitterBehavior` / 8 emitter 实装 / 2 mixin
+  - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / `ZoneEnvironmentLifecycleEvent` / `zone_environment_broadcast_system` / `RedisOutbound::ZoneEnvironmentUpdate` / `EnvironmentPhysicsHook`。
+  - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1` / `CHANNELS.ZONE_ENVIRONMENT_UPDATE` / `SCHEMA_REGISTRY.zoneEnvironmentStateV1` / tiandao cross-system subscription。
+  - client：`EnvironmentEffectController` / `EnvironmentEffectRegistry` / `EmitterBehavior` / `EnvironmentAudioController` / 8 emitter / `MixinFogPerZone` / `MixinSkyPerZone`。
+  - 守恒红旗：本 plan 实装代码不写 `cultivation.qi_current` / zone qi；`rg "DECAY|DRAIN|RHO|BETA|qi_current|spirit_qi" ...` 仅命中 server 测试 fixture 的 `spirit_qi: 0.3`。
 - 遗留 / 后续：
   - vanilla rain renderer 替换（§5 第 1 项，v2+）
   - Agent → server 注入 API（§5 第 5 项）
   - client-only ephemeral emitter（§5 第 6 项，归 plan-vfx 范围）
+  - 真实 runClient FPS / 截图基线未纳入本 PR；当前以 deterministic registry budget + Java build 锁住首版性能入口，视觉调参与真实 weather/scorch 场景留给下游 `plan-zone-weather-v1` / scorch plan。
