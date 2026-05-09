@@ -119,6 +119,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::SocialPact => "social_pact",
         ServerDataType::SocialFeud => "social_feud",
         ServerDataType::SocialRenownDelta => "social_renown_delta",
+        ServerDataType::IdentityPanelState => "identity_panel_state",
         ServerDataType::NicheIntrusion => "niche_intrusion",
         ServerDataType::NicheGuardianFatigue => "niche_guardian_fatigue",
         ServerDataType::NicheGuardianBroken => "niche_guardian_broken",

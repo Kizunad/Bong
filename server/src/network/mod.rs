@@ -28,6 +28,7 @@ pub mod extract_emit;
 pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
+pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
@@ -353,6 +354,11 @@ pub fn register(app: &mut App) {
         Update,
         techniques_snapshot_emit::emit_join_techniques_snapshot_payloads
             .after(crate::player::attach_player_state_to_joined_clients),
+    );
+    app.add_systems(
+        Update,
+        identity_panel_emit::emit_identity_panel_state_payloads
+            .after(crate::identity::command::handle_identity_command),
     );
     app.add_systems(
         Update,

@@ -19,6 +19,7 @@ use super::dugu::DuguPoisonStateV1;
 use super::forge::{
     ForgeBlueprintBookDataV1, ForgeOutcomeDataV1, ForgeSessionDataV1, WeaponForgeStationDataV1,
 };
+use super::identity::IdentityPanelStateV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
@@ -150,6 +151,7 @@ pub enum ServerDataType {
     SocialPact,
     SocialFeud,
     SocialRenownDelta,
+    IdentityPanelState,
     NicheIntrusion,
     NicheGuardianFatigue,
     NicheGuardianBroken,
@@ -348,6 +350,7 @@ pub enum ServerDataPayloadV1 {
     SocialPact(SocialPactEventV1),
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
+    IdentityPanelState(IdentityPanelStateV1),
     NicheIntrusion(NicheIntrusionEventV1),
     NicheGuardianFatigue(NicheGuardianFatigueV1),
     NicheGuardianBroken(NicheGuardianBrokenV1),
@@ -987,6 +990,10 @@ enum ServerDataPayloadWireV1 {
         tags_added: Vec<super::social::RenownTagV1>,
         tick: u64,
         reason: String,
+    },
+    IdentityPanelState {
+        #[serde(flatten)]
+        state: IdentityPanelStateV1,
     },
     NicheIntrusion {
         niche_pos: [i32; 3],
@@ -1743,6 +1750,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 tick,
                 reason,
             })),
+            ServerDataPayloadWireV1::IdentityPanelState { state } => {
+                Ok(Self::IdentityPanelState(state))
+            }
             ServerDataPayloadWireV1::NicheIntrusion {
                 niche_pos,
                 intruder_id,
@@ -2190,6 +2200,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 tick: event.tick,
                 reason: event.reason.clone(),
             },
+            ServerDataPayloadV1::IdentityPanelState(state) => Self::IdentityPanelState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::NicheIntrusion(event) => Self::NicheIntrusion {
                 niche_pos: event.niche_pos,
                 intruder_id: event.intruder_id.clone(),
@@ -2408,6 +2421,7 @@ impl ServerDataPayloadV1 {
             Self::SocialPact(..) => ServerDataType::SocialPact,
             Self::SocialFeud(..) => ServerDataType::SocialFeud,
             Self::SocialRenownDelta(..) => ServerDataType::SocialRenownDelta,
+            Self::IdentityPanelState(..) => ServerDataType::IdentityPanelState,
             Self::NicheIntrusion(..) => ServerDataType::NicheIntrusion,
             Self::NicheGuardianFatigue(..) => ServerDataType::NicheGuardianFatigue,
             Self::NicheGuardianBroken(..) => ServerDataType::NicheGuardianBroken,

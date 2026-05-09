@@ -36,6 +36,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
+use crate::identity::{reaction::npc_should_decline_trade, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
     PlayerInventory,
@@ -881,19 +882,29 @@ fn handle_sparring_invite_responses(
 fn dispatch_trade_offers(
     mut requests: EventReader<TradeOfferRequest>,
     mut registry: ResMut<TradeOfferRegistry>,
-    players: Query<(Entity, &Lifecycle, &Position, &PlayerInventory), With<Client>>,
+    players: Query<
+        (
+            Entity,
+            &Lifecycle,
+            &Position,
+            &PlayerInventory,
+            Option<&PlayerIdentities>,
+        ),
+        With<Client>,
+    >,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for request in requests.read() {
         if request.initiator == request.target {
             continue;
         }
-        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory)) =
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory, _)) =
             players.get(request.initiator)
         else {
             continue;
         };
-        let Ok((_, target_lifecycle, target_pos, target_inventory)) = players.get(request.target)
+        let Ok((_, target_lifecycle, target_pos, target_inventory, target_identities)) =
+            players.get(request.target)
         else {
             continue;
         };
@@ -910,6 +921,15 @@ fn dispatch_trade_offers(
         };
         let requested_items = trade_item_summaries(target_inventory);
         if requested_items.is_empty() {
+            continue;
+        }
+        if target_identities
+            .and_then(PlayerIdentities::active)
+            .is_some_and(npc_should_decline_trade)
+        {
+            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
+                initiator_client.send_chat_message("对方听过这张面孔的事，不愿交易");
+            }
             continue;
         }
         registry.pending.retain(|_, pending| {
@@ -2793,6 +2813,7 @@ mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
     use crate::combat::CombatClock;
+    use crate::identity::{RevealedTag, RevealedTagKind};
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
     };
@@ -3433,6 +3454,63 @@ mod tests {
         assert_eq!(
             app.world().resource::<TradeOfferRegistry>().pending.len(),
             1
+        );
+    }
+
+    #[test]
+    fn trade_offer_dispatch_rejects_target_with_wanted_identity() {
+        let mut app = App::new();
+        app.init_resource::<TradeOfferRegistry>();
+        app.add_event::<TradeOfferRequest>();
+        app.add_systems(Update, dispatch_trade_offers);
+        let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
+        initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(1001, "出物"),
+        ));
+        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+        let target = app.world_mut().spawn(target_bundle).id();
+        let mut target_identities = PlayerIdentities::with_default("毒蛊师", 0);
+        target_identities.identities[0].renown.notoriety = 30;
+        target_identities.identities[0]
+            .revealed_tags
+            .push(RevealedTag {
+                kind: RevealedTagKind::DuguRevealed,
+                witnessed_at_tick: 20,
+                witness_realm: Realm::Spirit,
+                permanent: true,
+            });
+        app.world_mut().entity_mut(target).insert((
+            Lifecycle {
+                character_id: "char:target".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(2002, "回物"),
+            target_identities,
+        ));
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            collect_server_data_payloads(&mut target_helper).is_empty(),
+            "Wanted identity should reject before trade_offer payload reaches target"
+        );
+        assert_eq!(
+            app.world().resource::<TradeOfferRegistry>().pending.len(),
+            0
         );
     }
 
