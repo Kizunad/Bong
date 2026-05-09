@@ -1,31 +1,35 @@
 //! plan-identity-v1 P5：server → client `identity_panel_state` 同步。
 
-use valence::prelude::{Added, Changed, Client, Or, Query, Res, With};
+use valence::prelude::{Client, DetectChanges, Query, Ref, Res, With};
 
-use crate::identity::{PlayerIdentities, RevealedTagKind};
+use crate::identity::{PlayerIdentities, RevealedTagKind, IDENTITY_SWITCH_COOLDOWN_TICKS};
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::npc::movement::GameTick;
 use crate::schema::identity::{IdentityPanelEntryV1, IdentityPanelStateV1, RevealedTagKindV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
-type ChangedIdentityClients<'world, 'state> = Query<
-    'world,
-    'state,
-    (&'static PlayerIdentities, &'static mut Client),
-    (
-        With<Client>,
-        Or<(Added<PlayerIdentities>, Changed<PlayerIdentities>)>,
-    ),
->;
+const IDENTITY_PANEL_COOLDOWN_REFRESH_INTERVAL_TICKS: u64 = 20;
+
+type IdentityPanelClientQueryItem<'a> = (Ref<'a, PlayerIdentities>, &'a mut Client);
 
 pub fn emit_identity_panel_state_payloads(
-    mut clients: ChangedIdentityClients<'_, '_>,
+    mut clients: Query<IdentityPanelClientQueryItem<'_>, With<Client>>,
     game_tick: Option<Res<GameTick>>,
 ) {
+    let cooldown_refresh_enabled = game_tick.is_some();
     let now_tick = game_tick.as_deref().map(|tick| tick.0 as u64).unwrap_or(0);
     for (identities, mut client) in clients.iter_mut() {
-        let state = build_identity_panel_state(identities, now_tick);
+        let identity_changed = identities.is_added() || identities.is_changed();
+        if !should_emit_identity_panel_state(
+            &identities,
+            now_tick,
+            identity_changed,
+            cooldown_refresh_enabled,
+        ) {
+            continue;
+        }
+        let state = build_identity_panel_state(&identities, now_tick);
         let payload = ServerDataV1::new(ServerDataPayloadV1::IdentityPanelState(state));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -37,6 +41,28 @@ pub fn emit_identity_panel_state_payloads(
         };
         send_server_data_payload(&mut client, payload_bytes.as_slice());
     }
+}
+
+fn should_emit_identity_panel_state(
+    identities: &PlayerIdentities,
+    now_tick: u64,
+    identity_changed: bool,
+    cooldown_refresh_enabled: bool,
+) -> bool {
+    if identity_changed {
+        return true;
+    }
+    if !cooldown_refresh_enabled || identities.last_switch_tick == 0 {
+        return false;
+    }
+    if now_tick % IDENTITY_PANEL_COOLDOWN_REFRESH_INTERVAL_TICKS != 0 {
+        return false;
+    }
+    let cooldown_refresh_deadline = identities
+        .last_switch_tick
+        .saturating_add(IDENTITY_SWITCH_COOLDOWN_TICKS)
+        .saturating_add(IDENTITY_PANEL_COOLDOWN_REFRESH_INTERVAL_TICKS);
+    now_tick <= cooldown_refresh_deadline
 }
 
 pub fn build_identity_panel_state(
@@ -116,6 +142,55 @@ mod tests {
         );
         assert_eq!(state.identities[1].display_name, "新名");
         assert!(!state.identities[1].frozen);
+    }
+
+    #[test]
+    fn panel_state_refreshes_during_cooldown_and_once_after_end() {
+        let mut identities = PlayerIdentities::with_default("kiz", 0);
+        identities.last_switch_tick = 101;
+
+        assert!(should_emit_identity_panel_state(
+            &identities,
+            120,
+            false,
+            true
+        ));
+        assert!(!should_emit_identity_panel_state(
+            &identities,
+            119,
+            false,
+            true
+        ));
+        assert!(should_emit_identity_panel_state(
+            &identities,
+            24_120,
+            false,
+            true
+        ));
+        assert!(!should_emit_identity_panel_state(
+            &identities,
+            24_140,
+            false,
+            true
+        ));
+        assert!(!should_emit_identity_panel_state(
+            &identities,
+            120,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn panel_state_still_emits_on_identity_change() {
+        let identities = PlayerIdentities::with_default("kiz", 0);
+
+        assert!(should_emit_identity_panel_state(
+            &identities,
+            119,
+            true,
+            false
+        ));
     }
 
     #[test]

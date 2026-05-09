@@ -4,6 +4,8 @@
 //! [`IdentityGossipTag`]；周期 tick 内仅向**同 zone + 同 faction** NPC 扩散。
 //! 扩散概率由 [`IdentityGossipConfig`] 控制，测试可设为 1.0 锁定行为。
 
+use std::collections::HashMap;
+
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EventReader, EventWriter, IntoSystemConfigs,
     ParamSet, Position, Query, Res, Resource, Update, With,
@@ -114,6 +116,7 @@ pub fn record_dugu_gossip_witness(
     players: Query<&PlayerIdentities>,
     mut memories: Query<&mut IdentityGossipMemory>,
 ) {
+    let mut pending: HashMap<Entity, Vec<IdentityGossipTag>> = HashMap::new();
     for event in events.read() {
         let Ok(identities) = players.get(event.revealed_player) else {
             continue;
@@ -126,12 +129,20 @@ pub fn record_dugu_gossip_witness(
             witness_realm: event.witness_realm,
             permanent: true,
         };
-        if let Ok(mut memory) = memories.get_mut(event.witness) {
-            memory.remember(tag);
+        pending.entry(event.witness).or_default().push(tag);
+    }
+
+    for (witness, tags) in pending {
+        if let Ok(mut memory) = memories.get_mut(witness) {
+            for tag in tags {
+                memory.remember(tag);
+            }
         } else {
             let mut memory = IdentityGossipMemory::default();
-            memory.remember(tag);
-            commands.entity(event.witness).insert(memory);
+            for tag in tags {
+                memory.remember(tag);
+            }
+            commands.entity(witness).insert(memory);
         }
     }
 }
@@ -397,6 +408,51 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].player, player);
         assert_eq!(collected[0].to_tier, ReactionTier::Wanted);
+    }
+
+    #[test]
+    fn same_witness_records_two_distinct_reveals_in_one_tick() {
+        let mut app = setup_app();
+        let first_player = app.world_mut().spawn(wanted_player_identities()).id();
+        let second_player = app.world_mut().spawn(wanted_player_identities()).id();
+        let witness = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 64.0, 0.0]),
+                faction(FactionId::Attack),
+            ))
+            .id();
+        app.world_mut().send_event(DuguRevealedEvent {
+            revealed_player: first_player,
+            witness,
+            witness_realm: Realm::Spirit,
+            at_position: [10.0, 64.0, 0.0],
+            at_tick: 20,
+        });
+        app.world_mut().send_event(DuguRevealedEvent {
+            revealed_player: second_player,
+            witness,
+            witness_realm: Realm::Spirit,
+            at_position: [10.0, 64.0, 0.0],
+            at_tick: 20,
+        });
+
+        app.update();
+
+        let memory = app
+            .world()
+            .get::<IdentityGossipMemory>(witness)
+            .expect("witness should retain both same-tick gossip tags");
+        assert_eq!(memory.known_tags.len(), 2);
+        assert!(memory
+            .known_tags
+            .iter()
+            .any(|tag| tag.target_player == first_player));
+        assert!(memory
+            .known_tags
+            .iter()
+            .any(|tag| tag.target_player == second_player));
     }
 
     #[test]
