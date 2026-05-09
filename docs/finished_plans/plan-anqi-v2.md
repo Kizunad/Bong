@@ -455,13 +455,13 @@ HUD 组件（plan-HUD-v1 接入）：
 
 - `cd server && cargo fmt --check`
 - `cd server && cargo clippy --all-targets -- -D warnings`
-- `cd server && cargo test`：3222 passed
+- `cd server && cargo test`：3246 passed
 - `cd server && cargo test -q anqi -- --nocapture`：10 passed
 - `cd server && cargo test -q inventory::tests::loads_item_registry_from_assets -- --nocapture`：1 passed
 - `cd agent && npm ci`
 - `cd agent && npm run build`
-- `cd agent && npm test -w @bong/schema`：328 passed
-- `cd agent && npm test -w @bong/tiandao`：308 passed
+- `cd agent && npm test -w @bong/schema`：331 passed
+- `cd agent && npm test -w @bong/tiandao`：311 passed
 - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build`：BUILD SUCCESSFUL
 
 ### 回归锚点
