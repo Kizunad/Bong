@@ -16,13 +16,15 @@ use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
-    CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANTICHEAT,
-    CH_ARMOR_DURABILITY_CHANGED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT,
-    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT,
-    CH_DUGU_POISON_PROGRESS, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME,
-    CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE,
-    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
-    CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
+    CH_ANQI_CARRIER_ABRASION, CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT,
+    CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
+    CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BONE_COIN_TICK,
+    CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
+    CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS, CH_DUO_SHE_EVENT,
+    CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER,
+    CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POI_NOVICE_EVENT,
+    CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
     CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED,
     CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
     CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
@@ -36,7 +38,8 @@ use crate::schema::channels::{
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
-    CarrierChargedEventV1, CarrierImpactEventV1, ProjectileDespawnedEventV1,
+    CarrierAbrasionEventV1, CarrierChargedEventV1, CarrierImpactEventV1, ContainerSwapEventV1,
+    EchoFractalEventV1, MultiShotEventV1, ProjectileDespawnedEventV1, QiInjectionEventV1,
 };
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
@@ -166,6 +169,11 @@ pub enum RedisOutbound {
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
     ProjectileDespawned(ProjectileDespawnedEventV1),
+    AnqiMultiShot(MultiShotEventV1),
+    AnqiQiInjection(QiInjectionEventV1),
+    AnqiEchoFractal(EchoFractalEventV1),
+    AnqiCarrierAbrasion(CarrierAbrasionEventV1),
+    AnqiContainerSwap(ContainerSwapEventV1),
     TuikeShed(ShedEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
     WantedPlayer(WantedPlayerEventV1),
@@ -1048,6 +1056,53 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_ANQI_PROJECTILE_DESPAWNED,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiMultiShot(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize MultiShotEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_MULTI_SHOT,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiQiInjection(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize QiInjectionEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_QI_INJECTION,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiEchoFractal(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize EchoFractalEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_ECHO_FRACTAL,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiCarrierAbrasion(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize CarrierAbrasionEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CARRIER_ABRASION,
+                payload,
+            })
+        }
+        RedisOutbound::AnqiContainerSwap(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ContainerSwapEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ANQI_CONTAINER_SWAP,
                 payload,
             })
         }

@@ -1,4 +1,28 @@
-# plan-anqi-v1: v1 only supports one beast-bone carrier tier.
+# plan-anqi-v2: six carrier tiers plus charged non-stackable variants.
+
+[[item]]
+id = "anqi_bone_chip"
+name = "残骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "普通动物骨削成的残骨暗器，封元后远距衰减明显。"
+max_stack_count = 32
+
+[[item]]
+id = "anqi_bone_chip_charged"
+name = "封元残骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "已封入真元的残骨暗器，低档载体不可堆叠。"
+max_stack_count = 1
 
 [[item]]
 id = "anqi_yibian_shougu"
@@ -22,4 +46,136 @@ base_weight = 0.2
 rarity = "uncommon"
 spirit_quality_initial = 1.0
 description = "已封入真元的异变兽骨。载体不可堆叠，命中时碎裂注射。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_lingmu_arrow"
+name = "灵木编制箭"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "灵木纤维编成的轻暗箭，适合五发齐射。"
+max_stack_count = 24
+
+[[item]]
+id = "anqi_lingmu_arrow_charged"
+name = "封元灵木箭"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "已封入真元的灵木编制箭，齐射时各弹道独立结算。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_dyed_bone"
+name = "凝实色染色骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "以凝实色染料养过的暗器骨，适合凝魂注射。"
+max_stack_count = 12
+
+[[item]]
+id = "anqi_dyed_bone_charged"
+name = "封元染色骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "封入凝实色真元的染色骨，命中后高密度注射。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_fenglinghe_bone"
+name = "封灵匣骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "epic"
+spirit_quality_initial = 1.0
+description = "上古残骨碎片改制的封灵匣骨，适合破甲注射。"
+max_stack_count = 8
+
+[[item]]
+id = "anqi_fenglinghe_bone_charged"
+name = "封元封灵匣骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "epic"
+spirit_quality_initial = 1.0
+description = "封入高压真元的封灵匣骨，破甲释放后有碎裂风险。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_shanggu_bone"
+name = "上古残骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "末法残土遗存的上古残骨，化虚真元场可将其分形为 echo 弹道。"
+max_stack_count = 4
+
+[[item]]
+id = "anqi_shanggu_bone_charged"
+name = "封元上古残骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "已封入超量真元的上古残骨，诱饵分形完成后本体碎裂。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_container_quiver"
+name = "暗器箭袋"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.6
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "可收纳十二支暗器载体，入囊与出囊各损失少量封存真元。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_container_pocket_pouch"
+name = "暗器裤袋"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "隐蔽小袋，可收纳四支暗器载体，磨损税高于箭袋。"
+max_stack_count = 1
+
+[[item]]
+id = "anqi_container_fenglinghe"
+name = "封灵匣"
+category = "misc"
+grid_w = 2
+grid_h = 1
+base_weight = 0.8
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "异兽骨骼与灵木编制的封灵匣，收放不损封存真元，但战斗中不可切换。"
 max_stack_count = 1

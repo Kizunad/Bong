@@ -3692,6 +3692,31 @@ mod tests {
                 "forge asset `{required}` must be registered"
             );
         }
+        for anqi_item in [
+            "anqi_bone_chip",
+            "anqi_bone_chip_charged",
+            "anqi_yibian_shougu",
+            "anqi_yibian_shougu_charged",
+            "anqi_lingmu_arrow",
+            "anqi_lingmu_arrow_charged",
+            "anqi_dyed_bone",
+            "anqi_dyed_bone_charged",
+            "anqi_fenglinghe_bone",
+            "anqi_fenglinghe_bone_charged",
+            "anqi_shanggu_bone",
+            "anqi_shanggu_bone_charged",
+            "anqi_container_quiver",
+            "anqi_container_pocket_pouch",
+            "anqi_container_fenglinghe",
+        ] {
+            let template = registry
+                .get(anqi_item)
+                .unwrap_or_else(|| panic!("anqi asset `{anqi_item}` must be registered"));
+            assert!(
+                (0.0..=1.0).contains(&template.spirit_quality_initial),
+                "anqi asset `{anqi_item}` spirit quality must remain within item registry bounds"
+            );
+        }
         for required_tool in [
             "cai_yao_dao",
             "bao_chu",

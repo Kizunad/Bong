@@ -58,28 +58,89 @@ pub enum BondKind {
     EmbeddedTrap,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CarrierKind {
+    BoneChip,
     YibianShougu,
+    LingmuArrow,
+    DyedBone,
+    FenglingheBone,
+    ShangguBone,
 }
 
 impl CarrierKind {
     pub const fn grade(self) -> CarrierGrade {
         match self {
+            Self::BoneChip => CarrierGrade::Bone,
             Self::YibianShougu => CarrierGrade::Beast,
+            Self::LingmuArrow => CarrierGrade::Spirit,
+            Self::DyedBone | Self::FenglingheBone | Self::ShangguBone => CarrierGrade::Relic,
         }
     }
 
     pub const fn half_life_min(self) -> f32 {
         match self {
+            Self::BoneChip => 45.0,
             Self::YibianShougu => 120.0,
+            Self::LingmuArrow => 90.0,
+            Self::DyedBone => 180.0,
+            Self::FenglingheBone => 240.0,
+            Self::ShangguBone => 360.0,
         }
     }
+
+    pub const fn material_template_id(self) -> &'static str {
+        match self {
+            Self::BoneChip => "anqi_bone_chip",
+            Self::YibianShougu => ANQI_MATERIAL_TEMPLATE_ID,
+            Self::LingmuArrow => "anqi_lingmu_arrow",
+            Self::DyedBone => "anqi_dyed_bone",
+            Self::FenglingheBone => "anqi_fenglinghe_bone",
+            Self::ShangguBone => "anqi_shanggu_bone",
+        }
+    }
+
+    pub const fn charged_template_id(self) -> &'static str {
+        match self {
+            Self::BoneChip => "anqi_bone_chip_charged",
+            Self::YibianShougu => ANQI_CHARGED_TEMPLATE_ID,
+            Self::LingmuArrow => "anqi_lingmu_arrow_charged",
+            Self::DyedBone => "anqi_dyed_bone_charged",
+            Self::FenglingheBone => "anqi_fenglinghe_bone_charged",
+            Self::ShangguBone => "anqi_shanggu_bone_charged",
+        }
+    }
+
+    pub fn from_template_id(template_id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| {
+            template_id == kind.material_template_id() || template_id == kind.charged_template_id()
+        })
+    }
+
+    pub const ALL: [Self; 6] = [
+        Self::BoneChip,
+        Self::YibianShougu,
+        Self::LingmuArrow,
+        Self::DyedBone,
+        Self::FenglingheBone,
+        Self::ShangguBone,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InjectionKind {
+    Snipe,
+    MultiShot,
+    SoulInject,
+    ArmorPierce,
+    EchoFractal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CarrierImprint {
+    pub carrier_kind: CarrierKind,
     pub qi_amount: f32,
     pub qi_amount_initial: f32,
     pub qi_color: ColorKind,
@@ -87,6 +148,8 @@ pub struct CarrierImprint {
     pub half_life_min: f32,
     pub decay_started_at_tick: u64,
     pub bond_kind: BondKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub injection_kind: Option<InjectionKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, bevy_ecs::component::Component)]
@@ -260,9 +323,29 @@ type ChargingActor<'a> = (
 
 pub fn anqi_carrier_profile(kind: CarrierKind) -> InjectProfile {
     match kind {
+        CarrierKind::BoneChip => InjectProfile {
+            wound_ratio: 0.45,
+            contam_ratio: 0.35,
+        },
         CarrierKind::YibianShougu => InjectProfile {
             wound_ratio: 0.5,
             contam_ratio: 0.5,
+        },
+        CarrierKind::LingmuArrow => InjectProfile {
+            wound_ratio: 0.55,
+            contam_ratio: 0.25,
+        },
+        CarrierKind::DyedBone => InjectProfile {
+            wound_ratio: 0.65,
+            contam_ratio: 0.30,
+        },
+        CarrierKind::FenglingheBone => InjectProfile {
+            wound_ratio: 0.75,
+            contam_ratio: 0.20,
+        },
+        CarrierKind::ShangguBone => InjectProfile {
+            wound_ratio: 0.70,
+            contam_ratio: 0.15,
         },
     }
 }
@@ -291,7 +374,7 @@ fn begin_charge_carrier(
         if cultivation.qi_current + f64::EPSILON < f64::from(qi_target) {
             continue;
         }
-        let Some((slot, item)) = find_chargeable_hand(inventory, intent.slot) else {
+        let Some((slot, item, _kind)) = find_chargeable_hand(inventory, intent.slot) else {
             continue;
         };
         let prepaid = qi_target * 0.5;
@@ -320,7 +403,7 @@ fn lifecycle_allows_charge(lifecycle: Option<&Lifecycle>) -> bool {
 fn find_chargeable_hand(
     inventory: &PlayerInventory,
     requested: Option<CarrierSlot>,
-) -> Option<(CarrierSlot, &ItemInstance)> {
+) -> Option<(CarrierSlot, &ItemInstance, CarrierKind)> {
     let slots = match requested {
         Some(CarrierSlot::MainHand) => &[CarrierSlot::MainHand][..],
         Some(CarrierSlot::OffHand) => &[CarrierSlot::OffHand][..],
@@ -328,9 +411,8 @@ fn find_chargeable_hand(
     };
     slots.iter().find_map(|slot| {
         let item = inventory.equipped.get(slot.equip_key())?;
-        (item.template_id == ANQI_MATERIAL_TEMPLATE_ID
-            || item.template_id == ANQI_CHARGED_TEMPLATE_ID)
-            .then_some((*slot, item))
+        let kind = CarrierKind::from_template_id(&item.template_id)?;
+        Some((*slot, item, kind))
     })
 }
 
@@ -413,19 +495,34 @@ fn finish_charge(
         commands.entity(entity).remove::<CarrierCharging>();
         return;
     }
-    if transform_equipped_item(inventory, registry, charging.slot, ANQI_CHARGED_TEMPLATE_ID) {
+    let carrier_kind = CarrierKind::from_template_id(
+        inventory
+            .equipped
+            .get(charging.slot.equip_key())
+            .map(|item| item.template_id.as_str())
+            .unwrap_or_default(),
+    )
+    .unwrap_or(CarrierKind::YibianShougu);
+    if transform_equipped_item(
+        inventory,
+        registry,
+        charging.slot,
+        carrier_kind.charged_template_id(),
+    ) {
         store.imprints_by_instance.insert(
             charging.instance_id,
             CarrierImprint {
+                carrier_kind,
                 qi_amount,
                 qi_amount_initial: qi_amount,
                 qi_color: qi_color
                     .map(|color| color.main)
                     .unwrap_or(ColorKind::Mellow),
                 source_realm: cultivation.realm,
-                half_life_min: CarrierKind::YibianShougu.half_life_min(),
+                half_life_min: carrier_kind.half_life_min(),
                 decay_started_at_tick: tick,
                 bond_kind: BondKind::HandheldCarrier,
+                injection_kind: None,
             },
         );
         events.send(CarrierChargedEvent {
@@ -515,7 +612,13 @@ fn degrade_equipped_instance(
     else {
         return false;
     };
-    transform_equipped_item(inventory, registry, slot, ANQI_MATERIAL_TEMPLATE_ID)
+    let material_template = inventory
+        .equipped
+        .get(slot.equip_key())
+        .and_then(|item| CarrierKind::from_template_id(&item.template_id))
+        .unwrap_or(CarrierKind::YibianShougu)
+        .material_template_id();
+    transform_equipped_item(inventory, registry, slot, material_template)
 }
 
 fn throw_carrier_intents(
@@ -563,9 +666,9 @@ fn throw_carrier_intents(
                 qi_payload: imprint.qi_amount,
             },
             AnqiProjectileFlight {
-                carrier_kind: CarrierKind::YibianShougu,
+                carrier_kind: imprint.carrier_kind,
                 qi_color: imprint.qi_color,
-                carrier_grade: CarrierKind::YibianShougu.grade(),
+                carrier_grade: imprint.carrier_kind.grade(),
                 spawn_pos,
                 prev_pos: spawn_pos,
                 velocity: dir * speed,
@@ -927,6 +1030,7 @@ mod tests {
     #[test]
     fn natural_decay_uses_half_life_curve() {
         let mut imprint = CarrierImprint {
+            carrier_kind: CarrierKind::YibianShougu,
             qi_amount: 40.0,
             qi_amount_initial: 40.0,
             qi_color: ColorKind::Solid,
@@ -934,6 +1038,7 @@ mod tests {
             half_life_min: 120.0,
             decay_started_at_tick: 0,
             bond_kind: BondKind::HandheldCarrier,
+            injection_kind: None,
         };
         let elapsed_min = 120.0;
         let half_lives = elapsed_min / imprint.half_life_min;

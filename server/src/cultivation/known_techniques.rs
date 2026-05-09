@@ -28,7 +28,7 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 12] = [
+const TECHNIQUE_IDS: [&str; 17] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -41,6 +41,11 @@ const TECHNIQUE_IDS: [&str; 12] = [
     "dugu.shoot_needle",
     "dugu.infuse_poison",
     "anqi.charge_carrier",
+    "anqi.single_snipe",
+    "anqi.multi_shot",
+    "anqi.soul_inject",
+    "anqi.armor_pierce",
+    "anqi.echo_fractal",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,7 +69,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 12] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 17] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -251,6 +256,96 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 12] = [
         cooldown_ticks: 400,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/anqi_charge_carrier.png",
+    },
+    TechniqueDefinition {
+        id: "anqi.single_snipe",
+        display_name: "单射狙击",
+        grade: "yellow",
+        description: "以单根载体封元远射，释放瞬间读取目向，命中后注入封存真元。",
+        required_realm: "Awaken",
+        required_meridians: &[
+            TechniqueRequiredMeridian {
+                channel: "Lung",
+                min_health: 0.01,
+            },
+            TechniqueRequiredMeridian {
+                channel: "Heart",
+                min_health: 0.01,
+            },
+            TechniqueRequiredMeridian {
+                channel: "Pericardium",
+                min_health: 0.01,
+            },
+        ],
+        qi_cost: 0.25,
+        cast_ticks: 6,
+        cooldown_ticks: 60,
+        range: 80.0,
+        icon_texture: "bong:textures/gui/skill/anqi_single_snipe.png",
+    },
+    TechniqueDefinition {
+        id: "anqi.multi_shot",
+        display_name: "多发齐射",
+        grade: "yellow",
+        description: "五支灵木载体扇形齐发，每条弹道独立结算。",
+        required_realm: "Awaken",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Pericardium",
+            min_health: 0.01,
+        }],
+        qi_cost: 0.40,
+        cast_ticks: 30,
+        cooldown_ticks: 240,
+        range: 30.0,
+        icon_texture: "bong:textures/gui/skill/anqi_multi_shot.png",
+    },
+    TechniqueDefinition {
+        id: "anqi.soul_inject",
+        display_name: "凝魂注射",
+        grade: "profound",
+        description: "凝实色载体高密度封存，命中后按颜色匹配放大伤口与污染。",
+        required_realm: "Condense",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Spleen",
+            min_health: 0.01,
+        }],
+        qi_cost: 0.35,
+        cast_ticks: 20,
+        cooldown_ticks: 360,
+        range: 50.0,
+        icon_texture: "bong:textures/gui/skill/anqi_soul_inject.png",
+    },
+    TechniqueDefinition {
+        id: "anqi.armor_pierce",
+        display_name: "破甲注射",
+        grade: "profound",
+        description: "封灵匣骨超功率封存，穿透目标防御后有载体碎裂风险。",
+        required_realm: "Solidify",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "LargeIntestine",
+            min_health: 0.01,
+        }],
+        qi_cost: 0.45,
+        cast_ticks: 40,
+        cooldown_ticks: 500,
+        range: 80.0,
+        icon_texture: "bong:textures/gui/skill/anqi_armor_pierce.png",
+    },
+    TechniqueDefinition {
+        id: "anqi.echo_fractal",
+        display_name: "诱饵分形",
+        grade: "earth",
+        description: "化虚真元浓度场将上古残骨分形为多条真实 echo 弹道。",
+        required_realm: "Void",
+        required_meridians: &[TechniqueRequiredMeridian {
+            channel: "Du",
+            min_health: 0.01,
+        }],
+        qi_cost: 0.60,
+        cast_ticks: 60,
+        cooldown_ticks: 6000,
+        range: 150.0,
+        icon_texture: "bong:textures/gui/skill/anqi_echo_fractal.png",
     },
 ];
 
