@@ -635,7 +635,7 @@ fn dehydrate_far_npcs(
 
 - `cargo fmt --check` ✅
 - `cargo clippy --all-targets -- -D warnings` ✅
-- `cargo test` ✅ `3496 passed; 0 failed`
+- `cargo test` ✅ `3497 passed; 0 failed`
 - `cargo test npc::dormant` ✅ `6 passed; 0 failed`
 - `cargo test npc::hydrate` ✅ `3 passed; 0 failed`
 - `cargo test publishes_dormant_npcs_in_world_state_and_redis_hash` ✅
