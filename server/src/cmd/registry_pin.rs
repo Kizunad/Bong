@@ -15,6 +15,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "tptree",
     "tpzone",
     "tsy_spawn",
+    "whale",
     "wound",
     "zones",
 ];
@@ -37,11 +38,11 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "spawn",
     "stamina set <value:float>",
     "summon rat",
-    "summon whale",
     "top",
     "tptree <tree:string>",
     "tpzone <zone:string>",
     "tsy_spawn <family_id:string>",
+    "whale spawn",
     "wound add <part:string>",
     "wound add <part:string> <severity:float>",
     "zones",
@@ -80,6 +81,7 @@ mod tests {
                 "tptree",
                 "tpzone",
                 "tsy_spawn",
+                "whale",
                 "wound",
                 "zones",
             ]

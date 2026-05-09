@@ -1,4 +1,7 @@
-//! Dev 指令：`/summon whale` —— 在玩家上方 30 块、前方 30 块处生成一只飞鲸。
+//! Dev 指令：`/whale spawn` —— 在玩家上方 30 块、前方 30 块处生成一只飞鲸。
+//! 不复用 `/summon` 前缀（与 rat 共用会让 brigadier root 出现重复 `summon` literal —
+//! `command_registry_contains_pinned_root_literals` 测试会撞红）。改用专属根
+//! `whale`，与 `rat activate` 同模式。
 //!
 //! 验证完整 spawn 流程：fauna_tag, blackboard, flight controller, brain
 //! thinker 全部就位，flight system 开始 drift。
@@ -30,8 +33,8 @@ impl Command for WhaleTestCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
         graph
             .root()
-            .literal("summon")
             .literal("whale")
+            .literal("spawn")
             .with_executable(|_| Self::SummonWhale);
     }
 }
@@ -60,7 +63,7 @@ pub fn handle_whale_test_commands(
 ) {
     for event in events.read() {
         tracing::info!(
-            "[bong][whale-cmd] /summon whale dispatched executor={:?}",
+            "[bong][whale-cmd] /whale spawn dispatched executor={:?}",
             event.executor
         );
         let Ok((position, look, player_layer, mut client)) = players.get_mut(event.executor) else {
@@ -77,7 +80,7 @@ pub fn handle_whale_test_commands(
             .or_else(|| layers.iter().next())
         else {
             tracing::warn!("[bong][whale-cmd] no active layer found, abort spawn");
-            client.send_chat_message("/summon whale failed: no active layer.");
+            client.send_chat_message("/whale spawn failed: no active layer.");
             continue;
         };
         tracing::info!(
@@ -112,7 +115,7 @@ pub fn handle_whale_test_commands(
             layer
         );
         client.send_chat_message(format!(
-            "/summon whale spawned {:?} at ({:.1}, {:.1}, {:.1}), wander_radius={}",
+            "/whale spawn spawned {:?} at ({:.1}, {:.1}, {:.1}), wander_radius={}",
             whale, home.x, home.y, home.z, DEFAULT_WANDER_RADIUS_XZ
         ));
     }
