@@ -13,6 +13,7 @@ pub mod foreign_qi_resistance;
 pub mod jiemai;
 pub mod lifecycle;
 pub mod needle;
+pub mod player_attack;
 pub mod projectile;
 pub mod rat_bite;
 pub mod raycast;
@@ -101,6 +102,7 @@ fn attach_combat_bundle_to_joined_clients(
             AntiCheatCounter::default(),
             carrier::CarrierStore::default(),
             anqi_v2::ContainerSlot::default(),
+            player_attack::PlayerAttackCooldown::default(),
             Lifecycle {
                 character_id,
                 spawn_anchor,
@@ -242,6 +244,10 @@ pub fn register(app: &mut App) {
         rat_bite::apply_rat_bite_qi_drain
             .in_set(CombatSystemSet::Resolve)
             .after(resolve::resolve_attack_intents),
+    );
+    app.add_systems(
+        Update,
+        player_attack::handle_player_attack.in_set(CombatSystemSet::Intent),
     );
     // Separate add_systems call to stay below Bevy 0.14 tuple-arity limits.
     app.add_systems(
