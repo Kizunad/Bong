@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Update};
+use valence::prelude::{
+    bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Startup, Update,
+};
 
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
 use crate::cultivation::life_record::LifeRecord;
@@ -26,6 +28,8 @@ use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
 pub const NPC_DORMANT_REDIS_KEY: &str = "bong:npc/dormant";
+const REDIS_URL_ENV_KEY: &str = "REDIS_URL";
+const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
 pub const HYDRATE_RADIUS_BLOCKS: f64 = 64.0;
 pub const DEHYDRATE_RADIUS_BLOCKS: f64 = 256.0;
 pub const DORMANT_ZONE_ABSORPTION_RADIUS_BLOCKS: f64 = 64.0;
@@ -269,6 +273,7 @@ pub fn register(app: &mut App) {
         .insert_resource(NpcVirtualizationConfig::default())
         .insert_resource(DormantRoguePopulationSeedConfig::default())
         .add_event::<DormantSeveredAt>()
+        .add_systems(Startup, load_dormant_store_from_redis_system)
         .add_systems(
             Update,
             (
@@ -276,6 +281,59 @@ pub fn register(app: &mut App) {
                 dormant_global_tick_system,
             ),
         );
+}
+
+fn load_dormant_store_from_redis_system(mut store: ResMut<NpcDormantStore>) {
+    if !store.is_empty() {
+        return;
+    }
+    match load_dormant_snapshots_from_redis(&mut store) {
+        Ok(0) => {}
+        Ok(count) => {
+            tracing::info!("[bong][npc] loaded {count} dormant NPC snapshot(s) from Redis HASH")
+        }
+        Err(error) => {
+            tracing::debug!("[bong][npc] skipped dormant Redis HASH restore: {error}");
+        }
+    }
+}
+
+fn load_dormant_snapshots_from_redis(store: &mut NpcDormantStore) -> Result<usize, String> {
+    let client = redis::Client::open(dormant_redis_url_from_env()).map_err(|error| {
+        format!("failed to open Redis client for {NPC_DORMANT_REDIS_KEY}: {error}")
+    })?;
+    let mut connection = client
+        .get_connection()
+        .map_err(|error| format!("failed to connect Redis for {NPC_DORMANT_REDIS_KEY}: {error}"))?;
+    let entries: HashMap<String, String> = redis::cmd("HGETALL")
+        .arg(NPC_DORMANT_REDIS_KEY)
+        .query(&mut connection)
+        .map_err(|error| format!("failed to HGETALL {NPC_DORMANT_REDIS_KEY}: {error}"))?;
+    load_dormant_snapshots_from_hash_entries(store, entries)
+}
+
+fn load_dormant_snapshots_from_hash_entries(
+    store: &mut NpcDormantStore,
+    entries: HashMap<String, String>,
+) -> Result<usize, String> {
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    for (char_id, payload) in entries {
+        let snapshot = serde_json::from_str::<NpcDormantSnapshot>(&payload)
+            .map_err(|error| format!("invalid dormant snapshot `{char_id}`: {error}"))?;
+        store.snapshots.insert(snapshot.char_id.clone(), snapshot);
+    }
+    store.rebuild_indexes();
+    Ok(store.len())
+}
+
+fn dormant_redis_url_from_env() -> String {
+    std::env::var(REDIS_URL_ENV_KEY)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REDIS_URL.to_string())
 }
 
 pub fn current_tick(game_tick: Option<&GameTick>) -> u64 {
@@ -772,5 +830,19 @@ mod tests {
             serde_json::from_str(payloads[0].1.as_str()).expect("deserialize");
         assert_eq!(decoded.char_id, "npc_a");
         assert_eq!(decoded.position, [10.0, 64.0, 10.0]);
+    }
+
+    #[test]
+    fn loads_dormant_snapshots_from_redis_hash_entries() {
+        let source = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
+        let entries = HashMap::from([(source.char_id.clone(), payload)]);
+        let mut store = NpcDormantStore::default();
+
+        let count = load_dormant_snapshots_from_hash_entries(&mut store, entries).expect("load");
+
+        assert_eq!(count, 1);
+        assert!(store.contains("npc_a"));
+        assert_eq!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME), &["npc_a"]);
     }
 }
