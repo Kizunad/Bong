@@ -60,6 +60,12 @@ import {
   WeatherEventUpdateV1,
 } from "../src/lingtian-weather.js";
 import {
+  EnvironmentEffectV1,
+  ZoneEnvironmentStateV1,
+  validateEnvironmentEffectV1Contract,
+  validateZoneEnvironmentStateV1Contract,
+} from "../src/zone-environment.js";
+import {
   BoneCoinTickV1,
   PriceIndexV1,
   validateBoneCoinTickV1Contract,
@@ -203,6 +209,11 @@ describe("sample files pass schema validation", () => {
   it("declares weather event update Redis channel", () => {
     expect(CHANNELS.WEATHER_EVENT_UPDATE).toBe("bong:weather_event_update");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.WEATHER_EVENT_UPDATE);
+  });
+
+  it("declares zone environment Redis channel", () => {
+    expect(CHANNELS.ZONE_ENVIRONMENT_UPDATE).toBe("bong:zone_environment_update");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONE_ENVIRONMENT_UPDATE);
   });
 
   it("declares zong formation Redis channel", () => {
@@ -1619,5 +1630,105 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
       const result = validate(WeatherEventUpdateV1, data);
       expect(result.ok).toBe(false);
     }
+  });
+});
+
+describe("plan-zone-environment-v1 schema", () => {
+  it("EnvironmentEffectV1 接受 8 个 wire 变体", () => {
+    const effects = [
+      {
+        kind: "tornado_column",
+        center: [0, 70, 0],
+        radius: 9,
+        height: 48,
+        particle_density: 0.6,
+      },
+      {
+        kind: "lightning_pillar",
+        center: [0, 70, 0],
+        radius: 4,
+        strike_rate_per_min: 2,
+      },
+      {
+        kind: "ash_fall",
+        aabb_min: [0, 60, 0],
+        aabb_max: [16, 90, 16],
+        density: 0.4,
+      },
+      {
+        kind: "fog_veil",
+        aabb_min: [0, 60, 0],
+        aabb_max: [16, 90, 16],
+        tint_rgb: [120, 132, 148],
+        density: 0.3,
+      },
+      {
+        kind: "dust_devil",
+        center: [0, 70, 0],
+        radius: 5,
+        height: 22,
+      },
+      {
+        kind: "ember_drift",
+        aabb_min: [0, 60, 0],
+        aabb_max: [16, 90, 16],
+        density: 0.3,
+        glow: 0.7,
+      },
+      {
+        kind: "heat_haze",
+        aabb_min: [0, 60, 0],
+        aabb_max: [16, 90, 16],
+        distortion_strength: 0.25,
+      },
+      {
+        kind: "snow_drift",
+        aabb_min: [0, 60, 0],
+        aabb_max: [16, 90, 16],
+        density: 0.5,
+        wind_dir: [0.5, 0, -0.25],
+      },
+    ];
+
+    for (const effect of effects) {
+      const result = validate(EnvironmentEffectV1, effect);
+      expect(result.ok, `${effect.kind}: ${result.errors.join("; ")}`).toBe(true);
+      expectContractAccepts(
+        "EnvironmentEffectV1",
+        validateEnvironmentEffectV1Contract,
+        effect,
+      );
+    }
+  });
+
+  it("ZoneEnvironmentStateV1 接受 sample 文件", () => {
+    const data = loadSample("zone-environment-state.sample.json");
+    const result = validate(ZoneEnvironmentStateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expectContractAccepts(
+      "ZoneEnvironmentStateV1",
+      validateZoneEnvironmentStateV1Contract,
+      data,
+    );
+  });
+
+  it("EnvironmentEffectV1 拒绝未知 kind", () => {
+    const result = validate(EnvironmentEffectV1, {
+      kind: "acid_rain",
+      aabb_min: [0, 60, 0],
+      aabb_max: [16, 90, 16],
+      density: 0.3,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("ZoneEnvironmentStateV1 拒绝缺 generation", () => {
+    const data = loadObjectSample("zone-environment-state.sample.json");
+    delete data.generation;
+    expectContractRejects(
+      "ZoneEnvironmentStateV1.generation required",
+      validateZoneEnvironmentStateV1Contract,
+      data,
+    );
   });
 });

@@ -410,6 +410,10 @@ import {
 } from "./container-interaction.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
+import {
+  EnvironmentEffectV1,
+  ZoneEnvironmentStateV1,
+} from "./zone-environment.js";
 import { ZonePressureCrossedV1, ZonePressureLevelV1 } from "./zone-pressure.js";
 
 export const SCHEMA_REGISTRY = {
@@ -445,6 +449,8 @@ export const SCHEMA_REGISTRY = {
   weatherEventKindV1: WeatherEventKindV1,
   weatherEventDataV1: WeatherEventDataV1,
   weatherEventUpdateV1: WeatherEventUpdateV1,
+  environmentEffectV1: EnvironmentEffectV1,
+  zoneEnvironmentStateV1: ZoneEnvironmentStateV1,
   boneCoinTickV1: BoneCoinTickV1,
   priceSampleV1: PriceSampleV1,
   priceIndexV1: PriceIndexV1,

@@ -64,6 +64,7 @@ pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
 pub mod yidao_state_emit;
 pub mod zhenmai_v2_event_bridge;
+pub mod zone_environment_bridge;
 pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -352,6 +353,8 @@ pub fn register(app: &mut App) {
             // apply system 之后跑，确保 Bevy events 已就位。
             weather_bridge::publish_weather_lifecycle_events
                 .after(crate::lingtian::weather::weather_apply_to_plot_system),
+            zone_environment_bridge::zone_environment_broadcast_system
+                .after(crate::world::environment::sync_zone_environment_effects),
         ),
     );
     app.add_systems(

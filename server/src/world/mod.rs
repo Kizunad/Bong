@@ -1,6 +1,7 @@
 pub mod block_break;
 pub mod dimension;
 pub mod dimension_transfer;
+pub mod environment;
 pub mod events;
 pub mod extract_system;
 pub mod karma;
@@ -104,6 +105,7 @@ pub fn register(app: &mut App) {
     // chunk —— 否则 vanilla / 普通方块挖了会"复原"。
     block_break::register(app);
     zone::register(app);
+    environment::register(app);
     season::register(app);
     spirit_eye::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());
