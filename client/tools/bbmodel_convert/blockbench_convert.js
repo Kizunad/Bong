@@ -166,20 +166,14 @@ function compileGroup(data, group) {
         let offset = element.from.slice();
         offset[0] *= -1;
 
-        if (
-          element.rotation[0] !== 0 ||
-          element.rotation[1] !== 0 ||
-          element.rotation[2] !== 0
-        ) {
+        // 防御：locator 可能没 rotation 字段，缺失时按 [0,0,0] 处理（无旋转）。
+        const rot = Array.isArray(element.rotation) ? element.rotation : [0, 0, 0];
+        if (rot[0] !== 0 || rot[1] !== 0 || rot[2] !== 0) {
           locators[key] = {
             offset,
             // 修：上游 [0]/[0]/[0] 是 typo，三轴都用 X 旋转 → Y/Z 旋转 locator 错位。
             // 改用对应轴 [0]/[1]/[2]（X 取负，Y 取负 — Bedrock 与 Java 坐标系手性差）。
-            rotation: [
-              -element.rotation[0],
-              -element.rotation[1],
-              element.rotation[2],
-            ],
+            rotation: [-rot[0], -rot[1], rot[2]],
           };
         } else {
           locators[key] = offset;
