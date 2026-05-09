@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "zhenmai_harden",
+  "description": "zhenmai v2 harden: palm covers one meridian line.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 7,
+    "stopTick": 9,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.3 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.25 } },
+      { "tick": 3, "easing": "INOUTSINE", "rightArm": { "pitch": -1.2, "yaw": 0.25, "bend": 0.7 } },
+      { "tick": 3, "easing": "INOUTSINE", "torso": { "pitch": 0.05 } },
+      { "tick": 7, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "bend": 0.0 } },
+      { "tick": 7, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0 } },
+      { "tick": 7, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "zhenmai_parry",
+  "description": "zhenmai v2 parry: short recoil guard and wrist snap.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 4,
+    "stopTick": 6,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "OUTQUAD", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "OUTQUAD", "rightArm": { "pitch": -0.4 } },
+      { "tick": 0, "easing": "OUTQUAD", "leftArm": { "pitch": -0.4 } },
+      { "tick": 2, "easing": "OUTQUAD", "body": { "y": -0.05 } },
+      { "tick": 2, "easing": "OUTQUAD", "rightArm": { "pitch": -1.25, "bend": 1.0 } },
+      { "tick": 2, "easing": "OUTQUAD", "leftArm": { "pitch": -1.1, "bend": 0.9 } },
+      { "tick": 4, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "bend": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "bend": 0.0 } }
+    ]
+  }
+}

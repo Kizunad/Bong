@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "zhenmai_multipoint",
+  "description": "zhenmai v2 multipoint: both arms open, torso braced.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 8,
+    "stopTick": 10,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "OUTQUAD", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "OUTQUAD", "rightArm": { "pitch": -0.2, "yaw": -0.1 } },
+      { "tick": 0, "easing": "OUTQUAD", "leftArm": { "pitch": -0.2, "yaw": 0.1 } },
+      { "tick": 4, "easing": "OUTQUAD", "body": { "y": -0.04 } },
+      { "tick": 4, "easing": "OUTQUAD", "rightArm": { "pitch": -0.9, "yaw": -0.85, "roll": 0.3 } },
+      { "tick": 4, "easing": "OUTQUAD", "leftArm": { "pitch": -0.9, "yaw": 0.85, "roll": -0.3 } },
+      { "tick": 8, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 8, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 } },
+      { "tick": 8, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 } }
+    ]
+  }
+}

@@ -135,6 +135,12 @@ public class VfxRegistryTest {
             "bootstrap should register yidao_life_extension");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR),
             "bootstrap should register yidao_mass_meridian_repair");
+        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_burst_blood")),
+            "bootstrap should register zhenmai parry blood burst");
+        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_neutralize_dust")),
+            "bootstrap should register zhenmai neutralize dust");
+        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_sever_flash")),
+            "bootstrap should register zhenmai sever flash");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 
