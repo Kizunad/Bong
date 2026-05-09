@@ -1,0 +1,86 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "accepted",
+    "kind",
+    "reason"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "suppress_tsy",
+          "type": "string"
+        },
+        {
+          "const": "explode_zone",
+          "type": "string"
+        },
+        {
+          "const": "barrier",
+          "type": "string"
+        },
+        {
+          "const": "legacy_assign",
+          "type": "string"
+        }
+      ]
+    },
+    "reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "cooldown_until_tick": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "qi",
+            "lifespan_years",
+            "cooldown_ticks"
+          ],
+          "properties": {
+            "qi": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "lifespan_years": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cooldown_ticks": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

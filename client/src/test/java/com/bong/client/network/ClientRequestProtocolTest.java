@@ -5,7 +5,10 @@ import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class ClientRequestProtocolTest {
 
@@ -30,6 +33,54 @@ public class ClientRequestProtocolTest {
     void encodesAbortTribulationRequest() {
         String json = ClientRequestProtocol.encodeAbortTribulationRequest();
         assertEquals("{\"type\":\"abort_tribulation\",\"v\":1}", json);
+    }
+
+    @Test
+    void encodesVoidActionSuppressTsy() {
+        assertEquals(
+            "{\"type\":\"void_action\",\"v\":1,\"request\":{\"kind\":\"suppress_tsy\",\"zone_id\":\"tsy_lingxu\"}}",
+            ClientRequestProtocol.encodeVoidActionSuppressTsy("tsy_lingxu")
+        );
+    }
+
+    @Test
+    void encodesVoidActionBarrierCircle() {
+        assertEquals(
+            "{\"type\":\"void_action\",\"v\":1,\"request\":{\"kind\":\"barrier\",\"zone_id\":\"spawn\",\"geometry\":{\"kind\":\"circle\",\"center\":[1.0,64.0,2.0],\"radius\":24.0}}}",
+            ClientRequestProtocol.encodeVoidActionBarrier("spawn", 1.0, 64.0, 2.0, 24.0)
+        );
+    }
+
+    @Test
+    void encodesVoidActionLegacyAssign() {
+        assertEquals(
+            "{\"type\":\"void_action\",\"v\":1,\"request\":{\"kind\":\"legacy_assign\",\"inheritor_id\":\"heir\",\"item_instance_ids\":[1001,1002],\"message\":\"留给后来人\"}}",
+            ClientRequestProtocol.encodeVoidActionLegacyAssign("heir", List.of(1001L, 1002L), " 留给后来人 ")
+        );
+    }
+
+    @Test
+    void rejectsVoidActionBarrierWithBlankZone() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeVoidActionBarrier(" ", 1.0, 64.0, 2.0, 24.0)
+        );
+    }
+
+    @Test
+    void rejectsVoidActionBarrierWithNonPositiveRadius() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeVoidActionBarrier("spawn", 1.0, 64.0, 2.0, 0.0)
+        );
+    }
+
+    @Test
+    void rejectsVoidActionLegacyAssignWithNegativeItemId() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeVoidActionLegacyAssign("heir", List.of(-1L), "留给后来人")
+        );
     }
 
     @Test

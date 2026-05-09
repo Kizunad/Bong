@@ -3387,6 +3387,7 @@ mod tests {
                     total_xp_at: 900,
                 }],
                 spirit_root_first: None,
+                ..LifeRecord::default()
             });
 
             enqueue_single_narration(
@@ -4471,6 +4472,7 @@ mod tests {
                     total_xp_at: 550,
                 }],
                 spirit_root_first: None,
+                ..LifeRecord::default()
             });
 
             app.update();

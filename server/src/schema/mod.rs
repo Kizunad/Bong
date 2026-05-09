@@ -45,6 +45,7 @@ pub mod tsy;
 pub mod tsy_hostile;
 pub mod tuike;
 pub mod vfx_event;
+pub mod void_actions;
 pub mod woliu;
 pub mod world_state;
 pub mod zone_pressure;

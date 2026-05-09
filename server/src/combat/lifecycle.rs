@@ -459,6 +459,7 @@ pub fn death_arbiter_tick(
             registry.record_death(clock.tick, death_zone);
         }
         let void_quota_exceeded = event.cause == CultivationDeathCause::VoidQuotaExceeded;
+        let void_action_backlash = event.cause == CultivationDeathCause::VoidActionBacklash;
         let lifespan_exhausted = if event.cause == CultivationDeathCause::NaturalAging {
             apply_natural_aging_lifespan_exhaustion(
                 cultivation,
@@ -466,7 +467,7 @@ pub fn death_arbiter_tick(
                 player_state,
             );
             true
-        } else if void_quota_exceeded {
+        } else if void_quota_exceeded || void_action_backlash {
             true
         } else {
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state)
@@ -511,12 +512,14 @@ pub fn death_arbiter_tick(
         });
 
         if lifespan_exhausted {
-            let lifespan_event =
-                if event.cause == CultivationDeathCause::NaturalAging || void_quota_exceeded {
-                    None
-                } else {
-                    death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
-                };
+            let lifespan_event = if event.cause == CultivationDeathCause::NaturalAging
+                || void_quota_exceeded
+                || void_action_backlash
+            {
+                None
+            } else {
+                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
+            };
             let lifespan_event_char_id = lifespan_event
                 .as_ref()
                 .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
@@ -531,6 +534,8 @@ pub fn death_arbiter_tick(
                 &mut vfx_events,
                 if void_quota_exceeded {
                     crate::cultivation::tribulation::VOID_QUOTA_EXCEEDED_REASON
+                } else if void_action_backlash {
+                    "void_action_backlash"
                 } else {
                     "natural_end"
                 },
@@ -1029,7 +1034,8 @@ fn death_insight_category_from_cultivation_cause(
         | CultivationDeathCause::NegativeZoneDrain
         | CultivationDeathCause::ContaminationOverflow
         | CultivationDeathCause::SwarmQiDrain
-        | CultivationDeathCause::VoidQuotaExceeded => DeathInsightCategoryV1::Cultivation,
+        | CultivationDeathCause::VoidQuotaExceeded
+        | CultivationDeathCause::VoidActionBacklash => DeathInsightCategoryV1::Cultivation,
     }
 }
 
@@ -2598,6 +2604,62 @@ mod tests {
             (1, 300, "cultivation:VoidQuotaExceeded".to_string())
         );
         assert_eq!(lifespan_events, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn void_action_backlash_records_dedicated_termination_cause() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("void-action-backlash");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 320 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Void".to_string(),
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Void,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Void"),
+                DeathRegistry::new("offline:Void"),
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: LifespanCapTable::VOID as f64,
+                    cap_by_realm: LifespanCapTable::VOID,
+                    offline_pause_tick: None,
+                },
+                Position::new([0.0, 66.0, 0.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(CultivationDeathTrigger {
+            entity,
+            cause: CultivationDeathCause::VoidActionBacklash,
+            context: serde_json::json!({"kind": "barrier"}),
+        });
+        app.update();
+
+        let life_record = app.world().entity(entity).get::<LifeRecord>().unwrap();
+        assert!(matches!(
+            life_record.biography.last(),
+            Some(BiographyEntry::Terminated { cause, tick })
+                if cause == "void_action_backlash" && *tick == 320
+        ));
 
         let _ = fs::remove_dir_all(root);
     }

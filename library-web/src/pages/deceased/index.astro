@@ -25,6 +25,7 @@ import Base from "../../layouts/Base.astro";
       <button type="button" class="deceased-filter" data-filter="横死">横死</button>
       <button type="button" class="deceased-filter" data-filter="自主归隐">自主归隐</button>
       <button type="button" class="deceased-filter" data-filter="夺舍者">夺舍者</button>
+      <button type="button" class="deceased-filter" data-filter="void-role">化虚者</button>
     </nav>
 
     <div id="deceased-state" class="deceased-state font-kai ink-reveal">
@@ -36,7 +37,8 @@ import Base from "../../layouts/Base.astro";
   <script is:inline>
     (function() {
       var entries = [];
-      var active = "all";
+      var active = new URLSearchParams(window.location.search).get("role") === "void" ? "void-role" : "all";
+      var voidFlagsLoaded = false;
       var list = document.getElementById("deceased-list");
       var state = document.getElementById("deceased-state");
       var total = document.getElementById("deceased-total");
@@ -60,9 +62,17 @@ import Base from "../../layouts/Base.astro";
       }
 
       function render() {
+        if (active === "void-role" && !voidFlagsLoaded) {
+          state.textContent = "正在翻检化虚生平卷……";
+          state.hidden = false;
+          list.innerHTML = "";
+          return;
+        }
         var filtered = active === "all"
           ? entries
-          : entries.filter(function(entry) { return entry.termination_category === active; });
+          : active === "void-role"
+            ? entries.filter(function(entry) { return entry.__void === true; })
+            : entries.filter(function(entry) { return entry.termination_category === active; });
         visible.textContent = String(filtered.length);
         total.textContent = String(entries.length);
 
@@ -100,12 +110,35 @@ import Base from "../../layouts/Base.astro";
       }
 
       filters.forEach(function(button) {
+        button.classList.toggle("active", (button.dataset.filter || "all") === active);
         button.addEventListener("click", function() {
           active = button.dataset.filter || "all";
           filters.forEach(function(item) { item.classList.toggle("active", item === button); });
+          if (active === "void-role" && !voidFlagsLoaded) {
+            ensureVoidFlags().then(render);
+          }
           render();
         });
       });
+
+      function ensureVoidFlags() {
+        return Promise.all(entries.map(function(entry) {
+          if (!entry.path || entry.__void !== undefined) return Promise.resolve();
+          return fetch("/" + String(entry.path).replace(/^\/+/, ""), { cache: "no-store" })
+            .then(function(response) { return response.ok ? response.json() : null; })
+            .then(function(snapshot) { entry.__void = hasVoidRecord(snapshot); })
+            .catch(function() { entry.__void = false; });
+        })).then(function() {
+          voidFlagsLoaded = true;
+        });
+      }
+
+      function hasVoidRecord(snapshot) {
+        var life = snapshot && snapshot.life_record || {};
+        return Array.isArray(life.void_actions) && life.void_actions.length > 0
+          || Boolean(life.legacy_inheritor)
+          || Boolean(life.legacy_letterbox);
+      }
 
       fetch("/deceased/_index.json", { cache: "no-store" })
         .then(function(response) {
@@ -118,7 +151,11 @@ import Base from "../../layouts/Base.astro";
             return Number(right.died_at_tick || 0) - Number(left.died_at_tick || 0)
               || String(left.char_id || "").localeCompare(String(right.char_id || ""));
           });
-          render();
+          if (active === "void-role") {
+            ensureVoidFlags().then(render);
+          } else {
+            render();
+          }
         })
         .catch(function() {
           entries = [];

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::alchemy::AlchemyInterventionV1;
 use super::inventory::{EquipSlotV1, InventoryLocationV1};
 use super::tuike::FalseSkinKindV1;
+use super::void_actions::VoidActionRequestV1;
 use crate::cultivation::components::MeridianId;
 use crate::cultivation::forging::ForgeAxis;
 use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind};
@@ -37,6 +38,11 @@ pub enum ClientRequestV1 {
     },
     StartDuXu {
         v: u8,
+    },
+    /// plan-void-actions-v1 — 化虚专属四类世界级 action。
+    VoidAction {
+        v: u8,
+        request: VoidActionRequestV1,
     },
     AbortTribulation {
         v: u8,
@@ -513,6 +519,20 @@ mod tests {
         let json = r#"{"type":"breakthrough_request","v":1}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         assert!(matches!(req, ClientRequestV1::BreakthroughRequest { v: 1 }));
+    }
+
+    #[test]
+    fn void_action_request_roundtrip() {
+        let json =
+            r#"{"type":"void_action","v":1,"request":{"kind":"suppress_tsy","zone_id":"tsy"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::VoidAction { v, request } => {
+                assert_eq!(v, 1);
+                assert_eq!(request.target_label(), "tsy");
+            }
+            other => panic!("expected VoidAction, got {other:?}"),
+        }
     }
 
     #[test]

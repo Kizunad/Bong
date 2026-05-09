@@ -68,6 +68,12 @@ export const CHANNELS = {
   TRIBULATION_SETTLE: "bong:tribulation/settle",
   TRIBULATION_COLLAPSE: "bong:tribulation/collapse",
 
+  /** Server → Agent: 化虚四类世界级 action 公告（plan-void-actions-v1） */
+  VOID_ACTION_SUPPRESS_TSY: "bong:void_action/suppress_tsy",
+  VOID_ACTION_EXPLODE_ZONE: "bong:void_action/explode_zone",
+  VOID_ACTION_BARRIER: "bong:void_action/barrier",
+  VOID_ACTION_LEGACY_ASSIGN: "bong:void_action/legacy_assign",
+
   /** Server → Agent: NPC 生成事件（plan-npc-ai-v1 §6） */
   NPC_SPAWN: "bong:npc/spawn",
 
@@ -250,6 +256,10 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.TRIBULATION_WAVE,
   CHANNELS.TRIBULATION_SETTLE,
   CHANNELS.TRIBULATION_COLLAPSE,
+  CHANNELS.VOID_ACTION_SUPPRESS_TSY,
+  CHANNELS.VOID_ACTION_EXPLODE_ZONE,
+  CHANNELS.VOID_ACTION_BARRIER,
+  CHANNELS.VOID_ACTION_LEGACY_ASSIGN,
   CHANNELS.NPC_SPAWN,
   CHANNELS.NPC_DEATH,
   CHANNELS.FACTION_EVENT,

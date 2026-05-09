@@ -123,6 +123,8 @@ pub enum QiTransferReason {
     EraDecay,
     /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）
     Crafting,
+    /// plan-void-actions-v1 — 化虚世界级 action 的真元投入，必须保留 ledger 轨迹。
+    VoidAction,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
@@ -167,6 +169,10 @@ impl WorldQiAccount {
 
     pub fn remove_balance(&mut self, account: &QiAccountId) -> Option<f64> {
         self.balances.remove(account)
+    }
+
+    pub fn has_account(&self, account: &QiAccountId) -> bool {
+        self.balances.contains_key(account)
     }
 
     pub fn balance(&self, account: &QiAccountId) -> f64 {

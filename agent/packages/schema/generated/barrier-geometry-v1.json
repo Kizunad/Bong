@@ -1,0 +1,36 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "kind",
+    "center",
+    "radius"
+  ],
+  "properties": {
+    "kind": {
+      "const": "circle",
+      "type": "string"
+    },
+    "center": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "radius": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

@@ -9,6 +9,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * 向服务端 {@code bong:client_request} 通道发送 CustomPayload。
@@ -58,6 +59,22 @@ public final class ClientRequestSender {
 
     public static void sendAbortTribulationRequest() {
         dispatch(ClientRequestProtocol.encodeAbortTribulationRequest());
+    }
+
+    public static void sendVoidActionSuppressTsy(String zoneId) {
+        dispatch(ClientRequestProtocol.encodeVoidActionSuppressTsy(zoneId));
+    }
+
+    public static void sendVoidActionExplodeZone(String zoneId) {
+        dispatch(ClientRequestProtocol.encodeVoidActionExplodeZone(zoneId));
+    }
+
+    public static void sendVoidActionBarrier(String zoneId, double centerX, double centerY, double centerZ, double radius) {
+        dispatch(ClientRequestProtocol.encodeVoidActionBarrier(zoneId, centerX, centerY, centerZ, radius));
+    }
+
+    public static void sendVoidActionLegacyAssign(String inheritorId, List<Long> itemInstanceIds, String message) {
+        dispatch(ClientRequestProtocol.encodeVoidActionLegacyAssign(inheritorId, itemInstanceIds, message));
     }
 
     public static void sendHeartDemonDecision(Integer chosenIdx) {

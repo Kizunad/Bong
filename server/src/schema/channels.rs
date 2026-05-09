@@ -30,6 +30,30 @@ pub const CH_TRIBULATION_WAVE: &str = "bong:tribulation/wave";
 pub const CH_TRIBULATION_SETTLE: &str = "bong:tribulation/settle";
 pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
 
+// 化虚专属 action（plan-void-actions-v1）：四类行为各自 fanout，agent 侧
+// 订阅后统一生成全服 narration。
+pub const CH_VOID_ACTION_SUPPRESS_TSY: &str = "bong:void_action/suppress_tsy";
+pub const CH_VOID_ACTION_EXPLODE_ZONE: &str = "bong:void_action/explode_zone";
+pub const CH_VOID_ACTION_BARRIER: &str = "bong:void_action/barrier";
+pub const CH_VOID_ACTION_LEGACY_ASSIGN: &str = "bong:void_action/legacy_assign";
+
+pub fn void_action_channel(
+    kind: crate::cultivation::void::components::VoidActionKind,
+) -> &'static str {
+    match kind {
+        crate::cultivation::void::components::VoidActionKind::SuppressTsy => {
+            CH_VOID_ACTION_SUPPRESS_TSY
+        }
+        crate::cultivation::void::components::VoidActionKind::ExplodeZone => {
+            CH_VOID_ACTION_EXPLODE_ZONE
+        }
+        crate::cultivation::void::components::VoidActionKind::Barrier => CH_VOID_ACTION_BARRIER,
+        crate::cultivation::void::components::VoidActionKind::LegacyAssign => {
+            CH_VOID_ACTION_LEGACY_ASSIGN
+        }
+    }
+}
+
 // NPC / 派系观测（plan-npc-ai-v1 §6）。Agent → Server 指令仍统一走
 // `bong:agent_command`，这里仅声明 server → agent 事件流水。
 pub const CH_NPC_SPAWN: &str = "bong:npc/spawn";
@@ -147,6 +171,13 @@ mod tests {
         assert_eq!(CH_TRIBULATION_WAVE, "bong:tribulation/wave");
         assert_eq!(CH_TRIBULATION_SETTLE, "bong:tribulation/settle");
         assert_eq!(CH_TRIBULATION_COLLAPSE, "bong:tribulation/collapse");
+        assert_eq!(CH_VOID_ACTION_SUPPRESS_TSY, "bong:void_action/suppress_tsy");
+        assert_eq!(CH_VOID_ACTION_EXPLODE_ZONE, "bong:void_action/explode_zone");
+        assert_eq!(CH_VOID_ACTION_BARRIER, "bong:void_action/barrier");
+        assert_eq!(
+            CH_VOID_ACTION_LEGACY_ASSIGN,
+            "bong:void_action/legacy_assign"
+        );
         assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
         assert_eq!(CH_NPC_DEATH, "bong:npc/death");
         assert_eq!(CH_FACTION_EVENT, "bong:faction/event");

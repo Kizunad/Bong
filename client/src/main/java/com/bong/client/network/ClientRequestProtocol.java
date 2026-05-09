@@ -1,10 +1,13 @@
 package com.bong.client.network;
 
 import com.bong.client.botany.BotanyHarvestMode;
+import com.bong.client.cultivation.voidaction.VoidActionKind;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
+
+import java.util.List;
 
 /**
  * 客户端 → 服务端 {@code bong:client_request} 通道的协议常量与 JSON 编码。
@@ -140,6 +143,60 @@ public final class ClientRequestProtocol {
 
     public static String encodeAbortTribulationRequest() {
         return envelope("abort_tribulation").toString();
+    }
+
+    public static String encodeVoidActionSuppressTsy(String zoneId) {
+        JsonObject request = voidActionRequest(VoidActionKind.SUPPRESS_TSY);
+        request.addProperty("zone_id", requireNonBlank(zoneId, "zoneId"));
+        return encodeVoidAction(request);
+    }
+
+    public static String encodeVoidActionExplodeZone(String zoneId) {
+        JsonObject request = voidActionRequest(VoidActionKind.EXPLODE_ZONE);
+        request.addProperty("zone_id", requireNonBlank(zoneId, "zoneId"));
+        return encodeVoidAction(request);
+    }
+
+    public static String encodeVoidActionBarrier(String zoneId, double centerX, double centerY, double centerZ, double radius) {
+        if (!Double.isFinite(centerX) || !Double.isFinite(centerY) || !Double.isFinite(centerZ)) {
+            throw new IllegalArgumentException("barrier center must be finite");
+        }
+        if (!Double.isFinite(radius) || radius <= 0.0) {
+            throw new IllegalArgumentException("barrier radius must be finite and > 0, got " + radius);
+        }
+        JsonObject request = voidActionRequest(VoidActionKind.BARRIER);
+        request.addProperty("zone_id", requireNonBlank(zoneId, "zoneId"));
+        JsonObject geometry = new JsonObject();
+        geometry.addProperty("kind", "circle");
+        JsonArray center = new JsonArray();
+        center.add(centerX);
+        center.add(centerY);
+        center.add(centerZ);
+        geometry.add("center", center);
+        geometry.addProperty("radius", radius);
+        request.add("geometry", geometry);
+        return encodeVoidAction(request);
+    }
+
+    public static String encodeVoidActionLegacyAssign(String inheritorId, List<Long> itemInstanceIds, String message) {
+        JsonObject request = voidActionRequest(VoidActionKind.LEGACY_ASSIGN);
+        request.addProperty("inheritor_id", requireNonBlank(inheritorId, "inheritorId"));
+        JsonArray items = new JsonArray();
+        if (itemInstanceIds != null) {
+            for (Long instanceId : itemInstanceIds) {
+                if (instanceId == null || instanceId < 0) {
+                    throw new IllegalArgumentException("itemInstanceIds must contain only non-negative ids");
+                }
+                items.add(instanceId.longValue());
+            }
+        }
+        request.add("item_instance_ids", items);
+        if (message == null || message.isBlank()) {
+            request.add("message", com.google.gson.JsonNull.INSTANCE);
+        } else {
+            request.addProperty("message", message.trim());
+        }
+        return encodeVoidAction(request);
     }
 
     /** 心魔劫决定 C2S 回执。{@code chosenIdx = null} 表示超时或未选。 */
@@ -901,6 +958,25 @@ public final class ClientRequestProtocol {
         obj.addProperty("type", type);
         obj.addProperty("v", VERSION);
         return obj;
+    }
+
+    private static JsonObject voidActionRequest(VoidActionKind kind) {
+        JsonObject request = new JsonObject();
+        request.addProperty("kind", kind.wireName());
+        return request;
+    }
+
+    private static String encodeVoidAction(JsonObject request) {
+        JsonObject obj = envelope("void_action");
+        obj.add("request", request);
+        return obj.toString();
+    }
+
+    private static String requireNonBlank(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " must not be blank");
+        }
+        return value.trim();
     }
 
     private static void addBlockPos(JsonObject obj, BlockPos pos) {

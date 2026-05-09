@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn all_non_natural_causes_consume_fortune_normally() {
-        // CultivationDeathCause 共 6 variant，验证除 NaturalAging 外的 5 种都走运数池
+        // 验证除 NaturalAging / 确定性终结类以外的普通修炼死因都走运数池。
         let lifespan = fresh_lifespan();
         let lc = fresh_lifecycle();
 
@@ -286,6 +286,7 @@ mod tests {
             CultivationDeathCause::NegativeZoneDrain,
             CultivationDeathCause::ContaminationOverflow,
             CultivationDeathCause::SwarmQiDrain,
+            CultivationDeathCause::VoidActionBacklash,
         ] {
             let outcome = regenerate_or_terminate(&lifespan, &lc, cause);
             assert!(

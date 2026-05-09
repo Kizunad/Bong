@@ -63,6 +63,7 @@ pub mod spiritual_sense;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;
+pub mod void;
 
 use valence::prelude::{
     Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or, Query,
@@ -175,6 +176,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(self::tribulation::VoidQuotaConfig::from_env());
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
+    void::register(app);
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();

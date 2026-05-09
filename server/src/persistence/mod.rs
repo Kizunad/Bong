@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, types::Type, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
@@ -19,6 +19,7 @@ use valence::prelude::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
+use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
@@ -36,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 17;
+const CURRENT_USER_VERSION: i32 = 19;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -540,6 +541,7 @@ fn bootstrap_persistence_system(
     settings: valence::prelude::Res<PersistenceSettings>,
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
+    mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
 ) {
     let wall_clock = current_unix_seconds();
     daily_backup_state.last_backup_day = Some(utc_day_from_unix_seconds(wall_clock));
@@ -580,6 +582,19 @@ fn bootstrap_persistence_system(
             "[bong][persistence] failed to scan orphaned npc archives at {}: {error}",
             settings.db_path().display()
         );
+    }
+
+    if let Some(cooldowns) = void_action_cooldowns.as_deref_mut() {
+        match hydrate_void_action_cooldowns(&settings, cooldowns) {
+            Ok(count) if count > 0 => tracing::info!(
+                "[bong][persistence] hydrated {count} void-action cooldown(s) from sqlite"
+            ),
+            Ok(_) => {}
+            Err(error) => panic!(
+                "[bong][persistence] failed to hydrate void-action cooldowns at {}: {error}",
+                settings.db_path().display()
+            ),
+        }
     }
 
     if let Some(zone_registry) = zones.as_deref_mut() {
@@ -1341,6 +1356,51 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 18 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS legacy_letterbox (
+                owner_id TEXT PRIMARY KEY,
+                inheritor_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                assigned_at_tick INTEGER NOT NULL CHECK (assigned_at_tick >= 0),
+                reject_until_tick INTEGER NOT NULL CHECK (reject_until_tick >= 0),
+                status TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE INDEX IF NOT EXISTS idx_legacy_letterbox_inheritor
+            ON legacy_letterbox (inheritor_id, status);
+            ",
+        )?;
+        assert_legacy_letterbox_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 18;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 19 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS void_action_cooldowns (
+                character_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                ready_at_tick INTEGER NOT NULL CHECK (ready_at_tick >= 0),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (character_id, kind)
+            );
+            ",
+        )?;
+        assert_void_action_cooldowns_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 19;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1447,6 +1507,180 @@ fn table_columns(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn assert_legacy_letterbox_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "legacy_letterbox")?;
+    let required = [
+        "owner_id",
+        "inheritor_id",
+        "payload_json",
+        "assigned_at_tick",
+        "reject_until_tick",
+        "status",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v18 migration completed but legacy_letterbox column {missing} missing"
+            )),
+        )));
+    }
+    let index_exists: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_legacy_letterbox_inheritor'",
+        [],
+        |row| row.get(0),
+    )?;
+    if index_exists != 1 {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other("v18 migration completed but legacy_letterbox index missing"),
+        )));
+    }
+    Ok(())
+}
+
+fn assert_void_action_cooldowns_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "void_action_cooldowns")?;
+    let required = ["character_id", "kind", "ready_at_tick", "last_updated_wall"];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v19 migration completed but void_action_cooldowns column {missing} missing"
+            )),
+        )));
+    }
+    let mut statement = transaction.prepare("PRAGMA table_info(void_action_cooldowns)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [("character_id".to_owned(), 1), ("kind".to_owned(), 2)];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v19 migration completed but void_action_cooldowns primary key mismatch: expected character_id,kind got {primary_key:?}"
+            )),
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VoidActionCooldownRecord {
+    character_id: String,
+    kind: VoidActionKind,
+    ready_at_tick: u64,
+}
+
+pub fn persist_void_action_cooldown(
+    settings: &PersistenceSettings,
+    character_id: &str,
+    kind: VoidActionKind,
+    ready_at_tick: u64,
+) -> io::Result<()> {
+    if kind.cooldown_ticks() == 0 {
+        return Ok(());
+    }
+    let ready_at_tick = i64::try_from(ready_at_tick).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("void-action cooldown tick overflows sqlite INTEGER: {error}"),
+        )
+    })?;
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "
+            INSERT INTO void_action_cooldowns (
+                character_id,
+                kind,
+                ready_at_tick,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(character_id, kind) DO UPDATE SET
+                ready_at_tick = excluded.ready_at_tick,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                character_id,
+                kind.wire_name(),
+                ready_at_tick,
+                current_unix_seconds(),
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn load_void_action_cooldown_records(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<VoidActionCooldownRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT character_id, kind, ready_at_tick
+            FROM void_action_cooldowns
+            ORDER BY character_id, kind
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            let character_id: String = row.get(0)?;
+            let kind_name: String = row.get(1)?;
+            let kind = VoidActionKind::from_wire_name(kind_name.as_str()).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    Type::Text,
+                    Box::new(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown void-action kind `{kind_name}`"),
+                    )),
+                )
+            })?;
+            let ready_at_tick: i64 = row.get(2)?;
+            Ok(VoidActionCooldownRecord {
+                character_id,
+                kind,
+                ready_at_tick: ready_at_tick as u64,
+            })
+        })
+        .map_err(io::Error::other)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)
+}
+
+fn hydrate_void_action_cooldowns(
+    settings: &PersistenceSettings,
+    cooldowns: &mut VoidActionCooldowns,
+) -> io::Result<usize> {
+    let records = load_void_action_cooldown_records(settings)?;
+    let count = records.len();
+    for record in records {
+        cooldowns.force_ready_at(
+            record.character_id.as_str(),
+            record.kind,
+            record.ready_at_tick,
+        );
+    }
+    Ok(count)
 }
 
 fn legacy_player_realm_to_cultivation(realm: &str) -> Option<Realm> {
@@ -4046,6 +4280,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::AnqiSniped { .. } => "anqi_sniped",
         BiographyEntry::FalseSkinShed { .. } => "false_skin_shed",
         BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
+        BiographyEntry::VoidAction { .. } => "void_action",
     }
 }
 
@@ -4129,7 +4364,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::VortexBackfired { tick, .. }
         | BiographyEntry::AnqiSniped { tick, .. }
         | BiographyEntry::FalseSkinShed { tick, .. }
-        | BiographyEntry::SpawnTutorialCompleted { tick, .. } => *tick,
+        | BiographyEntry::SpawnTutorialCompleted { tick, .. }
+        | BiographyEntry::VoidAction { tick, .. } => *tick,
     }
 }
 
@@ -5181,6 +5417,8 @@ mod persistence_tests {
             "social_renown",
             "social_spirit_niches",
             "social_faction_memberships",
+            "legacy_letterbox",
+            "void_action_cooldowns",
         ] {
             let exists: Option<String> = connection
                 .query_row(
@@ -5192,6 +5430,111 @@ mod persistence_tests {
                 .expect("sqlite_master social table query should succeed");
             assert_eq!(exists.as_deref(), Some(table), "{table} should exist");
         }
+    }
+
+    #[test]
+    fn v18_migration_rejects_partial_legacy_letterbox_schema() {
+        let db_path = database_path("v18-partial-legacy-letterbox");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE legacy_letterbox (
+                    owner_id TEXT PRIMARY KEY
+                );
+                PRAGMA user_version = 17;
+                ",
+            )
+            .expect("partial legacy table should be created");
+        drop(connection);
+
+        bootstrap_sqlite(&db_path, "server-run-test")
+            .expect_err("partial legacy_letterbox schema must block v18 migration");
+
+        let connection = Connection::open(&db_path).expect("db should reopen");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, 17);
+    }
+
+    #[test]
+    fn v19_migration_rejects_partial_void_action_cooldowns_schema() {
+        let db_path = database_path("v19-partial-void-action-cooldowns");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE void_action_cooldowns (
+                    character_id TEXT NOT NULL
+                );
+                PRAGMA user_version = 18;
+                ",
+            )
+            .expect("partial cooldown table should be created");
+        drop(connection);
+
+        bootstrap_sqlite(&db_path, "server-run-test")
+            .expect_err("partial void_action_cooldowns schema must block v19 migration");
+
+        let connection = Connection::open(&db_path).expect("db should reopen");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, 18);
+    }
+
+    #[test]
+    fn v19_migration_rejects_void_action_cooldowns_without_composite_primary_key() {
+        let db_path = database_path("v19-void-action-cooldowns-bad-primary-key");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE void_action_cooldowns (
+                    character_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    ready_at_tick INTEGER NOT NULL CHECK (ready_at_tick >= 0),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                PRAGMA user_version = 18;
+                ",
+            )
+            .expect("bad cooldown table should be created");
+        drop(connection);
+
+        bootstrap_sqlite(&db_path, "server-run-test")
+            .expect_err("void_action_cooldowns must keep composite primary key");
+
+        let connection = Connection::open(&db_path).expect("db should reopen");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, 18);
+    }
+
+    #[test]
+    fn void_action_cooldowns_roundtrip_hydrates_resource() {
+        let (settings, _root) = persistence_settings("void-action-cooldowns-roundtrip");
+        bootstrap_sqlite(settings.db_path(), "server-run-test").expect("bootstrap should succeed");
+        persist_void_action_cooldown(&settings, "offline:Void", VoidActionKind::Barrier, 12_345)
+            .expect("cooldown should persist");
+
+        let mut cooldowns = VoidActionCooldowns::default();
+        let count = hydrate_void_action_cooldowns(&settings, &mut cooldowns)
+            .expect("cooldowns should hydrate");
+
+        assert_eq!(count, 1);
+        assert_eq!(
+            cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
+            12_345
+        );
     }
 
     #[test]
@@ -7019,6 +7362,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
             character_id: life_record.character_id.clone(),
@@ -7118,6 +7462,7 @@ mod persistence_tests {
                 total_xp_at: 1_280,
             }],
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
             character_id: life_record.character_id.clone(),
@@ -7253,6 +7598,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
             character_id: life_record.character_id.clone(),
@@ -7333,6 +7679,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let first_lifecycle = Lifecycle {
             character_id: first_life_record.character_id.clone(),
@@ -7361,6 +7708,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         };
         let second_lifecycle = Lifecycle {
             character_id: second_life_record.character_id.clone(),
@@ -7439,6 +7787,7 @@ mod persistence_tests {
                 death_insights: Vec::new(),
                 skill_milestones: Vec::new(),
                 spirit_root_first: None,
+                ..LifeRecord::default()
             };
             let lifecycle = Lifecycle {
                 character_id: life_record.character_id.clone(),
@@ -7504,6 +7853,7 @@ mod persistence_tests {
                 death_insights: Vec::new(),
                 skill_milestones: Vec::new(),
                 spirit_root_first: None,
+                ..LifeRecord::default()
             };
             let lifecycle = Lifecycle {
                 character_id: life_record.character_id.clone(),
@@ -7574,6 +7924,7 @@ mod persistence_tests {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
+            ..LifeRecord::default()
         }
     }
 
@@ -7826,6 +8177,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -7923,6 +8275,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id,
@@ -8098,6 +8451,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -8261,6 +8615,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -8451,6 +8806,7 @@ mod persistence_tests {
                         death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
+                        ..LifeRecord::default()
                     };
                     let lifecycle = Lifecycle {
                         character_id: char_id.clone(),
@@ -8694,6 +9050,7 @@ mod persistence_tests {
                             death_insights: Vec::new(),
                             skill_milestones: Vec::new(),
                             spirit_root_first: None,
+                            ..LifeRecord::default()
                         };
                         let lifecycle = Lifecycle {
                             character_id: char_id.clone(),

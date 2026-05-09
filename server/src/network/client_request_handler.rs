@@ -45,6 +45,7 @@ use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
+use crate::cultivation::void::actions::VoidActionIntent;
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
@@ -211,6 +212,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
     pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
+    pub void_action_tx: Option<ResMut<'w, Events<VoidActionIntent>>>,
     pub heart_demon_choice_tx: Option<ResMut<'w, Events<HeartDemonChoiceSubmitted>>>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
@@ -319,6 +321,7 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::SetMeridianTarget { v, .. }
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::StartDuXu { v }
+            | ClientRequestV1::VoidAction { v, .. }
             | ClientRequestV1::AbortTribulation { v }
             | ClientRequestV1::HeartDemonDecision { v, .. }
             | ClientRequestV1::ForgeRequest { v, .. }
@@ -431,6 +434,24 @@ pub fn handle_client_request_payloads(
                         requested_at_tick: combat_clock.tick,
                     });
                 }
+            }
+            ClientRequestV1::VoidAction { request, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request void_action entity={:?} kind={:?}",
+                    ev.client,
+                    request.kind(),
+                );
+                let Some(void_action_tx) = dispatch.void_action_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped void_action because VoidActionIntent event resource is missing"
+                    );
+                    continue;
+                };
+                void_action_tx.send(VoidActionIntent {
+                    caster: ev.client,
+                    request,
+                    requested_at_tick: combat_clock.tick,
+                });
             }
             ClientRequestV1::AbortTribulation { .. } => {
                 tracing::warn!(
