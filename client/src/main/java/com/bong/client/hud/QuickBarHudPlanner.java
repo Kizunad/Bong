@@ -163,8 +163,19 @@ public final class QuickBarHudPlanner {
                     SLOT_SIZE - 2, SLOT_SIZE - 2,
                     0x404080FF
                 ));
-                String label = skillLabel(skillEntry.displayName(), skillEntry.id());
-                out.add(HudRenderCommand.text(HudRenderLayer.QUICK_BAR, label, x + 4, y + 6, 0xFFE0D080));
+                int iconSize = SLOT_SIZE - 2 * ICON_INSET;
+                List<HudRenderCommand> iconCommands = LoadoutIconLayer.buildSkillIconCommands(
+                    skillEntry,
+                    x + ICON_INSET,
+                    y + ICON_INSET,
+                    iconSize
+                );
+                if (iconCommands.isEmpty()) {
+                    String label = skillLabel(skillEntry.displayName(), skillEntry.id());
+                    out.add(HudRenderCommand.text(HudRenderLayer.QUICK_BAR, label, x + 4, y + 6, 0xFFE0D080));
+                } else {
+                    out.addAll(iconCommands);
+                }
                 if (skills.isOnCooldown(i, nowMillis)) {
                     out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, COOLDOWN_OVERLAY_COLOR));
                 }
