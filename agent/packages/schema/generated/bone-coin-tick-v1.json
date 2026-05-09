@@ -1,0 +1,74 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "tick",
+    "season",
+    "total_spirit_qi",
+    "total_face_value",
+    "active_coin_count",
+    "rotten_coin_count",
+    "legacy_scalar_count",
+    "rhythm_multiplier",
+    "market_factor"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "season": {
+      "anyOf": [
+        {
+          "const": "summer",
+          "type": "string"
+        },
+        {
+          "const": "summer_to_winter",
+          "type": "string"
+        },
+        {
+          "const": "winter",
+          "type": "string"
+        },
+        {
+          "const": "winter_to_summer",
+          "type": "string"
+        }
+      ]
+    },
+    "total_spirit_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "total_face_value": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "active_coin_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "rotten_coin_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "legacy_scalar_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "rhythm_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "market_factor": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

@@ -58,7 +58,7 @@ public class ItemTooltipPanel extends BaseComponent {
 
         // 顶部固定：padding + name + meta +（可选）status
         int needed = PADDING_TOP + lineBlock + lineBlock;
-        if (item.spiritQuality() < 1.0 || item.durability() < 1.0) {
+        if (!formatStatusLine(item).isEmpty()) {
             needed += lineBlock;
         }
         if (item.forgeQuality() != null) {
@@ -133,19 +133,10 @@ public class ItemTooltipPanel extends BaseComponent {
         context.drawTextWithShadow(textRenderer, Text.literal(meta), cx, cy, 0xFF888888);
         cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
 
-        // 纯度 / 耐久 —— 仅当 < 1.0 时显示，避免新玩家信息过载。
-        if (hoveredItem.spiritQuality() < 1.0 || hoveredItem.durability() < 1.0) {
-            StringBuilder status = new StringBuilder();
-            if (hoveredItem.spiritQuality() < 1.0) {
-                status.append(String.format(Locale.ROOT, "纯度 %.0f%%", hoveredItem.spiritQuality() * 100));
-            }
-            if (hoveredItem.durability() < 1.0) {
-                if (status.length() > 0) status.append("  ");
-                status.append(String.format(Locale.ROOT, "耐久 %.0f%%", hoveredItem.durability() * 100));
-            }
-            int statusColor = (hoveredItem.spiritQuality() < 0.3 || hoveredItem.durability() < 0.3)
-                ? 0xFFFF6666 : 0xFFAA8866;
-            context.drawTextWithShadow(textRenderer, Text.literal(status.toString()), cx, cy, statusColor);
+        // 真元 / 耐久 —— 仅当 < 1.0 时显示，避免新玩家信息过载。
+        String status = formatStatusLine(hoveredItem);
+        if (!status.isEmpty()) {
+            context.drawTextWithShadow(textRenderer, Text.literal(status), cx, cy, statusColor(hoveredItem));
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
@@ -237,6 +228,26 @@ public class ItemTooltipPanel extends BaseComponent {
             case "Turbid" -> "浊";
             default -> color;
         };
+    }
+
+    public static String formatStatusLine(InventoryItem item) {
+        if (item == null || item.isEmpty()) return "";
+
+        StringBuilder status = new StringBuilder();
+        if (item.spiritQuality() < 1.0) {
+            String label = item.isBoneCoin() ? "封灵真元" : "纯度";
+            status.append(String.format(Locale.ROOT, "%s %.0f%%", label, item.spiritQuality() * 100));
+        }
+        if (item.durability() < 1.0) {
+            if (status.length() > 0) status.append("  ");
+            status.append(String.format(Locale.ROOT, "耐久 %.0f%%", item.durability() * 100));
+        }
+        return status.toString();
+    }
+
+    private static int statusColor(InventoryItem item) {
+        return (item.spiritQuality() < 0.3 || item.durability() < 0.3)
+            ? 0xFFFF6666 : 0xFFAA8866;
     }
 
     private static String renderMitigationCell(String kind, float mitigation) {

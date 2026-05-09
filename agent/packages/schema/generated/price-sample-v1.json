@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "item_id",
+    "base_price",
+    "final_price"
+  ],
+  "properties": {
+    "item_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "base_price": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "final_price": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

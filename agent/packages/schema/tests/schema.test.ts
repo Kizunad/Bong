@@ -59,6 +59,12 @@ import {
   WeatherEventUpdateV1,
 } from "../src/lingtian-weather.js";
 import {
+  BoneCoinTickV1,
+  PriceIndexV1,
+  validateBoneCoinTickV1Contract,
+  validatePriceIndexV1Contract,
+} from "../src/economy.js";
+import {
   RatPhaseChangeEventV1,
   validateRatPhaseChangeEventV1Contract,
 } from "../src/rat-phase-event.js";
@@ -175,6 +181,13 @@ describe("sample files pass schema validation", () => {
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SEASON_CHANGED);
   });
 
+  it("declares economy Redis channels", () => {
+    expect(CHANNELS.BONE_COIN_TICK).toBe("bong:bone_coin_tick");
+    expect(CHANNELS.PRICE_INDEX).toBe("bong:price_index");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.BONE_COIN_TICK);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.PRICE_INDEX);
+  });
+
   it("declares pseudo vein Redis channels", () => {
     expect(CHANNELS.PSEUDO_VEIN_ACTIVE).toBe("bong:pseudo_vein:active");
     expect(CHANNELS.PSEUDO_VEIN_DISSIPATE).toBe("bong:pseudo_vein:dissipate");
@@ -257,6 +270,28 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("chat-message.sample.json");
     const result = validate(ChatMessageV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("bone-coin-tick.sample.json", () => {
+    const data = loadSample("bone-coin-tick.sample.json");
+    const result = validate(BoneCoinTickV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expectContractAccepts(
+      "BoneCoinTickV1",
+      validateBoneCoinTickV1Contract,
+      data,
+    );
+  });
+
+  it("price-index.sample.json", () => {
+    const data = loadSample("price-index.sample.json");
+    const result = validate(PriceIndexV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expectContractAccepts(
+      "PriceIndexV1",
+      validatePriceIndexV1Contract,
+      data,
+    );
   });
 
   it("pseudo-vein-snapshot.sample.json", () => {
