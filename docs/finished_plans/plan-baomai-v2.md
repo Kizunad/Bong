@@ -448,7 +448,7 @@ pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
 - **P0 境界差距矩阵**：`server/src/combat/realm_gap.rs` 新增 `REALM_GAP_MATRIX`、`realm_gap_multiplier()`、`RealmGapTier`、`classify_gap()`，覆盖 6 境界矩阵、逆关系和分类边界。
 - **P1 全力一击服务端机制**：`server/src/cultivation/full_power_strike.rs` 新增 `ChargingState`、`Exhausted`、`FullPowerAttackIntent`、`FullPowerReleasedEvent`、`FullPowerStrikeKilledEvent`、charge/release handler、打断、释放、虚脱过期、击杀 renown hook；`server/src/cultivation/skill_registry.rs` / `known_techniques.rs` 注册 `bao_mai.full_power_charge` 与 `bao_mai.full_power_release`。
 - **P2 虚脱修正**：`server/src/cultivation/tick.rs` 接 `Exhausted::qi_recovery_modifier`，`server/src/combat/status.rs` 接 `Exhausted::defense_modifier`；`server/src/combat/resolve.rs` 为 `AttackSource::FullPower` 避免重复扣 qi。
-- **P3 契约与事件**：`server/src/schema/server_data.rs`、`server/src/network/full_power_emit.rs`、`server/src/network/mod.rs` 输出 `full_power_charging_state` / `full_power_release` / `full_power_exhausted_state` server_data，并派发 `bong:charging_orb` / `bong:release_lightning` / `bong:exhausted_grey_mist` VFX；高境击杀通过 `FullPowerStrikeKilledEvent` + `SocialRenownDeltaEvent` 进入既有 renown/narrative 链路。
+- **P3 契约与事件**：`server/src/schema/server_data.rs`、`server/src/network/full_power_emit.rs`、`server/src/network/mod.rs` 输出 `full_power_charging_state` / `full_power_release` / `full_power_exhausted_state` server_data（HUD payload 定向发送给 caster，VFX 仍广播给周围玩家），并派发 `bong:charging_orb` / `bong:release_lightning` / `bong:exhausted_grey_mist` VFX；高境击杀通过 `FullPowerStrikeKilledEvent` + `SocialRenownDeltaEvent` 进入既有 renown/narrative 链路。
 - **P4 agent/client**：`agent/packages/schema/src/full-power.ts`、`server-data.ts`、`schema-registry.ts` 和 generated JSON schema 同步新增 full_power payload；client 新增 `FullPowerStateStore`、`FullPowerStateHandler`、`ChargingProgressBarHud`、`ExhaustedGreyOverlay`、`ChargingOrbVfx`、`ReleaseLightningVfx`、`ExhaustedGreyMistVfx`，并在 `ServerDataRouter`、`BongHudOrchestrator`、`VfxBootstrap` 接线。
 
 ### 关键 commits
@@ -457,13 +457,14 @@ pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
 - `645851032` · 2026-05-09 · 接入全力一击跨端契约
 - `80f225d53` · 2026-05-09 · 接入全力一击客户端反馈
 - `295558e68` · 2026-05-09 · 补全全力一击边界测试
+- `93d4dd17e` · 2026-05-09 · 修复全力一击 review 问题
 
 ### 测试结果
 
 - `cargo fmt --check`（server）通过。
 - `cargo clippy --all-targets -- -D warnings`（server）通过。
-- `cargo test`（server，新基线 rebase 后）通过：`3081 passed; 0 failed`。
-- `cargo test full_power`（server，最终边界断言后）通过：`12 passed; 0 failed`。
+- `cargo test`（server，review 修复后）通过：`3084 passed; 0 failed`。
+- `cargo test full_power`（server，review 修复后）通过：`15 passed; 0 failed`。
 - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）通过。
 - `npm run build`（agent）通过：`@bong/schema` + `@bong/tiandao` TypeScript build。
 - `npm test -w @bong/schema` 通过：`327 passed; 0 failed`。
