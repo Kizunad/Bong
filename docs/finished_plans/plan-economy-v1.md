@@ -164,9 +164,9 @@ P5 化虚:            骨币失意义,权力换算为天道注意力
 
 ### 关键 commits
 
-- `c305495b7` (2026-05-09) `plan-economy-v1: 接入骨币价格指数`
-- `00cb9952c` (2026-05-09) `plan-economy-v1: 补齐经济 IPC 与天道叙事`
-- `538f15ddb` (2026-05-09) `plan-economy-v1: 语义化骨币真元 tooltip`
+- `ddf74cdc8` (2026-05-09) `plan-economy-v1: 接入骨币价格指数`
+- `e79fb9f5e` (2026-05-09) `plan-economy-v1: 补齐经济 IPC 与天道叙事`
+- `a4e5d023b` (2026-05-09) `plan-economy-v1: 语义化骨币真元 tooltip`
 
 ### 测试结果
 
