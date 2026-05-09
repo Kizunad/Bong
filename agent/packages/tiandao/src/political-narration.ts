@@ -35,6 +35,7 @@ const {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const POLITICAL_THROTTLE_MS = 5 * 60 * 1000;
+const DEFAULT_ROUTEABLE_ZONE = "spawn";
 export const POLITICAL_EVENT_CHANNELS = [
   SOCIAL_FEUD,
   SOCIAL_PACT,
@@ -329,8 +330,8 @@ export class PoliticalNarrationRuntime {
     return {
       eventType: "pact",
       scope: "zone",
-      target: "jianghu",
-      zone: "jianghu",
+      target: DEFAULT_ROUTEABLE_ZONE,
+      zone: DEFAULT_ROUTEABLE_ZONE,
       severity: 1,
       bypassThrottle: false,
       identityExposed: false,
@@ -344,13 +345,11 @@ export class PoliticalNarrationRuntime {
     const validation = validateNicheIntrusionEventV1Contract(parsed);
     if (!validation.ok) return this.reject("NicheIntrusionEventV1", validation.errors);
     const payload = parsed as NicheIntrusionEventV1;
-    const [x, y, z] = payload.niche_pos;
-    const zone = `niche:${x},${y},${z}`;
     return {
       eventType: "niche_intrusion",
       scope: "zone",
-      target: zone,
-      zone,
+      target: DEFAULT_ROUTEABLE_ZONE,
+      zone: DEFAULT_ROUTEABLE_ZONE,
       severity: 3,
       bypassThrottle: true,
       identityExposed: false,
@@ -382,7 +381,7 @@ export class PoliticalNarrationRuntime {
     if (!validation.ok) return this.reject("HighRenownMilestoneEventV1", validation.errors);
     const payload = parsed as HighRenownMilestoneEventV1;
     const broadcast = payload.milestone >= 1000;
-    const zone = broadcast ? "broadcast" : (payload.zone?.trim() || `identity:${payload.identity_id}`);
+    const zone = broadcast ? "broadcast" : (payload.zone?.trim() || DEFAULT_ROUTEABLE_ZONE);
     return {
       eventType: "high_renown_milestone",
       scope: broadcast ? "broadcast" : "zone",

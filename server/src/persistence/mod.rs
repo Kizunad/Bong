@@ -1639,6 +1639,27 @@ fn assert_high_renown_milestones_schema_ready(
             io::Error::other("v20 migration completed but high_renown_milestones index missing"),
         )));
     }
+    let mut statement = transaction.prepare("PRAGMA table_info(high_renown_milestones)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [
+        ("player_uuid".to_owned(), 1),
+        ("identity_id".to_owned(), 2),
+        ("milestone".to_owned(), 3),
+    ];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v20 migration completed but high_renown_milestones primary key mismatch: expected player_uuid,identity_id,milestone got {primary_key:?}"
+            )),
+        )));
+    }
     Ok(())
 }
 
@@ -5524,6 +5545,28 @@ mod persistence_tests {
             high_renown_index.as_deref(),
             Some("idx_high_renown_milestones_char")
         );
+
+        let mut high_renown_pk_statement = connection
+            .prepare("PRAGMA table_info(high_renown_milestones)")
+            .expect("high renown table_info should prepare");
+        let high_renown_pk = high_renown_pk_statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+            })
+            .expect("high renown table_info query should succeed")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("high renown table_info rows should collect")
+            .into_iter()
+            .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            high_renown_pk,
+            [
+                ("player_uuid".to_string(), 1),
+                ("identity_id".to_string(), 2),
+                ("milestone".to_string(), 3),
+            ]
+        );
     }
 
     #[test]
@@ -5552,6 +5595,45 @@ mod persistence_tests {
         assert!(
             message.contains("high_renown_milestones column char_id missing")
                 || message.contains("no such column: char_id"),
+            "unexpected error: {message}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should still be readable");
+        assert_eq!(user_version, 19);
+    }
+
+    #[test]
+    fn v20_migration_rejects_high_renown_table_with_wrong_primary_key() {
+        let db_path = database_path("v20-wrong-high-renown-pk");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE high_renown_milestones (
+                    player_uuid TEXT NOT NULL,
+                    char_id TEXT NOT NULL,
+                    identity_id INTEGER NOT NULL,
+                    milestone INTEGER NOT NULL,
+                    emitted_at_tick INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL,
+                    PRIMARY KEY (char_id, identity_id, milestone)
+                );
+                CREATE INDEX idx_high_renown_milestones_char
+                ON high_renown_milestones (char_id, identity_id, milestone);
+                PRAGMA user_version = 19;
+                ",
+            )
+            .expect("legacy wrong primary key fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v20 migration should reject wrong high renown primary key");
+        let message = error.to_string();
+        assert!(
+            message.contains("high_renown_milestones primary key mismatch"),
             "unexpected error: {message}"
         );
         let user_version: i32 = connection

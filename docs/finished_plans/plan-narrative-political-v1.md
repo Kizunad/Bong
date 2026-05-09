@@ -365,10 +365,10 @@ function scorePoliticalNarration(narration: string, context: PoliticalContext): 
 
 ### 落地清单
 
-- **P0/P1 agent political runtime**：新增 `agent/packages/tiandao/src/skills/political.md` 与 `agent/packages/tiandao/src/political-narration.ts`，在 `agent/packages/tiandao/src/main.ts` 启动 `PoliticalNarrationRuntime`；订阅 `bong:social/feud`、`bong:social/pact`、`bong:social/niche_intrusion`、`bong:wanted_player`、`bong:high_renown_milestone` 五类事件，统一输出 `style/kind = "political_jianghu"` 的 `bong:agent_narrate`。
+- **P0/P1 agent political runtime**：新增 `agent/packages/tiandao/src/skills/political.md` 与 `agent/packages/tiandao/src/political-narration.ts`，在 `agent/packages/tiandao/src/main.ts` 启动 `PoliticalNarrationRuntime`；订阅 `bong:social/feud`、`bong:social/pact`、`bong:social/niche_intrusion`、`bong:wanted_player`、`bong:high_renown_milestone` 五类事件，统一输出 `style/kind = "political_jianghu"` 的 `bong:agent_narrate`；无真实 zone 的 pact / niche / high-renown 100/500 叙事使用 `spawn` 作为可路由 fallback target，避免 zone scope 静默丢弃。
 - **P2 throttle/dedupe**：`PoliticalNarrationThrottleStore` 与 `POLITICAL_THROTTLE_MS = 5 * 60 * 1000` 落在 `agent/packages/tiandao/src/political-narration.ts`；普通同 zone 事件按 severity 允许高声名里程碑抢占低 severity 预占/记录，通缉、高声名 1000、灵龛入侵走 `bypassThrottle`。server 侧既有 `NarrationDedupeResource` 已接受 `NarrationStyle::PoliticalJianghu` / `NarrationKind::PoliticalJianghu`，并新增 political duplicate 回归。
 - **P3 narration-eval**：`agent/packages/tiandao/src/narration-eval.ts` 新增 `JIANGHU_VOICE_RE`、`MODERN_POLITICAL_TERMS_BLACKLIST`、`checkAnonymityViolation()`、`scorePoliticalNarration()`；runtime 解析 LLM 输出时会对现代政治词和未暴露 identity 提名回退到匿名 fallback。
-- **P4 schema/server milestone**：`agent/packages/schema/src/social.ts`、`server/src/schema/social.rs` 新增 `HighRenownMilestoneEventV1`；`server/src/schema/channels.rs` / `agent/packages/schema/src/channels.ts` 新增 `bong:high_renown_milestone`；`server/src/social/high_renown_tracker.rs` 新增 `HighRenownMilestoneTracker`、`emit_high_renown_milestone_system`、`MILESTONE_THRESHOLDS = [100, 500, 1000]`，并通过 SQLite `high_renown_milestones` 表持久化已发阈值。
+- **P4 schema/server milestone**：`agent/packages/schema/src/social.ts`、`server/src/schema/social.rs` 新增 `HighRenownMilestoneEventV1`；`server/src/schema/channels.rs` / `agent/packages/schema/src/channels.ts` 新增 `bong:high_renown_milestone`；`server/src/social/high_renown_tracker.rs` 新增 `HighRenownMilestoneTracker`、`emit_high_renown_milestone_system`、`MILESTONE_THRESHOLDS = [100, 500, 1000]`，并通过 SQLite `high_renown_milestones` 表持久化已发阈值；Redis 入队成功后即写入内存去重，SQLite 暂时失败只影响重启后重试，不会每 tick 重复发同一里程碑。
 - **P4 client 分流**：`client/src/main/java/com/bong/client/state/NarrationState.java` 支持 `POLITICAL_JIANGHU`；`client/src/main/java/com/bong/client/network/NarrationHandler.java` 将 broadcast political 送 ChatHud，将 zone political 送 `UnifiedEventStore` social event stream。
 
 ### 关键变更
@@ -376,6 +376,7 @@ function scorePoliticalNarration(narration: string, context: PoliticalContext): 
 - `feat(narrative): 接入江湖政治传闻叙事`：接入政治传闻 schema / server milestone / agent runtime / client 分流。
 - `fix(narrative): 修复政治传闻 review 问题`：修复里程碑发送顺序、hydrate retry、LLM 门禁、匿名检测、niche fallback 与 migration drift。
 - `fix(narrative): 让政治传闻节流按 severity 抢占`：修复同 zone 低 severity 事件压掉高声名里程碑的问题。
+- `fix(narrative): 补齐政治传闻 review 收尾`：修复不可路由 zone fallback、里程碑持久化失败重复发送、v20 复合主键断言。
 
 ### 测试结果
 
@@ -386,7 +387,7 @@ function scorePoliticalNarration(narration: string, context: PoliticalContext): 
 - `client/`：`JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build` ✅ BUILD SUCCESSFUL
 - `server/`：`cargo fmt --check` ✅
 - `server/`：`cargo clippy --all-targets -- -D warnings` ✅
-- `server/`：`cargo test` ✅ 3172 passed / 0 failed
+- `server/`：`cargo test` ✅ 3174 passed / 0 failed
 
 ### 跨仓库核验
 

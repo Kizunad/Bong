@@ -110,21 +110,13 @@ pub fn emit_high_renown_milestone_system(
                 continue;
             }
 
-            if let Some(settings) = persistence.as_deref() {
-                if let Err(error) =
-                    persist_emitted_milestone(settings, key, lifecycle.character_id.as_str(), tick)
-                {
-                    tracing::warn!(
-                        ?error,
-                        char_id = lifecycle.character_id.as_str(),
-                        identity_id = active.id.0,
-                        milestone,
-                        "[bong][social] failed to persist high renown milestone"
-                    );
-                    continue;
-                }
-            }
-            tracker.already_emitted.insert(key);
+            remember_emitted_milestone_after_enqueue(
+                &mut tracker,
+                persistence.as_deref(),
+                key,
+                lifecycle.character_id.as_str(),
+                tick,
+            );
         }
     }
 }
@@ -233,6 +225,27 @@ pub(crate) fn persist_emitted_milestone(
         .map_err(io::Error::other)?;
     transaction.commit().map_err(io::Error::other)?;
     Ok(())
+}
+
+fn remember_emitted_milestone_after_enqueue(
+    tracker: &mut HighRenownMilestoneTracker,
+    persistence: Option<&PersistenceSettings>,
+    key: HighRenownMilestoneKey,
+    char_id: &str,
+    emitted_at_tick: u64,
+) {
+    if let Some(settings) = persistence {
+        if let Err(error) = persist_emitted_milestone(settings, key, char_id, emitted_at_tick) {
+            tracing::warn!(
+                ?error,
+                char_id,
+                identity_id = key.identity_id.0,
+                milestone = key.milestone,
+                "[bong][social] failed to persist high renown milestone"
+            );
+        }
+    }
+    tracker.already_emitted.insert(key);
 }
 
 fn hydrate_tracker(
@@ -374,5 +387,32 @@ mod tests {
 
         assert!(!tracker.hydrated);
         assert!(tracker.already_emitted.is_empty());
+    }
+
+    #[test]
+    fn enqueue_success_keeps_in_memory_dedupe_even_when_persistence_write_fails() {
+        let mut tracker = HighRenownMilestoneTracker::default();
+        let data_dir = unique_temp_dir("persist-failure-keeps-memory");
+        let settings = PersistenceSettings::with_paths(
+            data_dir.join("bong.db"),
+            data_dir.join("deceased"),
+            "high-renown-persist-failure",
+        );
+        let key = HighRenownMilestoneKey {
+            player_uuid: Uuid::new_v5(&Uuid::NAMESPACE_OID, b"offline:kiz"),
+            identity_id: IdentityId(7),
+            milestone: 500,
+        };
+
+        remember_emitted_milestone_after_enqueue(
+            &mut tracker,
+            Some(&settings),
+            key,
+            "offline:kiz",
+            48_000,
+        );
+
+        assert!(tracker.already_emitted.contains(&key));
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 }

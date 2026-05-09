@@ -161,7 +161,8 @@ describe("PoliticalNarrationRuntime", () => {
 
     expect(pub.published).toHaveLength(4);
     const narrations = pub.published.map((entry) => JSON.parse(entry.message).narrations[0]);
-    expect(narrations[1].target).toBe("niche:1,64,2");
+    expect(narrations[0].target).toBe("spawn");
+    expect(narrations[1].target).toBe("spawn");
     expect(narrations[1].text).not.toContain("niche:");
     expect(narrations[2].scope).toBe("broadcast");
     expect(narrations[2].text).toContain("玄锋");
