@@ -493,12 +493,14 @@ HUD 组件（plan-HUD-v1 接入）：
 - `0ef8e3529` · 2026-05-09 · `feat(agent): 接入医道 schema 与叙事运行时`
 - `124f01443` · 2026-05-09 · `feat(client): 渲染医道 HUD 与平和色视听反馈`
 - `3a811d57e` · 2026-05-09 · `fix(yidao): 收紧音效契约与 HUD 下发测试`
+- `d71008247` · 2026-05-09 · `fix(yidao): 修复无效治疗事件与续命窗口边界`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ `3239 passed; 0 failed`
+- `cd server && cargo test` ✅ `3241 passed; 0 failed`
+- `cd server && cargo test yidao` ✅ `13 passed; 0 failed`
 - `cd agent && npm run generate -w @bong/schema` ✅，生成物无未提交漂移
 - `cd agent && npm run build` ✅
 - `cd agent && npm test -w @bong/schema` ✅ `13 files / 331 tests passed`
