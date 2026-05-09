@@ -343,11 +343,9 @@ pub const fn rarity_base_price(rarity: ItemRarity) -> u64 {
     }
 }
 
-/// 估价单个 `ItemInstance`（骨币）。考虑：
-/// - rarity 基础价
-/// - stack_count 倍率
-/// - spirit_quality（0..=1）+50% 加成
-/// - durability（0..=1）≤0.2 时打 5 折
+/// 估价单个 `ItemInstance`（骨币），默认使用 neutral economy index。
+///
+/// 有当前市场快照时调用 `estimate_item_price_for_index`，以叠加 economy 指数。
 pub fn estimate_item_price(item: &ItemInstance) -> u64 {
     estimate_item_price_for_index(item, &neutral_price_index())
 }
