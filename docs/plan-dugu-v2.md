@@ -191,20 +191,20 @@
 
 ### ④ 神识遮蔽 — 身份隐藏 + 伪示
 
-**用途**：worldview §五:520-527 毒蛊师**主动遮蔽神识 + 伪装成普通修士**，inspect 看到的是假流派标签。可装成截脉师 / 器修 / 体修，让对手准备错对策。
+**用途**：worldview §五:520-527 毒蛊师**主动遮蔽神识 + 伪造 qi_color 向量**，inspect 看到的是伪造的 `QiColor { main, secondary, is_chaotic, is_hunyuan }`。对手根据 qi_color 推断流派准备对策——看到 Heavy 以为体修贴脸、看到 Solid 以为截脉准备反弹，实际是毒蛊阴诡色。
 
-| 施法者境界 | 神识遮蔽强度 | 伪示流派可选 | 伪示持续 |
+| 施法者境界 | 神识遮蔽强度 | 可伪造 qi_color | 伪示持续 |
 |---|---|---|---|
-| 醒灵 | 0.20（暴露率仅降 20%）| 仅"普通修士" | 1min |
-| 引气 | 0.30 | + 体修 | 3min |
-| 凝脉 | 0.50 | + 体修 / 器修 | 5min |
-| 固元 | 0.70 | + 体修 / 器修 / 截脉师 | 10min |
-| 通灵 | 0.85 | + 全 6 流派伪示 | 30min |
-| 半步化虚 | 0.92 | 全流派 + 可伪示境界（降 1 阶）| 1h |
-| 化虚 | 0.95 | 全流派 + 可伪示境界（降 2 阶）| 永久（直到主动关闭） |
+| 醒灵 | 0.20（暴露率仅降 20%）| 仅清空 secondary + is_chaotic（"普通修士"）| 1min |
+| 引气 | 0.30 | + 可将 main 设为 Heavy | 3min |
+| 凝脉 | 0.50 | + Solid / Sharp | 5min |
+| 固元 | 0.70 | + 任意单色 main（10 色自选）| 10min |
+| 通灵 | 0.85 | + 可设 secondary（双色向量伪造）| 30min |
+| 半步化虚 | 0.92 | 全向量自由伪造 + is_hunyuan 可伪 | 1h |
+| 化虚 | 0.95 | 全向量 + 可压低被 inspect 时的境界读数（降 2 阶）| 永久（直到主动关闭） |
 
 **caster qi 消耗**：5（启动）+ 0.5/s（维持）
-**机制**：开启后下次主动招式暴露概率 × (1 - 强度)。伪示流派标签写入 IdentityProfile 临时 override。被高境 NPC（worldview §十一:967）以 victim_realm_factor ×3 概率仍可识破
+**机制**：开启后 `QiColor` 的 inspect 读数被临时 override（写入 `ShroudActive.fake_qi_color: QiColor`），下次主动招式暴露概率 × (1 - 强度)。**真实 qi_color 不变**——仅 inspect / 神识感知看到的是假值，战斗结算仍走真实 qi_color。被高境 NPC（worldview §十一:967）以 victim_realm_factor ×3 概率仍可识破（识破 = 同时暴露真实 qi_color + 阴诡色）
 **worldview 锚**：§五:520-527 全段 + §四:506 末土后招原则
 
 ### ⑤ 倒蚀 — 化虚级远程引爆已种入毒（专属）
@@ -239,7 +239,7 @@ server/src/combat/dugu_v2/
 │                        + TaintMark component (受害者侧, caster_id +
 │                                              intensity + since_tick + permanent_decay_rate)
 │                        + ShroudActive component (神识遮蔽 active state +
-│                                                 强度 + 伪示流派 + 持续 ticks)
+│                                                 强度 + 伪造 qi_color + 持续 ticks)
 │                        + SelfCureSession component (caster 服食 progress)
 ├── tick.rs             — taint_decay_tick (固元短期 24h 恢复) +
 │                        permanent_qi_max_decay_tick (通灵+ 持续衰减) +
@@ -344,7 +344,7 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 | `cast_eclipse` | 7 受害者境界 × 即时扣 / 永久阈值跨档（醒灵-凝脉无持续 / 固元短期 / 通灵+ 永久）+ 自蕴加成各档 + qi 不足 reject + cooldown | 25 |
 | `cast_self_cure` | 阴诡色累积曲线 7 档 + 服食打断回滚 + 形貌异化阈值触发（≥60% dugu_self_revealed）+ 永久不可洗确认 + plan-botany-v2 毒草消耗 | 18 |
 | `cast_penetrate` | 已植入 TaintMark 触发联级 + 无标记 reject + 7 境界倍率 + 化虚 zone 量级 + 多目标扫描 | 18 |
-| `cast_shroud` | 7 境界遮蔽强度 + 伪示流派 override IdentityProfile + 持续 ticks + 主动关闭 + 化虚永久维持 | 15 |
+| `cast_shroud` | 7 境界遮蔽强度 + 伪造 qi_color override IdentityProfile + 持续 ticks + 主动关闭 + 化虚永久维持 | 15 |
 | `cast_reverse` | 化虚专属判定 + 通灵以下「指无应」+ 引爆 zone 扫描所有 TaintMark + 阴诡色累加 + 绝壁劫触发链 | 18 |
 | `reveal_probability` | 暴露公式 7 境界 × 距离 3 档 × 受害者境界 ×3 + DuguRevealedEvent emit + IdentityProfile 写入 | 14 |
 | `permanent_decay_persistence` | 通灵+ 永久标记跨 server restart 持久化 + 受害者死亡清除 + 解蛊药中和 | 12 |
