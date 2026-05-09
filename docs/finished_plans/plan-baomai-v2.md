@@ -371,7 +371,7 @@ pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
 
 - [x] 释放时 caster → target 一道紫红雷光（参考 vanilla lightning 但染色）
 - [x] 命中点爆炸粒子
-- [x] CustomPayload `bong:full_power_release` 同步：`{ caster_uuid, target_uuid, qi_released, hit_position }`
+- [x] ServerData `full_power_release` 同步：`{ caster_uuid, target_uuid, qi_released, hit_position }`；VFX `bong:release_lightning` 广播释放雷光
 
 ### `ExhaustedGreyOverlay`（虚脱期）
 
