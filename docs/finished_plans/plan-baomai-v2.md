@@ -453,17 +453,17 @@ pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
 
 ### 关键 commits
 
-- `3212807ff` · 2026-05-09 · 实现全力一击服务端机制
-- `645851032` · 2026-05-09 · 接入全力一击跨端契约
-- `80f225d53` · 2026-05-09 · 接入全力一击客户端反馈
-- `295558e68` · 2026-05-09 · 补全全力一击边界测试
-- `93d4dd17e` · 2026-05-09 · 修复全力一击 review 问题
+- `263c56cd1` · 2026-05-09 · 实现全力一击服务端机制
+- `f1dd3cd15` · 2026-05-09 · 接入全力一击跨端契约
+- `7346af5ef` · 2026-05-09 · 接入全力一击客户端反馈
+- `4f74c85b1` · 2026-05-09 · 补全全力一击边界测试
+- `b7aa4be93` · 2026-05-09 · 修复全力一击 review 问题
 
 ### 测试结果
 
 - `cargo fmt --check`（server）通过。
 - `cargo clippy --all-targets -- -D warnings`（server）通过。
-- `cargo test`（server，review 修复后）通过：`3084 passed; 0 failed`。
+- `cargo test`（server，rebase 到最新 `origin/main` 后）通过：`3187 passed; 0 failed`。
 - `cargo test full_power`（server，review 修复后）通过：`15 passed; 0 failed`。
 - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）通过。
 - `npm run build`（agent）通过：`@bong/schema` + `@bong/tiandao` TypeScript build。
