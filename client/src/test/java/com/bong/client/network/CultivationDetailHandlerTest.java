@@ -284,6 +284,43 @@ public class CultivationDetailHandlerTest {
     }
 
     @Test
+    void targetMeridianParsedCorrectly() {
+        var opened = twenty(false);
+        var openProg = twenty(0.0);
+        openProg.set(4, 0.65); // Heart = index 4
+        var payload = fullPayload(opened, twenty(0.0), twenty(5.0), twenty(1.0));
+        payload.add("open_progress", new Gson().toJsonTree(openProg));
+        payload.addProperty("target_meridian", 4);
+        handler.handle(envelope(payload));
+        MeridianBody body = MeridianStateStore.snapshot();
+        assertEquals(MeridianChannel.HT, body.targetMeridian());
+        assertEquals(0.65, body.channel(MeridianChannel.HT).healProgress(), 1e-9);
+    }
+
+    @Test
+    void targetMeridianNullWhenAbsent() {
+        var payload = fullPayload(twenty(true), twenty(1.0), twenty(5.0), twenty(1.0));
+        handler.handle(envelope(payload));
+        assertNull(MeridianStateStore.snapshot().targetMeridian());
+    }
+
+    @Test
+    void targetMeridianNullWhenOutOfRange() {
+        var payload = fullPayload(twenty(false), twenty(0.0), twenty(5.0), twenty(1.0));
+        payload.addProperty("target_meridian", 99);
+        handler.handle(envelope(payload));
+        assertNull(MeridianStateStore.snapshot().targetMeridian());
+    }
+
+    @Test
+    void targetMeridianExtraordinary() {
+        var payload = fullPayload(twenty(false), twenty(0.0), twenty(5.0), twenty(1.0));
+        payload.addProperty("target_meridian", 12); // Ren = index 12
+        handler.handle(envelope(payload));
+        assertEquals(MeridianChannel.REN, MeridianStateStore.snapshot().targetMeridian());
+    }
+
+    @Test
     void appliesSkillMilestonesWhenPresent() {
         var payload = fullPayload(twenty(true), twenty(1.0), twenty(5.0), twenty(1.0));
         payload.addProperty("realm", "Spirit");

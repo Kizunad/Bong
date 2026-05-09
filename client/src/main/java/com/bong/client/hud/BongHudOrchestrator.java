@@ -244,6 +244,7 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
+        commands.addAll(MeridianOpenHudPlanner.buildCommands(widthMeasurer, screenWidth, screenHeight));
         commands.addAll(IdentityHudCornerLabel.buildCommands(widthMeasurer, screenWidth));
 
         return List.copyOf(commands);

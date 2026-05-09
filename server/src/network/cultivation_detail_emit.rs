@@ -10,8 +10,9 @@ use valence::prelude::{bevy_ecs, Client, Entity, Position, Query, Res, ResMut, R
 
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianSystem, QiColor,
+    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
 };
+use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{
     lifespan_tick_rate_multiplier, LifespanCapTable, LifespanComponent,
@@ -44,6 +45,7 @@ type CultivationDetailEmitQueryItem<'a> = (
     Option<&'a LifeRecord>,
     Option<&'a QiColor>,
     Option<&'a PracticeLog>,
+    Option<&'a MeridianTarget>,
 );
 
 pub fn emit_cultivation_detail_payloads(
@@ -70,6 +72,7 @@ pub fn emit_cultivation_detail_payloads(
         life_record,
         qi_color,
         practice_log,
+        meridian_target,
     ) in &mut clients
     {
         let mut opened = Vec::with_capacity(20);
@@ -137,6 +140,9 @@ pub fn emit_cultivation_detail_payloads(
             qi_color_chaotic: qi_color.is_some_and(|color| color.is_chaotic),
             qi_color_hunyuan: qi_color.is_some_and(|color| color.is_hunyuan),
             practice_weights: practice_weights_payload(practice_log),
+            target_meridian: meridian_target
+                .and_then(|t| MeridianId::ALL.iter().position(|&m| m == t.0))
+                .map(|i| i as u8),
         });
         let label = payload_type_label(payload.payload_type());
         let bytes = match serialize_server_data_payload(&payload) {

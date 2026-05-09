@@ -96,55 +96,77 @@ public class MeridianDetailPanel extends BaseComponent {
         ctx.fill(bx + 4, cy, bx + WIDTH - 4, cy + 1, 0x33FFFFFF);
         cy += 4;
 
-        // === 损伤等级 ===
-        ctx.drawTextWithShadow(tr, Text.literal(cs.damage().label()),
-            bx + 5, cy, cs.damage().color());
-        cy += 14;
+        boolean opened = !cs.blocked();
+
+        // === 通脉状态 ===
+        if (opened) {
+            ctx.drawTextWithShadow(tr, Text.literal("§a已通"), bx + 5, cy, 0xFF44CC66);
+        } else {
+            ctx.drawTextWithShadow(tr, Text.literal("§c未通"), bx + 5, cy, 0xFFCC6644);
+        }
+        cy += 12;
+
+        // === 损伤等级（仅已通经脉有意义）===
+        if (opened) {
+            ctx.drawTextWithShadow(tr, Text.literal(cs.damage().label()),
+                bx + 5, cy, cs.damage().color());
+            cy += 14;
+        }
 
         // 分隔
         ctx.fill(bx + 4, cy, bx + WIDTH - 4, cy + 1, 0x22FFFFFF);
         cy += 4;
 
-        // === 流量 ===
-        ctx.drawTextWithShadow(tr, Text.literal("§7流量"), bx + 5, cy, 0xFFAAAAAA);
-        cy += 10;
-        ctx.drawTextWithShadow(tr, Text.literal(
-            String.format("§f%.0f§8/§7%.0f", cs.currentFlow(), cs.capacity())),
-            bx + 5, cy, 0xFFAAAAAA);
-        cy += 10;
-        drawBar(ctx, bx + 5, cy, WIDTH - 10, 4, cs.flowRatio(),
-            0xFF44AACC, 0xFF223344);
-        cy += 8;
-
-        // === 污染 ===
-        if (cs.contamination() > 0.01) {
+        if (opened) {
+            // === 流量（仅已通经脉显示）===
+            ctx.drawTextWithShadow(tr, Text.literal("§7流量"), bx + 5, cy, 0xFFAAAAAA);
+            cy += 10;
             ctx.drawTextWithShadow(tr, Text.literal(
-                String.format("§7污染 §d%.0f%%", cs.contamination() * 100)),
+                String.format("§f%.0f§8/§7%.0f", cs.currentFlow(), cs.capacity())),
                 bx + 5, cy, 0xFFAAAAAA);
             cy += 10;
-            drawBar(ctx, bx + 5, cy, WIDTH - 10, 3, cs.contamination(),
-                0xFF9944CC, 0xFF2A1A3A);
-            cy += 7;
-        } else {
-            ctx.drawTextWithShadow(tr, Text.literal("§8污染 无"), bx + 5, cy, 0xFF666666);
-            cy += 11;
-        }
+            drawBar(ctx, bx + 5, cy, WIDTH - 10, 4, cs.flowRatio(),
+                0xFF44AACC, 0xFF223344);
+            cy += 8;
 
-        // === 恢复 / 封闭 ===
-        if (cs.healProgress() > 0.01) {
-            ctx.drawTextWithShadow(tr, Text.literal(
-                String.format("§7恢复 §a%.0f%%", cs.healProgress() * 100)),
-                bx + 5, cy, 0xFFAAAAAA);
-            cy += 10;
-            drawBar(ctx, bx + 5, cy, WIDTH - 10, 3, cs.healProgress(),
-                0xFF44AA66, 0xFF1A2A1F);
-            cy += 7;
-        } else if (cs.blocked()) {
-            ctx.drawTextWithShadow(tr, Text.literal("§c已封闭"), bx + 5, cy, 0xFFCC4444);
-            cy += 11;
+            // === 污染 ===
+            if (cs.contamination() > 0.01) {
+                ctx.drawTextWithShadow(tr, Text.literal(
+                    String.format("§7污染 §d%.0f%%", cs.contamination() * 100)),
+                    bx + 5, cy, 0xFFAAAAAA);
+                cy += 10;
+                drawBar(ctx, bx + 5, cy, WIDTH - 10, 3, cs.contamination(),
+                    0xFF9944CC, 0xFF2A1A3A);
+                cy += 7;
+            } else {
+                ctx.drawTextWithShadow(tr, Text.literal("§8污染 无"), bx + 5, cy, 0xFF666666);
+                cy += 11;
+            }
+
+            // === 恢复（已通经脉的伤势恢复）===
+            if (cs.healProgress() > 0.01) {
+                ctx.drawTextWithShadow(tr, Text.literal(
+                    String.format("§7恢复 §a%.0f%%", cs.healProgress() * 100)),
+                    bx + 5, cy, 0xFFAAAAAA);
+                cy += 10;
+                drawBar(ctx, bx + 5, cy, WIDTH - 10, 3, cs.healProgress(),
+                    0xFF44AA66, 0xFF1A2A1F);
+                cy += 7;
+            }
         } else {
-            ctx.drawTextWithShadow(tr, Text.literal("§8恢复 —"), bx + 5, cy, 0xFF666666);
-            cy += 11;
+            // === 冲脉进度（未通经脉）===
+            if (cs.healProgress() > 0.01) {
+                ctx.drawTextWithShadow(tr, Text.literal(
+                    String.format("§7冲脉 §e%.0f%%", cs.healProgress() * 100)),
+                    bx + 5, cy, 0xFFAAAAAA);
+                cy += 10;
+                drawBar(ctx, bx + 5, cy, WIDTH - 10, 3, cs.healProgress(),
+                    0xFFCCAA44, 0xFF2A2A1A);
+                cy += 7;
+            } else {
+                ctx.drawTextWithShadow(tr, Text.literal("§8冲脉 未开始"), bx + 5, cy, 0xFF666666);
+                cy += 11;
+            }
         }
 
         // === 描述（剩余空间自动换行） ===

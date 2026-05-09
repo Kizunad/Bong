@@ -83,6 +83,14 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         boolean qiColorChaotic = readBoolean(payload, "qi_color_chaotic");
         boolean qiColorHunyuan = readBoolean(payload, "qi_color_hunyuan");
         EnumMap<ColorKind, Double> practiceWeights = parsePracticeWeights(readArray(payload, "practice_weights"));
+        int targetMeridianIdx = (int) readDouble(payload, "target_meridian");
+        boolean hasTarget = payload.has("target_meridian")
+            && payload.get("target_meridian").isJsonPrimitive()
+            && payload.getAsJsonPrimitive("target_meridian").isNumber();
+        MeridianChannel targetMeridian = null;
+        if (hasTarget && targetMeridianIdx >= 0 && targetMeridianIdx < CHANNEL_ORDER.length) {
+            targetMeridian = CHANNEL_ORDER[targetMeridianIdx];
+        }
 
         MeridianBody body = buildBody(
             opened,
@@ -98,7 +106,8 @@ public final class CultivationDetailHandler implements ServerDataHandler {
             qiColorSecondary,
             qiColorChaotic,
             qiColorHunyuan,
-            practiceWeights
+            practiceWeights,
+            targetMeridian
         );
         MeridianStateStore.replace(body);
         syncSkillCapsFromRealm(realm);
@@ -129,6 +138,18 @@ public final class CultivationDetailHandler implements ServerDataHandler {
                                    ColorKind qiColorMain, ColorKind qiColorSecondary,
                                    boolean qiColorChaotic, boolean qiColorHunyuan,
                                    EnumMap<ColorKind, Double> practiceWeights) {
+        return buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
+            contaminationTotal, lifespan, qiColorMain, qiColorSecondary, qiColorChaotic, qiColorHunyuan,
+            practiceWeights, null);
+    }
+
+    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
+                                   JsonArray openProgress, JsonArray cracksCount, String realm,
+                                   double contaminationTotal, JsonObject lifespan,
+                                   ColorKind qiColorMain, ColorKind qiColorSecondary,
+                                   boolean qiColorChaotic, boolean qiColorHunyuan,
+                                   EnumMap<ColorKind, Double> practiceWeights,
+                                   MeridianChannel targetMeridian) {
         EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
         for (int i = 0; i < CHANNEL_ORDER.length; i++) {
             MeridianChannel ch = CHANNEL_ORDER[i];
@@ -177,6 +198,7 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         }
         builder.qiColor(qiColorMain, qiColorSecondary, qiColorChaotic, qiColorHunyuan);
         builder.qiColorPracticeWeights(practiceWeights);
+        builder.targetMeridian(targetMeridian);
         return builder.build();
     }
 

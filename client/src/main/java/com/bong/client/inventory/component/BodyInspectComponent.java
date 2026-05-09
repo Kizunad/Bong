@@ -440,7 +440,9 @@ public class BodyInspectComponent extends BaseComponent {
             return;
         }
 
-        // === Row 1: 经脉名 + 族 + 损伤（右对齐） ===
+        boolean opened = !cs.blocked();
+
+        // === Row 1: 经脉名 + 族 + 状态（右对齐） ===
         String name = focus.displayName();
         ctx.drawTextWithShadow(tr, Text.literal(name), bx + 4, py, focus.baseColor());
 
@@ -448,57 +450,75 @@ public class BodyInspectComponent extends BaseComponent {
         String fam = focus.family() == MeridianChannel.Family.REGULAR ? "§8正经" : "§d奇经";
         ctx.drawTextWithShadow(tr, Text.literal(fam), afterName, py, 0xFFAAAAAA);
 
-        String dmg = cs.damage().label();
-        int cracks = meridianBody.cracksFor(focus);
-        String rightText = cracks > 0 ? (dmg + " · 裂 " + cracks) : dmg;
-        int rightColor = cracks > 0 ? 0xFFFF5050 : cs.damage().color();
-        ctx.drawTextWithShadow(tr, Text.literal(rightText),
-            bx + W - 4 - tr.getWidth(rightText), py, rightColor);
-
-        // === Row 2: 流量条 ===
-        int row2Y = py + 12;
-        String flowStr = String.format("%.0f/%.0f", cs.currentFlow(), cs.capacity());
-        ctx.drawTextWithShadow(tr, Text.literal("§7流量"), bx + 4, row2Y, 0xFFAAAAAA);
-        int numStart = bx + 4 + tr.getWidth("流量") + 4;
-        ctx.drawTextWithShadow(tr, Text.literal("§f" + flowStr), numStart, row2Y, 0xFFDDDDDD);
-        // bar 在右半边
-        int barX = numStart + tr.getWidth(flowStr) + 4;
-        int barW = bx + W - 4 - barX;
-        if (barW > 20) {
-            drawBar(ctx, barX, row2Y + 2, barW, 4, cs.flowRatio(), 0xFF44AACC, 0xFF223344);
+        if (opened) {
+            String dmg = cs.damage().label();
+            int cracks = meridianBody.cracksFor(focus);
+            String rightText = cracks > 0 ? (dmg + " · 裂 " + cracks) : dmg;
+            int rightColor = cracks > 0 ? 0xFFFF5050 : cs.damage().color();
+            ctx.drawTextWithShadow(tr, Text.literal(rightText),
+                bx + W - 4 - tr.getWidth(rightText), py, rightColor);
+        } else {
+            String rightText = "未通";
+            ctx.drawTextWithShadow(tr, Text.literal("§c" + rightText),
+                bx + W - 4 - tr.getWidth(rightText), py, 0xFFCC6644);
         }
 
-        // === Row 3: 污染 + 恢复（左右并列） ===
-        int row3Y = py + 24;
-        int half = (W - 8) / 2;
+        if (opened) {
+            // === Row 2: 流量条（仅已通经脉）===
+            int row2Y = py + 12;
+            String flowStr = String.format("%.0f/%.0f", cs.currentFlow(), cs.capacity());
+            ctx.drawTextWithShadow(tr, Text.literal("§7流量"), bx + 4, row2Y, 0xFFAAAAAA);
+            int numStart = bx + 4 + tr.getWidth("流量") + 4;
+            ctx.drawTextWithShadow(tr, Text.literal("§f" + flowStr), numStart, row2Y, 0xFFDDDDDD);
+            int barX = numStart + tr.getWidth(flowStr) + 4;
+            int barW = bx + W - 4 - barX;
+            if (barW > 20) {
+                drawBar(ctx, barX, row2Y + 2, barW, 4, cs.flowRatio(), 0xFF44AACC, 0xFF223344);
+            }
 
-        // 左：污染
-        if (cs.contamination() > 0.01) {
-            String t = String.format("污 %.0f%%", cs.contamination() * 100);
-            ctx.drawTextWithShadow(tr, Text.literal("§d" + t), bx + 4, row3Y, 0xFFCC88DD);
-            int tw = tr.getWidth(t) + 4;
-            if (half - tw > 10) {
-                drawBar(ctx, bx + 4 + tw, row3Y + 2, half - tw - 4, 3,
-                    cs.contamination(), 0xFF9944CC, 0xFF2A1A3A);
+            // === Row 3: 污染 + 恢复（左右并列）===
+            int row3Y = py + 24;
+            int half = (W - 8) / 2;
+
+            if (cs.contamination() > 0.01) {
+                String t = String.format("污 %.0f%%", cs.contamination() * 100);
+                ctx.drawTextWithShadow(tr, Text.literal("§d" + t), bx + 4, row3Y, 0xFFCC88DD);
+                int tw = tr.getWidth(t) + 4;
+                if (half - tw > 10) {
+                    drawBar(ctx, bx + 4 + tw, row3Y + 2, half - tw - 4, 3,
+                        cs.contamination(), 0xFF9944CC, 0xFF2A1A3A);
+                }
+            } else {
+                ctx.drawTextWithShadow(tr, Text.literal("§8污染 无"), bx + 4, row3Y, 0xFF666666);
+            }
+
+            int rightX = bx + 4 + half;
+            if (cs.healProgress() > 0.01) {
+                String t = String.format("恢 %.0f%%", cs.healProgress() * 100);
+                ctx.drawTextWithShadow(tr, Text.literal("§a" + t), rightX, row3Y, 0xFF88CC88);
+                int tw = tr.getWidth(t) + 4;
+                if (half - tw > 10) {
+                    drawBar(ctx, rightX + tw, row3Y + 2, half - tw - 4, 3,
+                        cs.healProgress(), 0xFF44AA66, 0xFF1A2A1F);
+                }
+            } else {
+                ctx.drawTextWithShadow(tr, Text.literal("§8恢复 —"), rightX, row3Y, 0xFF666666);
             }
         } else {
-            ctx.drawTextWithShadow(tr, Text.literal("§8污染 无"), bx + 4, row3Y, 0xFF666666);
-        }
-
-        // 右：恢复 / 封闭
-        int rightX = bx + 4 + half;
-        if (cs.healProgress() > 0.01) {
-            String t = String.format("恢 %.0f%%", cs.healProgress() * 100);
-            ctx.drawTextWithShadow(tr, Text.literal("§a" + t), rightX, row3Y, 0xFF88CC88);
-            int tw = tr.getWidth(t) + 4;
-            if (half - tw > 10) {
-                drawBar(ctx, rightX + tw, row3Y + 2, half - tw - 4, 3,
-                    cs.healProgress(), 0xFF44AA66, 0xFF1A2A1F);
+            // === Row 2-3: 冲脉进度（未通经脉）===
+            int row2Y = py + 12;
+            if (cs.healProgress() > 0.01) {
+                String t = String.format("冲脉 %.0f%%", cs.healProgress() * 100);
+                ctx.drawTextWithShadow(tr, Text.literal("§e" + t), bx + 4, row2Y, 0xFFCCAA44);
+                int tw = tr.getWidth(t) + 4;
+                int barW = bx + W - 4 - (bx + 4 + tw);
+                if (barW > 20) {
+                    drawBar(ctx, bx + 4 + tw, row2Y + 2, barW, 4,
+                        cs.healProgress(), 0xFFCCAA44, 0xFF2A2A1A);
+                }
+            } else {
+                ctx.drawTextWithShadow(tr, Text.literal("§8冲脉 未开始"), bx + 4, row2Y, 0xFF666666);
             }
-        } else if (cs.blocked()) {
-            ctx.drawTextWithShadow(tr, Text.literal("§c已封闭"), rightX, row3Y, 0xFFCC4444);
-        } else {
-            ctx.drawTextWithShadow(tr, Text.literal("§8恢复 —"), rightX, row3Y, 0xFF666666);
         }
     }
 
@@ -531,8 +551,13 @@ public class BodyInspectComponent extends BaseComponent {
         int[][] wp = MERIDIAN_PATHS.get(ch);
         if (wp == null) return;
 
-        int baseRgb = cs.damage().color() & 0x00FFFFFF;
         boolean active = hover || selected || techniqueHighlighted;
+        int baseRgb;
+        if (cs.blocked()) {
+            baseRgb = active ? 0x888888 : 0x555555;
+        } else {
+            baseRgb = cs.damage().color() & 0x00FFFFFF;
+        }
 
         // Alpha / 粗度：默认纤细，激活时加粗提亮
         int mainAlpha;
@@ -540,6 +565,9 @@ public class BodyInspectComponent extends BaseComponent {
         if (active) {
             mainAlpha = 240;
             thickness = 3;
+        } else if (cs.blocked()) {
+            mainAlpha = (int) (0.3 * 255);
+            thickness = 1;
         } else {
             // 全部视图下更低调，专项筛选时稍亮
             double a = (meridianFilter == MeridianFilter.ALL ? 0.45 : 0.75)
