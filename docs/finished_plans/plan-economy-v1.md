@@ -148,3 +148,45 @@ P5 化虚:            骨币失意义,权力换算为天道注意力
   - **plan-qi-physics-patch-v1 ✅ finished**（PR #162，2026-05-08）—— `qi_excretion(ContainerKind::SealedInBone, env)` 底盘已就位，骨币 shelflife 已切走压强法则 clamp 路径，本 plan §1.5 三选一裁决无解的最大障碍清除
   - P0 已实装（PR #105 commit `c5895641`）+ P1 上钻已收口 → 直接进 P2（节律 × 价格指数）
   - 下一步：等 plan-lingtian-weather-v1 汐转期 API 完整暴露后，启动 P2「价格指数 = base × 节律乘数」实装；同步收口 §4 三个未决（节律检测依赖 / 商人 AI 化 / 价格指数尺度）
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 骨币物料：沿用 `server/src/fauna/bone_coin.rs`、`server/src/inventory::ItemInstance.spirit_quality` 和 `server/src/shelflife/registry.rs` 已落地结果；本次未新增 `remaining_qi` 近义字段。
+- P1 真元逸散底盘：沿用 `plan-qi-physics-patch-v1` 已完成的 `ContainerKind::SealedInBone` / `qi_excretion` 路径；本 plan 不重复定义衰变公式。
+- P2 价格指数：`server/src/economy/mod.rs` 新增 `BoneCoinSupply` / `EconomyPriceIndex`，按玩家 inventory 内骨币面额与 `spirit_quality` 聚合世界供给，使用 `QI_RHYTHM_ACTIVE` / `QI_RHYTHM_NEUTRAL` / `QI_RHYTHM_TURBULENT_RANGE` 计算节律乘数，按供需 log 因子输出价格倍数。
+- P2 NPC 报价入口：`server/src/npc/social.rs` 保持 `estimate_item_price()` neutral 行为兼容，并新增 `estimate_item_price_for_index()` 供商人 / NPC 交易在拿到市场快照时套用 economy 指数。
+- P2/P3 IPC：`server/src/schema/economy.rs`、`server/src/schema/channels.rs`、`server/src/network/redis_bridge.rs` 新增 `bong:bone_coin_tick` 与 `bong:price_index` 发布契约；`agent/packages/schema/src/economy.ts`、samples 与 generated schema 对拍。
+- P3 月度 telemetry：`server/src/economy/mod.rs` 注册 `publish_economy_telemetry_system`，每 30 个 vanilla day tick 发布骨币真元供给与价格指数快照。
+- P3 天道叙事：`agent/packages/tiandao/src/economy-analyzer.ts`、`redis-ipc.ts`、`runtime.ts` 消费 `PRICE_INDEX`，输出「天下灵气总价」类 narration，并保留 cross-system buffer 观测。
+- P3 client 展示：`client/src/main/java/com/bong/client/inventory/model/InventoryItem.java` 与 `ItemTooltipPanel.java` 将骨币 `spirit_quality` 显示为「封灵真元 XX%」，普通物品仍显示「纯度」。
+
+### 关键 commits
+
+- `c305495b7` (2026-05-09) `plan-economy-v1: 接入骨币价格指数`
+- `00cb9952c` (2026-05-09) `plan-economy-v1: 补齐经济 IPC 与天道叙事`
+- `538f15ddb` (2026-05-09) `plan-economy-v1: 语义化骨币真元 tooltip`
+
+### 测试结果
+
+- `agent/packages/schema`: `npm run generate` → 314 schemas exported。
+- `agent`: `npm run build` → passed。
+- `agent/packages/schema`: `npm test` → 12 files / 330 tests passed。
+- `agent/packages/schema`: `npm run build` → passed。
+- `agent/packages/tiandao`: `npm test` → 43 files / 308 tests passed。
+- `client`: `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build` → BUILD SUCCESSFUL。
+- `server`: `cargo fmt --check` → passed。
+- `server`: `cargo clippy --all-targets -- -D warnings` → passed。
+- `server`: `cargo test` → 3205 tests passed。
+
+### 跨仓库核验
+
+- server: `EconomyPriceIndex`、`RedisOutbound::BoneCoinTick`、`RedisOutbound::PriceIndex`、`estimate_item_price_for_index`。
+- agent schema: `BoneCoinTickV1`、`PriceSampleV1`、`PriceIndexV1`、`CHANNELS.PRICE_INDEX`。
+- tiandao: `EconomyAnalyzer`、`RedisIpc.drainPriceIndexEvents()`、`processEconomyEvents()`。
+- client: `InventoryItem.isBoneCoin()`、`ItemTooltipPanel.formatStatusLine()`。
+
+### 遗留 / 后续
+
+- 无本 plan 阻塞项。商人 AI 化与区域级供给尺度没有在当前代码库形成稳定 runtime 接口；本次按 KISS/YAGNI 收敛为全服供给指数 + 显式 NPC 估价入口，后续若出现真实 merchant 系统再接入当前 `EconomyPriceIndex`。
