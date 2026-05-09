@@ -447,6 +447,16 @@ mod tests {
     }
 
     #[test]
+    fn estimate_item_price_for_index_applies_market_multiplier() {
+        let item = make_item(ItemRarity::Uncommon, 2, 0.5, 1.0);
+        let mut index = neutral_price_index();
+        index.price_multiplier = 1.25;
+
+        assert!(estimate_item_price_for_index(&item, &index) > estimate_item_price(&item));
+        assert_eq!(estimate_item_price_for_index(&item, &index), 38);
+    }
+
+    #[test]
     fn estimate_item_price_durability_discount() {
         let fine = make_item(ItemRarity::Epic, 1, 0.0, 1.0);
         let broken = make_item(ItemRarity::Epic, 1, 0.0, 0.1);

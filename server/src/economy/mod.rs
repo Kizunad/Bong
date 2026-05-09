@@ -169,17 +169,9 @@ fn publish_economy_telemetry_system(
         return;
     };
 
-    let mut supply = BoneCoinSupply::default();
-    let mut player_count = 0usize;
-    for inventory in inventories.iter() {
-        player_count += 1;
-        supply.legacy_scalar_count = supply
-            .legacy_scalar_count
-            .saturating_add(inventory.bone_coins);
-        for item in inventory_items(inventory) {
-            accumulate_item_supply(&mut supply, item);
-        }
-    }
+    let inventory_refs: Vec<&PlayerInventory> = inventories.iter().collect();
+    let player_count = inventory_refs.len();
+    let supply = collect_bone_coin_supply(inventory_refs);
 
     let season = season_state
         .as_deref()
