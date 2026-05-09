@@ -26,7 +26,7 @@ public final class YidaoServerDataHandler implements ServerDataHandler {
     private ServerDataDispatch handleHudState(ServerDataEnvelope envelope, JsonObject payload) {
         YidaoHudStateStore.Snapshot next = new YidaoHudStateStore.Snapshot(
             readString(payload, "healer_id", ""),
-            readInt(payload, "reputation", 0),
+            readSignedInt(payload, "reputation", 0),
             (float) readDouble(payload, "peace_mastery", 0d),
             readDouble(payload, "karma", 0d),
             readString(payload, "active_skill", ""),
@@ -49,7 +49,7 @@ public final class YidaoServerDataHandler implements ServerDataHandler {
             readString(payload, "healer_id", ""),
             readString(payload, "active_action", ""),
             readInt(payload, "queue_len", 0),
-            readInt(payload, "reputation", 0),
+            readSignedInt(payload, "reputation", 0),
             readBoolean(payload, "retreating", false)
         );
         YidaoNpcAiStateStore.replace(next);
@@ -85,6 +85,13 @@ public final class YidaoServerDataHandler implements ServerDataHandler {
     private static int readInt(JsonObject obj, String field, int fallback) {
         double value = readDouble(obj, field, fallback);
         return (int) Math.max(0, Math.min(Integer.MAX_VALUE, Math.round(value)));
+    }
+
+    private static int readSignedInt(JsonObject obj, String field, int fallback) {
+        double value = readDouble(obj, field, fallback);
+        if (value <= Integer.MIN_VALUE) return Integer.MIN_VALUE;
+        if (value >= Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        return (int) Math.round(value);
     }
 
     private static double readDouble(JsonObject obj, String field, double fallback) {

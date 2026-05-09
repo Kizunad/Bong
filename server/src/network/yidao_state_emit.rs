@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use valence::prelude::{Client, Entity, Local, Query, Username};
 
@@ -31,6 +31,15 @@ pub fn emit_yidao_hud_state_payloads(
 ) {
     for (entity, mut client, username, profile, mastery, karma, casting) in &mut clients {
         let Some(state) = build_yidao_hud_state(entity, profile, mastery, karma, casting) else {
+            if previous.remove(&entity).is_some() {
+                send_yidao_payload(
+                    &mut client,
+                    username,
+                    ServerDataV1::new(ServerDataPayloadV1::YidaoHudState(cleared_yidao_hud_state(
+                        entity,
+                    ))),
+                );
+            }
             continue;
         };
         if previous.get(&entity) == Some(&state) {
@@ -47,20 +56,38 @@ pub fn emit_yidao_hud_state_payloads(
 
 pub fn emit_healer_npc_ai_state_payloads(
     healers: Query<(Entity, &HealerProfile, Option<&Casting>)>,
-    mut clients: Query<(&mut Client, &Username)>,
-    mut previous: Local<HashMap<Entity, HealerNpcAiStateV1>>,
+    mut clients: Query<(Entity, &mut Client, &Username)>,
+    mut previous: Local<HashMap<(Entity, Entity), HealerNpcAiStateV1>>,
 ) {
+    let mut live_pairs = HashSet::new();
     for (healer, profile, casting) in &healers {
         let state = build_healer_npc_ai_state(healer, profile, casting);
-        if previous.get(&healer) == Some(&state) {
-            continue;
-        }
-        previous.insert(healer, state.clone());
-        let payload = ServerDataV1::new(ServerDataPayloadV1::HealerNpcAiState(state));
-        for (mut client, username) in &mut clients {
-            send_yidao_payload(&mut client, username, payload.clone());
+        for (client_entity, mut client, username) in &mut clients {
+            let key = (client_entity, healer);
+            live_pairs.insert(key);
+            if !should_send_healer_npc_ai_state(&mut previous, key, &state) {
+                continue;
+            }
+            send_yidao_payload(
+                &mut client,
+                username,
+                ServerDataV1::new(ServerDataPayloadV1::HealerNpcAiState(state.clone())),
+            );
         }
     }
+    previous.retain(|key, _| live_pairs.contains(key));
+}
+
+fn should_send_healer_npc_ai_state(
+    previous: &mut HashMap<(Entity, Entity), HealerNpcAiStateV1>,
+    key: (Entity, Entity),
+    state: &HealerNpcAiStateV1,
+) -> bool {
+    if previous.get(&key) == Some(state) {
+        return false;
+    }
+    previous.insert(key, state.clone());
+    true
 }
 
 fn build_yidao_hud_state(
@@ -106,6 +133,22 @@ fn build_yidao_hud_state(
             .unwrap_or_default(),
         mass_preview_count: 0,
     })
+}
+
+fn cleared_yidao_hud_state(entity: Entity) -> YidaoHudStateV1 {
+    YidaoHudStateV1 {
+        healer_id: entity_wire_id(entity),
+        reputation: 0,
+        peace_mastery: 0.0,
+        karma: 0.0,
+        active_skill: None,
+        patient_ids: Vec::new(),
+        patient_hp_percent: None,
+        patient_contam_total: None,
+        severed_meridian_count: 0,
+        contract_count: 0,
+        mass_preview_count: 0,
+    }
 }
 
 fn build_healer_npc_ai_state(
@@ -274,5 +317,49 @@ mod tests {
         assert_eq!(state.reputation, 5);
         assert_eq!(state.active_action, "life_extension");
         assert!(!state.retreating);
+    }
+
+    #[test]
+    fn cleared_hud_state_keeps_wire_id_but_has_no_active_content() {
+        let healer = Entity::from_raw(11);
+
+        let state = cleared_yidao_hud_state(healer);
+
+        assert_eq!(state.healer_id, entity_wire_id(healer));
+        assert_eq!(state.reputation, 0);
+        assert_eq!(state.peace_mastery, 0.0);
+        assert_eq!(state.active_skill, None);
+        assert!(state.patient_ids.is_empty());
+    }
+
+    #[test]
+    fn healer_ai_dedupe_is_scoped_per_client() {
+        let healer = Entity::from_raw(13);
+        let client_a = Entity::from_raw(21);
+        let client_b = Entity::from_raw(22);
+        let state = HealerNpcAiStateV1 {
+            healer_id: entity_wire_id(healer),
+            active_action: "idle".to_string(),
+            queue_len: 0,
+            reputation: 3,
+            retreating: false,
+        };
+        let mut previous = HashMap::new();
+
+        assert!(should_send_healer_npc_ai_state(
+            &mut previous,
+            (client_a, healer),
+            &state
+        ));
+        assert!(!should_send_healer_npc_ai_state(
+            &mut previous,
+            (client_a, healer),
+            &state
+        ));
+        assert!(should_send_healer_npc_ai_state(
+            &mut previous,
+            (client_b, healer),
+            &state
+        ));
     }
 }

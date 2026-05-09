@@ -816,7 +816,8 @@ fn grow_healer_identity(
     }
     let mut contract_state = None;
     if let Some(mut profile) = world.get_mut::<HealerProfile>(caster) {
-        profile.reputation += success_count as i32;
+        let reputation_gain = i32::try_from(success_count).unwrap_or(i32::MAX);
+        profile.reputation = profile.reputation.saturating_add(reputation_gain);
         for patient in patients.iter().copied().take(success_count as usize) {
             contract_state = Some(record_treatment_contract(
                 &mut profile,
@@ -1128,7 +1129,7 @@ fn is_patient_in_range(
         world.get::<Position>(caster),
         world.get::<Position>(patient),
     ) else {
-        return true;
+        return false;
     };
     caster_pos.get().distance_squared(patient_pos.get()) <= range_m * range_m
 }
@@ -1262,6 +1263,7 @@ mod tests {
                 PracticeLog::default(),
                 SkillBarBindings::default(),
                 HealingMastery::default(),
+                Position::new([0.0, 64.0, 0.0]),
             ))
             .id()
     }
@@ -1281,6 +1283,7 @@ mod tests {
                 },
                 Lifecycle::default(),
                 MeridianSystem::default(),
+                Position::new([0.0, 64.0, 0.0]),
             ))
             .id()
     }
@@ -1338,6 +1341,28 @@ mod tests {
         );
         let events = app.world().resource::<Events<YidaoEvent>>();
         assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn targeted_patient_without_position_is_rejected() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut()
+            .entity_mut(patient)
+            .insert(severed)
+            .remove::<Position>();
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+
+        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
     }
 
     #[test]

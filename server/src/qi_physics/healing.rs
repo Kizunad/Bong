@@ -117,7 +117,8 @@ pub fn emergency_stabilize(
 ) -> Result<EmergencyStabilizeOutcome, QiPhysicsError> {
     let medic_qi_max = finite_non_negative(medic_qi_max, "medic_qi_max")?;
     let mastery = mastery_unit(mastery)?;
-    let patient_hp_max = patient_hp_max.max(1.0);
+    let patient_hp_max =
+        finite_non_negative(f64::from(patient_hp_max), "patient_hp_max")?.max(1.0) as f32;
     let restore_fraction = lerp(0.3, 0.5, mastery) as f32;
     Ok(EmergencyStabilizeOutcome {
         qi_cost: medic_qi_max * lerp(0.3, 0.1, mastery),
@@ -254,6 +255,14 @@ mod tests {
         assert_eq!(out.qi_cost, 8.0);
         assert_eq!(out.hp_restore, 60.0);
         assert_eq!(out.dying_window_ticks, 1800);
+    }
+
+    #[test]
+    fn emergency_stabilize_rejects_non_finite_patient_hp_max() {
+        let err = emergency_stabilize(80.0, f32::NAN, 50.0).unwrap_err();
+        assert!(
+            matches!(err, QiPhysicsError::InvalidAmount { field, .. } if field == "patient_hp_max")
+        );
     }
 
     #[test]

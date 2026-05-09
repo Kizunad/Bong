@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /** 医道平和色治疗脉络：5 招共用轻量粒子 player，差异由 event id 和 payload count 控制。 */
 public final class YidaoPeacePulsePlayer implements VfxPlayer {
     public static final Identifier MERIDIAN_REPAIR = new Identifier("bong", "yidao_meridian_repair");
@@ -22,16 +20,18 @@ public final class YidaoPeacePulsePlayer implements VfxPlayer {
         ClientWorld world = client.world;
         if (world == null) return;
 
-        double ox = payload.origin()[0];
-        double oy = payload.origin()[1];
-        double oz = payload.origin()[2];
+        double[] origin = payload.origin();
+        if (origin.length != 3 || !finiteVec3(origin)) return;
+        double ox = origin[0];
+        double oy = origin[1];
+        double oz = origin[2];
         int rgb = payload.colorRgb().orElse(FALLBACK_RGB);
         float r = ((rgb >> 16) & 0xFF) / 255f;
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         float alpha = (float) Math.max(0.35, Math.min(0.9, payload.strength().orElse(0.75)));
-        int count = clamp(payload.count().orElse(OptionalInt.of(defaultCount(payload.eventId())).getAsInt()), 1, 64);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(50).getAsInt());
+        int count = clamp(payload.count().orElse(defaultCount(payload.eventId())), 1, 64);
+        int maxAge = clamp(payload.durationTicks().orElse(50), 1, 200);
         boolean mass = MASS_MERIDIAN_REPAIR.equals(payload.eventId());
 
         for (int i = 0; i < count; i++) {
@@ -72,5 +72,9 @@ public final class YidaoPeacePulsePlayer implements VfxPlayer {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static boolean finiteVec3(double[] values) {
+        return Double.isFinite(values[0]) && Double.isFinite(values[1]) && Double.isFinite(values[2]);
     }
 }

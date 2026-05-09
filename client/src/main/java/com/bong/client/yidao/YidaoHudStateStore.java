@@ -31,7 +31,16 @@ public final class YidaoHudStateStore {
         }
 
         public boolean active() {
-            return !healerId.isBlank();
+            return !activeSkill.isBlank()
+                || !patientIds.isEmpty()
+                || reputation != 0
+                || peaceMastery > 0f
+                || karma > 0d
+                || patientHpPercent != null
+                || patientContamTotal != null
+                || severedMeridianCount > 0
+                || contractCount > 0
+                || massPreviewCount > 0;
         }
     }
 
