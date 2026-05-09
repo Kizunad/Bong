@@ -191,11 +191,18 @@ export function checkAnonymityViolation(
   narration: string,
   context: PoliticalNarrationContext = {},
 ): boolean {
-  const exposed = normalizeIdentitySet(context.exposedIdentities);
+  const exposed = [...normalizeIdentitySet(context.exposedIdentities)].sort(
+    (left, right) => right.length - left.length,
+  );
   const unexposed = normalizeIdentitySet(context.unexposedIdentities);
+  let scrubbedNarration = narration;
+
+  for (const name of exposed) {
+    scrubbedNarration = scrubbedNarration.split(name).join("");
+  }
 
   for (const name of unexposed) {
-    if (name.length > 0 && narration.includes(name) && !exposed.has(name)) {
+    if (name.length > 0 && scrubbedNarration.includes(name)) {
       return true;
     }
   }

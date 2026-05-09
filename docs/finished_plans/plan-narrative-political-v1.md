@@ -35,7 +35,7 @@
 | 维度 | 内容 |
 |------|------|
 | **进料** | `SocialRelationshipEvent` (feud level 跨阈值) · `SocialPactEvent` · `SocialExposureEvent` (检 identity 是否已暴露才能提名) · `bong:niche_destroyed`（niche-defense-v1 待 emit）· `bong:wanted_player`（identity-v1 P5 待 emit）· `Renown.fame`（milestone tracker）· `IdentityProfile.display_name`（提名候选） |
-| **出料** | political narration → `bong:agent_narration` 既有通道（ChatHud / EventStore 按 scope 分流）· `PoliticalNarrationThrottleStore` Resource · `narration-eval` 评分扩展（JIANGHU_VOICE_RE / ANONYMITY_VIOLATION / MODERN_POLITICAL_TERMS_BLACKLIST） |
+| **出料** | political narration → `bong:agent_narrate` 既有通道（ChatHud / EventStore 按 scope 分流）· `PoliticalNarrationThrottleStore` Resource · `narration-eval` 评分扩展（JIANGHU_VOICE_RE / ANONYMITY_VIOLATION / MODERN_POLITICAL_TERMS_BLACKLIST） |
 | **共享 event** | 复用 `SocialRelationshipEvent` / `SocialPactEvent` / `SocialExposureEvent` / `SocialRenownDeltaEvent`（plan-social-v1 已实装）；复用 `bong:wanted_player`（identity-v1 P5 emit）；新增 `bong:high_renown_milestone`（fame 跨 100/500/1000 阈值时 server emit）；新增 `PoliticalNarrationThrottleStore` Resource |
 | **跨仓库契约** | **server**：`HighRenownMilestoneTracker` Resource + `emit_high_renown_milestone_system` + niche-defense / identity event 转发到 agent（已有 redis_outbox 框架）<br>**agent**：`agent/packages/tiandao/src/skills/political.md` 新 skill 文件 + `agent/packages/tiandao/src/political-narration.ts` runtime handler（参考 `dugu-narration.ts`）+ `narration-eval.ts` 加 JIANGHU_VOICE_RE / ANONYMITY_VIOLATION_CHECK / MODERN_POLITICAL_TERMS_BLACKLIST<br>**client**：无新契约（沿用 plan-HUD-v1 ChatHud + EventStore 双通道，按 scope 分流） |
 | **worldview 锚点** | §十一 安全与社交（事件源）+ §八 天道叙事语调（江湖口耳相传）+ §K 红线第 12 条 + O.7 决策（默认沉默）+ §十一 匿名系统（Exposure 约束） |
@@ -128,7 +128,7 @@ prompt 关键段：
 //   4. 调 throttle check (zone-level 5 min + dedupe)
 //   5. 紧急事件 bypass_throttle: true
 //   6. 拼 prompt 调 political skill
-//   7. 推 narration 到 bong:agent_narration
+//   7. 推 narration 到 bong:agent_narrate
 ```
 
 ### 测试
@@ -395,4 +395,6 @@ function scorePoliticalNarration(narration: string, context: PoliticalContext): 
 ### 遗留 / 后续
 
 - `bong:niche_destroyed` 与 `bong:wanted_player` 仍由对应协同 plan 负责真实上游 emit；本 plan 已按最终 Redis 契约消费并覆盖 dummy / schema / runtime 路径。
+- `SocialFeudEventV1` 目前没有 `level` / `prev_level` 字段，因此"feud 跨阈值才出声"暂时退化为"每条 feud 事件 + zone 5 分钟 throttle"；真正的 feud level 过滤留给 vN+1。
+- `PoliticalNarrationContext.severity` 目前只进入 LLM context，runtime throttle 仍是 first-write-wins；同 zone 多事件按 severity 抢占最重大事件留给 vN+1。
 - mentorship、派系战、师徒决裂、婚约等更宽 political 事件按原计划留给 vN+1。

@@ -2962,6 +2962,22 @@ mod redis_bridge_tests {
             Some(RedisInbound::AgentCommand(_))
         ));
 
+        let political_narration = r#"{
+            "v": 1,
+            "narrations": [{
+                "scope": "zone",
+                "target": "spawn",
+                "text": "江湖有传，血谷旧怨又添一笔，闻者只把灯挑暗。",
+                "style": "political_jianghu",
+                "kind": "political_jianghu"
+            }]
+        }"#;
+        assert!(matches!(
+            parse_inbound_message(CH_AGENT_NARRATE, political_narration)
+                .expect("political jianghu narration payload should pass"),
+            Some(RedisInbound::AgentNarration(_))
+        ));
+
         let heart_demon_offer = r#"{
             "offer_id": "heart_demon:1:1000",
             "trigger_id": "heart_demon:1:1000",

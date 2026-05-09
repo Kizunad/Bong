@@ -88,22 +88,6 @@ pub fn emit_high_renown_milestone_system(
                 continue;
             }
 
-            if let Some(settings) = persistence.as_deref() {
-                if let Err(error) =
-                    persist_emitted_milestone(settings, key, lifecycle.character_id.as_str(), tick)
-                {
-                    tracing::warn!(
-                        ?error,
-                        char_id = lifecycle.character_id.as_str(),
-                        identity_id = active.id.0,
-                        milestone,
-                        "[bong][social] failed to persist high renown milestone"
-                    );
-                    continue;
-                }
-            }
-            tracker.already_emitted.insert(key);
-
             let payload = build_high_renown_milestone_event(
                 lifecycle.character_id.as_str(),
                 active,
@@ -123,7 +107,24 @@ pub fn emit_high_renown_milestone_system(
                     milestone,
                     "[bong][social] failed to enqueue high renown milestone"
                 );
+                continue;
             }
+
+            if let Some(settings) = persistence.as_deref() {
+                if let Err(error) =
+                    persist_emitted_milestone(settings, key, lifecycle.character_id.as_str(), tick)
+                {
+                    tracing::warn!(
+                        ?error,
+                        char_id = lifecycle.character_id.as_str(),
+                        identity_id = active.id.0,
+                        milestone,
+                        "[bong][social] failed to persist high renown milestone"
+                    );
+                    continue;
+                }
+            }
+            tracker.already_emitted.insert(key);
         }
     }
 }
@@ -241,16 +242,19 @@ fn hydrate_tracker(
     if tracker.hydrated {
         return;
     }
-    if let Some(settings) = persistence {
-        match load_emitted_milestones(settings) {
-            Ok(keys) => tracker.already_emitted.extend(keys),
-            Err(error) => tracing::warn!(
-                ?error,
-                "[bong][social] failed to hydrate high renown milestone tracker"
-            ),
+    let Some(settings) = persistence else {
+        return;
+    };
+    match load_emitted_milestones(settings) {
+        Ok(keys) => {
+            tracker.already_emitted.extend(keys);
+            tracker.hydrated = true;
         }
+        Err(error) => tracing::warn!(
+            ?error,
+            "[bong][social] failed to hydrate high renown milestone tracker"
+        ),
     }
-    tracker.hydrated = true;
 }
 
 fn is_identity_exposed(anonymity: Option<&Anonymity>, exposure_log: Option<&ExposureLog>) -> bool {
@@ -360,5 +364,15 @@ mod tests {
 
         assert!(loaded.contains(&key));
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn hydrate_without_persistence_does_not_mark_tracker_hydrated() {
+        let mut tracker = HighRenownMilestoneTracker::default();
+
+        hydrate_tracker(&mut tracker, None);
+
+        assert!(!tracker.hydrated);
+        assert!(tracker.already_emitted.is_empty());
     }
 }

@@ -21,8 +21,7 @@ import {
 import type { LlmClient } from "./llm.js";
 import { normalizeLlmChatResult } from "./llm.js";
 import {
-  MODERN_POLITICAL_TERMS_BLACKLIST,
-  checkAnonymityViolation,
+  scorePoliticalNarration,
 } from "./narration-eval.js";
 
 const {
@@ -71,6 +70,53 @@ export class PoliticalNarrationThrottleStore {
   record(zone: string, currentMs: number): void {
     this.lastNarrationByZone.set(zone, currentMs);
   }
+
+  reserve(zone: string, currentMs: number, bypass: boolean): PoliticalNarrationThrottleReservation | null {
+    if (bypass) {
+      return {
+        bypass: true,
+        currentMs,
+        zone,
+      };
+    }
+    const previous = this.lastNarrationByZone.get(zone);
+    if (!this.canEmit(zone, currentMs, false)) {
+      return null;
+    }
+    this.record(zone, currentMs);
+    const reservation: PoliticalNarrationThrottleReservation = {
+      bypass: false,
+      currentMs,
+      zone,
+    };
+    if (previous !== undefined) {
+      reservation.previous = previous;
+    }
+    return reservation;
+  }
+
+  commit(reservation: PoliticalNarrationThrottleReservation): void {
+    if (reservation.bypass) {
+      this.record(reservation.zone, reservation.currentMs);
+    }
+  }
+
+  rollback(reservation: PoliticalNarrationThrottleReservation): void {
+    if (reservation.bypass) return;
+    if (this.lastNarrationByZone.get(reservation.zone) !== reservation.currentMs) return;
+    if (reservation.previous === undefined) {
+      this.lastNarrationByZone.delete(reservation.zone);
+      return;
+    }
+    this.lastNarrationByZone.set(reservation.zone, reservation.previous);
+  }
+}
+
+interface PoliticalNarrationThrottleReservation {
+  zone: string;
+  currentMs: number;
+  bypass: boolean;
+  previous?: number;
 }
 
 export interface PoliticalNarrationRuntimeClient {
@@ -185,7 +231,8 @@ export class PoliticalNarrationRuntime {
     this.stats.received += 1;
 
     const currentMs = this.now();
-    if (!this.throttleStore.canEmit(context.zone, currentMs, context.bypassThrottle)) {
+    const reservation = this.throttleStore.reserve(context.zone, currentMs, context.bypassThrottle);
+    if (reservation === null) {
       this.stats.throttled += 1;
       return;
     }
@@ -194,6 +241,7 @@ export class PoliticalNarrationRuntime {
     const envelope = { v: 1, narrations: [narration] };
     const validation = validateNarrationV1Contract(envelope);
     if (!validation.ok) {
+      this.throttleStore.rollback(reservation);
       this.stats.rejectedContract += 1;
       this.logger.warn("[political-runtime] NarrationV1 contract rejected:", validation.errors.join("; "));
       return;
@@ -201,9 +249,10 @@ export class PoliticalNarrationRuntime {
 
     try {
       await this.pub.publish(AGENT_NARRATE, JSON.stringify(envelope));
-      this.throttleStore.record(context.zone, currentMs);
+      this.throttleStore.commit(reservation);
       this.stats.published += 1;
     } catch (error) {
+      this.throttleStore.rollback(reservation);
       this.logger.warn("[political-runtime] publish failed:", error);
     }
   }
@@ -368,10 +417,8 @@ export function parsePoliticalNarrationContent(content: string, context: Politic
       style: "political_jianghu",
       kind: "political_jianghu",
     };
-    if (
-      MODERN_POLITICAL_TERMS_BLACKLIST.test(narration.text) ||
-      checkAnonymityViolation(narration.text, context)
-    ) {
+    const score = scorePoliticalNarration(narration.text, context);
+    if (!score.hasJianghuVoice || !score.noModernPoliticalTerms || !score.anonymityOk) {
       return fallback;
     }
     const validation = validateNarrationV1Contract({ v: 1, narrations: [narration] });
@@ -398,7 +445,7 @@ function fallbackText(context: PoliticalNarrationContext): string {
     case "pact":
       return "市井相传，有二修士结契同行，以血口作证；契上字未必能久，旁人只见火光一瞬，后事仍藏在袖底。";
     case "niche_intrusion":
-      return `山中有人道，${context.zone} 一处灵龛遭破，主人名姓仍被尘土遮着；取物者脚印未干，传闻已先行过岭。`;
+      return `山中有人道，${displayLocation(context)} 一处灵龛遭破，主人名姓仍被尘土遮着；取物者脚印未干，传闻已先行过岭。`;
     case "wanted_player": {
       const payload = context.payload as WantedPlayerEventV1;
       return `闻者道，${payload.identity_display_name} 的画影已过诸市，旧账与恶名一并钉在纸上；见者是避是杀，各凭命薄。`;
@@ -409,4 +456,11 @@ function fallbackText(context: PoliticalNarrationContext): string {
       return `江湖有传，${name} 之名已越 ${payload.milestone} 声名阈，酒肆里有人添灯，有人掩门；名声既起，后路便不再由己。`;
     }
   }
+}
+
+function displayLocation(context: PoliticalNarrationContext): string {
+  if (context.eventType === "niche_intrusion" || context.zone.startsWith("niche:")) {
+    return "林中";
+  }
+  return context.zone;
 }

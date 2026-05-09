@@ -48,6 +48,18 @@ class FakePubSub implements PoliticalNarrationRuntimeClient {
   }
 }
 
+class FlakyPubSub extends FakePubSub {
+  public failNextPublish = true;
+
+  override async publish(channel: string, message: string): Promise<number> {
+    if (this.failNextPublish) {
+      this.failNextPublish = false;
+      throw new Error("transient publish failure");
+    }
+    return super.publish(channel, message);
+  }
+}
+
 const silent = { info: vi.fn(), warn: vi.fn() };
 
 describe("PoliticalNarrationRuntime", () => {
@@ -150,9 +162,27 @@ describe("PoliticalNarrationRuntime", () => {
     expect(pub.published).toHaveLength(4);
     const narrations = pub.published.map((entry) => JSON.parse(entry.message).narrations[0]);
     expect(narrations[1].target).toBe("niche:1,64,2");
+    expect(narrations[1].text).not.toContain("niche:");
     expect(narrations[2].scope).toBe("broadcast");
     expect(narrations[2].text).toContain("玄锋");
     expect(narrations[3].scope).toBe("broadcast");
+  });
+
+  it("ignores broken pact events", async () => {
+    const pub = new FakePubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+    });
+
+    await runtime.handlePayload(
+      SOCIAL_PACT,
+      JSON.stringify({ v: 1, left: "char:a", right: "char:b", terms: "同行", tick: 1, broken: true }),
+    );
+
+    expect(pub.published).toHaveLength(0);
+    expect(runtime.stats.ignored).toBe(1);
   });
 
   it("throttles same-zone ordinary events but lets bypass events through", async () => {
@@ -181,6 +211,30 @@ describe("PoliticalNarrationRuntime", () => {
     );
 
     expect(pub.published).toHaveLength(2);
+    expect(runtime.stats.throttled).toBe(1);
+  });
+
+  it("reserves throttle before the first publish completes", async () => {
+    const pub = new FakePubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      now: () => 50_000,
+    });
+    const feud = {
+      v: 1,
+      left: "char:one",
+      right: "char:two",
+      tick: 42,
+      place: "blood_valley",
+    };
+
+    const first = runtime.handlePayload(SOCIAL_FEUD, JSON.stringify(feud));
+    await runtime.handlePayload(SOCIAL_FEUD, JSON.stringify({ ...feud, tick: 43 }));
+    await first;
+
+    expect(pub.published).toHaveLength(1);
     expect(runtime.stats.throttled).toBe(1);
   });
 
@@ -278,5 +332,102 @@ describe("PoliticalNarrationRuntime", () => {
     expect(narration.text).toContain("某修士");
     expect(narration.text).not.toContain("玄锋");
     expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("falls back when LLM output uses modern political terms", async () => {
+    const pub = new FakePubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      llm: {
+        chat: vi.fn(async () =>
+          JSON.stringify({
+            text: "江湖有传，玄锋在山中立政府与议会，市井消息一夜传开。",
+            scope: "broadcast",
+            style: "political_jianghu",
+            kind: "political_jianghu",
+          }),
+        ),
+      },
+    });
+
+    await runtime.handlePayload(
+      HIGH_RENOWN_MILESTONE,
+      JSON.stringify({
+        v: 1,
+        event: "high_renown_milestone",
+        player_uuid: "7a8f80c2-82ad-5d7c-a0dd-b3c1b7d2e1a1",
+        char_id: "offline:kiz",
+        identity_id: 0,
+        identity_display_name: "玄锋",
+        fame: 1000,
+        milestone: 1000,
+        identity_exposed: true,
+        tick: 4,
+        zone: "spawn",
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const narration = JSON.parse(pub.published[0].message).narrations[0];
+    expect(narration.text).not.toContain("政府");
+    expect(narration.text).not.toContain("议会");
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("falls back when LLM output lacks jianghu voice", async () => {
+    const pub = new FakePubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      llm: {
+        chat: vi.fn(async () =>
+          JSON.stringify({
+            text: "两名修士建立了长期合作关系，事件影响范围有限，后续发展仍需观察。",
+            scope: "zone",
+            target: "jianghu",
+            style: "political_jianghu",
+            kind: "political_jianghu",
+          }),
+        ),
+      },
+    });
+
+    await runtime.handlePayload(
+      SOCIAL_PACT,
+      JSON.stringify({ v: 1, left: "char:a", right: "char:b", terms: "同行", tick: 1, broken: false }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const narration = JSON.parse(pub.published[0].message).narrations[0];
+    expect(narration.text).toMatch(/江湖|市井|山中|传/);
+    expect(narration.text).not.toContain("长期合作关系");
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("does not record throttle when publish fails", async () => {
+    const pub = new FlakyPubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      now: () => 50_000,
+    });
+    const feud = {
+      v: 1,
+      left: "char:one",
+      right: "char:two",
+      tick: 42,
+      place: "blood_valley",
+    };
+
+    await runtime.handlePayload(SOCIAL_FEUD, JSON.stringify(feud));
+    await runtime.handlePayload(SOCIAL_FEUD, JSON.stringify({ ...feud, tick: 43 }));
+
+    expect(pub.published).toHaveLength(1);
+    expect(runtime.stats.published).toBe(1);
+    expect(runtime.stats.throttled).toBe(0);
   });
 });

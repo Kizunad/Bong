@@ -272,4 +272,17 @@ describe("narration evaluation", () => {
       }).score,
     );
   });
+
+  it("does not treat exposed longer names as unexposed short-name leaks", () => {
+    const text = padNarrationWindow(
+      "江湖有传，玄锋子之名已过诸渊，市井将把旧账添入灯下；后势未明，闻者只问此名何时再现。",
+    );
+
+    expect(
+      checkAnonymityViolation(text, {
+        exposedIdentities: ["玄锋子"],
+        unexposedIdentities: ["玄锋"],
+      }),
+    ).toBe(false);
+  });
 });

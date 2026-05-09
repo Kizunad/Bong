@@ -5480,6 +5480,7 @@ mod persistence_tests {
             "social_faction_memberships",
             "legacy_letterbox",
             "void_action_cooldowns",
+            "high_renown_milestones",
         ] {
             let exists: Option<String> = connection
                 .query_row(
@@ -5491,6 +5492,72 @@ mod persistence_tests {
                 .expect("sqlite_master social table query should succeed");
             assert_eq!(exists.as_deref(), Some(table), "{table} should exist");
         }
+
+        for column in [
+            "player_uuid",
+            "char_id",
+            "identity_id",
+            "milestone",
+            "emitted_at_tick",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            let column_exists: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('high_renown_milestones') WHERE name = ?1",
+                    params![column],
+                    |row| row.get(0),
+                )
+                .expect("high_renown_milestones column query should succeed");
+            assert_eq!(column_exists, 1, "{column} should exist");
+        }
+
+        let high_renown_index: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_high_renown_milestones_char'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("high renown index query should succeed");
+        assert_eq!(
+            high_renown_index.as_deref(),
+            Some("idx_high_renown_milestones_char")
+        );
+    }
+
+    #[test]
+    fn v20_migration_rejects_malformed_high_renown_table() {
+        let db_path = database_path("v20-malformed-high-renown");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE high_renown_milestones (
+                    player_uuid TEXT NOT NULL,
+                    identity_id INTEGER NOT NULL,
+                    milestone INTEGER NOT NULL,
+                    PRIMARY KEY (player_uuid, identity_id, milestone)
+                );
+                PRAGMA user_version = 19;
+                ",
+            )
+            .expect("legacy malformed fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v20 migration should reject malformed table");
+        let message = error.to_string();
+        assert!(
+            message.contains("high_renown_milestones column char_id missing")
+                || message.contains("no such column: char_id"),
+            "unexpected error: {message}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should still be readable");
+        assert_eq!(user_version, 19);
     }
 
     #[test]
