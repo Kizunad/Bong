@@ -52,7 +52,13 @@ public final class YidaoServerDataHandler implements ServerDataHandler {
             readSignedInt(payload, "reputation", 0),
             readBoolean(payload, "retreating", false)
         );
-        YidaoNpcAiStateStore.replace(next);
+        YidaoNpcAiStateStore.upsert(next);
+        if (next.clearSignal()) {
+            return ServerDataDispatch.handled(
+                envelope.type(),
+                "Cleared healer_npc_ai_state (healer=" + next.healerId() + ")"
+            );
+        }
         return ServerDataDispatch.handled(
             envelope.type(),
             "Applied healer_npc_ai_state (action=" + next.activeAction() + ", queue=" + next.queueLen() + ")"

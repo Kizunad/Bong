@@ -75,7 +75,28 @@ pub fn emit_healer_npc_ai_state_payloads(
             );
         }
     }
-    previous.retain(|key, _| live_pairs.contains(key));
+    let stale_pairs = stale_healer_npc_ai_pairs(&previous, &live_pairs);
+    if stale_pairs.is_empty() {
+        return;
+    }
+    for (client_entity, mut client, username) in &mut clients {
+        for (_, healer) in stale_pairs
+            .iter()
+            .copied()
+            .filter(|(stale_client, _)| *stale_client == client_entity)
+        {
+            send_yidao_payload(
+                &mut client,
+                username,
+                ServerDataV1::new(ServerDataPayloadV1::HealerNpcAiState(
+                    cleared_healer_npc_ai_state(healer),
+                )),
+            );
+        }
+    }
+    for key in stale_pairs {
+        previous.remove(&key);
+    }
 }
 
 fn should_send_healer_npc_ai_state(
@@ -88,6 +109,17 @@ fn should_send_healer_npc_ai_state(
     }
     previous.insert(key, state.clone());
     true
+}
+
+fn stale_healer_npc_ai_pairs(
+    previous: &HashMap<(Entity, Entity), HealerNpcAiStateV1>,
+    live_pairs: &HashSet<(Entity, Entity)>,
+) -> Vec<(Entity, Entity)> {
+    previous
+        .keys()
+        .copied()
+        .filter(|key| !live_pairs.contains(key))
+        .collect()
 }
 
 fn build_yidao_hud_state(
@@ -148,6 +180,16 @@ fn cleared_yidao_hud_state(entity: Entity) -> YidaoHudStateV1 {
         severed_meridian_count: 0,
         contract_count: 0,
         mass_preview_count: 0,
+    }
+}
+
+fn cleared_healer_npc_ai_state(healer: Entity) -> HealerNpcAiStateV1 {
+    HealerNpcAiStateV1 {
+        healer_id: entity_wire_id(healer),
+        active_action: "clear".to_string(),
+        queue_len: 0,
+        reputation: 0,
+        retreating: false,
     }
 }
 
@@ -333,6 +375,19 @@ mod tests {
     }
 
     #[test]
+    fn cleared_healer_ai_state_keeps_wire_id_and_uses_clear_action() {
+        let healer = Entity::from_raw(12);
+
+        let state = cleared_healer_npc_ai_state(healer);
+
+        assert_eq!(state.healer_id, entity_wire_id(healer));
+        assert_eq!(state.active_action, "clear");
+        assert_eq!(state.queue_len, 0);
+        assert_eq!(state.reputation, 0);
+        assert!(!state.retreating);
+    }
+
+    #[test]
     fn healer_ai_dedupe_is_scoped_per_client() {
         let healer = Entity::from_raw(13);
         let client_a = Entity::from_raw(21);
@@ -361,5 +416,29 @@ mod tests {
             (client_b, healer),
             &state
         ));
+    }
+
+    #[test]
+    fn stale_healer_ai_pairs_are_scoped_by_client_and_healer() {
+        let client_a = Entity::from_raw(31);
+        let client_b = Entity::from_raw(32);
+        let healer_a = Entity::from_raw(41);
+        let healer_b = Entity::from_raw(42);
+        let state = HealerNpcAiStateV1 {
+            healer_id: entity_wire_id(healer_a),
+            active_action: "idle".to_string(),
+            queue_len: 0,
+            reputation: 0,
+            retreating: false,
+        };
+        let mut previous = HashMap::new();
+        previous.insert((client_a, healer_a), state.clone());
+        previous.insert((client_a, healer_b), state.clone());
+        previous.insert((client_b, healer_a), state);
+        let live_pairs = HashSet::from([(client_a, healer_a), (client_b, healer_a)]);
+
+        let stale = stale_healer_npc_ai_pairs(&previous, &live_pairs);
+
+        assert_eq!(stale, vec![(client_a, healer_b)]);
     }
 }
