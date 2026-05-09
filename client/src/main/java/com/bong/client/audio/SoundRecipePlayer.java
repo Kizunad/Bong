@@ -1,6 +1,7 @@
 package com.bong.client.audio;
 
 import com.bong.client.combat.CombatHudStateStore;
+import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.network.AudioEventPayload;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -157,6 +158,9 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     }
 
     private static boolean defaultFlagActive(String flag) {
+        if (EnvironmentAudioLoopState.isActive(flag)) {
+            return true;
+        }
         return switch (flag) {
             case "hp_below_30" -> CombatHudStateStore.snapshot().hpPercent() < 0.3f;
             default -> false;

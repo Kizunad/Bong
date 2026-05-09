@@ -11,6 +11,7 @@ import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongHudCommand;
 import com.bong.client.debug.BongSpawnParticleCommand;
 import com.bong.client.debug.BongVfxCommand;
+import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
@@ -74,6 +75,7 @@ public class BongClient implements ClientModInitializer {
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
         SoundRecipePlayer.bootstrap();
+        EnvironmentEffectController.bootstrap();
         BongAnimCommand.register();
         BongHudCommand.register();
         BongSpawnParticleCommand.register();
