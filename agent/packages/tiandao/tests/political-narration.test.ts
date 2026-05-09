@@ -238,6 +238,48 @@ describe("PoliticalNarrationRuntime", () => {
     expect(runtime.stats.throttled).toBe(1);
   });
 
+  it("lets higher severity same-zone events supersede pending ordinary narration", async () => {
+    const pub = new FakePubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+      now: () => 50_000,
+    });
+    const feud = {
+      v: 1,
+      left: "char:one",
+      right: "char:two",
+      tick: 42,
+      place: "blood_valley",
+    };
+
+    const first = runtime.handlePayload(SOCIAL_FEUD, JSON.stringify(feud));
+    await runtime.handlePayload(
+      HIGH_RENOWN_MILESTONE,
+      JSON.stringify({
+        v: 1,
+        event: "high_renown_milestone",
+        player_uuid: "7a8f80c2-82ad-5d7c-a0dd-b3c1b7d2e1a1",
+        char_id: "offline:kiz",
+        identity_id: 0,
+        identity_display_name: "玄锋",
+        fame: 500,
+        milestone: 500,
+        identity_exposed: true,
+        tick: 43,
+        zone: "blood_valley",
+      }),
+    );
+    await first;
+
+    expect(pub.published).toHaveLength(1);
+    const narration = JSON.parse(pub.published[0].message).narrations[0];
+    expect(narration.target).toBe("blood_valley");
+    expect(narration.text).toContain("500");
+    expect(runtime.stats.throttled).toBe(1);
+  });
+
   it("allows ordinary zone narration after five minutes", async () => {
     let now = 1_000;
     const pub = new FakePubSub();

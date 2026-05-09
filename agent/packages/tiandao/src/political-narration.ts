@@ -59,34 +59,45 @@ export interface PoliticalNarrationContext {
 }
 
 export class PoliticalNarrationThrottleStore {
-  private readonly lastNarrationByZone = new Map<string, number>();
+  private readonly lastNarrationByZone = new Map<string, PoliticalNarrationThrottleEntry>();
 
-  canEmit(zone: string, currentMs: number, bypass: boolean): boolean {
+  canEmit(zone: string, currentMs: number, bypass: boolean, severity = 0): boolean {
     if (bypass) return true;
     const last = this.lastNarrationByZone.get(zone);
-    return last === undefined || currentMs - last >= POLITICAL_THROTTLE_MS;
+    return (
+      last === undefined ||
+      currentMs - last.currentMs >= POLITICAL_THROTTLE_MS ||
+      severity > last.severity
+    );
   }
 
-  record(zone: string, currentMs: number): void {
-    this.lastNarrationByZone.set(zone, currentMs);
+  record(zone: string, currentMs: number, severity = 0): void {
+    this.lastNarrationByZone.set(zone, { currentMs, severity });
   }
 
-  reserve(zone: string, currentMs: number, bypass: boolean): PoliticalNarrationThrottleReservation | null {
+  reserve(
+    zone: string,
+    currentMs: number,
+    bypass: boolean,
+    severity = 0,
+  ): PoliticalNarrationThrottleReservation | null {
     if (bypass) {
       return {
         bypass: true,
         currentMs,
+        severity,
         zone,
       };
     }
     const previous = this.lastNarrationByZone.get(zone);
-    if (!this.canEmit(zone, currentMs, false)) {
+    if (!this.canEmit(zone, currentMs, false, severity)) {
       return null;
     }
-    this.record(zone, currentMs);
+    this.record(zone, currentMs, severity);
     const reservation: PoliticalNarrationThrottleReservation = {
       bypass: false,
       currentMs,
+      severity,
       zone,
     };
     if (previous !== undefined) {
@@ -97,26 +108,38 @@ export class PoliticalNarrationThrottleStore {
 
   commit(reservation: PoliticalNarrationThrottleReservation): void {
     if (reservation.bypass) {
-      this.record(reservation.zone, reservation.currentMs);
+      this.record(reservation.zone, reservation.currentMs, reservation.severity);
     }
   }
 
   rollback(reservation: PoliticalNarrationThrottleReservation): void {
     if (reservation.bypass) return;
-    if (this.lastNarrationByZone.get(reservation.zone) !== reservation.currentMs) return;
+    if (!this.isCurrent(reservation)) return;
     if (reservation.previous === undefined) {
       this.lastNarrationByZone.delete(reservation.zone);
       return;
     }
     this.lastNarrationByZone.set(reservation.zone, reservation.previous);
   }
+
+  isCurrent(reservation: PoliticalNarrationThrottleReservation): boolean {
+    if (reservation.bypass) return true;
+    const current = this.lastNarrationByZone.get(reservation.zone);
+    return current?.currentMs === reservation.currentMs && current.severity === reservation.severity;
+  }
+}
+
+interface PoliticalNarrationThrottleEntry {
+  currentMs: number;
+  severity: number;
 }
 
 interface PoliticalNarrationThrottleReservation {
   zone: string;
   currentMs: number;
+  severity: number;
   bypass: boolean;
-  previous?: number;
+  previous?: PoliticalNarrationThrottleEntry;
 }
 
 export interface PoliticalNarrationRuntimeClient {
@@ -231,13 +254,22 @@ export class PoliticalNarrationRuntime {
     this.stats.received += 1;
 
     const currentMs = this.now();
-    const reservation = this.throttleStore.reserve(context.zone, currentMs, context.bypassThrottle);
+    const reservation = this.throttleStore.reserve(
+      context.zone,
+      currentMs,
+      context.bypassThrottle,
+      context.severity,
+    );
     if (reservation === null) {
       this.stats.throttled += 1;
       return;
     }
 
     const narration = await this.renderNarration(context);
+    if (!this.throttleStore.isCurrent(reservation)) {
+      this.stats.throttled += 1;
+      return;
+    }
     const envelope = { v: 1, narrations: [narration] };
     const validation = validateNarrationV1Contract(envelope);
     if (!validation.ok) {
