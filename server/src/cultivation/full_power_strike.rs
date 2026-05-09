@@ -621,6 +621,12 @@ mod tests {
     #[test]
     fn rejects_invalid_charge_and_release_states() {
         let mut app = app();
+        let no_cultivation = app.world_mut().spawn(SkillBarBindings::default()).id();
+        assert_eq!(
+            start_charge_fn(app.world_mut(), no_cultivation, 0, None),
+            rejected(CastRejectReason::RealmTooLow)
+        );
+
         let low_qi = actor(&mut app, Realm::Induce, 99.0, 100.0);
         assert_eq!(
             start_charge_fn(app.world_mut(), low_qi, 0, None),
