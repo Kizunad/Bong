@@ -571,7 +571,7 @@ server identity 相关新增/覆盖单测分布：
 - `identity::wanted_player_emit::tests`：7
 - `persistence::identity::tests`：3
 - `schema::identity::tests`：5
-- 新增本轮 P5：`identity::gossip::tests` 3、`network::identity_panel_emit::tests` 4、`npc::brain::tests::chase_target_scorer_boosts_wanted_identity_even_outside_normal_range`、`social::tests::trade_offer_dispatch_rejects_target_with_wanted_identity`
+- 新增本轮 P5：`identity::gossip::tests` 3、`network::identity_panel_emit::tests` 4、`npc::brain::tests::chase_target_scorer_boosts_wanted_identity_even_outside_normal_range`、`social::tests::trade_offer_dispatch_rejects_wanted_initiator_identity`
 
 ### 跨仓库核验
 
