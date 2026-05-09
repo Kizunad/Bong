@@ -640,7 +640,9 @@ mod tests {
         fs::write(region_dir.join("r.0.0.mca"), b"placeholder")
             .expect("region marker file should be creatable");
 
-        let _guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
+        let _lock = env_lock();
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
         let selection = select_world_bootstrap();
 
         assert_eq!(
@@ -657,7 +659,9 @@ mod tests {
         let world_path = unique_temp_dir("bong-world-bootstrap-env-missing");
         fs::create_dir_all(&world_path).expect("test world path should be creatable");
 
-        let _guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
+        let _lock = env_lock();
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
         let selection = select_world_bootstrap();
 
         assert_eq!(
@@ -723,7 +727,10 @@ mod tests {
         let manifest_path = raster_dir.join("manifest.json");
         fs::write(&manifest_path, "{}\n").expect("manifest file should be creatable");
 
-        let _guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, Some(manifest_path.clone()));
+        let _lock = env_lock();
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, None);
+        let _raster_guard =
+            ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, Some(manifest_path.clone()));
         let selection = select_world_bootstrap();
 
         assert_eq!(
@@ -738,6 +745,14 @@ mod tests {
     struct ScopedEnvVar {
         key: &'static str,
         previous: Option<std::ffi::OsString>,
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     impl ScopedEnvVar {
