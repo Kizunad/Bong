@@ -28,11 +28,13 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 10] = [
+const TECHNIQUE_IDS: [&str; 12] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
+    "bao_mai.full_power_charge",
+    "bao_mai.full_power_release",
     "zhenmai.parry",
     "zhenmai.sever_chain",
     "woliu.vortex",
@@ -62,7 +64,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 10] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 12] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -136,6 +138,32 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 10] = [
         cooldown_ticks: 120,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/ni_mai_hu_ti.png",
+    },
+    TechniqueDefinition {
+        id: "bao_mai.full_power_charge",
+        display_name: "全力一击·蓄",
+        grade: "profound",
+        description: "把当前真元池逐 tick 灌入一击，蓄力期间被命中会损失部分真元。",
+        required_realm: "Induce",
+        required_meridians: &[],
+        qi_cost: 100.0,
+        cast_ticks: 1,
+        cooldown_ticks: 0,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/full_power_charge.png",
+    },
+    TechniqueDefinition {
+        id: "bao_mai.full_power_release",
+        display_name: "全力一击·放",
+        grade: "profound",
+        description: "释放已蓄真元，按双方境界池子差距换算伤害，随后进入虚脱。",
+        required_realm: "Induce",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        cast_ticks: 1,
+        cooldown_ticks: 20,
+        range: 8.0,
+        icon_texture: "bong:textures/gui/skill/full_power_release.png",
     },
     TechniqueDefinition {
         id: "zhenmai.parry",

@@ -256,8 +256,10 @@ pub fn resolve_attack_intents(
                 );
             }
 
-            if intent.source != AttackSource::BurstMeridian
-                && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
+            if !matches!(
+                intent.source,
+                AttackSource::BurstMeridian | AttackSource::FullPower
+            ) && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
             {
                 if intent.debug_command.is_none() {
                     record_anticheat_violation(
@@ -306,7 +308,10 @@ pub fn resolve_attack_intents(
                 continue;
             };
 
-            if intent.source != AttackSource::BurstMeridian {
+            if !matches!(
+                intent.source,
+                AttackSource::BurstMeridian | AttackSource::FullPower
+            ) {
                 attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
                     .clamp(0.0, attacker_cultivation.qi_max);
             }
@@ -908,6 +913,7 @@ fn attack_source_label(source: AttackSource) -> &'static str {
         AttackSource::Melee => "attack_intent",
         AttackSource::BurstMeridian => "burst_meridian_attack",
         AttackSource::QiNeedle => "qi_needle",
+        AttackSource::FullPower => "full_power_strike",
     }
 }
 
