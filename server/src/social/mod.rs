@@ -898,12 +898,12 @@ fn dispatch_trade_offers(
         if request.initiator == request.target {
             continue;
         }
-        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory, _)) =
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory, initiator_identities)) =
             players.get(request.initiator)
         else {
             continue;
         };
-        let Ok((_, target_lifecycle, target_pos, target_inventory, target_identities)) =
+        let Ok((_, target_lifecycle, target_pos, target_inventory, _)) =
             players.get(request.target)
         else {
             continue;
@@ -923,7 +923,7 @@ fn dispatch_trade_offers(
         if requested_items.is_empty() {
             continue;
         }
-        if target_identities
+        if initiator_identities
             .and_then(PlayerIdentities::active)
             .is_some_and(npc_should_decline_trade)
         {
@@ -3458,7 +3458,7 @@ mod tests {
     }
 
     #[test]
-    fn trade_offer_dispatch_rejects_target_with_wanted_identity() {
+    fn trade_offer_dispatch_rejects_wanted_initiator_identity() {
         let mut app = App::new();
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
@@ -3466,19 +3466,9 @@ mod tests {
         let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
         initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
         let initiator = app.world_mut().spawn(initiator_bundle).id();
-        app.world_mut().entity_mut(initiator).insert((
-            Lifecycle {
-                character_id: "char:initiator".to_string(),
-                ..Default::default()
-            },
-            trade_inventory(1001, "出物"),
-        ));
-        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
-        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
-        let target = app.world_mut().spawn(target_bundle).id();
-        let mut target_identities = PlayerIdentities::with_default("毒蛊师", 0);
-        target_identities.identities[0].renown.notoriety = 30;
-        target_identities.identities[0]
+        let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
+        initiator_identities.identities[0].renown.notoriety = 30;
+        initiator_identities.identities[0]
             .revealed_tags
             .push(RevealedTag {
                 kind: RevealedTagKind::DuguRevealed,
@@ -3486,13 +3476,23 @@ mod tests {
                 witness_realm: Realm::Spirit,
                 permanent: true,
             });
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(1001, "出物"),
+            initiator_identities,
+        ));
+        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+        let target = app.world_mut().spawn(target_bundle).id();
         app.world_mut().entity_mut(target).insert((
             Lifecycle {
                 character_id: "char:target".to_string(),
                 ..Default::default()
             },
             trade_inventory(2002, "回物"),
-            target_identities,
         ));
 
         app.world_mut().send_event(TradeOfferRequest {
@@ -3506,7 +3506,7 @@ mod tests {
 
         assert!(
             collect_server_data_payloads(&mut target_helper).is_empty(),
-            "Wanted identity should reject before trade_offer payload reaches target"
+            "Wanted initiator should be rejected before trade_offer payload reaches target"
         );
         assert_eq!(
             app.world().resource::<TradeOfferRegistry>().pending.len(),
