@@ -110,6 +110,40 @@ rarity = "common"
 spirit_quality_initial = 0.4
 description = "带着余温的异兽皮，可作粗陋护具和伪装材料。"
 
+# 飞行鲸（神兽级）专属掉落 —— 仅化虚境界以上击杀飞鲸可得
+[[item]]
+id = "jing_gu"
+name = "苍鲸脊骨"
+category = "misc"
+grid_w = 2
+grid_h = 3
+base_weight = 4.5
+rarity = "legendary"
+spirit_quality_initial = 0.95
+description = "九霄苍鲸脊骨，骨纹蕴龙鳞古意。炼器铸法皆为极品，凡器以此为骨即可承化虚之意。"
+
+[[item]]
+id = "jing_sui"
+name = "鲸髓凝液"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "legendary"
+spirit_quality_initial = 0.98
+description = "苍鲸骨腔内凝练的髓液，化虚以下吸服即灼神。需配阵化解，乃延寿冲关之极品。"
+
+[[item]]
+id = "jing_hun_yu"
+name = "鲸魂玉珏"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "鲸殒落时未散的灵识凝玉，蕴鲸生平之识见。可悟通灵化虚之桥径，万金难求。"
+
 [[item]]
 id = "bone_coin_5"
 name = "封灵骨币·五"

@@ -37,6 +37,10 @@ pub const YI_SHOU_GU: &str = "yi_shou_gu";
 pub const BIAN_YI_HEXIN: &str = "bian_yi_hexin";
 pub const FU_YA_HESUI: &str = "fu_ya_hesui";
 pub const ZHEN_SHI_CHU: &str = "zhen_shi_chu";
+// 飞鲸（神兽级）专属掉落 ID —— 用于 WHALE_DROPS 表 + ItemRegistry 查询
+pub const JING_GU: &str = "jing_gu";
+pub const JING_SUI: &str = "jing_sui";
+pub const JING_HUN_YU: &str = "jing_hun_yu";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuantityRange {
@@ -119,12 +123,28 @@ const VOID_DISTORTED_DROPS: [DropEntry; 4] = [
     DropEntry::rare(BIAN_YI_HEXIN, QuantityRange::fixed(1), 0.20),
 ];
 
+/// 飞行鲸：神兽级中立巨型生物，化虚境界以上才打得动（HP=800）。
+/// 专属掉落池（不复用 spider/void 系材料，独立"鲸"系列）：
+/// - 异兽骨 8-15：杂骨保底量大
+/// - 苍鲸脊骨 2-4：鲸专属保底，炼器极品 (legendary)
+/// - 鲸髓凝液 ×1 保底：髓液，破境/延寿用 (legendary)
+/// - 鲸魂玉珏 30%：灵识凝玉，化虚悟性 (legendary)
+/// - 变异核心 20%：异化兽核心，破境跳板（其他妖兽也掉，但鲸级稀有度 20% 高于平均）
+const WHALE_DROPS: [DropEntry; 5] = [
+    DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::between(8, 15)),
+    DropEntry::guaranteed(JING_GU, QuantityRange::between(2, 4)),
+    DropEntry::guaranteed(JING_SUI, QuantityRange::fixed(1)),
+    DropEntry::rare(JING_HUN_YU, QuantityRange::fixed(1), 0.30),
+    DropEntry::rare(BIAN_YI_HEXIN, QuantityRange::fixed(1), 0.20),
+];
+
 pub fn drop_table_for(kind: BeastKind) -> &'static [DropEntry] {
     match kind {
         BeastKind::Rat => &RAT_DROPS,
         BeastKind::Spider => &SPIDER_DROPS,
         BeastKind::HybridBeast => &HYBRID_DROPS,
         BeastKind::VoidDistorted => &VOID_DISTORTED_DROPS,
+        BeastKind::Whale => &WHALE_DROPS,
     }
 }
 
@@ -377,6 +397,9 @@ mod tests {
             BIAN_YI_HEXIN,
             FU_YA_HESUI,
             ZHEN_SHI_CHU,
+            JING_GU,
+            JING_SUI,
+            JING_HUN_YU,
             "bone_coin_5",
             "bone_coin_15",
             "bone_coin_40",
@@ -412,6 +435,7 @@ mod tests {
             BeastKind::Spider,
             BeastKind::HybridBeast,
             BeastKind::VoidDistorted,
+            BeastKind::Whale,
         ] {
             for seed in [1, 42, 99] {
                 let drops = roll_fauna_drops(FaunaTag::new(kind), seed);
@@ -425,6 +449,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn whale_drops_match_neutral_giant_design_table() {
+        // 神兽级数值锁（饱和）：
+        // - yi_shou_gu 量 [8, 15] 保底
+        // - jing_gu 量 [2, 4] 保底（鲸专属脊骨）
+        // - jing_sui ×1 保底
+        // - jing_hun_yu 30% (rare)
+        // - bian_yi_hexin 20% (rare)
+        // - 不掉 fu_ya_hesui / zhen_shi_chu（鲸专属池，与其他妖兽稀有项错开）
+        let mut yi_min = u32::MAX;
+        let mut yi_max = 0u32;
+        let mut jing_gu_min = u32::MAX;
+        let mut jing_gu_max = 0u32;
+        let mut jing_sui_hits = 0;
+        let mut jing_hun_yu_hits = 0;
+        let mut bian_yi_hits = 0;
+        let mut fu_ya_hits = 0;
+        let mut zhen_shi_hits = 0;
+        const SAMPLES: u64 = 2000;
+        for seed in 0..SAMPLES {
+            let drops = roll_fauna_drops(FaunaTag::new(BeastKind::Whale), seed.wrapping_mul(31));
+            let yi = drops
+                .iter()
+                .find(|d| d.item_id == YI_SHOU_GU)
+                .expect("whale must always drop yi_shou_gu (guaranteed)");
+            yi_min = yi_min.min(yi.quantity);
+            yi_max = yi_max.max(yi.quantity);
+
+            let jg = drops
+                .iter()
+                .find(|d| d.item_id == JING_GU)
+                .expect("whale must always drop jing_gu (鲸专属脊骨保底)");
+            jing_gu_min = jing_gu_min.min(jg.quantity);
+            jing_gu_max = jing_gu_max.max(jg.quantity);
+
+            if drops.iter().any(|d| d.item_id == JING_SUI) {
+                jing_sui_hits += 1;
+            }
+            if drops.iter().any(|d| d.item_id == JING_HUN_YU) {
+                jing_hun_yu_hits += 1;
+            }
+            if drops.iter().any(|d| d.item_id == BIAN_YI_HEXIN) {
+                bian_yi_hits += 1;
+            }
+            if drops.iter().any(|d| d.item_id == FU_YA_HESUI) {
+                fu_ya_hits += 1;
+            }
+            if drops.iter().any(|d| d.item_id == ZHEN_SHI_CHU) {
+                zhen_shi_hits += 1;
+            }
+        }
+        // yi_shou_gu 数量恰好 [8, 15]
+        assert!(
+            yi_min >= 8 && yi_max <= 15,
+            "yi_shou_gu range observed [{yi_min}, {yi_max}], spec [8, 15]"
+        );
+        assert!(yi_max > yi_min, "rolls must span >1 unique value");
+        // jing_gu 数量恰好 [2, 4]
+        assert!(
+            jing_gu_min >= 2 && jing_gu_max <= 4,
+            "jing_gu range observed [{jing_gu_min}, {jing_gu_max}], spec [2, 4]"
+        );
+        // jing_sui 100% 出
+        assert_eq!(
+            jing_sui_hits, SAMPLES,
+            "jing_sui must drop on every whale kill (guaranteed)"
+        );
+        // jing_hun_yu ~30%
+        let jhy_rate = jing_hun_yu_hits as f64 / SAMPLES as f64;
+        assert!(
+            (0.25..=0.35).contains(&jhy_rate),
+            "jing_hun_yu rate {jhy_rate:.3} should be ~0.30 (±0.05)"
+        );
+        // bian_yi_hexin ~20%
+        let bian_yi_rate = bian_yi_hits as f64 / SAMPLES as f64;
+        assert!(
+            (0.16..=0.24).contains(&bian_yi_rate),
+            "bian_yi_hexin rate {bian_yi_rate:.3} should be ~0.20 (±0.04)"
+        );
+        // 鲸专属池：绝不掉 fu_ya_hesui / zhen_shi_chu
+        assert_eq!(fu_ya_hits, 0, "whale must NOT drop fu_ya_hesui (鲸专属池)");
+        assert_eq!(
+            zhen_shi_hits, 0,
+            "whale must NOT drop zhen_shi_chu (鲸专属池)"
+        );
     }
 
     #[test]

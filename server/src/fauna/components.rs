@@ -11,6 +11,10 @@ pub enum BeastKind {
     Spider,
     HybridBeast,
     VoidDistorted,
+    /// 飞行中立巨型生物（feat/flying-whale 开发中）。客户端用 GeckoLib 自定义
+    /// 模型 `bong:whale` 渲染，server 走自定义 EntityKind（详见
+    /// `npc::spawn_whale::WHALE_ENTITY_KIND`）。
+    Whale,
 }
 
 impl BeastKind {
@@ -20,6 +24,7 @@ impl BeastKind {
             Self::Spider => "spider",
             Self::HybridBeast => "hybrid_beast",
             Self::VoidDistorted => "void_distorted",
+            Self::Whale => "whale",
         }
     }
 }

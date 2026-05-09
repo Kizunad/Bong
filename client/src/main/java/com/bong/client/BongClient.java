@@ -35,6 +35,8 @@ import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
 import com.bong.client.visual.season.SeasonVisualBootstrap;
 import com.bong.client.weapon.WeaponRenderBootstrap;
 import com.bong.client.weapon.WeaponScreenshotHarness;
+import com.bong.client.whale.WhaleDebugCommand;
+import com.bong.client.whale.WhaleRenderBootstrap;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import org.slf4j.Logger;
@@ -80,6 +82,8 @@ public class BongClient implements ClientModInitializer {
         CombatHudBootstrap.register();
         BotanyPlantRenderBootstrap.register();
         BotanyHudBootstrap.register();
+        WhaleRenderBootstrap.register();
+        WhaleDebugCommand.register();
         SpiritNicheRevealBootstrap.register();
         SparringInviteScreenBootstrap.register();
         TradeOfferScreenBootstrap.register();
