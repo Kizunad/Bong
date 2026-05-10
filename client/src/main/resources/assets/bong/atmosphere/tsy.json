@@ -1,0 +1,15 @@
+{
+  "zone_id": "tsy",
+  "fog_color": "#404050",
+  "fog_density": 0.3,
+  "ambient_particle": {
+    "type": "cloud256_dust",
+    "tint": "#707080",
+    "density": 1.0,
+    "drift": [0.0, -0.002, 0.0],
+    "interval_ticks": 20
+  },
+  "sky_tint": "#202030",
+  "entry_transition_fx": "FADE",
+  "ambient_recipe_id": "ambient_tsy"
+}

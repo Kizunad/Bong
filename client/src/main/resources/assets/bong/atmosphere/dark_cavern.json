@@ -1,0 +1,15 @@
+{
+  "zone_id": "dark_cavern",
+  "fog_color": "#303038",
+  "fog_density": 0.45,
+  "ambient_particle": {
+    "type": "cloud256_dust",
+    "tint": "#686878",
+    "density": 1.1,
+    "drift": [0.0, 0.004, 0.0],
+    "interval_ticks": 18
+  },
+  "sky_tint": "#383848",
+  "entry_transition_fx": "FADE",
+  "ambient_recipe_id": "ambient_dark_cavern"
+}
