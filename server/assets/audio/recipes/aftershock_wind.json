@@ -1,0 +1,9 @@
+{
+  "id": "aftershock_wind",
+  "layers": [
+    { "sound": "minecraft:ambient.basalt_deltas.mood", "volume": 0.40, "pitch": 0.70, "delay_ticks": 0 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

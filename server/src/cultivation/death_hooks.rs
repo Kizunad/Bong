@@ -440,7 +440,10 @@ mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
     use crate::cultivation::tick::CultivationClock;
-    use crate::persistence::{complete_tribulation_ascension, load_ascension_quota};
+    use crate::persistence::{
+        complete_tribulation_ascension, load_ascension_quota, persist_active_tribulation,
+        ActiveTribulationRecord,
+    };
     use crate::player::state::canonical_player_id;
     use crate::qi_physics::{QiAccountId, QiTransferReason};
     use crate::world::dimension::DimensionKind;
@@ -657,6 +660,21 @@ mod tests {
     #[test]
     fn terminated_void_player_releases_ascension_quota() {
         let (settings, root) = temp_persistence_settings("terminated-void-release-quota");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active DuXu should persist before quota setup");
         complete_tribulation_ascension(&settings, canonical_player_id("Azure").as_str())
             .expect("quota setup should succeed");
 

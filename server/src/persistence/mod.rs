@@ -37,9 +37,12 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 20;
+const CURRENT_USER_VERSION: i32 = 22;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
+const TRIBULATION_KIND_DU_XU: &str = "du_xu";
+const TRIBULATION_KIND_JUE_BI: &str = "jue_bi";
+const JUEBI_SOURCE_VOID_QUOTA_EXCEEDED: &str = "void_quota_exceeded";
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
 pub const WORLD_MODEL_STATE_FIELD_CURRENT_ERA: &str = "current_era";
 pub const WORLD_MODEL_STATE_FIELD_ZONE_HISTORY: &str = "zone_history";
@@ -350,12 +353,17 @@ pub struct AgentDecisionRecord {
     pub observed_at_wall: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActiveTribulationRecord {
     pub char_id: String,
+    pub kind: String,
+    pub source: String,
+    pub origin_dimension: Option<String>,
     pub wave_current: u32,
     pub waves_total: u32,
     pub started_tick: u64,
+    pub epicenter: [f64; 3],
+    pub intensity: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1426,6 +1434,98 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 21 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS tribulations_active (
+                char_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'du_xu',
+                source TEXT NOT NULL DEFAULT '',
+                wave_current INTEGER NOT NULL CHECK (wave_current >= 0),
+                waves_total INTEGER NOT NULL CHECK (waves_total > 0),
+                started_tick INTEGER NOT NULL CHECK (started_tick >= 0),
+                epicenter_x REAL NOT NULL DEFAULT 0.0,
+                epicenter_y REAL NOT NULL DEFAULT 64.0,
+                epicenter_z REAL NOT NULL DEFAULT 0.0,
+                intensity REAL NOT NULL DEFAULT 0.0,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            ",
+        )?;
+        let columns = table_columns(&transaction, "tribulations_active")?;
+        if !columns.iter().any(|column| column == "kind") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN kind TEXT NOT NULL DEFAULT 'du_xu';
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "source") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN source TEXT NOT NULL DEFAULT '';
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "epicenter_x") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN epicenter_x REAL NOT NULL DEFAULT 0.0;
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "epicenter_y") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN epicenter_y REAL NOT NULL DEFAULT 64.0;
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "epicenter_z") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN epicenter_z REAL NOT NULL DEFAULT 0.0;
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "intensity") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN intensity REAL NOT NULL DEFAULT 0.0;
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 21;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 22 {
+        let transaction = connection.transaction()?;
+        let columns = table_columns(&transaction, "tribulations_active")?;
+        if !columns.iter().any(|column| column == "origin_dimension") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN origin_dimension TEXT;
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 22;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1928,9 +2028,19 @@ pub fn load_active_tribulation(
 pub fn load_active_tribulation_count(settings: &PersistenceSettings) -> io::Result<u32> {
     let connection = open_persistence_connection(settings)?;
     let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM tribulations_active", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "
+            SELECT COUNT(*) FROM tribulations_active
+            WHERE kind = ?1
+               OR (kind = ?2 AND source = ?3)
+            ",
+            params![
+                TRIBULATION_KIND_DU_XU,
+                TRIBULATION_KIND_JUE_BI,
+                JUEBI_SOURCE_VOID_QUOTA_EXCEEDED
+            ],
+            |row| row.get(0),
+        )
         .map_err(io::Error::other)?;
     sql_to_u32(count)
 }
@@ -1960,7 +2070,24 @@ pub fn complete_tribulation_ascension(
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
     let mut quota = load_ascension_quota_from_transaction(&transaction)?;
-    quota.occupied_slots = quota.occupied_slots.saturating_add(1);
+    let active_kind_source: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT kind, source FROM tribulations_active WHERE char_id = ?1",
+            params![char_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let occupies_quota = matches!(
+        active_kind_source
+            .as_ref()
+            .map(|(kind, source)| (kind.as_str(), source.as_str())),
+        Some((TRIBULATION_KIND_DU_XU, _))
+            | Some((TRIBULATION_KIND_JUE_BI, JUEBI_SOURCE_VOID_QUOTA_EXCEEDED))
+    );
+    if occupies_quota {
+        quota.occupied_slots = quota.occupied_slots.saturating_add(1);
+    }
 
     transaction
         .execute(
@@ -3400,24 +3527,45 @@ fn upsert_active_tribulation(
             "
             INSERT INTO tribulations_active (
                 char_id,
+                kind,
+                source,
+                origin_dimension,
                 wave_current,
                 waves_total,
                 started_tick,
+                epicenter_x,
+                epicenter_y,
+                epicenter_z,
+                intensity,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(char_id) DO UPDATE SET
+                kind = excluded.kind,
+                source = excluded.source,
+                origin_dimension = excluded.origin_dimension,
                 wave_current = excluded.wave_current,
                 waves_total = excluded.waves_total,
                 started_tick = excluded.started_tick,
+                epicenter_x = excluded.epicenter_x,
+                epicenter_y = excluded.epicenter_y,
+                epicenter_z = excluded.epicenter_z,
+                intensity = excluded.intensity,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
             params![
-                record.char_id,
+                record.char_id.as_str(),
+                record.kind.as_str(),
+                record.source.as_str(),
+                record.origin_dimension.as_deref(),
                 i64::from(record.wave_current),
                 i64::from(record.waves_total),
                 tick_to_sql(record.started_tick)?,
+                record.epicenter[0],
+                record.epicenter[1],
+                record.epicenter[2],
+                f64::from(record.intensity),
                 CURRENT_SCHEMA_VERSION,
                 wall_clock,
             ],
@@ -3555,27 +3703,69 @@ fn load_active_tribulation_from_connection(
     connection: &Connection,
     char_id: &str,
 ) -> io::Result<Option<ActiveTribulationRecord>> {
-    let row: Option<(i64, i64, i64)> = connection
+    type ActiveTribulationRow = (
+        String,
+        String,
+        Option<String>,
+        i64,
+        i64,
+        i64,
+        f64,
+        f64,
+        f64,
+        f64,
+    );
+    let row: Option<ActiveTribulationRow> = connection
         .query_row(
             "
-            SELECT wave_current, waves_total, started_tick
+            SELECT kind, source, origin_dimension, wave_current, waves_total, started_tick, epicenter_x, epicenter_y, epicenter_z, intensity
             FROM tribulations_active
             WHERE char_id = ?1
             ",
             params![char_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                ))
+            },
         )
         .optional()
         .map_err(io::Error::other)?;
-    let Some((wave_current, waves_total, started_tick)) = row else {
+    let Some((
+        kind,
+        source,
+        origin_dimension,
+        wave_current,
+        waves_total,
+        started_tick,
+        x,
+        y,
+        z,
+        intensity,
+    )) = row
+    else {
         return Ok(None);
     };
 
     Ok(Some(ActiveTribulationRecord {
         char_id: char_id.to_string(),
+        kind,
+        source,
+        origin_dimension,
         wave_current: sql_to_u32(wave_current)?,
         waves_total: sql_to_u32(waves_total)?,
         started_tick: sql_to_tick(started_tick)?,
+        epicenter: [x, y, z],
+        intensity: intensity as f32,
     }))
 }
 
@@ -4363,6 +4553,8 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::FalseSkinShed { .. } => "false_skin_shed",
         BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
         BiographyEntry::VoidAction { .. } => "void_action",
+        BiographyEntry::JueBiSurvived { .. } => "jue_bi_survived",
+        BiographyEntry::JueBiKilled { .. } => "jue_bi_killed",
     }
 }
 
@@ -4447,7 +4639,9 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::AnqiSniped { tick, .. }
         | BiographyEntry::FalseSkinShed { tick, .. }
         | BiographyEntry::SpawnTutorialCompleted { tick, .. }
-        | BiographyEntry::VoidAction { tick, .. } => *tick,
+        | BiographyEntry::VoidAction { tick, .. }
+        | BiographyEntry::JueBiSurvived { tick, .. }
+        | BiographyEntry::JueBiKilled { tick, .. } => *tick,
     }
 }
 
@@ -6332,6 +6526,78 @@ mod persistence_tests {
     }
 
     #[test]
+    fn v21_migration_backfills_partial_juebi_epicenter_columns() {
+        let db_path = database_path("v21-partial-juebi-epicenter");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE tribulations_active (
+                    char_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT 'du_xu',
+                    source TEXT NOT NULL DEFAULT '',
+                    wave_current INTEGER NOT NULL CHECK (wave_current >= 0),
+                    waves_total INTEGER NOT NULL CHECK (waves_total > 0),
+                    started_tick INTEGER NOT NULL CHECK (started_tick >= 0),
+                    epicenter_x REAL NOT NULL DEFAULT 0.0,
+                    intensity REAL NOT NULL DEFAULT 0.0,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                INSERT INTO tribulations_active (
+                    char_id,
+                    kind,
+                    source,
+                    wave_current,
+                    waves_total,
+                    started_tick,
+                    epicenter_x,
+                    intensity,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (
+                    'offline:Azure',
+                    'jue_bi',
+                    'void_action_explode_zone',
+                    2,
+                    3,
+                    120,
+                    12.0,
+                    1.6,
+                    1,
+                    1
+                );
+                PRAGMA user_version = 20;
+                ",
+            )
+            .expect("partial v20 tribulation table should be created");
+
+        apply_migrations(&mut connection).expect("partial v20 table should migrate to v21");
+
+        for column in ["epicenter_x", "epicenter_y", "epicenter_z"] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('tribulations_active') WHERE name = ?1",
+                    params![column],
+                    |row| row.get(0),
+                )
+                .expect("tribulations_active column query should succeed");
+            assert_eq!(count, 1, "{column} should exist after v21 migration");
+        }
+        let active = load_active_tribulation_from_connection(&connection, "offline:Azure")
+            .expect("active tribulation query should succeed")
+            .expect("legacy active row should survive migration");
+        assert_eq!(active.kind, "jue_bi");
+        assert_eq!(active.origin_dimension, None);
+        assert_eq!(active.epicenter, [12.0, 64.0, 0.0]);
+        assert_eq!(active.intensity, 1.6);
+
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+    }
+
+    #[test]
     fn task7_migrations_create_ascension_quota_table() {
         let db_path = database_path("task7-ascension-quota");
         bootstrap_sqlite(&db_path, "task7-ascension-quota").expect("bootstrap should succeed");
@@ -6854,9 +7120,14 @@ mod persistence_tests {
 
         let record = ActiveTribulationRecord {
             char_id: "offline:Azure".to_string(),
+            kind: "jue_bi".to_string(),
+            source: "void_action_explode_zone".to_string(),
+            origin_dimension: Some("minecraft:overworld".to_string()),
             wave_current: 2,
             waves_total: 5,
             started_tick: 1440,
+            epicenter: [12.0, 66.0, -3.0],
+            intensity: 1.6,
         };
         persist_active_tribulation(&settings, &record).expect("active tribulation should persist");
 
@@ -6908,9 +7179,14 @@ mod persistence_tests {
 
         let record = ActiveTribulationRecord {
             char_id: "offline:Azure".to_string(),
+            kind: "du_xu".to_string(),
+            source: String::new(),
+            origin_dimension: Some("minecraft:overworld".to_string()),
             wave_current: 4,
             waves_total: 5,
             started_tick: 2880,
+            epicenter: [0.0, 64.0, 0.0],
+            intensity: 0.0,
         };
         persist_active_tribulation(&settings, &record).expect("active tribulation should persist");
 
@@ -6921,6 +7197,86 @@ mod persistence_tests {
         let loaded_quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(loaded_quota.occupied_slots, 1);
 
+        let active = load_active_tribulation(&settings, record.char_id.as_str())
+            .expect("active tribulation query should succeed");
+        assert!(active.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_tribulation_ascension_without_active_row_is_idempotent_for_quota() {
+        let (settings, root) = persistence_settings("ascension-quota-complete-no-active");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let quota = complete_tribulation_ascension(&settings, "offline:Azure")
+            .expect("missing active row completion should stay idempotent");
+        assert_eq!(quota.occupied_slots, 0);
+
+        let loaded_quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(loaded_quota.occupied_slots, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_independent_juebi_clears_active_without_incrementing_quota() {
+        let (settings, root) = persistence_settings("juebi-complete-no-quota");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = ActiveTribulationRecord {
+            char_id: "offline:Azure".to_string(),
+            kind: TRIBULATION_KIND_JUE_BI.to_string(),
+            source: "void_action_explode_zone".to_string(),
+            origin_dimension: Some("minecraft:overworld".to_string()),
+            wave_current: 3,
+            waves_total: 3,
+            started_tick: 2880,
+            epicenter: [0.0, 64.0, 0.0],
+            intensity: 1.6,
+        };
+        persist_active_tribulation(&settings, &record).expect("active JueBi should persist");
+
+        let quota = complete_tribulation_ascension(&settings, record.char_id.as_str())
+            .expect("independent JueBi completion should clear active row");
+        assert_eq!(quota.occupied_slots, 0);
+
+        let loaded_quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(loaded_quota.occupied_slots, 0);
+        let active = load_active_tribulation(&settings, record.char_id.as_str())
+            .expect("active tribulation query should succeed");
+        assert!(active.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_void_quota_juebi_clears_active_and_increments_quota() {
+        let (settings, root) = persistence_settings("juebi-complete-void-quota");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = ActiveTribulationRecord {
+            char_id: "offline:Azure".to_string(),
+            kind: TRIBULATION_KIND_JUE_BI.to_string(),
+            source: JUEBI_SOURCE_VOID_QUOTA_EXCEEDED.to_string(),
+            origin_dimension: Some("minecraft:overworld".to_string()),
+            wave_current: 3,
+            waves_total: 3,
+            started_tick: 2880,
+            epicenter: [0.0, 64.0, 0.0],
+            intensity: 1.6,
+        };
+        persist_active_tribulation(&settings, &record).expect("void-quota JueBi should persist");
+
+        let quota = complete_tribulation_ascension(&settings, record.char_id.as_str())
+            .expect("void-quota JueBi completion should occupy quota");
+        assert_eq!(quota.occupied_slots, 1);
+
+        let loaded_quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(loaded_quota.occupied_slots, 1);
         let active = load_active_tribulation(&settings, record.char_id.as_str())
             .expect("active tribulation query should succeed");
         assert!(active.is_none());
