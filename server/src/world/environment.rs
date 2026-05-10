@@ -195,9 +195,10 @@ impl ZoneEnvironmentRegistry {
             .unwrap_or(&[])
     }
 
-    pub fn effect_at(&self, zone: &str, index: usize) -> Option<&EnvironmentEffect> {
-        let key = normalize_zone(zone);
-        self.by_zone.get(key.as_str())?.get(index)
+    pub fn iter_zone_effects(&self) -> impl Iterator<Item = (&str, &EnvironmentEffect)> {
+        self.by_zone
+            .iter()
+            .flat_map(|(zone, effects)| effects.iter().map(move |effect| (zone.as_str(), effect)))
     }
 
     pub fn generation(&self, zone: &str) -> u64 {
@@ -595,6 +596,27 @@ mod tests {
         assert_ne!(
             registry.current("spawn")[0],
             registry.current("blood_valley")[0]
+        );
+    }
+
+    #[test]
+    fn registry_iter_zone_effects_exposes_zone_pairs() {
+        let mut registry = ZoneEnvironmentRegistry::new();
+        registry.add("spawn", all_effects()[0].clone());
+        registry.add("blood_valley", all_effects()[1].clone());
+
+        let mut pairs: Vec<(&str, &str)> = registry
+            .iter_zone_effects()
+            .map(|(zone, effect)| (zone, effect.kind()))
+            .collect();
+        pairs.sort();
+
+        assert_eq!(
+            pairs,
+            vec![
+                ("blood_valley", "lightning_pillar"),
+                ("spawn", "tornado_column"),
+            ]
         );
     }
 

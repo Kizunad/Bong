@@ -6,6 +6,9 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::environment::{EnvironmentEffect, ZoneEnvironmentRegistry};
 use crate::world::zone::ZoneRegistry;
 
+pub const OPAQUE_FOG_DENSITY_THRESHOLD: f32 = 0.85;
+pub const BLOCKS_PER_CHUNK: f32 = 16.0;
+
 #[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
 pub struct WeatherVisionRestore {
     pub original_chunks: u8,
@@ -83,7 +86,7 @@ pub fn weather_vision_obscure_system(
 fn is_opaque_fog_veil(effect: &EnvironmentEffect) -> bool {
     matches!(
         effect,
-        EnvironmentEffect::FogVeil { density, .. } if *density >= 0.85
+        EnvironmentEffect::FogVeil { density, .. } if *density >= OPAQUE_FOG_DENSITY_THRESHOLD
     )
 }
 
@@ -91,7 +94,7 @@ fn chunks_for_radius(radius_blocks: f32) -> u8 {
     if !radius_blocks.is_finite() || radius_blocks <= 0.0 {
         return 1;
     }
-    ((radius_blocks / 16.0).ceil() as u8).max(1)
+    ((radius_blocks / BLOCKS_PER_CHUNK).ceil() as u8).max(1)
 }
 
 #[cfg(test)]

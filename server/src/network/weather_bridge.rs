@@ -135,6 +135,7 @@ mod tests {
                     env.data.kind,
                     crate::schema::lingtian_weather::WeatherEventKindV1::Blizzard
                 );
+                assert_eq!(env.data.zone_id, "north_wastes");
                 assert_eq!(env.data.remaining_ticks, 0);
                 // started_at < expires_at 不变量保留（自然过期可与"刚开始就 expire"区分）
                 assert_eq!(env.data.started_at_lingtian_tick, 800);

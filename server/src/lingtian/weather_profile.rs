@@ -78,6 +78,15 @@ impl ZoneWeatherProfile {
             ("blizzard_multiplier", self.blizzard_multiplier),
             ("heavy_haze_multiplier", self.heavy_haze_multiplier),
             ("ling_mist_multiplier", self.ling_mist_multiplier),
+        ] {
+            let Some(value) = value else {
+                continue;
+            };
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("{field} must be finite and >= 0"));
+            }
+        }
+        for (field, value) in [
             (
                 "lightning_strike_per_min_override",
                 self.lightning_strike_per_min_override,
@@ -88,8 +97,8 @@ impl ZoneWeatherProfile {
             let Some(value) = value else {
                 continue;
             };
-            if !value.is_finite() || value < 0.0 {
-                return Err(format!("{field} must be finite and >= 0"));
+            if !value.is_finite() || value <= 0.0 {
+                return Err(format!("{field} must be finite and > 0"));
             }
         }
         Ok(())
@@ -123,7 +132,12 @@ impl ZoneWeatherProfileRegistry {
         let path = path.as_ref();
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(format!(
+                    "weather profile file not found: {}",
+                    path.display()
+                ));
+            }
             Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
         };
         let parsed: ZoneWeatherProfilesFile = serde_json::from_str(text.as_str())
@@ -270,6 +284,42 @@ mod tests {
     }
 
     #[test]
+    fn registry_rejects_zero_positive_override_values() {
+        for (field, profile) in [
+            (
+                "lightning_strike_per_min_override",
+                ZoneWeatherProfile {
+                    lightning_strike_per_min_override: Some(0.0),
+                    ..Default::default()
+                },
+            ),
+            (
+                "push_velocity_strength",
+                ZoneWeatherProfile {
+                    push_velocity_strength: Some(0.0),
+                    ..Default::default()
+                },
+            ),
+            (
+                "vision_obscure_radius",
+                ZoneWeatherProfile {
+                    vision_obscure_radius: Some(0.0),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let mut registry = ZoneWeatherProfileRegistry::new();
+            let err = registry
+                .insert("scorch", profile)
+                .expect_err("zero override should be rejected");
+            assert!(
+                err.contains(field),
+                "error should name invalid field `{field}`: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn registry_returns_default_for_unknown_zone() {
         let registry = ZoneWeatherProfileRegistry::new();
 
@@ -277,6 +327,21 @@ mod tests {
             registry.profile_for("missing"),
             ZoneWeatherProfile::default()
         );
+    }
+
+    #[test]
+    fn registry_load_missing_profile_file_errors() {
+        let path = std::env::temp_dir().join(format!(
+            "bong-missing-weather-profiles-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+
+        let err = ZoneWeatherProfileRegistry::load_from_path(&path)
+            .expect_err("missing profile file should surface config error");
+
+        assert!(err.contains("weather profile file not found"));
+        assert!(err.contains(path.to_string_lossy().as_ref()));
     }
 
     #[test]

@@ -7,11 +7,12 @@ pub mod vision;
 pub mod wind;
 
 pub fn register(app: &mut App) {
+    app.insert_resource(lightning::WeatherLightningRng::default());
     app.add_systems(
         Update,
         (
-            lightning::lightning_pillar_lifecycle_system
-                .after(crate::world::environment::publish_zone_environment_lifecycle_events),
+            lightning::lightning_pillar_tick_system
+                .after(crate::world::weather_to_environment::weather_environment_sync_system),
             wind::weather_dust_devil_push_system
                 .after(crate::world::weather_to_environment::weather_environment_sync_system),
             vision::weather_vision_obscure_system

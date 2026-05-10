@@ -72,6 +72,7 @@ const SNAPSHOT_FILE_PREFIX = "tiandao-snapshot-";
 const SNAPSHOT_FILE_SUFFIX = ".json";
 const WORLD_MODEL_RECONCILE_INTERVAL_MS = 300_000;
 const WORLD_MODEL_RECONCILE_INTERVAL_LOOPS = Math.max(1, Math.floor(WORLD_MODEL_RECONCILE_INTERVAL_MS / TICK_INTERVAL_MS));
+const SCORCH_WEATHER_ZONE_MARKERS = ["scorch", "blood_valley"] as const;
 export const ALLOWED_LLM_MODELS = Object.freeze([DEFAULT_MODEL, "gpt-5.4"] as const);
 export const MODEL_ROUTE_ROLES = Object.freeze([
   "default",
@@ -827,8 +828,7 @@ export function renderWeatherNarration(event: WeatherEventUpdateV1): Narration |
 }
 
 function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["kind"]): string | null {
-  const scorch = zone.includes("scorch") || zone.includes("blood_valley");
-  if (scorch && kind === "thunderstorm") {
+  if (isScorchWeatherZone(zone) && kind === "thunderstorm") {
     return "焦土上方雷云压低，地火灰里已经有白光在找落点。";
   }
   switch (kind) {
@@ -845,6 +845,10 @@ function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["
     default:
       return null;
   }
+}
+
+function isScorchWeatherZone(zone: string): boolean {
+  return SCORCH_WEATHER_ZONE_MARKERS.some((marker) => zone.includes(marker));
 }
 
 export async function processLocustSwarmEvents(args: {

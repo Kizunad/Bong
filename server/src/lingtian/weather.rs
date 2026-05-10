@@ -466,7 +466,7 @@ pub fn weather_generator_system(
             zone,
             event: entry.event,
             started_at_lingtian_tick: entry.started_at_lingtian_tick,
-            expired_at_lingtian_tick: now,
+            expired_at_lingtian_tick: entry.expires_at_lingtian_tick,
         });
     }
 
@@ -519,7 +519,7 @@ pub fn weather_generator_system_zone_aware(
             zone,
             event: entry.event,
             started_at_lingtian_tick: entry.started_at_lingtian_tick,
-            expired_at_lingtian_tick: now,
+            expired_at_lingtian_tick: entry.expires_at_lingtian_tick,
         });
     }
 
@@ -602,7 +602,7 @@ pub fn weather_apply_to_plot_system(
             zone,
             event: entry.event,
             started_at_lingtian_tick: entry.started_at_lingtian_tick,
-            expired_at_lingtian_tick: now,
+            expired_at_lingtian_tick: entry.expires_at_lingtian_tick,
         });
     }
 }
@@ -923,6 +923,41 @@ mod tests {
         assert_eq!(removed[0].1.event, WeatherEvent::Thunderstorm);
         assert_eq!(removed[0].1.started_at_lingtian_tick, 1000);
         assert_eq!(removed[0].1.expires_at_lingtian_tick, 1200);
+    }
+
+    #[test]
+    fn weather_apply_to_plot_system_emits_original_expiry_tick() {
+        let mut app = App::new();
+        let mut active = ActiveWeather::new();
+        active.insert("z", WeatherEvent::Thunderstorm, 10, 100);
+        app.insert_resource(LingtianTickAccumulator::new());
+        app.insert_resource(LingtianClock { lingtian_tick: 150 });
+        app.insert_resource(active);
+        app.add_event::<WeatherLifecycleEvent>();
+        app.add_systems(Update, weather_apply_to_plot_system);
+
+        app.update();
+
+        let events = app.world().resource::<Events<WeatherLifecycleEvent>>();
+        let expired = events
+            .iter_current_update_events()
+            .find_map(|event| match event {
+                WeatherLifecycleEvent::Expired {
+                    zone,
+                    event,
+                    started_at_lingtian_tick,
+                    expired_at_lingtian_tick,
+                } => Some((
+                    zone.as_str(),
+                    *event,
+                    *started_at_lingtian_tick,
+                    *expired_at_lingtian_tick,
+                )),
+                WeatherLifecycleEvent::Started { .. } => None,
+            })
+            .expect("expired lifecycle should be emitted");
+
+        assert_eq!(expired, ("z", WeatherEvent::Thunderstorm, 10, 100));
     }
 
     // -------- WeatherRng --------
