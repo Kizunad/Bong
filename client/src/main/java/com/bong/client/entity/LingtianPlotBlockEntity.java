@@ -16,7 +16,11 @@ public final class LingtianPlotBlockEntity extends BlockEntity {
     }
 
     public void setVisualState(LingtianPlotBlock.VisualState visualState) {
-        this.visualState = LingtianPlotBlock.normalize(visualState);
+        LingtianPlotBlock.VisualState nextState = LingtianPlotBlock.normalize(visualState);
+        if (this.visualState == nextState) {
+            return;
+        }
+        this.visualState = nextState;
         markDirty();
     }
 

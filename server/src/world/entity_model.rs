@@ -232,14 +232,18 @@ fn sync_spirit_eye_visuals(
         }
     }
 
+    let mut stale_visuals = Vec::new();
     visuals.by_eye_id.retain(|eye_id, visual| {
         if live_ids.contains(eye_id) {
             true
         } else {
-            commands.entity(*visual).despawn();
+            stale_visuals.push(*visual);
             false
         }
     });
+    for visual in stale_visuals {
+        commands.entity(visual).despawn();
+    }
 }
 
 fn sync_spirit_niche_visuals(

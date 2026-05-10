@@ -50,7 +50,16 @@ public final class BongEntityRenderBootstrap {
         EnumMap<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> map =
             new EnumMap<>(BongEntityModelKind.class);
         for (RendererBinding binding : BINDINGS) {
-            map.put(binding.kind(), binding.rendererClass());
+            Class<? extends BongModeledEntityRenderer> previous =
+                map.put(binding.kind(), binding.rendererClass());
+            if (previous != null) {
+                throw new IllegalStateException("Duplicate renderer binding for " + binding.kind());
+            }
+        }
+        for (BongEntityModelKind kind : BongEntityModelKind.values()) {
+            if (!map.containsKey(kind)) {
+                throw new IllegalStateException("Missing renderer binding for " + kind);
+            }
         }
         return Map.copyOf(map);
     }
