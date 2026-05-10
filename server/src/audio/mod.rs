@@ -171,8 +171,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            43,
-            "plan §3 MVP recipes plus narration, locust, yidao, zhenmai-v2, woliu-v2, JueBi, and TSY experience cues should contain 43 recipes"
+            45,
+            "plan §3 MVP recipes plus narration, locust, yidao, zhenmai-v2, woliu-v2, JueBi, botany, and TSY experience cues should contain 45 recipes"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -185,6 +185,8 @@ mod tests {
         assert!(registry.get("zhenmai_sever_crack").is_some());
         assert!(registry.get("vortex_low_hum").is_some());
         assert!(registry.get("vortex_qi_siphon").is_some());
+        assert!(registry.get("lingtian_plant_seed").is_some());
+        assert!(registry.get("lingtian_drain").is_some());
         assert!(registry.get("ground_crack_rumble").is_some());
         assert!(registry.get("pillar_eruption_boom").is_some());
         assert!(registry.get("pressure_collapse_whoosh").is_some());

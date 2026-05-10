@@ -144,6 +144,13 @@ pub fn complete_harvest_for_player(
         ));
     }
 
+    let harvest_spirit_quality = item_registry
+        .get(kind.item_id)
+        .map(|template| {
+            template.spirit_quality_initial + herbalism_quality_bonus + variant.quality_modifier()
+        })
+        .unwrap_or(herbalism_quality_bonus + variant.quality_modifier())
+        .clamp(0.0, 1.0) as f32;
     let has_instance_modifier = variant != PlantVariant::None || herbalism_quality_bonus > 0.0;
     let _receipt = if has_instance_modifier {
         add_customized_item_to_player_inventory(
@@ -247,6 +254,7 @@ pub fn complete_harvest_for_player(
         completed: true,
         detail: format!("采得 1 株 · 灵气流出 {:.3}", kind.growth_cost),
         target_pos,
+        spirit_quality: harvest_spirit_quality,
     });
     Ok(())
 }
@@ -396,6 +404,7 @@ pub fn enforce_harvest_session_constraints(
             completed: false,
             detail,
             target_pos,
+            spirit_quality: 0.0,
         });
     }
 }

@@ -24,7 +24,9 @@ use crate::cultivation::tribulation::{
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted, TemperingHit};
 use crate::forge::session::{ForgeSessions, ForgeStep};
-use crate::lingtian::events::{HarvestCompleted, ReplenishCompleted, TillCompleted};
+use crate::lingtian::events::{
+    DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
+};
 use crate::network::audio_event_emit::{
     recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
@@ -373,18 +375,32 @@ pub fn emit_botany_audio_triggers(
 
 pub fn emit_lingtian_audio_triggers(
     mut tills: EventReader<TillCompleted>,
+    mut plantings: EventReader<PlantingCompleted>,
     mut harvests: EventReader<HarvestCompleted>,
     mut replenishes: EventReader<ReplenishCompleted>,
+    mut drains: EventReader<DrainQiCompleted>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in tills.read() {
         emit_play_at_block(&mut audio, "till_soil", event.player, event.pos, 1.0);
+    }
+    for event in plantings.read() {
+        emit_play_at_block(
+            &mut audio,
+            "lingtian_plant_seed",
+            event.player,
+            event.pos,
+            0.9,
+        );
     }
     for event in harvests.read() {
         emit_play_at_block(&mut audio, "harvest_pluck", event.player, event.pos, 1.0);
     }
     for event in replenishes.read() {
         emit_play_at_block(&mut audio, "plot_replenish", event.player, event.pos, 1.0);
+    }
+    for event in drains.read() {
+        emit_play_at_block(&mut audio, "lingtian_drain", event.player, event.pos, 0.85);
     }
 }
 
@@ -693,6 +709,71 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "skill_lv_up");
         assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == player));
+    }
+
+    #[test]
+    fn lingtian_actions_emit_dedicated_recipes() {
+        let mut app = App::new();
+        app.add_event::<TillCompleted>();
+        app.add_event::<PlantingCompleted>();
+        app.add_event::<HarvestCompleted>();
+        app.add_event::<ReplenishCompleted>();
+        app.add_event::<DrainQiCompleted>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_lingtian_audio_triggers);
+        let player = app.world_mut().spawn_empty().id();
+        let pos = valence::prelude::BlockPos::new(3, 64, 5);
+
+        app.world_mut().send_event(TillCompleted {
+            player,
+            pos,
+            hoe: crate::lingtian::hoe::HoeKind::Iron,
+            hoe_instance_id: 1,
+        });
+        app.world_mut().send_event(PlantingCompleted {
+            player,
+            pos,
+            plant_id: "ci_she_hao".to_string(),
+        });
+        app.world_mut().send_event(HarvestCompleted {
+            player,
+            pos,
+            plant_id: "ci_she_hao".to_string(),
+            seed_dropped: false,
+        });
+        app.world_mut().send_event(ReplenishCompleted {
+            player,
+            pos,
+            source: crate::lingtian::session::ReplenishSource::Zone,
+            plot_qi_added: 0.2,
+            overflow_to_zone: 0.0,
+        });
+        app.world_mut().send_event(DrainQiCompleted {
+            player,
+            pos,
+            plot_qi_drained: 0.3,
+            qi_to_player: 0.24,
+            qi_to_zone: 0.06,
+        });
+
+        app.update();
+
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|request| request.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec![
+                "till_soil",
+                "lingtian_plant_seed",
+                "harvest_pluck",
+                "plot_replenish",
+                "lingtian_drain"
+            ]
+        );
     }
 
     #[test]

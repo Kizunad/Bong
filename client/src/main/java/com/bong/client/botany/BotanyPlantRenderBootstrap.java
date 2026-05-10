@@ -11,5 +11,6 @@ public final class BotanyPlantRenderBootstrap {
             BotanyPlantV2Entities.botanyPlantV2(),
             BotanyPlantEntityRenderer::new
         );
+        BotanyPlantStageWorldRenderer.register();
     }
 }
