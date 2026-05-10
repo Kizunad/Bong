@@ -113,28 +113,30 @@
 
 ### 落地清单
 
-- P0 噬元鼠 / 负压灵：`server/src/fauna/visual.rs` 固定 `DEVOUR_RAT_ENTITY_KIND=126`、`FUYA_ENTITY_KIND=133`；`server/src/npc/spawn_rat.rs` 把鼠群从 vanilla silverfish 切到 `DEVOUR_RAT_ENTITY_KIND`；`server/src/npc/tsy_hostile.rs` 给 Fuya 挂 `FaunaVisualKind::Fuya` 与压力嗡鸣 / charge 音效；client 侧落在 `client/src/main/java/com/bong/client/fauna/`、`client/src/main/resources/assets/bong/geo/devour_rat.geo.json`、`fuya.geo.json`、`textures/entity/fauna/devour_rat*.png`、`fuya.png`；鼠群 VFX 落在 `RatSwarmAuraPlayer`。
+- P0 噬元鼠 / 负压灵：`server/src/fauna/visual.rs` 固定 `DEVOUR_RAT_ENTITY_KIND=126`、`FUYA_ENTITY_KIND=133`；`server/src/npc/spawn_rat.rs` 把鼠群从 vanilla silverfish 切到 `DEVOUR_RAT_ENTITY_KIND`；`server/src/npc/tsy_hostile.rs` 给 Fuya 挂 `FaunaVisualKind::Fuya`，用 entity-scoped audio flag 接通压力嗡鸣 loop 并在 DeathEvent 停止，charge 音效走 `fauna_fuya_charge`；client 侧落在 `client/src/main/java/com/bong/client/fauna/`、`client/src/main/resources/assets/bong/geo/devour_rat.geo.json`、`fuya.geo.json`、`textures/entity/fauna/devour_rat*.png`、`fuya.png`；鼠群 VFX 落在 `RatSwarmAuraPlayer`。
 - P1 灰烬蛛 / 缝合兽 / 负压畸变体：`server/src/npc/spawn.rs` 通过 `entity_kind_for_beast` 与 `visual_kind_for_beast` 将 `BeastKind::{Spider,HybridBeast,VoidDistorted}` 接到自定义 EntityKind 与视觉壳；音效 recipe 落在 `server/assets/audio/recipes/fauna_ash_spider_*`、`fauna_hybrid_beast_*`、`fauna_void_distorted_*`；client 模型 / 贴图落在 `ash_spider.geo.json`、`hybrid_beast.geo.json`、`void_distorted.geo.json` 与同名 texture；spider shimmer VFX 落在 `SpiderShimmerPlayer`。
 - P2 道伥 / 执念 / 守卫 + 通用 spawn/death VFX：`server/src/npc/tsy_hostile.rs` 固定 `DAOXIANG_ENTITY_KIND=130`、`ZHINIAN_ENTITY_KIND=131`、`TSY_SENTINEL_ENTITY_KIND=132` 并挂 `FaunaVisualKind`；client 模型 / 贴图落在 `daoxiang.geo.json`、`zhinian.geo.json`、`tsy_sentinel.geo.json` 与同名 texture；通用 `fauna_spawn_dust`、`fauna_bone_shatter` 与既有 `death_soul_dissipate` 由 `server/src/fauna/experience.rs` 发出，client 播放器落在 `FaunaSpawnDustPlayer` / `FaunaBoneShatterPlayer`。
 
 ### 关键 commit
 
-- `92085e5cd`（2026-05-10）实现异变兽视觉音效服务端契约：server 侧 EntityKind、FaunaVisualKind、spawn/death/attack/ambient VFX/audio 发射、音效 recipe 与回归测试。
-- `5455cb69e`（2026-05-10）接入异变兽客户端渲染资源：client 侧 GeckoLib fauna entity/model/renderer/bootstrap、8 个非鲸视觉壳模型、贴图、动画、VFX player 与注册测试。
-- `62337a18c`（2026-05-10）fix(fauna-experience-v1): 避免鲸误挂异变兽视觉壳：保留已有鲸 `WHALE_ENTITY_KIND=125` / WhaleRenderer 语义，非本 plan 视觉壳不覆盖鲸。
+- `4d78b4776`（2026-05-10）实现异变兽视觉音效服务端契约：server 侧 EntityKind、FaunaVisualKind、spawn/death/attack/ambient VFX/audio 发射、音效 recipe 与回归测试。
+- `3d49ec185`（2026-05-10）接入异变兽客户端渲染资源：client 侧 GeckoLib fauna entity/model/renderer/bootstrap、8 个非鲸视觉壳模型、贴图、动画、VFX player 与注册测试。
+- `4d5f146ff`（2026-05-10）fix(fauna-experience-v1): 避免鲸误挂异变兽视觉壳：保留已有鲸 `WHALE_ENTITY_KIND=125` / WhaleRenderer 语义，非本 plan 视觉壳不覆盖鲸。
+- `0d0cc1fd3`（2026-05-10）fix(fauna-experience-v1): 接通 Fuya 压力嗡鸣 loop：client 侧 `SoundRecipePlayer` 支持 payload-owned loop flag，server 侧 Fuya spawn/death 负责 play/stop。
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`3639 passed; 0 failed`。
-- `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build`：通过，`BUILD SUCCESSFUL`。
-- 定向回归也已覆盖：`fauna::visual::tests::whale_keeps_existing_renderer_without_fauna_visual_shell`、`npc::spawn::tests::spawn_beast_npc_at_attaches_live_territory_brain_components`、`FaunaRenderBootstrapTest`、`VfxRegistryTest`。
+- rebase 前本地全量：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过，`3639 passed; 0 failed`；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` 通过。
+- review 修复后本地增量：`cd server && cargo fmt --check` 通过；`cd server && CARGO_BUILD_JOBS=1 cargo check` 通过；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test --tests com.bong.client.audio.SoundRecipePlayerTest` 通过。
+- review 修复后本地 `cargo test fuya_pressure_hum_audio_emits_on_aura_spawn` 在 test binary 链接阶段被系统 SIGKILL，无 Rust 诊断；该路径需由 PR CI 的 server/e2e 阶段继续核验。
 
 ### 跨仓库核验
 
 - server：`FaunaVisualKind`、`entity_kind_for_beast`、`emit_fauna_spawn_vfx_system`、`emit_fauna_death_vfx_audio_system`、`emit_rat_swarm_aura_on_gregarious_system`、`emit_fuya_pressure_hum_audio_system`。
 - client：`FaunaEntities`、`FaunaEntity`、`FaunaModel`、`FaunaRenderer`、`FaunaRenderBootstrap`、`RatSwarmAuraPlayer`、`SpiderShimmerPlayer`、`FaunaSpawnDustPlayer`、`FaunaBoneShatterPlayer`。
-- 共享契约：复用既有 `VfxEventRequest` / `VfxEventPayloadV1::SpawnParticle` / `PlaySoundRecipeRequest`，未新增 agent/schema wire type。
+- 共享契约：复用既有 `VfxEventRequest` / `VfxEventPayloadV1::SpawnParticle` / `PlaySoundRecipeRequest` / `StopSoundRecipeRequest`，未新增 agent/schema wire type。
 
 ### 遗留 / 后续
 
 - 云端 headless 流程已完成编译与注册回归；计划中的 9 种生物 10s 手动视频验收需要在本地图形环境中录制，不阻塞当前代码与资源归档。
+- 状态驱动视觉切换仍应拆到后续 `fauna-state-visual-v1`：噬元鼠 Thunder/Tainted texture 与 RatPhase/环境态绑定、Fuya Enraged 红化 + 1.5x 膨胀、执念 Masquerade/Aggressive 双 texture 切换、守卫 phase 裂缝发光。当前 plan 已落地静态视觉身份、EntityKind/raw_id、通用 VFX 与音效 loop，不再把这些 phase-driven 细节标成已完成代码。
