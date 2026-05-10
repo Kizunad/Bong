@@ -23,12 +23,14 @@ import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Util;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -67,7 +69,13 @@ public class BongNetworkHandler {
             (handler, client) -> client.execute(() -> {
                 RealmCollapseHudStateStore.clearOnDisconnect();
                 NpcMetadataStore.clearAll();
+                ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
             })
+        );
+        ClientPlayConnectionEvents.JOIN.register(
+            (handler, sender, client) -> client.execute(() ->
+                ClientConnectionStatusStore.markConnected(Util.getMeasuringTimeMs())
+            )
         );
     }
 
@@ -94,6 +102,7 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             ServerDataRouter.RouteResult result = ROUTER.route(jsonPayload, readableBytes);
 
             if (result.isParseError()) {
@@ -136,6 +145,7 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             ServerDataDispatch dispatch = LOCUST_SWARM_WARNING_HANDLER.handle(jsonPayload);
             if (!dispatch.handled()) {
                 BongClient.LOGGER.warn("Ignoring bong:locust_swarm_warning payload: {}", dispatch.logMessage());
@@ -154,6 +164,7 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             // 派发到主线程：VFX bridge 里会读 world.getPlayerByUuid + 调 PlayerAnimator，
             // 这些都是主线程约束。路由/解析可以在网络线程做，但我们索性一把送到主线程，
             // 简化并避免解析成功但 bridge 落地时 world 已经切换的竞态。
@@ -179,6 +190,7 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             client.execute(() -> {
                 AudioEventRouter.RouteResult result = AUDIO_ROUTER.routePlay(jsonPayload, readableBytes);
                 if (result.isParseError()) {
@@ -201,6 +213,7 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             client.execute(() -> {
                 AudioEventRouter.RouteResult result = AUDIO_ROUTER.routeStop(jsonPayload, readableBytes);
                 if (result.isParseError()) {
@@ -223,8 +236,13 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             client.execute(() -> EnvironmentEffectController.acceptPayload(jsonPayload));
         });
+    }
+
+    private static void markConnectionPayload() {
+        ClientConnectionStatusStore.markPayloadReceived(Util.getMeasuringTimeMs());
     }
 
     private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
