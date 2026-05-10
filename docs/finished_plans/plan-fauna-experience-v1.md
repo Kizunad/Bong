@@ -30,7 +30,7 @@
 
 1. **噬元鼠 GeckoLib 模型**（`local_models/DevoureRat.bbmodel` → `client/src/main/resources/assets/bong/geo/devour_rat.geo.json`）
    - 骨骼框架低多边形（skeletal rat，发光红瞳，背脊突刺）
-   - 3 variant texture：Normal(灰) / Thunder(蓝电弧纹) / Tainted(紫斑)
+   - 静态模型与 Normal / Thunder / Tainted texture 资源已落地；RatPhase / 环境态驱动的 texture 切换延期到 `fauna-state-visual-v1`
    - `DevoureRatRenderer.java` + `DevoureRatRenderBootstrap.java`（参照 WhaleRenderer 栈）
    - server spawn 时 `EntityKind::SILVERFISH` → 改为自定义 entity ID（参照 Whale entity 125 注册流程）
 
@@ -40,7 +40,7 @@
 
 3. **负压灵 GeckoLib 模型**（`local_models/Fuya.bbmodel`）
    - 半透明扭曲人形（imploding geometry 风格，身体中心塌缩感）
-   - Enraged 状态：颜色从深紫 → 血红 + 体积膨胀 1.5x
+   - 静态模型 / 贴图资源已落地；Enraged 红化与 1.5x 膨胀等状态驱动视觉切换延期到 `fauna-state-visual-v1`
    - `FuyaRenderer.java` + `FuyaRenderBootstrap.java`
 
 4. **生物音效 recipe**
@@ -80,8 +80,8 @@
 ### 交付物
 
 1. **道伥模型**：枯槁人形（干尸化外观，空洞眼眶，行动僵硬）
-2. **执念模型**：Masquerade 态=普通人外观 / Aggressive 态=黑雾缭绕 + 面部扭曲（两套 texture 切换）
-3. **守卫模型**：石化甲胄人形（古代风格，phase 提升时甲胄裂缝发光）
+2. **执念模型**：静态模型 / 贴图资源已落地；Masquerade / Aggressive 双 texture 切换延期到 `fauna-state-visual-v1`
+3. **守卫模型**：石化甲胄人形静态模型 / 贴图资源已落地；phase 提升时甲胄裂缝发光延期到 `fauna-state-visual-v1`
 4. **通用 spawn/death VFX**
    - Spawn：`BongSpriteParticle` dust burst × 8（从地面向上扩散）
    - Death：`DeathSoulDissipatePlayer`（已存在）复用 + 骨碎片粒子（BongLineParticle 短线段 × 6 向外飞散）

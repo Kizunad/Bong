@@ -2000,8 +2000,20 @@ mod tests {
             Some(&TSY_SENTINEL_ENTITY_KIND)
         );
         assert_eq!(
+            app.world().get::<FaunaVisualKind>(daoxiang),
+            Some(&FaunaVisualKind::Daoxiang)
+        );
+        assert_eq!(
+            app.world().get::<FaunaVisualKind>(zhinian),
+            Some(&FaunaVisualKind::Zhinian)
+        );
+        assert_eq!(
             app.world().get::<FaunaVisualKind>(fuya),
             Some(&FaunaVisualKind::Fuya)
+        );
+        assert_eq!(
+            app.world().get::<FaunaVisualKind>(sentinel),
+            Some(&FaunaVisualKind::TsySentinel)
         );
     }
 
