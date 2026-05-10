@@ -20,16 +20,18 @@ public final class BongToast {
 
     private final Text text;
     private final int color;
+    private final long shownAtMillis;
     private final long expiresAtMillis;
 
-    private BongToast(Text text, int color, long expiresAtMillis) {
+    private BongToast(Text text, int color, long shownAtMillis, long expiresAtMillis) {
         this.text = Objects.requireNonNull(text, "text");
         this.color = color;
+        this.shownAtMillis = Math.max(0L, shownAtMillis);
         this.expiresAtMillis = Math.max(0L, expiresAtMillis);
     }
 
     public static BongToast empty() {
-        return new BongToast(Text.empty(), 0xFFFFFF, 0L);
+        return new BongToast(Text.empty(), 0xFFFFFF, 0L, 0L);
     }
 
     public static BongToast create(NarrationState narrationState, long shownAtMillis) {
@@ -40,6 +42,7 @@ public final class BongToast {
         return new BongToast(
             toastText(narrationState),
             toastColor(narrationState),
+            Math.max(0L, shownAtMillis),
             Math.max(0L, shownAtMillis) + narrationState.toastDurationMillis()
         );
     }
@@ -54,6 +57,7 @@ public final class BongToast {
         return new BongToast(
             Text.literal(normalizedText),
             color,
+            Math.max(0L, shownAtMillis),
             Math.max(0L, shownAtMillis) + normalizedDurationMillis
         );
     }
@@ -92,7 +96,8 @@ public final class BongToast {
             return Optional.empty();
         }
 
-        return Optional.of(HudRenderCommand.toast(HudRenderLayer.TOAST, clippedText, 0, 0, toast.color()));
+        int xOffset = HudAnimation.toastSlideOffset(toast.shownAtMillis(), toast.expiresAtMillis(), nowMillis, 28);
+        return Optional.of(HudRenderCommand.toast(HudRenderLayer.TOAST, clippedText, xOffset, 0, toast.color()));
     }
 
     public static void render(
@@ -112,7 +117,7 @@ public final class BongToast {
         }
 
         int width = textRenderer.getWidth(message);
-        int x = Math.max(0, (scaledWidth - width) / 2);
+        int x = Math.max(0, (scaledWidth - width) / 2 + command.x());
         int y = Math.max(0, scaledHeight / 4);
         context.fill(
             x - HORIZONTAL_PADDING,
@@ -130,6 +135,10 @@ public final class BongToast {
 
     public int color() {
         return color;
+    }
+
+    public long shownAtMillis() {
+        return shownAtMillis;
     }
 
     public long expiresAtMillis() {

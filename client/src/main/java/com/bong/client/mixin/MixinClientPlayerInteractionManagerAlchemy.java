@@ -4,6 +4,7 @@ import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.hud.TargetInfoStateStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.InventoryStateStore;
@@ -12,6 +13,8 @@ import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.ClientPlayerInteractionManager;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -19,10 +22,28 @@ import net.minecraft.util.math.BlockPos;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ClientPlayerInteractionManager.class)
 public abstract class MixinClientPlayerInteractionManagerAlchemy {
+    @Inject(method = "attackEntity", at = @At("TAIL"))
+    private void bong$targetInfoAttack(PlayerEntity player, Entity target, CallbackInfo ci) {
+        TargetInfoStateStore.observeEntity(target, System.currentTimeMillis());
+    }
+
+    @Inject(method = "interactEntity", at = @At("TAIL"))
+    private void bong$targetInfoInteract(
+        PlayerEntity player,
+        Entity entity,
+        Hand hand,
+        CallbackInfoReturnable<ActionResult> cir
+    ) {
+        if (hand == Hand.MAIN_HAND) {
+            TargetInfoStateStore.observeEntity(entity, System.currentTimeMillis());
+        }
+    }
+
     @Inject(method = "interactBlock", at = @At("HEAD"), cancellable = true)
     private void bong$alchemyInteractBlock(
         ClientPlayerEntity player,

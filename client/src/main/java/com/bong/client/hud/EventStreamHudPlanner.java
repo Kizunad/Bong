@@ -46,7 +46,8 @@ public final class EventStreamHudPlanner {
 
         for (int i = 0; i < visible; i++) {
             UnifiedEvent e = entries.get(i);
-            String text = e.channel().icon() + " " + e.displayText();
+            String fullText = e.channel().icon() + " " + e.displayText();
+            String text = HudAnimation.typewriterText(fullText, e.createdAtMs(), nowMillis);
             String clipped = HudTextHelper.clipToWidth(text, PANEL_WIDTH - 6, widthMeasurer);
             if (clipped == null || clipped.isEmpty()) continue;
             out.add(HudRenderCommand.text(
