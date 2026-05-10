@@ -11,6 +11,7 @@ public enum CraftCategory {
     ZHENFA_TRAP("zhenfa_trap", "阵法预埋件"),
     TOOL("tool", "凡器"),
     CONTAINER("container", "容器 / 装具"),
+    POISON_POWDER("poison_powder", "毒粉研磨"),
     MISC("misc", "其它");
 
     private final String wire;

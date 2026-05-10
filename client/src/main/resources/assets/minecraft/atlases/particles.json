@@ -4,6 +4,8 @@
         { "type": "single", "resource": "bong:particle/enlightenment_dust" },
         { "type": "single", "resource": "bong:particle/flying_sword_trail" },
         { "type": "single", "resource": "bong:particle/lingqi_ripple" },
+        { "type": "single", "resource": "bong:particle/poison_breath_aura" },
+        { "type": "single", "resource": "bong:particle/poison_pill_eaten_puff" },
         { "type": "single", "resource": "bong:particle/qi_aura" },
         { "type": "single", "resource": "bong:particle/rune_char_4ee4_cang" },
         { "type": "single", "resource": "bong:particle/rune_char_4ee4_cao" },

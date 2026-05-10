@@ -231,6 +231,12 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(PoisonTraitHudPlanner.buildCommands(
+                PoisonTraitHudStateStore.snapshot(),
+                screenWidth,
+                screenHeight,
+                nowMillis
+            ));
             commands.addAll(ChargingProgressBarHud.buildCommands(screenWidth, screenHeight));
             commands.addAll(ExhaustedGreyOverlay.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(YidaoHudPlanner.buildCommands(
