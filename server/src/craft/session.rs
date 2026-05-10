@@ -27,6 +27,9 @@ use super::unlock::RecipeUnlockState;
 /// §5 决策门 #3 = B：取消返还 70%，30% 损耗惩罚。
 pub const CANCEL_REFUND_RATIO: f64 = 0.7;
 
+/// 单次手搓批量上限。client UI 与 schema 同步使用同一个语义上限。
+pub const MAX_CRAFT_QUANTITY: u32 = 64;
+
 /// `start_craft` 的"ledger 与 cultivation 视图失同步"严格判定阈值。
 /// 浮点容差 — 1e-9 远大于 transfer 路径任何累积误差，但小到能捕获语义性 desync。
 const QI_SYNC_EPSILON: f64 = 1e-9;
@@ -86,6 +89,8 @@ pub enum StartCraftError {
     LedgerError(String),
     /// 批量数量必须 >= 1。
     InvalidQuantity(u32),
+    /// 批量数量超过服务端硬上限。
+    QuantityTooLarge { requested: u32, max: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +256,12 @@ pub fn start_craft(
 ) -> Result<StartCraftSuccess, StartCraftError> {
     if request.quantity == 0 {
         return Err(StartCraftError::InvalidQuantity(request.quantity));
+    }
+    if request.quantity > MAX_CRAFT_QUANTITY {
+        return Err(StartCraftError::QuantityTooLarge {
+            requested: request.quantity,
+            max: MAX_CRAFT_QUANTITY,
+        });
     }
     let recipe = deps
         .registry
@@ -726,6 +737,34 @@ mod tests {
         assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 1);
         assert_eq!(cult.qi_current, 35.0);
         assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 15.0);
+    }
+
+    #[test]
+    fn start_craft_rejects_quantity_above_limit_before_cost_checks() {
+        let (registry, unlock, mut cult, color, mut ledger) = make_world();
+        let mut inv = make_inventory(&[("herb_a", 8), ("iron_needle", 10)]);
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("a"),
+                current_tick: 1000,
+                zone_id: "spawn",
+                quantity: MAX_CRAFT_QUANTITY + 1,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            StartCraftError::QuantityTooLarge {
+                requested: MAX_CRAFT_QUANTITY + 1,
+                max: MAX_CRAFT_QUANTITY,
+            }
+        );
+        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 8);
+        assert_eq!(cult.qi_current, 50.0);
     }
 
     #[test]

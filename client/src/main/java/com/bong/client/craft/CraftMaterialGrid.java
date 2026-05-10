@@ -46,9 +46,10 @@ public final class CraftMaterialGrid {
         return root;
     }
 
-    public void refresh(CraftRecipe recipe, InventoryModel inventory, CraftSessionStateView state) {
+    public void refresh(CraftRecipe recipe, InventoryModel inventory, CraftSessionStateView state, int quantity) {
         slotGrid.clearChildren();
         requirementList.clearChildren();
+        int batchQuantity = Math.max(1, quantity);
         if (recipe == null) {
             title.text(Text.literal("未选择配方"));
             fillEmptySlots();
@@ -58,7 +59,7 @@ public final class CraftMaterialGrid {
         }
 
         title.text(Text.literal(CraftRecipeFilter.displayName(recipe)));
-        List<CraftMaterialState> states = CraftInventoryCounter.materialStates(recipe, inventory);
+        List<CraftMaterialState> states = CraftInventoryCounter.materialStates(recipe, inventory, batchQuantity);
         int shown = 0;
         for (int row = 0; row < CraftScreenLayout.MATERIAL_ROWS; row++) {
             FlowLayout slotRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
@@ -89,11 +90,12 @@ public final class CraftMaterialGrid {
             ), color));
         }
         if (recipe.qiCost() > 0.0) {
-            boolean ok = inventory != null && inventory.qiCurrent() >= recipe.qiCost();
+            double totalQiCost = recipe.qiCost() * batchQuantity;
+            boolean ok = inventory != null && inventory.qiCurrent() >= totalQiCost;
             requirementList.child(label(String.format(
                 "%s 自身真元 %.0f (当前 %.0f)",
                 ok ? "✓" : "✗",
-                recipe.qiCost(),
+                totalQiCost,
                 inventory == null ? 0.0 : inventory.qiCurrent()
             ), ok ? 0xFF7AB45A : 0xFFD05A4A));
         }

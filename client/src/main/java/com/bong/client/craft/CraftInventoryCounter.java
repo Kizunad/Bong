@@ -26,14 +26,19 @@ public final class CraftInventoryCounter {
     }
 
     public static List<CraftMaterialState> materialStates(CraftRecipe recipe, InventoryModel inventory) {
+        return materialStates(recipe, inventory, 1);
+    }
+
+    public static List<CraftMaterialState> materialStates(CraftRecipe recipe, InventoryModel inventory, int quantity) {
         if (recipe == null) {
             return List.of();
         }
+        int multiplier = Math.max(1, quantity);
         List<CraftMaterialState> states = new ArrayList<>(recipe.materials().size());
         for (CraftRecipe.MaterialEntry material : recipe.materials()) {
             states.add(new CraftMaterialState(
                 material.templateId(),
-                Math.max(0, material.count()),
+                saturatingMultiply(Math.max(0, material.count()), multiplier),
                 countTemplate(inventory, material.templateId())
             ));
         }
@@ -97,5 +102,10 @@ public final class CraftInventoryCounter {
             return 0;
         }
         return Math.max(0, item.stackCount());
+    }
+
+    private static int saturatingMultiply(int value, int multiplier) {
+        long result = (long) value * (long) multiplier;
+        return result > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) result;
     }
 }

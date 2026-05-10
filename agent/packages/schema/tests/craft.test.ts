@@ -51,6 +51,16 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
       });
       expect(result.ok).toBe(false);
     });
+    it("rejects quantity above server cap", () => {
+      const result = validateCraftStartReqV1Contract({
+        v: 1,
+        player_id: "x",
+        recipe_id: "y",
+        quantity: 65,
+        ts: 1,
+      });
+      expect(result.ok).toBe(false);
+    });
   });
 
   describe("CraftSessionStateV1", () => {

@@ -170,7 +170,7 @@ pub fn apply_craft_intents(
             recipe_id: &intent.recipe_id,
             current_tick: clock.tick,
             zone_id: DEFAULT_CRAFT_ZONE_ID,
-            quantity: intent.quantity.max(1),
+            quantity: intent.quantity,
         };
         let deps = StartCraftDeps {
             registry: &registry,
@@ -358,16 +358,35 @@ pub fn tick_craft_sessions(
                 }
                 Err(err) => {
                     tracing::error!(
-                        "[bong][craft] finalize FAILED: recipe={} output={template} x{count} grant_err={err} — qi & 材料已扣，对玩家显示 InternalError 失败",
+                        "[bong][craft] finalize FAILED: recipe={} output={template} x{count} grant_err={err} — cancel remaining batch and refund materials",
                         event.recipe_id
                     );
-                    failed_tx.send(CraftFailedEvent {
-                        caster: entity,
-                        recipe_id: event.recipe_id,
-                        reason: CraftFailureReason::InternalError,
-                        material_returned: 0,
-                        qi_refunded: 0.0,
-                    });
+                    let CancelCraftOutcome {
+                        mut event,
+                        refund_manifest,
+                    } = cancel_craft(&session, recipe, entity, CraftFailureReason::InternalError);
+                    let mut material_returned = 0;
+                    for (refund_template, refund_count) in refund_manifest {
+                        match add_item_to_player_inventory(
+                            &mut inventory,
+                            &item_registry,
+                            &mut allocator,
+                            &refund_template,
+                            refund_count,
+                        ) {
+                            Ok(_) => {
+                                material_returned += refund_count;
+                            }
+                            Err(refund_err) => {
+                                tracing::error!(
+                                    "[bong][craft] refund FAILED after finalize failure: recipe={} refund={refund_template} x{refund_count} err={refund_err}",
+                                    event.recipe_id
+                                );
+                            }
+                        }
+                    }
+                    event.material_returned = material_returned;
+                    failed_tx.send(event);
                 }
             }
             commands

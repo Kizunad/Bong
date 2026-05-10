@@ -83,10 +83,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         columns.child(outputPreview.root());
         panel.child(columns);
 
-        actionBar = new CraftActionBar(() -> {
-            actionBar.setQuantityToMax();
-            refreshAll();
-        }, this::startCraft);
+        actionBar = new CraftActionBar(() -> actionBar.setQuantityToMax(), this::startCraft, this::refreshAll);
         panel.child(actionBar.root());
 
         root.child(panel);
@@ -168,9 +165,9 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         recipeList.setSelectedId(selectedId);
         recipeList.refresh(inventory);
         CraftSessionStateView session = CraftStore.sessionState();
-        materialGrid.refresh(selected, inventory, session);
-        outputPreview.refresh(selected, flashTicks);
         actionBar.refresh(selected, inventory, session);
+        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        outputPreview.refresh(selected, flashTicks);
         if (subtitle != null) {
             int known = CraftStore.recipes().size();
             int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);

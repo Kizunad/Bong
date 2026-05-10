@@ -21,6 +21,7 @@ public final class ClientRequestProtocol {
     public static final String CHANNEL_NAMESPACE = "bong";
     public static final String CHANNEL_PATH = "client_request";
     public static final int VERSION = 1;
+    public static final int MAX_CRAFT_QUANTITY = 64;
 
     /** 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。 */
     public enum MeridianId {
@@ -1021,6 +1022,9 @@ public final class ClientRequestProtocol {
         }
         if (quantity < 1) {
             throw new IllegalArgumentException("quantity must be >= 1");
+        }
+        if (quantity > MAX_CRAFT_QUANTITY) {
+            throw new IllegalArgumentException("quantity must be <= " + MAX_CRAFT_QUANTITY);
         }
         JsonObject obj = envelope("craft_start");
         obj.addProperty("recipe_id", recipeId);

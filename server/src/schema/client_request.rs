@@ -507,6 +507,8 @@ fn default_craft_quantity() -> u32 {
     1
 }
 
+const MAX_CRAFT_QUANTITY_V1: u32 = crate::craft::MAX_CRAFT_QUANTITY;
+
 fn deserialize_craft_quantity<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -514,6 +516,11 @@ where
     let quantity = u32::deserialize(deserializer)?;
     if quantity == 0 {
         return Err(serde::de::Error::custom("craft quantity must be >= 1"));
+    }
+    if quantity > MAX_CRAFT_QUANTITY_V1 {
+        return Err(serde::de::Error::custom(format!(
+            "craft quantity must be <= {MAX_CRAFT_QUANTITY_V1}"
+        )));
     }
     Ok(quantity)
 }
@@ -1468,6 +1475,9 @@ mod tests {
 
         let zero = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":0}"#;
         assert!(serde_json::from_str::<ClientRequestV1>(zero).is_err());
+
+        let too_large = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":65}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(too_large).is_err());
     }
 
     #[test]

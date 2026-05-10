@@ -432,6 +432,8 @@ public class ClientRequestProtocolTest {
         );
         assertThrows(IllegalArgumentException.class,
             () -> ClientRequestProtocol.encodeCraftStart("craft.example.herb_knife.iron", 0));
+        assertThrows(IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeCraftStart("craft.example.herb_knife.iron", 65));
     }
 
     @Test

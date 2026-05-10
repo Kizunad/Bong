@@ -45,6 +45,22 @@ class CraftUxViewModelTest {
     }
 
     @Test
+    void materialStatesMultiplyNeedsBySelectedQuantity() {
+        CraftRecipe recipe = recipe("armor", CraftCategory.TOOL, true,
+            List.of(new CraftRecipe.MaterialEntry("iron_ore", 5)),
+            0.0
+        );
+        InventoryModel inventory = InventoryModel.builder()
+            .gridItem(stack("iron_ore", 7), 0, 0)
+            .build();
+
+        List<CraftMaterialState> states = CraftInventoryCounter.materialStates(recipe, inventory, 2);
+        assertEquals(10, states.get(0).need());
+        assertFalse(states.get(0).sufficient());
+        assertEquals(3, states.get(0).missing());
+    }
+
+    @Test
     void maxCraftableUsesMaterialsAndQi() {
         CraftRecipe recipe = recipe("knife", CraftCategory.TOOL, true,
             List.of(new CraftRecipe.MaterialEntry("iron_ingot", 2)),

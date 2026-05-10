@@ -25,13 +25,15 @@ public final class CraftActionBar {
     private final LabelComponent quantityLabel;
     private final LabelComponent statusLabel;
     private final IntConsumer onStart;
+    private final Runnable onQuantityChanged;
 
     private CraftRecipe recipe;
     private int quantity = 1;
     private int maxQuantity = 0;
 
-    public CraftActionBar(Runnable onFill, IntConsumer onStart) {
+    public CraftActionBar(Runnable onFill, IntConsumer onStart, Runnable onQuantityChanged) {
         this.onStart = onStart;
+        this.onQuantityChanged = onQuantityChanged;
         root = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(CraftScreenLayout.ACTION_BAR_H));
         root.surface(Surface.flat(0xFF12121C).and(Surface.outline(0xFF3A3040)));
         root.padding(Insets.of(4));
@@ -46,13 +48,13 @@ public final class CraftActionBar {
         fillButton.sizing(Sizing.fixed(70), Sizing.fixed(20));
         root.child(fillButton);
 
-        minusButton = Components.button(Text.literal("-"), b -> setQuantity(quantity - 1));
+        minusButton = Components.button(Text.literal("-"), b -> setQuantity(quantity - 1, true));
         minusButton.sizing(Sizing.fixed(20), Sizing.fixed(20));
         root.child(minusButton);
         quantityLabel = label("1", 0xFFE8DDC4);
         quantityLabel.horizontalSizing(Sizing.fixed(28));
         root.child(quantityLabel);
-        plusButton = Components.button(Text.literal("+"), b -> setQuantity(quantity + 1));
+        plusButton = Components.button(Text.literal("+"), b -> setQuantity(quantity + 1, true));
         plusButton.sizing(Sizing.fixed(20), Sizing.fixed(20));
         root.child(plusButton);
 
@@ -97,7 +99,7 @@ public final class CraftActionBar {
 
     public void setQuantityToMax() {
         if (maxQuantity > 0) {
-            setQuantity(maxQuantity);
+            setQuantity(maxQuantity, true);
         }
     }
 
@@ -105,10 +107,14 @@ public final class CraftActionBar {
         return quantity;
     }
 
-    private void setQuantity(int next) {
+    private void setQuantity(int next, boolean notify) {
         int upper = maxQuantity <= 0 ? 1 : maxQuantity;
+        int previous = quantity;
         quantity = Math.max(1, Math.min(upper, next));
         quantityLabel.text(Text.literal(String.valueOf(quantity)));
+        if (notify && quantity != previous && onQuantityChanged != null) {
+            onQuantityChanged.run();
+        }
     }
 
     private static String statusText(CraftRecipe recipe, int maxQuantity, boolean activeSession) {
