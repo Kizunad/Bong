@@ -12,7 +12,7 @@
 - `plan-qi-physics-v1` P1 ship → 阵法真元逆逸散走 `qi_physics::field::inverse_diffusion` 🆕（patch P3 加）- `plan-qi-physics-patch-v1` P0/P3 → 7 流派 W 矩阵（阵法 ρ=0.40 / W vs 4 攻 [0.5, 0.4, 0.6, 0.3]）+ inverse_diffusion / cross_dimension_projection 算子
 - `plan-craft-v1` 🟡 → ZhenfaTrap 类目（4 类阵预埋件配方）—— v2 P0 必须先用此底盘
 - `plan-meridian-severed-v1` 🆕 active → 阵法流派依赖经脉清单（任督二脉 + KI 足少阴肾经）+ SEVERED 阵法失效路径
-- `plan-tribulation-v1` ⏳ → 聚灵阵天道注视累积 + 欺天阵被识破反噬（劫期权重操控反噬）
+- `plan-tribulation-v2` 🆕 active → 聚灵阵天道注视累积 + 欺天阵被识破触发绝壁劫（天地排异三相）
 - `plan-narrative-political-v1` ✅ active → 欺天阵江湖传闻
 - `plan-social-v1` ✅ → 灵龛归属（护龛阵需要灵龛主人身份认证）
 - `plan-skill-v1` ✅ + `plan-input-binding-v1` ✅ + `plan-HUD-v1` ✅
@@ -23,7 +23,7 @@
 **反向被依赖**：
 
 - `plan-style-balance-v1` 🆕 → 5 阵的 W/ρ 数值进矩阵（阵法 ρ=0.40 / 专克毒蛊 W=0.6 因聚灵阵反污染 / 失效 vs 涡流 W=0.3 因紊流场冲散阵眼）
-- `plan-tribulation-v1` ⏳ → 欺天阵化虚级触发天道注视（同 zhenmai-v2 / baomai-v3 / anqi-v2 化虚级同列）
+- `plan-tribulation-v2` 🆕 active → 欺天阵化虚级触发天道注视（同 zhenmai-v2 / baomai-v3 / anqi-v2 化虚级同列）
 - `plan-multi-life-v1` ⏳ → 跨周目阵法持久化处理（化虚阵法师跨周目还能维护吗？）
 - `plan-yidao-v1` 🆕 placeholder → 护龛阵 + 医者结合（医者诊所被护龛阵保护路径）
 
@@ -301,30 +301,27 @@ HUD 组件（plan-HUD-v1 接入）：
 - [ ] 神识扫描时识破概率计算（mastery_diff）
 - [ ] 测试：幻阵 20 单测 + 识破 8 单测 + 与各类阵覆盖 12 单测
 
-### P3 — 经脉依赖 + 熟练度生长 + 化虚跨位面阵（5-6 周）
+### P3 — 经脉依赖 + 熟练度生长（4 周）
 
 - [ ] 接 `plan-meridian-severed-v1` 7 流派经脉表追加阵法条目
-- [ ] 5 阵 SEVERED 失效路径
-- [ ] 5 阵 mastery 字段（0-100）+ cast/触发加 mastery 公式
-- [ ] mastery 生长效果（cast time / 朽坏延缓 / 逆逸散效率 / 跨位面带宽）
-- [ ] `qi_physics::field::cross_dimension_projection` 算子（patch P3 加）
-- [ ] ⑤ 跨位面阵实装（化虚 gate + tsy-dimension 接入）
-- [ ] 天道注视触发（化虚跨位面阵 +2.0 weight）
-- [ ] 测试：经脉依赖 25 单测 + mastery 30 单测 + 跨位面阵 32 单测
+- [ ] 4 阵 SEVERED 失效路径
+- [ ] 4 阵 mastery 字段（0-100）+ cast/触发加 mastery 公式
+- [ ] mastery 生长效果（cast time / 朽坏延缓 / 逆逸散效率）
+- [ ] 测试：经脉依赖 25 单测 + mastery 30 单测
 
-### P4 — 客户端 5 动画 / 5 粒子 / 5 音效 / 7 HUD（4 周）
+### P4 — 客户端 4 动画 / 4 粒子 / 4 音效 / 5 HUD（3 周）
 
-- [ ] 5 阵动画（布阵 / 触发 / 朽坏 / 破阵）
-- [ ] 5 粒子 + 5 音效 recipe
-- [ ] 7 HUD 组件（阵图布局 / 阵眼 marker / 天道注视 / 假劫期 / 跨位面通道 / 经脉依赖灰显 / 缜密色识破）
-- [ ] 测试：客户端 5 阵视觉回归 + HUD 集成测试
+- [ ] 4 阵动画（布阵 / 触发 / 朽坏 / 破阵）
+- [ ] 4 粒子 + 4 音效 recipe
+- [ ] 5 HUD 组件（阵图布局 / 阵眼 marker / 天道注视 / 假劫期 / 经脉依赖灰显）
+- [ ] 测试：客户端 4 阵视觉回归 + HUD 集成测试
 
 ### P5 — v2 收口（饱和测试 + agent narration + e2e 联调）（2-3 周）
 
-- [ ] agent `tiandao::zhenfa_v2_runtime`（5 阵 narration 全量 + 跨位面阵 + 欺天阵识破反噬）
-- [ ] 化虚跨位面阵江湖传闻 + 欺天阵被识破叙事
-- [ ] e2e 联调：client → server cast → 阵法布置 → 触发 / 朽坏 / 跨位面投射 → client 渲染（每阵独立 e2e）
-- [ ] 饱和测试 audit：5 阵每阵 ≥20 单测，总单测 ≥150
+- [ ] agent `tiandao::zhenfa_v2_runtime`（4 阵 narration 全量 + 欺天阵识破触发绝壁劫叙事）
+- [ ] 欺天阵被识破 → emit `JueBiTriggerEvent`（plan-tribulation-v2 接入）
+- [ ] e2e 联调：client → server cast → 阵法布置 → 触发 / 朽坏 → client 渲染（每阵独立 e2e）
+- [ ] 饱和测试 audit：4 阵每阵 ≥20 单测，总单测 ≥120
 - [ ] 与 plan-style-balance-v1 对接：阵法 W/ρ 矩阵填表（vs 7 流派 7 个 W 数值）
 - [ ] Finish Evidence + 迁入 docs/finished_plans/
 
@@ -332,12 +329,10 @@ HUD 组件（plan-HUD-v1 接入）：
 
 ## §6 已知风险 / open 问题
 
-- [ ] **Q1** 化虚跨位面阵：mastery 100 多位面同步（主 + 子1 + 子2 + 子3）是否过强？性能 / 平衡 / 物理推导哪个优先 → P3 拍板
 - [ ] **Q2** 欺天阵识破概率（0.5% / 0.2%）：是否需要根据天道权重动态调整 → P1 拍板
 - [ ] **Q3** 聚灵阵天道注视阈值（zone_density × 1.5 > 6.0）：v1 留待 Q14 拍板，v2 需根据 lingtian 系统实测调参 → P0 拍板
 - [ ] **Q4** 多个聚灵阵叠加：阵眼位置近 → 浓度叠加是否触发更高天道注视 → P0 拍板
 - [ ] **Q5** 幻阵 vs 神识扫描：是否给被扫描者主动反馈"被扫描"信号 → P2 拍板
-- [ ] **Q6** 化虚跨位面阵跨周目（plan-multi-life-v1）：化虚阵法师跨周目还能维护原阵眼吗？→ P3 与 multi-life 联动
 - [ ] **Q7** 欺天阵嫁祸 PvP：被嫁祸玩家如何感知 + 反制路径 → P1 拍板（与 plan-narrative-political-v1 联动）
 
 ---

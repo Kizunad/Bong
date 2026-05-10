@@ -19,7 +19,7 @@
 **反向被依赖**：
 
 - `plan-style-balance-v1` 🆕 → 三招的 W/β 数值进矩阵（替尸 β=1.2 / 专克毒蛊 W=0.7）
-- `plan-tribulation-v1` ⏳ → 化虚替尸者 hard counter 化虚毒蛊师场景（PVP 渡劫干扰场景）
+- `plan-tribulation-v2` 🆕 active → 化虚替尸者 hard counter 化虚毒蛊师场景（绝壁劫 PVP 威慑）
 - `plan-narrative-political-v1` ✅ active → 化虚级一次性烧上古伪皮的江湖传闻（"昨日某战，烧 3 件上古皮，赢"）
 - `plan-tsy-loot-v1` ✅ → 上古级伪皮材料源（坍缩渊深层 jackpot）
 

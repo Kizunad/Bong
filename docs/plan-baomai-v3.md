@@ -19,7 +19,7 @@
 **反向被依赖**：
 
 - `plan-style-balance-v1` 🆕 → 5 招的 ρ/W 数值进矩阵（体修 ρ=0.65 / vs 涡流 W=0.8 / vs 替尸 W=0.3 / vs 截脉 W=0.5）
-- `plan-tribulation-v1` ⏳ → 化虚级散功触发"绝壁劫"
+- `plan-tribulation-v2` 🆕 active → 化虚级散功触发绝壁劫（天地排异三相）
 - `plan-narrative-political-v1` ✅ active → 化虚体修一战烧 qi_max 50% 的江湖传闻
 - `plan-meridian-severed-v1` 🆕 → 焚血累积 + 散功化虚 + 全力一击 Exhausted 都可触发 SEVERED
 
@@ -262,7 +262,7 @@ worldview §三:187 化虚 ×5 质变 + §四:354 过载撕裂反向物理化身
   - **敌方攻击仍正常命中**（伤害走 §P 物理矩阵，化虚体修扛伤）
 - 5s 后：BodyTranscendence 移除 → qi_max 永久 -50% 写入 cultivation::Cultivation + flow_rate 恢复正常
 - 不可逆（worldview §三:80 维护成本极高 + 重新突破需走完突破流程）
-- 化虚连续 cast 3 次散功（30 days in-game 内）→ 触发"绝壁劫"（强度 ×1.5，跟涡心 / 倒蚀 / 绝脉断链一致格调）
+- 化虚连续 cast 3 次散功（30 days in-game 内）→ emit `JueBiTriggerEvent` → 触发天地排异三相绝壁劫（plan-tribulation-v2；非必死但存活率 <10%，zone 内高境者一损俱损）
 
 **叙事意象**：化虚体修在生死关头，全身经脉骤然爆发金光，每一掌每一拳都打出过载 ×10 的真元 → 5s 内拼命输出，但他自己也在受敌方攻击（不是无敌，是孤注） → 5s 后金光散尽，整个人衰老 10 岁，池子永久缩水一半，扛着满身伤离场。这是 worldview §三:187 "凡躯彻底重铸" + §五:402 "赌命爆发"的物理化身——**重铸不是免伤，是用过去的本钱赌 5s 极限输出**
 
