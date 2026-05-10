@@ -628,7 +628,8 @@ fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
         | "exposure_name"
         | "narration_cue"
         | "skill_lv_up"
-        | "stance_switch" => AudioAttenuation::PlayerLocal,
+        | "stance_switch"
+        | "blood_burn_sizzle" => AudioAttenuation::PlayerLocal,
         "tribulation_thunder_distant" => AudioAttenuation::GlobalHint,
         "realm_breakthrough" => AudioAttenuation::ZoneBroadcast,
         _ => AudioAttenuation::World3d,
@@ -741,6 +742,14 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "skill_lv_up");
         assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == player));
+    }
+
+    #[test]
+    fn blood_burn_audio_is_player_local() {
+        assert_eq!(
+            attenuation_for_recipe("blood_burn_sizzle"),
+            AudioAttenuation::PlayerLocal
+        );
     }
 
     #[test]

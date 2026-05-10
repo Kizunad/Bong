@@ -137,6 +137,12 @@ pub fn blood_burn_conversion(
 ) -> Result<BloodBurnConversionOutcome, QiPhysicsError> {
     let hp_current = finite_non_negative(f64::from(hp_current), "blood_burn.hp_current")? as f32;
     let hp_burned = finite_non_negative(f64::from(hp_burn), "blood_burn.hp_burn")? as f32;
+    if hp_burned > hp_current {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "blood_burn.hp_burn",
+            value: f64::from(hp_burned),
+        });
+    }
     let multiplier =
         finite_non_negative(f64::from(qi_multiplier), "blood_burn.qi_multiplier")? as f32;
     Ok(BloodBurnConversionOutcome {
@@ -223,6 +229,18 @@ mod tests {
         let out = blood_burn_conversion(100.0, 91.0, 2.5, 500).unwrap();
         assert!(out.ends_in_near_death);
         assert_eq!(out.qi_multiplier, 2.5);
+    }
+
+    #[test]
+    fn blood_burn_conversion_rejects_more_hp_than_available() {
+        let err = blood_burn_conversion(20.0, 21.0, 2.0, 500).unwrap_err();
+        assert!(matches!(
+            err,
+            QiPhysicsError::InvalidAmount {
+                field: "blood_burn.hp_burn",
+                ..
+            }
+        ));
     }
 
     #[test]

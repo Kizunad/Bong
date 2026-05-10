@@ -2,14 +2,21 @@ package com.bong.client.combat.baomai.v3;
 
 import com.bong.client.BongHud;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BaomaiV3HudTest {
+    @BeforeEach
+    void setUp() {
+        BaomaiV3HudStateStore.clear();
+    }
+
     @AfterEach
     void tearDown() {
         BaomaiV3HudStateStore.clear();
@@ -38,6 +45,17 @@ public class BaomaiV3HudTest {
         BaomaiV3Hud.render(surface, 2_000L);
 
         assertTrue(surface.texts.isEmpty());
+    }
+
+    @Test
+    void scarSeverityResetsAfterVisibleWindow() {
+        BaomaiV3HudStateStore.recordMeridianRippleScar(0.90, 1_000L);
+        BaomaiV3HudStateStore.recordMeridianRippleScar(0.20, 7_001L);
+
+        BaomaiV3HudStateStore.Snapshot snapshot = BaomaiV3HudStateStore.snapshot(7_001L);
+
+        assertTrue(snapshot.meridianRippleScarVisible());
+        assertEquals(0.20, snapshot.meridianRippleScarSeverity(), 0.0001);
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {
