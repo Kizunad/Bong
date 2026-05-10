@@ -2912,6 +2912,8 @@ mod tests {
                 carrier: ZhenfaCarrierKind::LingqiBlock,
                 qi_invest_ratio: 0.5,
                 qi_invest_amount: 25.0,
+                realm_at_cast: Realm::Induce,
+                mastery_at_cast: 0.0,
                 effect_radius: 2,
                 ward_radius: 8,
                 placed_at_tick: 1,
