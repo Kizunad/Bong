@@ -283,6 +283,49 @@ pub fn body_transcendence(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShedToCarrierOutcome {
+    pub damage_absorbed: f64,
+    pub damage_overflow: f64,
+    pub contam_absorbed: f64,
+    pub contam_overflow: f64,
+}
+
+/// 替尸影论承伤算子：伪皮先吃本次伤害和同源污染，超出单层上限才回流真身。
+pub fn shed_to_carrier(
+    carrier_remaining_capacity: f64,
+    incoming_damage: f64,
+    incoming_contam_percent: f64,
+) -> ShedToCarrierOutcome {
+    let capacity = if carrier_remaining_capacity.is_finite() {
+        carrier_remaining_capacity.max(0.0)
+    } else {
+        0.0
+    };
+    let damage = if incoming_damage.is_finite() {
+        incoming_damage.max(0.0)
+    } else {
+        0.0
+    };
+    let contam = if incoming_contam_percent.is_finite() {
+        incoming_contam_percent.max(0.0)
+    } else {
+        0.0
+    };
+    let damage_absorbed = damage.min(capacity);
+    let damage_overflow = (damage - damage_absorbed).max(0.0);
+    let contam_capacity = capacity.min(100.0);
+    let contam_absorbed = contam.min(contam_capacity);
+    let contam_overflow = (contam - contam_absorbed).max(0.0);
+
+    ShedToCarrierOutcome {
+        damage_absorbed,
+        damage_overflow,
+        contam_absorbed,
+        contam_overflow,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +433,23 @@ mod tests {
         assert_eq!(out.qi_max_before, 10_700.0);
         assert_eq!(out.qi_max_after, 5_350.0);
         assert_eq!(out.flow_rate_multiplier, 10.0);
+    }
+
+    #[test]
+    fn shed_to_carrier_absorbs_until_capacity_then_overflows() {
+        let out = shed_to_carrier(50.0, 80.0, 12.0);
+        assert_eq!(out.damage_absorbed, 50.0);
+        assert_eq!(out.damage_overflow, 30.0);
+        assert_eq!(out.contam_absorbed, 12.0);
+        assert_eq!(out.contam_overflow, 0.0);
+    }
+
+    #[test]
+    fn shed_to_carrier_sanitizes_non_finite_input() {
+        let out = shed_to_carrier(f64::NAN, f64::INFINITY, -1.0);
+        assert_eq!(out.damage_absorbed, 0.0);
+        assert_eq!(out.damage_overflow, 0.0);
+        assert_eq!(out.contam_absorbed, 0.0);
+        assert_eq!(out.contam_overflow, 0.0);
     }
 }

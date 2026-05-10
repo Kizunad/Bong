@@ -1,5 +1,6 @@
 import { type Static, Type } from "@sinclair/typebox";
 
+import { FalseSkinLayerStateV1 } from "./tuike-v2.js";
 import { type ValidationResult, validate } from "./validate.js";
 
 export const FalseSkinKindV1 = Type.Union([
@@ -16,6 +17,7 @@ export const FalseSkinStateV1 = Type.Object(
     contam_capacity_per_layer: Type.Number({ minimum: 0 }),
     absorbed_contam: Type.Number({ minimum: 0 }),
     equipped_at_tick: Type.Integer({ minimum: 0 }),
+    layers: Type.Optional(Type.Array(FalseSkinLayerStateV1, { maxItems: 3 })),
   },
   { additionalProperties: false },
 );

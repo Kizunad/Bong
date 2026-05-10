@@ -1,0 +1,33 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "tuike_don_skin",
+  "description": "tuike-v2 don false skin: both hands press the back and pull a false skin into place.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 16,
+    "stopTick": 20,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.35, "yaw": -0.35, "roll": -0.20, "bend": 0.45, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.35, "yaw": 0.35, "roll": 0.20, "bend": 0.45, "axis": 3.1415927 } },
+      { "tick": 6, "easing": "INOUTSINE", "body": { "y": -0.03 } },
+      { "tick": 6, "easing": "INOUTSINE", "torso": { "pitch": 0.08 } },
+      { "tick": 6, "easing": "INOUTSINE", "rightArm": { "pitch": -1.10, "yaw": -0.58, "roll": -0.42, "bend": 1.05, "axis": 3.1415927 } },
+      { "tick": 6, "easing": "INOUTSINE", "leftArm": { "pitch": -1.10, "yaw": 0.58, "roll": 0.42, "bend": 1.05, "axis": 3.1415927 } },
+      { "tick": 12, "easing": "OUTSINE", "body": { "y": -0.01 } },
+      { "tick": 12, "easing": "OUTSINE", "torso": { "pitch": -0.04 } },
+      { "tick": 12, "easing": "OUTSINE", "rightArm": { "pitch": -0.78, "yaw": -0.18, "roll": -0.08, "bend": 0.72, "axis": 3.1415927 } },
+      { "tick": 12, "easing": "OUTSINE", "leftArm": { "pitch": -0.78, "yaw": 0.18, "roll": 0.08, "bend": 0.72, "axis": 3.1415927 } },
+      { "tick": 16, "easing": "OUTSINE", "body": { "y": 0.0 } },
+      { "tick": 16, "easing": "OUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 16, "easing": "OUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0, "axis": 3.1415927 } },
+      { "tick": 16, "easing": "OUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0, "axis": 3.1415927 } }
+    ]
+  }
+}

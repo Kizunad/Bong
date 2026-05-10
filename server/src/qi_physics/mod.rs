@@ -35,9 +35,9 @@ pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
 pub use field::{
     aoe_ground_wave, blood_burn_conversion, body_transcendence, density_amplifier, density_echo,
     inverse_diffusion, multi_point_dispersion, reverse_burst_all_marks, sever_meridian,
-    tiandao_signal_distort, AoeGroundWaveOutcome, BloodBurnConversionOutcome,
+    shed_to_carrier, tiandao_signal_distort, AoeGroundWaveOutcome, BloodBurnConversionOutcome,
     BodyTranscendenceOutcome, DensityAmplifierOutcome, DuguReverseBurstOutcome, EchoFractalOutcome,
-    InverseDiffusionOutcome, TiandaoSignalDistortionOutcome,
+    InverseDiffusionOutcome, ShedToCarrierOutcome, TiandaoSignalDistortionOutcome,
 };
 pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
