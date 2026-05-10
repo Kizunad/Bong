@@ -23,7 +23,11 @@ public final class ScreenTransitionController {
     }
 
     public static boolean interceptSetScreen(MinecraftClient client, Screen nextScreen) {
-        if (client == null || applyingDirectly || !UiTransitionSettings.enabled()) {
+        if (client == null || applyingDirectly) {
+            return false;
+        }
+        if (!UiTransitionSettings.enabled()) {
+            clearActiveTransition();
             return false;
         }
         Screen oldScreen = client.currentScreen;
@@ -34,6 +38,7 @@ public final class ScreenTransitionController {
         TransitionConfig.TransitionSpec spec = ScreenTransitionRegistry.resolve(oldScreen, nextScreen);
         int durationMs = UiTransitionSettings.durationFor(spec.durationMs());
         if (!spec.animates() || durationMs == 0) {
+            clearActiveTransition();
             return false;
         }
 
@@ -70,12 +75,7 @@ public final class ScreenTransitionController {
     }
 
     public static void cancelAndClose(MinecraftClient client) {
-        ActiveTransition active = activeTransition;
-        if (active != null) {
-            active.handle().cancel();
-            cancelledTransitions++;
-        }
-        activeTransition = null;
+        clearActiveTransition();
         if (client != null) {
             applyDirect(client, null);
         }
@@ -109,6 +109,15 @@ public final class ScreenTransitionController {
             client.setScreen(screen);
         } finally {
             applyingDirectly = false;
+        }
+    }
+
+    private static void clearActiveTransition() {
+        ActiveTransition active = activeTransition;
+        if (active != null) {
+            active.handle().cancel();
+            cancelledTransitions++;
+            activeTransition = null;
         }
     }
 

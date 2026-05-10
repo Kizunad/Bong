@@ -26,9 +26,14 @@ class UiTransitionPerformanceTest {
         UiTransitionSettings.FpsDecision second = UiTransitionSettings.observeFrameRate(25.0);
 
         assertTrue(first.showToast());
-        assertTrue(first.lowSpecFallback());
+        assertTrue(first.fallbackSuggested());
         assertFalse(second.showToast());
-        assertTrue(second.lowSpecFallback());
+        assertTrue(second.fallbackSuggested());
+        assertFalse(UiTransitionSettings.lowSpecFallback());
+
+        UiTransitionSettings.FpsDecision recovered = UiTransitionSettings.observeFrameRate(60.0);
+        assertFalse(recovered.showToast());
+        assertFalse(recovered.fallbackSuggested());
     }
 
     @Test

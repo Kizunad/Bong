@@ -6,8 +6,8 @@ public final class TransitionInputPolicy {
     private TransitionInputPolicy() {
     }
 
-    public static boolean shouldBlockMouse(boolean inputLocked) {
-        return inputLocked;
+    public static boolean shouldBlockMouse(boolean inputLocked, int action) {
+        return inputLocked && action == GLFW.GLFW_PRESS;
     }
 
     public static KeyDecision keyDecision(boolean inputLocked, int keyCode, int action) {

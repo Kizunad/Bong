@@ -28,7 +28,7 @@ public class MixinMouse {
         cancellable = true
     )
     private void bong$captureHarvestPanelDrag(long window, int button, int action, int mods, CallbackInfo ci) {
-        if (TransitionInputPolicy.shouldBlockMouse(ScreenTransitionController.inputLocked())) {
+        if (TransitionInputPolicy.shouldBlockMouse(ScreenTransitionController.inputLocked(), action)) {
             ci.cancel();
             return;
         }

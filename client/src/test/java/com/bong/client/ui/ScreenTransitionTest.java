@@ -256,7 +256,8 @@ class ScreenTransitionTest {
         );
 
         assertTrue(active.inputLocked());
-        assertTrue(TransitionInputPolicy.shouldBlockMouse(active.inputLocked()));
+        assertTrue(TransitionInputPolicy.shouldBlockMouse(active.inputLocked(), GLFW.GLFW_PRESS));
+        assertFalse(TransitionInputPolicy.shouldBlockMouse(active.inputLocked(), GLFW.GLFW_RELEASE));
         assertEquals(
             TransitionInputPolicy.KeyDecision.CANCEL_AND_CLOSE,
             TransitionInputPolicy.keyDecision(active.inputLocked(), GLFW.GLFW_KEY_ESCAPE, GLFW.GLFW_PRESS)

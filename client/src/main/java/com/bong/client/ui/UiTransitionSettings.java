@@ -27,15 +27,14 @@ public final class UiTransitionSettings {
 
     public static FpsDecision observeFrameRate(double fps) {
         if (!Double.isFinite(fps) || fps <= 0.0) {
-            return new FpsDecision(false, lowSpecFallback);
+            return new FpsDecision(false, false);
         }
         if (fps < 30.0) {
-            lowSpecFallback = true;
             boolean shouldToast = !lowFpsToastShown;
             lowFpsToastShown = true;
             return new FpsDecision(shouldToast, true);
         }
-        return new FpsDecision(false, lowSpecFallback);
+        return new FpsDecision(false, false);
     }
 
     public static void setEnabledForTests(boolean nextEnabled) {
@@ -52,6 +51,6 @@ public final class UiTransitionSettings {
         lowFpsToastShown = false;
     }
 
-    public record FpsDecision(boolean showToast, boolean lowSpecFallback) {
+    public record FpsDecision(boolean showToast, boolean fallbackSuggested) {
     }
 }
