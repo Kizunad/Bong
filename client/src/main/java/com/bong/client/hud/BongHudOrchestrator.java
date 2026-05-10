@@ -136,6 +136,11 @@ public final class BongHudOrchestrator {
             if (seasonTint != 0) {
                 commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
             }
+            commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
+                PlayerStateStore.snapshot().localNegPressure(),
+                screenWidth,
+                screenHeight
+            ));
         }
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {

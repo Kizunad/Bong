@@ -79,7 +79,7 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
         return InventoryItem.createFullWithVisualMeta(
             instanceId, itemId, displayName, gridWidth, gridHeight,
             weight, rarity, description, stackCount, spiritQuality, durability,
-            charges, "", "", 0, null, "", java.util.List.of(), null, java.util.List.of()
+            charges, "", "", 0, null, "", List.of(), null, List.of()
         );
     }
 

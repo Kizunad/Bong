@@ -1,6 +1,7 @@
 package com.bong.client.inventory.render;
 
 import com.bong.client.inventory.component.GridSlotComponent;
+import com.bong.client.inventory.AncientRelicGlowRenderer;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.BongSpriteParticle;
@@ -96,11 +97,24 @@ public final class DroppedItemWorldRenderer {
             matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - cameraYaw));
 
             Identifier texture = textureFor(entry.item().itemId());
-            VertexConsumer consumer = consumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
             Matrix4f pos = matrices.peek().getPositionMatrix();
             Matrix3f norm = matrices.peek().getNormalMatrix();
 
+            if (AncientRelicGlowRenderer.shouldGlow(entry.item())) {
+                VertexConsumer glow = consumers.getBuffer(RenderLayer.getEntityTranslucent(texture));
+                int color = AncientRelicGlowRenderer.pulseColor((long) (phaseTicks * 50.0));
+                int alpha = (color >>> 24) & 0xFF;
+                int red = (color >>> 16) & 0xFF;
+                int green = (color >>> 8) & 0xFF;
+                int blue = color & 0xFF;
+                emitVertex(glow, pos, norm, -0.31f, -0.31f, 0.0f, 1.0f, light, red, green, blue, alpha);
+                emitVertex(glow, pos, norm,  0.31f, -0.31f, 1.0f, 1.0f, light, red, green, blue, alpha);
+                emitVertex(glow, pos, norm,  0.31f,  0.31f, 1.0f, 0.0f, light, red, green, blue, alpha);
+                emitVertex(glow, pos, norm, -0.31f,  0.31f, 0.0f, 0.0f, light, red, green, blue, alpha);
+            }
+
             // Quad（CCW，正面法线 +Z）：bottom-left → bottom-right → top-right → top-left
+            VertexConsumer consumer = consumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
             emitVertex(consumer, pos, norm, -QUAD_HALF, -QUAD_HALF, 0.0f, 1.0f, light);
             emitVertex(consumer, pos, norm,  QUAD_HALF, -QUAD_HALF, 1.0f, 1.0f, light);
             emitVertex(consumer, pos, norm,  QUAD_HALF,  QUAD_HALF, 1.0f, 0.0f, light);
@@ -115,8 +129,16 @@ public final class DroppedItemWorldRenderer {
         VertexConsumer consumer, Matrix4f pos, Matrix3f norm,
         float x, float y, float u, float v, int light
     ) {
+        emitVertex(consumer, pos, norm, x, y, u, v, light, 255, 255, 255, 255);
+    }
+
+    private static void emitVertex(
+        VertexConsumer consumer, Matrix4f pos, Matrix3f norm,
+        float x, float y, float u, float v, int light,
+        int red, int green, int blue, int alpha
+    ) {
         consumer.vertex(pos, x, y, 0.0f)
-            .color(255, 255, 255, 255)
+            .color(red, green, blue, alpha)
             .texture(u, v)
             .overlay(OverlayTexture.DEFAULT_UV)
             .light(light)

@@ -97,13 +97,27 @@ export const worldSnapshotBlock: ContextBlock = {
   render({ state }) {
     const zones = state.zones
       .map(
-        (z: ZoneSnapshot) =>
-          `- ${z.name}: 灵气 ${z.spirit_qi.toFixed(2)}, 危险 ${z.danger_level}/5, 玩家 ${z.player_count}人`,
+        (z: ZoneSnapshot) => {
+          const status = zoneStatusLabel(z);
+          const events = z.active_events.length > 0 ? `, 事件 ${z.active_events.join("/")}` : "";
+          return `- ${z.name}: 灵气 ${z.spirit_qi.toFixed(2)}, 危险 ${z.danger_level}/5, 玩家 ${z.player_count}人${status}${events}`;
+        },
       )
       .join("\n");
     return `## 世界快照\nTick: ${state.tick}, 在线: ${state.players.length}人\n\n${zones}`;
   },
 };
+
+function zoneStatusLabel(zone: ZoneSnapshot): string {
+  switch (zone.status) {
+    case "race_out":
+      return ", 状态 race-out（坍缩渊塌缩/TsyCollapseStarted）";
+    case "collapsed":
+      return ", 状态 collapsed";
+    default:
+      return "";
+  }
+}
 
 export const playerProfilesBlock: ContextBlock = {
   name: "player_profiles",

@@ -90,6 +90,37 @@ public class InventoryItemTest {
     }
 
     @Test
+    void ancientRelicGlowRendersChargesInStatusLine() {
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
+            77L,
+            "ancient_relic_eye",
+            "古眼",
+            1,
+            1,
+            0.8,
+            "ancient",
+            "",
+            1,
+            1.0,
+            0.9,
+            3,
+            "",
+            "",
+            0,
+            null,
+            "",
+            java.util.List.of(),
+            null,
+            java.util.List.of()
+        );
+
+        assertTrue(item.isAncientRelic());
+        assertEquals(0xFF4444, item.rarityColor());
+        assertEquals("耐久 90%  ⚡ ×3 上古遗物·一次性", ItemTooltipPanel.formatStatusLine(item));
+        assertTrue(AncientRelicGlowRenderer.shouldGlow(item));
+    }
+
+    @Test
     void ancientRelicChargesClampAndMarkRelic() {
         InventoryItem item = InventoryItem.createFullWithVisualMeta(
             45L,

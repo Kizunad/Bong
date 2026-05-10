@@ -31,12 +31,20 @@ use crate::inventory::{
     bump_revision, consume_item_instance_once, ItemInstance, ItemRegistry, PlacedItemState,
     PlayerInventory, MAIN_PACK_CONTAINER_ID,
 };
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::loot_pool::{roll_loot_pool, LootPoolRegistry};
 use crate::world::tsy_container::{
     item_as_container_key, KeyKind, LootContainer, SearchProgress, SEARCH_INTERACT_RANGE_M,
     SEARCH_MOVE_INTERRUPT_THRESHOLD_M,
 };
 use crate::world::tsy_container_spawn::relic_source_for_family;
+
+const TSY_SEARCH_DUST_VFX: &str = "bong:tsy_search_dust";
+const TSY_SEARCH_LOOT_POP_VFX: &str = "bong:tsy_search_loot_pop";
+const TSY_SEARCH_SCRAPE_AUDIO: &str = "tsy_search_scrape";
+const TSY_SEARCH_AUDIO_RADIUS: f64 = 24.0;
 
 /// plan §2.1 — 玩家请求开始搜刮。
 #[derive(Event, Debug, Clone)]
@@ -138,7 +146,9 @@ pub fn register(app: &mut valence::prelude::App) {
         .add_event::<SearchAborted>()
         .add_event::<RelicExtracted>()
         .add_event::<TsyZoneInitialized>()
-        .add_event::<CancelSearchRequest>();
+        .add_event::<CancelSearchRequest>()
+        .add_event::<VfxEventRequest>()
+        .add_event::<PlaySoundRecipeRequest>();
     app.add_systems(
         Update,
         (
@@ -166,6 +176,8 @@ pub fn start_search_container(
     >,
     clock: Res<CombatClock>,
     mut commands: Commands,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for req in requests.read() {
         let Ok((p_pos, p_inv, p_combat, p_progress)) = players.get(req.player) else {
@@ -248,6 +260,20 @@ pub fn start_search_container(
             },
             IsSearching,
         ));
+        vfx_events.send(spawn_particle_vfx(
+            TSY_SEARCH_DUST_VFX,
+            c_pos.0,
+            Some("#9A8974"),
+            Some(0.5),
+            Some(8),
+            Some(34),
+            None,
+        ));
+        audio_events.send(world_audio_request(
+            TSY_SEARCH_SCRAPE_AUDIO,
+            c_pos.0,
+            Some("tsy_search".to_string()),
+        ));
         results.send(StartSearchResult::Started {
             player: req.player,
             container: req.container,
@@ -271,7 +297,7 @@ pub fn tick_search_progress(
     mut commands: Commands,
     mut completed: EventWriter<SearchCompleted>,
     mut aborted: EventWriter<SearchAborted>,
-    mut containers: Query<&mut LootContainer>,
+    mut containers: Query<(&mut LootContainer, &Position)>,
     clock: Res<CombatClock>,
     item_registry: Res<ItemRegistry>,
     loot_pools: Res<LootPoolRegistry>,
@@ -279,9 +305,11 @@ pub fn tick_search_progress(
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
     mut relic_extracted: EventWriter<RelicExtracted>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     let mut to_clear: Vec<(Entity, Entity, Option<SearchAbortReason>)> = Vec::new();
-    let mut completions: Vec<(Entity, Entity, Option<u64>)> = Vec::new();
+    let mut completions: Vec<(Entity, Entity, Option<u64>, valence::prelude::DVec3)> = Vec::new();
 
     for (player_ent, pos, combat, wounds, mut progress) in players.iter_mut() {
         let dist = pos.0.distance(valence::math::DVec3::new(
@@ -320,6 +348,7 @@ pub fn tick_search_progress(
                 player_ent,
                 progress.container,
                 progress.key_item_instance_id,
+                pos.0,
             ));
         }
     }
@@ -329,7 +358,7 @@ pub fn tick_search_progress(
             .entity(player_ent)
             .remove::<SearchProgress>()
             .remove::<IsSearching>();
-        if let Ok(mut c) = containers.get_mut(container_ent) {
+        if let Ok((mut c, _)) = containers.get_mut(container_ent) {
             if c.searched_by == Some(player_ent) {
                 c.searched_by = None;
             }
@@ -343,9 +372,9 @@ pub fn tick_search_progress(
         }
     }
 
-    for (player_ent, container_ent, key_id) in completions {
+    for (player_ent, container_ent, key_id, player_pos) in completions {
         // 必须有容器
-        let Ok(mut container) = containers.get_mut(container_ent) else {
+        let Ok((mut container, container_pos)) = containers.get_mut(container_ent) else {
             commands
                 .entity(player_ent)
                 .remove::<SearchProgress>()
@@ -399,6 +428,20 @@ pub fn tick_search_progress(
             family_id: family_id.clone(),
             loot,
         });
+        vfx_events.send(spawn_particle_vfx(
+            TSY_SEARCH_LOOT_POP_VFX,
+            container_pos.0,
+            Some("#FFD060"),
+            Some(0.75),
+            Some(8),
+            Some(32),
+            Some([player_pos.x, player_pos.y, player_pos.z]),
+        ));
+        audio_events.send(world_audio_request(
+            TSY_SEARCH_SCRAPE_AUDIO,
+            container_pos.0,
+            None,
+        ));
 
         if is_skeleton {
             relic_extracted.send(RelicExtracted {
@@ -486,6 +529,52 @@ fn place_item_in_main_pack(inv: &mut PlayerInventory, instance: ItemInstance) {
         instance,
     });
     bump_revision(inv);
+}
+
+fn spawn_particle_vfx(
+    event_id: &str,
+    origin: valence::prelude::DVec3,
+    color: Option<&str>,
+    strength: Option<f32>,
+    count: Option<u16>,
+    duration_ticks: Option<u16>,
+    direction: Option<[f64; 3]>,
+) -> VfxEventRequest {
+    VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: event_id.to_string(),
+            origin: [origin.x, origin.y, origin.z],
+            direction,
+            color: color.map(str::to_string),
+            strength,
+            count,
+            duration_ticks,
+        },
+    )
+}
+
+fn world_audio_request(
+    recipe_id: &str,
+    origin: valence::prelude::DVec3,
+    flag: Option<String>,
+) -> PlaySoundRecipeRequest {
+    PlaySoundRecipeRequest {
+        recipe_id: recipe_id.to_string(),
+        instance_id: 0,
+        pos: Some([
+            origin.x.floor() as i32,
+            origin.y.floor() as i32,
+            origin.z.floor() as i32,
+        ]),
+        flag,
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: TSY_SEARCH_AUDIO_RADIUS,
+        },
+    }
 }
 
 #[cfg(test)]

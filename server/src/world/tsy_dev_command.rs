@@ -94,12 +94,22 @@ struct BlueprintZone {
     patrol_anchors: Vec<[f64; 3]>,
     #[serde(default)]
     blocked_tiles: Vec<[i32; 2]>,
+    #[serde(default)]
+    pois: Vec<BlueprintPoi>,
 }
 
 #[derive(Deserialize)]
 struct BlueprintAabb {
     min: [f64; 3],
     max: [f64; 3],
+}
+
+#[derive(Deserialize)]
+struct BlueprintPoi {
+    kind: String,
+    pos_xyz: [f64; 3],
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 fn load_blueprint() -> Result<BlueprintRoot, TsySpawnOutcome> {
@@ -508,6 +518,67 @@ mod tests {
         let directions: Vec<PortalDirection> = portals.iter().map(|p| p.direction).collect();
         assert!(directions.contains(&PortalDirection::Entry));
         assert!(directions.contains(&PortalDirection::Exit));
+    }
+
+    #[test]
+    fn gaoshou_zone_loads_with_experience_plan_poi_contract() {
+        let blueprint = load_blueprint().expect("zones.tsy.json loads");
+        let zones = pick_family(&blueprint, "tsy_gaoshou_01").expect("gaoshou family exists");
+
+        assert_eq!(zones.len(), 3);
+        assert!(zones
+            .iter()
+            .all(|zone| zone.dimension == DimensionKind::Tsy));
+        assert!(zones
+            .iter()
+            .all(|zone| zone
+                .patrol_anchors
+                .iter()
+                .all(|anchor| anchor[0] >= zone.aabb.min[0]
+                    && anchor[0] <= zone.aabb.max[0]
+                    && anchor[1] >= zone.aabb.min[1]
+                    && anchor[1] <= zone.aabb.max[1]
+                    && anchor[2] >= zone.aabb.min[2]
+                    && anchor[2] <= zone.aabb.max[2])));
+        assert!(zones
+            .iter()
+            .any(|zone| zone.name == "tsy_gaoshou_01_shallow"
+                && zone.active_events.iter().any(|event| event == "tsy_entry")));
+
+        let poi_kinds: Vec<_> = zones
+            .iter()
+            .flat_map(|zone| zone.pois.iter())
+            .map(|poi| poi.kind.as_str())
+            .collect();
+        assert_eq!(
+            poi_kinds
+                .iter()
+                .filter(|kind| **kind == "loot_container")
+                .count(),
+            2
+        );
+        assert_eq!(
+            poi_kinds
+                .iter()
+                .filter(|kind| **kind == "npc_anchor")
+                .count(),
+            1
+        );
+        assert_eq!(
+            poi_kinds
+                .iter()
+                .filter(|kind| **kind == "relic_core_slot")
+                .count(),
+            1
+        );
+
+        let all_pois: Vec<_> = zones.iter().flat_map(|zone| zone.pois.iter()).collect();
+        assert!(all_pois.iter().all(|poi| poi.pos_xyz[0].is_finite()
+            && poi.pos_xyz[1].is_finite()
+            && poi.pos_xyz[2].is_finite()));
+        assert!(all_pois
+            .iter()
+            .any(|poi| poi.tags.iter().any(|tag| tag == "archetype:daoxiang")));
     }
 
     #[test]
