@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "action"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "movement_action",
+      "type": "string"
+    },
+    "action": {
+      "anyOf": [
+        {
+          "const": "dash",
+          "type": "string"
+        },
+        {
+          "const": "slide",
+          "type": "string"
+        },
+        {
+          "const": "double_jump",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

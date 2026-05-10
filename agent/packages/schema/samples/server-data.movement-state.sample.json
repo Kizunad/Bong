@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "movement_state",
+  "current_speed_multiplier": 0.75,
+  "stamina_cost_active": true,
+  "movement_action": "dashing",
+  "zone_kind": "normal",
+  "dash_cooldown_remaining_ticks": 40,
+  "slide_cooldown_remaining_ticks": 0,
+  "double_jump_charges_remaining": 1,
+  "double_jump_charges_max": 1,
+  "hitbox_height_blocks": 1.8,
+  "stamina_current": 85,
+  "stamina_max": 100,
+  "low_stamina": false,
+  "last_action_tick": 120
+}

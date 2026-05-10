@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "normal",
+      "type": "string"
+    },
+    {
+      "const": "dead",
+      "type": "string"
+    },
+    {
+      "const": "negative",
+      "type": "string"
+    },
+    {
+      "const": "residue_ash",
+      "type": "string"
+    }
+  ]
+}
