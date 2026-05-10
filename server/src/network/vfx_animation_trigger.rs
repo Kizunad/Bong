@@ -19,13 +19,16 @@ use crate::lingtian::events::{
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
-const ANIM_SWORD_SWING_HORIZ: &str = "bong:sword_swing_horiz";
+const ANIM_SWORD_SLASH_DOWN: &str = "bong:sword_slash_down";
 const ANIM_SWORD_STAB: &str = "bong:sword_stab";
 const ANIM_FIST_PUNCH_RIGHT: &str = "bong:fist_punch_right";
-const ANIM_PALM_THRUST: &str = "bong:palm_thrust";
-const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
-const ANIM_HIT_RECOIL: &str = "bong:hit_recoil";
-const ANIM_BREAKTHROUGH_BURST: &str = "bong:breakthrough_burst";
+const ANIM_PALM_STRIKE: &str = "bong:palm_strike";
+const ANIM_PARRY_BLOCK: &str = "bong:parry_block";
+const ANIM_HURT_STAGGER: &str = "bong:hurt_stagger";
+const ANIM_BREAKTHROUGH_YINQI: &str = "bong:breakthrough_yinqi";
+const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
+const ANIM_BREAKTHROUGH_GUYUAN: &str = "bong:breakthrough_guyuan";
+const ANIM_BREAKTHROUGH_TONGLING: &str = "bong:breakthrough_tongling";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
 const BOTANY_HARVEST_VFX: &str = "bong:botany_harvest";
 const LINGTIAN_TILL_VFX: &str = "bong:lingtian_till";
@@ -76,7 +79,7 @@ pub fn emit_defense_animation_triggers(
     for defense in defenses.read() {
         emit_play_for_entity(
             defense.defender,
-            ANIM_GUARD_RAISE,
+            ANIM_PARRY_BLOCK,
             COMBAT_PRIORITY,
             Some(1),
             &players,
@@ -97,7 +100,7 @@ pub fn emit_hit_recoil_animation_triggers(
         }
         emit_play_for_entity(
             event.target,
-            ANIM_HIT_RECOIL,
+            ANIM_HURT_STAGGER,
             HIT_RECOIL_PRIORITY,
             Some(1),
             &players,
@@ -118,7 +121,7 @@ pub fn emit_breakthrough_animation_triggers(
         }
         emit_play_for_entity(
             outcome.entity,
-            ANIM_BREAKTHROUGH_BURST,
+            breakthrough_anim_for_outcome(outcome),
             STORY_PRIORITY,
             Some(3),
             &players,
@@ -148,7 +151,7 @@ pub fn emit_tribulation_animation_triggers(
     for failure in failures.read() {
         emit_play_for_entity(
             failure.entity,
-            ANIM_HIT_RECOIL,
+            ANIM_HURT_STAGGER,
             HIT_RECOIL_PRIORITY,
             Some(1),
             &players,
@@ -321,10 +324,31 @@ fn emit_spawn_particle(
 
 fn attack_anim_for_wound_kind(kind: WoundKind) -> &'static str {
     match kind {
-        WoundKind::Cut => ANIM_SWORD_SWING_HORIZ,
+        WoundKind::Cut => ANIM_SWORD_SLASH_DOWN,
         WoundKind::Pierce => ANIM_SWORD_STAB,
-        WoundKind::Burn => ANIM_PALM_THRUST,
+        WoundKind::Burn => ANIM_PALM_STRIKE,
         WoundKind::Blunt | WoundKind::Concussion => ANIM_FIST_PUNCH_RIGHT,
+    }
+}
+
+fn breakthrough_anim_for_outcome(outcome: &BreakthroughOutcome) -> &'static str {
+    let Ok(success) = &outcome.result else {
+        return ANIM_BREAKTHROUGH_YINQI;
+    };
+    match (outcome.from, success.to) {
+        (
+            crate::cultivation::components::Realm::Awaken,
+            crate::cultivation::components::Realm::Induce,
+        ) => ANIM_BREAKTHROUGH_YINQI,
+        (
+            crate::cultivation::components::Realm::Induce,
+            crate::cultivation::components::Realm::Condense,
+        ) => ANIM_BREAKTHROUGH_NINGMAI,
+        (
+            crate::cultivation::components::Realm::Condense,
+            crate::cultivation::components::Realm::Solidify,
+        ) => ANIM_BREAKTHROUGH_GUYUAN,
+        _ => ANIM_BREAKTHROUGH_TONGLING,
     }
 }
 
@@ -398,7 +422,7 @@ mod tests {
 
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 1);
-        assert_play_anim(&emitted[0], ANIM_SWORD_SWING_HORIZ, COMBAT_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_SWORD_SLASH_DOWN, COMBAT_PRIORITY);
     }
 
     #[test]
@@ -454,7 +478,7 @@ mod tests {
 
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 1);
-        assert_play_anim(&emitted[0], ANIM_HIT_RECOIL, HIT_RECOIL_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
     }
 
     #[test]
@@ -479,7 +503,7 @@ mod tests {
 
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 1);
-        assert_play_anim(&emitted[0], ANIM_BREAKTHROUGH_BURST, STORY_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_BREAKTHROUGH_YINQI, STORY_PRIORITY);
     }
 
     #[test]
