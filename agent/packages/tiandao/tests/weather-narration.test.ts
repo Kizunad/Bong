@@ -105,6 +105,7 @@ describe("zone weather narration", () => {
       logger: { warn: vi.fn() },
     });
 
+    expect(publishNarrations).toHaveBeenCalledTimes(1);
     expect(publishNarrations).toHaveBeenCalledWith({
       narrations: [expect.objectContaining({ target: "zone:blood_valley_east_scorch" })],
       metadata: {
