@@ -23,17 +23,23 @@ public final class CameraFovOffset {
     }
 
     public static double compute(VisualEffectState state, long nowMillis) {
+        return compute(state, nowMillis, 0.0);
+    }
+
+    public static double compute(VisualEffectState state, long nowMillis, double localNegPressure) {
+        double tsyPressureOffset = TsyPressureOverlay.fovOffsetDegrees(localNegPressure);
         if (state == null || state.isEmpty()) {
-            return 0.0;
+            return tsyPressureOffset;
         }
         double scaled = state.scaledIntensityAt(nowMillis);
         if (scaled <= 0.0) {
-            return 0.0;
+            return tsyPressureOffset;
         }
-        return switch (state.effectType()) {
+        double visualOffset = switch (state.effectType()) {
             case FOV_ZOOM_IN -> -MAX_ZOOM_DEGREES * scaled;
             case FOV_STRETCH -> MAX_STRETCH_DEGREES * scaled;
             default -> 0.0;
         };
+        return visualOffset + tsyPressureOffset;
     }
 }

@@ -6,6 +6,7 @@ use valence::prelude::{
     Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource, With, Without,
 };
 
+use crate::cultivation::components::Realm;
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::faction::{
     FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
@@ -489,6 +490,7 @@ fn execute_spawn_npc(
                     zone.name.as_str(),
                     spawn_position,
                     patrol_target,
+                    Realm::Awaken,
                     initial_age_ticks,
                 );
                 npc_spawn_notices.send(spawn_notice(
@@ -511,6 +513,7 @@ fn execute_spawn_npc(
                     zone.name.as_str(),
                     spawn_position,
                     patrol_target,
+                    Realm::Awaken,
                     initial_age_ticks,
                 );
                 npc_spawn_notices.send(spawn_notice(
@@ -561,6 +564,7 @@ fn execute_spawn_npc(
                     patrol_target,
                     faction_id,
                     FactionRank::Disciple,
+                    Realm::Awaken,
                     command
                         .params
                         .get("master_id")

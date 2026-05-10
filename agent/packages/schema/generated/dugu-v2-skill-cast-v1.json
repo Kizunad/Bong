@@ -1,0 +1,114 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "caster",
+    "skill",
+    "tick",
+    "hp_loss",
+    "qi_loss",
+    "qi_max_loss",
+    "permanent_decay_rate_per_min",
+    "returned_zone_qi",
+    "reveal_probability",
+    "animation_id",
+    "particle_id",
+    "sound_recipe_id",
+    "icon_texture"
+  ],
+  "properties": {
+    "caster": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "skill": {
+      "anyOf": [
+        {
+          "const": "eclipse",
+          "type": "string"
+        },
+        {
+          "const": "self_cure",
+          "type": "string"
+        },
+        {
+          "const": "penetrate",
+          "type": "string"
+        },
+        {
+          "const": "shroud",
+          "type": "string"
+        },
+        {
+          "const": "reverse",
+          "type": "string"
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "taint_tier": {
+      "anyOf": [
+        {
+          "const": "immediate",
+          "type": "string"
+        },
+        {
+          "const": "temporary",
+          "type": "string"
+        },
+        {
+          "const": "permanent",
+          "type": "string"
+        }
+      ]
+    },
+    "hp_loss": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "qi_loss": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "qi_max_loss": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "permanent_decay_rate_per_min": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "returned_zone_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "reveal_probability": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "animation_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "particle_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "sound_recipe_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "icon_texture": {
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

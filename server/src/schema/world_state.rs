@@ -55,6 +55,7 @@ impl From<crate::world::season::SeasonState> for SeasonStateV1 {
 pub enum ZoneStatusV1 {
     #[default]
     Normal,
+    RaceOut,
     Collapsed,
 }
 
@@ -334,5 +335,15 @@ mod tests {
         let state: WorldStateV1 = serde_json::from_value(value).expect("deserialize world state");
 
         assert_eq!(state.zones[0].status, ZoneStatusV1::Collapsed);
+    }
+
+    #[test]
+    fn deserialize_world_state_accepts_race_out_zone_status() {
+        let mut value = sample_world_state_value();
+        value["zones"][0]["status"] = json!("race_out");
+
+        let state: WorldStateV1 = serde_json::from_value(value).expect("deserialize world state");
+
+        assert_eq!(state.zones[0].status, ZoneStatusV1::RaceOut);
     }
 }

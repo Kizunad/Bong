@@ -293,6 +293,7 @@ fn spawn_tutorial_poi_markers(
                     poi.zone.as_str(),
                     pos,
                     patrol_target,
+                    Realm::Awaken,
                     0.0,
                 );
                 notices.send(spawn_notice(

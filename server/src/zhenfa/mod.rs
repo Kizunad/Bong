@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, Entity, Event, EventReader, EventWriter,
+    bevy_ecs, App, Client, Commands, Component, Entity, Event, EventReader, EventWriter, Events,
     IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, Username, With, Without,
 };
 
@@ -17,6 +17,7 @@ use crate::cultivation::insight_apply::InsightModifiers;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::{CarrierGrade, MediumKind, StyleAttack, StyleDefense};
@@ -560,6 +561,7 @@ fn handle_zhenfa_trigger_requests(
     mut death_events: EventWriter<DeathEvent>,
     mut status_effects: EventWriter<ApplyStatusEffectIntent>,
     mut sense_pulses: EventWriter<ZhenfaSensePulse>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for req in requests.read() {
         let Ok((position, cultivation, qi_color, inventory)) = players.get(req.player) else {
@@ -622,6 +624,7 @@ fn handle_zhenfa_trigger_requests(
             &mut death_events,
             &mut status_effects,
             &mut sense_pulses,
+            vfx_events.as_deref_mut(),
         );
     }
 }
@@ -673,6 +676,7 @@ fn tick_zhenfa_registry(
     mut status_effects: EventWriter<ApplyStatusEffectIntent>,
     mut sense_pulses: EventWriter<ZhenfaSensePulse>,
     mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     let now = clock.tick;
     let expired = registry.expire_at_or_before(now);
@@ -681,6 +685,15 @@ fn tick_zhenfa_registry(
     }
     for instance in &expired {
         commands.entity(instance.anchor_entity).despawn();
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::ZHENFA_DEPLETE,
+            instance.pos,
+            "#888888",
+            0.45,
+            8,
+            30,
+        );
     }
 
     let mut passive_triggers = Vec::new();
@@ -753,6 +766,15 @@ fn tick_zhenfa_registry(
             intensity: 1.0,
             generation: now,
         });
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::ZHENFA_WARD,
+            pos,
+            "#4488FF",
+            0.7,
+            20,
+            60,
+        );
     }
 
     let mut snapshots = registry.trigger_now(passive_triggers, now);
@@ -766,6 +788,7 @@ fn tick_zhenfa_registry(
         &mut death_events,
         &mut status_effects,
         &mut sense_pulses,
+        vfx_events.as_deref_mut(),
     );
 }
 
@@ -871,6 +894,7 @@ fn emit_zhenfa_sense_pulses(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_trigger_snapshots(
     snapshots: Vec<TriggerSnapshot>,
     targets: &mut Query<ZhenfaDamageTarget<'_>>,
@@ -879,6 +903,7 @@ fn apply_trigger_snapshots(
     death_events: &mut EventWriter<DeathEvent>,
     status_effects: &mut EventWriter<ApplyStatusEffectIntent>,
     sense_pulses: &mut EventWriter<ZhenfaSensePulse>,
+    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     for snapshot in snapshots {
         let tick = snapshot.triggered_at_tick;
@@ -889,6 +914,15 @@ fn apply_trigger_snapshots(
             intensity: 1.0,
             generation: tick,
         });
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::ZHENFA_TRAP,
+            snapshot.pos,
+            "#FF3344",
+            snapshot.qi_invest_ratio.clamp(0.3, 1.0) as f32,
+            16,
+            24,
+        );
 
         let damage_profile = damage_profile(snapshot.qi_invest_ratio);
         let mut hit_any = false;
@@ -1005,6 +1039,32 @@ fn despawn_triggered_anchors(commands: &mut Commands, snapshots: &[TriggerSnapsh
     for snapshot in snapshots {
         commands.entity(snapshot.anchor_entity).despawn();
     }
+}
+
+fn emit_zhenfa_vfx(
+    events: Option<&mut Events<VfxEventRequest>>,
+    event_id: &'static str,
+    pos: [i32; 3],
+    color: &'static str,
+    strength: f32,
+    count: u32,
+    duration_ticks: u32,
+) {
+    let Some(events) = events else {
+        return;
+    };
+    gameplay_vfx::send_spawn(
+        events,
+        gameplay_vfx::spawn_request(
+            event_id,
+            gameplay_vfx::block_center(pos),
+            Some([0.0, 1.0, 0.0]),
+            color,
+            strength,
+            count,
+            duration_ticks,
+        ),
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1275,6 +1335,57 @@ mod tests {
                 zhenfa_flag_inventory(),
             ))
             .id()
+    }
+
+    #[test]
+    fn activate_emits_vfx() {
+        let mut app = app_with_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "owner", [0.0, 64.0, 0.0]);
+        let _target = spawn_player(&mut app, "intruder", [1.5, 64.0, 0.5]);
+        let anchor_entity = app.world_mut().spawn_empty().id();
+        let id = app
+            .world_mut()
+            .resource_mut::<ZhenfaRegistry>()
+            .insert(ZhenfaInstance {
+                id: 0,
+                kind: ZhenfaKind::Trap,
+                owner,
+                owner_player_id: "player:owner".to_string(),
+                pos: [1, 64, 0],
+                carrier: ZhenfaCarrierKind::CommonStone,
+                qi_invest_ratio: 0.2,
+                qi_invest_amount: 20.0,
+                effect_radius: 1,
+                ward_radius: 1,
+                placed_at_tick: 1,
+                expires_at_tick: 100,
+                triggered_at: None,
+                trigger: None,
+                color_main: ColorKind::Intricate,
+                color_secondary: None,
+                anchor_entity,
+            })
+            .expect("insert trap");
+
+        app.world_mut().send_event(ZhenfaTriggerRequest {
+            player: owner,
+            instance_id: Some(id),
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("zhenfa trigger should emit vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::ZHENFA_TRAP);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     fn array_flag_item(instance_id: u64) -> ItemInstance {

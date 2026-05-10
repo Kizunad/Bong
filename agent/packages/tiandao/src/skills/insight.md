@@ -55,3 +55,8 @@
 - 宁缺毋滥：无明显契机时宁可返回少选项甚至空数组，也不要硬塞
 - Style/Perception 类（E/F 大类）慎用，它们会触发全场 narration，不可滥发
 - 记住：修炼是修士与自己的较量，顿悟是"点拨"而不是"赏赐"
+
+## 坍缩渊首次入场
+- 若 trigger_id 或 recent_biography 明确出现 `tsy_first_entry` / `TsyZoneActivated` / 坍缩渊首次入场，只可给 Perception / Composure / Qi 中的轻量选项。
+- flavor_text 应写"负压、骨屑、回声、裂缝反光"这类可感物象，提示玩家理解搜打撤风险；不要给战斗技能、财富或直接保命奖励。
+- 若 available_categories 不含 Perception/Composure/Qi，返回空 choices，避免把首次入场误判成突破奖励。

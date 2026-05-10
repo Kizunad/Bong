@@ -194,6 +194,10 @@
               "type": "string"
             },
             {
+              "const": "race_out",
+              "type": "string"
+            },
+            {
               "const": "collapsed",
               "type": "string"
             }

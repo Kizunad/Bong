@@ -136,6 +136,11 @@ public final class BongHudOrchestrator {
             if (seasonTint != 0) {
                 commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
             }
+            commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
+                PlayerStateStore.snapshot().localNegPressure(),
+                screenWidth,
+                screenHeight
+            ));
         }
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {
@@ -198,6 +203,12 @@ public final class BongHudOrchestrator {
             ));
             commands.addAll(WoliuV2HudPlanner.buildCommands(
                 VortexStateStore.snapshot(),
+                screenWidth,
+                screenHeight,
+                nowMillis
+            ));
+            commands.addAll(DuguV2HudPlanner.buildCommands(
+                DuguV2HudStateStore.snapshot(),
                 screenWidth,
                 screenHeight,
                 nowMillis

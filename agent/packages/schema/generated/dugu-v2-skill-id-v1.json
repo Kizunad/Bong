@@ -1,0 +1,24 @@
+{
+  "anyOf": [
+    {
+      "const": "eclipse",
+      "type": "string"
+    },
+    {
+      "const": "self_cure",
+      "type": "string"
+    },
+    {
+      "const": "penetrate",
+      "type": "string"
+    },
+    {
+      "const": "shroud",
+      "type": "string"
+    },
+    {
+      "const": "reverse",
+      "type": "string"
+    }
+  ]
+}

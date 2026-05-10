@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "dugu_pointing_curse",
+  "description": "dugu-v2 reverse: one still finger points outward while the body recoils from the backlash.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 14,
+    "stopTick": 18,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0, "z": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0, "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "head": { "pitch": 0.0, "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.30, "yaw": -0.12, "roll": -0.08, "bend": 0.30, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.25, "yaw": 0.18, "roll": 0.12, "bend": 0.35, "axis": 3.1415927 } },
+      { "tick": 5, "easing": "OUTQUAD", "body": { "z": -0.045 } },
+      { "tick": 5, "easing": "OUTQUAD", "torso": { "pitch": -0.10, "yaw": -0.16 } },
+      { "tick": 5, "easing": "OUTQUAD", "head": { "pitch": 0.05, "yaw": -0.10 } },
+      { "tick": 5, "easing": "OUTQUAD", "rightArm": { "pitch": -1.42, "yaw": -0.62, "roll": -0.32, "bend": 0.08, "axis": 3.1415927 } },
+      { "tick": 5, "easing": "OUTQUAD", "leftArm": { "pitch": -0.60, "yaw": 0.28, "roll": 0.24, "bend": 0.80, "axis": 3.1415927 } },
+      { "tick": 14, "easing": "INOUTSINE", "body": { "z": 0.0 } },
+      { "tick": 14, "easing": "INOUTSINE", "torso": { "pitch": 0.0, "yaw": 0.0 } },
+      { "tick": 14, "easing": "INOUTSINE", "head": { "pitch": 0.0, "yaw": 0.0 } },
+      { "tick": 14, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } },
+      { "tick": 14, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } }
+    ]
+  }
+}

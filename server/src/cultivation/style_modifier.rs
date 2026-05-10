@@ -38,6 +38,7 @@ mod tests {
             secondary,
             is_chaotic: false,
             is_hunyuan: false,
+            ..Default::default()
         }
     }
 

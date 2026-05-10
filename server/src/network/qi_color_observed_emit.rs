@@ -192,6 +192,7 @@ mod tests {
                 secondary: Some(ColorKind::Heavy),
                 is_chaotic: true,
                 is_hunyuan: false,
+                ..Default::default()
             },
         );
 
@@ -230,6 +231,7 @@ mod tests {
                 secondary: Some(ColorKind::Solid),
                 is_chaotic: true,
                 is_hunyuan: false,
+                ..Default::default()
             },
         );
 

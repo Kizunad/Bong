@@ -96,6 +96,9 @@ pub const CH_WOLIU_V2_BACKFIRE: &str = "bong:woliu_v2/backfire";
 pub const CH_WOLIU_V2_TURBULENCE: &str = "bong:woliu_v2/turbulence";
 pub const CH_ZHENMAI_SKILL_EVENT: &str = "bong:zhenmai/skill_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
+pub const CH_DUGU_V2_CAST: &str = "bong:dugu_v2/cast";
+pub const CH_DUGU_V2_SELF_CURE: &str = "bong:dugu_v2/self_cure";
+pub const CH_DUGU_V2_REVERSE: &str = "bong:dugu_v2/reverse";
 pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
 pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
 pub const CH_ANQI_PROJECTILE_DESPAWNED: &str = "bong:combat/projectile_despawned";
@@ -223,6 +226,9 @@ mod tests {
         assert_eq!(CH_WOLIU_V2_TURBULENCE, "bong:woliu_v2/turbulence");
         assert_eq!(CH_ZHENMAI_SKILL_EVENT, "bong:zhenmai/skill_event");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
+        assert_eq!(CH_DUGU_V2_CAST, "bong:dugu_v2/cast");
+        assert_eq!(CH_DUGU_V2_SELF_CURE, "bong:dugu_v2/self_cure");
+        assert_eq!(CH_DUGU_V2_REVERSE, "bong:dugu_v2/reverse");
         assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
         assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");
         assert_eq!(

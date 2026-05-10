@@ -7,7 +7,7 @@
     "bounds_xz": { "min": [-2000, -2000], "max": [2000, 2000] },
     "notes": [
       "TSY dim blueprint. Coordinates are TSY-internal — no overworld XYZ relation.",
-      "Family spacing 500 blocks; lingxu_01 origin / zongmen_01 +0,+200 / daneng_01 +500,+500.",
+      "Family spacing 500 blocks; lingxu_01 origin / zongmen_01 +0,+200 / daneng_01 +500,+500 / gaoshou_01 +1000,+500.",
       "lingxu_01 三层是 P0 dev-command fixture（tsy_dev_command.rs tests 硬编码），保留不删。"
     ]
   },
@@ -288,6 +288,89 @@
         { "kind": "npc_anchor",      "pos_xyz": [545.0, -22.0, 545.0], "tags": ["archetype:fuya", "trigger:always", "leash_radius:6"] },
         { "kind": "npc_anchor",      "pos_xyz": [565.0, -22.0, 545.0], "tags": ["archetype:fuya", "trigger:on_relic_touched", "leash_radius:8"] },
         { "kind": "npc_anchor",      "pos_xyz": [555.0, -22.0, 535.0], "tags": ["archetype:zhinian", "trigger:on_enter", "leash_radius:10"] }
+      ]
+    },
+    {
+      "name": "tsy_gaoshou_01_shallow",
+      "dimension": "tsy",
+      "display_name": "近代高手死处·浅层（第一族）",
+      "aabb": { "min": [1000, 40, 500], "max": [1100, 120, 600] },
+      "center_xz": [1050, 550],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.35,
+      "danger_level": 4,
+      "active_events": ["tsy_entry"],
+      "patrol_anchors": [[1050.0, 80.0, 550.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_gaoshou_hermitage",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [62, 68], "peak": 74 },
+        "surface_palette": ["podzol", "coarse_dirt", "oak_planks", "hay_block"],
+        "biome_mix": ["mofa:tsy_hermitage"],
+        "landmarks": ["thatched_hermitage"],
+        "depth_tier": "shallow",
+        "origin": "gaoshou_sichu"
+      },
+      "pois": [
+        { "kind": "rift_portal",    "pos_xyz": [1050.0, 100.0, 550.0], "tags": ["direction:exit", "kind:main", "family_id:gaoshou_01", "orientation:horizontal"] },
+        { "kind": "loot_container", "pos_xyz": [1060.0,  80.0, 560.0], "tags": ["archetype:storage_pouch"] },
+        { "kind": "npc_anchor",     "pos_xyz": [1040.0,  80.0, 545.0], "tags": ["archetype:daoxiang", "trigger:on_enter", "leash_radius:8"] }
+      ]
+    },
+    {
+      "name": "tsy_gaoshou_01_mid",
+      "dimension": "tsy",
+      "display_name": "近代高手死处·中层（第一族）",
+      "aabb": { "min": [1000, 0, 500], "max": [1100, 40, 600] },
+      "center_xz": [1050, 550],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.65,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[1050.0, 20.0, 550.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_gaoshou_hermitage",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [4, 14], "peak": 28 },
+        "surface_palette": ["deepslate", "podzol", "gravel", "barrel"],
+        "biome_mix": ["mofa:tsy_hermitage"],
+        "landmarks": ["lone_grave_mound", "daily_artifact_cache"],
+        "depth_tier": "mid",
+        "origin": "gaoshou_sichu"
+      },
+      "pois": [
+        { "kind": "loot_container", "pos_xyz": [1045.0, 20.0, 565.0], "tags": ["archetype:skeleton"] }
+      ]
+    },
+    {
+      "name": "tsy_gaoshou_01_deep",
+      "dimension": "tsy",
+      "display_name": "近代高手死处·深层（第一族）",
+      "aabb": { "min": [1000, -40, 500], "max": [1100, 0, 600] },
+      "center_xz": [1050, 550],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.95,
+      "danger_level": 5,
+      "active_events": ["tsy_collapse_proximity"],
+      "patrol_anchors": [[1050.0, -20.0, 550.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_gaoshou_hermitage",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [-34, -24], "peak": -8 },
+        "surface_palette": ["deepslate", "tuff", "oak_planks", "soul_sand"],
+        "biome_mix": ["mofa:tsy_hermitage"],
+        "landmarks": ["daily_artifact_cache"],
+        "depth_tier": "deep",
+        "origin": "gaoshou_sichu"
+      },
+      "pois": [
+        { "kind": "relic_core_slot", "pos_xyz": [1050.0, -20.0, 550.0], "tags": ["slot_count:3"] }
       ]
     }
   ]

@@ -307,7 +307,7 @@ pub fn dehydrate_far_npcs_system(
             store.remove(&char_id);
         }
         store.insert(snapshot);
-        commands.entity(entity).despawn();
+        commands.entity(entity).insert(Despawned);
     }
 }
 
@@ -414,6 +414,7 @@ fn spawn_from_snapshot(
             home_zone,
             pos,
             patrol_target,
+            snapshot.cultivation.realm,
             snapshot.lifespan.age_ticks,
         ),
         NpcArchetype::Rogue => spawn_rogue_npc_at(
@@ -423,6 +424,7 @@ fn spawn_from_snapshot(
             home_zone,
             pos,
             patrol_target,
+            snapshot.cultivation.realm,
             snapshot.lifespan.age_ticks,
         ),
         NpcArchetype::Beast => spawn_beast_npc_at(
@@ -449,6 +451,7 @@ fn spawn_from_snapshot(
                 .as_ref()
                 .map(|membership| membership.rank)
                 .unwrap_or(FactionRank::Disciple),
+            snapshot.cultivation.realm,
             snapshot
                 .faction
                 .as_ref()
@@ -704,6 +707,52 @@ mod tests {
     }
 
     #[test]
+    fn dehydrate_marks_live_npc_despawned_for_valence_layer_cleanup() {
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+
+        let lifecycle = Lifecycle {
+            character_id: "npc_far".to_string(),
+            ..Default::default()
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(10.0, 64.0, 10.0)),
+                lifecycle,
+                NpcArchetype::Rogue,
+                NpcLifespan::new(0.0, 1_000.0),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<NpcDormantStore>()
+            .contains("npc_far"));
+        assert!(
+            app.world().get::<Despawned>(entity).is_some(),
+            "dehydrated NPC must be marked Despawned instead of raw despawned"
+        );
+    }
+
+    #[test]
     fn player_proximity_ignores_other_dimensions() {
         let players = vec![(DimensionKind::Tsy, DVec3::new(10.0, 64.0, 10.0))];
 
@@ -796,6 +845,17 @@ mod tests {
         app.update();
 
         assert!(app.world().resource::<NpcDormantStore>().is_empty());
+        let profiles = {
+            let world = app.world_mut();
+            let mut query = world.query::<&crate::skin::NpcVisualProfile>();
+            query.iter(world).copied().collect::<Vec<_>>()
+        };
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(
+            profiles[0].skin_tier,
+            crate::skin::npc_skin_selector::NpcSkinTier::RogueHigh,
+            "hydrating a Spirit rogue should keep the high-realm skin pool profile"
+        );
         let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
         let all = events.iter_current_update_events().collect::<Vec<_>>();
         assert_eq!(all.len(), 1);

@@ -5,6 +5,8 @@
 //! evolution live in later slices; this file only defines state shape and
 //! trivially pure helpers.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
@@ -319,6 +321,8 @@ pub struct QiColor {
     pub secondary: Option<ColorKind>,
     pub is_chaotic: bool,
     pub is_hunyuan: bool,
+    #[serde(default)]
+    pub permanent_lock_mask: HashSet<ColorKind>,
 }
 
 impl Default for QiColor {
@@ -328,7 +332,18 @@ impl Default for QiColor {
             secondary: None,
             is_chaotic: false,
             is_hunyuan: false,
+            permanent_lock_mask: HashSet::new(),
         }
+    }
+}
+
+impl QiColor {
+    pub fn lock_permanent(&mut self, color: ColorKind) {
+        self.permanent_lock_mask.insert(color);
+    }
+
+    pub fn is_permanently_locked(&self, color: ColorKind) -> bool {
+        self.permanent_lock_mask.contains(&color)
     }
 }
 
@@ -442,6 +457,14 @@ mod tests {
         assert_eq!(cultivation.qi_current, 180.0);
         assert_eq!(cultivation.qi_max, 210.0);
         assert_eq!(cultivation.qi_max_frozen, Some(30.0));
+    }
+
+    #[test]
+    fn qi_color_tracks_permanent_lock_mask() {
+        let mut color = QiColor::default();
+        color.lock_permanent(ColorKind::Insidious);
+        assert!(color.is_permanently_locked(ColorKind::Insidious));
+        assert!(!color.is_permanently_locked(ColorKind::Mellow));
     }
 
     #[test]

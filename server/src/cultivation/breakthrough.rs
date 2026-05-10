@@ -15,10 +15,10 @@ use valence::prelude::{
 
 use crate::combat::components::StatusEffects;
 use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
+use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
-use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -656,17 +656,14 @@ pub fn breakthrough_system(
                 // plan-particle-system-v1 §4.4：突破成功发 breakthrough_pillar 光柱。
                 if let Ok(pos) = positions.get(req.entity) {
                     let p = pos.get();
-                    vfx_events.send(VfxEventRequest::new(
+                    vfx_events.send(gameplay_vfx::spawn_request(
+                        gameplay_vfx::BREAKTHROUGH_PILLAR,
                         p,
-                        VfxEventPayloadV1::SpawnParticle {
-                            event_id: "bong:breakthrough_pillar".to_string(),
-                            origin: [p.x, p.y, p.z],
-                            direction: None,
-                            color: Some("#FFE8A0".to_string()),
-                            strength: Some(1.0),
-                            count: Some(12),
-                            duration_ticks: Some(60),
-                        },
+                        None,
+                        "#FFE8A0",
+                        1.0,
+                        12,
+                        60,
                     ));
                 }
             }
@@ -677,6 +674,18 @@ pub fn breakthrough_system(
                         severity: *severity,
                         tick: now,
                     });
+                }
+                if let Ok(pos) = positions.get(req.entity) {
+                    let p = pos.get();
+                    vfx_events.send(gameplay_vfx::spawn_request(
+                        gameplay_vfx::BREAKTHROUGH_FAIL,
+                        p,
+                        None,
+                        "#FF3344",
+                        (*severity as f32).clamp(0.35, 1.0),
+                        (8.0 + *severity as f32 * 16.0).round() as u32,
+                        60,
+                    ));
                 }
             }
             Err(BreakthroughError::EnvInsufficient { .. }) => {
@@ -800,6 +809,8 @@ fn block_pos_from_position(position: &Position) -> BlockPos {
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::npc::spawn::NpcMarker;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
     use crate::world::karma::KarmaWeightStore;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update, Username};
@@ -1122,6 +1133,103 @@ mod tests {
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
         assert_eq!(cultivation.qi_current, 100.0);
         assert!((cultivation.pending_material_bonus - 0.12).abs() < 1e-9);
+    }
+
+    #[test]
+    fn npc_breakthrough_emits_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (cultivation, meridians) = setup_for_induce();
+        let npc = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("npc_42v0"),
+                Position::new([8.0, 66.0, 8.0]),
+                NpcMarker,
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: npc,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let ids = vfx_events
+            .iter_current_update_events()
+            .filter_map(|event| match &event.payload {
+                VfxEventPayloadV1::SpawnParticle { event_id, .. } => Some(event_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"bong:breakthrough_pillar"));
+    }
+
+    #[test]
+    fn breakthrough_fail_emits_vfx() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (mut cultivation, meridians) = setup_for_induce();
+        cultivation.composure = 0.0;
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::default(),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::BREAKTHROUGH_FAIL
+                )
+            })
+            .expect("rolled breakthrough failure should emit breakthrough_fail vfx");
+        match &emitted.payload {
+            VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::BREAKTHROUGH_FAIL);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

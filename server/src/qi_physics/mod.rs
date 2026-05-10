@@ -32,7 +32,10 @@ pub use container::{abrasion_loss, AbrasionDirection, AbrasionOutcome, AnqiConta
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
-pub use field::{density_echo, multi_point_dispersion, sever_meridian, EchoFractalOutcome};
+pub use field::{
+    density_echo, multi_point_dispersion, reverse_burst_all_marks, sever_meridian,
+    DuguReverseBurstOutcome, EchoFractalOutcome,
+};
 pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
     yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,

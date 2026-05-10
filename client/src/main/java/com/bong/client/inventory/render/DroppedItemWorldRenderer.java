@@ -1,7 +1,10 @@
 package com.bong.client.inventory.render;
 
 import com.bong.client.inventory.component.GridSlotComponent;
+import com.bong.client.inventory.AncientRelicGlowRenderer;
 import com.bong.client.inventory.state.DroppedItemStore;
+import com.bong.client.visual.particle.BongParticles;
+import com.bong.client.visual.particle.BongSpriteParticle;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
@@ -12,15 +15,14 @@ import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.RotationAxis;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 地面 dropped loot 的世界空间 billboard 渲染。
@@ -48,9 +50,6 @@ public final class DroppedItemWorldRenderer {
     /** 上下浮动周期（tick，20 tick = 1 s）。2 秒一圈。 */
     private static final float BOB_PERIOD_TICKS = 40.0f;
 
-    /** itemId → texture Identifier 缓存，避免每帧 GC。 */
-    private static final Map<String, Identifier> TEXTURE_CACHE = new ConcurrentHashMap<>();
-
     private DroppedItemWorldRenderer() {}
 
     public static void register() {
@@ -61,7 +60,9 @@ public final class DroppedItemWorldRenderer {
         var entries = DroppedItemStore.snapshot();
         if (entries.isEmpty()) return;
 
-        ClientWorld world = MinecraftClient.getInstance().world;
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) return;
+        ClientWorld world = client.world;
         VertexConsumerProvider consumers = context.consumers();
         MatrixStack matrices = context.matrixStack();
         if (world == null || consumers == null || matrices == null) return;
@@ -96,17 +97,31 @@ public final class DroppedItemWorldRenderer {
             matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - cameraYaw));
 
             Identifier texture = textureFor(entry.item().itemId());
-            VertexConsumer consumer = consumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
             Matrix4f pos = matrices.peek().getPositionMatrix();
             Matrix3f norm = matrices.peek().getNormalMatrix();
 
+            if (AncientRelicGlowRenderer.shouldGlow(entry.item())) {
+                VertexConsumer glow = consumers.getBuffer(RenderLayer.getEntityTranslucent(texture));
+                int color = AncientRelicGlowRenderer.pulseColor((long) (phaseTicks * 50.0));
+                int alpha = (color >>> 24) & 0xFF;
+                int red = (color >>> 16) & 0xFF;
+                int green = (color >>> 8) & 0xFF;
+                int blue = color & 0xFF;
+                emitVertex(glow, pos, norm, -0.31f, -0.31f, 0.0f, 1.0f, light, red, green, blue, alpha);
+                emitVertex(glow, pos, norm,  0.31f, -0.31f, 1.0f, 1.0f, light, red, green, blue, alpha);
+                emitVertex(glow, pos, norm,  0.31f,  0.31f, 1.0f, 0.0f, light, red, green, blue, alpha);
+                emitVertex(glow, pos, norm, -0.31f,  0.31f, 0.0f, 0.0f, light, red, green, blue, alpha);
+            }
+
             // Quad（CCW，正面法线 +Z）：bottom-left → bottom-right → top-right → top-left
+            VertexConsumer consumer = consumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
             emitVertex(consumer, pos, norm, -QUAD_HALF, -QUAD_HALF, 0.0f, 1.0f, light);
             emitVertex(consumer, pos, norm,  QUAD_HALF, -QUAD_HALF, 1.0f, 1.0f, light);
             emitVertex(consumer, pos, norm,  QUAD_HALF,  QUAD_HALF, 1.0f, 0.0f, light);
             emitVertex(consumer, pos, norm, -QUAD_HALF,  QUAD_HALF, 0.0f, 0.0f, light);
 
             matrices.pop();
+            maybeSpawnRarityEffects(client, world, entry, phaseTicks);
         }
     }
 
@@ -114,8 +129,16 @@ public final class DroppedItemWorldRenderer {
         VertexConsumer consumer, Matrix4f pos, Matrix3f norm,
         float x, float y, float u, float v, int light
     ) {
+        emitVertex(consumer, pos, norm, x, y, u, v, light, 255, 255, 255, 255);
+    }
+
+    private static void emitVertex(
+        VertexConsumer consumer, Matrix4f pos, Matrix3f norm,
+        float x, float y, float u, float v, int light,
+        int red, int green, int blue, int alpha
+    ) {
         consumer.vertex(pos, x, y, 0.0f)
-            .color(255, 255, 255, 255)
+            .color(red, green, blue, alpha)
             .texture(u, v)
             .overlay(OverlayTexture.DEFAULT_UV)
             .light(light)
@@ -124,7 +147,105 @@ public final class DroppedItemWorldRenderer {
     }
 
     private static Identifier textureFor(String itemId) {
-        return TEXTURE_CACHE.computeIfAbsent(itemId,
-            GridSlotComponent::textureIdForItemId);
+        return GridSlotComponent.textureIdForItemId(itemId);
+    }
+
+    private static void maybeSpawnRarityEffects(
+        MinecraftClient client,
+        ClientWorld world,
+        DroppedItemStore.Entry entry,
+        double phaseTicks
+    ) {
+        if (client == null || client.particleManager == null || entry == null || entry.item() == null) {
+            return;
+        }
+        String rarity = entry.item().rarity();
+        if (!DroppedLootRarityVisuals.hasAuraParticles(rarity)) {
+            return;
+        }
+        long tick = world.getTime();
+        if (Math.floorMod(tick + entry.instanceId(), 12L) == 0L) {
+            int count = DroppedLootRarityVisuals.auraParticleCount(rarity);
+            for (int i = 0; i < count; i++) {
+                spawnAuraParticle(client, world, entry, rarity, phaseTicks, i, count);
+            }
+        }
+        double beamHeight = DroppedLootRarityVisuals.beamHeight(rarity);
+        if (beamHeight > 0.0 && Math.floorMod(tick + entry.instanceId(), 8L) == 0L) {
+            spawnBeamParticle(client, world, entry, rarity, beamHeight);
+        }
+        if (DroppedLootRarityVisuals.shouldHum(rarity)
+            && client.player != null
+            && Math.floorMod(tick + entry.instanceId(), 80L) == 0L) {
+            world.playSound(
+                entry.worldPosX(),
+                entry.worldPosY(),
+                entry.worldPosZ(),
+                SoundEvents.BLOCK_BEACON_ACTIVATE,
+                SoundCategory.BLOCKS,
+                0.2f,
+                2.0f,
+                false
+            );
+        }
+    }
+
+    private static void spawnAuraParticle(
+        MinecraftClient client,
+        ClientWorld world,
+        DroppedItemStore.Entry entry,
+        String rarity,
+        double phaseTicks,
+        int index,
+        int count
+    ) {
+        double angle = phaseTicks * 0.12 + (Math.PI * 2.0 * index / Math.max(1, count));
+        double radius = 0.32;
+        double x = entry.worldPosX() + Math.cos(angle) * radius;
+        double y = entry.worldPosY() + 0.55 + Math.sin(angle * 2.0) * 0.05;
+        double z = entry.worldPosZ() + Math.sin(angle) * radius;
+        double vx = -Math.sin(angle) * 0.008;
+        double vz = Math.cos(angle) * 0.008;
+
+        BongSpriteParticle particle = new BongSpriteParticle(world, x, y, z, vx, 0.006, vz);
+        particle.setColor(
+            DroppedLootRarityVisuals.red(rarity),
+            DroppedLootRarityVisuals.green(rarity),
+            DroppedLootRarityVisuals.blue(rarity)
+        );
+        boolean ancient = DroppedLootRarityVisuals.isAncient(rarity);
+        particle.setScalePublic(ancient ? 0.18f : 0.13f);
+        particle.setAlphaPublic(0.72f);
+        particle.setMaxAgePublic(ancient ? 34 : 24);
+        if (BongParticles.qiAuraSprites != null) {
+            particle.setSpritePublic(BongParticles.qiAuraSprites.getSprite(world.random));
+        }
+        client.particleManager.addParticle(particle);
+    }
+
+    private static void spawnBeamParticle(
+        MinecraftClient client,
+        ClientWorld world,
+        DroppedItemStore.Entry entry,
+        String rarity,
+        double beamHeight
+    ) {
+        double x = entry.worldPosX();
+        double y = entry.worldPosY() + 0.55 + world.random.nextDouble() * beamHeight;
+        double z = entry.worldPosZ();
+        BongSpriteParticle particle = new BongSpriteParticle(world, x, y, z, 0.0, 0.014, 0.0);
+        particle.setColor(
+            DroppedLootRarityVisuals.red(rarity),
+            DroppedLootRarityVisuals.green(rarity),
+            DroppedLootRarityVisuals.blue(rarity)
+        );
+        boolean ancient = DroppedLootRarityVisuals.isAncient(rarity);
+        particle.setScalePublic(ancient ? 0.24f : 0.18f);
+        particle.setAlphaPublic(ancient ? 0.82f : 0.58f);
+        particle.setMaxAgePublic(ancient ? 28 : 20);
+        if (BongParticles.qiAuraSprites != null) {
+            particle.setSpritePublic(BongParticles.qiAuraSprites.getSprite(world.random));
+        }
+        client.particleManager.addParticle(particle);
     }
 }

@@ -1537,6 +1537,7 @@ mod tests {
                     secondary: None,
                     is_chaotic: false,
                     is_hunyuan: false,
+                    ..Default::default()
                 },
                 PracticeLog::default(),
                 SkillBarBindings::default(),
