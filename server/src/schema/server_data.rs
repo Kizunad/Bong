@@ -2930,6 +2930,8 @@ mod tests {
                 recipe_id: None,
                 elapsed_ticks: 0,
                 total_ticks: 0,
+                completed_count: 0,
+                total_count: 0,
                 ts: 1234567,
             }),
             ServerDataPayloadV1::CraftOutcome(CraftOutcomeV1::Completed {

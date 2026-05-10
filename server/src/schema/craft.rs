@@ -148,6 +148,7 @@ pub struct CraftStartReqV1 {
     pub v: u8,
     pub player_id: String,
     pub recipe_id: RecipeIdV1,
+    pub quantity: u32,
     pub ts: u64,
 }
 
@@ -163,6 +164,8 @@ pub struct CraftSessionStateV1 {
     pub recipe_id: Option<RecipeIdV1>,
     pub elapsed_ticks: u64,
     pub total_ticks: u64,
+    pub completed_count: u32,
+    pub total_count: u32,
     pub ts: u64,
 }
 
@@ -317,6 +320,7 @@ mod tests {
             v: 1,
             player_id: "offline:Alice".into(),
             recipe_id: "craft.example.eclipse_needle.iron".into(),
+            quantity: 3,
             ts: 1234567,
         };
         let s = serde_json::to_string(&v).unwrap();
@@ -333,6 +337,8 @@ mod tests {
             recipe_id: Some("craft.example.eclipse_needle.iron".into()),
             elapsed_ticks: 30,
             total_ticks: 100,
+            completed_count: 1,
+            total_count: 3,
             ts: 1234567,
         };
         let s = serde_json::to_string(&v).unwrap();
@@ -349,6 +355,8 @@ mod tests {
             recipe_id: None,
             elapsed_ticks: 0,
             total_ticks: 0,
+            completed_count: 0,
+            total_count: 0,
             ts: 1234567,
         };
         let s = serde_json::to_string(&v).unwrap();
@@ -438,6 +446,7 @@ mod tests {
             v: 1,
             player_id: "x".into(),
             recipe_id: "y".into(),
+            quantity: 1,
             ts: 0,
         };
         assert!(serde_json::to_string(&start).unwrap().contains("\"v\":1"));
@@ -449,6 +458,8 @@ mod tests {
             recipe_id: None,
             elapsed_ticks: 0,
             total_ticks: 0,
+            completed_count: 0,
+            total_count: 0,
             ts: 0,
         };
         assert!(serde_json::to_string(&state).unwrap().contains("\"v\":1"));

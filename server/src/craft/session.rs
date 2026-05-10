@@ -47,6 +47,10 @@ pub struct CraftSession {
     pub owner_player_id: String,
     /// 起手时实际扣除的 qi（守恒律观察值，必须与 ledger 中 transfer 的 amount 等同）
     pub qi_paid: f64,
+    /// 本 session 总制作件数。1 表示普通单件制作。
+    pub quantity_total: u32,
+    /// 已经完成并发放到背包的件数。
+    pub completed_count: u32,
 }
 
 /// `start_craft` 的失败原因。所有 reject 路径都不会写 ledger / 不会扣材料 / 不会改 inventory。
@@ -80,6 +84,8 @@ pub enum StartCraftError {
     },
     /// ledger 内部错误（transfer 失败等）
     LedgerError(String),
+    /// 批量数量必须 >= 1。
+    InvalidQuantity(u32),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -210,6 +216,7 @@ pub struct StartCraftRequest<'a> {
     pub recipe_id: &'a RecipeId,
     pub current_tick: u64,
     pub zone_id: &'a str,
+    pub quantity: u32,
 }
 
 /// 守恒律调用器：传入对真元 ledger 的 mut 引用。
@@ -242,6 +249,9 @@ pub fn start_craft(
     request: StartCraftRequest<'_>,
     deps: StartCraftDeps<'_>,
 ) -> Result<StartCraftSuccess, StartCraftError> {
+    if request.quantity == 0 {
+        return Err(StartCraftError::InvalidQuantity(request.quantity));
+    }
     let recipe = deps
         .registry
         .get(request.recipe_id)
@@ -279,12 +289,13 @@ pub fn start_craft(
     // 材料充足校验
     let mut deficits = Vec::new();
     for (template, need) in &recipe.materials {
+        let total_need = need.saturating_mul(request.quantity);
         let have = count_template_in_inventory(deps.inventory, template);
-        if have < *need {
+        if have < total_need {
             deficits.push(MaterialDeficit {
                 template_id: template.clone(),
                 have,
-                need: *need,
+                need: total_need,
             });
         }
     }
@@ -292,17 +303,18 @@ pub fn start_craft(
         return Err(StartCraftError::MissingMaterials(deficits));
     }
 
-    if deps.cultivation.qi_current < recipe.qi_cost {
+    let total_qi_cost = recipe.qi_cost * f64::from(request.quantity);
+    if deps.cultivation.qi_current < total_qi_cost {
         return Err(StartCraftError::InsufficientQi {
             have: deps.cultivation.qi_current,
-            need: recipe.qi_cost,
+            need: total_qi_cost,
         });
     }
 
     // ===== 副作用阶段 =====
     let from = QiAccountId::player(request.player_id);
     let to = QiAccountId::zone(request.zone_id);
-    if recipe.qi_cost > 0.0 {
+    if total_qi_cost > 0.0 {
         // 守恒律：调用方必须先把 cultivation.qi_current **严格** sync 到
         // ledger.player(id)（待 qi_physics::sync_player_qi_to_ledger system
         // 接入后由 ECS hook 自动同步）。本函数**不**主动 set_balance，避免
@@ -317,23 +329,23 @@ pub fn start_craft(
             return Err(StartCraftError::LedgerOutOfSync {
                 player_balance,
                 cultivation_qi_current: deps.cultivation.qi_current,
-                required: recipe.qi_cost,
+                required: total_qi_cost,
             });
         }
         // 视图严格一致后，验证余额够付（外层 cultivation_qi_current >= qi_cost
         // 已校验，sync 一致后 player_balance 也保证 >= qi_cost；fail-safe）
-        if player_balance < recipe.qi_cost {
+        if player_balance < total_qi_cost {
             return Err(StartCraftError::LedgerOutOfSync {
                 player_balance,
                 cultivation_qi_current: deps.cultivation.qi_current,
-                required: recipe.qi_cost,
+                required: total_qi_cost,
             });
         }
 
         let transfer = QiTransfer::new(
             from.clone(),
             to.clone(),
-            recipe.qi_cost,
+            total_qi_cost,
             QiTransferReason::Crafting,
         )
         .map_err(|e: QiPhysicsError| StartCraftError::LedgerError(e.to_string()))?;
@@ -341,7 +353,7 @@ pub fn start_craft(
             .transfer(transfer)
             .map_err(|e: QiPhysicsError| StartCraftError::LedgerError(e.to_string()))?;
 
-        deps.cultivation.qi_current -= recipe.qi_cost;
+        deps.cultivation.qi_current -= total_qi_cost;
         if deps.cultivation.qi_current < 0.0 {
             // 上面已校验充足，这里不该走到；fail-safe clamp
             deps.cultivation.qi_current = 0.0;
@@ -351,9 +363,10 @@ pub fn start_craft(
     // 扣材料（不可回滚 — 上面已确认充足）
     let mut consumed = Vec::with_capacity(recipe.materials.len());
     for (template, need) in &recipe.materials {
-        consume_materials_from_inventory(deps.inventory, template, *need)
+        let total_need = need.saturating_mul(request.quantity);
+        consume_materials_from_inventory(deps.inventory, template, total_need)
             .expect("materials checked above");
-        consumed.push((template.clone(), *need));
+        consumed.push((template.clone(), total_need));
     }
 
     let session = CraftSession {
@@ -362,7 +375,9 @@ pub fn start_craft(
         remaining_ticks: recipe.time_ticks,
         total_ticks: recipe.time_ticks,
         owner_player_id: request.player_id.to_string(),
-        qi_paid: recipe.qi_cost,
+        qi_paid: total_qi_cost,
+        quantity_total: request.quantity,
+        completed_count: 0,
     };
 
     let event = CraftStartedEvent {
@@ -370,7 +385,7 @@ pub fn start_craft(
         recipe_id: recipe.id.clone(),
         started_at_tick: request.current_tick,
         total_ticks: recipe.time_ticks,
-        qi_paid: recipe.qi_cost,
+        qi_paid: total_qi_cost,
     };
 
     Ok(StartCraftSuccess {
@@ -408,7 +423,11 @@ pub fn cancel_craft(
         .materials
         .iter()
         .map(|(template, need)| {
-            let refund = ((*need as f64) * CANCEL_REFUND_RATIO).floor() as u32;
+            let remaining_count = session
+                .quantity_total
+                .saturating_sub(session.completed_count);
+            let reserved_need = need.saturating_mul(remaining_count);
+            let refund = ((reserved_need as f64) * CANCEL_REFUND_RATIO).floor() as u32;
             (template.clone(), refund)
         })
         .filter(|(_, refund)| *refund > 0)
@@ -657,6 +676,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -683,6 +703,32 @@ mod tests {
     }
 
     #[test]
+    fn start_craft_batch_reserves_all_materials_and_qi_upfront() {
+        let (registry, unlock, mut cult, color, mut ledger) = make_world();
+        let mut inv = make_inventory(&[("herb_a", 8), ("iron_needle", 10)]);
+        let result = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("a"),
+                current_tick: 1000,
+                zone_id: "spawn",
+                quantity: 3,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .unwrap();
+
+        assert_eq!(result.session.quantity_total, 3);
+        assert_eq!(result.session.completed_count, 0);
+        assert_eq!(result.session.qi_paid, 15.0);
+        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 2);
+        assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 1);
+        assert_eq!(cult.qi_current, 35.0);
+        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 15.0);
+    }
+
+    #[test]
     fn start_craft_rejects_unknown_recipe() {
         let (registry, unlock, mut cult, color, mut ledger) = make_world();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
@@ -693,6 +739,7 @@ mod tests {
                 recipe_id: &RecipeId::new("missing"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -712,6 +759,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -732,6 +780,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let mut deps =
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
@@ -743,6 +793,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             deps,
         )
@@ -761,6 +812,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -800,6 +852,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -841,6 +894,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -880,6 +934,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -916,6 +971,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -937,6 +993,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let done = tick_session(&mut session, 30);
         assert!(!done);
@@ -952,6 +1010,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let done = tick_session(&mut session, 5);
         assert!(done);
@@ -967,6 +1027,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let done = tick_session(&mut session, 100);
         assert!(done);
@@ -982,6 +1044,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let done = tick_session(&mut session, 0);
         assert!(!done);
@@ -997,6 +1061,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let done = tick_session(&mut session, 50);
         assert!(done);
@@ -1015,6 +1081,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let outcome = cancel_craft(
             &session,
@@ -1046,6 +1114,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let outcome = cancel_craft(
             &session,
@@ -1058,6 +1128,36 @@ mod tests {
     }
 
     #[test]
+    fn cancel_craft_batch_refunds_unfinished_quantity() {
+        let recipe = simple_recipe("a"); // herb_a×2, iron_needle×3
+        let session = CraftSession {
+            recipe_id: RecipeId::new("a"),
+            started_at_tick: 0,
+            remaining_ticks: 50,
+            total_ticks: 100,
+            owner_player_id: "offline:Alice".into(),
+            qi_paid: 15.0,
+            quantity_total: 3,
+            completed_count: 1,
+        };
+        let outcome = cancel_craft(
+            &session,
+            &recipe,
+            caster_entity(),
+            CraftFailureReason::PlayerCancelled,
+        );
+        let map: HashMap<&str, u32> = outcome
+            .refund_manifest
+            .iter()
+            .map(|(t, n)| (t.as_str(), *n))
+            .collect();
+        // 剩余 2 件：herb_a floor(2*2*0.7)=2；iron_needle floor(3*2*0.7)=4
+        assert_eq!(map.get("herb_a"), Some(&2));
+        assert_eq!(map.get("iron_needle"), Some(&4));
+        assert_eq!(outcome.event.material_returned, 6);
+    }
+
+    #[test]
     fn cancel_craft_propagates_player_died_reason() {
         let recipe = simple_recipe("a");
         let session = CraftSession {
@@ -1067,6 +1167,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let outcome = cancel_craft(
             &session,
@@ -1087,6 +1189,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let outcome = cancel_craft(
             &session,
@@ -1110,6 +1214,8 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let outcome = finalize_craft(&session, &recipe, caster_entity(), 200);
         assert_eq!(outcome.event.completed_at_tick, 200);
@@ -1133,6 +1239,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -1194,6 +1301,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -1221,6 +1329,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -1259,6 +1368,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -1286,6 +1396,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -1323,6 +1434,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
@@ -1369,6 +1481,7 @@ mod tests {
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
                 zone_id: "spawn",
+                quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
