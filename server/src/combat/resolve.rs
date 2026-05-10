@@ -13,6 +13,8 @@ use crate::combat::jiemai::{
 };
 use crate::combat::status::has_active_status;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
+use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
+use crate::combat::tuike_v2::StackedFalseSkins;
 use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::combat::zhenmai_v2::{
     self, BackfireAmplification, MeridianHardenActive, MultiPointActive,
@@ -117,6 +119,7 @@ type CombatTargetItem<'a> = (
     Option<&'a mut CombatState>,
     Option<&'a mut Cultivation>,
     Option<&'a mut FalseSkin>,
+    Option<&'a StackedFalseSkins>,
     Option<&'a mut DerivedAttrs>,
     Option<&'a mut PracticeLog>,
     Option<&'a mut MultiPointActive>,
@@ -363,6 +366,7 @@ pub fn resolve_attack_intents(
             combat_state,
             defender_cultivation,
             false_skin,
+            tuike_v2_stack,
             defender_attrs,
             defender_practice_log,
             mut multipoint_active,
@@ -384,7 +388,8 @@ pub fn resolve_attack_intents(
         let defender_damage_multiplier = defender_attrs
             .as_ref()
             .map(|attrs| attrs.defense_power)
-            .unwrap_or(1.0);
+            .unwrap_or(1.0)
+            * naked_defense_damage_multiplier(tuike_v2_stack, clock.tick);
         // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
         let mut hit_tool: Option<crate::tools::ToolKind> = None;
         let weapon_multiplier: f32 = match weapons.get(intent.attacker) {
@@ -3562,6 +3567,85 @@ mod tests {
         assert!(
             (reduced_wounds.health_current - (reduced_wounds.health_max - reduced_damage)).abs()
                 < 0.001
+        );
+    }
+
+    #[test]
+    fn resolver_applies_tuike_naked_window_damage_penalty() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1370 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let baseline_attacker = spawn_player(
+            &mut app,
+            "AzureBaseNaked",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let naked_attacker = spawn_player(
+            &mut app,
+            "AzureNaked",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let baseline_target = spawn_player(
+            &mut app,
+            "CrimsonBaseNaked",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let naked_target = spawn_player(
+            &mut app,
+            "CrimsonNaked",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(naked_target)
+            .insert(StackedFalseSkins {
+                naked_until_tick: 1400,
+                ..Default::default()
+            });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: baseline_attacker,
+            target: Some(baseline_target),
+            issued_at_tick: 1369,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: naked_attacker,
+            target: Some(naked_target),
+            issued_at_tick: 1369,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events[1].damage > events[0].damage * 1.49,
+            "裸壳期应把本次承伤放大到约 1.5 倍"
         );
     }
 

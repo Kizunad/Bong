@@ -4,10 +4,12 @@ use crate::qi_physics;
 
 use super::state::{FalseSkinLayer, FalseSkinTier, StackedFalseSkins};
 
-pub const TUIKE_BETA: f64 = 1.2;
+pub use crate::qi_physics::constants::TUIKE_BETA;
 pub const SHED_CURRENT_QI_RATIO: f64 = 0.05;
 pub const ACTIVE_SHED_COOLDOWN_TICKS: u64 = 8 * crate::combat::components::TICKS_PER_SECOND;
+pub const TRANSFER_STANDARD_COOLDOWN_TICKS: u64 = 5 * crate::combat::components::TICKS_PER_SECOND;
 pub const TRANSFER_PERMANENT_COOLDOWN_TICKS: u64 = 30 * crate::combat::components::TICKS_PER_SECOND;
+pub const NAKED_DEFENSE_DAMAGE_MULTIPLIER: f32 = 1.5;
 pub const RESIDUE_DECAY_MIN_TICKS: u64 = 10 * 60 * crate::combat::components::TICKS_PER_SECOND;
 pub const RESIDUE_DECAY_MAX_TICKS: u64 = 30 * 60 * crate::combat::components::TICKS_PER_SECOND;
 
@@ -34,6 +36,22 @@ pub fn shed_start_cost(qi_current: f64) -> f64 {
         qi_current.max(0.0) * SHED_CURRENT_QI_RATIO * TUIKE_BETA
     } else {
         0.0
+    }
+}
+
+pub fn transfer_cooldown_ticks(permanent_absorbed: f64) -> u64 {
+    if permanent_absorbed > f64::EPSILON {
+        TRANSFER_PERMANENT_COOLDOWN_TICKS
+    } else {
+        TRANSFER_STANDARD_COOLDOWN_TICKS
+    }
+}
+
+pub fn naked_defense_damage_multiplier(stack: Option<&StackedFalseSkins>, now_tick: u64) -> f32 {
+    if stack.is_some_and(|stack| stack.is_empty() && now_tick < stack.naked_until_tick) {
+        NAKED_DEFENSE_DAMAGE_MULTIPLIER
+    } else {
+        1.0
     }
 }
 

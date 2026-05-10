@@ -9,7 +9,7 @@ pub use events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinDecayedToAshEvent, FalseSkinSheddedEvent,
     PermanentTaintAbsorbedEvent, TuikeSkillId, TuikeSkillVisual,
 };
-pub use skills::register_skills;
+pub use skills::{declare_meridian_dependencies, register_skills};
 #[allow(unused_imports)]
 pub use state::{
     FalseSkinLayer, FalseSkinResidue, FalseSkinTier, PermanentQiMaxDecay, StackedFalseSkins,

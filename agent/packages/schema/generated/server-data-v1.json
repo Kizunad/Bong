@@ -13029,6 +13029,64 @@
         "equipped_at_tick": {
           "minimum": 0,
           "type": "integer"
+        },
+        "layers": {
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "tier",
+              "spirit_quality",
+              "damage_capacity",
+              "contam_load",
+              "permanent_taint_load"
+            ],
+            "properties": {
+              "tier": {
+                "anyOf": [
+                  {
+                    "const": "fan",
+                    "type": "string"
+                  },
+                  {
+                    "const": "light",
+                    "type": "string"
+                  },
+                  {
+                    "const": "mid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "heavy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ancient",
+                    "type": "string"
+                  }
+                ]
+              },
+              "spirit_quality": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "damage_capacity": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "contam_load": {
+                "minimum": 0,
+                "maximum": 100,
+                "type": "number"
+              },
+              "permanent_taint_load": {
+                "minimum": 0,
+                "type": "number"
+              }
+            }
+          }
         }
       }
     },

@@ -4,9 +4,11 @@ use crate::combat::components::DerivedAttrs;
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::Cultivation;
-use crate::inventory::{PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
+use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
 
-use super::events::FalseSkinDecayedToAshEvent;
+use super::events::{
+    FalseSkinDecayedToAshEvent, FalseSkinSheddedEvent, TuikeSkillId, TuikeSkillVisual,
+};
 use super::physics::maintenance_qi_per_sec;
 use super::state::{
     false_skin_tier_for_item, FalseSkinLayer, FalseSkinResidue, StackedFalseSkins, WornFalseSkin,
@@ -18,6 +20,14 @@ type SyncFalseSkinItem<'a> = (
     Option<&'a mut StackedFalseSkins>,
     Option<&'a WornFalseSkin>,
     Option<&'a mut DerivedAttrs>,
+);
+type MaintenanceFalseSkinItem<'a> = (
+    Entity,
+    &'a mut Cultivation,
+    &'a mut StackedFalseSkins,
+    Option<&'a PracticeLog>,
+    Option<&'a mut DerivedAttrs>,
+    Option<&'a mut PlayerInventory>,
 );
 
 pub fn sync_false_skin_stack_from_inventory(
@@ -76,25 +86,88 @@ pub fn sync_false_skin_stack_from_inventory(
 }
 
 pub fn false_skin_maintenance_tick(
+    mut commands: Commands,
     clock: Option<Res<CombatClock>>,
-    mut query: Query<(
-        Entity,
-        &mut Cultivation,
-        &StackedFalseSkins,
-        Option<&PracticeLog>,
-    )>,
+    mut query: Query<MaintenanceFalseSkinItem<'_>>,
+    mut shed_events: EventWriter<FalseSkinSheddedEvent>,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     if tick % crate::combat::components::TICKS_PER_SECOND != 0 {
         return;
     }
-    for (_entity, mut cultivation, stack, practice) in &mut query {
-        let cost = maintenance_qi_per_sec(stack, practice);
+    for (entity, mut cultivation, mut stack, practice, attrs, inventory) in &mut query {
+        let cost = maintenance_qi_per_sec(&stack, practice);
         if cost <= f64::EPSILON {
+            continue;
+        }
+        if cultivation.qi_current + f64::EPSILON < cost {
+            shed_outer_layer_for_maintenance(
+                &mut commands,
+                entity,
+                &mut stack,
+                attrs,
+                inventory,
+                &mut shed_events,
+                tick,
+            );
             continue;
         }
         cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
     }
+}
+
+fn shed_outer_layer_for_maintenance(
+    commands: &mut Commands,
+    owner: Entity,
+    stack: &mut StackedFalseSkins,
+    attrs: Option<valence::prelude::Mut<'_, DerivedAttrs>>,
+    inventory: Option<valence::prelude::Mut<'_, PlayerInventory>>,
+    shed_events: &mut EventWriter<FalseSkinSheddedEvent>,
+    tick: u64,
+) {
+    let Some(layer) = stack.shed_outer(tick) else {
+        return;
+    };
+    let layers_after = stack.layer_count() as u8;
+    if let Some(mut attrs) = attrs {
+        attrs.tuike_layers = layers_after;
+    }
+    if stack.is_empty() {
+        commands.entity(owner).remove::<WornFalseSkin>();
+    } else if let Some(outer) = stack.outer().map(WornFalseSkin::from) {
+        commands.entity(owner).insert(outer);
+    }
+    if let Some(mut inventory) = inventory {
+        let _ = consume_item_instance_once(&mut inventory, layer.instance_id);
+    }
+
+    let residue_decay = super::physics::residue_decay_ticks_for_tier(layer.tier);
+    commands.spawn(FalseSkinResidue {
+        owner,
+        tier: layer.tier,
+        contam_load: layer.contam_load,
+        permanent_taint_load: layer.permanent_taint_load,
+        dropped_at_tick: tick,
+        decay_at_tick: tick.saturating_add(residue_decay),
+        picked_up: false,
+    });
+    shed_events.send(FalseSkinSheddedEvent {
+        owner,
+        attacker: None,
+        tier: layer.tier,
+        damage_absorbed: 0.0,
+        damage_overflow: 0.0,
+        contam_load: layer.contam_load,
+        permanent_taint_load: layer.permanent_taint_load,
+        layers_after,
+        active: false,
+        tick,
+        visual: TuikeSkillVisual::for_skill(
+            TuikeSkillId::Shed,
+            layer.tier == super::state::FalseSkinTier::Ancient,
+        )
+        .into(),
+    });
 }
 
 pub fn false_skin_residue_decay_tick(

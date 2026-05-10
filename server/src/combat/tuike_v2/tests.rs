@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, Entity, Events};
+use valence::prelude::{bevy_ecs, App, Entity, Events, Update};
 
 use crate::combat::components::{DerivedAttrs, SkillBarBindings, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation, Realm};
+use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::inventory::{
     InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_FALSE_SKIN,
@@ -17,17 +18,21 @@ use super::events::{
 };
 use super::physics::{
     can_absorb_permanent_taint, can_wear_tier, maintenance_qi_per_sec, max_layers_for_realm,
-    max_tier_for_realm, residue_decay_ticks_for_tier, shed_start_cost, shed_to_carrier,
-    transfer_limit_percent, transfer_qi_per_contam_percent, transfer_taint_to_outer_skin,
-    ACTIVE_SHED_COOLDOWN_TICKS, RESIDUE_DECAY_MAX_TICKS, RESIDUE_DECAY_MIN_TICKS,
-    TRANSFER_PERMANENT_COOLDOWN_TICKS,
+    max_tier_for_realm, naked_defense_damage_multiplier, residue_decay_ticks_for_tier,
+    shed_start_cost, shed_to_carrier, transfer_cooldown_ticks, transfer_limit_percent,
+    transfer_qi_per_contam_percent, transfer_taint_to_outer_skin, ACTIVE_SHED_COOLDOWN_TICKS,
+    RESIDUE_DECAY_MAX_TICKS, RESIDUE_DECAY_MIN_TICKS, TRANSFER_PERMANENT_COOLDOWN_TICKS,
+    TRANSFER_STANDARD_COOLDOWN_TICKS,
 };
-use super::skills::{cast_don, cast_shed, cast_transfer_taint, shed_outer_layer};
+use super::skills::{
+    cast_don, cast_shed, cast_transfer_taint, declare_meridian_dependencies, shed_outer_layer,
+};
 use super::state::{
     false_skin_tier_for_item, FalseSkinLayer, FalseSkinResidue, FalseSkinTier, PermanentQiMaxDecay,
     StackedFalseSkins, WornFalseSkin, FALSE_SKIN_ANCIENT_ITEM_ID, FALSE_SKIN_FAN_ITEM_ID,
     FALSE_SKIN_HEAVY_ITEM_ID, FALSE_SKIN_LIGHT_ITEM_ID, FALSE_SKIN_MID_ITEM_ID,
 };
+use super::tick::false_skin_maintenance_tick;
 
 fn cultivation(realm: Realm, qi_current: f64, qi_max: f64) -> Cultivation {
     Cultivation {
@@ -156,6 +161,20 @@ fn skill_id_shed_wire_id_is_stable() {
 #[test]
 fn skill_id_transfer_wire_id_is_stable() {
     assert_eq!(TuikeSkillId::TransferTaint.as_str(), "tuike.transfer_taint");
+}
+
+#[test]
+fn meridian_dependencies_explicitly_declare_tuike_as_empty() {
+    let mut dependencies = SkillMeridianDependencies::default();
+    declare_meridian_dependencies(&mut dependencies);
+
+    for skill_id in ["tuike.don", "tuike.shed", "tuike.transfer_taint"] {
+        assert!(dependencies.is_declared(skill_id));
+        assert!(
+            dependencies.lookup(skill_id).is_empty(),
+            "tuike is a wallet-based style and must intentionally declare no meridian deps"
+        );
+    }
 }
 
 #[test]
@@ -293,6 +312,10 @@ fn shed_cost_zero_when_qi_zero() {
 
 #[test]
 fn shed_cost_uses_beta_and_current_qi() {
+    assert_eq!(
+        super::physics::TUIKE_BETA,
+        crate::qi_physics::constants::TUIKE_BETA
+    );
     assert!((shed_start_cost(80.0) - 4.8).abs() < 1e-9);
 }
 
@@ -556,6 +579,69 @@ fn maintenance_discount_does_not_apply_below_threshold() {
 }
 
 #[test]
+fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 120 });
+    app.add_event::<FalseSkinSheddedEvent>();
+    app.add_systems(Update, false_skin_maintenance_tick);
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Awaken, 0.05, 10.0),
+            StackedFalseSkins::with_layer(FalseSkinLayer::new(1001, FalseSkinTier::Fan, 1.0, 0)),
+            WornFalseSkin {
+                instance_id: 1001,
+                tier: FalseSkinTier::Fan,
+                spirit_quality: 1.0,
+                contam_load: 0.0,
+                permanent_taint_load: 0.0,
+            },
+            inventory_with_skin(FALSE_SKIN_FAN_ITEM_ID, 1.0),
+            DerivedAttrs {
+                tuike_layers: 1,
+                ..Default::default()
+            },
+            PracticeLog::default(),
+        ))
+        .id();
+
+    app.update();
+
+    let stack = app.world().get::<StackedFalseSkins>(entity).unwrap();
+    assert!(stack.is_empty());
+    assert_eq!(stack.naked_until_tick, 120 + 5 * TICKS_PER_SECOND);
+    assert!(app.world().get::<WornFalseSkin>(entity).is_none());
+    assert_eq!(
+        app.world()
+            .get::<DerivedAttrs>(entity)
+            .unwrap()
+            .tuike_layers,
+        0
+    );
+    assert!(!app
+        .world()
+        .get::<PlayerInventory>(entity)
+        .unwrap()
+        .equipped
+        .contains_key(EQUIP_SLOT_FALSE_SKIN));
+    let mut residue_query = app.world_mut().query::<&FalseSkinResidue>();
+    assert_eq!(residue_query.iter(app.world()).count(), 1);
+}
+
+#[test]
+fn naked_defense_window_amplifies_incoming_damage_only_while_empty() {
+    let stack = StackedFalseSkins {
+        naked_until_tick: 200,
+        ..Default::default()
+    };
+    assert_eq!(naked_defense_damage_multiplier(Some(&stack), 199), 1.5);
+    assert_eq!(naked_defense_damage_multiplier(Some(&stack), 200), 1.0);
+
+    let layered = stack_with(FalseSkinTier::Fan, 1.0);
+    assert_eq!(naked_defense_damage_multiplier(Some(&layered), 199), 1.0);
+}
+
+#[test]
 fn shed_to_carrier_absorbs_damage_with_capacity() {
     let mut l = layer(FalseSkinTier::Light, 1.0);
     let outcome = shed_to_carrier(&mut l, 30.0, 2.0);
@@ -638,6 +724,18 @@ fn transfer_records_contam_on_outer_skin() {
     let mut stack = stack_with(FalseSkinTier::Mid, 1.0);
     transfer_taint_to_outer_skin(&mut stack, Realm::Solidify, 3.0, 100.0, None).unwrap();
     assert_eq!(stack.outer().unwrap().contam_load, 3.0);
+}
+
+#[test]
+fn transfer_standard_cooldown_is_shorter_than_permanent_absorb_cooldown() {
+    assert_eq!(
+        transfer_cooldown_ticks(0.0),
+        TRANSFER_STANDARD_COOLDOWN_TICKS
+    );
+    assert_eq!(
+        transfer_cooldown_ticks(0.25),
+        TRANSFER_PERMANENT_COOLDOWN_TICKS
+    );
 }
 
 #[test]
@@ -775,6 +873,28 @@ fn cast_shed_spends_qi_and_sheds() {
 }
 
 #[test]
+fn cast_shed_routes_spent_qi_to_overflow_without_zone_context() {
+    let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);
+    assert_started(cast_don(&mut world, entity, 0, None));
+    assert_started(cast_shed(&mut world, entity, 1, None));
+
+    let qi_transfers = world.resource::<Events<crate::qi_physics::QiTransfer>>();
+    let transfers = qi_transfers
+        .iter_current_update_events()
+        .collect::<Vec<_>>();
+    assert_eq!(transfers.len(), 1);
+    assert_eq!(transfers[0].amount, 60.0);
+    assert_eq!(
+        transfers[0].reason,
+        crate::qi_physics::QiTransferReason::ReleaseToZone
+    );
+    assert_eq!(
+        transfers[0].to.kind,
+        crate::qi_physics::QiAccountKind::Overflow
+    );
+}
+
+#[test]
 fn shed_outer_layer_emits_residue() {
     let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);
     assert_started(cast_don(&mut world, entity, 0, None));
@@ -805,7 +925,7 @@ fn cast_transfer_moves_contamination_and_spends_qi() {
     assert_started(cast_don(&mut world, entity, 0, None));
     assert_eq!(
         assert_started(cast_transfer_taint(&mut world, entity, 1, None)),
-        TRANSFER_PERMANENT_COOLDOWN_TICKS
+        TRANSFER_STANDARD_COOLDOWN_TICKS
     );
     assert_eq!(
         world.get::<Contamination>(entity).unwrap().entries[0].amount,
@@ -824,7 +944,10 @@ fn cast_transfer_absorbs_permanent_marker_on_void_ancient() {
         applied_at_tick: 90,
     });
     assert_started(cast_don(&mut world, entity, 0, None));
-    assert_started(cast_transfer_taint(&mut world, entity, 1, None));
+    assert_eq!(
+        assert_started(cast_transfer_taint(&mut world, entity, 1, None)),
+        TRANSFER_PERMANENT_COOLDOWN_TICKS
+    );
     assert!(world.get::<PermanentQiMaxDecay>(entity).is_none());
     assert_eq!(
         world

@@ -1,21 +1,25 @@
-use valence::prelude::{bevy_ecs, Entity, Events};
+use valence::prelude::{bevy_ecs, Entity, Events, Position};
 
 use crate::combat::components::{DerivedAttrs, SkillBarBindings};
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
+use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::inventory::{PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent, PermanentTaintAbsorbedEvent,
     TuikeSkillId, TuikeSkillVisual,
 };
 use super::physics::{
-    max_layers_for_realm, shed_start_cost, transfer_taint_to_outer_skin,
+    max_layers_for_realm, shed_start_cost, transfer_cooldown_ticks, transfer_taint_to_outer_skin,
     ACTIVE_SHED_COOLDOWN_TICKS, TRANSFER_PERMANENT_COOLDOWN_TICKS,
 };
 use super::state::{
@@ -31,6 +35,12 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(TUIKE_DON_SKILL_ID, cast_don);
     registry.register(TUIKE_SHED_SKILL_ID, cast_shed);
     registry.register(TUIKE_TRANSFER_TAINT_SKILL_ID, cast_transfer_taint);
+}
+
+pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencies) {
+    dependencies.declare(TUIKE_DON_SKILL_ID, Vec::new());
+    dependencies.declare(TUIKE_SHED_SKILL_ID, Vec::new());
+    dependencies.declare(TUIKE_TRANSFER_TAINT_SKILL_ID, Vec::new());
 }
 
 pub fn cast_don(
@@ -229,16 +239,11 @@ pub fn cast_transfer_taint(
         },
     );
 
-    set_cooldown(
-        world,
-        caster,
-        slot,
-        now_tick,
-        TRANSFER_PERMANENT_COOLDOWN_TICKS,
-    );
+    let cooldown_ticks = transfer_cooldown_ticks(outcome.permanent_absorbed);
+    set_cooldown(world, caster, slot, now_tick, cooldown_ticks);
     record_practice(world, caster, TuikeSkillId::TransferTaint, 1);
     CastResult::Started {
-        cooldown_ticks: TRANSFER_PERMANENT_COOLDOWN_TICKS,
+        cooldown_ticks,
         anim_duration_ticks: 10,
     }
 }
@@ -265,6 +270,9 @@ pub fn shed_outer_layer(
         attrs.tuike_layers = layers_after;
     }
     world.entity_mut(owner).insert(stack);
+    if let Some(mut inventory) = world.get_mut::<PlayerInventory>(owner) {
+        let _ = consume_item_instance_once(&mut inventory, layer.instance_id);
+    }
     let residue_decay = super::physics::residue_decay_ticks_for_tier(layer.tier);
     world.spawn(FalseSkinResidue {
         owner,
@@ -340,6 +348,9 @@ fn spend_qi(
     if amount <= f64::EPSILON {
         return true;
     }
+    if !amount.is_finite() {
+        return false;
+    }
     {
         let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
             return false;
@@ -349,15 +360,98 @@ fn spend_qi(
         }
         cultivation.qi_current = (cultivation.qi_current - amount).clamp(0.0, cultivation.qi_max);
     }
-    if let Ok(transfer) = QiTransfer::new(
-        QiAccountId::player(format!("entity:{}", caster.to_bits())),
-        QiAccountId::container(format!("{sink}:{}", caster.to_bits())),
-        amount,
-        QiTransferReason::Channeling,
-    ) {
+    emit_spent_qi_release(world, caster, amount, sink);
+    true
+}
+
+fn emit_spent_qi_release(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    amount: f64,
+    sink: &'static str,
+) {
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|position| position.get());
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|dimension| dimension.0)
+        .unwrap_or(DimensionKind::Overworld);
+
+    let mut transfers = Vec::new();
+    if let (Some(position), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>())
+    {
+        let zone_name = zones
+            .find_zone(dimension, position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(transfer) = outcome.transfer {
+                            transfers.push(transfer);
+                        }
+                        if outcome.overflow > QI_EPSILON {
+                            push_spent_qi_overflow(
+                                &mut transfers,
+                                from.clone(),
+                                outcome.overflow,
+                                sink,
+                                caster,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][tuike_v2] invalid spent qi release for {:?}; route to overflow",
+                            caster
+                        );
+                        push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+                    }
+                }
+            } else {
+                push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+            }
+        } else {
+            push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+        }
+    } else {
+        push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+    }
+
+    for transfer in transfers {
         emit_if_present(world, transfer);
     }
-    true
+}
+
+fn push_spent_qi_overflow(
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    sink: &'static str,
+    caster: Entity,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    if let Ok(transfer) = QiTransfer::new(
+        from,
+        QiAccountId::overflow(format!("{sink}:{}", caster.to_bits())),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    ) {
+        transfers.push(transfer);
+    }
 }
 
 fn contamination_total_percent(contamination: Option<&Contamination>) -> f64 {

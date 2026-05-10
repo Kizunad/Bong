@@ -412,7 +412,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 28] = [
         required_meridians: &[],
         qi_cost: 0.0,
         cast_ticks: 10,
-        cooldown_ticks: 600,
+        cooldown_ticks: 100,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png",
     },

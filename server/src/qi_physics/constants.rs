@@ -32,6 +32,8 @@ pub const VORTEX_TURBULENCE_ABSORPTION_MULTIPLIER: f64 = 0.0;
 pub const VORTEX_TURBULENCE_CAST_PRECISION_MULTIPLIER: f64 = 0.5;
 /// plan-woliu-v2 §0：紊流场内护体真气额外消耗比例。
 pub const VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS: f64 = 0.20;
+/// plan-tuike-v2 §0：替尸蜕壳启动系数，归属 qi_physics 统一矩阵。
+pub const TUIKE_BETA: f64 = 1.2;
 /// worldview §九：骨币半衰参考，约 13 天。
 pub const QI_HALFLIFE_REFERENCE_DAYS: f64 = 13.0;
 /// plan-shelflife-v1：死域保质期衰减倍率，保持旧曲线三倍加速。

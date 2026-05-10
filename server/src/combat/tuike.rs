@@ -149,6 +149,7 @@ impl FalseSkin {
             contam_capacity_per_layer: self.contam_capacity_per_layer,
             absorbed_contam: self.absorbed_contam,
             equipped_at_tick: self.equipped_at_tick,
+            layers: Vec::new(),
         }
     }
 }
@@ -161,6 +162,7 @@ pub fn empty_false_skin_state(target_id: String) -> FalseSkinStateV1 {
         contam_capacity_per_layer: 0.0,
         absorbed_contam: 0.0,
         equipped_at_tick: 0,
+        layers: Vec::new(),
     }
 }
 

@@ -16,6 +16,7 @@ use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::tuike::FalseSkinStateV1;
+use crate::schema::tuike_v2::{FalseSkinLayerStateV1, FalseSkinTierV1};
 
 type ChangedFalseSkinClient<'a> = (
     Entity,
@@ -168,6 +169,34 @@ fn stacked_state_payload(target_id: String, stack: &StackedFalseSkins) -> FalseS
             .unwrap_or(0.0),
         absorbed_contam: outer.map(|layer| layer.contam_load).unwrap_or(0.0),
         equipped_at_tick: outer.map(|layer| layer.equipped_at_tick).unwrap_or(0),
+        layers: stack
+            .layers
+            .iter()
+            .take(3)
+            .map(false_skin_layer_state)
+            .collect(),
+    }
+}
+
+fn false_skin_layer_state(
+    layer: &crate::combat::tuike_v2::FalseSkinLayer,
+) -> FalseSkinLayerStateV1 {
+    FalseSkinLayerStateV1 {
+        tier: false_skin_tier_state(layer.tier),
+        spirit_quality: layer.spirit_quality,
+        damage_capacity: layer.damage_capacity(),
+        contam_load: layer.contam_load,
+        permanent_taint_load: layer.permanent_taint_load,
+    }
+}
+
+fn false_skin_tier_state(tier: FalseSkinTier) -> FalseSkinTierV1 {
+    match tier {
+        FalseSkinTier::Fan => FalseSkinTierV1::Fan,
+        FalseSkinTier::Light => FalseSkinTierV1::Light,
+        FalseSkinTier::Mid => FalseSkinTierV1::Mid,
+        FalseSkinTier::Heavy => FalseSkinTierV1::Heavy,
+        FalseSkinTier::Ancient => FalseSkinTierV1::Ancient,
     }
 }
 
@@ -203,6 +232,7 @@ fn target_id_for(
 mod tests {
     use super::*;
     use crate::combat::tuike::{FalseSkin, FalseSkinKind};
+    use crate::combat::tuike_v2::{FalseSkinLayer, FalseSkinTier, StackedFalseSkins};
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use valence::prelude::{App, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
@@ -265,5 +295,34 @@ mod tests {
         let cleared = collect_false_skin_payloads(&mut helper);
         assert_eq!(cleared.len(), 1);
         assert_eq!(cleared[0].layers_remaining, 0);
+    }
+
+    #[test]
+    fn emits_tuike_v2_layer_details_on_stack_change() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_tuike_v2_false_skin_state_payloads);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((
+            client_bundle,
+            StackedFalseSkins {
+                layers: vec![
+                    FalseSkinLayer::new(1, FalseSkinTier::Fan, 0.8, 7),
+                    FalseSkinLayer::new(2, FalseSkinTier::Ancient, 3.0, 9),
+                ],
+                ..Default::default()
+            },
+        ));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_false_skin_payloads(&mut helper);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].layers_remaining, 2);
+        assert_eq!(payloads[0].layers.len(), 2);
+        assert_eq!(payloads[0].layers[0].tier, FalseSkinTierV1::Fan);
+        assert_eq!(payloads[0].layers[1].tier, FalseSkinTierV1::Ancient);
+        assert_eq!(payloads[0].layers[1].spirit_quality, 3.0);
+        assert_eq!(payloads[0].layers[1].damage_capacity, 3000.0);
     }
 }
