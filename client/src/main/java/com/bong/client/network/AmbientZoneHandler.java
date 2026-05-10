@@ -98,25 +98,23 @@ public final class AmbientZoneHandler {
 
     public static final class RouteResult {
         private final Kind kind;
-        private final AmbientZonePayload payload;
         private final String logMessage;
 
-        private RouteResult(Kind kind, AmbientZonePayload payload, String logMessage) {
+        private RouteResult(Kind kind, String logMessage) {
             this.kind = kind;
-            this.payload = payload;
             this.logMessage = logMessage;
         }
 
         static RouteResult parseError(String logMessage) {
-            return new RouteResult(Kind.PARSE_ERROR, null, logMessage);
+            return new RouteResult(Kind.PARSE_ERROR, logMessage);
         }
 
         static RouteResult handled(AmbientZonePayload payload) {
-            return new RouteResult(Kind.HANDLED, payload, "switched " + payload.debugDescriptor());
+            return new RouteResult(Kind.HANDLED, "switched " + payload.debugDescriptor());
         }
 
         static RouteResult noChange(AmbientZonePayload payload) {
-            return new RouteResult(Kind.NO_CHANGE, payload, "kept " + payload.debugDescriptor());
+            return new RouteResult(Kind.NO_CHANGE, "kept " + payload.debugDescriptor());
         }
 
         public boolean isParseError() {
