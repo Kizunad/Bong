@@ -122,6 +122,8 @@ class CraftUxViewModelTest {
         CraftRecipe locked = recipe("secret", CraftCategory.MISC, false, List.of(), 0.0);
         assertEquals("???", CraftRecipeFilter.displayName(locked));
         assertEquals("引气 / 残卷 / 师承", CraftRecipeFilter.unlockHint(locked));
+        assertTrue(CraftRecipeFilter.matches(locked, "???"));
+        assertFalse(CraftRecipeFilter.matches(locked, "secret"));
     }
 
     private static CraftRecipe recipe(

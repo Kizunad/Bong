@@ -427,6 +427,10 @@ public class ClientRequestProtocolTest {
     @Test
     void encodesCraftStartQuantity() {
         assertEquals(
+            "{\"type\":\"craft_start\",\"v\":1,\"recipe_id\":\"craft.example.herb_knife.iron\",\"quantity\":1}",
+            ClientRequestProtocol.encodeCraftStart("craft.example.herb_knife.iron")
+        );
+        assertEquals(
             "{\"type\":\"craft_start\",\"v\":1,\"recipe_id\":\"craft.example.herb_knife.iron\",\"quantity\":3}",
             ClientRequestProtocol.encodeCraftStart("craft.example.herb_knife.iron", 3)
         );

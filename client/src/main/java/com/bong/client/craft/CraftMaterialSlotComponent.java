@@ -18,6 +18,8 @@ public final class CraftMaterialSlotComponent extends BaseComponent {
     private String itemId = "";
     private int count = 0;
     private boolean sufficient = true;
+    private InventoryItem cachedItem;
+    private Text cachedCountText = Text.literal("x0");
 
     public CraftMaterialSlotComponent() {
         sizing(Sizing.fixed(CraftScreenLayout.MATERIAL_SLOT_SIZE), Sizing.fixed(CraftScreenLayout.MATERIAL_SLOT_SIZE));
@@ -27,12 +29,18 @@ public final class CraftMaterialSlotComponent extends BaseComponent {
         this.itemId = itemId == null ? "" : itemId;
         this.count = Math.max(0, count);
         this.sufficient = sufficient;
+        this.cachedItem = this.itemId.isEmpty()
+            ? null
+            : InventoryItem.create(this.itemId, this.itemId, 1, 1, 1.0, "common", "");
+        this.cachedCountText = Text.literal("x" + this.count);
     }
 
     public void clearContent() {
         this.itemId = "";
         this.count = 0;
         this.sufficient = true;
+        this.cachedItem = null;
+        this.cachedCountText = Text.literal("x0");
     }
 
     @Override
@@ -41,14 +49,12 @@ public final class CraftMaterialSlotComponent extends BaseComponent {
         context.fill(x, y, x + size, y + size, BG);
         int border = itemId.isEmpty() ? BORDER_EMPTY : (sufficient ? BORDER_OK : BORDER_MISSING);
         drawBorder(context, x, y, size, size, hovered ? 0xFFB0B0B0 : border);
-        if (!itemId.isEmpty()) {
-            InventoryItem item = InventoryItem.create(itemId, itemId, 1, 1, 1.0, "common", "");
-            GridSlotComponent.drawItemTexture(context, item, x + 5, y + 4, size - 10, size - 12);
-            String text = "x" + count;
+        if (cachedItem != null) {
+            GridSlotComponent.drawItemTexture(context, cachedItem, x + 5, y + 4, size - 10, size - 12);
             var renderer = MinecraftClient.getInstance().textRenderer;
-            int tx = x + size - renderer.getWidth(text) - 3;
+            int tx = x + size - renderer.getWidth(cachedCountText) - 3;
             int ty = y + size - renderer.fontHeight - 2;
-            context.drawTextWithShadow(renderer, Text.literal(text), tx, ty, sufficient ? 0xFFE8FFE0 : 0xFFFF8080);
+            context.drawTextWithShadow(renderer, cachedCountText, tx, ty, sufficient ? 0xFFE8FFE0 : 0xFFFF8080);
         }
     }
 

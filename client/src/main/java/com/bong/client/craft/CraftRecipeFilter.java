@@ -37,8 +37,8 @@ public final class CraftRecipeFilter {
         if (recipe == null) {
             return false;
         }
-        if (!recipe.unlocked() && !"???".contains(q)) {
-            return false;
+        if (!recipe.unlocked()) {
+            return "???".equals(q);
         }
         if (contains(recipe.displayName(), q)
             || contains(recipe.id(), q)
