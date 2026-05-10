@@ -444,16 +444,17 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
   - P4 telemetry/联动：`server/src/combat/style_telemetry.rs`、`server/src/network/qi_color_observed_emit.rs`、`server/src/network/redis_bridge.rs` 接入毒蛊事件、阴诡色观测、天道叙事 channel。
 
 - **关键 commit**：
-  - `985c07dcf`（2026-05-10）`feat(dugu-v2): 实装五招物理与 server 规则`
-  - `3abb6f002`（2026-05-10）`feat(dugu-v2): 接通 schema 与天道叙事`
-  - `0a9b3a215`（2026-05-10）`feat(dugu-v2): 补客户端 HUD 粒子与音效配方`
-  - `39aff0c04`（2026-05-10）`fix(dugu-v2): 补齐四招客户端动画资源`
+  - `97470711b`（2026-05-10）`feat(dugu-v2): 实装五招物理与 server 规则`
+  - `edb1d70da`（2026-05-10）`feat(dugu-v2): 接通 schema 与天道叙事`
+  - `7bceeb80e`（2026-05-10）`feat(dugu-v2): 补客户端 HUD 粒子与音效配方`
+  - `1842f6684`（2026-05-10）`fix(dugu-v2): 补齐四招客户端动画资源`
 
 - **测试结果**：
   - `cd server && cargo test combat::dugu_v2`：120 passed。
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：3761 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
+  - `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：3772 passed（默认 debuginfo test 链接在当前执行环境被 SIGKILL，降调试符号后同一测试集通过）。
   - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：tiandao 47 files / 328 tests passed；schema 15 files / 353 tests passed。
-  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon test build`：BUILD SUCCESSFUL；1015 tests, 0 failures。
+  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon test build`：BUILD SUCCESSFUL；1019 tests, 0 failures。
   - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/dugu_*.json -o /tmp/...`：4 个新增动画 headless grid 渲染成功。
 
 - **跨仓库核验**：
