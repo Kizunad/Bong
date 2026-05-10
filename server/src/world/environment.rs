@@ -150,10 +150,6 @@ impl ZoneEnvironmentRegistry {
         removed
     }
 
-    pub fn replace(&mut self, zone: impl Into<String>, effects: Vec<EnvironmentEffect>) {
-        self.replace_for_dimension(zone, DimensionKind::Overworld.ident_str(), effects);
-    }
-
     pub fn replace_for_dimension(
         &mut self,
         zone: impl Into<String>,
@@ -565,7 +561,11 @@ mod tests {
     #[test]
     fn registry_remove_by_match_predicate() {
         let mut registry = ZoneEnvironmentRegistry::new();
-        registry.replace("spawn", all_effects());
+        registry.replace_for_dimension(
+            "spawn",
+            DimensionKind::Overworld.ident_str(),
+            all_effects(),
+        );
         let removed = registry.remove("spawn", |effect| effect.kind() == "fog_veil");
         assert_eq!(removed, 1);
         assert!(!registry
@@ -578,7 +578,11 @@ mod tests {
     fn registry_replace_overrides_existing() {
         let mut registry = ZoneEnvironmentRegistry::new();
         registry.add("spawn", all_effects()[0].clone());
-        registry.replace("spawn", vec![all_effects()[3].clone()]);
+        registry.replace_for_dimension(
+            "spawn",
+            DimensionKind::Overworld.ident_str(),
+            vec![all_effects()[3].clone()],
+        );
         assert_eq!(registry.current("spawn"), &[all_effects()[3].clone()]);
     }
 
@@ -608,9 +612,13 @@ mod tests {
     fn replace_same_effects_does_not_bump_generation() {
         let mut registry = ZoneEnvironmentRegistry::new();
         let effects = vec![all_effects()[0].clone()];
-        registry.replace("spawn", effects.clone());
+        registry.replace_for_dimension(
+            "spawn",
+            DimensionKind::Overworld.ident_str(),
+            effects.clone(),
+        );
         registry.drain_dirty();
-        registry.replace("spawn", effects);
+        registry.replace_for_dimension("spawn", DimensionKind::Overworld.ident_str(), effects);
         assert_eq!(registry.generation("spawn"), 1);
         assert!(registry.drain_dirty().is_empty());
     }
@@ -619,7 +627,11 @@ mod tests {
     fn replace_dimension_change_marks_dirty() {
         let mut registry = ZoneEnvironmentRegistry::new();
         let effects = vec![all_effects()[0].clone()];
-        registry.replace("spawn", effects.clone());
+        registry.replace_for_dimension(
+            "spawn",
+            DimensionKind::Overworld.ident_str(),
+            effects.clone(),
+        );
         registry.drain_dirty();
         registry.replace_for_dimension(
             "spawn",
@@ -635,7 +647,11 @@ mod tests {
     #[test]
     fn mark_all_dirty_for_snapshot_does_not_bump_generation() {
         let mut registry = ZoneEnvironmentRegistry::new();
-        registry.replace("spawn", vec![all_effects()[0].clone()]);
+        registry.replace_for_dimension(
+            "spawn",
+            DimensionKind::Overworld.ident_str(),
+            vec![all_effects()[0].clone()],
+        );
         registry.drain_dirty();
 
         registry.mark_all_dirty_for_snapshot();
