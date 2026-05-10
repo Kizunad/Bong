@@ -115,8 +115,8 @@ public class ExtractProgressHudPlannerTest {
 
         assertTrue(riftLines.size() == 5, "只应展示最近 5 个同 family exit CollapseTear，实际：" + riftLines);
         assertTrue(riftLines.get(0).contains("距 1 格"), "列表应按距离升序，实际：" + riftLines);
-        assertTrue(riftLines.stream().anyMatch(text -> text.startsWith("×") && text.contains("距 2 格")),
-            "当前正在撤离的裂口应显示已占标记，实际：" + riftLines);
+        assertTrue(riftLines.stream().anyMatch(text -> text.startsWith("我") && text.contains("距 2 格")),
+            "当前玩家正在撤离的裂口应显示自用标记，实际：" + riftLines);
         assertTrue(riftLines.stream().noneMatch(text -> text.contains("距 0 格")),
             "列表必须过滤跨 family / 非 exit / 非 CollapseTear，实际：" + riftLines);
     }

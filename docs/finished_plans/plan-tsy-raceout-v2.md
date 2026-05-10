@@ -1,6 +1,6 @@
 # Bong · plan-tsy-raceout-v2 · 完成
 
-race-out v1 polish 包：承接 `plan-tsy-raceout-v1` ✅ finished（PR #151，2026-05-08）落地了 Q-RC4 单 portal 单 player + race-out HUD 紧迫文案 + calamity narration prompt。**v2 收集 PR #149**（同期 cloud Claude session 重复消费 v1 的并行实施版本，已 closed）的**差异化深度**作为正式 polish：① 大屏 race-out banner（顶部 "塌缩 RACE-OUT" + 中央向上取整 3→2→1 大号秒数） ② Q-RC2 远视觉钩裂口列表（client HUD 右上角列最近 5 个本族裂口距离 + 跨 family/方向/kind 全过滤） ③ Schema 新增 `ExtractAbortedReasonV1::PortalOccupied` wire variant（additive 不破 client，区分"自己已撤" vs "被人占"两路 UX） ④ **P2 strict vs lenient 终结流水二次决策**——本次按 v1 现状 + worldview §十六.六"按 §十二 现有规则照走"锁定方案 B lenient 标准流水 ⑤ P3 narration scope=zone（v1）vs broadcast（#149）二次决策，本次锁定方案 A zone。
+race-out v1 polish 包：承接 `plan-tsy-raceout-v1` ✅ finished（PR #151，2026-05-08）落地了 Q-RC4 单 portal 单 player + race-out HUD 紧迫文案 + calamity narration prompt。**v2 收集 PR #149**（同期 cloud Claude session 重复消费 v1 的并行实施版本，已 closed）的**差异化深度**作为正式 polish：① 大屏 race-out banner（顶部 "塌缩 RACE-OUT" + 中央向上取整 30→1 大号秒数） ② Q-RC2 远视觉钩裂口列表（client HUD 右上角列最近 5 个本族裂口距离 + 跨 family/方向/kind 全过滤 + 当前玩家自用标记） ③ Schema 新增 `ExtractAbortedReasonV1::PortalOccupied` wire variant（additive 不破 client，区分"自己已撤" vs "被人占"两路 UX） ④ **P2 strict vs lenient 终结流水二次决策**——本次按 v1 现状 + worldview §十六.六"按 §十二 现有规则照走"锁定方案 B lenient 标准流水 ⑤ P3 narration scope=zone（v1）vs broadcast（#149）二次决策，本次锁定方案 A zone。
 
 **世界观锚点**：`worldview.md §十六.一 step 4 race-out`（line 1392，"还没撤出的所有修士面临 race-out"）· `§十六.六 坍缩渊塌缩`（line 1589-1592，秘境内死亡 100% 掉落 + 干尸化 / 按 §十二 现有规则照走 vs strict force-terminate）· `§十六:1537 塌缩裂口表`（race-out 期间随机开 3-5 / 撤离 3 秒 / 塌缩完成即封闭）· `§十六:1544 塌缩优先`（撤离时长强制缩短 3s）· `§十二 死亡终结流水`（fortune_remaining + 寿元 -5% + 化虚 -100 年）
 
@@ -48,8 +48,8 @@ race-out v1 polish 包：承接 `plan-tsy-raceout-v1` ✅ finished（PR #151，2
 
 - [x] **race-out HUD 大屏化（v1 polish 缺失项）**：v1 实装的是底部小号 label `"race-out · 化死域 Xs"`，紧迫感不够。v2 升级：
   - **顶部 banner**："塌缩 RACE-OUT"（红色加粗，全屏宽度，1/8 屏高）
-  - **中央倒计时**：大号秒数（向上取整 3 → 2 → 1，红色发光，1/4 屏高）
-  - **右上角裂口列表**（Q-RC2 远视觉钩）：最近 5 个本族 CollapseTear 距离（按距离升序），每行显示 kind 标记、"距 NN 格" + 占用状态（已占→灰色 + × 标记）
+  - **中央倒计时**：大号秒数（向上取整，完整 race-out 显示 30 → 1，最后 3 秒显示 3 → 2 → 1，红色发光，1/4 屏高）
+  - **右上角裂口列表**（Q-RC2 远视觉钩）：最近 5 个本族 CollapseTear 距离（按距离升序），每行显示 kind 标记、"距 NN 格" + 当前玩家正在使用的裂口标记；wire 层暂不携带其他玩家 occupant 信息。
   - 全屏红色 tint 保留（v1 已实装 `0x22FF0000`）
 - [x] **Q-RC4 IPC 精确化**：v1 复用 `AlreadyBusy` wire variant 把"被人占用"和"自己已撤"混在一起——客户端无法区分给玩家的提示。v2 新增 `ExtractAbortedReasonV1::PortalOccupied` literal（schema additive 不破现有 client），client 区分两路 UX 提示：
   - `already_busy` → "你已在撤离中"（玩家自己 ExtractProgress 已存在）
@@ -69,8 +69,8 @@ race-out v1 polish 包：承接 `plan-tsy-raceout-v1` ✅ finished（PR #151，2
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ✅ | 大屏 race-out banner + 中央倒计时（向上取整 3→2→1） | `ExtractProgressHudPlannerTest.collapseStateBuildsCountdownTint` 覆盖 banner / scaled countdown / tint |
-| **P1** ✅ | Q-RC2 远视觉钩裂口列表（右上角 5 最近本族 CollapseTear 距离 + 占用 / kind 图标） | `collapseRiftListFiltersFamilyKindDirectionAndSortsNearestFive` 覆盖 family/kind/direction 过滤、排序、5 个上限、占用标记 |
+| **P0** ✅ | 大屏 race-out banner + 中央倒计时（向上取整，30→1） | `ExtractProgressHudPlannerTest.collapseStateBuildsCountdownTint` 覆盖 banner / scaled countdown / tint |
+| **P1** ✅ | Q-RC2 远视觉钩裂口列表（右上角 5 最近本族 CollapseTear 距离 + 当前使用 / kind 标记） | `collapseRiftListFiltersFamilyKindDirectionAndSortsNearestFive` 覆盖 family/kind/direction 过滤、排序、5 个上限、自用标记 |
 | **P2** ✅ | Schema 新增 `portal_occupied` wire variant + client 区分 UX 提示 | schema/server/client 测试覆盖 `portal_occupied`，文案为"裂口被占，换下一个" |
 | **P3** ✅ | Q-RC6 strict vs lenient 终结流水决策落地 | 锁定方案 B lenient；`tsy_collapsed` 保持标准 fortune revival 决策 |
 | **P4** ✅ | Q-RC7 narration scope 决策落地（zone / broadcast / 混合） | 锁定方案 A zone；`calamity.md` 明确不得 broadcast |
@@ -89,7 +89,7 @@ v1 已实装基础 race-out（不动）：
 v2 polish 增量：
   P0 client UI 升级：
     appendCollapse → 顶部 banner + 中央 countdown + 保留底部 tint
-    倒计时数字 = ceil(remainingTicks / 20)，3 → 2 → 1，每秒切换
+    倒计时数字 = ceil(remainingTicks / 20)，30 → ... → 1，每秒切换
   P1 client UI 增加 appendCollapseRiftListWithPlayerPos：
     从 ExtractState.portals() 过滤 family_id 匹配 + kind == CollapseTear + direction == Exit
     sort by distance(player_pos, portal.world_pos) asc
@@ -151,7 +151,7 @@ v2 polish 增量：
 
 ### 落地清单
 
-- **P0 / P1 client HUD**：`client/src/main/java/com/bong/client/hud/ExtractProgressHudPlanner.java` 新增 race-out 顶部 banner、中央 scaled countdown、右上本族裂口列表；`HudRenderCommand.java` / `BongHud.java` 增加 `SCALED_TEXT` 渲染命令；`ExtractProgressHudPlannerTest.java` 覆盖 tint、banner、倒计时、裂口过滤/排序/5 个上限/占用标记。
+- **P0 / P1 client HUD**：`client/src/main/java/com/bong/client/hud/ExtractProgressHudPlanner.java` 新增 race-out 顶部 banner、中央 scaled countdown、右上本族裂口列表；`HudRenderCommand.java` / `BongHud.java` 增加 `SCALED_TEXT` 渲染命令；`ExtractProgressHudPlannerTest.java` 覆盖 tint、banner、30→1 倒计时、裂口过滤/排序/5 个上限/当前玩家自用标记。
 - **P2 portal_occupied wire + UX**：`agent/packages/schema/src/extract-v1.ts` 增加 `portal_occupied`，重新生成 schema JSON 和 sample；`server/src/schema/server_data.rs` / `server/src/network/extract_emit.rs` 增加 `PortalOccupied` 映射；`client/src/main/java/com/bong/client/tsy/ExtractStateStore.java` 区分 "你已在撤离中" 与 "裂口被占，换下一个"；schema/server/client 测试补覆盖。
 - **P3 Q-RC6**：选择方案 B lenient，不新增 strict terminal death；`server/src/combat/lifecycle.rs` 用 `tsy_collapsed_death_keeps_standard_fortune_revival_decision` 锁定 `tsy_collapsed` 仍走标准 fortune revival 决策。
 - **P4 Q-RC7**：`agent/packages/tiandao/src/skills/calamity.md` 标注 race-out v1/v2，明确 `scope:"zone"` 且不得 broadcast。
@@ -160,6 +160,8 @@ v2 polish 增量：
 
 - `8e2bf6a17` · 2026-05-11 · `plan-tsy-raceout-v2: 强化撤离 race-out HUD`
 - `57e42bf48` · 2026-05-11 · `plan-tsy-raceout-v2: 区分裂口占用撤离拒绝`
+- `3a1a349b0` · 2026-05-11 · `docs(plan-tsy-raceout-v2): finish evidence 并归档至 finished_plans/`
+- `8d599ec50` · 2026-05-11 · `docs(plan-tsy-raceout-v2): 同步 rebase 后 evidence commit`
 
 ### 测试结果
 
@@ -181,6 +183,7 @@ v2 polish 增量：
 ### 遗留 / 后续
 
 - 无本 plan 阻塞项。
+- 当前 `RiftPortalStateV1` 不携带其他玩家 occupant 信息；本 plan 的裂口列表只能标记当前玩家正在使用的裂口。若后续要在列表里展示"被他人占用"，需新 plan 给 rift portal wire 增加 occupant 摘要字段。
 - `plan-narrative-v1` 仍负责后续 race-out 信号通道接入。
 - `plan-style-balance-v1` 仍负责 race-out 期间 PVP telemetry 观察。
 - `plan-vfx-v2` 可继续补 race-out 启动瞬间裂口闪光 / 粒子 / 音效。

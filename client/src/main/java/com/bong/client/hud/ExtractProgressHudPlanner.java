@@ -23,8 +23,9 @@ public final class ExtractProgressHudPlanner {
     private static final int DANGER_DIM = 0xCC3A0A10;
     private static final int TEXT = 0xFFE6F3FF;
     private static final int MUTED = 0xFF8EA5B8;
-    private static final int OCCUPIED = 0xFF717982;
+    private static final int ACTIVE_PORTAL = 0xFF717982;
     private static final int FILL = 0xFF60D8FF;
+    private static final String COLLAPSE_HINT = "→ 冲入塌缩裂口（已占即换下一个）";
 
     private ExtractProgressHudPlanner() {
     }
@@ -137,8 +138,8 @@ public final class ExtractProgressHudPlanner {
         out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, label, labelX, countdownY + 42, DANGER));
         out.add(HudRenderCommand.text(
             HudRenderLayer.TSY_EXTRACT,
-            "→ 冲入塌缩裂口（已占即换下一个）",
-            Math.max(8, (screenWidth - widthMeasurer.measure("→ 冲入塌缩裂口（已占即换下一个）")) / 2),
+            COLLAPSE_HINT,
+            Math.max(8, (screenWidth - widthMeasurer.measure(COLLAPSE_HINT)) / 2),
             countdownY + 54,
             MUTED
         ));
@@ -172,14 +173,14 @@ public final class ExtractProgressHudPlanner {
         out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, "本族裂口", x + 8, y + 6, TEXT));
         for (int i = 0; i < nearest.size(); i++) {
             RiftPortalView portal = nearest.get(i).portal();
-            boolean occupied = state.activePortalEntityId() != null && state.activePortalEntityId() == portal.entityId();
-            String line = riftListLine(portal, nearest.get(i).distanceSq(), occupied);
+            boolean currentPlayerPortal = state.activePortalEntityId() != null && state.activePortalEntityId() == portal.entityId();
+            String line = riftListLine(portal, nearest.get(i).distanceSq(), currentPlayerPortal);
             out.add(HudRenderCommand.text(
                 HudRenderLayer.TSY_EXTRACT,
                 clip(line, RIFT_LIST_WIDTH - 16, widthMeasurer),
                 x + 8,
                 y + 20 + i * 12,
-                occupied ? OCCUPIED : DANGER
+                currentPlayerPortal ? ACTIVE_PORTAL : DANGER
             ));
         }
     }
@@ -197,9 +198,9 @@ public final class ExtractProgressHudPlanner {
         return dx * dx + dy * dy + dz * dz;
     }
 
-    private static String riftListLine(RiftPortalView portal, double distanceSq, boolean occupied) {
+    private static String riftListLine(RiftPortalView portal, double distanceSq, boolean currentPlayerPortal) {
         long blocks = Math.round(Math.sqrt(Math.max(0.0, distanceSq)));
-        String marker = occupied ? "×" : "›";
+        String marker = currentPlayerPortal ? "我" : "›";
         return String.format(Locale.ROOT, "%s %s 距 %d 格", marker, kindIcon(portal.kind()), blocks);
     }
 
