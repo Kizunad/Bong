@@ -287,6 +287,7 @@
   - 本 plan 新增 `client/src/main/java/com/bong/client/animation/AnimationLayerManager.java`，把 `EXPRESSION` / `LOWER_BODY` / `UPPER_BODY` / `FULL_BODY` 映射到稳定 priority，并保证同语义层替换、跨语义层共存。
   - 本 plan 扩展 `BongAnimations.IMPLEMENTATION_V1_ANIMATIONS`，新增 39 个 PlayerAnimator JSON；`assets/bong/player_animation/` 当前共 67 个动画资源，覆盖战斗、姿态、NPC、产出交互、七流派 stance、伤口/虚弱步态、突破、死亡/重生。
   - 新增 `client/tools/gen_player_animation_implementation_v1.py`、`client/tools/gen_stance.py`、`client/tools/gen_breakthrough.py`，继续使用 `render_animation.py` 做 headless 资源核验。
+  - Review 收尾：`AnimationLayerManager` 仅在 stop 成功后更新通道追踪，并在生成器基线补齐 head/torso `roll=0` 边界复位，防止 `dodge_roll` / limping 类动画残留侧倾。
   - server 新增 `server/src/network/animation_trigger.rs`：`AnimationTrigger` component 适配到既有 `VfxEventPayloadV1::PlayAnim` / `StopAnim`，并在同 tick 清除 component。
   - `server/src/network/vfx_animation_trigger.rs` 已把 combat attack / defense / hit recoil / breakthrough / tribulation / woliu / botany harvest / lingtian till 事件映射到骨骼动画；目标查询放宽到 `Position + UniqueId`，支持带 skinned player shell 的 NPC。
   - 协议决议：未新增平行 `bong:animation_trigger` CustomPayload，统一复用既有 `bong:vfx_event` 动画 payload，避免两套 server→client 表演协议并存。
@@ -294,11 +295,13 @@
   - `0f2290d35` · 2026-05-11 · `实现 player-animation 动画资源与分层管理`
   - `cbc563b47` · 2026-05-11 · `接入 player-animation 服务端触发适配`
   - `067e60794` · 2026-05-11 · `补强 player-animation 事件触发覆盖`
+  - `e7a8e85a1` · 2026-05-11 · `修复 player-animation review 反馈`
 - **测试结果**：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3650 passed。
   - `cd server && cargo test vfx_animation_trigger && cargo test animation_trigger` → 8 passed + 10 passed，覆盖 `PlayAnim` / `StopAnim` component 适配、combat/breakthrough/botany/lingtian 映射、skinned NPC `UniqueId` 目标。
   - Java 17 (`$HOME/.sdkman/candidates/java/17.0.18-amzn`) 下 `cd client && ./gradlew test --tests "com.bong.client.animation.*"` → BUILD SUCCESSFUL。
   - Java 17 下 `cd client && ./gradlew test build` → BUILD SUCCESSFUL。
+  - Review 收尾后 Java 17 下 `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build` → BUILD SUCCESSFUL。
   - `python3 -m py_compile client/tools/gen_player_animation_implementation_v1.py client/tools/gen_stance.py client/tools/gen_breakthrough.py` → pass。
   - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/stance_baomai.json --ticks "0,10,20" -o /tmp/bong-player-animation-implementation-v1-render` → wrote `stance_baomai_grid.png`。
 - **跨仓库核验**：
