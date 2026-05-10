@@ -61,6 +61,7 @@ public final class CraftOutputPreview {
             case TUIKE_SKIN -> new String[] {"伪装  可装备", "损耗随战斗结算"};
             case ZHENFA_TRAP -> new String[] {"阵件  可埋设", "触发后交由阵法系统"};
             case TOOL -> new String[] {"凡器  可使用", "耐久随采集/战斗损耗"};
+            case ARMOR_CRAFT -> new String[] {"甲胄  可装备", "耐久随战斗结算"};
             case CONTAINER -> new String[] {"装具  扩展背包", "重量影响行动负担"};
             case MISC -> new String[] {"凡物  通用材料", "以物易物基础流通物"};
         };
