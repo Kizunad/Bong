@@ -340,6 +340,38 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesNpcEngagementRequests() {
+        assertEquals(
+            "{\"type\":\"npc_inspect_request\",\"v\":1,\"npc_entity_id\":42}",
+            ClientRequestProtocol.encodeNpcInspectRequest(42)
+        );
+        assertEquals(
+            "{\"type\":\"npc_dialogue_choice\",\"v\":1,\"npc_entity_id\":42,\"option_id\":\"trade\"}",
+            ClientRequestProtocol.encodeNpcDialogueChoice(42, " trade ")
+        );
+        assertEquals(
+            "{\"type\":\"npc_trade_request\",\"v\":1,\"npc_entity_id\":42,\"offered_items\":[1001,1002],\"requested_item_id\":\"spirit_grass\"}",
+            ClientRequestProtocol.encodeNpcTradeRequest(42, List.of(1001L, 1002L), " spirit_grass ")
+        );
+    }
+
+    @Test
+    void rejectsInvalidNpcEngagementRequests() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeNpcInspectRequest(-1)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeNpcDialogueChoice(1, " ")
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeNpcTradeRequest(1, List.of(-1L), "spirit_grass")
+        );
+    }
+
+    @Test
     void encodesSearchRequests() {
         assertEquals(
             "{\"type\":\"start_search\",\"v\":1,\"container_entity_id\":42}",

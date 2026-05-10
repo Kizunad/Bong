@@ -2474,6 +2474,96 @@
       "required": [
         "v",
         "type",
+        "npc_entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "npc_inspect_request",
+          "type": "string"
+        },
+        "npc_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "npc_entity_id",
+        "option_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "npc_dialogue_choice",
+          "type": "string"
+        },
+        "npc_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "option_id": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "npc_entity_id",
+        "offered_items",
+        "requested_item_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "npc_trade_request",
+          "type": "string"
+        },
+        "npc_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offered_items": {
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "requested_item_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "qi_target"
       ],
       "properties": {

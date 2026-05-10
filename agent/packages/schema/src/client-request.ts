@@ -630,6 +630,39 @@ export const TradeOfferResponseRequestV1 = Type.Object(
 );
 export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
 
+export const NpcInspectRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("npc_inspect_request"),
+    npc_entity_id: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type NpcInspectRequestV1 = Static<typeof NpcInspectRequestV1>;
+
+export const NpcDialogueChoiceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("npc_dialogue_choice"),
+    npc_entity_id: Type.Integer({ minimum: 0 }),
+    option_id: Type.String({ minLength: 1, maxLength: 64 }),
+  },
+  { additionalProperties: false },
+);
+export type NpcDialogueChoiceRequestV1 = Static<typeof NpcDialogueChoiceRequestV1>;
+
+export const NpcTradeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("npc_trade_request"),
+    npc_entity_id: Type.Integer({ minimum: 0 }),
+    offered_items: Type.Array(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+    requested_item_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type NpcTradeRequestV1 = Static<typeof NpcTradeRequestV1>;
+
 export const AnqiCarrierSlotV1 = Type.Union([
   Type.Literal("main_hand"),
   Type.Literal("off_hand"),
@@ -906,6 +939,9 @@ export const ClientRequestV1 = Type.Union([
   SparringInviteResponseRequestV1,
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
+  NpcInspectRequestV1,
+  NpcDialogueChoiceRequestV1,
+  NpcTradeRequestV1,
   ChargeCarrierRequestV1,
   ThrowCarrierRequestV1,
   AnqiContainerSwitchRequestV1,
