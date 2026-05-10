@@ -97,6 +97,9 @@ pub struct EnvField {
     pub ambient_pressure: f64,
     pub turbulence_intensity: f64,
     pub law_disruption: f64,
+    pub dugu_taint_residue: f64,
+    pub self_cure_aura: f64,
+    pub reverse_aftermath_cloud: f64,
 }
 
 impl EnvField {
@@ -130,6 +133,21 @@ impl EnvField {
         } else {
             0.0
         };
+        self
+    }
+
+    pub fn with_dugu_taint_residue(mut self, intensity: f64) -> Self {
+        self.dugu_taint_residue = clamp_field_intensity(intensity);
+        self
+    }
+
+    pub fn with_self_cure_aura(mut self, intensity: f64) -> Self {
+        self.self_cure_aura = clamp_field_intensity(intensity);
+        self
+    }
+
+    pub fn with_reverse_aftermath_cloud(mut self, intensity: f64) -> Self {
+        self.reverse_aftermath_cloud = clamp_field_intensity(intensity);
         self
     }
 
@@ -187,7 +205,18 @@ impl Default for EnvField {
             ambient_pressure: 0.0,
             turbulence_intensity: 0.0,
             law_disruption: 0.0,
+            dugu_taint_residue: 0.0,
+            self_cure_aura: 0.0,
+            reverse_aftermath_cloud: 0.0,
         }
+    }
+}
+
+fn clamp_field_intensity(intensity: f64) -> f64 {
+    if intensity.is_finite() {
+        intensity.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -247,5 +276,16 @@ mod tests {
         assert_eq!(env.law_disruption_backfire_fraction(), 0.4);
         assert_eq!(env.law_disruption_channeling_multiplier(), 3.0);
         assert_eq!(env.law_disruption_distance_multiplier(), 2.0);
+    }
+
+    #[test]
+    fn dugu_field_traces_are_independent_and_clamped() {
+        let env = EnvField::default()
+            .with_dugu_taint_residue(1.4)
+            .with_self_cure_aura(0.35)
+            .with_reverse_aftermath_cloud(f64::NAN);
+        assert_eq!(env.dugu_taint_residue, 1.0);
+        assert_eq!(env.self_cure_aura, 0.35);
+        assert_eq!(env.reverse_aftermath_cloud, 0.0);
     }
 }

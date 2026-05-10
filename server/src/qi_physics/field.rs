@@ -1,4 +1,5 @@
 use super::collision::reverse_clamp;
+use super::constants::DUGU_DIRTY_QI_ZONE_RETURN_RATIO;
 use super::{finite_non_negative, QiPhysicsError};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -7,6 +8,14 @@ pub struct EchoFractalOutcome {
     pub threshold: f64,
     pub echo_count: u32,
     pub damage_per_echo: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DuguReverseBurstOutcome {
+    pub mark_count: u32,
+    pub total_taint_intensity: f64,
+    pub burst_damage: f64,
+    pub returned_zone_qi: f64,
 }
 
 pub fn density_echo(
@@ -53,6 +62,28 @@ pub fn sever_meridian(normal_clamp: f64, amplification_multiplier: f64) -> f64 {
     (normal_clamp.max(0.0) * amplification_multiplier.max(0.0)).max(0.0)
 }
 
+/// 毒蛊倒蚀只负责把已种入的永久标记一次性清算；标记扫描由 combat 层完成。
+pub fn reverse_burst_all_marks<I>(mark_intensities: I) -> DuguReverseBurstOutcome
+where
+    I: IntoIterator<Item = f64>,
+{
+    let mut mark_count = 0_u32;
+    let mut total_taint_intensity = 0.0;
+    for intensity in mark_intensities {
+        if intensity.is_finite() && intensity > 0.0 {
+            mark_count = mark_count.saturating_add(1);
+            total_taint_intensity += intensity;
+        }
+    }
+    let burst_damage = total_taint_intensity * 12.0;
+    DuguReverseBurstOutcome {
+        mark_count,
+        total_taint_intensity,
+        burst_damage,
+        returned_zone_qi: total_taint_intensity * DUGU_DIRTY_QI_ZONE_RETURN_RATIO,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +110,14 @@ mod tests {
     #[test]
     fn sever_meridian_triples_normal_half_clamp_for_void_zhenmai() {
         assert_eq!(sever_meridian(0.5, 3.0), 1.5);
+    }
+
+    #[test]
+    fn reverse_burst_all_marks_returns_dirty_qi_to_zone_budget() {
+        let out = reverse_burst_all_marks([2.0, f64::NAN, -1.0, 3.0]);
+        assert_eq!(out.mark_count, 2);
+        assert_eq!(out.total_taint_intensity, 5.0);
+        assert_eq!(out.burst_damage, 60.0);
+        assert!((out.returned_zone_qi - 4.95).abs() < 1e-9);
     }
 }

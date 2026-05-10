@@ -18,6 +18,10 @@ pub const QI_DRAIN_CLAMP: f64 = 0.50;
 pub const VORTEX_ABSORPTION_RATIO_BASE: f64 = 0.01;
 /// plan-woliu-v2 §0：涡流搅拌器默认甩回环境比例。
 pub const VORTEX_SWIRL_RATIO_BASE: f64 = 0.99;
+/// plan-dugu-v2 §0：毒蛊脏真元异体排斥率，伪装成宿主真元混入经脉。
+pub const DUGU_RHO: f64 = 0.05;
+/// plan-dugu-v2 §0：脏真元过渡态最终散回受害者所在 zone qi 的比例。
+pub const DUGU_DIRTY_QI_ZONE_RETURN_RATIO: f64 = 0.99;
 /// plan-woliu-v2 §0：紊流场基础自然耗散率（每秒）。
 pub const VORTEX_TURBULENCE_DECAY_PER_SEC: f64 = 0.05;
 /// plan-woliu-v2 §0：紊流场内灵物/丹材保质期加速倍率。
@@ -104,5 +108,11 @@ mod tests {
             (total - 1.0).abs() < 1e-12,
             "woliu stir ratios must sum to 1.0 for qi conservation, got {total}"
         );
+    }
+
+    #[test]
+    fn dugu_dirty_qi_constants_match_plan_budget() {
+        assert!((DUGU_RHO - 0.05).abs() < QI_EPSILON);
+        assert!((DUGU_DIRTY_QI_ZONE_RETURN_RATIO - 0.99).abs() < QI_EPSILON);
     }
 }

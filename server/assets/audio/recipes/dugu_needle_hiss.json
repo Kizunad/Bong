@@ -1,0 +1,10 @@
+{
+  "id": "dugu_needle_hiss",
+  "layers": [
+    { "sound": "minecraft:entity.spider.hurt", "volume": 0.4, "pitch": 1.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.3, "pitch": 1.2, "delay_ticks": 1 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

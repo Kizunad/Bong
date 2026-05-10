@@ -134,6 +134,7 @@ mod tests {
                     secondary: Some(ColorKind::Solid),
                     is_chaotic: false,
                     is_hunyuan: true,
+                    ..Default::default()
                 },
             ))
             .id();
@@ -146,6 +147,7 @@ mod tests {
                     secondary: None,
                     is_chaotic: false,
                     is_hunyuan: false,
+                    ..Default::default()
                 },
             ))
             .id();
