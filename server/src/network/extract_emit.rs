@@ -352,10 +352,7 @@ fn reject_reason_wire(reason: ExtractRejectionReason) -> ExtractAbortedReasonV1 
             ExtractAbortedReasonV1::PortalExpired
         }
         ExtractRejectionReason::CannotExit => ExtractAbortedReasonV1::CannotExit,
-        // plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 已被其他玩家占用。
-        // 复用 AlreadyBusy IPC variant 避免 schema breaking change；
-        // client HUD 文案由 nearestPortal 切换提示弥补 UX。
-        ExtractRejectionReason::PortalOccupied => ExtractAbortedReasonV1::AlreadyBusy,
+        ExtractRejectionReason::PortalOccupied => ExtractAbortedReasonV1::PortalOccupied,
     }
 }
 
@@ -387,6 +384,14 @@ mod tests {
         let value = serde_json::to_value(payload).expect("serialize");
         assert_eq!(value["type"], "extract_started");
         assert_eq!(value["portal_kind"], "collapse_tear");
+    }
+
+    #[test]
+    fn portal_occupied_rejection_uses_dedicated_wire_reason() {
+        assert_eq!(
+            reject_reason_wire(ExtractRejectionReason::PortalOccupied),
+            ExtractAbortedReasonV1::PortalOccupied
+        );
     }
 
     #[test]

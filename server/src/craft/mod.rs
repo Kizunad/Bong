@@ -78,6 +78,9 @@ pub fn register(app: &mut App) {
     register_anqi_v2_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register anqi-v2 recipes: {err}");
     });
+    register_zhenfa_v2_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register zhenfa-v2 recipes: {err}");
+    });
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
@@ -385,6 +388,153 @@ pub fn register_anqi_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Regi
     Ok(())
 }
 
+/// plan-zhenfa-v2 §3：护龛 / 聚灵 / 欺天 / 幻阵预埋件 + 两档阵旗。
+pub fn register_zhenfa_v2_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    let mentor = |npc: &str| {
+        vec![UnlockSource::Mentor {
+            npc_archetype: npc.to_string(),
+        }]
+    };
+    let scroll = |id: &str| {
+        vec![UnlockSource::Scroll {
+            item_template: format!("scroll_{id}"),
+        }]
+    };
+
+    let specs = [
+        (
+            "zhenfa.array.ward",
+            CraftCategory::ZhenfaTrap,
+            "护龛阵预埋件",
+            vec![
+                ("ancient_soil_shard".to_string(), 5),
+                ("array_eye_block".to_string(), 1),
+            ],
+            15.0,
+            15 * 60 * 20,
+            ("zhenfa_array_ward".to_string(), 1),
+            CraftRequirements::default(),
+            scroll("zhenfa_array_ward"),
+        ),
+        (
+            "zhenfa.array.lingju",
+            CraftCategory::ZhenfaTrap,
+            "聚灵阵预埋件",
+            vec![
+                ("ancient_soil_shard".to_string(), 9),
+                ("array_eye_block".to_string(), 3),
+                ("lingquan_water".to_string(), 3),
+            ],
+            30.0,
+            30 * 60 * 20,
+            ("zhenfa_array_lingju".to_string(), 1),
+            CraftRequirements::default(),
+            mentor("array_scribe"),
+        ),
+        (
+            "zhenfa.array.deceive",
+            CraftCategory::ZhenfaTrap,
+            "欺天阵预埋件",
+            vec![
+                ("ancient_bone_shard".to_string(), 5),
+                ("array_eye_block".to_string(), 1),
+                ("sealed_void_qi".to_string(), 1),
+            ],
+            80.0,
+            60 * 60 * 20,
+            ("zhenfa_array_deceive".to_string(), 1),
+            CraftRequirements {
+                realm_min: Some(Realm::Solidify),
+                qi_color_min: Some((ColorKind::Intricate, 0.2)),
+                skill_lv_min: None,
+            },
+            vec![UnlockSource::Insight {
+                trigger: InsightTrigger::Breakthrough,
+            }],
+        ),
+        (
+            "zhenfa.array.illusion",
+            CraftCategory::ZhenfaTrap,
+            "幻阵符",
+            vec![
+                ("intricate_qi_dye".to_string(), 3),
+                ("ling_mu".to_string(), 2),
+            ],
+            8.0,
+            5 * 60 * 20,
+            ("zhenfa_array_illusion_talisman".to_string(), 3),
+            CraftRequirements {
+                realm_min: None,
+                qi_color_min: Some((ColorKind::Intricate, 0.1)),
+                skill_lv_min: None,
+            },
+            mentor("array_scribe"),
+        ),
+        (
+            "zhenfa.flag.basic",
+            CraftCategory::Tool,
+            "基础阵旗",
+            vec![
+                ("ling_mu".to_string(), 2),
+                ("beast_leather".to_string(), 1),
+                ("intricate_qi_dye".to_string(), 1),
+            ],
+            4.0,
+            8 * 60 * 20,
+            ("array_flag".to_string(), 1),
+            CraftRequirements::default(),
+            scroll("zhenfa_flag_basic"),
+        ),
+        (
+            "zhenfa.flag.deceive",
+            CraftCategory::Tool,
+            "欺天阵旗",
+            vec![
+                ("ancient_bone_shard".to_string(), 3),
+                ("sealed_void_qi".to_string(), 1),
+            ],
+            50.0,
+            30 * 60 * 20,
+            ("array_flag_deceive".to_string(), 1),
+            CraftRequirements {
+                realm_min: Some(Realm::Solidify),
+                qi_color_min: Some((ColorKind::Intricate, 0.2)),
+                skill_lv_min: None,
+            },
+            vec![UnlockSource::Insight {
+                trigger: InsightTrigger::Breakthrough,
+            }],
+        ),
+    ];
+
+    for (
+        id,
+        category,
+        display_name,
+        materials,
+        qi_cost,
+        time_ticks,
+        output,
+        requirements,
+        unlock_sources,
+    ) in specs
+    {
+        registry.register(CraftRecipe {
+            id: RecipeId::new(id),
+            category,
+            display_name: display_name.into(),
+            materials,
+            qi_cost,
+            time_ticks,
+            output,
+            requirements,
+            unlock_sources,
+        })?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,6 +632,30 @@ mod tests {
         assert!(registry
             .get(&RecipeId::new("anqi.carrier.shanggu_bone"))
             .is_some_and(|recipe| recipe.requirements.realm_min == Some(Realm::Void)));
+    }
+
+    #[test]
+    fn register_zhenfa_v2_recipes_adds_four_arrays_and_two_flags() {
+        let mut registry = CraftRegistry::new();
+        register_zhenfa_v2_recipes(&mut registry).unwrap();
+        assert_eq!(registry.by_category(CraftCategory::ZhenfaTrap).count(), 4);
+        assert_eq!(registry.by_category(CraftCategory::Tool).count(), 2);
+        assert!(registry
+            .get(&RecipeId::new("zhenfa.array.deceive"))
+            .is_some_and(|recipe| recipe.requirements.realm_min == Some(Realm::Solidify)));
+    }
+
+    #[test]
+    fn register_zhenfa_v2_recipes_keep_ids_in_zhenfa_namespace() {
+        let mut registry = CraftRegistry::new();
+        register_zhenfa_v2_recipes(&mut registry).unwrap();
+        for recipe in registry.iter() {
+            assert!(
+                recipe.id.as_str().starts_with("zhenfa."),
+                "zhenfa recipe id `{}` should stay in zhenfa namespace",
+                recipe.id
+            );
+        }
     }
 
     #[test]

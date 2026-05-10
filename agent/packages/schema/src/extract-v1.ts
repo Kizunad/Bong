@@ -82,6 +82,7 @@ export const ExtractAbortedReasonV1 = Type.Union([
   Type.Literal("out_of_range"),
   Type.Literal("not_in_tsy"),
   Type.Literal("already_busy"),
+  Type.Literal("portal_occupied"),
   Type.Literal("cannot_exit"),
 ]);
 export type ExtractAbortedReasonV1 = Static<typeof ExtractAbortedReasonV1>;

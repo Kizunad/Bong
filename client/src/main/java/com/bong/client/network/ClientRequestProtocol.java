@@ -71,7 +71,11 @@ public final class ClientRequestProtocol {
 
     public enum ZhenfaKind {
         TRAP("trap"),
-        WARD("ward");
+        WARD("ward"),
+        SHRINE_WARD("shrine_ward"),
+        LINGJU("lingju"),
+        DECEIVE_HEAVEN("deceive_heaven"),
+        ILLUSION("illusion");
 
         private final String wireName;
 

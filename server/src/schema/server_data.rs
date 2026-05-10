@@ -1249,6 +1249,7 @@ pub enum ExtractAbortedReasonV1 {
     OutOfRange,
     NotInTsy,
     AlreadyBusy,
+    PortalOccupied,
     CannotExit,
 }
 
@@ -2738,7 +2739,7 @@ mod tests {
             }),
             ServerDataPayloadV1::ExtractAborted(ExtractAbortedV1 {
                 player_id: "offline:Kiz".to_string(),
-                reason: ExtractAbortedReasonV1::Damaged,
+                reason: ExtractAbortedReasonV1::PortalOccupied,
             }),
             ServerDataPayloadV1::ExtractFailed(ExtractFailedV1 {
                 player_id: "offline:Kiz".to_string(),

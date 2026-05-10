@@ -99,6 +99,16 @@ public class BongHud {
                 context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
                 continue;
             }
+            if (command.isScaledText()) {
+                var matrices = context.getMatrices();
+                matrices.push();
+                matrices.translate(command.x(), command.y(), 0);
+                float scale = (float) command.textScale();
+                matrices.scale(scale, scale, 1.0f);
+                context.drawTextWithShadow(client.textRenderer, command.text(), 0, 0, command.color());
+                matrices.pop();
+                continue;
+            }
             if (command.isRect()) {
                 context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
                 continue;

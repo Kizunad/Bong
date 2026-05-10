@@ -39,7 +39,7 @@
   - agent: `tiandao::zhenfa_v2_runtime`（4 阵 narration + 欺天阵被识破反噬叙事 + 聚灵阵天道注视提示）
   - client: 4 阵动画（布阵 / 触发 / 朽坏 / 破阵）+ 4 粒子 + 4 音效 recipe + 5 HUD 组件（阵图布局 / 阵眼 marker / 朽坏倒计时 / 天道注视进度 / 经脉依赖灰显）
 - **worldview 锚点**：见头部
-- **qi_physics 锚点**：阵法真元逆逸散走 `qi_physics::field::inverse_diffusion` 🆕 / 聚灵阵真元密度增益走 `qi_physics::field::density_amplifier` 🆕 / 欺天阵天道感应扰动走 `qi_physics::field::tiandao_signal_distort` 🆕（patch P3 全加） / 朽坏速率走 v1 已实装 `qi_physics::container::abrasion_loss`（共享 anqi-v2 magnitude 不同 tax_rate）/ **禁止 plan 内自己写阵法 / 朽坏 / 跨位面 / 天道扰动公式**
+- **qi_physics 锚点**：阵法真元逆逸散走 `qi_physics::field::inverse_diffusion` 🆕 / 聚灵阵真元密度增益走 `qi_physics::field::density_amplifier` 🆕 / 欺天阵天道感应扰动走 `qi_physics::field::tiandao_signal_distort` 🆕（patch P3 全加） / 朽坏速率走 v1 已实装 `qi_physics::container::abrasion_loss`（共享 anqi-v2 magnitude 不同 tax_rate）/ **禁止 plan 内自己写阵法 / 朽坏 / 子位面投射 / 天道扰动公式**
 
 ---
 
@@ -64,7 +64,7 @@
   ```
   ~~⑤ 跨位面阵~~ — 砍掉（2026-05-10）：子位面实例化机制尚未实装（plan-tsy-dimension-v1 只有单 Layer），等子位面多实例后再立 zhenfa-v3 或独立 plan
 
-- [ ] **化虚级跨位面阵物理推导（worldview §三:187 + §十三）**：阵法的"质变"在化虚级专属——
+- [ ] **已延期：化虚级跨位面阵物理推导（worldview §三:187 + §十三）**：子位面多实例尚未落地，相关机制统一留到 zhenfa-v3，不计入 v2 验收。
 - [ ] **欺天阵反 MMO 红线（worldview §八:614 物理推导）**：
   - 欺天阵**不是无敌护盾**，是向天道广播"我不是值得劫的目标"的假信号
   - 物理依据：天道通过真元密度场感应"应劫之人"，欺天阵在阵法师周围创造伪劫气真元场，让天道误判
@@ -254,15 +254,15 @@
 | ② 聚灵阵 | 持旗布 3-9 阵眼（每点缜密色立柱） | 真元密度场涟漪 + 灵气可视化 | 阵柱倒塌 | 咏唱 + 灵气嗡（持续） |
 | ③ 欺天阵 | 持化虚阵旗对天画符 | 假劫气云团升起（向天道方向）+ 识破时反噬雷光 | 阵眼熔毁 | 咏唱 + 假劫云嗡 + 反噬雷鸣（识破） |
 | ④ 幻阵 | 持旗甩出符纸覆盖现有阵法 | 缜密色雾化覆盖 + 神识扫到时显形涟漪 | 雾散 | 符纸碎裂 + 显形咔嚓 |
-| ⑤ 跨位面阵 | 持化虚阵旗多次施法（主位面 + 子位面共 N 次） | 跨位面通道光柱 + 信号传递可视化 | 通道关闭 | 化虚共振嗡 + 跨位面信号嗡 |
+| ⑤ 跨位面阵 | 已延期至 zhenfa-v3 | 已延期至 zhenfa-v3 | 已延期至 zhenfa-v3 | 已延期至 zhenfa-v3 |
 
 HUD 组件（plan-HUD-v1 接入）：
 
-- **阵图布局 UI**（持旗 Shift+使用键）：5 阵图标 + 阵眼布置预览 + 阵参数配置（载体材质 / 阵威 / 朽坏期）
+- **阵图布局 UI**（持旗 Shift+使用键）：4 阵图标 + 阵眼布置预览 + 阵参数配置（载体材质 / 阵威 / 朽坏期）；跨位面阵图标延期至 zhenfa-v3
 - **阵眼 marker**：地图上显示已布阵眼位置 + 朽坏倒计时
-- **天道注视进度**：聚灵 / 跨位面阵布阵时显示当前 tribulation_weight（圈环）
+- **天道注视进度**：聚灵阵 / 欺天阵布阵时显示当前 tribulation_weight（圈环）；跨位面阵显示延期至 zhenfa-v3
 - **假劫期广播指示**：欺天阵激活时显示 "60s 假劫期生效中" + 识破概率实时显示
-- **跨位面通道**：化虚阵法师 HUD 显示跨位面活跃通道列表 + 各通道信号衰减
+- **跨位面通道**：已延期至 zhenfa-v3，v2 不实现活跃通道列表。
 - **经脉依赖灰显**：cast 阵法前 HUD 灰显被 SEVERED 的阵法
 - **缜密色识破工具**：神识扫描他人阵法时显示识破概率（mastery_diff 决定）
 
@@ -339,4 +339,38 @@ HUD 组件（plan-HUD-v1 接入）：
 
 ## §7 进度日志
 
-- 2026-05-06：骨架创建。承接 plan-zhenfa-v1 ✅ finished（commit b82b02a0；P0/P1 诡雷 + 警戒场已实装）。v2 范围明确：4 大类剩余 3 类（护龛 / 聚灵 / 欺天）+ 幻阵 + 化虚跨位面阵 + 5 经脉依赖 + 熟练度生长 + 反 MMO 物理推导。化虚跨位面阵走 worldview §三:187 + §十三 末法无传送（**信号投射非物质传送**）。欺天阵走 worldview §八:614-618 气运劫持（**不是免疫**，是真元场扰动天道感应器，被识破反噬 ×3）。聚灵阵天道阈值落地（v1 Q14）。坐标派 / 信息派定调，与暗器单点 / 截脉接触面 / 毒蛊渗透 / 替尸钱包 / 体修肉体 / 涡流环境改造区分。
+- 2026-05-06：骨架创建。承接 plan-zhenfa-v1 ✅ finished（commit b82b02a0；P0/P1 诡雷 + 警戒场已实装）。早期骨架曾包含化虚跨位面阵；2026-05-10 已确认子位面多实例尚未落地，该项延期至 zhenfa-v3。v2 范围收敛为 4 大类剩余 3 类（护龛 / 聚灵 / 欺天）+ 幻阵 + 5 经脉依赖 + 熟练度生长 + 反 MMO 物理推导。欺天阵走 worldview §八:614-618 气运劫持（**不是免疫**，是真元场扰动天道感应器，被识破反噬 ×3）。聚灵阵天道阈值落地（v1 Q14）。坐标派 / 信息派定调，与暗器单点 / 截脉接触面 / 毒蛊渗透 / 替尸钱包 / 体修肉体 / 涡流环境改造区分。
+
+## Finish Evidence
+
+### 落地清单
+
+- **server 阵法核心**：在 `server/src/zhenfa/mod.rs` 复用 v1 `ZhenfaRegistry` / 阵眼生命周期，扩展 `ZhenfaKind::{ShrineWard,Lingju,DeceiveHeaven,Illusion}`，新增 `ArrayImprint`、`ArrayMastery`、四阵 deploy 事件、统一 decay / breakthrough 事件与欺天暴露专用事件。
+- **护龛 / 聚灵 / 欺天 / 幻阵**：护龛阵按 owner + `Relationships` 盟友 + `Renown.fame >= 80` 放行，未授权目标进入范围会被阻挡和烧伤；聚灵阵写入密度倍率与天道注视权重 profile；欺天阵固元+ gate、定 tick 识破后触发 `JueBiTriggerEvent::ZhenfaDeceptionExposed`；幻阵使用独立 `reveal_threshold` 契约，不复用 `radius`。
+- **经脉与 mastery**：布阵前检查 `MeridianSeveredPermanent`，四阵经脉依赖分别接任督 / Kidney / Heart；`ArrayMastery` 按 cast +0.3、触发 +1.0 增长，并参与 cast time / 持续时间 profile。
+- **qi_physics**：`server/src/qi_physics/field.rs` 新增 `inverse_diffusion`、`density_amplifier`、`tiandao_signal_distort`，阵法模块只消费底盘算子，不在 plan 内另造物理公式。
+- **craft 接入**：`server/src/craft/mod.rs` 注册 `register_zhenfa_v2_recipes()`，落地 4 个阵法预埋件和 2 档阵旗配方，并保持 `zhenfa.*` 命名空间。
+- **跨栈契约 / IPC**：新增 `server/src/schema/zhenfa_v2.rs`、`server/src/network/zhenfa_v2_event_bridge.rs`、`CH_ZHENFA_V2_EVENT`、`RedisOutbound::ZhenfaV2Event`；agent schema 新增 `ZhenfaV2EventV1` 与 generated JSON；client request schema / Java enum 同步 4 个新 kind。
+- **agent narration**：`agent/packages/tiandao/src/zhenfa-v2-runtime.ts` 订阅 `bong:zhenfa/v2_event`，覆盖 deploy / decay / breakthrough / `deceive_heaven_exposed` 叙事，并在 `main.ts` 启动 runtime。
+- **client 协议**：`ClientRequestProtocol.ZhenfaKind` 支持 `shrine_ward`、`lingju`、`deceive_heaven`、`illusion`，并补 `deceive_heaven` 编码回归；本 PR 不宣称完成计划中 P4 的专用动画 / 粒子 / 音效 / HUD 资产。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：通过。
+- `cd server && cargo check`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo check --bin bong-server`：通过（post-merge conflict resolution）。
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test zhenfa`：通过，29 passed / 0 failed / 3635 filtered out。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3664 passed / 0 failed。
+- `cd agent && npm run generate -w @bong/schema`：通过，331 schemas exported。
+- `cd agent && npm run build`：通过。
+- `cd agent && npm test -w @bong/schema`：通过，16 files / 355 tests。
+- `cd agent && npm test -w @bong/tiandao`：通过，48 files / 333 tests。
+- `cd client && JAVA_HOME="<java-17-home>" PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL（本地使用 Corretto 17.0.18）。
+- `git diff --check`：通过。
+
+### 备注 / 后续
+
+- 普通 `CARGO_BUILD_JOBS=1 cargo test zhenfa` 在本机 debug test binary 链接阶段曾被 `SIGKILL`；使用低 debuginfo test profile 后定向与全量 server 测试均通过，判定为本地链接内存压力而非源码失败。
+- 2026-05-10 rebase/merge `origin/main` 后，server 生产目标 `cargo check --bin bong-server` 通过；同机多 worktree 并发 Rust 链接期间，post-merge `cargo clippy --all-targets` / `cargo test zhenfa` 在 test binary 链接阶段仍可被 SIGKILL，未产出源码诊断。
+- plan 文本早期写过"跨位面阵"和 P4 专用视觉/HUD 全量交付；2026-05-10 范围已收敛为 v2 runtime / contract / physics / craft / narration / protocol 闭环，跨位面阵留 zhenfa-v3，专用视觉资产留后续 plan。

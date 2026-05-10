@@ -62,6 +62,7 @@ describe("plan-tsy-extract-v1 §4.1 extract-v1 schema", () => {
     }).ok).toBe(true);
     expect(validate(ExtractAbortedV1, { player_id: "offline:Kiz", reason: "damaged" }).ok).toBe(true);
     expect(validate(ExtractAbortedV1, { player_id: "offline:Kiz", reason: "out_of_range" }).ok).toBe(true);
+    expect(validate(ExtractAbortedV1, { player_id: "offline:Kiz", reason: "portal_occupied" }).ok).toBe(true);
     expect(validate(ExtractFailedV1, { player_id: "offline:Kiz", reason: "spirit_qi_drained" }).ok).toBe(true);
   });
 
@@ -146,7 +147,7 @@ describe("plan-tsy-extract-v1 §4.1 extract-v1 schema", () => {
       },
       {
         schema: ServerDataExtractAbortedV1,
-        value: { v: 1, type: "extract_aborted", player_id: "offline:Kiz", reason: "portal_expired" },
+        value: { v: 1, type: "extract_aborted", player_id: "offline:Kiz", reason: "portal_occupied" },
       },
       {
         schema: ServerDataExtractFailedV1,

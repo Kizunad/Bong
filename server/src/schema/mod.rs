@@ -53,6 +53,7 @@ pub mod woliu;
 pub mod woliu_v2;
 pub mod world_state;
 pub mod yidao;
+pub mod zhenfa_v2;
 pub mod zhenmai_v2;
 pub mod zone_environment;
 pub mod zone_pressure;

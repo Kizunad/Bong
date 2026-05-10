@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Bong CraftScreen Mockup (对标 AlchemyScreen 600×340 owo-lib 风格)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; image-rendering: pixelated; }
+body {
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: monospace;
+}
+
+/* MC 像素风字体模拟 */
+@font-face {
+  font-family: 'MCFont';
+  src: local('Courier New');
+}
+
+/* 模拟 MC 游戏内背景（半透明黑）*/
+.game-bg {
+  width: 960px;
+  height: 540px;
+  background: linear-gradient(135deg, #1a2a1a 0%, #0a1510 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: 1px solid #333;
+}
+.game-bg::after {
+  content: 'UI Scale 3 · 960×540 viewport';
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: #444;
+}
+
+/* ===== CraftScreen 主面板 =====
+   对标 AlchemyScreen: PANEL_W=600 → 加宽到 640, PANEL_H=340 保持
+   Surface.flat(0xFF0D0D15).and(Surface.outline(0xFF4A4050))
+*/
+.craft-panel {
+  width: 640px;
+  height: 340px;
+  background: #0D0D15;
+  border: 2px solid #4A4050;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ===== Header (同 Alchemy buildHeader 风格) ===== */
+.header {
+  height: 20px;
+  padding: 2px 8px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #3A3040;
+  background: #12121C;
+}
+.header-title {
+  font-size: 11px;
+  color: #FFFFFF;
+  font-weight: bold;
+}
+.header-hint {
+  margin-left: auto;
+  font-size: 9px;
+  color: #888888;
+}
+
+/* ===== 三栏 Body (columns.gap(4)) ===== */
+.body {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+/* --- 左栏：配方手札 (同 AlchemyScreen buildScrollColumn 风格) ---
+   Surface.flat(0xFF2A2318).and(Surface.outline(0xFF6A5030))
+   width: 160px
+*/
+.left-col {
+  width: 160px;
+  background: #1A1814;
+  border: 1px solid #4A4030;
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+}
+.category-row {
+  display: flex;
+  gap: 2px;
+  padding: 2px 0 4px 0;
+  border-bottom: 1px solid #3A3020;
+  flex-wrap: wrap;
+}
+.cat-btn {
+  padding: 1px 4px;
+  font-size: 8px;
+  color: #AA9060;
+  background: #2A2318;
+  border: 1px solid #5A4A30;
+  cursor: pointer;
+}
+.cat-btn.active {
+  color: #FFD080;
+  background: #3A3020;
+  border-color: #8A7040;
+}
+.recipe-scroll {
+  flex: 1;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+.recipe-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 3px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.recipe-row:hover { background: #2A2820; }
+.recipe-row.selected { background: #2A3528; border-color: #5A8A50; }
+.recipe-row.locked { opacity: 0.35; }
+.r-icon {
+  width: 14px; height: 14px;
+  background: #333028;
+  border: 1px solid #555040;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px;
+}
+.r-name { font-size: 9px; color: #CCBB99; flex: 1; }
+.r-qty { font-size: 8px; color: #6A6; }
+.r-qty.zero { color: #A66; }
+.r-lock { font-size: 8px; color: #666; }
+
+/* --- 中栏：材料 + 进度 (MID_W=260) --- */
+.mid-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  gap: 6px;
+}
+.mid-title {
+  text-align: center;
+  font-size: 10px;
+  color: #AA9970;
+  padding: 2px;
+  border-bottom: 1px solid #3A3020;
+}
+.mat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  gap: 4px;
+  padding: 6px 12px;
+  justify-content: center;
+}
+/* GridSlotComponent.CELL_SIZE 风格 */
+.mat-slot {
+  width: 44px; height: 44px;
+  background: #1E1E1E;
+  border: 2px solid #3A3A3A;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.mat-slot.ok { border-color: #3A6A3A; }
+.mat-slot.missing { border-color: #6A3A3A; }
+.mat-slot.empty { border-color: #222222; background: #141414; }
+.mat-slot .s-icon {
+  width: 20px; height: 20px;
+  background: #2A2A2A;
+  border: 1px solid #444;
+  margin-bottom: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.mat-slot .s-count {
+  font-size: 8px;
+  color: #888;
+}
+.mat-slot.ok .s-count { color: #8C8; }
+.mat-slot.missing .s-count { color: #C88; }
+
+/* Progress bar (同 Alchemy progressFill 风格) */
+.progress-section {
+  padding: 4px 16px;
+}
+.prog-bar {
+  height: 6px;
+  background: #1A1A1A;
+  border: 1px solid #3A3A3A;
+  overflow: hidden;
+}
+.prog-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #3A6A3A, #5AAA5A);
+  transition: width 0.5s;
+}
+.prog-fill.active { width: 65%; }
+.prog-label {
+  font-size: 8px;
+  color: #666;
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* --- 右栏：产物预览 (RIGHT_W=200) --- */
+.right-col {
+  width: 200px;
+  background: #14141C;
+  border: 1px solid #3A3A50;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.output-icon {
+  width: 40px; height: 40px;
+  background: #2A2A3A;
+  border: 2px solid #5A5A7A;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  margin-top: 4px;
+}
+.output-name {
+  font-size: 11px;
+  color: #EEDDCC;
+  text-align: center;
+}
+.output-sub {
+  font-size: 8px;
+  color: #777;
+}
+.stat-list {
+  width: 100%;
+  margin-top: 4px;
+}
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 1px 4px;
+  font-size: 9px;
+  border-bottom: 1px solid #222230;
+}
+.stat-key { color: #888; }
+.stat-val { color: #8C8; }
+.stat-val.neutral { color: #AAA; }
+
+.req-section {
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid #333340;
+}
+.req-title {
+  font-size: 8px;
+  color: #666;
+  margin-bottom: 2px;
+}
+.req-row {
+  font-size: 9px;
+  padding: 1px 0;
+  display: flex;
+  gap: 4px;
+}
+.req-row .chk { color: #6A6; }
+.req-row .fail { color: #A66; }
+.req-row .txt { color: #999; }
+
+/* ===== 底部操作杠 (同 Alchemy buildBottomStrip 风格) ===== */
+.bottom-bar {
+  height: 32px;
+  background: #12121C;
+  border-top: 1px solid #3A3040;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 8px;
+}
+.b-btn {
+  padding: 3px 8px;
+  font-size: 9px;
+  border: 1px solid #5A5040;
+  background: #2A2820;
+  color: #CCBB88;
+  cursor: pointer;
+}
+.b-btn:hover { background: #3A3828; border-color: #7A6A50; }
+.b-btn.craft-btn {
+  margin-left: auto;
+  background: #2A4A2A;
+  border-color: #4A8A4A;
+  color: #AAFFAA;
+  padding: 4px 14px;
+  font-size: 10px;
+}
+.b-btn.craft-btn.disabled {
+  background: #1A1A1A;
+  border-color: #3A3A3A;
+  color: #555;
+  cursor: not-allowed;
+}
+.qty-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.qty-btn {
+  width: 16px; height: 16px;
+  background: #1A1A2A;
+  border: 1px solid #4A4A5A;
+  color: #AAA;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+}
+.qty-num {
+  font-size: 10px;
+  color: #DDD;
+  width: 20px;
+  text-align: center;
+}
+
+/* 标注 */
+.note {
+  position: absolute;
+  font-size: 9px;
+  color: #ff8;
+  background: rgba(0,0,0,0.7);
+  padding: 1px 4px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<div style="font-size:11px; color:#888; margin-bottom:12px; text-align:center;">
+  Bong CraftScreen Mockup · 对标 AlchemyScreen owo-lib 风格<br>
+  <span style="color:#666">Panel: 640×340 (Alchemy=600×340) · Surface.flat(#0D0D15) + outline(#4A4050)</span>
+</div>
+
+<div class="game-bg">
+  <div class="craft-panel">
+
+    <!-- Header -->
+    <div class="header">
+      <span class="header-title">手搓台</span>
+      <span class="header-hint">C 关闭 · 双击配方快速制作</span>
+    </div>
+
+    <!-- Body: 3 columns -->
+    <div class="body">
+
+      <!-- LEFT: 配方列表 -->
+      <div class="left-col">
+        <div class="category-row">
+          <span class="cat-btn active">全部</span>
+          <span class="cat-btn">甲</span>
+          <span class="cat-btn">兵</span>
+          <span class="cat-btn">具</span>
+          <span class="cat-btn">丹</span>
+          <span class="cat-btn">杂</span>
+        </div>
+        <div class="recipe-scroll">
+          <div class="recipe-row">
+            <div class="r-icon">🦴</div>
+            <span class="r-name">骨甲·胸</span>
+            <span class="r-qty">×3</span>
+          </div>
+          <div class="recipe-row">
+            <div class="r-icon">🐾</div>
+            <span class="r-name">兽皮甲·胸</span>
+            <span class="r-qty">×1</span>
+          </div>
+          <div class="recipe-row selected">
+            <div class="r-icon">⛓️</div>
+            <span class="r-name">铁甲·胸甲</span>
+            <span class="r-qty">×2</span>
+          </div>
+          <div class="recipe-row">
+            <div class="r-icon">🟤</div>
+            <span class="r-name">铜甲·胸甲</span>
+            <span class="r-qty zero">×0</span>
+          </div>
+          <div class="recipe-row">
+            <div class="r-icon">⛏</div>
+            <span class="r-name">铁镐</span>
+            <span class="r-qty">×5</span>
+          </div>
+          <div class="recipe-row">
+            <div class="r-icon">🪓</div>
+            <span class="r-name">铁斧</span>
+            <span class="r-qty">×4</span>
+          </div>
+          <div class="recipe-row">
+            <div class="r-icon">💊</div>
+            <span class="r-name">回元丹(粗)</span>
+            <span class="r-qty">×2</span>
+          </div>
+          <div class="recipe-row locked">
+            <div class="r-icon">🔒</div>
+            <span class="r-name">???</span>
+            <span class="r-lock">引气</span>
+          </div>
+          <div class="recipe-row locked">
+            <div class="r-icon">🔒</div>
+            <span class="r-name">???</span>
+            <span class="r-lock">残卷</span>
+          </div>
+          <div class="recipe-row locked">
+            <div class="r-icon">🔒</div>
+            <span class="r-name">???</span>
+            <span class="r-lock">师承</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- MID: 材料放置 + 进度 -->
+      <div class="mid-col">
+        <div class="mid-title">─ 铁甲·胸甲 ─</div>
+        <div class="mat-grid">
+          <div class="mat-slot ok">
+            <div class="s-icon">⬜</div>
+            <span class="s-count">5/5 ✓</span>
+          </div>
+          <div class="mat-slot ok">
+            <div class="s-icon">🐾</div>
+            <span class="s-count">3/3 ✓</span>
+          </div>
+          <div class="mat-slot missing">
+            <div class="s-icon">💀</div>
+            <span class="s-count">1/3 ✗</span>
+          </div>
+          <div class="mat-slot empty"></div>
+          <div class="mat-slot empty"></div>
+          <div class="mat-slot empty"></div>
+        </div>
+        <div class="req-section" style="padding: 2px 16px;">
+          <div class="req-title" style="font-size:8px; color:#666; margin-bottom:2px;">[ 材料需求 ]</div>
+          <div class="req-row" style="font-size:9px; display:flex; gap:4px; padding:1px 0;"><span style="color:#6A6;">✓</span><span style="color:#999;">铁矿 ×5 (有5)</span></div>
+          <div class="req-row" style="font-size:9px; display:flex; gap:4px; padding:1px 0;"><span style="color:#6A6;">✓</span><span style="color:#999;">兽皮 ×3 (有7)</span></div>
+          <div class="req-row" style="font-size:9px; display:flex; gap:4px; padding:1px 0;"><span style="color:#A66;">✗</span><span style="color:#999;">骨币 ×3 (有1)</span></div>
+        </div>
+        <div class="progress-section">
+          <div class="prog-bar">
+            <div class="prog-fill active"></div>
+          </div>
+          <div class="prog-label">制作中 · 65%</div>
+        </div>
+      </div>
+
+      <!-- RIGHT: 产物预览 -->
+      <div class="right-col">
+        <div class="output-icon">🛡️</div>
+        <div class="output-name">铁甲·胸甲</div>
+        <div class="output-sub">凡物 · 铁制</div>
+        <div class="stat-list">
+          <div class="stat-row">
+            <span class="stat-key">防御</span>
+            <span class="stat-val">+8</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-key">耐久</span>
+            <span class="stat-val neutral">200</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-key">重量</span>
+            <span class="stat-val neutral">6.0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-key">制作时间</span>
+            <span class="stat-val neutral">3.0s</span>
+          </div>
+        </div>
+        <div class="req-section">
+          <div class="req-title">[ 说明 ]</div>
+          <div style="font-size:8px; color:#777; line-height:1.4; padding:2px 0;">
+            凡物铁甲，散修标配。<br>
+            防御尚可，耐用度中等。<br>
+            <span style="color:#554;">可在锻炉强化为灵甲。</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Bottom action bar -->
+    <div class="bottom-bar">
+      <span class="b-btn">一键填充</span>
+      <div class="qty-group">
+        <span class="qty-btn">−</span>
+        <span class="qty-num">1</span>
+        <span class="qty-btn">+</span>
+      </div>
+      <span class="b-btn craft-btn disabled">材料不足</span>
+    </div>
+
+  </div>
+</div>
+
+<div style="font-size:10px; color:#666; margin-top:12px; max-width:640px; text-align:center;">
+  布局参考：AlchemyScreen BaseOwoScreen&lt;FlowLayout&gt; · PANEL_W=640(+40) PANEL_H=340 ·
+  LEFT=160 MID=flex RIGHT=200 · Surface.flat(#0D0D15)+outline(#4A4050) ·
+  GridSlotComponent 风格材料格 · 底部操作杠=32px
+</div>
+
+</body>
+</html>
