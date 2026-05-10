@@ -160,9 +160,10 @@ pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
         | "bong:death_soul_dissipate"
         | "bong:npc_death_smoke"
         | "bong:npc_death_qi_burst" => VfxPriority::Critical,
-        "bong:enlightenment_aura" | "bong:npc_rank_aura_elder" | "bong:npc_rank_aura_master" => {
-            VfxPriority::Important
-        }
+        "bong:enlightenment_aura"
+        | "bong:npc_rank_aura_elder"
+        | "bong:npc_rank_aura_master"
+        | "bong:npc_qi_aura_ripple" => VfxPriority::Important,
         _ => VfxPriority::Normal,
     }
 }
@@ -679,7 +680,27 @@ mod tests {
             VfxPriority::Critical
         );
         assert_eq!(
+            vfx_default_priority("bong:npc_death_smoke"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
+            vfx_default_priority("bong:npc_death_qi_burst"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
             vfx_default_priority("bong:enlightenment_aura"),
+            VfxPriority::Important
+        );
+        assert_eq!(
+            vfx_default_priority("bong:npc_rank_aura_elder"),
+            VfxPriority::Important
+        );
+        assert_eq!(
+            vfx_default_priority("bong:npc_rank_aura_master"),
+            VfxPriority::Important
+        );
+        assert_eq!(
+            vfx_default_priority("bong:npc_qi_aura_ripple"),
             VfxPriority::Important
         );
         assert_eq!(

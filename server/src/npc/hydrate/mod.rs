@@ -414,6 +414,7 @@ fn spawn_from_snapshot(
             home_zone,
             pos,
             patrol_target,
+            snapshot.cultivation.realm,
             snapshot.lifespan.age_ticks,
         ),
         NpcArchetype::Rogue => spawn_rogue_npc_at(
@@ -423,6 +424,7 @@ fn spawn_from_snapshot(
             home_zone,
             pos,
             patrol_target,
+            snapshot.cultivation.realm,
             snapshot.lifespan.age_ticks,
         ),
         NpcArchetype::Beast => spawn_beast_npc_at(
@@ -449,6 +451,7 @@ fn spawn_from_snapshot(
                 .as_ref()
                 .map(|membership| membership.rank)
                 .unwrap_or(FactionRank::Disciple),
+            snapshot.cultivation.realm,
             snapshot
                 .faction
                 .as_ref()
@@ -796,6 +799,17 @@ mod tests {
         app.update();
 
         assert!(app.world().resource::<NpcDormantStore>().is_empty());
+        let profiles = {
+            let world = app.world_mut();
+            let mut query = world.query::<&crate::skin::NpcVisualProfile>();
+            query.iter(world).copied().collect::<Vec<_>>()
+        };
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(
+            profiles[0].skin_tier,
+            crate::skin::npc_skin_selector::NpcSkinTier::RogueHigh,
+            "hydrating a Spirit rogue should keep the high-realm skin pool profile"
+        );
         let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
         let all = events.iter_current_update_events().collect::<Vec<_>>();
         assert_eq!(all.len(), 1);

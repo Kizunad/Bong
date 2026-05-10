@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /**
  * Radial true-qi burst emitted when a high-realm NPC dies.
  */
@@ -30,8 +28,8 @@ public final class NpcDeathQiBurstPlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         double strength = Math.max(0.25, Math.min(1.25, payload.strength().orElse(0.75)));
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 4, 24);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(12).getAsInt());
+        int count = clamp(payload.count().orElse(DEFAULT_COUNT), 4, 24);
+        int maxAge = payload.durationTicks().orElse(12);
 
         for (int i = 0; i < count; i++) {
             double angle = (Math.PI * 2.0 * i / count) + world.random.nextDouble() * 0.08;

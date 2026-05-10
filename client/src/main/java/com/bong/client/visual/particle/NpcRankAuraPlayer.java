@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /**
  * NPC rank aura markers for elder/master silhouettes.
  */
@@ -31,8 +29,8 @@ public final class NpcRankAuraPlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         float alpha = (float) Math.max(0.25, Math.min(0.85, payload.strength().orElse(0.55)));
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 24);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(40).getAsInt());
+        int count = clamp(payload.count().orElse(DEFAULT_COUNT), 1, 24);
+        int maxAge = payload.durationTicks().orElse(40);
 
         for (int i = 0; i < count; i++) {
             double angle = (Math.PI * 2.0 * i / count) + world.random.nextDouble() * 0.12;

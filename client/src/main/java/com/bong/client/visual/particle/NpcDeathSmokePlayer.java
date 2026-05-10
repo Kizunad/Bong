@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /**
  * Grey residual smoke left by an NPC death after the soul-dissipate burst.
  */
@@ -30,8 +28,8 @@ public final class NpcDeathSmokePlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         float alpha = (float) Math.max(0.2, Math.min(0.7, payload.strength().orElse(0.45)));
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 36);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(60).getAsInt());
+        int count = clamp(payload.count().orElse(DEFAULT_COUNT), 1, 36);
+        int maxAge = payload.durationTicks().orElse(60);
 
         for (int i = 0; i < count; i++) {
             double dx = (world.random.nextDouble() - 0.5) * 0.8;

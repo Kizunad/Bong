@@ -93,6 +93,7 @@ type DeathArbiterQueryItem<'a> = (
     Option<&'a mut LifespanComponent>,
     Option<&'a Position>,
     Option<&'a NpcVisualProfile>,
+    Option<&'a NpcMarker>,
 );
 
 type NearDeathPersistenceQueryItem<'a> = (
@@ -107,6 +108,7 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a mut Position>,
     Option<&'a Username>,
     Option<&'a NpcMarker>,
+    Option<&'a NpcVisualProfile>,
     Option<&'a mut PlayerInventory>,
     Option<&'a mut SkillSet>,
 );
@@ -286,6 +288,7 @@ pub fn death_arbiter_tick(
             mut lifespan,
             position,
             npc_visual_profile,
+            npc_marker,
         )) = lifecycle_q.get_mut(event.target)
         else {
             continue;
@@ -364,6 +367,7 @@ pub fn death_arbiter_tick(
                 now_tick,
                 &mut terminated,
                 position,
+                npc_marker.is_some(),
                 npc_visual_profile,
                 &mut vfx_events,
                 "natural_end",
@@ -436,6 +440,7 @@ pub fn death_arbiter_tick(
             mut lifespan,
             position,
             npc_visual_profile,
+            npc_marker,
         )) = lifecycle_q.get_mut(event.entity)
         else {
             continue;
@@ -536,6 +541,7 @@ pub fn death_arbiter_tick(
                 clock.tick,
                 &mut terminated,
                 position,
+                npc_marker.is_some(),
                 npc_visual_profile,
                 &mut vfx_events,
                 if void_quota_exceeded {
@@ -626,6 +632,7 @@ pub fn near_death_tick(
         position,
         _username,
         npc_marker,
+        npc_visual_profile,
         _inventory,
         _skill_set,
     ) in &mut lifecycle_q
@@ -666,6 +673,8 @@ pub fn near_death_tick(
                 clock.tick,
                 &mut terminated,
                 position.as_deref(),
+                npc_marker.is_some(),
+                npc_visual_profile,
                 &mut vfx_events,
                 "npc_death",
             ) {
@@ -692,6 +701,8 @@ pub fn near_death_tick(
                 clock.tick,
                 &mut terminated,
                 position.as_deref(),
+                npc_marker.is_some(),
+                npc_visual_profile,
                 &mut vfx_events,
                 "natural_end",
             ) {
@@ -760,7 +771,8 @@ pub fn handle_revival_action_intents(
             player_state,
             position,
             username,
-            _npc_marker,
+            npc_marker,
+            npc_visual_profile,
             inventory,
             skill_set,
         )) = lifecycle_q.get_mut(intent.entity)
@@ -809,6 +821,8 @@ pub fn handle_revival_action_intents(
                     clock.tick,
                     &mut terminated,
                     position.as_deref(),
+                    npc_marker.is_some(),
+                    npc_visual_profile,
                     &mut vfx_events,
                     "tribulation_failed",
                 ) {
@@ -841,6 +855,8 @@ pub fn handle_revival_action_intents(
                     intent.issued_at_tick,
                     &mut terminated,
                     position.as_deref(),
+                    npc_marker.is_some(),
+                    npc_visual_profile,
                     &mut vfx_events,
                     "voluntary_retire",
                 ) {
@@ -1311,6 +1327,8 @@ fn terminate_lifecycle(
     now_tick: u64,
     terminated: &mut EventWriter<PlayerTerminated>,
     position: Option<&Position>,
+    is_npc: bool,
+    npc_visual_profile: Option<&NpcVisualProfile>,
     vfx_events: &mut EventWriter<VfxEventRequest>,
     cause: &str,
 ) -> bool {
@@ -1322,7 +1340,8 @@ fn terminate_lifecycle(
         now_tick,
         terminated,
         position,
-        None,
+        is_npc,
+        npc_visual_profile,
         vfx_events,
         cause,
         None,
@@ -1339,6 +1358,7 @@ fn terminate_lifecycle_with_death_context(
     now_tick: u64,
     terminated: &mut EventWriter<PlayerTerminated>,
     position: Option<&Position>,
+    is_npc: bool,
     npc_visual_profile: Option<&NpcVisualProfile>,
     vfx_events: &mut EventWriter<VfxEventRequest>,
     cause: &str,
@@ -1411,7 +1431,7 @@ fn terminate_lifecycle_with_death_context(
                 duration_ticks: Some(40),
             },
         ));
-        if lifecycle.character_id.starts_with("npc_") {
+        if is_npc {
             vfx_events.send(crate::skin::faction_tint::npc_death_smoke_request(p));
             if let Some(request) =
                 crate::skin::faction_tint::npc_death_qi_burst_request(p, npc_visual_profile)
@@ -2290,6 +2310,67 @@ mod tests {
             Some(RevivalDecision::Tribulation { chance }) if (chance - 0.80).abs() < 1e-9
         ));
         assert_eq!(terminated_events.len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn near_death_npc_termination_keeps_high_realm_qi_burst_profile() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("npc-near-death-vfx");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, near_death_tick);
+
+        let profile = crate::skin::select_npc_visual_profile(
+            crate::npc::lifecycle::NpcArchetype::Rogue,
+            Realm::Spirit,
+            None,
+            None,
+            0.5,
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "npc_high_realm".to_string(),
+                    state: LifecycleState::NearDeath,
+                    near_death_deadline_tick: Some(199),
+                    ..Default::default()
+                },
+                LifeRecord::new("npc_high_realm"),
+                Position::new([0.0, 66.0, 0.0]),
+                NpcMarker,
+                profile,
+            ))
+            .id();
+
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 1);
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let mut reader = vfx_events.get_reader();
+        let event_ids = reader
+            .read(vfx_events)
+            .filter_map(|request| match &request.payload {
+                VfxEventPayloadV1::SpawnParticle { event_id, .. } => Some(event_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            event_ids.contains(&"bong:npc_death_smoke"),
+            "terminating an NPC through near-death should emit death smoke"
+        );
+        assert!(
+            event_ids.contains(&"bong:npc_death_qi_burst"),
+            "high-realm NPC profile should survive the near-death wrapper and emit qi burst"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /**
  * Subtle ground ripple used by high-realm hydrated NPCs.
  */
@@ -29,7 +27,7 @@ public final class NpcQiAuraRipplePlayer implements VfxPlayer {
         float r = ((rgb >> 16) & 0xFF) / 255f;
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(35).getAsInt());
+        int maxAge = payload.durationTicks().orElse(35);
 
         BongGroundDecalParticle ripple = new BongGroundDecalParticle(world, ox, oy, oz);
         ripple.setDecalShape(0.9 + strength * 1.4, 0.025);

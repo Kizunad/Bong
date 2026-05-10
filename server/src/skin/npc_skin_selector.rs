@@ -45,7 +45,7 @@ pub enum NpcAgeBand {
 impl NpcAgeBand {
     pub fn from_ratio(age_ratio: f64) -> Self {
         let ratio = if age_ratio.is_finite() {
-            age_ratio.clamp(0.0, 16.0)
+            age_ratio.clamp(0.0, 1.0)
         } else {
             0.0
         };

@@ -12,6 +12,7 @@ use valence::prelude::{
 
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction, CultivateState,
@@ -490,6 +491,7 @@ fn seed_initial_rogue_population_on_startup(
             pos,
             patrol_target,
             job.zone.spirit_qi,
+            Realm::Awaken,
             age,
         );
         commands
@@ -581,6 +583,7 @@ fn process_npc_reproduction_requests(
                 request.home_zone.as_str(),
                 request.position,
                 request.position,
+                Realm::Awaken,
                 request.initial_age_ticks.max(0.0),
             ),
             NpcArchetype::Beast => {
@@ -753,6 +756,7 @@ fn relic_guard_thinker() -> ThinkerBuilder {
 
 /// Spawn a Rogue (散修) NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_rogue_npc_at(
     commands: &mut Commands,
     skin_context: NpcSkinSpawnContext<'_>,
@@ -760,12 +764,13 @@ pub fn spawn_rogue_npc_at(
     home_zone: &str,
     spawn_position: DVec3,
     patrol_target: DVec3,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
     let profile = select_npc_visual_profile(
         NpcArchetype::Rogue,
-        crate::cultivation::components::Realm::Awaken,
+        realm,
         None,
         None,
         initial_age_ratio(NpcArchetype::Rogue, initial_age_ticks),
@@ -831,12 +836,13 @@ pub fn spawn_scattered_cultivator_at(
     spawn_position: DVec3,
     patrol_target: DVec3,
     qi_density: f64,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
     let profile = select_npc_visual_profile(
         NpcArchetype::Rogue,
-        crate::cultivation::components::Realm::Awaken,
+        realm,
         None,
         None,
         initial_age_ratio(NpcArchetype::Rogue, initial_age_ticks),
@@ -874,6 +880,7 @@ pub fn spawn_scattered_cultivator_at(
 /// Starting age is controlled by
 /// `initial_age_ticks` — newborns pass `0.0`, agent-spawned adults can pass
 /// any value below the Commoner default max age.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_commoner_npc_at(
     commands: &mut Commands,
     skin_context: NpcSkinSpawnContext<'_>,
@@ -881,12 +888,13 @@ pub fn spawn_commoner_npc_at(
     home_zone: &str,
     spawn_position: DVec3,
     patrol_target: DVec3,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
     let profile = select_npc_visual_profile(
         NpcArchetype::Commoner,
-        crate::cultivation::components::Realm::Awaken,
+        realm,
         None,
         None,
         initial_age_ratio(NpcArchetype::Commoner, initial_age_ticks),
@@ -1111,13 +1119,14 @@ pub fn spawn_disciple_npc_at(
     patrol_target: DVec3,
     faction_id: FactionId,
     rank: FactionRank,
+    realm: Realm,
     master_id: Option<String>,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
     let profile = select_npc_visual_profile(
         NpcArchetype::Disciple,
-        crate::cultivation::components::Realm::Awaken,
+        realm,
         Some(faction_id),
         Some(rank),
         initial_age_ratio(NpcArchetype::Disciple, initial_age_ticks),
@@ -1606,6 +1615,7 @@ mod tests {
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(20.0, 66.0, 20.0),
             DVec3::new(20.0, 66.0, 20.0),
+            Realm::Awaken,
             2.0,
         );
     }
@@ -1764,6 +1774,7 @@ mod tests {
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(18.0, 66.0, 18.0),
             DVec3::new(18.0, 66.0, 18.0),
+            Realm::Awaken,
             0.0,
         );
     }
@@ -1777,6 +1788,7 @@ mod tests {
             DVec3::new(19.0, 66.0, 19.0),
             DVec3::new(19.0, 66.0, 19.0),
             0.9,
+            Realm::Awaken,
             0.0,
         );
     }
@@ -1883,6 +1895,7 @@ mod tests {
             DVec3::new(42.0, 66.0, 42.0),
             FactionId::Attack,
             FactionRank::Disciple,
+            Realm::Awaken,
             None,
             0.0,
         );
