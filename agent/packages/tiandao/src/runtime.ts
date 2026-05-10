@@ -777,7 +777,7 @@ async function processEconomyEvents(args: {
   }
 }
 
-async function processWeatherEvents(args: {
+export async function processWeatherEvents(args: {
   redis: RuntimeRedis;
   logger: Pick<typeof console, "warn">;
 }): Promise<void> {
@@ -788,15 +788,19 @@ async function processWeatherEvents(args: {
   }
 
   const narrations: Narration[] = [];
-  let sourceTick = 0;
+  let sourceTick: number | null = null;
   for (const event of events) {
-    sourceTick = Math.max(sourceTick, event.data.started_at_lingtian_tick);
     const narration = renderWeatherNarration(event);
-    if (narration !== null) {
-      narrations.push(narration);
+    if (narration === null) {
+      continue;
     }
+    narrations.push(narration);
+    sourceTick = Math.max(
+      sourceTick ?? event.data.started_at_lingtian_tick,
+      event.data.started_at_lingtian_tick,
+    );
   }
-  if (narrations.length === 0) {
+  if (narrations.length === 0 || sourceTick === null) {
     return;
   }
 

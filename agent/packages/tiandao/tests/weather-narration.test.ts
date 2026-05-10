@@ -1,6 +1,11 @@
 import type { WeatherEventUpdateV1 } from "@bong/schema";
-import { describe, expect, it } from "vitest";
-import { renderWeatherNarration } from "../src/runtime.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  processWeatherEvents,
+  renderWeatherNarration,
+  type NarrationPublishRequest,
+  type RuntimeRedis,
+} from "../src/runtime.js";
 
 function weather(overrides: Partial<WeatherEventUpdateV1> = {}): WeatherEventUpdateV1 {
   return {
@@ -67,5 +72,45 @@ describe("zone weather narration", () => {
 
   it("ignores expired events to avoid duplicate narration", () => {
     expect(renderWeatherNarration(weather({ kind: "expired" }))).toBeNull();
+  });
+
+  it("uses only emitted weather narrations for publish metadata", async () => {
+    const publishNarrations = vi.fn(async (_request: NarrationPublishRequest) => {});
+    const redis: RuntimeRedis = {
+      connect: vi.fn(async () => {}),
+      disconnect: vi.fn(async () => {}),
+      getLatestState: vi.fn(() => null),
+      drainPlayerChat: vi.fn(async () => []),
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations,
+      drainWeatherEventUpdates: vi.fn(() => [
+        weather({
+          data: {
+            ...weather().data,
+            started_at_lingtian_tick: 123,
+          },
+        }),
+        weather({
+          kind: "expired",
+          data: {
+            ...weather().data,
+            started_at_lingtian_tick: 999,
+          },
+        }),
+      ]),
+    };
+
+    await processWeatherEvents({
+      redis,
+      logger: { warn: vi.fn() },
+    });
+
+    expect(publishNarrations).toHaveBeenCalledWith({
+      narrations: [expect.objectContaining({ target: "zone:blood_valley_east_scorch" })],
+      metadata: {
+        sourceTick: 123,
+        correlationId: "zone-weather:123",
+      },
+    });
   });
 });
