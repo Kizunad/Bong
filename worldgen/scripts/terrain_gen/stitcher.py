@@ -34,6 +34,7 @@ from .profiles.rift_mouth_barrens import fill_rift_mouth_barrens_tile
 from .profiles.rift_valley import fill_rift_valley_tile
 from .profiles.sky_isle import fill_sky_isle_tile
 from .profiles.spring_marsh import fill_spring_marsh_tile
+from .profiles.tribulation_scorch import fill_tribulation_scorch_tile
 from .profiles.tsy_daneng_crater import fill_tsy_daneng_crater_tile
 from .profiles.tsy_gaoshou_hermitage import fill_tsy_gaoshou_hermitage_tile
 from .profiles.tsy_zhanchang import fill_tsy_zhanchang_tile
@@ -454,6 +455,8 @@ def _build_zone_overlay_tile(
         buffer = fill_abyssal_maze_tile(zone, tile, tile_size, palette)
     elif profile == "ancient_battlefield":
         buffer = fill_ancient_battlefield_tile(zone, tile, tile_size, palette)
+    elif profile == "tribulation_scorch":
+        buffer = fill_tribulation_scorch_tile(zone, tile, tile_size, palette)
     elif profile == "tsy_zongmen_ruin":
         buffer = fill_tsy_zongmen_ruin_tile(zone, tile, tile_size, palette)
     elif profile == "tsy_daneng_crater":
@@ -524,6 +527,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: sky_isle overlay (sky_island_* vertical layers).",
             "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",
             "Implemented: ancient_battlefield overlay (anomaly_intensity/anomaly_kind).",
+            "Implemented: tribulation_scorch overlay (glass, lightning pits, surface minerals).",
             "Implemented: realm_collapse_mask from server zone_overlays collapsed records.",
             "Only active tiles intersecting named zones are synthesized in this scaffold stage.",
         ),

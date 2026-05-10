@@ -3,6 +3,8 @@
 use valence::prelude::{App, IntoSystemConfigs, Update};
 
 pub mod lightning;
+#[cfg(test)]
+pub mod tribulation_scorch;
 pub mod vision;
 pub mod wind;
 

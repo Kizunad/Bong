@@ -103,6 +103,17 @@
       "water": { "level": "none", "coverage": 0.0 },
       "passability": "medium_high_with_anomaly_hazard"
     },
+    "tribulation_scorch": {
+      "height": { "base": [70, 88], "peak": 96 },
+      "boundary": { "mode": "hard", "width": 80 },
+      "surface": ["coarse_dirt", "gravel", "sand", "blackstone", "basalt", "glass"],
+      "water": { "level": "very_low", "coverage": 0.01 },
+      "passability": "high",
+      "ambient_hint": {
+        "thunder_feel": "frequent",
+        "lightning_visual_fx": "ash_drift_with_static_crackle"
+      }
+    },
     "tsy_zongmen_ruin": {
       "height": { "shallow": [60, 72], "mid": [4, 28], "deep": [-36, -8] },
       "boundary": { "mode": "hard", "width": 4 },

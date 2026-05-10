@@ -1,0 +1,12 @@
+# plan-terrain-tribulation-scorch-v1 P3 — 化虚渡劫遗迹极稀有掉落。
+
+[[item]]
+id = "xujie_canxie"
+name = "虚劫残屑"
+category = "treasure"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "legendary"
+spirit_quality_initial = 0.95
+description = "化虚劫坑里偶尔还能摸到的蓝白碎屑，像被天道收走时漏下的一点回声。用途待雷法残卷、器修载体或暴烈色催化后续 plan 决策。"
