@@ -24,6 +24,7 @@ pub mod derived_attrs_emit;
 pub mod dropped_loot_sync_emit;
 pub mod dugu_event_bridge;
 pub mod dugu_state_emit;
+pub mod dugu_v2_event_bridge;
 pub mod event_stream_emit;
 pub mod extract_emit;
 pub mod false_skin_state_emit;
@@ -419,6 +420,11 @@ pub fn register(app: &mut App) {
             woliu_event_bridge::publish_woliu_v2_cast_events,
             woliu_event_bridge::publish_woliu_v2_backfire_events,
             woliu_event_bridge::publish_woliu_v2_turbulence_events,
+            dugu_v2_event_bridge::publish_dugu_v2_eclipse_events,
+            dugu_v2_event_bridge::publish_dugu_v2_penetrate_events,
+            dugu_v2_event_bridge::publish_dugu_v2_shroud_events,
+            dugu_v2_event_bridge::publish_dugu_v2_self_cure_events,
+            dugu_v2_event_bridge::publish_dugu_v2_reverse_events,
         ),
     );
     app.add_systems(

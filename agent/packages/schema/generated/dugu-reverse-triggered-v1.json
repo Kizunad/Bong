@@ -1,0 +1,55 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "caster",
+    "affected_targets",
+    "burst_damage",
+    "returned_zone_qi",
+    "center",
+    "tick"
+  ],
+  "properties": {
+    "caster": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "affected_targets": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "burst_damage": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "returned_zone_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "juebi_delay_ticks": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "center": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
