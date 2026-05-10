@@ -46,13 +46,17 @@ function createPlayer(name: string, overrides: PlayerOverrides = {}): PlayerProf
 }
 
 function createZone(name: string, spiritQi: number, overrides: Partial<ZoneSnapshot> = {}): ZoneSnapshot {
-  return {
+  const zone: ZoneSnapshot = {
     name,
     spirit_qi: spiritQi,
     danger_level: overrides.danger_level ?? 1,
     active_events: overrides.active_events ?? [],
     player_count: overrides.player_count ?? 0,
   };
+  if (overrides.status) {
+    zone.status = overrides.status;
+  }
+  return zone;
 }
 
 function createState(args: {
@@ -392,5 +396,25 @@ describe("context with task-21 world model blocks", () => {
     expect(context).not.toContain("## 天道平衡态");
     expect(context).not.toContain("## 其他天道意志");
     expect(context).not.toContain("## 近期民意");
+  });
+
+  it("renders TSY race-out status for calamity narration trigger", () => {
+    const state = createState({
+      tick: 900,
+      zones: [
+        createZone("tsy_lingxu_01_deep", -1.0, {
+          danger_level: 5,
+          status: "race_out",
+          active_events: ["tsy_race_out"],
+          player_count: 2,
+        }),
+      ],
+    });
+
+    const text = worldSnapshotBlock.render(createContextInput(state));
+
+    expect(text).toContain("race-out");
+    expect(text).toContain("TsyCollapseStarted");
+    expect(text).toContain("tsy_race_out");
   });
 });

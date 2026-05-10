@@ -1,0 +1,15 @@
+{
+  "zone_id": "qingyun_peaks",
+  "fog_color": "#8090A0",
+  "fog_density": 0.3,
+  "ambient_particle": {
+    "type": "cloud256_dust",
+    "tint": "#C0C8D0",
+    "density": 1.5,
+    "drift": [0.01, -0.005, 0.02],
+    "interval_ticks": 16
+  },
+  "sky_tint": "#C0C8D8",
+  "entry_transition_fx": "MIST_BURST",
+  "ambient_recipe_id": "ambient_qingyun_peaks"
+}

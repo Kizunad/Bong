@@ -55,6 +55,7 @@ use crate::world::zone::{TsyDepth, ZoneRegistry};
 
 /// 塌缩窗口长度（30 秒 × 20 tick/s）。
 pub const COLLAPSE_DURATION_TICKS: u64 = 30 * 20;
+pub const EVENT_TSY_RACE_OUT: &str = "tsy_race_out";
 
 /// 干尸 → 道伥的自然累积阈值。MVP = 5 分钟。
 pub const DAOXIANG_NATURAL_TICKS: u64 = 6_000;
@@ -414,6 +415,18 @@ fn apply_tsy_spirit_qi_conserved(state: &TsyZoneState, zones: &mut ZoneRegistry)
     for (zone_name, current_qi, target_qi) in current_layers {
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
             zone.spirit_qi = current_qi + (target_qi - current_qi) * target_scale;
+            if is_collapsing {
+                if !zone
+                    .active_events
+                    .iter()
+                    .any(|event| event == EVENT_TSY_RACE_OUT)
+                {
+                    zone.active_events.push(EVENT_TSY_RACE_OUT.to_string());
+                }
+            } else {
+                zone.active_events
+                    .retain(|event| event != EVENT_TSY_RACE_OUT);
+            }
         }
     }
 }

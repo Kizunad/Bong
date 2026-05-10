@@ -307,7 +307,7 @@ pub fn dehydrate_far_npcs_system(
             store.remove(&char_id);
         }
         store.insert(snapshot);
-        commands.entity(entity).despawn();
+        commands.entity(entity).insert(Despawned);
     }
 }
 
@@ -704,6 +704,52 @@ mod tests {
 
         assert!(!can_insert_dormant_snapshot(&store, "npc_new", 1));
         assert!(can_insert_dormant_snapshot(&store, "npc_existing", 1));
+    }
+
+    #[test]
+    fn dehydrate_marks_live_npc_despawned_for_valence_layer_cleanup() {
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+
+        let lifecycle = Lifecycle {
+            character_id: "npc_far".to_string(),
+            ..Default::default()
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(10.0, 64.0, 10.0)),
+                lifecycle,
+                NpcArchetype::Rogue,
+                NpcLifespan::new(0.0, 1_000.0),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<NpcDormantStore>()
+            .contains("npc_far"));
+        assert!(
+            app.world().get::<Despawned>(entity).is_some(),
+            "dehydrated NPC must be marked Despawned instead of raw despawned"
+        );
     }
 
     #[test]

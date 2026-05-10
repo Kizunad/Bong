@@ -1,0 +1,24 @@
+{
+  "zone_id": "blood_valley",
+  "fog_color": "#5A2020",
+  "fog_density": 0.35,
+  "ambient_particles": [
+    {
+      "type": "cloud256_dust",
+      "tint": "#8B4040",
+      "density": 2.0,
+      "drift": [0.025, 0.0, 0.01],
+      "interval_ticks": 14
+    },
+    {
+      "type": "tribulation_spark",
+      "tint": "#FF4444",
+      "density": 0.3,
+      "drift": [0.0, 0.03, 0.0],
+      "interval_ticks": 60
+    }
+  ],
+  "sky_tint": "#604040",
+  "entry_transition_fx": "WIND_GUST",
+  "ambient_recipe_id": "ambient_blood_valley"
+}

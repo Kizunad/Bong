@@ -1,4 +1,4 @@
-# Bong · plan-zone-atmosphere-v2 · 骨架
+# Bong · plan-zone-atmosphere-v2
 
 区域氛围视觉识别系统——在 `plan-vfx-wiring-v1`（环境粒子接线）+ `plan-audio-world-v1`（区域 ambient 音效）✅ active 基础上拓展。vfx-wiring-v1 已接线战斗/修炼/产出/社交/死亡/状态效果的事件驱动 VFX，audio-world-v1 已建 6 区域 ambient loop + 昼夜 crossfade——但两者都是**事件触发型或 loop 型**，不解决 zone 之间视觉差异的问题。当前走进血谷和走出灵泉湿地在视觉上几乎一样（除了灵气条数字变化）。本 plan 给每个 zone 赋予**持续的视觉身份**：灵压雾色分层、环境粒子密度、zone 边界过渡特效、负压区视觉扭曲。让玩家不看 HUD 就知道自己进了哪个区。
 
@@ -59,16 +59,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | ZoneAtmosphereProfile 数据结构 + Renderer 骨架 + 初醒原 / 青云残峰 profile + 过渡带 | ⬜ |
-| P1 | 血谷 / 灵泉湿地 / 北荒 / 幽暗地穴 profile | ⬜ |
-| P2 | 死域 / 负灵域特殊视觉 + 残灰方块足迹 | ⬜ |
-| P3 | 坍缩渊分层 atmosphere + 塌缩视觉序列 | ⬜ |
-| P4 | 季节联动（SeasonState → zone profile 动态覆盖） | ⬜ |
-| P5 | 性能压测（6 zone × 3 季节 × fog+particle 开销） | ⬜ |
+| P0 | ZoneAtmosphereProfile 数据结构 + Renderer 骨架 + 初醒原 / 青云残峰 profile + 过渡带 | ✅ 2026-05-10 |
+| P1 | 血谷 / 灵泉湿地 / 北荒 / 幽暗地穴 profile | ✅ 2026-05-10 |
+| P2 | 死域 / 负灵域特殊视觉 + 残灰方块足迹 | ✅ 2026-05-10 |
+| P3 | 坍缩渊分层 atmosphere + 塌缩视觉序列 | ✅ 2026-05-10 |
+| P4 | 季节联动（SeasonState → zone profile 动态覆盖） | ✅ 2026-05-10 |
+| P5 | 性能压测（6 zone × 3 季节 × fog+particle 开销） | ✅ 2026-05-10 |
 
 ---
 
-## P0 — 数据结构 + 骨架 + 首批 profile ⬜
+## P0 — 数据结构 + 骨架 + 首批 profile ✅ 2026-05-10
 
 ### 交付物
 
@@ -121,7 +121,7 @@
 
 ---
 
-## P1 — 其余 4 zone profile ⬜
+## P1 — 其余 4 zone profile ✅ 2026-05-10
 
 ### 交付物
 
@@ -160,7 +160,7 @@
 
 ---
 
-## P2 — 死域/负灵域特殊视觉 + 残灰足迹 ⬜
+## P2 — 死域/负灵域特殊视觉 + 残灰足迹 ✅ 2026-05-10
 
 ### 交付物
 
@@ -189,7 +189,7 @@
 
 ---
 
-## P3 — 坍缩渊分层 atmosphere ⬜
+## P3 — 坍缩渊分层 atmosphere ✅ 2026-05-10
 
 ### 交付物
 
@@ -222,7 +222,7 @@
 
 ---
 
-## P4 — 季节联动 ⬜
+## P4 — 季节联动 ✅ 2026-05-10
 
 ### 交付物
 
@@ -248,7 +248,7 @@
 
 ---
 
-## P5 — 性能压测 ⬜
+## P5 — 性能压测 ✅ 2026-05-10
 
 ### 交付物
 
@@ -271,8 +271,25 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`ZoneAtmosphereProfile` ×6+ / `ZoneAtmosphereRenderer` / `ZoneBoundaryTransition` / 死域/负灵域特殊视觉 / 坍缩渊分层 / 季节联动 / 残灰足迹
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：未来新 zone 只需加法 profile JSON（不碰 shader/管线）/ 天气系统独立 plan
+- **落地清单**：
+  - P0/P1：`client/src/main/java/com/bong/client/atmosphere/ZoneAtmosphereProfile.java` / `ZoneAtmosphereProfileParser.java` / `ZoneAtmosphereProfileRegistry.java` / `ZoneBoundaryTransition.java`，以及 `client/src/main/resources/assets/bong/atmosphere/*.json`（`spawn_plain` / `qingyun_peaks` / `blood_valley` / `spring_marsh` / `north_wastes` / `wilderness` / `dark_cavern` / `tsy`）。
+  - P2：`ZoneAtmospherePlanner` 的 dead-zone / negative-zone 分支、`AshFootprintTracker`、`ZoneAtmosphereHudPlanner` 的 desaturation / vignette overlay。
+  - P3：`ZoneAtmospherePlanner` 的 TSY tier fog、deep breathing、collapse countdown blacken/vignette/camera-shake sequence。
+  - P4：`SeasonState` 驱动的 summer / winter / tide-turn profile override，dead-zone skip guard。
+  - P5：`ZoneAtmosphereCommand.estimatedFrameCostMs()`、`ZoneAtmosphereTest.atmosphere_matrix_perf_stays_under_budget`、`scripts/atmosphere_matrix_test.sh`。
+- **关键 commit**：
+  - `d34bdf35e`（2026-05-10）`feat(client): 建立区域氛围 profile 基础`
+  - `38b30d9b7`（2026-05-10）`feat(client): 接入区域氛围渲染链路`
+  - `48d2268c5`（2026-05-10）`test(client): 增加区域氛围矩阵验证入口`
+- **测试结果**：
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test --tests com.bong.client.atmosphere.ZoneAtmosphereTest` → PASS
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` → PASS
+  - `bash scripts/atmosphere_matrix_test.sh` → PASS
+- **跨仓库核验**：
+  - client：`ZoneAtmosphereRenderer.bootstrap()` 在 `BongClient` 启动；`EnvironmentEffectController` tick 更新 atmosphere；`EnvironmentFogController` 将 zone atmosphere 与现有 environment fog 合成；`BongHudOrchestrator` 追加 atmosphere overlay。
+  - server/agent：本 plan 不新增协议；继续消费已有 `zone_info` / `SeasonState` / `ZoneEnvironmentStateV1` / TSY extract countdown。
+- **遗留 / 后续**：
+  - 实机截图和逐分辨率肉眼验收仍依赖 `runClient` 环境；本 PR 提供可重复的 36 组合 JVM 矩阵和脚本入口。
+  - 后续新增 zone 只需追加 profile JSON；天气系统独立 plan 可复用 `ZoneAtmosphereProfile.ParticleConfig`。

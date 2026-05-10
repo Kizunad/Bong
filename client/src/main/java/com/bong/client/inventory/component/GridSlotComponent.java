@@ -4,6 +4,7 @@ import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.ItemIconRegistry;
 import com.bong.client.inventory.RarityBorderRenderer;
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.AncientRelicGlowRenderer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -97,6 +98,9 @@ public class GridSlotComponent extends BaseComponent {
             int alpha = (int) ((0.5 - quality) * 2.0 * 0x66) & 0xFF;
             int overlay = (alpha << 24) | 0x222222;
             context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, overlay);
+        }
+        if (AncientRelicGlowRenderer.shouldGlow(item)) {
+            AncientRelicGlowRenderer.drawGlowBorder(context, dx, dy, dw, dh, System.currentTimeMillis());
         }
 
         int botanyBorder = BotanySpiritQualityVisuals.borderColor(item);

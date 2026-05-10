@@ -1,6 +1,7 @@
 package com.bong.client.environment;
 
 import com.bong.client.BongClient;
+import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
@@ -72,6 +73,7 @@ public final class EnvironmentEffectController {
         ClientPlayerEntity player = client.player;
         if (world == null || player == null) {
             AUDIO.clear();
+            ZoneAtmosphereRenderer.clear();
             EnvironmentFogController.clear();
             return;
         }
@@ -79,6 +81,7 @@ public final class EnvironmentEffectController {
         Vec3d playerPos = player.getPos();
         REGISTRY.tickFade(playerPos, DEFAULT_RADIUS);
         Collection<ActiveEmitter> active = REGISTRY.activeNearPlayer(playerPos, DEFAULT_RADIUS);
+        ZoneAtmosphereRenderer.update(client, playerPos);
         AUDIO.update(active, playerPos);
         EnvironmentFogController.update(active, playerPos);
         for (ActiveEmitter emitter : active) {
@@ -101,6 +104,7 @@ public final class EnvironmentEffectController {
     public static void clear() {
         REGISTRY.clear();
         AUDIO.clear();
+        ZoneAtmosphereRenderer.clear();
         EnvironmentFogController.clear();
         lastWorld = null;
     }

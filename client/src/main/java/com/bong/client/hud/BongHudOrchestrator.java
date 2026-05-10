@@ -112,6 +112,10 @@ public final class BongHudOrchestrator {
         // HUD marker 路径已下线——两套定位系统并存会让文字标签相对图标"乱飘"。
 
         if (BongClientFeatures.ENABLE_VISUAL_EFFECTS) {
+            com.bong.client.atmosphere.ZoneAtmosphereHudPlanner.append(
+                commands,
+                com.bong.client.atmosphere.ZoneAtmosphereRenderer.currentCommand()
+            );
             com.bong.client.visual.realm_vision.RealmVisionCommand realmVisionCommand =
                 com.bong.client.visual.realm_vision.RealmVisionPlanner.plan(
                     com.bong.client.visual.realm_vision.RealmVisionStateStore.snapshot(),
@@ -136,6 +140,11 @@ public final class BongHudOrchestrator {
             if (seasonTint != 0) {
                 commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
             }
+            commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
+                PlayerStateStore.snapshot().localNegPressure(),
+                screenWidth,
+                screenHeight
+            ));
         }
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {

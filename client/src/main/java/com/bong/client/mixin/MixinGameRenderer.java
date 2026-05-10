@@ -1,6 +1,7 @@
 package com.bong.client.mixin;
 
 import com.bong.client.hud.BongHudStateStore;
+import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.visual.CameraFovOffset;
 import net.minecraft.client.render.Camera;
@@ -36,7 +37,11 @@ public class MixinGameRenderer {
         CallbackInfoReturnable<Double> cir
     ) {
         VisualEffectState state = BongHudStateStore.snapshot().visualEffectState();
-        double delta = CameraFovOffset.compute(state, System.currentTimeMillis());
+        double delta = CameraFovOffset.compute(
+            state,
+            System.currentTimeMillis(),
+            PlayerStateStore.snapshot().localNegPressure()
+        );
         if (delta == 0.0) {
             return;
         }

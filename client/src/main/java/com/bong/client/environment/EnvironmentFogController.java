@@ -1,5 +1,6 @@
 package com.bong.client.environment;
 
+import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.render.FogShape;
 import net.minecraft.util.math.Vec3d;
@@ -15,7 +16,10 @@ public final class EnvironmentFogController {
     }
 
     public static void update(Collection<ActiveEmitter> activeEmitters, Vec3d playerPos) {
-        current = EnvironmentFogPlanner.plan(activeEmitters, playerPos);
+        current = ZoneAtmosphereRenderer.mergeFogCommands(
+            EnvironmentFogPlanner.plan(activeEmitters, playerPos),
+            ZoneAtmosphereRenderer.currentFogCommand()
+        );
     }
 
     public static void applyFog() {
