@@ -25,13 +25,14 @@ public final class MovementVfxPlayer implements VfxPlayer {
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
         ClientWorld world = GameplayVfxUtil.world(client);
-        if (world == null) {
+        if (world == null || payload == null || payload.origin().length < 3) {
             return;
         }
 
-        double ox = payload.origin()[0];
-        double oy = payload.origin()[1];
-        double oz = payload.origin()[2];
+        double[] origin = payload.origin();
+        double ox = origin[0];
+        double oy = origin[1];
+        double oz = origin[2];
         float[] rgb = GameplayVfxUtil.rgb(payload, fallbackRgb());
         int count = GameplayVfxUtil.count(payload, defaultCount(), 1, 32);
         int maxAge = GameplayVfxUtil.duration(payload, defaultDuration());

@@ -2,9 +2,11 @@ use uuid::Uuid;
 use valence::entity::attributes::{EntityAttribute, EntityAttributes};
 use valence::entity::entity::Pose as PoseComponent;
 use valence::entity::{Look, OnGround, Pose, Velocity};
+use valence::math::Aabb;
 use valence::prelude::{
-    bevy_ecs, Added, App, Changed, Client, Commands, Component, DVec3, Entity, Event, EventReader,
-    EventWriter, IntoSystemConfigs, Or, Position, Query, Res, UniqueId, Update, With, Without,
+    bevy_ecs, Added, App, BlockPos, BlockState, Changed, ChunkLayer, Client, Commands, Component,
+    DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs, Or, Position, Query, Res,
+    UniqueId, Update, With, Without,
 };
 
 use crate::combat::components::{
@@ -27,7 +29,7 @@ use crate::schema::movement::{
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -51,6 +53,8 @@ pub const DOUBLE_JUMP_STAMINA_COST: f32 = 20.0;
 pub const DOUBLE_JUMP_DURATION_TICKS: u64 = 4;
 pub const DOUBLE_JUMP_BASE_VERTICAL_VELOCITY: f32 = 6.4;
 pub const DOUBLE_JUMP_DIRECTIONAL_NUDGE_BLOCKS: f64 = 0.8;
+pub const PLAYER_COLLISION_WIDTH_BLOCKS: f64 = 0.6;
+pub const MOVEMENT_SWEEP_STEP_BLOCKS: f64 = 0.2;
 const MOVEMENT_SPEED_ATTRIBUTE_UUID: Uuid = Uuid::from_u128(0x426f_6e67_4d6f_7665_6d65_6e74_5631);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +121,6 @@ impl From<MovementZoneKind> for MovementZoneKindV1 {
 pub struct MovementActionIntent {
     pub entity: Entity,
     pub action: MovementAction,
-    pub requested_at_tick: u64,
 }
 
 #[derive(Debug, Clone, Component)]
@@ -137,7 +140,7 @@ pub struct MovementState {
     pub last_grounded: bool,
     pub stamina_cost_active: bool,
     pub last_action_tick: Option<u64>,
-    pub rejected_action: Option<String>,
+    pub rejected_action: Option<MovementActionRequestV1>,
 }
 
 impl Default for MovementState {
@@ -195,7 +198,10 @@ fn attach_movement_state_to_joined_clients(
 
 fn sync_stamina_regen_from_realm(mut players: Query<(&Cultivation, &mut Stamina), With<Client>>) {
     for (cultivation, mut stamina) in &mut players {
-        stamina.recover_per_sec = stamina_regen_rate(cultivation.realm);
+        let next = stamina_regen_rate(cultivation.realm);
+        if (stamina.recover_per_sec - next).abs() > f32::EPSILON {
+            stamina.recover_per_sec = next;
+        }
     }
 }
 
@@ -205,6 +211,7 @@ type MovementSpeedQueryItem<'a> = (
     Option<&'a Stamina>,
     Option<&'a Position>,
     Option<&'a CurrentDimension>,
+    Option<&'a OnGround>,
     Option<&'a mut DerivedAttrs>,
     Option<&'a mut EntityAttributes>,
 );
@@ -214,8 +221,16 @@ fn apply_movement_speed_system(
     zones: Option<Res<ZoneRegistry>>,
     mut players: Query<MovementSpeedQueryItem<'_>, With<Client>>,
 ) {
-    for (mut movement, cultivation, stamina, position, dimension, derived_attrs, entity_attrs) in
-        &mut players
+    for (
+        mut movement,
+        cultivation,
+        stamina,
+        position,
+        dimension,
+        on_ground,
+        derived_attrs,
+        entity_attrs,
+    ) in &mut players
     {
         let realm = cultivation
             .map(|cultivation| cultivation.realm)
@@ -224,11 +239,14 @@ fn apply_movement_speed_system(
         let stamina_current = stamina.map(|stamina| stamina.current).unwrap_or(100.0);
         let multiplier = speed_multiplier(realm, zone_kind, clock.tick, stamina_current);
         let max_charges = double_jump_charges_by_realm(realm);
-        let remaining_charges = if movement.last_grounded {
-            max_charges
-        } else {
-            movement.double_jump_charges_remaining.min(max_charges)
-        };
+        let grounded = on_ground
+            .map(|on_ground| on_ground.0)
+            .unwrap_or(movement.last_grounded);
+        let remaining_charges = double_jump_remaining_after_grounded(
+            grounded,
+            movement.double_jump_charges_remaining,
+            max_charges,
+        );
 
         if movement.zone_kind != zone_kind {
             movement.zone_kind = zone_kind;
@@ -279,7 +297,10 @@ type MovementActionQueryItem<'a> = (
 );
 
 fn handle_movement_action_intents(
+    clock: Res<CombatClock>,
     mut intents: EventReader<MovementActionIntent>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    layers: Query<&ChunkLayer>,
     mut players: Query<MovementActionQueryItem<'_>, With<Client>>,
     mut vfx: EventWriter<VfxEventRequest>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
@@ -300,7 +321,7 @@ fn handle_movement_action_intents(
         else {
             continue;
         };
-        let now = intent.requested_at_tick;
+        let now = clock.tick;
         let grounded = on_ground.map(|on_ground| on_ground.0).unwrap_or(true);
         let realm = cultivation
             .map(|cultivation| cultivation.realm)
@@ -308,10 +329,15 @@ fn handle_movement_action_intents(
         let dir = horizontal_direction(*look);
         let origin = position.get();
         let action = intent.action;
+        let dimension_kind = dimension.map(|dimension| dimension.0).unwrap_or_default();
 
         if let Some(reason) = reject_reason(action, &movement, &stamina, grounded, now) {
-            movement.rejected_action = Some(reason);
+            movement.rejected_action = movement_action_request(action);
             movement.stamina_cost_active = false;
+            tracing::debug!(
+                "[bong][movement] rejected action={action:?} entity={:?} reason={reason}",
+                intent.entity
+            );
             continue;
         }
 
@@ -323,7 +349,15 @@ fn handle_movement_action_intents(
         match action {
             MovementAction::None => {}
             MovementAction::Dashing => {
-                position.0 = movement_displacement(origin, dir, DASH_DISTANCE_BLOCKS);
+                position.0 = movement_displacement_checked(
+                    origin,
+                    dir,
+                    DASH_DISTANCE_BLOCKS,
+                    movement.hitbox_height_blocks,
+                    dimension_kind,
+                    dimension_layers.as_deref(),
+                    &layers,
+                );
                 movement.action = MovementAction::Dashing;
                 movement.active_until_tick = now.saturating_add(DASH_DURATION_TICKS);
                 movement.dash_ready_at_tick = now.saturating_add(dash_cooldown_by_realm(realm));
@@ -331,7 +365,15 @@ fn handle_movement_action_intents(
                     now.saturating_add(DASH_ATTACK_BONUS_WINDOW_TICKS);
             }
             MovementAction::Sliding => {
-                position.0 = movement_displacement(origin, dir, SLIDE_DISTANCE_BLOCKS);
+                position.0 = movement_displacement_checked(
+                    origin,
+                    dir,
+                    SLIDE_DISTANCE_BLOCKS,
+                    SLIDE_HITBOX_HEIGHT_BLOCKS,
+                    dimension_kind,
+                    dimension_layers.as_deref(),
+                    &layers,
+                );
                 movement.action = MovementAction::Sliding;
                 movement.active_until_tick = now.saturating_add(SLIDE_DURATION_TICKS);
                 movement.stand_transition_until_tick = slide_stand_transition_end(now);
@@ -354,8 +396,15 @@ fn handle_movement_action_intents(
                     })
                     .map(|current| double_jump_direction_after_air_turn(current, dir))
                     .unwrap_or(dir);
-                position.0 =
-                    movement_displacement(origin, air_dir, DOUBLE_JUMP_DIRECTIONAL_NUDGE_BLOCKS);
+                position.0 = movement_displacement_checked(
+                    origin,
+                    air_dir,
+                    DOUBLE_JUMP_DIRECTIONAL_NUDGE_BLOCKS,
+                    movement.hitbox_height_blocks,
+                    dimension_kind,
+                    dimension_layers.as_deref(),
+                    &layers,
+                );
                 if let Some(mut velocity) = velocity {
                     velocity.0.y =
                         DOUBLE_JUMP_BASE_VERTICAL_VELOCITY * double_jump_height_multiplier(realm);
@@ -369,7 +418,7 @@ fn handle_movement_action_intents(
             action,
             origin,
             dir,
-            dimension.map(|dimension| dimension.0).unwrap_or_default(),
+            dimension_kind,
             unique_id,
             &mut vfx,
             &mut audio,
@@ -525,7 +574,7 @@ impl MovementState {
             stamina_max,
             low_stamina: stamina_current / stamina_max <= LOW_STAMINA_HUD_RATIO,
             last_action_tick: self.last_action_tick,
-            rejected_action: self.rejected_action.clone(),
+            rejected_action: self.rejected_action,
         }
     }
 }
@@ -743,6 +792,18 @@ pub fn double_jump_charges_by_realm(realm: Realm) -> u8 {
     }
 }
 
+pub fn double_jump_remaining_after_grounded(
+    grounded: bool,
+    charges_remaining: u8,
+    max_charges: u8,
+) -> u8 {
+    if grounded {
+        max_charges
+    } else {
+        charges_remaining.min(max_charges)
+    }
+}
+
 pub fn double_jump_height_multiplier(realm: Realm) -> f32 {
     match realm {
         Realm::Solidify | Realm::Spirit | Realm::Void => 1.0,
@@ -786,6 +847,106 @@ pub fn movement_displacement(origin: DVec3, dir: DVec3, distance: f64) -> DVec3 
     origin + normalize_horizontal(dir) * distance
 }
 
+pub fn movement_displacement_swept(
+    origin: DVec3,
+    dir: DVec3,
+    distance: f64,
+    hitbox_height_blocks: f32,
+    mut collides: impl FnMut(DVec3, f32) -> bool,
+) -> DVec3 {
+    let target = movement_displacement(origin, dir, distance);
+    let delta = target - origin;
+    let horizontal_distance = DVec3::new(delta.x, 0.0, delta.z).length();
+    if horizontal_distance <= f64::EPSILON {
+        return target;
+    }
+    let steps = (horizontal_distance / MOVEMENT_SWEEP_STEP_BLOCKS)
+        .ceil()
+        .max(1.0) as u32;
+    let mut last_safe = origin;
+    for step in 1..=steps {
+        let candidate = origin + delta * (f64::from(step) / f64::from(steps));
+        if collides(candidate, hitbox_height_blocks) {
+            return last_safe;
+        }
+        last_safe = candidate;
+    }
+    target
+}
+
+fn movement_displacement_checked(
+    origin: DVec3,
+    dir: DVec3,
+    distance: f64,
+    hitbox_height_blocks: f32,
+    dimension: DimensionKind,
+    dimension_layers: Option<&DimensionLayers>,
+    layers: &Query<&ChunkLayer>,
+) -> DVec3 {
+    movement_displacement_swept(
+        origin,
+        dir,
+        distance,
+        hitbox_height_blocks,
+        |candidate, height| {
+            player_collides_with_world(candidate, height, dimension, dimension_layers, layers)
+        },
+    )
+}
+
+fn player_collides_with_world(
+    position: DVec3,
+    hitbox_height_blocks: f32,
+    dimension: DimensionKind,
+    dimension_layers: Option<&DimensionLayers>,
+    layers: &Query<&ChunkLayer>,
+) -> bool {
+    let Some(dimension_layers) = dimension_layers else {
+        return false;
+    };
+    let Ok(layer) = layers.get(dimension_layers.entity_for(dimension)) else {
+        return false;
+    };
+    let player_aabb = player_collision_aabb(position, hitbox_height_blocks);
+    player_aabb_intersects_blocks(layer, player_aabb)
+}
+
+fn player_collision_aabb(position: DVec3, hitbox_height_blocks: f32) -> Aabb {
+    Aabb::from_bottom_size(
+        position,
+        DVec3::new(
+            PLAYER_COLLISION_WIDTH_BLOCKS,
+            f64::from(hitbox_height_blocks.max(0.1)),
+            PLAYER_COLLISION_WIDTH_BLOCKS,
+        ),
+    )
+}
+
+fn player_aabb_intersects_blocks(layer: &ChunkLayer, player_aabb: Aabb) -> bool {
+    let min = player_aabb.min();
+    let max = player_aabb.max();
+    for x in min.x.floor() as i32..=max.x.floor() as i32 {
+        for y in min.y.floor() as i32..=max.y.floor() as i32 {
+            for z in min.z.floor() as i32..=max.z.floor() as i32 {
+                let pos = BlockPos::new(x, y, z);
+                let Some(block) = layer.block(pos) else {
+                    continue;
+                };
+                if block.state == BlockState::AIR {
+                    continue;
+                }
+                for shape in block.state.collision_shapes() {
+                    let block_aabb = shape + DVec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    if player_aabb.intersects(block_aabb) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn dash_attack_multiplier(state: &MovementState, tick: u64) -> f32 {
     if state.dash_attack_bonus_until_tick > tick {
         DASH_ATTACK_BONUS_MULTIPLIER
@@ -796,6 +957,15 @@ pub fn dash_attack_multiplier(state: &MovementState, tick: u64) -> f32 {
 
 pub fn double_jump_allowed(grounded: bool, charges_remaining: u8) -> bool {
     !grounded && charges_remaining > 0
+}
+
+fn movement_action_request(action: MovementAction) -> Option<MovementActionRequestV1> {
+    match action {
+        MovementAction::None => None,
+        MovementAction::Dashing => Some(MovementActionRequestV1::Dash),
+        MovementAction::Sliding => Some(MovementActionRequestV1::Slide),
+        MovementAction::DoubleJumping => Some(MovementActionRequestV1::DoubleJump),
+    }
 }
 
 pub fn double_jump_direction_after_air_turn(current: DVec3, requested: DVec3) -> DVec3 {
@@ -979,10 +1149,18 @@ mod tests {
             ..Default::default()
         };
         state.last_grounded = true;
-        if state.last_grounded {
-            state.double_jump_charges_remaining = state.double_jump_charges_max;
-        }
+        state.double_jump_charges_remaining = double_jump_remaining_after_grounded(
+            state.last_grounded,
+            state.double_jump_charges_remaining,
+            state.double_jump_charges_max,
+        );
         assert_eq!(state.double_jump_charges_remaining, 2);
+    }
+
+    #[test]
+    fn double_jump_airborne_does_not_refill_charges() {
+        assert_eq!(double_jump_remaining_after_grounded(false, 0, 2), 0);
+        assert_eq!(double_jump_remaining_after_grounded(false, 3, 2), 2);
     }
 
     #[test]
@@ -997,6 +1175,27 @@ mod tests {
         assert!(
             angle <= 45.0001,
             "air turn must clamp to 45 degrees, got {angle}"
+        );
+    }
+
+    #[test]
+    fn swept_displacement_stops_before_first_collision() {
+        let origin = DVec3::new(0.0, 64.0, 0.0);
+        let end = movement_displacement_swept(
+            origin,
+            DVec3::new(1.0, 0.0, 0.0),
+            DASH_DISTANCE_BLOCKS,
+            1.8,
+            |candidate, _height| candidate.x >= 2.0,
+        );
+
+        assert!(
+            end.x < 2.0,
+            "movement should stop before blocking contact: {end:?}"
+        );
+        assert!(
+            end.x > 1.5,
+            "movement should advance to the last safe sample: {end:?}"
         );
     }
 

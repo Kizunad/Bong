@@ -497,13 +497,13 @@ pub fn handle_client_request_payloads(
                 });
             }
             ClientRequestV1::MovementAction { action, .. } => {
-                tracing::info!(
+                tracing::debug!(
                     "[bong][network] client_request movement_action entity={:?} action={:?}",
                     ev.client,
                     action
                 );
                 let Some(movement_action_tx) = dispatch.movement_action_tx.as_deref_mut() else {
-                    tracing::warn!(
+                    tracing::debug!(
                         "[bong][network] dropped movement_action because MovementActionIntent event resource is missing"
                     );
                     continue;
@@ -511,7 +511,6 @@ pub fn handle_client_request_payloads(
                 movement_action_tx.send(MovementActionIntent {
                     entity: ev.client,
                     action: MovementAction::from(action),
-                    requested_at_tick: combat_clock.tick,
                 });
             }
             ClientRequestV1::AbortTribulation { .. } => {

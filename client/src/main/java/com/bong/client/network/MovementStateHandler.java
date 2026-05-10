@@ -53,6 +53,7 @@ public final class MovementStateHandler implements ServerDataHandler {
         Double staminaCurrent = readDouble(payload, "stamina_current");
         Double staminaMax = readDouble(payload, "stamina_max");
         Boolean lowStamina = readBoolean(payload, "low_stamina");
+        String rejectedAction = readOptionalMovementAction(payload, "rejected_action");
 
         if (speed == null
             || staminaCostActive == null
@@ -73,7 +74,8 @@ public final class MovementStateHandler implements ServerDataHandler {
             || jumpChargesMax < 0
             || hitboxHeight < 0.0
             || staminaCurrent < 0.0
-            || staminaMax <= 0.0) {
+            || staminaMax <= 0.0
+            || rejectedAction == null) {
             return null;
         }
 
@@ -96,7 +98,7 @@ public final class MovementStateHandler implements ServerDataHandler {
             staminaMax,
             lowStamina,
             lastActionTick,
-            readOptionalString(payload, "rejected_action"),
+            rejectedAction,
             0L,
             0L,
             0L
@@ -140,7 +142,14 @@ public final class MovementStateHandler implements ServerDataHandler {
         JsonPrimitive p = el.getAsJsonPrimitive();
         if (!p.isNumber()) return null;
         String raw = p.getAsString();
-        return INTEGER_TOKEN_PATTERN.matcher(raw).matches() ? p.getAsLong() : null;
+        if (!INTEGER_TOKEN_PATTERN.matcher(raw).matches()) {
+            return null;
+        }
+        try {
+            return p.getAsLong();
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private static Long readOptionalLong(JsonObject obj, String field) {
@@ -150,7 +159,36 @@ public final class MovementStateHandler implements ServerDataHandler {
         JsonPrimitive p = el.getAsJsonPrimitive();
         if (!p.isNumber()) return null;
         String raw = p.getAsString();
-        return INTEGER_TOKEN_PATTERN.matcher(raw).matches() ? p.getAsLong() : null;
+        if (!INTEGER_TOKEN_PATTERN.matcher(raw).matches()) {
+            return null;
+        }
+        try {
+            return p.getAsLong();
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static String readOptionalMovementAction(JsonObject obj, String field) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull()) {
+            return "";
+        }
+        if (!el.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        if (!p.isString()) {
+            return null;
+        }
+        String value = p.getAsString();
+        if (value.isEmpty()
+            || "dash".equals(value)
+            || "slide".equals(value)
+            || "double_jump".equals(value)) {
+            return value;
+        }
+        return null;
     }
 
     private static Integer readInteger(JsonObject obj, String field) {

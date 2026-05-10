@@ -596,6 +596,33 @@ mod tests {
     }
 
     #[test]
+    fn movement_action_request_roundtrip() {
+        let json = r#"{"type":"movement_action","v":1,"action":"dash"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::MovementAction { v, action } => {
+                assert_eq!(v, 1);
+                assert_eq!(action, MovementActionRequestV1::Dash);
+            }
+            other => panic!("expected MovementAction, got {other:?}"),
+        }
+
+        let encoded = serde_json::to_string(&req).expect("movement action serializes");
+        assert_eq!(encoded, json);
+    }
+
+    #[test]
+    fn movement_action_rejects_unknown_fields() {
+        let json = r#"{"type":"movement_action","v":1,"action":"dash","extra":true}"#;
+        let error =
+            serde_json::from_str::<ClientRequestV1>(json).expect_err("extra field must fail");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "expected unknown-field error, got {error}"
+        );
+    }
+
+    #[test]
     fn coffin_open_roundtrip() {
         let json = r#"{"type":"coffin_open","v":1,"x":0,"y":69,"z":0}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();

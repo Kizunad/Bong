@@ -722,6 +722,10 @@ mod server_data_tests {
             payload_type_label(ServerDataType::PoisonTraitState),
             "poison_trait_state"
         );
+        assert_eq!(
+            payload_type_label(ServerDataType::MovementState),
+            "movement_state"
+        );
     }
 
     #[test]

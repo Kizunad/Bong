@@ -8,11 +8,11 @@ public final class MovementStateStore {
     private MovementStateStore() {
     }
 
-    public static MovementState snapshot() {
+    public static synchronized MovementState snapshot() {
         return snapshot;
     }
 
-    public static void replace(MovementState next, long nowMs) {
+    public static synchronized void replace(MovementState next, long nowMs) {
         MovementState current = snapshot;
         MovementState normalized = next == null ? MovementState.empty() : next;
         long hudActivityAtMs = current.hudActivityAtMs();
@@ -34,7 +34,7 @@ public final class MovementStateStore {
         snapshot = normalized.withTiming(nowMs, hudActivityAtMs, rejectedAtMs);
     }
 
-    public static void clear() {
+    public static synchronized void clear() {
         snapshot = MovementState.empty();
     }
 

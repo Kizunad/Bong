@@ -2672,6 +2672,7 @@ impl ServerDataPayloadV1 {
 mod tests {
     use super::*;
     use crate::network::agent_bridge::payload_type_label;
+    use crate::schema::movement::{MovementActionRequestV1, MovementActionV1, MovementZoneKindV1};
     use crate::schema::poison_trait::{PoisonOverdoseSeverityV1, PoisonSideEffectTagV1};
 
     /// Catches wire-vs-label drift like the QuickSlotConfig "snake_case" bug
@@ -2992,6 +2993,22 @@ mod tests {
                 severed_meridian_count: 1,
                 contract_count: 2,
                 mass_preview_count: 0,
+            }),
+            ServerDataPayloadV1::MovementState(MovementStateV1 {
+                current_speed_multiplier: 0.75,
+                stamina_cost_active: true,
+                movement_action: MovementActionV1::Dashing,
+                zone_kind: MovementZoneKindV1::Normal,
+                dash_cooldown_remaining_ticks: 40,
+                slide_cooldown_remaining_ticks: 0,
+                double_jump_charges_remaining: 1,
+                double_jump_charges_max: 1,
+                hitbox_height_blocks: 1.8,
+                stamina_current: 85.0,
+                stamina_max: 100.0,
+                low_stamina: false,
+                last_action_tick: Some(120),
+                rejected_action: Some(MovementActionRequestV1::Dash),
             }),
             // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
             ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {
@@ -3336,6 +3353,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.movement-state.sample.json"
             ),
         ];
 

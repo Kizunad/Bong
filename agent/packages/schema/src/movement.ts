@@ -38,7 +38,7 @@ export const MovementStateV1 = Type.Object(
     stamina_max: Type.Number({ minimum: 0 }),
     low_stamina: Type.Boolean(),
     last_action_tick: Type.Optional(Type.Integer({ minimum: 0 })),
-    rejected_action: Type.Optional(Type.String({ minLength: 1 })),
+    rejected_action: Type.Optional(MovementActionRequestV1),
   },
   { additionalProperties: false },
 );

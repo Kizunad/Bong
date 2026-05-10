@@ -68,14 +68,14 @@ class MovementStateHandlerTest {
               "stamina_current": 4,
               "stamina_max": 100,
               "low_stamina": true,
-              "rejected_action": "stamina_insufficient"
+              "rejected_action": "dash"
             }
             """);
 
         ServerDataDispatch dispatch = new MovementStateHandler().handle(envelope, 3_000L);
 
         assertTrue(dispatch.handled());
-        assertEquals("stamina_insufficient", MovementStateStore.snapshot().rejectedAction());
+        assertEquals("dash", MovementStateStore.snapshot().rejectedAction());
         assertEquals(3_000L, MovementStateStore.snapshot().rejectedAtMs());
     }
 
@@ -89,6 +89,89 @@ class MovementStateHandlerTest {
               "stamina_cost_active": true,
               "movement_action": "teleporting",
               "zone_kind": "normal"
+            }
+            """);
+
+        ServerDataDispatch result = new MovementStateHandler().handle(envelope, 2_000L);
+
+        assertFalse(result.handled());
+        assertTrue(MovementStateStore.snapshot().isEmpty());
+    }
+
+    @Test
+    void rejectsInvalidRejectedAction() {
+        ServerDataEnvelope envelope = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": false,
+              "movement_action": "none",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 0,
+              "slide_cooldown_remaining_ticks": 0,
+              "double_jump_charges_remaining": 0,
+              "double_jump_charges_max": 1,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 4,
+              "stamina_max": 100,
+              "low_stamina": true,
+              "rejected_action": "stamina_insufficient"
+            }
+            """);
+
+        ServerDataDispatch result = new MovementStateHandler().handle(envelope, 2_000L);
+
+        assertFalse(result.handled());
+        assertTrue(MovementStateStore.snapshot().isEmpty());
+    }
+
+    @Test
+    void rejectsNonStringRejectedAction() {
+        ServerDataEnvelope envelope = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": false,
+              "movement_action": "none",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 0,
+              "slide_cooldown_remaining_ticks": 0,
+              "double_jump_charges_remaining": 0,
+              "double_jump_charges_max": 1,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 4,
+              "stamina_max": 100,
+              "low_stamina": true,
+              "rejected_action": 1
+            }
+            """);
+
+        ServerDataDispatch result = new MovementStateHandler().handle(envelope, 2_000L);
+
+        assertFalse(result.handled());
+        assertTrue(MovementStateStore.snapshot().isEmpty());
+    }
+
+    @Test
+    void outOfRangeIntegerIsNoOp() {
+        ServerDataEnvelope envelope = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": true,
+              "movement_action": "dashing",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 9223372036854775808,
+              "slide_cooldown_remaining_ticks": 0,
+              "double_jump_charges_remaining": 1,
+              "double_jump_charges_max": 1,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 70,
+              "stamina_max": 100,
+              "low_stamina": false
             }
             """);
 

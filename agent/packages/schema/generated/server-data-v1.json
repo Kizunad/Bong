@@ -13542,8 +13542,20 @@
           "type": "integer"
         },
         "rejected_action": {
-          "minLength": 1,
-          "type": "string"
+          "anyOf": [
+            {
+              "const": "dash",
+              "type": "string"
+            },
+            {
+              "const": "slide",
+              "type": "string"
+            },
+            {
+              "const": "double_jump",
+              "type": "string"
+            }
+          ]
         }
       }
     },

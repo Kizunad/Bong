@@ -44,5 +44,5 @@ pub struct MovementStateV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_action_tick: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rejected_action: Option<String>,
+    pub rejected_action: Option<MovementActionRequestV1>,
 }

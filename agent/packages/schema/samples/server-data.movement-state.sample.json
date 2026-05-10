@@ -13,5 +13,6 @@
   "stamina_current": 85,
   "stamina_max": 100,
   "low_stamina": false,
-  "last_action_tick": 120
+  "last_action_tick": 120,
+  "rejected_action": "dash"
 }
