@@ -26,7 +26,7 @@ use crate::world::dimension::DimensionLayers;
 use crate::world::rift_portal::{RiftKind, RiftPortal};
 use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::tsy_container::{ContainerKind, LootContainer};
-use crate::zhenfa::ZhenfaAnchor;
+use crate::zhenfa::{ZhenfaAnchor, ZhenfaRegistry};
 
 pub const SPIRIT_NICHE_ENTITY_KIND: EntityKind = EntityKind::new(134);
 pub const SPIRIT_EYE_ENTITY_KIND: EntityKind = EntityKind::new(135);
@@ -94,6 +94,32 @@ pub struct BongVisualEntity {
 struct SpiritEyeVisuals {
     by_eye_id: HashMap<String, Entity>,
 }
+
+type RiftPortalVisualQueryItem<'a> = (
+    Entity,
+    Ref<'a, RiftPortal>,
+    Ref<'a, Position>,
+    &'a EntityLayerId,
+    Option<&'a BongVisualAttachment>,
+);
+type RiftPortalVisualQuery<'w, 's> = Query<'w, 's, RiftPortalVisualQueryItem<'static>>;
+
+type ZhenfaAnchorVisualQueryItem<'a> = (
+    Entity,
+    Ref<'a, ZhenfaAnchor>,
+    Ref<'a, Position>,
+    Option<&'a BongVisualAttachment>,
+);
+type ZhenfaAnchorVisualQuery<'w, 's> = Query<'w, 's, ZhenfaAnchorVisualQueryItem<'static>>;
+
+type TsyContainerVisualQueryItem<'a> = (
+    Entity,
+    Ref<'a, LootContainer>,
+    Ref<'a, Position>,
+    &'a EntityLayerId,
+    Option<&'a BongVisualAttachment>,
+);
+type TsyContainerVisualQuery<'w, 's> = Query<'w, 's, TsyContainerVisualQueryItem<'static>>;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][entity-model] registering server visual entity bridge");
@@ -240,16 +266,7 @@ fn sync_spirit_niche_visuals(
     }
 }
 
-fn sync_rift_portal_visuals(
-    mut commands: Commands,
-    portals: Query<(
-        Entity,
-        Ref<RiftPortal>,
-        Ref<Position>,
-        &EntityLayerId,
-        Option<&BongVisualAttachment>,
-    )>,
-) {
+fn sync_rift_portal_visuals(mut commands: Commands, portals: RiftPortalVisualQuery<'_, '_>) {
     for (source, portal, pos, layer, attachment) in &portals {
         if attachment.is_some() && !portal.is_changed() && !pos.is_changed() {
             continue;
@@ -327,20 +344,20 @@ fn sync_alchemy_furnace_visuals(
 fn sync_zhenfa_anchor_visuals(
     mut commands: Commands,
     layers: Option<Res<DimensionLayers>>,
-    anchors: Query<(
-        Entity,
-        Ref<ZhenfaAnchor>,
-        Ref<Position>,
-        Option<&BongVisualAttachment>,
-    )>,
+    registry: Option<Res<ZhenfaRegistry>>,
+    anchors: ZhenfaAnchorVisualQuery<'_, '_>,
 ) {
     let Some(layers) = layers else {
+        return;
+    };
+    let Some(registry) = registry else {
         return;
     };
     for (source, anchor, pos, attachment) in &anchors {
         if attachment.is_some() && !anchor.is_changed() && !pos.is_changed() {
             continue;
         }
+        let visual_state = registry.anchor_visual_state(&anchor);
         upsert_attached_visual(
             &mut commands,
             source,
@@ -348,7 +365,7 @@ fn sync_zhenfa_anchor_visuals(
             layers.overworld,
             BongVisualKind::FormationCore,
             pos.get(),
-            1,
+            visual_state,
         );
     }
 }
@@ -377,16 +394,7 @@ fn sync_lingtian_plot_visuals(
     }
 }
 
-fn sync_tsy_container_visuals(
-    mut commands: Commands,
-    containers: Query<(
-        Entity,
-        Ref<LootContainer>,
-        Ref<Position>,
-        &EntityLayerId,
-        Option<&BongVisualAttachment>,
-    )>,
-) {
+fn sync_tsy_container_visuals(mut commands: Commands, containers: TsyContainerVisualQuery<'_, '_>) {
     for (source, container, pos, layer, attachment) in &containers {
         if attachment.is_some() && !container.is_changed() && !pos.is_changed() {
             continue;
