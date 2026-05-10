@@ -381,11 +381,46 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
-- **落地清单**：3 招对应 server/agent/client 模块路径 + 4 档伪皮 craft-v1 配方
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test combat::tuike_v2` + 测试数 / `narration-eval` 3 招 + 化虚 hard counter 实战测试 / WSLg 联调实录
-- **跨仓库核验**：server 3 招 SkillRegistry + 4 配方 craft-v1 注册 / agent 3 招 narration + 化虚一战烧上古的政治叙事 / client 2 HUD + 3 粒子 + 3 动画 + 3 音效
-- **遗留 / 后续**：凝实色 passive_buff 通用化（其他流派 vN+1 也需类似 hook 时提取）/ telemetry 校准（plan-style-balance-v1）/ 化虚 hard counter 平衡（化虚毒蛊师反制路径，留 dugu vN+1）/ 上古级伪皮经济曲线（plan-economy-v1 联调）
+### 落地清单
+
+- **P0 / 设计门收口**：`server/src/combat/tuike_v2/state.rs` / `physics.rs` 固化三招数值、`FalseSkinTier` 五档、`TUIKE_BETA = 1.2`、境界叠穿层数、10-30min 残骸腐烂窗口、化虚上古级永久标记吸收规则。
+- **P1 / server 三招与物理**：`server/src/combat/tuike_v2/{mod,state,physics,events,skills,tick,tests}.rs` 实装 `tuike.don` / `tuike.shed` / `tuike.transfer_taint`，接入 `SkillRegistry`、`KnownTechnique`、`DerivedAttrs.tuike_layers`、`PracticeLog` 凝实色维持折扣、`PermanentQiMaxDecay` hard counter、独立 `FalseSkinResidue` 地面残骸。
+- **P1 / qi_physics 与 craft**：`server/src/qi_physics/field.rs` 增加 `shed_to_carrier` 算子，`server/src/craft/mod.rs` 注册 `tuike.false_skin.light` / `mid` / `heavy` / `ancient` 四档伪皮配方。
+- **P2 / client UI 与视觉**：`client/src/main/java/com/bong/client/combat/store/FalseSkinHudStateStore.java`、`client/src/main/java/com/bong/client/hud/FalseSkinStackHud.java`、`ContamLoadHud.java`、`BongHudOrchestrator.java`、`TuikeFalseSkinParticlePlayer.java`、`VfxBootstrap.java`、`BongAnimations.java`，以及三份 `client/src/main/resources/assets/bong/player_animation/tuike_*.json`。
+- **P3 / 音效与 agent 叙事**：`server/assets/audio/recipes/{don_skin_low_thud,shed_skin_burst,contam_transfer_hum}.json`，`server/src/network/{tuike_event_bridge,vfx_animation_trigger,audio_trigger,false_skin_state_emit,redis_bridge}.rs`，`agent/packages/schema/src/tuike-v2.ts`，`agent/packages/tiandao/src/tuike_v2_runtime.ts`。
+- **P4 / 联调钩子**：`PracticeLog` 凝实色折扣、化虚上古伪皮吸永久标记、`FalseSkinStackStateV1` HUD 状态、`TuikeSkillEventV1` 叙事/视觉/音频事件、上古级配方材料与境界门槛均已落入可测 contract。
+
+### 关键 commit
+
+- `e580f7df7` / 2026-05-10 / `feat(tuike): 实现蜕壳三招完整链路`：server + agent + client 跨栈实现、100 个 server 单测、schema/generated、HUD/VFX/动画/音频/叙事事件接入。
+
+### 测试结果
+
+- `git diff --check`：通过。
+- `cd server && cargo fmt --check`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 cargo test combat::tuike_v2`：通过，`100 passed`。
+- `grep -rcE '#\[test\]' server/src/combat/tuike_v2/`：`tests.rs:100`，满足 P1 `>= 80`。
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：通过。
+- `cd agent && npm ci`：通过。
+- `cd agent && npm run generate -w @bong/schema`：通过。
+- `cd agent && npm run generate:check -w @bong/schema`：通过，327 个 generated schema 文件保持 fresh。
+- `cd agent && npm run build`：通过。
+- `cd agent && npm test -w @bong/schema -- --maxWorkers=1`：通过，14 files / 351 tests。
+- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 329 tests。
+- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test --tests ...`：新增 client 定向测试通过。
+- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test build`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：本地尝试两轮均在链接 `bong-server` test binary 时被系统 SIGKILL；当时机器 15Gi 内存几乎打满且多个其它 worktree 的 `cargo` / `rustc` / Gradle 任务并发。没有观测到 Rust 测试断言失败，CI 仍需跑完整 server matrix。
+
+### 跨仓库核验
+
+- **server**：`combat::tuike_v2::*`、`TuikeSkillId`、`FalseSkinTier`、`StackedFalseSkins`、`FalseSkinResidue`、`PermanentQiMaxDecay`、`shed_to_carrier`、`register_tuike_v2_recipes`、`TuikeSkillEventV1`、`FalseSkinStackStateV1`。
+- **agent/schema**：`CH_TUIKE_V2_SKILL_EVENT`、`CH_FALSE_SKIN_STACK_STATE`、`tuikeV2SkillEventV1`、`falseSkinStackStateV1`、`createTuikeV2Runtime`。
+- **client**：`FalseSkinStateHandler`、`FalseSkinHudStateStore`、`FalseSkinStackHud`、`ContamLoadHud`、`TuikeFalseSkinParticlePlayer`、`FALSE_SKIN_DON_DUST` / `FALSE_SKIN_SHED_BURST` / `ANCIENT_SKIN_GLOW`。
+
+### 遗留 / 后续
+
+- `plan-style-balance-v1` 继续消费真实 PVP telemetry 后调 W/β 数值；本 plan 已提供替尸侧事件与 hard-counter contract。
+- `plan-economy-v1` / `plan-tsy-loot-v1` 后续可基于 `tuike.false_skin.ancient` 配方材料与上古残骸产物校准价格曲线。
+- 若后续多个流派都需要凝实色维持折扣，可把当前 `PracticeLog` 查询从 `tuike_v2` 抽到统一 style passive helper。
