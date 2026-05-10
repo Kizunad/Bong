@@ -400,9 +400,11 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 
 - `git diff --check`：通过。
 - `cd server && cargo fmt --check`：通过。
-- `cd server && CARGO_BUILD_JOBS=1 cargo test combat::tuike_v2`：通过，`100 passed`。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test combat::tuike_v2`：通过，`100 passed`。
 - `grep -rcE '#\[test\]' server/src/combat/tuike_v2/`：`tests.rs:100`，满足 P1 `>= 80`。
-- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test audio`：通过，22 passed；验证替尸 v2 三份音效 recipe 符合当前音频 schema。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3752 passed。
 - `cd agent && npm ci`：通过。
 - `cd agent && npm run generate -w @bong/schema`：通过。
 - `cd agent && npm run generate:check -w @bong/schema`：通过，327 个 generated schema 文件保持 fresh。
@@ -411,7 +413,6 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 - `cd agent && npm test -w @bong/tiandao`：通过，47 files / 329 tests。
 - `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test --tests ...`：新增 client 定向测试通过。
 - `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test build`：通过。
-- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：本地尝试两轮均在链接 `bong-server` test binary 时被系统 SIGKILL；当时机器 15Gi 内存几乎打满且多个其它 worktree 的 `cargo` / `rustc` / Gradle 任务并发。没有观测到 Rust 测试断言失败，CI 仍需跑完整 server matrix。
 
 ### 跨仓库核验
 
