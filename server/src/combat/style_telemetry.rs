@@ -16,11 +16,33 @@ pub struct StyleBalanceTelemetryEvent {
     pub defender_player_id: String,
     pub attacker_color: Option<StyleTelemetryColorSnapshotV1>,
     pub defender_color: Option<StyleTelemetryColorSnapshotV1>,
+    pub attacker_style: Option<String>,
+    pub defender_style: Option<String>,
+    pub attacker_rejection_rate: Option<f64>,
+    pub defender_resistance: Option<f64>,
+    pub defender_drain_affinity: Option<f64>,
+    pub attacker_qi: Option<f64>,
+    pub distance_blocks: Option<f64>,
+    pub effective_hit: Option<f64>,
+    pub defender_lost: Option<f64>,
+    pub defender_absorbed: Option<f64>,
     pub cause: String,
     pub resolved_at_tick: u64,
 }
 
-type StyleTelemetryParticipantItem<'a> = (Option<&'a Username>, Option<&'a QiColor>);
+#[derive(bevy_ecs::component::Component, Debug, Clone, PartialEq)]
+pub struct StyleBalanceTelemetryProfile {
+    pub style: String,
+    pub rejection_rate: Option<f64>,
+    pub resistance: Option<f64>,
+    pub drain_affinity: Option<f64>,
+}
+
+type StyleTelemetryParticipantItem<'a> = (
+    Option<&'a Username>,
+    Option<&'a QiColor>,
+    Option<&'a StyleBalanceTelemetryProfile>,
+);
 
 pub fn collect_hunyuan_pvp_telemetry(
     mut deaths: EventReader<DeathEvent>,
@@ -34,13 +56,22 @@ pub fn collect_hunyuan_pvp_telemetry(
         let Some(attacker_player_id) = death.attacker_player_id.as_ref() else {
             continue;
         };
-        let Ok((Some(defender_username), defender_color)) = participants.get(death.target) else {
+        let Ok((Some(defender_username), defender_color, defender_profile)) =
+            participants.get(death.target)
+        else {
             continue;
         };
-        let attacker_color = participants
+        let (attacker_color, attacker_style, attacker_rejection_rate) = participants
             .get(attacker)
             .ok()
-            .and_then(|(_, color)| color.map(StyleTelemetryColorSnapshotV1::from));
+            .map(|(_, color, profile)| {
+                (
+                    color.map(StyleTelemetryColorSnapshotV1::from),
+                    profile.map(|profile| profile.style.clone()),
+                    profile.and_then(|profile| profile.rejection_rate),
+                )
+            })
+            .unwrap_or((None, None, None));
 
         telemetry.send(StyleBalanceTelemetryEvent {
             attacker,
@@ -49,6 +80,16 @@ pub fn collect_hunyuan_pvp_telemetry(
             defender_player_id: canonical_player_id(defender_username.0.as_str()),
             attacker_color,
             defender_color: defender_color.map(StyleTelemetryColorSnapshotV1::from),
+            attacker_style,
+            defender_style: defender_profile.map(|profile| profile.style.clone()),
+            attacker_rejection_rate,
+            defender_resistance: defender_profile.and_then(|profile| profile.resistance),
+            defender_drain_affinity: defender_profile.and_then(|profile| profile.drain_affinity),
+            attacker_qi: None,
+            distance_blocks: None,
+            effective_hit: None,
+            defender_lost: None,
+            defender_absorbed: None,
             cause: death.cause.clone(),
             resolved_at_tick: death.at_tick,
         });
@@ -70,6 +111,16 @@ pub fn publish_style_balance_telemetry_events(
             defender_player_id: event.defender_player_id.clone(),
             attacker_color: event.attacker_color.clone(),
             defender_color: event.defender_color.clone(),
+            attacker_style: event.attacker_style.clone(),
+            defender_style: event.defender_style.clone(),
+            attacker_rejection_rate: event.attacker_rejection_rate,
+            defender_resistance: event.defender_resistance,
+            defender_drain_affinity: event.defender_drain_affinity,
+            attacker_qi: event.attacker_qi,
+            distance_blocks: event.distance_blocks,
+            effective_hit: event.effective_hit,
+            defender_lost: event.defender_lost,
+            defender_absorbed: event.defender_absorbed,
             cause: event.cause.clone(),
             resolved_at_tick: event.resolved_at_tick,
         };
@@ -136,6 +187,12 @@ mod tests {
                     is_hunyuan: true,
                     ..Default::default()
                 },
+                StyleBalanceTelemetryProfile {
+                    style: "baomai".to_string(),
+                    rejection_rate: Some(0.65),
+                    resistance: None,
+                    drain_affinity: None,
+                },
             ))
             .id();
         let defender = app
@@ -148,6 +205,12 @@ mod tests {
                     is_chaotic: false,
                     is_hunyuan: false,
                     ..Default::default()
+                },
+                StyleBalanceTelemetryProfile {
+                    style: "jiemai".to_string(),
+                    rejection_rate: None,
+                    resistance: Some(0.95),
+                    drain_affinity: Some(0.2),
                 },
             ))
             .id();
@@ -175,6 +238,11 @@ mod tests {
             collected.defender_color.as_ref().map(|c| c.main),
             Some(ColorKind::Violent)
         );
+        assert_eq!(collected.attacker_style.as_deref(), Some("baomai"));
+        assert_eq!(collected.defender_style.as_deref(), Some("jiemai"));
+        assert_eq!(collected.attacker_rejection_rate, Some(0.65));
+        assert_eq!(collected.defender_resistance, Some(0.95));
+        assert_eq!(collected.defender_drain_affinity, Some(0.2));
     }
 
     #[test]

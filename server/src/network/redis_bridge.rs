@@ -3102,6 +3102,16 @@ mod redis_bridge_tests {
                     },
                 ),
                 defender_color: None,
+                attacker_style: Some("baomai".to_string()),
+                defender_style: Some("jiemai".to_string()),
+                attacker_rejection_rate: Some(0.65),
+                defender_resistance: Some(0.95),
+                defender_drain_affinity: Some(0.2),
+                attacker_qi: Some(20.0),
+                distance_blocks: Some(3.0),
+                effective_hit: Some(11.8),
+                defender_lost: Some(0.59),
+                defender_absorbed: Some(0.12),
                 cause: "attack_intent:offline:Azure".to_string(),
                 resolved_at_tick: 404,
             },
@@ -3116,6 +3126,11 @@ mod redis_bridge_tests {
                 assert_eq!(v["defender_player_id"], "offline:Crimson");
                 assert_eq!(v["attacker_color"]["main"], "Heavy");
                 assert_eq!(v["attacker_color"]["is_hunyuan"], true);
+                assert_eq!(v["attacker_style"], "baomai");
+                assert_eq!(v["defender_style"], "jiemai");
+                assert_eq!(v["attacker_rejection_rate"], 0.65);
+                assert_eq!(v["defender_resistance"], 0.95);
+                assert_eq!(v["defender_lost"], 0.59);
                 assert!(v.get("defender_color").is_none());
                 assert_eq!(v["resolved_at_tick"], 404);
             }

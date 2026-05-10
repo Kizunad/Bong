@@ -235,6 +235,49 @@
         }
       }
     },
+    "attacker_style": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "defender_style": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "attacker_rejection_rate": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "defender_resistance": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "defender_drain_affinity": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "attacker_qi": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "distance_blocks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "effective_hit": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "defender_lost": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "defender_absorbed": {
+      "minimum": 0,
+      "type": "number"
+    },
     "cause": {
       "minLength": 1,
       "type": "string"
