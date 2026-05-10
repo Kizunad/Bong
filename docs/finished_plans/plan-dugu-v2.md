@@ -434,11 +434,35 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
-- **落地清单**：5 招对应 server/agent/client 模块路径
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test combat::dugu_v2` + 测试数 / `narration-eval` 5 招通过率 / WSLg 联调实录 / 暴露后社会反应实测
-- **跨仓库核验**：server 5 招 SkillRegistry 注册 / agent 5 招 narration runtime + 暴露江湖传闻 / client 4 HUD + 3 粒子 + 4 动画 + 3 音效 / IdentityProfile DuguRevealedEvent consumer
-- **遗留 / 后续**：cultivation::QiColor permanent_lock_mask 字段扩展（dugu-v2 P1 自身）/ telemetry 校准（plan-style-balance-v1）/ 自蕴毒草扩展（plan-botany-v3）/ 多周目 TaintMark 跨角色规则（plan-multi-life-v1）/ 蚀针 + 煎汤配方注册（plan-craft-v1）
+- **落地清单**：
+  - P0/P1 server：`server/src/combat/dugu_v2/{skills,physics,state,tick,events}.rs` 落地五招 `dugu.eclipse/self_cure/penetrate/shroud/reverse`、三档永久阈值、ρ=0.05 脏真元、99% zone qi 回流、暴露概率、自蕴阴诡色、`TaintMark`、`ShroudActive`、`ReverseAftermathCloud`、`DuguRevealedEvent` 与 `JueBiTriggerSource::DuguReverse`。
+  - P1 qi/color/env：`server/src/qi_physics/{constants,env,field}.rs` 增加 `DUGU_RHO`、`reverse_burst_all_marks`、三种 dugu EnvField 痕迹；`server/src/cultivation/components.rs` 增加 `QiColor::permanent_lock_mask`。
+  - P2 client：`client/src/main/resources/assets/bong/player_animation/dugu_{needle_throw,self_cure_pose,shroud_activate,pointing_curse}.json`、`client/src/main/resources/assets/bong/particles/dugu_{dark_green_mist,taint_pulse,reverse_burst}.json`、`client/src/main/java/com/bong/client/hud/DuguV2HudPlanner.java` / `DuguV2HudStateStore.java`。
+  - P3 agent/audio：`agent/packages/schema/src/dugu_v2.ts`、`agent/packages/tiandao/src/dugu_v2_runtime.ts`、`server/src/network/dugu_v2_event_bridge.rs`、`server/assets/audio/recipes/dugu_{needle_hiss,self_cure_drink,curse_cackle}.json`。
+  - P4 telemetry/联动：`server/src/combat/style_telemetry.rs`、`server/src/network/qi_color_observed_emit.rs`、`server/src/network/redis_bridge.rs` 接入毒蛊事件、阴诡色观测、天道叙事 channel。
+
+- **关键 commit**：
+  - `985c07dcf`（2026-05-10）`feat(dugu-v2): 实装五招物理与 server 规则`
+  - `3abb6f002`（2026-05-10）`feat(dugu-v2): 接通 schema 与天道叙事`
+  - `0a9b3a215`（2026-05-10）`feat(dugu-v2): 补客户端 HUD 粒子与音效配方`
+  - `39aff0c04`（2026-05-10）`fix(dugu-v2): 补齐四招客户端动画资源`
+
+- **测试结果**：
+  - `cd server && cargo test combat::dugu_v2`：120 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：3761 passed。
+  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：tiandao 47 files / 328 tests passed；schema 15 files / 353 tests passed。
+  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon test build`：BUILD SUCCESSFUL；1015 tests, 0 failures。
+  - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/dugu_*.json -o /tmp/...`：4 个新增动画 headless grid 渲染成功。
+
+- **跨仓库核验**：
+  - server：`register_skills(&mut SkillRegistry)` 注册五招；`DuguSkillVisual` 携带 4 动画 + 3 音效；`DuguV2SkillCastV1` / `DuguSelfCureProgressV1` / `DuguReverseTriggeredV1` 通过 Redis outbound 发布。
+  - agent：`DuguV2NarrationRuntime` 订阅 `bong:dugu_v2:cast` / `self_cure` / `reverse`，生成五招、暴露、永久衰减、自蕴形貌异化、化虚倒蚀绝壁劫预兆叙事。
+  - client：4 HUD surface、3 particle type、4 player animation JSON、3 sound recipe 均有资源/测试覆盖；Dugu v2 HUD 接入 `BongHudOrchestrator`。
+
+- **遗留 / 后续**：
+  - 未在本 plan 内新增专属毒草物种；当前自蕴按 plan 默认 A 复用 botany-v2 既有毒草边界，dugu 专属物种留 `plan-botany-v3`。
+  - 蚀针 / 自蕴煎汤配方的通用手搓注册继续由 `plan-craft-v1` 后续消费。
+  - 多周目 TaintMark 亡者博物馆继承规则留 `plan-multi-life-v1`；PVP 数值长线校准留 `plan-style-balance-v1`。
+  - 本轮未启动 WSLg `runClient` 做人工视觉走查；以 Java 17 client build、资源打包测试、HUD planner 测试与 headless animation render 覆盖非交互验证。
