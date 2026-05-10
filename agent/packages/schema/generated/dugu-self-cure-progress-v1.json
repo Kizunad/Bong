@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "caster",
+    "hours_used",
+    "daily_hours_after",
+    "gain_percent",
+    "insidious_color_percent",
+    "morphology_percent",
+    "self_revealed",
+    "tick"
+  ],
+  "properties": {
+    "caster": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "hours_used": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "daily_hours_after": {
+      "minimum": 0,
+      "maximum": 6,
+      "type": "number"
+    },
+    "gain_percent": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "insidious_color_percent": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "morphology_percent": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "self_revealed": {
+      "type": "boolean"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

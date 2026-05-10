@@ -207,6 +207,12 @@ public final class BongHudOrchestrator {
                 screenHeight,
                 nowMillis
             ));
+            commands.addAll(DuguV2HudPlanner.buildCommands(
+                DuguV2HudStateStore.snapshot(),
+                screenWidth,
+                screenHeight,
+                nowMillis
+            ));
             commands.addAll(ChargingProgressBarHud.buildCommands(screenWidth, screenHeight));
             commands.addAll(ExhaustedGreyOverlay.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(YidaoHudPlanner.buildCommands(

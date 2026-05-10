@@ -102,6 +102,13 @@ import {
   DuguPoisonStateV1,
   DuguRevealedEventV1,
 } from "./dugu.js";
+import {
+  DuguReverseTriggeredV1,
+  DuguSelfCureProgressV1,
+  DuguTaintTierV1,
+  DuguV2SkillCastV1,
+  DuguV2SkillIdV1,
+} from "./dugu_v2.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { DeathInsightRequestV1 } from "./death-insight.js";
 import {
@@ -601,6 +608,11 @@ export const SCHEMA_REGISTRY = {
   antidoteResultV1: AntidoteResultV1,
   antidoteResultEventV1: AntidoteResultEventV1,
   duguRevealedEventV1: DuguRevealedEventV1,
+  duguV2SkillIdV1: DuguV2SkillIdV1,
+  duguTaintTierV1: DuguTaintTierV1,
+  duguV2SkillCastV1: DuguV2SkillCastV1,
+  duguSelfCureProgressV1: DuguSelfCureProgressV1,
+  duguReverseTriggeredV1: DuguReverseTriggeredV1,
   serverDataDuguPoisonStateV1: ServerDataDuguPoisonStateV1,
   carrierStateV1: CarrierStateV1,
   carrierChargedEventV1: CarrierChargedEventV1,
@@ -1010,6 +1022,13 @@ export const GENERATED_SCHEMA_FILES = {
   "dugu-antidote-result-event-v1.json":
     SCHEMA_REGISTRY.antidoteResultEventV1,
   "dugu-revealed-event-v1.json": SCHEMA_REGISTRY.duguRevealedEventV1,
+  "dugu-v2-skill-id-v1.json": SCHEMA_REGISTRY.duguV2SkillIdV1,
+  "dugu-taint-tier-v1.json": SCHEMA_REGISTRY.duguTaintTierV1,
+  "dugu-v2-skill-cast-v1.json": SCHEMA_REGISTRY.duguV2SkillCastV1,
+  "dugu-self-cure-progress-v1.json":
+    SCHEMA_REGISTRY.duguSelfCureProgressV1,
+  "dugu-reverse-triggered-v1.json":
+    SCHEMA_REGISTRY.duguReverseTriggeredV1,
   "server-data-dugu-poison-state-v1.json":
     SCHEMA_REGISTRY.serverDataDuguPoisonStateV1,
   "false-skin-kind-v1.json": SCHEMA_REGISTRY.falseSkinKindV1,

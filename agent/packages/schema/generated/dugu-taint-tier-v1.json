@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "immediate",
+      "type": "string"
+    },
+    {
+      "const": "temporary",
+      "type": "string"
+    },
+    {
+      "const": "permanent",
+      "type": "string"
+    }
+  ]
+}

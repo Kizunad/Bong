@@ -13,6 +13,7 @@ use valence::prelude::{
 
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
 use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
@@ -49,7 +50,11 @@ use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
     TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
 };
-use crate::skin::{npc_uuid, NpcPlayerSkin, NpcSkinFallbackPolicy, SignedSkin, SkinPool};
+use crate::skin::faction_tint::visual_equipment;
+use crate::skin::{
+    initial_age_ratio, npc_uuid, select_npc_visual_profile, NpcPlayerSkin, NpcSkinFallbackPolicy,
+    NpcVisualProfile, SignedSkin, SkinPool,
+};
 use crate::world::mob_spawn::{MobSpawnFilter, NaturalMobKind};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -488,6 +493,7 @@ fn seed_initial_rogue_population_on_startup(
             pos,
             patrol_target,
             job.zone.spirit_qi,
+            Realm::Awaken,
             age,
         );
         commands
@@ -579,6 +585,7 @@ fn process_npc_reproduction_requests(
                 request.home_zone.as_str(),
                 request.position,
                 request.position,
+                Realm::Awaken,
                 request.initial_age_ticks.max(0.0),
             ),
             NpcArchetype::Beast => {
@@ -751,6 +758,7 @@ fn relic_guard_thinker() -> ThinkerBuilder {
 
 /// Spawn a Rogue (散修) NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_rogue_npc_at(
     commands: &mut Commands,
     skin_context: NpcSkinSpawnContext<'_>,
@@ -758,15 +766,24 @@ pub fn spawn_rogue_npc_at(
     home_zone: &str,
     spawn_position: DVec3,
     patrol_target: DVec3,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let skin = draw_npc_skin(skin_context, NpcArchetype::Rogue, spawn_position);
+    let profile = select_npc_visual_profile(
+        NpcArchetype::Rogue,
+        realm,
+        None,
+        None,
+        initial_age_ratio(NpcArchetype::Rogue, initial_age_ticks),
+    );
+    let skin = draw_npc_skin(skin_context, profile, spawn_position);
     let entity = spawn_rogue_commoner_base(
         commands,
         layer,
         spawn_position,
         &skin,
+        profile,
         loadout.clone(),
         NpcArchetype::Rogue,
         home_zone,
@@ -821,15 +838,24 @@ pub fn spawn_scattered_cultivator_at(
     spawn_position: DVec3,
     patrol_target: DVec3,
     qi_density: f64,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let skin = draw_npc_skin(skin_context, NpcArchetype::Rogue, spawn_position);
+    let profile = select_npc_visual_profile(
+        NpcArchetype::Rogue,
+        realm,
+        None,
+        None,
+        initial_age_ratio(NpcArchetype::Rogue, initial_age_ticks),
+    );
+    let skin = draw_npc_skin(skin_context, profile, spawn_position);
     let entity = spawn_rogue_commoner_base(
         commands,
         layer,
         spawn_position,
         &skin,
+        profile,
         loadout.clone(),
         NpcArchetype::Rogue,
         home_zone,
@@ -856,6 +882,7 @@ pub fn spawn_scattered_cultivator_at(
 /// Starting age is controlled by
 /// `initial_age_ticks` — newborns pass `0.0`, agent-spawned adults can pass
 /// any value below the Commoner default max age.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_commoner_npc_at(
     commands: &mut Commands,
     skin_context: NpcSkinSpawnContext<'_>,
@@ -863,15 +890,24 @@ pub fn spawn_commoner_npc_at(
     home_zone: &str,
     spawn_position: DVec3,
     patrol_target: DVec3,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let skin = draw_npc_skin(skin_context, NpcArchetype::Commoner, spawn_position);
+    let profile = select_npc_visual_profile(
+        NpcArchetype::Commoner,
+        realm,
+        None,
+        None,
+        initial_age_ratio(NpcArchetype::Commoner, initial_age_ticks),
+    );
+    let skin = draw_npc_skin(skin_context, profile, spawn_position);
     let entity = spawn_rogue_commoner_base(
         commands,
         layer,
         spawn_position,
         &skin,
+        profile,
         loadout.clone(),
         NpcArchetype::Commoner,
         home_zone,
@@ -896,7 +932,7 @@ pub fn spawn_commoner_npc_at(
 
 fn draw_npc_skin(
     skin_context: NpcSkinSpawnContext<'_>,
-    archetype: NpcArchetype,
+    profile: NpcVisualProfile,
     spawn_position: DVec3,
 ) -> Option<SignedSkin> {
     let pool = skin_context.pool?;
@@ -905,7 +941,7 @@ fn draw_npc_skin(
     }
 
     let salt = skin_salt(spawn_position);
-    Some(pool.next_for(archetype, salt))
+    Some(pool.next_for_profile(profile, salt))
 }
 
 fn skin_salt(spawn_position: DVec3) -> u64 {
@@ -920,6 +956,7 @@ fn spawn_rogue_commoner_base(
     layer: Entity,
     spawn_position: DVec3,
     skin: &Option<SignedSkin>,
+    profile: NpcVisualProfile,
     loadout: NpcCombatLoadout,
     archetype: NpcArchetype,
     home_zone: &str,
@@ -953,7 +990,7 @@ fn spawn_rogue_commoner_base(
         }
     }
 
-    entity_commands
+    let entity = entity_commands
         .insert((
             Transform::from_xyz(
                 spawn_position.x as f32,
@@ -974,7 +1011,11 @@ fn spawn_rogue_commoner_base(
             MovementCooldowns::default(),
             NpcPatrol::new(home_zone, patrol_target),
         ))
-        .id()
+        .id();
+    commands
+        .entity(entity)
+        .insert((profile, visual_equipment(&profile)));
+    entity
 }
 
 fn attach_player_skin(
@@ -1087,10 +1128,18 @@ pub fn spawn_disciple_npc_at(
     patrol_target: DVec3,
     faction_id: FactionId,
     rank: FactionRank,
+    realm: Realm,
     master_id: Option<String>,
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
+    let profile = select_npc_visual_profile(
+        NpcArchetype::Disciple,
+        realm,
+        Some(faction_id),
+        Some(rank),
+        initial_age_ratio(NpcArchetype::Disciple, initial_age_ticks),
+    );
     let entity = commands
         .spawn((
             VillagerEntityBundle {
@@ -1119,6 +1168,10 @@ pub fn spawn_disciple_npc_at(
             NpcPatrol::new(home_zone, patrol_target),
         ))
         .id();
+
+    commands
+        .entity(entity)
+        .insert((profile, visual_equipment(&profile)));
 
     commands.entity(entity).insert((
         WanderState::default(),
@@ -1571,6 +1624,7 @@ mod tests {
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(20.0, 66.0, 20.0),
             DVec3::new(20.0, 66.0, 20.0),
+            Realm::Awaken,
             2.0,
         );
     }
@@ -1729,6 +1783,7 @@ mod tests {
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(18.0, 66.0, 18.0),
             DVec3::new(18.0, 66.0, 18.0),
+            Realm::Awaken,
             0.0,
         );
     }
@@ -1742,6 +1797,7 @@ mod tests {
             DVec3::new(19.0, 66.0, 19.0),
             DVec3::new(19.0, 66.0, 19.0),
             0.9,
+            Realm::Awaken,
             0.0,
         );
     }
@@ -1863,6 +1919,7 @@ mod tests {
             DVec3::new(42.0, 66.0, 42.0),
             FactionId::Attack,
             FactionRank::Disciple,
+            Realm::Awaken,
             None,
             0.0,
         );

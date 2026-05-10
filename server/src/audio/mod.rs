@@ -171,8 +171,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            58,
-            "audio registry should include MVP cues plus JueBi, botany, TSY experience, and fauna-experience-v1 creature recipes"
+            61,
+            "audio registry should include MVP cues plus JueBi, botany visual cues, TSY experience, fauna-experience-v1 creature recipes, and dugu-v2 recipes"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -202,6 +202,9 @@ mod tests {
         assert!(registry.get("fauna_ash_spider_attack").is_some());
         assert!(registry.get("fauna_hybrid_beast_death").is_some());
         assert!(registry.get("fauna_void_distorted_ambient").is_some());
+        assert!(registry.get("dugu_needle_hiss").is_some());
+        assert!(registry.get("dugu_self_cure_drink").is_some());
+        assert!(registry.get("dugu_curse_cackle").is_some());
     }
 
     #[test]
