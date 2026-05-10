@@ -133,18 +133,21 @@
 - P1 物品栏视觉：新增 `RarityBorderRenderer.java`，`GridSlotComponent` 绘制 6 档 rarity 边框、Ancient 呼吸与反色闪烁 overlay；`ItemTooltipPanel` 增加稀有度颜色、灵质百分比与 3px 渐变条。
 - P1/P2 metadata：`InventoryItem` 新增 `charges` / `isAncientRelic()` / `createFullWithVisualMeta(...)`；`InventorySnapshotHandler`、`InventoryEventHandler`、`DroppedLootSyncHandler` 保留 scroll / forge / alchemy / charges metadata。
 - P2 掉落物视觉：新增 `DroppedLootRarityVisuals.java`；`DroppedItemWorldRenderer` 对 Rare+ 生成 qi aura，Legendary/Ancient 生成光柱，Ancient 周期播放 beacon hum。
+- Review 修复：新增 `RarityVisuals.java` 收敛 6 档 rarity label/color/normalize；三个 inventory/dropped 入口严格拒绝非法 `charges`；图标 prompt 与资源契约统一到 128×128。
 
 ### 关键 commit
 
 - `550f90132`（2026-05-10）`plan-item-visual-v1: 生成物品图标与注册表`
 - `9193884a9`（2026-05-10）`plan-item-visual-v1: 增强物品栏稀有度视觉`
 - `c385e9a95`（2026-05-10）`plan-item-visual-v1: 区分掉落物稀有度特效`
+- `78fdaf7df`（2026-05-10）`fix(plan-item-visual-v1): 收敛稀有度和 charges 校验`
 
 ### 测试结果
 
 - `python3 scripts/images/test_gen_item_batch.py` → 3 tests passed
 - `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.inventory.render.DroppedLootRarityVisualsTest" --tests "com.bong.client.network.DroppedLootSyncHandlerTest"` → passed
-- `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL；JUnit XML 汇总 `tests=1027 failures=0 errors=0`
+- Review fix 定向测试：`./gradlew test --tests "com.bong.client.inventory.component.ItemTooltipPanelTest" --tests "com.bong.client.inventory.InventoryItemTest" --tests "com.bong.client.inventory.ItemIconRegistryTest" --tests "com.bong.client.inventory.GeneratedItemIconAssetsTest" --tests "com.bong.client.inventory.RarityBorderRendererTest" --tests "com.bong.client.network.DroppedLootSyncHandlerTest" --tests "com.bong.client.network.InventorySnapshotHandlerTest" --tests "com.bong.client.network.InventoryEventHandlerTest"` → passed
+- `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL；JUnit XML 汇总 `tests=1033 failures=0 errors=0`
 - `git diff --check` → passed
 
 ### 跨仓库核验
