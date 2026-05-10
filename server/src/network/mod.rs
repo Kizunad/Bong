@@ -3035,6 +3035,51 @@ mod tests {
         }
 
         #[test]
+        fn world_state_marks_tsy_race_out_zone() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .active_events
+                .push(EVENT_TSY_RACE_OUT.to_string());
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let spawn_zone = state
+                .zones
+                .iter()
+                .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn fallback zone should still be emitted");
+
+            assert_eq!(spawn_zone.status, ZoneStatusV1::RaceOut);
+            assert!(spawn_zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_TSY_RACE_OUT));
+        }
+
+        #[test]
+        fn world_state_prefers_realm_collapse_over_tsy_race_out() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            let zone = app
+                .world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist");
+            zone.active_events.push(EVENT_TSY_RACE_OUT.to_string());
+            zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let spawn_zone = state
+                .zones
+                .iter()
+                .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn fallback zone should still be emitted");
+
+            assert_eq!(spawn_zone.status, ZoneStatusV1::Collapsed);
+        }
+
+        #[test]
         fn uses_generation_aware_canonical_ids() {
             let (mut app, rx_outbound) = setup_publish_app(false);
             let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);

@@ -154,6 +154,9 @@ pub fn emit_portal_spawn_vfx(
     portals: Query<(&RiftPortal, &Position), Added<RiftPortal>>,
 ) {
     for (portal, pos) in &portals {
+        if portal.kind == RiftKind::CollapseTear {
+            continue;
+        }
         vfx_events.send(portal_vfx_request(portal.kind, pos.0));
     }
 }
@@ -1203,6 +1206,59 @@ mod tests {
         assert!(audio_collected
             .iter()
             .any(|event| event.recipe_id == TSY_COLLAPSE_RUMBLE_AUDIO));
+    }
+
+    #[test]
+    fn collapse_tear_vfx_emits_once_across_collapse_and_spawn_systems() {
+        let mut app =
+            app_with_extract_system((emit_portal_spawn_vfx, on_tsy_collapse_started).chain());
+        let tsy_layer = app.world_mut().spawn(()).id();
+        let overworld = app.world_mut().spawn(()).id();
+        app.insert_resource(DimensionLayers {
+            overworld,
+            tsy: tsy_layer,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "tsy_lingxu_01_shallow".to_string(),
+                dimension: DimensionKind::Tsy,
+                bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                spirit_qi: -0.4,
+                danger_level: 4,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_event::<TsyCollapseStarted>();
+        app.world_mut()
+            .resource_mut::<Events<TsyCollapseStarted>>()
+            .send(TsyCollapseStarted {
+                family_id: "tsy_lingxu_01".to_string(),
+                at_tick: 10,
+            });
+
+        app.update();
+        app.update();
+
+        let mut q = app.world_mut().query::<&RiftPortal>();
+        let tears = q
+            .iter(app.world())
+            .filter(|portal| portal.kind == RiftKind::CollapseTear)
+            .count();
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let tear_vfx_count = vfx_events
+            .get_reader()
+            .read(vfx_events)
+            .filter(|event| {
+                matches!(
+                    &event.payload,
+                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == TSY_PORTAL_TEAR_VFX
+                )
+            })
+            .count();
+        assert_eq!(tear_vfx_count, tears);
     }
 
     #[test]
