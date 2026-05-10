@@ -1,6 +1,8 @@
 package com.bong.client.animation;
 
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
+import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.util.Identifier;
 
 import java.util.EnumMap;
@@ -53,8 +55,73 @@ public final class AnimationLayerManager {
             playerId,
             channel,
             animId,
+            channel.priority(),
             BongAnimationPlayer.DEFAULT_FADE_IN_TICKS,
             BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS
+        );
+    }
+
+    public static boolean play(
+        AbstractClientPlayerEntity player,
+        Identifier animId,
+        int priority,
+        int fadeInTicks
+    ) {
+        if (player == null || animId == null) {
+            return false;
+        }
+        return playOnStack(
+            PlayerAnimationAccess.getPlayerAnimLayer(player),
+            player.getUuid(),
+            channelForPriority(priority),
+            animId,
+            priority,
+            fadeInTicks,
+            BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS
+        );
+    }
+
+    public static boolean stop(AbstractClientPlayerEntity player, Identifier animId, int fadeOutTicks) {
+        if (player == null || animId == null) {
+            return false;
+        }
+        return stopAnimationOnStack(
+            PlayerAnimationAccess.getPlayerAnimLayer(player),
+            player.getUuid(),
+            animId,
+            fadeOutTicks
+        );
+    }
+
+    public static Channel channelForPriority(int priority) {
+        if (priority >= Channel.FULL_BODY.priority()) {
+            return Channel.FULL_BODY;
+        }
+        if (priority >= Channel.UPPER_BODY.priority()) {
+            return Channel.UPPER_BODY;
+        }
+        if (priority >= Channel.LOWER_BODY.priority()) {
+            return Channel.LOWER_BODY;
+        }
+        return Channel.EXPRESSION;
+    }
+
+    static boolean playOnStack(
+        AnimationStack stack,
+        UUID playerId,
+        Channel channel,
+        Identifier animId,
+        int fadeInTicks,
+        int fadeOutTicks
+    ) {
+        return playOnStack(
+            stack,
+            playerId,
+            channel,
+            animId,
+            channel.priority(),
+            fadeInTicks,
+            fadeOutTicks
         );
     }
 
@@ -63,6 +130,7 @@ public final class AnimationLayerManager {
         UUID playerId,
         Channel channel,
         Identifier animId,
+        int priority,
         int fadeInTicks,
         int fadeOutTicks
     ) {
@@ -85,7 +153,7 @@ public final class AnimationLayerManager {
             stack,
             playerId,
             animId,
-            channel.priority(),
+            priority,
             Math.max(0, fadeInTicks)
         );
         if (played) {
@@ -94,6 +162,37 @@ public final class AnimationLayerManager {
             ACTIVE_BY_CHANNEL.remove(playerId);
         }
         return played;
+    }
+
+    static boolean stopAnimationOnStack(
+        AnimationStack stack,
+        UUID playerId,
+        Identifier animId,
+        int fadeOutTicks
+    ) {
+        if (stack == null || playerId == null || animId == null) {
+            return false;
+        }
+        EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
+        Channel trackedChannel = null;
+        if (byChannel != null) {
+            for (Map.Entry<Channel, Identifier> entry : byChannel.entrySet()) {
+                if (animId.equals(entry.getValue())) {
+                    trackedChannel = entry.getKey();
+                    break;
+                }
+            }
+        }
+        boolean stopped = BongAnimationPlayer.stopOnStack(
+            stack, playerId, animId, Math.max(0, fadeOutTicks)
+        );
+        if (stopped && trackedChannel != null) {
+            byChannel.remove(trackedChannel);
+            if (byChannel.isEmpty()) {
+                ACTIVE_BY_CHANNEL.remove(playerId);
+            }
+        }
+        return stopped;
     }
 
     static boolean stopOnStack(

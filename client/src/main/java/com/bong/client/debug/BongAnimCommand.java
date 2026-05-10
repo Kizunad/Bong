@@ -1,5 +1,6 @@
 package com.bong.client.debug;
 
+import com.bong.client.animation.AnimationLayerManager;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimationRegistry;
 import com.bong.client.animation.BongPunchCombo;
@@ -117,7 +118,7 @@ public final class BongAnimCommand {
             return 0;
         }
 
-        boolean ok = BongAnimationPlayer.play(player, id, priority, fadeInTicks);
+        boolean ok = AnimationLayerManager.play(player, id, priority, fadeInTicks);
         if (!ok) {
             ctx.getSource().sendError(Text.literal("[bong/anim] 播放失败: " + id));
             return 0;
@@ -153,7 +154,7 @@ public final class BongAnimCommand {
             ctx.getSource().sendError(Text.literal("[bong/anim] 本地玩家不存在"));
             return 0;
         }
-        boolean ok = BongAnimationPlayer.stop(player, id);
+        boolean ok = AnimationLayerManager.stop(player, id, BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS);
         ctx.getSource().sendFeedback(Text.literal(
             "[bong/anim] 停止 " + id + (ok ? "（已淡出）" : "（未在播）")
         ));

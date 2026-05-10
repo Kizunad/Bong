@@ -66,6 +66,54 @@ public class AnimationLayerManagerTest {
     }
 
     @Test
+    void priorityRangeMapsToSemanticChannelAndPreservesStackPriority() {
+        AnimationStack stack = new AnimationStack();
+
+        assertEquals(
+            AnimationLayerManager.Channel.EXPRESSION,
+            AnimationLayerManager.channelForPriority(100)
+        );
+        assertEquals(
+            AnimationLayerManager.Channel.LOWER_BODY,
+            AnimationLayerManager.channelForPriority(500)
+        );
+        assertEquals(
+            AnimationLayerManager.Channel.UPPER_BODY,
+            AnimationLayerManager.channelForPriority(2000)
+        );
+        assertEquals(
+            AnimationLayerManager.Channel.FULL_BODY,
+            AnimationLayerManager.channelForPriority(3000)
+        );
+
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack,
+            playerId,
+            AnimationLayerManager.channelForPriority(1000),
+            FIST,
+            1000,
+            0,
+            0
+        ));
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack,
+            playerId,
+            AnimationLayerManager.channelForPriority(2000),
+            PALM,
+            2000,
+            0,
+            0
+        ));
+
+        List<Pair<Integer, IAnimation>> layers = layersIn(stack);
+        assertEquals(1, layers.size(), "同一语义层必须替换，不能按 priority 堆两层");
+        assertEquals(2000, (int) layers.get(0).getLeft(), "stack priority 保留服务端传入值");
+        assertEquals(PALM, AnimationLayerManager.activeInChannel(
+            playerId, AnimationLayerManager.Channel.UPPER_BODY
+        ));
+    }
+
+    @Test
     void failedReplacementClearsStoppedChannelState() {
         AnimationStack stack = new AnimationStack();
 
@@ -146,6 +194,23 @@ public class AnimationLayerManagerTest {
             playerId, AnimationLayerManager.Channel.LOWER_BODY
         ));
         assertEquals(1, layersIn(stack).size());
+    }
+
+    @Test
+    void stopByAnimationIdClearsTrackedChannel() {
+        AnimationStack stack = new AnimationStack();
+
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack, playerId, AnimationLayerManager.Channel.UPPER_BODY, FIST, 0, 0
+        ));
+
+        assertTrue(AnimationLayerManager.stopAnimationOnStack(stack, playerId, FIST, 0));
+
+        assertNull(AnimationLayerManager.activeInChannel(
+            playerId, AnimationLayerManager.Channel.UPPER_BODY
+        ));
+        assertFalse(BongAnimationPlayer.activeAnimations(playerId).contains(FIST));
+        assertEquals(0, layersIn(stack).size());
     }
 
     private static KeyframeAnimation buildMinimalAnim() {
