@@ -91,12 +91,16 @@ pub fn qi_collision(
         };
     }
 
+    let rejection_rate = atk.rejection_rate().clamp(0.0, 1.0);
     let resistance = def.resistance().clamp(0.0, 1.0);
-    let rejection = attenuated * QI_EXCRETION_BASE * (1.0 - purity + resistance * 0.5);
+    let mitigation_resistance = resistance.min(0.95);
+    // Resistance contributes to rejection and mitigation independently; only
+    // the mitigation path is capped so high resistance still leaves a gap.
+    let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 0.5);
     let effective_hit = (attenuated - rejection).max(0.0) * env.rhythm_factor();
     let backfire_fraction = env.law_disruption_backfire_fraction();
     let attacker_backfire = effective_hit * backfire_fraction;
-    let defender_lost = effective_hit * (1.0 - resistance) * (1.0 - backfire_fraction);
+    let defender_lost = effective_hit * (1.0 - mitigation_resistance) * (1.0 - backfire_fraction);
     let defender_absorbed =
         (defender_lost * def.drain_affinity().clamp(0.0, 1.0)).min(injected * QI_DRAIN_CLAMP);
 
@@ -148,6 +152,7 @@ mod tests {
     use crate::cultivation::components::ColorKind;
 
     use super::*;
+    use crate::qi_physics::env::{CarrierGrade, MediumKind};
     use crate::qi_physics::traits::{SimpleStyleAttack, SimpleStyleDefense};
 
     fn ids() -> (QiAccountId, QiAccountId, QiAccountId) {
@@ -223,6 +228,92 @@ mod tests {
     }
 
     #[test]
+    fn max_resistance_still_leaves_penetration_gap() {
+        let (attacker_id, defender_id, environment_id) = ids();
+        let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        let immune_old = SimpleStyleDefense::new(ColorKind::Solid, 1.0);
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &immune_old,
+            1.0,
+            &EnvField::default(),
+        );
+        assert!(
+            outcome.defender_lost > 0.0,
+            "resistance=1.0 应只保留 95% 上限，不能变成无敌盾"
+        );
+    }
+
+    #[test]
+    fn rejection_rate_controls_rejection_independent_of_purity() {
+        let (attacker_id, defender_id, environment_id) = ids();
+        let mut pure = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        pure.purity = 1.0;
+        pure.rejection_rate = 0.45;
+        let mut impure_but_above_threshold = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        impure_but_above_threshold.purity = 0.45;
+        impure_but_above_threshold.rejection_rate = 0.45;
+        let def = SimpleStyleDefense::new(ColorKind::Solid, 0.2);
+
+        let pure_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &pure,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
+        let impure_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &impure_but_above_threshold,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
+
+        assert!((pure_out.effective_hit - impure_out.effective_hit).abs() < 1e-9);
+        assert!((pure_out.defender_lost - impure_out.defender_lost).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lower_rejection_rate_penetrates_more_than_heavy_qi_at_equal_payload() {
+        let (attacker_id, defender_id, environment_id) = ids();
+        let mut dugu = SimpleStyleAttack::new(ColorKind::Insidious, 10.0);
+        dugu.rejection_rate = 0.05;
+        let mut baomai = SimpleStyleAttack::new(ColorKind::Heavy, 10.0);
+        baomai.rejection_rate = 0.65;
+        let def = SimpleStyleDefense::new(ColorKind::Solid, 0.5);
+
+        let dugu_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &dugu,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
+        let baomai_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &baomai,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
+
+        assert!(dugu_out.effective_hit > baomai_out.effective_hit);
+        assert!(dugu_out.defender_lost > baomai_out.defender_lost);
+    }
+
+    #[test]
     fn drain_affinity_is_clamped_to_half_spend() {
         let (attacker_id, defender_id, environment_id) = ids();
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
@@ -260,6 +351,171 @@ mod tests {
         assert_eq!(outcome.transfers[0].to, environment_id);
         assert_eq!(outcome.transfers[1].from, attacker_id);
         assert_eq!(outcome.transfers[1].to, defender_id);
+    }
+
+    #[test]
+    fn style_balance_matrix_preserves_directional_worldview_expectations() {
+        let (attacker_id, defender_id, environment_id) = ids();
+        let env = EnvField::default();
+
+        let attacks = [
+            (
+                "baomai",
+                ColorKind::Heavy,
+                20.0,
+                0.65,
+                MediumKind::bare(ColorKind::Heavy),
+            ),
+            (
+                "anqi",
+                ColorKind::Sharp,
+                8.0,
+                0.45,
+                MediumKind {
+                    color: ColorKind::Sharp,
+                    carrier: CarrierGrade::SpiritWeapon,
+                },
+            ),
+            (
+                "zhenfa",
+                ColorKind::Mellow,
+                10.0,
+                0.35,
+                MediumKind {
+                    color: ColorKind::Mellow,
+                    carrier: CarrierGrade::PhysicalWeapon,
+                },
+            ),
+            (
+                "dugu",
+                ColorKind::Insidious,
+                5.0,
+                0.05,
+                MediumKind::bare(ColorKind::Insidious),
+            ),
+        ];
+        let defenses = [
+            ("jiemai", ColorKind::Solid, 1.0, 0.20),
+            ("tuike", ColorKind::Solid, 1.0, 0.05),
+            ("woliu", ColorKind::Intricate, 0.25, 0.85),
+        ];
+
+        for (_, color, qi, rho, medium) in attacks {
+            let mut attack = SimpleStyleAttack::new(color, qi);
+            attack.rejection_rate = rho;
+            attack.medium = medium;
+            for (_, def_color, resistance, drain_affinity) in defenses {
+                let mut defense = SimpleStyleDefense::new(def_color, resistance);
+                defense.drain_affinity = drain_affinity;
+                let outcome = qi_collision(
+                    &attacker_id,
+                    &defender_id,
+                    &environment_id,
+                    &attack,
+                    &defense,
+                    3.0,
+                    &env,
+                );
+                assert!(
+                    outcome.defender_lost > 0.0,
+                    "{color:?} vs {def_color:?} 不应出现 defender_lost=0 的无敌行"
+                );
+            }
+        }
+
+        let mut low_rho = SimpleStyleAttack::new(ColorKind::Insidious, 10.0);
+        low_rho.rejection_rate = 0.05;
+        let mut high_rho = SimpleStyleAttack::new(ColorKind::Heavy, 10.0);
+        high_rho.rejection_rate = 0.65;
+        let def = SimpleStyleDefense::new(ColorKind::Solid, 0.5);
+        let low_rho_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &low_rho,
+            &def,
+            3.0,
+            &env,
+        );
+        let high_rho_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &high_rho,
+            &def,
+            3.0,
+            &env,
+        );
+        assert!(low_rho_out.defender_lost > high_rho_out.defender_lost);
+
+        let standard_attack = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        let mut ordinary_defense = SimpleStyleDefense::new(ColorKind::Solid, 0.25);
+        ordinary_defense.drain_affinity = 0.1;
+        let mut woliu_defense = SimpleStyleDefense::new(ColorKind::Intricate, 0.25);
+        woliu_defense.drain_affinity = 0.85;
+        let ordinary_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &standard_attack,
+            &ordinary_defense,
+            3.0,
+            &env,
+        );
+        let woliu_out = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &standard_attack,
+            &woliu_defense,
+            3.0,
+            &env,
+        );
+        assert!(woliu_out.defender_absorbed > ordinary_out.defender_absorbed);
+    }
+
+    #[test]
+    fn spirit_weapon_carrier_preserves_more_qi_than_bare_qi_over_distance() {
+        let (attacker_id, defender_id, environment_id) = ids();
+        let mut bare = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        bare.medium = MediumKind::bare(ColorKind::Sharp);
+        let mut carried = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        carried.medium = MediumKind {
+            color: ColorKind::Sharp,
+            carrier: CarrierGrade::SpiritWeapon,
+        };
+        let def = SimpleStyleDefense::new(ColorKind::Solid, 0.1);
+
+        let bare_near = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &bare,
+            &def,
+            0.0,
+            &EnvField::default(),
+        );
+        let bare_far = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &bare,
+            &def,
+            20.0,
+            &EnvField::default(),
+        );
+        let carried_far = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &carried,
+            &def,
+            20.0,
+            &EnvField::default(),
+        );
+
+        assert!(bare_far.defender_lost < bare_near.defender_lost);
+        assert!(carried_far.defender_lost > bare_far.defender_lost);
     }
 
     #[test]

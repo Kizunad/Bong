@@ -10,6 +10,10 @@ pub trait StyleAttack {
         1.0
     }
 
+    fn rejection_rate(&self) -> f64 {
+        0.30
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind::bare(self.style_color())
     }
@@ -35,6 +39,7 @@ pub struct SimpleStyleAttack {
     pub color: ColorKind,
     pub qi: f64,
     pub purity: f64,
+    pub rejection_rate: f64,
     pub medium: MediumKind,
 }
 
@@ -44,6 +49,7 @@ impl SimpleStyleAttack {
             color,
             qi,
             purity: 1.0,
+            rejection_rate: 0.30,
             medium: MediumKind::bare(color),
         }
     }
@@ -60,6 +66,10 @@ impl StyleAttack for SimpleStyleAttack {
 
     fn purity(&self) -> f64 {
         self.purity
+    }
+
+    fn rejection_rate(&self) -> f64 {
+        self.rejection_rate
     }
 
     fn medium(&self) -> MediumKind {
@@ -106,6 +116,7 @@ mod tests {
     fn simple_attack_defaults_to_full_purity() {
         let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
         assert_eq!(atk.purity(), 1.0);
+        assert_eq!(atk.rejection_rate(), 0.30);
         assert_eq!(atk.injected_qi(), 10.0);
     }
 

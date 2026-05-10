@@ -108,6 +108,10 @@ impl StyleAttack for VortexField {
         (1.0 - f64::from(self.radius / 32.0).clamp(0.0, 0.5)).clamp(0.5, 1.0)
     }
 
+    fn rejection_rate(&self) -> f64 {
+        0.30
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind::bare(ColorKind::Intricate)
     }
@@ -1479,5 +1483,6 @@ mod tests {
         assert_eq!(field.style_color(), ColorKind::Intricate);
         assert_eq!(field.injected_qi(), 0.25);
         assert!(field.purity() >= 0.5);
+        assert_eq!(field.rejection_rate(), 0.30);
     }
 }

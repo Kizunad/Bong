@@ -310,6 +310,10 @@ impl StyleAttack for ZhenfaInstance {
         self.qi_invest_ratio.clamp(0.0, 1.0)
     }
 
+    fn rejection_rate(&self) -> f64 {
+        0.35
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind {
             color: self.color_main,
@@ -2889,6 +2893,7 @@ mod tests {
 
         assert_eq!(instance.style_color(), ColorKind::Intricate);
         assert_eq!(instance.injected_qi(), 25.0);
+        assert_eq!(instance.rejection_rate(), 0.35);
         assert_eq!(instance.medium().carrier, CarrierGrade::SpiritWeapon);
         assert_eq!(instance.defense_color(), ColorKind::Solid);
         assert_eq!(instance.resistance(), 0.5);

@@ -71,6 +71,7 @@ import {
   validateBoneCoinTickV1Contract,
   validatePriceIndexV1Contract,
 } from "../src/economy.js";
+import { validateStyleBalanceTelemetryEventV1Contract } from "../src/style-balance.js";
 import {
   RatPhaseChangeEventV1,
   validateRatPhaseChangeEventV1Contract,
@@ -156,6 +157,41 @@ type ContractValidation = (data: unknown) => { ok: boolean; errors: string[] };
 // ─── Sample validation ─────────────────────────────────
 
 describe("sample files pass schema validation", () => {
+  it("accepts style balance telemetry with optional physical parameters", () => {
+    expectContractAccepts("StyleBalanceTelemetryEventV1", validateStyleBalanceTelemetryEventV1Contract, {
+      v: 1,
+      attacker_player_id: "offline:Azure",
+      defender_player_id: "offline:Crimson",
+      attacker_color: {
+        main: "Heavy",
+        secondary: "Solid",
+        is_chaotic: false,
+        is_hunyuan: true,
+      },
+      attacker_style: "baomai",
+      defender_style: "jiemai",
+      attacker_rejection_rate: 0.65,
+      defender_resistance: 0.95,
+      defender_drain_affinity: 0.2,
+      attacker_qi: 20,
+      distance_blocks: 3,
+      effective_hit: 11.8,
+      defender_lost: 0.59,
+      defender_absorbed: 0.12,
+      cause: "attack_intent:offline:Azure",
+      resolved_at_tick: 404,
+    });
+
+    expectContractRejects("StyleBalanceTelemetryEventV1", validateStyleBalanceTelemetryEventV1Contract, {
+      v: 1,
+      attacker_player_id: "offline:Azure",
+      defender_player_id: "offline:Crimson",
+      attacker_rejection_rate: 1.2,
+      cause: "attack_intent:offline:Azure",
+      resolved_at_tick: 404,
+    });
+  });
+
   it("declares social Redis channels", () => {
     expect(CHANNELS.SOCIAL_EXPOSURE).toBe("bong:social/exposure");
     expect(CHANNELS.SOCIAL_PACT).toBe("bong:social/pact");
