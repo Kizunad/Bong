@@ -26,6 +26,10 @@
           "type": "string"
         },
         {
+          "const": "jue_bi",
+          "type": "string"
+        },
+        {
           "const": "ascension_quota_open",
           "type": "string"
         }
@@ -114,6 +118,10 @@
       "type": "string"
     },
     "zone": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "source": {
       "minLength": 1,
       "type": "string"
     },

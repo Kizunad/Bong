@@ -191,6 +191,26 @@ const HeartDemonRecord = Type.Object(
   { additionalProperties: false },
 );
 
+const JueBiSurvived = Type.Object(
+  {
+    JueBiSurvived: Type.Object({
+      source: Type.String({ minLength: 1, maxLength: 128 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+const JueBiKilled = Type.Object(
+  {
+    JueBiKilled: Type.Object({
+      source: Type.String({ minLength: 1, maxLength: 128 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 const TradeCompleted = Type.Object(
   {
     TradeCompleted: Type.Object({
@@ -247,6 +267,8 @@ export const BiographyEntryV1 = Type.Union([
   TribulationIntercepted,
   TribulationFled,
   HeartDemonRecord,
+  JueBiSurvived,
+  JueBiKilled,
   TradeCompleted,
   FalseSkinShed,
   SpawnTutorialCompleted,
