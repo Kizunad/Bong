@@ -13,6 +13,13 @@ import net.minecraft.registry.Registry;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 
+/**
+ * Client-side ID slot for the lingtian plot block surface.
+ *
+ * <p>当前 server 运行时通过 {@code EntityKind::new(132)} 视觉 marker 同步灵田状态，
+ * 不会向 chunk stream 写入 {@code bong:lingtian_plot} 方块。本注册保留 Fabric block /
+ * block entity 的 ID 与渲染面，供后续 Valence 原生自定义方块路径接入时复用。
+ */
 public final class LingtianPlotBlock extends BlockWithEntity {
     public static final Identifier ID = new Identifier("bong", "lingtian_plot");
     private static BlockEntityType<LingtianPlotBlockEntity> entityType;
