@@ -12,19 +12,22 @@ const { AGENT_NARRATE, POISON_DOSE_EVENT, POISON_OVERDOSE_EVENT } = CHANNELS;
 class FakePubSub implements PoisonTraitRuntimeClient {
   public published: Array<{ channel: string; message: string }> = [];
   public subscribedChannels: string[] = [];
-  public listeners: Array<(channel: string, message: string) => void> = [];
+  private readonly listenersByEvent = new Map<string, Array<(channel: string, message: string) => void>>();
 
   async subscribe(channel: string): Promise<void> {
     this.subscribedChannels.push(channel);
   }
 
-  on(_event: string, listener: (channel: string, message: string) => void) {
-    this.listeners.push(listener);
+  on(event: string, listener: (channel: string, message: string) => void) {
+    const listeners = this.listenersByEvent.get(event) ?? [];
+    listeners.push(listener);
+    this.listenersByEvent.set(event, listeners);
     return this;
   }
 
-  off(_event: string, listener: (channel: string, message: string) => void) {
-    this.listeners = this.listeners.filter((entry) => entry !== listener);
+  off(event: string, listener: (channel: string, message: string) => void) {
+    const listeners = this.listenersByEvent.get(event) ?? [];
+    this.listenersByEvent.set(event, listeners.filter((entry) => entry !== listener));
     return this;
   }
 
@@ -35,6 +38,12 @@ class FakePubSub implements PoisonTraitRuntimeClient {
   async publish(channel: string, message: string): Promise<number> {
     this.published.push({ channel, message });
     return 1;
+  }
+
+  emit(event: string, channel: string, message: string): void {
+    for (const listener of this.listenersByEvent.get(event) ?? []) {
+      listener(channel, message);
+    }
   }
 }
 
@@ -52,6 +61,45 @@ describe("PoisonTraitNarrationRuntime", () => {
       expect.arrayContaining([POISON_DOSE_EVENT, POISON_OVERDOSE_EVENT]),
     );
     expect(sub.subscribedChannels).toHaveLength(2);
+  });
+
+  it("wires Redis message events to poison narration handling", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new PoisonTraitNarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.connect();
+    sub.emit(
+      "ignored",
+      POISON_DOSE_EVENT,
+      JSON.stringify({
+        v: 1,
+        player_entity_id: 7,
+        dose_amount: 5,
+        side_effect_tag: "qi_focus_drift_2h",
+        poison_level_after: 17,
+        digestion_after: 50,
+        at_tick: 100,
+      }),
+    );
+    expect(pub.published).toHaveLength(0);
+
+    sub.emit(
+      "message",
+      POISON_DOSE_EVENT,
+      JSON.stringify({
+        v: 1,
+        player_entity_id: 7,
+        dose_amount: 5,
+        side_effect_tag: "qi_focus_drift_2h",
+        poison_level_after: 17,
+        digestion_after: 50,
+        at_tick: 100,
+      }),
+    );
+
+    await vi.waitFor(() => expect(pub.published).toHaveLength(1));
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
   });
 
   it("publishes dose narration to agent narration channel", async () => {

@@ -10,6 +10,7 @@ use valence::prelude::{
 
 use crate::cultivation::death_hooks::{PlayerRevived, PlayerTerminated};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::poison_trait::PoisonPillKind;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 /// Worldview §十二：死亡掉落应落在「死亡点」而不是「重生点」。
@@ -1593,6 +1594,12 @@ fn parse_item_effect(
         "poison_pill" => {
             let pill_item_id =
                 required_non_empty_option(effect.target, source_path, "item.effect.target")?;
+            if PoisonPillKind::from_item_id(&pill_item_id).is_none() {
+                return Err(format!(
+                    "{} item `{item_id}` effect `poison_pill` has unknown poison pill target `{pill_item_id}`",
+                    source_path.display()
+                ));
+            }
             Ok(ItemEffect::PoisonPill { pill_item_id })
         }
         other => Err(format!(
@@ -3639,6 +3646,25 @@ mod tests {
                 "expected target validation error, got {error}"
             );
         }
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_poison_pill_unknown_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "poison_pill".to_string(),
+                magnitude: 0.0,
+                target: Some("poison_pill_typo".to_string()),
+            },
+            Path::new("<inline-items.toml>"),
+            "poison_pill_unknown_target",
+        )
+        .expect_err("poison_pill effect should reject unknown target ids");
+
+        assert!(
+            error.contains("unknown poison pill target `poison_pill_typo`"),
+            "expected poison pill target validation error, got {error}"
+        );
     }
 
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {

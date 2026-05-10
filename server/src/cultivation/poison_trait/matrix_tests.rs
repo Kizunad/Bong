@@ -796,13 +796,21 @@ fn poison_trait_recipes_do_not_use_dugu_insidious_color() {
         include_str!("../../../assets/alchemy/recipes/poison_trait_wu_sui_san_xin_v1.json"),
     ];
     for recipe in recipes {
+        let json: serde_json::Value =
+            serde_json::from_str(recipe).expect("poison recipe json should parse");
         assert!(
             !recipe.contains("\"toxin_color\": \"Insidious\""),
             "毒性真元毒丹不得使用毒蛊专属 Insidious 染色"
         );
-        assert!(
-            recipe.contains("\"toxin_color\": \"Turbid\""),
-            "毒性真元毒丹 perfect/good 档应使用可洗 Turbid 染色"
+        assert_eq!(
+            json["outcomes"]["perfect"]["toxin_color"].as_str(),
+            Some("Turbid"),
+            "毒性真元毒丹 perfect 档应使用可洗 Turbid 染色"
+        );
+        assert_eq!(
+            json["outcomes"]["good"]["toxin_color"].as_str(),
+            Some("Turbid"),
+            "毒性真元毒丹 good 档应使用可洗 Turbid 染色"
         );
     }
 }
