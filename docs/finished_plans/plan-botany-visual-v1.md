@@ -6,10 +6,10 @@
 
 ## 接入面 Checklist（防孤岛）
 
-- **进料**：`botany::PlantRegistry` ✅ / `botany::HarvestProgress` ✅ / `lingtian::LingtianPlot` ✅ / `lingtian::LingtianSessionState` ✅ / `BotanyPlantEntityRenderer` ✅ / `BotanyHudPlanner` ✅ / `vfx::VfxRegistry` ✅ / `audio::SoundRecipePlayer` ✅
-- **出料**：client 植物渲染增强 → `BotanyPlantEntityRenderer` / VFX player → `VfxBootstrap` / audio recipe → `server/assets/audio/recipes/` / 灵田地块自定义渲染 → `LingtianPlotRenderer`
+- **进料**：`botany::PlantRegistry` ✅ / `botany::HarvestProgress` ✅ / `lingtian::LingtianPlot` ✅ / `lingtian::LingtianSessionState` ✅ / `BotanyPlantStageWorldRenderer` ✅ / `BotanyHudPlanner` ✅ / `vfx::VfxRegistry` ✅ / `audio::SoundRecipePlayer` ✅
+- **出料**：client 植物渲染增强 → `BotanyPlantStageWorldRenderer` / VFX player → `VfxBootstrap` / audio recipe → `server/assets/audio/recipes/` / 灵田地块自定义渲染 → `LingtianPlotRunePlayer` / `LingtianSessionHud`
 - **共享类型/event**：复用 `VfxEventRequest` / `AudioTriggerS2c` / `HarvestProgress` / `LingtianSessionState`，不新增 event
-- **跨仓库契约**：server emit `VfxEventRequest(botany_harvest/botany_aura/lingtian_till)` → client VfxRegistry 消费
+- **跨仓库契约**：server emit `VfxEventRequest(botany_harvest/botany_aura/botany_plant_stage/lingtian_till)` → client VfxRegistry 消费
 - **worldview 锚点**：§九 自给经济（灵田）/ §七 生态（植物与灵气共生）
 
 ---
@@ -31,17 +31,17 @@
 1. **灵草 aura VFX**（`BotanyAuraPlayer.java`）
    - 灵气浓度 ≥ 0.5 的植物实体周围：4 颗 `BongSpriteParticle`（`qi_aura` 贴图，tint 按 `spirit_quality` 映射：0.3→淡绿 #88CC88 / 0.7→翠绿 #22FF44 / 1.0→金绿 #FFDD22）
    - 粒子缓慢上升 + 微弱左右飘动（sin 轨迹），lifetime 40-80 tick
-   - server emit：`botany::growth_system` 每 200 tick 对 mature 植物 emit `VfxEventRequest::new("botany_aura", plant_pos)`
+   - server emit：`botany::growth_system` 每 200 tick 对 mature 且 zone 灵气 ≥ 0.5 的植物 emit `bong:botany_aura`，颜色/强度来自采收物 `spirit_quality` + 变种修正
 
 2. **采收粒子 VFX**（`BotanyHarvestBurstPlayer.java`）
    - 采收瞬间：叶片碎片粒子 × 12（`BongSpriteParticle` `enlightenment_dust` 贴图 tint 绿系，向上扩散 + 重力下落）
    - 稀有植物（epic+）额外金色光柱（复用 `BreakthroughPillarPlayer` 缩小版，高度 3 block，持续 1s）
-   - server emit：`botany::harvest_system` 采收成功时 emit `VfxEventRequest::new("botany_harvest", plant_pos)` + rarity 参数
+   - server emit：`botany::harvest_system` 采收成功时 emit `bong:botany_harvest`，`strength` 透出实际 `spirit_quality`，≥0.9 触发光柱
 
 3. **灵田动作音效接线**
    - `harvest_pluck.json` / `till_soil.json` / `plot_replenish.json` 已存在但未接线
    - `server/src/lingtian/action_system.rs`：每个 action 完成时 emit `AudioTriggerS2c::new("{recipe_id}", player_local)`
-   - 新增 `lingtian_plant_seed.json`（`minecraft:block.grass.place` pitch 1.2）/ `lingtian_drain.json`（`minecraft:block.pointed_dripstone.drip_lava` pitch 0.8 loop）
+   - 新增 `lingtian_plant_seed.json`（`minecraft:block.grass.place` pitch 1.2）/ `lingtian_drain.json`（`minecraft:block.pointed_dripstone.drip_lava` pitch 0.8，`lingtian_drain_active` loop）
 
 ### 验收抓手
 
@@ -54,12 +54,12 @@
 
 ### 交付物
 
-1. **生长阶段渲染**（增强 `BotanyPlantEntityRenderer`）
+1. **生长阶段渲染**（`BotanyPlantStageWorldRenderer`）
    - 3 个视觉阶段：seedling（quad 缩放 0.3 + 半透明 0.5）/ growing（缩放 0.7 + 微摆动 sin 动画）/ mature（缩放 1.0 + aura 粒子 P0 已有）
-   - 阶段由 server 下发 `PlantGrowthStage { Seedling | Growing | Mature | Wilted }` 字段驱动
+   - 阶段由 server lifecycle 通过 `bong:botany_plant_stage__{plant_id}__{stage}` heartbeat 驱动，client `BotanyPlantStagePlayer` 写入 store 后由世界空间 billboard 渲染
    - Wilted 状态：quad tint 灰化（saturation ×0.3）+ 无 aura
 
-2. **灵田地块自定义外观**（`LingtianPlotRenderer.java`）
+2. **灵田地块自定义外观**（`LingtianPlotRunePlayer` / `LingtianSessionHud`）
    - 灵田已开垦地块：用 `BongGroundDecalParticle` 在 farmland 表面绘制发光灵纹（`rune_char` 贴图 tint 淡青 #44CCCC，lifetime 永驻直到地块状态变化）
    - 地块状态视觉：空置=无灵纹 / 已种植=淡青灵纹 / 成熟=亮绿灵纹 + 上方 aura / 枯竭=灰色灵纹 + 裂缝 decal
    - 灵田补灵时：地面灵纹亮度脉动 2s（alpha 0.3→0.8→0.3）
@@ -118,25 +118,28 @@
   - `38868d5c8` `botany-visual: 接通灵草与灵田音画事件`
   - `a89e1b3cd` `botany-visual: 增强植物阶段渲染与粒子资产`
   - `2ea9d957f` `botany-visual: 补齐灵材品质与灵田状态 HUD`
+  - `355e1f94b` `botany-visual: 修复灵草阶段与品质视效`
 - P0：
-  - server 在 `botany::lifecycle` 每 200 tick 为高灵气成熟植物 emit `bong:botany_aura`。
-  - server 在 `network::vfx_animation_trigger` 从 `HarvestTerminalEvent` emit `bong:botany_harvest`。
-  - 灵田完成事件接入 `till_soil` / `lingtian_plant_seed` / `harvest_pluck` / `plot_replenish` / `lingtian_drain`，并新增对应 recipe JSON。
-  - client `VfxBootstrap` 注册 `BotanyAuraPlayer`、`BotanyHarvestBurstPlayer`、`LingtianPlotRunePlayer`。
+  - server 在 `botany::lifecycle` 计算 plant age → `Seedling/Growing/Mature/Wilted`，仅对 mature 且 zone 灵气 ≥0.5 的植物每 200 tick emit `bong:botany_aura`。
+  - aura 与采收 burst 的颜色/强度统一走 `spirit_quality`：lifecycle 读取 item template + variant 修正，harvest terminal event 透出实际采收品质。
+  - server 在 `network::vfx_animation_trigger` 从 `HarvestTerminalEvent` emit `bong:botany_harvest`；`strength >= 0.9` 的稀有/高品质采收在 client 触发金色光柱。
+  - 灵田完成事件接入 `till_soil` / `lingtian_plant_seed` / `harvest_pluck` / `plot_replenish` / `lingtian_drain`，`lingtian_drain` recipe 带 `lingtian_drain_active` loop。
+  - client `VfxBootstrap` 注册 `BotanyAuraPlayer`、`BotanyHarvestBurstPlayer`、`BotanyPlantStagePlayer`、`LingtianPlotRunePlayer`。
 - P1：
-  - `BotanyPlantV2Entity` 下发/持久化 `GrowthStage`，`BotanyPlantEntityRenderer` 按 seedling/growing/mature/wilted 调整 scale、alpha、sway、tint 和 emissive overlay。
+  - server lifecycle 每 100 tick emit `bong:botany_plant_stage__{plant_id}__{stage}` heartbeat，client `BongVfxParticleBridge` 对该前缀路由到 `BotanyPlantStagePlayer`。
+  - `BotanyPlantStageWorldRenderer` 消费 `BotanyPlantStageVisualStore`，按 seedling/growing/mature/wilted 调整 scale、alpha、sway、tint；seedling/growing 直接使用生成的阶段 PNG。
   - `scripts/images/gen_plant_growth_stages.py` 基于 39 张植物图标生成 78 张 seedling/growing 阶段资产到 `client/src/main/resources/assets/bong-client/textures/gui/botany/stages/`。
   - 灵田动作地块灵纹通过 `BongGroundDecalParticle` 渲染，开垦/种植/补灵/收获/吸灵使用不同颜色与强度。
 - P2：
   - `GridSlotComponent` 为灵材按 `spirit_quality` 绘制 uncommon/rare/epic 边框光晕。
   - `ItemTooltipPanel` 为灵材追加品质百分比与品质条。
-  - `LingtianSessionHud` 在 active session 时于准星侧显示地块 mini panel，包含动作 icon、植物 id、进度与染污度；植物展示渲染复用 `BotanyPlantV2Entity` 的 quad/stage/aura 路径。
+  - `LingtianSessionHud` 在 active session 时于准星侧显示地块 mini panel，包含动作 icon、植物 id、进度与染污度；植物展示渲染复用 server-driven stage heartbeat + `BotanyPlantStageWorldRenderer` 的 quad/stage/aura 路径。
 - 验证：
   - `python3 scripts/images/gen_plant_growth_stages.py --check`
-  - `cd server && cargo test mature_plant_emits_aura_vfx_on_cadence`
-  - `cd server && cargo test lingtian_actions_emit_dedicated_recipes`
-  - `cd server && cargo test completed_botany_harvest_emits_leaf_burst_particle`
-  - `cd server && cargo test lingtian_completion_events_emit_plot_rune_particles`
+  - `cd server && cargo test botany`
+  - `cd server && cargo test audio`
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test --tests '*BotanyPlantVisualStateTest' --tests '*BotanySpiritQualityVisualsTest' --tests '*LingtianPlotVisualStateTest' --tests '*VfxRegistryTest'`
+  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test --tests '*BotanyPlantStagePlayerTest' --tests '*VfxRegistryTest' --tests '*BotanyPlantVisualStateTest'`
+  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test --tests '*SoundRecipePlayerTest' --tests '*LingtianPlotVisualStateTest' --tests '*BotanySpiritQualityVisualsTest'`
   - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build`
+  - `git diff --check`
