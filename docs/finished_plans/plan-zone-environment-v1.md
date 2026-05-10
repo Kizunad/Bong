@@ -275,28 +275,31 @@ public interface EmitterBehavior {
 ## Finish Evidence
 
 - 落地清单：
-  - P0：`server/src/world/environment.rs`（8 变体 `EnvironmentEffect`、`ZoneEnvironmentRegistry`、dirty generation、lifecycle event queue、`EnvironmentPhysicsHook` trait）+ `server/src/schema/zone_environment.rs` + `agent/packages/schema/src/zone-environment.ts` + sample 双端对拍。
-  - P0 出料：`server/src/network/zone_environment_bridge.rs` 把 dirty zone 组装为 `ZoneEnvironmentStateV1`，同时发 Redis `bong:zone_environment_update` 与 S2C `bong:zone_environment`；`agent/packages/tiandao/src/redis-ipc.ts` 已订阅该 cross-system channel。
-  - P1：`client/src/main/java/com/bong/client/environment/EnvironmentEffectRegistry.java`、`ActiveEmitter.java`、`EmitterBehavior.java`、`EnvironmentEffectParser.java`，实现 zone state update、80 格 culling、40 tick fade in/out。
-  - P1/P3 emitter：`client/src/main/java/com/bong/client/environment/emitter/` 下 8 个内置行为（Tornado / LightningPillar / AshFall / FogVeil / DustDevil / EmberDrift / HeatHaze / SnowDrift）接 `EnvironmentParticleHelper` 自演粒子。
-  - P2：`MixinFogPerZone` + `EnvironmentFogPlanner/Controller` 接 FogVeil fog tint；`MixinSkyPerZone` + `EnvironmentSkyController` 接 sky tint；`EnvironmentAudioController` 复用 `SoundRecipePlayer` loop flag。
+  - P0：`server/src/world/environment.rs`（8 变体 `EnvironmentEffect`、`ZoneEnvironmentRegistry`、dirty generation、dimension tracking、lifecycle event queue、`EnvironmentPhysicsHook` trait）+ `server/src/schema/zone_environment.rs` + `agent/packages/schema/src/zone-environment.ts` + sample 双端对拍。
+  - P0 出料：`server/src/network/zone_environment_bridge.rs` 把 dirty zone 组装为带 `dimension` 的 `ZoneEnvironmentStateV1`，同时发 Redis `bong:zone_environment_update` 与 S2C `bong:zone_environment`；新 client join 会触发当前 snapshot 重发，serialize 失败会重标 dirty 重试；`agent/packages/tiandao/src/redis-ipc.ts` 已订阅该 cross-system channel。
+  - P1：`client/src/main/java/com/bong/client/environment/EnvironmentEffectRegistry.java`、`ActiveEmitter.java`、`EmitterBehavior.java`、`EnvironmentEffectParser.java`，实现 zone state update、dimension 过滤、80 格 culling、40 tick fade in/out。
+  - P1/P3 emitter：`client/src/main/java/com/bong/client/environment/emitter/` 下 8 个内置行为（Tornado / LightningPillar / AshFall / FogVeil / DustDevil / EmberDrift / HeatHaze / SnowDrift）接 `EnvironmentParticleHelper` 按 client tick 自演粒子；`density` / `glow` / `distortion_strength` / `particle_density` 会影响 repeat budget，参数变化通过 refresh 更新，不重启 fade。
+  - P2：`MixinFogPerZone` + `EnvironmentFogPlanner/Controller` 接 FogVeil terrain fog tint（不覆盖 sky / thick fog）；`MixinSkyPerZone` + `EnvironmentSkyController` 接 sky tint 并恢复原 shader color；`EnvironmentAudioController` 复用 `SoundRecipePlayer` loop flag。
   - P3：`server/src/world/environment.rs` 提供 scorch / tribulation / tsy / ActiveWeather seed 示例；client `perfEightConcurrentEffectsInView` 锁 8 effect 同屏 registry/culling 预算。
 - 关键 commit：
   - `808844cae` 2026-05-10 — `plan-zone-environment-v1: 接入环境状态协议`
   - `265250435` 2026-05-10 — `plan-zone-environment-v1: 接入客户端环境自演`
   - `84e9a5527` 2026-05-10 — `plan-zone-environment-v1: 补环境回归测试`
+  - `74439b5b5` 2026-05-10 — `修复 zone environment review 反馈`
+  - `824cd1a48` 2026-05-10 — `清理 zone environment 维度化接口`
 - 测试结果：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3508 passed。
-  - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅ schema 349 passed，tiandao 320 passed。
-  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 972 tests。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3512 passed。
+  - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅ schema 351 passed，tiandao 320 passed。
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 978 tests。
   - `git diff --check` ✅ 无 whitespace 错误。
 - 跨仓库核验：
-  - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / `ZoneEnvironmentLifecycleEvent` / `zone_environment_broadcast_system` / `RedisOutbound::ZoneEnvironmentUpdate` / `EnvironmentPhysicsHook`。
-  - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1` / `CHANNELS.ZONE_ENVIRONMENT_UPDATE` / `SCHEMA_REGISTRY.zoneEnvironmentStateV1` / tiandao cross-system subscription。
-  - client：`EnvironmentEffectController` / `EnvironmentEffectRegistry` / `EmitterBehavior` / `EnvironmentAudioController` / 8 emitter / `MixinFogPerZone` / `MixinSkyPerZone`。
+  - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / `ZoneEnvironmentLifecycleEvent` / `mark_zone_environment_dirty_for_new_clients` / `zone_environment_broadcast_system` / `RedisOutbound::ZoneEnvironmentUpdate` / `EnvironmentPhysicsHook`。
+  - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1.dimension` / bounded `tint_rgb` channels / `CHANNELS.ZONE_ENVIRONMENT_UPDATE` / `SCHEMA_REGISTRY.zoneEnvironmentStateV1` / tiandao cross-system subscription。
+  - client：`EnvironmentEffectController` / `ZoneEnvironmentState.dimension` / `EnvironmentEffectRegistry` / `EmitterBehavior` / `EnvironmentAudioController` / 8 tick-based emitter / `MixinFogPerZone` / `MixinSkyPerZone`。
   - 守恒红旗：本 plan 实装代码不写 `cultivation.qi_current` / zone qi；`rg "DECAY|DRAIN|RHO|BETA|qi_current|spirit_qi" ...` 仅命中 server 测试 fixture 的 `spirit_qi: 0.3`。
 - 遗留 / 后续：
   - vanilla rain renderer 替换（§5 第 1 项，v2+）
   - Agent → server 注入 API（§5 第 5 项）
   - client-only ephemeral emitter（§5 第 6 项，归 plan-vfx 范围）
+  - HeatHaze v1 以 tick-based particle shimmer 表达 `distortion_strength`，真实屏幕后处理 / shader distortion 留给后续视觉调参 plan。
   - 真实 runClient FPS / 截图基线未纳入本 PR；当前以 deterministic registry budget + Java build 锁住首版性能入口，视觉调参与真实 weather/scorch 场景留给下游 `plan-zone-weather-v1` / scorch plan。
