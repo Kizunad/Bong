@@ -7,7 +7,8 @@ use crate::combat::events::{
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
-    ColorKind, CrackCause, Cultivation, MeridianCrack, MeridianId, MeridianSystem, Realm,
+    ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianId,
+    MeridianSystem, Realm,
 };
 use crate::cultivation::full_power_strike;
 use crate::cultivation::meridian::severed::{
@@ -434,6 +435,7 @@ pub fn cast_blood_burn(
         if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(caster) {
             lifecycle.enter_near_death(now_tick);
         }
+        apply_blood_burn_contamination(world, caster, now_tick);
     } else {
         world.entity_mut(caster).insert(BloodBurnActive {
             started_at_tick: now_tick,
@@ -490,16 +492,6 @@ pub fn cast_disperse(
     let mastery = mastery_level(world, caster, BaomaiSkillId::Disperse);
     let profile = disperse_profile(cultivation.realm, mastery);
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_DISPERSE_SKILL_ID) {
-        apply_qi_max_loss(world, caster, cultivation.qi_max, 0.05);
-        world.send_event(DispersedQiEvent {
-            caster,
-            tick: now_tick,
-            qi_max_before: cultivation.qi_max,
-            qi_max_after: cultivation.qi_max * 0.95,
-            flow_rate_multiplier: 1.0,
-            active_until_tick: None,
-            failed_reason: Some("meridian_severed".to_string()),
-        });
         return rejected(reason);
     }
     let outcome = match body_transcendence(
@@ -564,19 +556,40 @@ pub fn cast_disperse(
         failed_reason: (!profile.has_transcendence).then_some("凡躯不应".to_string()),
     });
     record_practice(world, caster, BaomaiSkillId::Disperse);
-    if let Some(position) = world.get::<Position>(caster).map(|p| p.get()) {
-        emit_particle(
-            world,
-            position,
-            "bong:body_transcendence_pillar",
-            "#F5D36A",
-            1.0,
-            32,
-        );
+    if profile.has_transcendence {
+        if let Some(position) = world.get::<Position>(caster).map(|p| p.get()) {
+            emit_particle(
+                world,
+                position,
+                "bong:body_transcendence_pillar",
+                "#F5D36A",
+                1.0,
+                32,
+            );
+        }
     }
     CastResult::Started {
         cooldown_ticks: profile.duration_ticks.max(20),
         anim_duration_ticks: profile.duration_ticks.min(u64::from(u32::MAX)) as u32,
+    }
+}
+
+fn apply_blood_burn_contamination(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    now_tick: u64,
+) {
+    let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
+        return;
+    };
+    if let Some(mut contamination) = world.get_mut::<Contamination>(caster) {
+        contamination.entries.push(ContamSource {
+            amount: cultivation.qi_max.max(0.0) * 0.05,
+            color: ColorKind::Violent,
+            meridian_id: None,
+            attacker_id: Some("baomai:blood_burn".to_string()),
+            introduced_at: now_tick,
+        });
     }
 }
 

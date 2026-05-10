@@ -106,12 +106,6 @@ pub fn disperse_profile(realm: Realm, skill_lv: u8) -> DisperseProfile {
             duration_ticks: cooldown_ticks_linear(5.0, 8.0, skill_lv),
             has_transcendence: true,
         },
-        Realm::Spirit => DisperseProfile {
-            qi_max_loss_ratio: 0.40,
-            flow_rate_multiplier: 6.0,
-            duration_ticks: 3 * TICKS_PER_SECOND,
-            has_transcendence: true,
-        },
         _ => DisperseProfile {
             qi_max_loss_ratio: 0.05,
             flow_rate_multiplier: 1.0,

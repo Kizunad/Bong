@@ -5,6 +5,7 @@ import com.bong.client.network.VfxEventPayload;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.Vec3d;
 
 public final class BaomaiV3VfxPlayer implements VfxPlayer {
     public static final Identifier GROUND_WAVE_DUST = new Identifier("bong", "ground_wave_dust");
@@ -27,15 +28,48 @@ public final class BaomaiV3VfxPlayer implements VfxPlayer {
         if (GROUND_WAVE_DUST.equals(id)) {
             playGroundWave(client, payload);
         } else if (BLOOD_BURN_CRIMSON.equals(id)) {
-            BaomaiV3HudStateStore.recordBloodBurn(payload.durationTicks().orElse(200));
+            if (shouldUpdateLocalHud(client, payload)) {
+                BaomaiV3HudStateStore.recordBloodBurn(payload.durationTicks().orElse(200));
+            }
             playBurst(client, payload, BLOOD_RGB, 0.35, 0.9);
         } else if (BODY_TRANSCENDENCE_PILLAR.equals(id)) {
-            BaomaiV3HudStateStore.recordBodyTranscendence(payload.durationTicks().orElse(100), 10.0);
+            if (shouldUpdateLocalHud(client, payload)) {
+                BaomaiV3HudStateStore.recordBodyTranscendence(
+                    payload.durationTicks().orElse(100),
+                    10.0
+                );
+            }
             playPillar(client, payload);
         } else if (MERIDIAN_RIPPLE_SCAR.equals(id)) {
-            BaomaiV3HudStateStore.recordMeridianRippleScar(payload.strength().orElse(0.45));
+            if (shouldUpdateLocalHud(client, payload)) {
+                BaomaiV3HudStateStore.recordMeridianRippleScar(payload.strength().orElse(0.45));
+            }
             playBurst(client, payload, SCAR_RGB, 0.12, 0.45);
         }
+    }
+
+    private static boolean shouldUpdateLocalHud(
+        MinecraftClient client,
+        VfxEventPayload.SpawnParticle payload
+    ) {
+        if (client.player == null) {
+            return false;
+        }
+        Vec3d playerPos = client.player.getPos();
+        return isLocalPlayerOrigin(
+            new double[] { playerPos.x, playerPos.y, playerPos.z },
+            payload.origin()
+        );
+    }
+
+    static boolean isLocalPlayerOrigin(double[] localPos, double[] origin) {
+        if (localPos == null || origin == null || localPos.length != 3 || origin.length != 3) {
+            return false;
+        }
+        double dx = localPos[0] - origin[0];
+        double dy = localPos[1] - origin[1];
+        double dz = localPos[2] - origin[2];
+        return dx * dx + dy * dy + dz * dz <= 2.25;
     }
 
     private static void playGroundWave(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
