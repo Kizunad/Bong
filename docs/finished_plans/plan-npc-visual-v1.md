@@ -136,10 +136,11 @@
 - `e471a09f7`（2026-05-10）`plan-npc-visual-v1：NPC 视觉分层与光环 VFX`
 - `7a7ba594f`（2026-05-10）`plan-npc-visual-v1：补齐高境界死亡真元爆散`
 - `c8219b6e0`（2026-05-10）`plan-npc-visual-v1：修复 review 发现的视觉边界`
+- `5404e6590`（2026-05-10）`plan-npc-visual-v1：规范化初始年龄比例`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test` → 3643 passed；`CARGO_PROFILE_TEST_DEBUG=0` 仅用于降低本机并发链接内存占用。
+- `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test` → 3644 passed；`CARGO_PROFILE_TEST_DEBUG=0` 仅用于降低本机并发链接内存占用。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test near_death_npc_termination_keeps_high_realm_qi_burst_profile -- --nocapture` → 1 passed。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test tribulation_ready_dormant_hydrates_without_player_distance_gate -- --nocapture` → 1 passed。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test default_priority_covers_all_known_events -- --nocapture` → 1 passed。
