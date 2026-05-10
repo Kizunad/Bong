@@ -479,19 +479,19 @@ PoisonOverdoseEvent severity → MICRO_TEAR 抽取经脉概率？
 - **落地清单**
   - server 底盘：`server/src/cultivation/poison_trait/{components,events,handlers,tick,attack_hook,recipes}.rs`，注册点 `server/src/cultivation/mod.rs`。
   - 毒丹/毒粉数据：5 个 alchemy recipe 位于 `server/assets/alchemy/recipes/poison_trait_*_v1.json`；5 丹 + 5 粉 item template 位于 `server/assets/items/pills.toml`；5 个研磨 recipe 由 `register_craft_recipes` 注入 `CraftCategory::PoisonPowder`。
-  - consume / cost 链路：`ConsumePoisonPillIntent` 从 `server/src/network/client_request_handler.rs` 发出；`consume_poison_pill_system` 写 `PoisonToxicity` / `DigestionLoad`；`apply_poison_overdose_costs` 扣寿元并 emit `MeridianCrackEvent` MICRO_TEAR。
+  - consume / cost 链路：`ConsumePoisonPillIntent` 从 `server/src/network/client_request_handler.rs` 发出；`consume_poison_pill_system` 写 `PoisonToxicity` / `DigestionLoad`；`apply_poison_overdose_costs` 扣寿元并 emit `MeridianCrackEvent` MICRO_TEAR，后续由经脉裂痕/永久断裂流水线评估是否派生 `MeridianSeveredEvent`。
   - Attack hook：`apply_poison_attack_modifier` 覆盖长期 `PoisonToxicity` 修饰 + 瞬时毒粉 debuff，毒蛊招式路径排除长期毒性修饰。
   - IPC / agent：Rust schema `server/src/schema/poison_trait.rs`；server-data emit `server/src/network/poison_trait_emit.rs`；Redis channels `bong:poison/dose` / `bong:poison/overdose`；TypeBox schema `agent/packages/schema/src/poison-trait.ts` + generated JSON；叙事 runtime `agent/packages/tiandao/src/poison-trait-runtime.ts`。
   - client：HUD planner/store `PoisonTraitHudPlanner` / `PoisonTraitHudStateStore`；server-data handler `PoisonTraitServerDataHandler` + router registration；HUD layer `POISON_TRAIT`；2 粒子、1 音效 recipe、10 个透明 item icon；通用 `bong:eat_food` PlayerAnimator JSON 与 `client/tools/gen_eat_food.py`。
 
 - **关键 commit**
-  - `db75bfa94` · 2026-05-11 · `plan-poison-trait-v1: 落地毒性真元服务端底盘`
-  - `e4b640461` · 2026-05-11 · `plan-poison-trait-v1: 接入 agent 毒性叙事契约`
-  - `be5110992` · 2026-05-11 · `plan-poison-trait-v1: 补齐客户端毒性反馈资产`
-  - `d9a8c9cb3` · 2026-05-11 · `plan-poison-trait-v1: 修复毒性服务端 review 阻断`
-  - `a562ee9be` · 2026-05-11 · `plan-poison-trait-v1: 接入毒性 agent 叙事通道`
-  - `b0f594436` · 2026-05-11 · `plan-poison-trait-v1: 接入客户端毒性 server-data`
-  - `42a8bb7b0` · 2026-05-11 · `plan-poison-trait-v1: 修复 review 反馈的毒丹效果路径`
+  - `db75bfa94` · 2026-05-11T03:55:08+12:00 · `plan-poison-trait-v1: 落地毒性真元服务端底盘`
+  - `e4b640461` · 2026-05-11T03:55:08+12:00 · `plan-poison-trait-v1: 接入 agent 毒性叙事契约`
+  - `be5110992` · 2026-05-11T03:57:25+12:00 · `plan-poison-trait-v1: 补齐客户端毒性反馈资产`
+  - `d9a8c9cb3` · 2026-05-11T03:58:33+12:00 · `plan-poison-trait-v1: 修复毒性服务端 review 阻断`
+  - `a562ee9be` · 2026-05-11T03:58:34+12:00 · `plan-poison-trait-v1: 接入毒性 agent 叙事通道`
+  - `b0f594436` · 2026-05-11T03:58:34+12:00 · `plan-poison-trait-v1: 接入客户端毒性 server-data`
+  - `42a8bb7b0` · 2026-05-11T04:43:57+12:00 · `plan-poison-trait-v1: 修复 review 反馈的毒丹效果路径`
 
 - **测试结果**
   - `cargo fmt --check`（server）→ passed。
