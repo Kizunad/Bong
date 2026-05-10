@@ -131,3 +131,80 @@
 | plan-player-animation-v1 | ✅ finished | GeckoLib + Fabric entity 注册参考（WhaleRenderer） |
 
 **全部依赖已 finished，无阻塞。**
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 灵龛 / 灵眼 / 裂缝传送门：
+  - `client/src/main/java/com/bong/client/entity/BongEntityRegistry.java`
+  - `client/src/main/java/com/bong/client/entity/BongEntityRenderBootstrap.java`
+  - `client/src/main/java/com/bong/client/entity/SpiritNicheRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/SpiritNicheRenderBootstrap.java`
+  - `client/src/main/java/com/bong/client/entity/SpiritEyeRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/RiftPortalRenderer.java`
+  - `local_models/SpiritNiche.bbmodel`
+  - `local_models/SpiritEye.bbmodel`
+  - `local_models/RiftPortal.bbmodel`
+  - `client/src/main/resources/assets/bong/geo/{spirit_niche,spirit_eye,rift_portal}.geo.json`
+  - `client/src/main/resources/assets/bong/animations/{spirit_niche,spirit_eye,rift_portal}.animation.json`
+  - `client/src/main/resources/assets/bong/textures/entity/{spirit_niche_*,spirit_eye_*,rift_portal_*}.png`
+- P1 炼器台 / 丹炉 / 阵法核心：
+  - `client/src/main/java/com/bong/client/entity/ForgeStationRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/AlchemyFurnaceRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/FormationCoreRenderer.java`
+  - `local_models/{ForgeStation,AlchemyFurnace,FormationCore}.bbmodel`
+  - `client/src/main/resources/assets/bong/geo/{forge_station,alchemy_furnace,formation_core}.geo.json`
+  - `client/src/main/resources/assets/bong/animations/{forge_station,alchemy_furnace,formation_core}.animation.json`
+  - `client/src/main/resources/assets/bong/textures/entity/{forge_station_*,alchemy_furnace_*,formation_core_*}.png`
+- P2 灵田地块 / TSY 容器：
+  - `client/src/main/java/com/bong/client/entity/LingtianPlotRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/LingtianPlotBlock.java`
+  - `client/src/main/java/com/bong/client/entity/LingtianPlotBlockEntity.java`
+  - `client/src/main/java/com/bong/client/entity/DryCorpseRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/BoneSkeletonRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/StoragePouchRenderer.java`
+  - `client/src/main/java/com/bong/client/entity/StoneCasketRenderer.java`
+  - `local_models/{LingtianPlot,DryCorpse,BoneSkeleton,StoragePouch,StoneCasket}.bbmodel`
+  - `client/src/main/resources/assets/bong/geo/{lingtian_plot,dry_corpse,bone_skeleton,storage_pouch,stone_casket}.geo.json`
+  - `client/src/main/resources/assets/bong/animations/{lingtian_plot,dry_corpse,bone_skeleton,storage_pouch,stone_casket}.animation.json`
+  - `client/src/main/resources/assets/bong/textures/entity/{lingtian_plot_*,dry_corpse_*,bone_skeleton_*,storage_pouch_*,stone_casket_*}.png`
+- 通用注册与契约：
+  - `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java`：统一维护 11 个实体的 `bong:*` id、raw id、尺寸、状态贴图、geo/animation 资源路径。
+  - `client/src/main/java/com/bong/client/BongClient.java`：在 `WhaleRenderBootstrap.register()` 之后注册新实体，避免破坏既有 `whale raw_id=125`。
+  - `client/src/test/java/com/bong/client/entity/BongEntityModelRegistryTest.java`
+  - `client/src/test/java/com/bong/client/entity/BongEntityModelAssetTest.java`
+
+### 关键 commit
+
+- `266029ed1`（2026-05-10）`feat(client): 接入游戏实体模型渲染注册`
+- `bbabeee8a`（2026-05-10）`feat(client): 补齐游戏实体模型资产`
+- `11bc6b7f9`（2026-05-10）`test(client): 锁定实体模型渲染资产`
+
+### 测试结果
+
+- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test`
+  - `BUILD SUCCESSFUL`
+  - `client/build/test-results/test`: `tests=997 failures=0 errors=0 skipped=0`
+  - 新增 `BongEntityModelRegistryTest`: `tests=9 failures=0 errors=0 skipped=0`
+  - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
+- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build`
+  - `BUILD SUCCESSFUL`
+
+### 跨仓库核验
+
+- server 已有对应运行时实体 / 组件锚点：
+  - `server/src/social/components.rs`：`SpiritNiche`
+  - `server/src/world/spirit_eye.rs`：`SpiritEye`
+  - `server/src/world/rift_portal.rs`：`RiftPortal`
+  - `server/src/forge/station.rs`：`WeaponForgeStation`
+  - `server/src/alchemy/furnace.rs`：`AlchemyFurnace`
+  - `server/src/zhenfa/mod.rs`：`ZhenfaAnchor`
+  - `server/src/lingtian/plot.rs`：`LingtianPlot`
+  - `server/src/world/tsy.rs` / `server/src/world/tsy_container.rs`：`LootContainer`
+- client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=126..136`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=125` 之后。
+- 未新增 server_data / Redis event；视觉状态走实体 metadata 的 `VisualState` tracker 映射到状态贴图。
+
+### 遗留 / 后续
+
+- CI 已覆盖 Fabric 注册表、GeckoLib 资源路径、BlockBench 源文件和状态贴图存在性；实际 WSLg `runClient` 视觉走查仍属于人工验收，不在本次云端自动测试内。
