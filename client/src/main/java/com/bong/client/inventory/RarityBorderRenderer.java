@@ -11,18 +11,11 @@ public final class RarityBorderRenderer {
     private RarityBorderRenderer() {}
 
     public static int colorRgb(String rarity) {
-        return switch (normalize(rarity)) {
-            case "uncommon" -> 0x22CC22;
-            case "rare" -> 0x2288FF;
-            case "epic" -> 0xAA44FF;
-            case "legendary" -> 0xFFAA00;
-            case "ancient" -> 0xFF4444;
-            default -> 0x808080;
-        };
+        return RarityVisuals.colorRgb(rarity);
     }
 
     public static int colorArgb(String rarity, float ageTicks) {
-        int alpha = "ancient".equals(normalize(rarity)) ? ancientPulseAlpha(ageTicks) : 0xCC;
+        int alpha = RarityVisuals.isAncient(rarity) ? ancientPulseAlpha(ageTicks) : 0xCC;
         return (alpha << 24) | colorRgb(rarity);
     }
 
@@ -48,10 +41,6 @@ public final class RarityBorderRenderer {
         context.fill(x, y + h - 1, x + w, y + h, color);
         context.fill(x, y + 1, x + 1, y + h - 1, color);
         context.fill(x + w - 1, y + 1, x + w, y + h - 1, color);
-    }
-
-    private static String normalize(String rarity) {
-        return rarity == null ? "common" : rarity.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private static float positiveModulo(float value, float divisor) {

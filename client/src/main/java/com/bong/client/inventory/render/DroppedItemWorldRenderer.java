@@ -22,9 +22,6 @@ import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * 地面 dropped loot 的世界空间 billboard 渲染。
  *
@@ -50,9 +47,6 @@ public final class DroppedItemWorldRenderer {
     private static final float BOB_AMPLITUDE = 0.06f;
     /** 上下浮动周期（tick，20 tick = 1 s）。2 秒一圈。 */
     private static final float BOB_PERIOD_TICKS = 40.0f;
-
-    /** itemId → texture Identifier 缓存，避免每帧 GC。 */
-    private static final Map<String, Identifier> TEXTURE_CACHE = new ConcurrentHashMap<>();
 
     private DroppedItemWorldRenderer() {}
 
@@ -130,8 +124,7 @@ public final class DroppedItemWorldRenderer {
     }
 
     private static Identifier textureFor(String itemId) {
-        return TEXTURE_CACHE.computeIfAbsent(itemId,
-            GridSlotComponent::textureIdForItemId);
+        return GridSlotComponent.textureIdForItemId(itemId);
     }
 
     private static void maybeSpawnRarityEffects(

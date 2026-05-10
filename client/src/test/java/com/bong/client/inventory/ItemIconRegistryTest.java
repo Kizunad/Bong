@@ -33,4 +33,12 @@ class ItemIconRegistryTest {
             ItemIconRegistry.fallbackTextureIdForItemId("blueprint_scroll_qing_feng")
         );
     }
+
+    @Test
+    void invalidTextureIdsFallBackWithoutThrowing() {
+        assertEquals(
+            new Identifier(ItemIconRegistry.FALLBACK_ITEM_PATH),
+            ItemIconRegistry.textureIdForItemId("Bad Item Id")
+        );
+    }
 }

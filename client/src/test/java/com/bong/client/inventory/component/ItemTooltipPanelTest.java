@@ -65,4 +65,33 @@ class ItemTooltipPanelTest {
         assertTrue(status.contains("⚡ ×3"));
         assertTrue(status.contains("上古遗物·一次性"));
     }
+
+    @Test
+    void rarityLabelsCoverAllSixTiers() {
+        assertRarityLabelAndColor("common", "普通", 0x808080);
+        assertRarityLabelAndColor("uncommon", "精良", 0x22CC22);
+        assertRarityLabelAndColor("rare", "稀有", 0x2288FF);
+        assertRarityLabelAndColor("epic", "史诗", 0xAA44FF);
+        assertRarityLabelAndColor("legendary", "传说", 0xFFAA00);
+        assertRarityLabelAndColor(" Ancient ", "上古", 0xFF4444);
+    }
+
+    private static void assertRarityLabelAndColor(String rarity, String label, int color) {
+        InventoryItem item = InventoryItem.createFull(
+            99L,
+            "fixture",
+            "fixture",
+            1,
+            1,
+            0.1,
+            rarity,
+            "",
+            1,
+            1.0,
+            1.0
+        );
+
+        assertEquals(label, ItemTooltipPanel.rarityLabel(rarity));
+        assertEquals(color, item.rarityColor());
+    }
 }

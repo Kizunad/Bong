@@ -366,6 +366,8 @@ public final class InventoryEventHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        JsonElement chargesElement = itemObject.get("charges");
+        boolean hasChargesField = chargesElement != null && !chargesElement.isJsonNull();
         Integer charges = readOptionalInt(itemObject, "charges");
 
         if (instanceId == null || itemId == null || displayName == null
@@ -375,6 +377,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
             || gridWidth < 1 || gridHeight < 1 || weight < 0.0 || stackCount < 1
             || spiritQuality < 0.0 || spiritQuality > 1.0
             || durability < 0.0 || durability > 1.0
+            || (hasChargesField && charges == null)
             || (charges != null && (charges < 0 || charges > 5))) {
             return null;
         }

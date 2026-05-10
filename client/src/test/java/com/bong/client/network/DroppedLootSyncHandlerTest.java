@@ -133,4 +133,42 @@ public class DroppedLootSyncHandlerTest {
         assertFalse(result.isHandled(), result.logMessage());
         assertTrue(DroppedItemStore.snapshot().isEmpty());
     }
+
+    @Test
+    void droppedLootSyncRejectsInvalidChargesField() {
+        String payload = """
+            {
+              "v": 1,
+              "type": "dropped_loot_sync",
+              "drops": [
+                {
+                  "instance_id": 9100,
+                  "source_container_id": "main_pack",
+                  "source_row": 0,
+                  "source_col": 0,
+                  "world_pos": [1.0, 64.0, 2.0],
+                  "item": {
+                    "instance_id": 9100,
+                    "item_id": "ancient_relic",
+                    "display_name": "上古遗物",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.5,
+                    "rarity": "ancient",
+                    "description": "",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0,
+                    "charges": "bad"
+                  }
+                }
+              ]
+            }
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
+
+        assertFalse(result.isHandled(), result.logMessage());
+        assertTrue(DroppedItemStore.snapshot().isEmpty());
+    }
 }

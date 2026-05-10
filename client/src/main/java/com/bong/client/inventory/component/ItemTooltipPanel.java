@@ -1,6 +1,7 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.botany.BotanySpiritQualityVisuals;
+import com.bong.client.inventory.RarityVisuals;
 import com.bong.client.inventory.model.InventoryItem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -224,13 +225,8 @@ public class ItemTooltipPanel extends BaseComponent {
         }
     }
 
-    private static String rarityLabel(String rarity) {
-        return switch (rarity) {
-            case "legendary" -> "传说";
-            case "rare" -> "稀有";
-            case "uncommon" -> "精良";
-            default -> "普通";
-        };
+    static String rarityLabel(String rarity) {
+        return RarityVisuals.label(rarity);
     }
 
     private static String forgeColorLabel(String color) {

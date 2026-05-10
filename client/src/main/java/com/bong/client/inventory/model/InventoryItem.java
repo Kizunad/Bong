@@ -1,5 +1,7 @@
 package com.bong.client.inventory.model;
 
+import com.bong.client.inventory.RarityVisuals;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -53,7 +55,7 @@ public final class InventoryItem {
         this.gridWidth = Math.max(1, Math.min(4, gridWidth));
         this.gridHeight = Math.max(1, Math.min(4, gridHeight));
         this.weight = Math.max(0.0, weight);
-        this.rarity = Objects.requireNonNull(rarity, "rarity");
+        this.rarity = RarityVisuals.normalize(Objects.requireNonNull(rarity, "rarity"));
         this.description = Objects.requireNonNull(description, "description");
         this.stackCount = Math.max(1, stackCount);
         this.spiritQuality = clamp01(spiritQuality);
@@ -433,7 +435,7 @@ public final class InventoryItem {
     }
 
     public boolean isAncientRelic() {
-        return "ancient".equals(rarity);
+        return RarityVisuals.isAncient(rarity);
     }
 
     public String inscriptionId() {
@@ -455,14 +457,7 @@ public final class InventoryItem {
     }
 
     public int rarityColor() {
-        return switch (rarity) {
-            case "ancient" -> 0xFF4444;
-            case "legendary" -> 0xFFAA00;
-            case "epic" -> 0xAA44FF;
-            case "rare" -> 0x2288FF;
-            case "uncommon" -> 0x22CC22;
-            default -> 0x808080;
-        };
+        return RarityVisuals.colorRgb(rarity);
     }
 
     @Override

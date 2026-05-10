@@ -104,7 +104,7 @@ def load_items(items_root: Path) -> dict[str, ItemSpec]:
 
 
 def prompt_for(item: ItemSpec) -> str:
-    return f"{item.name}，末法残土风格，暗色调水墨，透明背景，64×64 icon"
+    return f"{item.name}，末法残土风格，暗色调水墨，透明背景，128×128 icon"
 
 
 def parse_ids(values: list[str]) -> list[str]:

@@ -66,10 +66,13 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        JsonElement chargesElement = itemObject.get("charges");
+        boolean hasChargesField = chargesElement != null && !chargesElement.isJsonNull();
         Integer charges = readOptionalInt(itemObject, "charges");
         if (instanceId == null || itemId == null || displayName == null || gridWidth == null || gridHeight == null
             || weight == null || rarity == null || description == null || stackCount == null
             || spiritQuality == null || durability == null
+            || (hasChargesField && charges == null)
             || (charges != null && (charges < 0 || charges > 5))) {
             return null;
         }

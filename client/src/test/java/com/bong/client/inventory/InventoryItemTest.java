@@ -118,4 +118,34 @@ public class InventoryItemTest {
         assertEquals(5, item.charges());
         assertEquals(0xFF4444, item.rarityColor());
     }
+
+    @Test
+    void rarityMetadataIsNormalizedForVisualSemantics() {
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
+            46L,
+            "ancient_relic",
+            "上古遗物",
+            1,
+            1,
+            0.2,
+            " Ancient ",
+            "",
+            1,
+            1.0,
+            1.0,
+            1,
+            "",
+            "",
+            0,
+            null,
+            "",
+            java.util.List.of(),
+            null,
+            java.util.List.of()
+        );
+
+        assertEquals("ancient", item.rarity());
+        assertTrue(item.isAncientRelic());
+        assertEquals(0xFF4444, item.rarityColor());
+    }
 }

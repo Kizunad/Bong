@@ -31,7 +31,7 @@ rarity = "common"
         self.assertEqual("封灵骨币·五", item.name)
         self.assertEqual("bone_coin", item.category)
         self.assertIn("透明背景", batch.prompt_for(item))
-        self.assertIn("64×64 icon", batch.prompt_for(item))
+        self.assertIn("128×128 icon", batch.prompt_for(item))
 
     def test_selected_items_filters_existing_textures_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

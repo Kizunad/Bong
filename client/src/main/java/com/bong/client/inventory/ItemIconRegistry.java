@@ -2,6 +2,7 @@ package com.bong.client.inventory;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.InvalidIdentifierException;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -90,7 +91,12 @@ public final class ItemIconRegistry {
             return FALLBACK_ITEM_TEXTURE;
         }
 
-        Identifier candidate = id(itemTexturePath(itemId));
+        Identifier candidate;
+        try {
+            candidate = id(itemTexturePath(itemId));
+        } catch (InvalidIdentifierException exception) {
+            return fallbackTextureIdForItemId(itemId);
+        }
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getResourceManager().getResource(candidate).isPresent()) {
             return candidate;
