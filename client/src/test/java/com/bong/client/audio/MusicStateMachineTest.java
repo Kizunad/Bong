@@ -64,6 +64,11 @@ class MusicStateMachineTest {
     }
 
     @Test
+    void stateParserUsesLocaleIndependentUppercase() {
+        assertEquals(Optional.of(MusicStateMachine.State.COMBAT), MusicStateMachine.State.fromWire("combat"));
+    }
+
+    @Test
     void identicalUpdateDoesNotRestartLoop() {
         RecordingSink sink = new RecordingSink();
         SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
@@ -78,11 +83,38 @@ class MusicStateMachineTest {
         assertEquals(1, player.activeLoopCountForTests());
     }
 
+    @Test
+    void sameRecipeIdWithChangedRecipeRestartsLoop() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        MusicStateMachine machine = new MusicStateMachine(player);
+        MusicStateMachine.AmbientZoneUpdate first =
+            update("spawn", "ambient_spawn_plain", MusicStateMachine.State.AMBIENT, "ambient_flag");
+        MusicStateMachine.AmbientZoneUpdate changedRecipe =
+            update("spawn", "ambient_spawn_plain", MusicStateMachine.State.AMBIENT, "ambient_flag", 55);
+
+        assertTrue(machine.apply(first));
+        long firstInstance = machine.activeInstanceIdForTests();
+        assertTrue(machine.apply(changedRecipe));
+
+        assertEquals(firstInstance, sink.stoppedInstanceId);
+    }
+
     private static MusicStateMachine.AmbientZoneUpdate update(
         String zone,
         String recipeId,
         MusicStateMachine.State state,
         String flag
+    ) {
+        return update(zone, recipeId, state, flag, 50);
+    }
+
+    private static MusicStateMachine.AmbientZoneUpdate update(
+        String zone,
+        String recipeId,
+        MusicStateMachine.State state,
+        String flag,
+        int priority
     ) {
         return new MusicStateMachine.AmbientZoneUpdate(
             zone,
@@ -95,16 +127,16 @@ class MusicStateMachineTest {
             Optional.of(new AudioPosition(0, 64, 0)),
             1.0f,
             0.0f,
-            recipe(recipeId, flag)
+            recipe(recipeId, flag, priority)
         );
     }
 
-    private static AudioRecipe recipe(String id, String flag) {
+    private static AudioRecipe recipe(String id, String flag, int priority) {
         return new AudioRecipe(
             id,
             List.of(new AudioLayer(new Identifier("minecraft", "ambient.cave"), 0.2f, 1.0f, 0)),
             Optional.of(new AudioLoopConfig(80, flag)),
-            50,
+            priority,
             AudioAttenuation.PLAYER_LOCAL,
             AudioCategory.AMBIENT
         );

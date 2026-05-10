@@ -5,15 +5,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    ident, App, Client, DVec3, Entity, Position, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, ident, App, Client, DVec3, Entity, IntoSystemConfigs, Position, Query, Res, ResMut,
+    Resource, Update, With,
 };
 
 use crate::audio::SoundRecipeRegistry;
 use crate::combat::components::CombatState;
 use crate::combat::CombatClock;
+use crate::cultivation::tick::{CultivationClock, CultivationSessionPracticeAccumulator};
 use crate::cultivation::tribulation::TribulationState;
-use crate::fauna::rat_phase::MeditatingState;
 use crate::schema::audio::{
     validate_recipe_id, AmbientZoneS2c, LoopConfig, SoundLayer, SoundRecipe,
 };
@@ -32,8 +34,8 @@ const AUDIO_WORLD_LOOP_FLAG: &str = "audio_world";
 const AMBIENT_CROSSFADE_TICKS: u32 = 60;
 const NIGHT_START_TICK: u64 = 13_000;
 const NIGHT_END_TICK: u64 = 23_000;
-const PITCH_SHIFT_SUMMER: f32 = 0.1375;
-const PITCH_SHIFT_WINTER: f32 = -0.1520;
+const PITCH_SHIFT_SUMMER: f32 = 0.10;
+const PITCH_SHIFT_WINTER: f32 = -0.10;
 
 #[derive(Debug, Default)]
 pub struct AmbientAudioState {
@@ -171,39 +173,58 @@ type AmbientClientItem<'a> = (
     &'a Position,
     Option<&'a CurrentDimension>,
     Option<&'a CombatState>,
-    Option<&'a MeditatingState>,
     Option<&'a TsyPresence>,
     Option<&'a TribulationState>,
 );
 
+#[derive(SystemParam)]
+pub struct AmbientZoneChangeParams<'w> {
+    registry: Option<Res<'w, SoundRecipeRegistry>>,
+    zone_registry: Option<Res<'w, ZoneRegistry>>,
+    zone_recipes: Option<Res<'w, AmbientZoneRecipes>>,
+    clock: Option<Res<'w, CombatClock>>,
+    cultivation_clock: Option<Res<'w, CultivationClock>>,
+    practice_accumulator: Option<Res<'w, CultivationSessionPracticeAccumulator>>,
+    season_state: Option<Res<'w, WorldSeasonState>>,
+}
+
 pub fn register(app: &mut App) {
     app.init_resource::<AmbientAudioState>()
         .insert_resource(AmbientZoneRecipes::load_default())
-        .add_systems(Update, ambient_zone_change_system);
+        .add_systems(
+            Update,
+            ambient_zone_change_system
+                .after(crate::cultivation::tick::qi_regen_and_zone_drain_tick),
+        );
 }
 
 pub fn ambient_zone_change_system(
-    registry: Option<Res<SoundRecipeRegistry>>,
-    zone_registry: Option<Res<ZoneRegistry>>,
-    zone_recipes: Option<Res<AmbientZoneRecipes>>,
-    clock: Option<Res<CombatClock>>,
-    season_state: Option<Res<WorldSeasonState>>,
+    params: AmbientZoneChangeParams,
     mut state: ResMut<AmbientAudioState>,
     mut clients: Query<AmbientClientItem<'_>, With<Client>>,
 ) {
-    let Some(registry) = registry.as_deref() else {
+    let Some(registry) = params.registry.as_deref() else {
         return;
     };
-    let zone_registry = zone_registry.as_deref();
-    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
-    let season = season_state
+    let zone_registry = params.zone_registry.as_deref();
+    let tick = params
+        .clock
+        .as_deref()
+        .map(|clock| clock.tick)
+        .unwrap_or_default();
+    let cultivation_tick = params
+        .cultivation_clock
+        .as_deref()
+        .map(|clock| clock.tick)
+        .unwrap_or(tick);
+    let season = params
+        .season_state
         .as_deref()
         .map(|state| state.current.season)
         .unwrap_or_else(|| crate::world::season::query_season("", tick).season);
     let mut live_entities = std::collections::HashSet::new();
 
-    for (entity, mut client, position, dimension, combat, meditating, tsy_presence, tribulation) in
-        &mut clients
+    for (entity, mut client, position, dimension, combat, tsy_presence, tribulation) in &mut clients
     {
         live_entities.insert(entity);
         let dim = dimension
@@ -216,10 +237,16 @@ pub fn ambient_zone_change_system(
             .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
         let tsy_depth = zone.and_then(Zone::tsy_depth);
         let is_tsy = dim == DimensionKind::Tsy || tsy_presence.is_some() || tsy_depth.is_some();
-        let music_state = resolve_music_state(tick, combat, meditating, is_tsy, tribulation);
+        let is_cultivating = params
+            .practice_accumulator
+            .as_deref()
+            .is_some_and(|accumulator| {
+                accumulator.is_recently_practicing(entity, cultivation_tick)
+            });
+        let music_state = resolve_music_state(tick, combat, is_cultivating, is_tsy, tribulation);
         let recipe_id = recipe_for_state(
             music_state,
-            zone_recipes.as_deref(),
+            params.zone_recipes.as_deref(),
             zone.as_ref(),
             zone_name.as_str(),
         );
@@ -275,7 +302,7 @@ pub fn ambient_zone_change_system(
 fn resolve_music_state(
     tick: u64,
     combat: Option<&CombatState>,
-    meditating: Option<&MeditatingState>,
+    is_cultivating: bool,
     is_tsy: bool,
     tribulation: Option<&TribulationState>,
 ) -> AudioMusicState {
@@ -288,7 +315,7 @@ fn resolve_music_state(
     if is_tsy {
         return AudioMusicState::Tsy;
     }
-    if meditating.is_some() {
+    if is_cultivating {
         return AudioMusicState::Cultivation;
     }
     AudioMusicState::Ambient
@@ -438,6 +465,8 @@ mod tests {
         app.insert_resource(AmbientZoneRecipes::load_default());
         app.insert_resource(zones);
         app.insert_resource(CombatClock::default());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(CultivationSessionPracticeAccumulator::default());
         app.init_resource::<AmbientAudioState>();
         app.add_systems(Update, ambient_zone_change_system);
         app
@@ -567,9 +596,10 @@ mod tests {
     fn meditation_triggers_ambient() {
         let mut app = setup_app(ZoneRegistry::fallback());
         let (entity, mut helper) = spawn_client(&mut app, "cultivator", [8.0, 64.0, 8.0]);
+        app.world_mut().resource_mut::<CultivationClock>().tick = 20;
         app.world_mut()
-            .entity_mut(entity)
-            .insert(MeditatingState { since_tick: 1 });
+            .resource_mut::<CultivationSessionPracticeAccumulator>()
+            .note_practice_tick_for_tests(entity, 20);
 
         app.update();
         flush_packets(&mut app);

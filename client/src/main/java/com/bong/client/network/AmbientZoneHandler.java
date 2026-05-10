@@ -54,8 +54,20 @@ public final class AmbientZoneHandler {
         Float volumeMul = AudioEventEnvelope.readRequiredFloat(root, "volume_mul");
         Float pitchShift = AudioEventEnvelope.readRequiredFloat(root, "pitch_shift");
         AudioRecipe recipe = AudioEventEnvelope.parseRecipe(root.get("recipe"));
-        if (night == null || fadeTicks == null || pos == null || volumeMul == null || pitchShift == null || recipe == null) {
+        if (night == null || season == null || fadeTicks == null || pos == null || volumeMul == null || pitchShift == null || recipe == null) {
             return AmbientZoneParseResult.error("Invalid ambient_zone payload fields");
+        }
+        if (!isSeason(season)) {
+            return AmbientZoneParseResult.error("Invalid season");
+        }
+        if (fadeTicks < 0) {
+            return AmbientZoneParseResult.error("fade_ticks must be >= 0");
+        }
+        if (!Float.isFinite(volumeMul) || volumeMul < 0.0f || volumeMul > AudioEventEnvelope.AUDIO_VOLUME_MAX) {
+            return AmbientZoneParseResult.error("volume_mul out of range");
+        }
+        if (!Float.isFinite(pitchShift) || pitchShift < -1.0f || pitchShift > 1.0f) {
+            return AmbientZoneParseResult.error("pitch_shift out of range");
         }
         if (!recipeId.equals(recipe.id())) {
             return AmbientZoneParseResult.error("ambient_recipe_id must equal recipe.id");
@@ -65,7 +77,7 @@ public final class AmbientZoneHandler {
             recipeId,
             state.get(),
             night,
-            season == null ? "" : season,
+            season,
             readOptionalString(root, "tsy_depth"),
             fadeTicks,
             pos,
@@ -73,6 +85,13 @@ public final class AmbientZoneHandler {
             pitchShift,
             recipe
         ));
+    }
+
+    private static boolean isSeason(String season) {
+        return switch (season) {
+            case "summer", "summer_to_winter", "winter", "winter_to_summer" -> true;
+            default -> false;
+        };
     }
 
     private static Boolean readBoolean(JsonObject root, String fieldName) {

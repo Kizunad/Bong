@@ -3,6 +3,7 @@ package com.bong.client.audio;
 import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.network.AudioEventPayload;
 
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -88,7 +89,7 @@ public final class MusicStateMachine {
                 return Optional.empty();
             }
             try {
-                return Optional.of(State.valueOf(raw.trim().toUpperCase()));
+                return Optional.of(State.valueOf(raw.trim().toUpperCase(Locale.ROOT)));
             } catch (IllegalArgumentException ignored) {
                 return Optional.empty();
             }
@@ -132,7 +133,9 @@ public final class MusicStateMachine {
                 throw new IllegalArgumentException("ambientRecipeId must not be blank");
             }
             Objects.requireNonNull(state, "state");
-            season = season == null ? "" : season;
+            if (season == null || season.isBlank()) {
+                throw new IllegalArgumentException("season must not be blank");
+            }
             tsyDepth = tsyDepth == null ? Optional.empty() : tsyDepth;
             pos = pos == null ? Optional.empty() : pos;
             Objects.requireNonNull(recipe, "recipe");
@@ -150,7 +153,8 @@ public final class MusicStateMachine {
         String season,
         Optional<String> tsyDepth,
         float volumeMul,
-        float pitchShift
+        float pitchShift,
+        AudioRecipe recipe
     ) {
         static TransitionKey from(AmbientZoneUpdate update) {
             return new TransitionKey(
@@ -161,7 +165,8 @@ public final class MusicStateMachine {
                 update.season(),
                 update.tsyDepth(),
                 update.volumeMul(),
-                update.pitchShift()
+                update.pitchShift(),
+                update.recipe()
             );
         }
     }

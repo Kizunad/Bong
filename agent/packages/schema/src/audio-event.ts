@@ -10,6 +10,14 @@ export const AUDIO_PITCH_MIN = 0.1;
 export const AUDIO_PITCH_MAX = 2;
 export const AUDIO_PRIORITY_MAX = 100;
 
+export const AudioSeasonV1 = Type.Union([
+  Type.Literal("summer"),
+  Type.Literal("summer_to_winter"),
+  Type.Literal("winter"),
+  Type.Literal("winter_to_summer"),
+]);
+export type AudioSeasonV1 = Static<typeof AudioSeasonV1>;
+
 export const AudioAttenuationV1 = Type.Union([
   Type.Literal("player_local"),
   Type.Literal("world_3d"),
@@ -98,7 +106,7 @@ export const AmbientZoneEventV1 = Type.Object(
       Type.Literal("TRIBULATION"),
     ]),
     is_night: Type.Boolean(),
-    season: Type.String({ minLength: 1, maxLength: 32 }),
+    season: AudioSeasonV1,
     tsy_depth: Type.Optional(Type.Union([
       Type.Literal("shallow"),
       Type.Literal("mid"),
