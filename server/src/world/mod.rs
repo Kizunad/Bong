@@ -1,6 +1,7 @@
 pub mod block_break;
 pub mod dimension;
 pub mod dimension_transfer;
+pub mod entity_model;
 pub mod environment;
 pub mod events;
 pub mod extract_system;
@@ -111,6 +112,7 @@ pub fn register(app: &mut App) {
     weather_physics::register(app);
     season::register(app);
     spirit_eye::register(app);
+    entity_model::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());
     app.insert_resource(karma::QiDensityHeatmap::default());
     events::register(app);

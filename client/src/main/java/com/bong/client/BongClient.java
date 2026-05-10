@@ -12,6 +12,7 @@ import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongHudCommand;
 import com.bong.client.debug.BongSpawnParticleCommand;
 import com.bong.client.debug.BongVfxCommand;
+import com.bong.client.entity.BongEntityRenderBootstrap;
 import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.fauna.FaunaRenderBootstrap;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
@@ -89,6 +90,7 @@ public class BongClient implements ClientModInitializer {
         BotanyHudBootstrap.register();
         WhaleRenderBootstrap.register();
         FaunaRenderBootstrap.register();
+        BongEntityRenderBootstrap.register();
         WhaleDebugCommand.register();
         SpiritNicheRevealBootstrap.register();
         SparringInviteScreenBootstrap.register();

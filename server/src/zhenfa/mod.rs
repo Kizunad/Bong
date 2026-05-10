@@ -111,6 +111,10 @@ pub struct ZhenfaAnchor {
     pub id: u64,
 }
 
+pub const ZHENFA_VISUAL_STATE_INACTIVE: u8 = 0;
+pub const ZHENFA_VISUAL_STATE_ACTIVE: u8 = 1;
+pub const ZHENFA_VISUAL_STATE_EXHAUSTED: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZhenfaInstance {
     pub id: u64,
@@ -257,6 +261,20 @@ impl ZhenfaRegistry {
 
     pub fn find_at(&self, pos: [i32; 3]) -> Option<&ZhenfaInstance> {
         self.by_pos.get(&pos).and_then(|id| self.instances.get(id))
+    }
+
+    pub fn anchor_visual_state(&self, anchor: &ZhenfaAnchor) -> u8 {
+        if anchor.id == 0 {
+            return ZHENFA_VISUAL_STATE_INACTIVE;
+        }
+        let Some(instance) = self.instances.get(&anchor.id) else {
+            return ZHENFA_VISUAL_STATE_EXHAUSTED;
+        };
+        if instance.triggered_at.is_some() || self.pending_chain.iter().any(|p| p.id == anchor.id) {
+            ZHENFA_VISUAL_STATE_EXHAUSTED
+        } else {
+            ZHENFA_VISUAL_STATE_ACTIVE
+        }
     }
 
     #[allow(dead_code)]
@@ -1880,5 +1898,52 @@ mod tests {
         assert_eq!(instance.medium().carrier, CarrierGrade::SpiritWeapon);
         assert_eq!(instance.defense_color(), ColorKind::Solid);
         assert_eq!(instance.resistance(), 0.5);
+    }
+
+    #[test]
+    fn zhenfa_anchor_visual_state_reflects_registry_lifecycle() {
+        let mut registry = ZhenfaRegistry::default();
+        assert_eq!(
+            registry.anchor_visual_state(&ZhenfaAnchor { id: 0 }),
+            ZHENFA_VISUAL_STATE_INACTIVE
+        );
+
+        let id = registry
+            .insert(ZhenfaInstance {
+                id: 0,
+                kind: ZhenfaKind::Trap,
+                owner: Entity::from_raw(1),
+                owner_player_id: "offline:Azure".to_string(),
+                pos: [1, 64, 1],
+                carrier: ZhenfaCarrierKind::LingqiBlock,
+                qi_invest_ratio: 0.5,
+                qi_invest_amount: 25.0,
+                effect_radius: 2,
+                ward_radius: 8,
+                placed_at_tick: 1,
+                expires_at_tick: 100,
+                triggered_at: None,
+                trigger: None,
+                color_main: ColorKind::Intricate,
+                color_secondary: Some(ColorKind::Solid),
+                anchor_entity: Entity::from_raw(2),
+            })
+            .unwrap();
+        assert_eq!(
+            registry.anchor_visual_state(&ZhenfaAnchor { id }),
+            ZHENFA_VISUAL_STATE_ACTIVE
+        );
+
+        registry
+            .pending_chain
+            .push_back(PendingChainTrigger { id, due_tick: 8 });
+        assert_eq!(
+            registry.anchor_visual_state(&ZhenfaAnchor { id }),
+            ZHENFA_VISUAL_STATE_EXHAUSTED
+        );
+        assert_eq!(
+            registry.anchor_visual_state(&ZhenfaAnchor { id: 999 }),
+            ZHENFA_VISUAL_STATE_EXHAUSTED
+        );
     }
 }
