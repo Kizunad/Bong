@@ -15,8 +15,8 @@
     "tolerance": { "temp_band": 0.10, "duration_band": 25 }
   },
   "outcomes": {
-    "perfect": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 1.0, "toxin_amount": 0.24, "toxin_color": "Insidious" },
-    "good": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 0.7, "toxin_amount": 0.35, "toxin_color": "Insidious" },
+    "perfect": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 1.0, "toxin_amount": 0.24, "toxin_color": "Turbid" },
+    "good": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 0.7, "toxin_amount": 0.35, "toxin_color": "Turbid" },
     "flawed": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 0.4, "toxin_amount": 0.55, "toxin_color": "Sharp" },
     "waste": null,
     "explode": { "damage": 8.0, "meridian_crack": 0.03 }

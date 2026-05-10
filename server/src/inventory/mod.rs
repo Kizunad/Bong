@@ -3599,6 +3599,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parse_item_effect_accepts_poison_pill_target() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "poison_pill".to_string(),
+                magnitude: 0.0,
+                target: Some("poison_pill_qing_lin_man_tuo".to_string()),
+            },
+            Path::new("<inline-items.toml>"),
+            "poison_pill_qing_lin_man_tuo",
+        )
+        .expect("poison_pill effect should parse");
+
+        assert_eq!(
+            effect,
+            ItemEffect::PoisonPill {
+                pill_item_id: "poison_pill_qing_lin_man_tuo".to_string()
+            }
+        );
+    }
+
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(0),

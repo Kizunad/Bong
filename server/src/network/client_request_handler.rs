@@ -7588,6 +7588,41 @@ fn handle_alchemy_take_pill(
         return;
     }
 
+    let poison_pill_kind = match &effect {
+        ItemEffect::PoisonPill { pill_item_id } => {
+            let Some(kind) = PoisonPillKind::from_item_id(pill_item_id.as_str()) else {
+                tracing::warn!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} unknown poison pill id `{pill_item_id}`"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "take_pill_poison_invalid",
+                );
+                return;
+            };
+            if combat_params.poison_pill_tx.is_none() {
+                tracing::warn!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} poison intent resource missing"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "take_pill_poison_unavailable",
+                );
+                return;
+            }
+            Some(kind)
+        }
+        _ => None,
+    };
+
     let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);
     if let Err(error) = consume_result {
         tracing::warn!(
@@ -7675,7 +7710,7 @@ fn handle_alchemy_take_pill(
         }
         ItemEffect::PoisonPill { pill_item_id } => {
             match (
-                PoisonPillKind::from_item_id(pill_item_id.as_str()),
+                poison_pill_kind,
                 combat_params.poison_pill_tx.as_deref_mut(),
             ) {
                 (Some(pill), Some(poison_pill_tx)) => {
@@ -7689,9 +7724,7 @@ fn handle_alchemy_take_pill(
                     );
                 }
                 (None, _) => {
-                    tracing::warn!(
-                        "[bong][network][alchemy] take_pill entity={entity:?} unknown poison pill id `{pill_item_id}`"
-                    );
+                    tracing::warn!("[bong][network][alchemy] take_pill entity={entity:?} poisoned pill prevalidation disappeared for `{pill_item_id}`");
                 }
                 (_, None) => {
                     tracing::warn!(

@@ -15,8 +15,8 @@
     "tolerance": { "temp_band": 0.07, "duration_band": 20 }
   },
   "outcomes": {
-    "perfect": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 1.0, "toxin_amount": 0.52, "toxin_color": "Insidious" },
-    "good": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 0.7, "toxin_amount": 0.72, "toxin_color": "Insidious" },
+    "perfect": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 1.0, "toxin_amount": 0.52, "toxin_color": "Turbid" },
+    "good": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 0.7, "toxin_amount": 0.72, "toxin_color": "Turbid" },
     "flawed": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 0.4, "toxin_amount": 1.00, "toxin_color": "Turbid" },
     "waste": null,
     "explode": { "damage": 20.0, "meridian_crack": 0.08 }

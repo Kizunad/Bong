@@ -97,6 +97,8 @@ pub const CH_WOLIU_V2_TURBULENCE: &str = "bong:woliu_v2/turbulence";
 pub const CH_ZHENMAI_SKILL_EVENT: &str = "bong:zhenmai/skill_event";
 pub const CH_ZHENFA_V2_EVENT: &str = "bong:zhenfa/v2_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
+pub const CH_POISON_DOSE_EVENT: &str = "bong:poison/dose";
+pub const CH_POISON_OVERDOSE_EVENT: &str = "bong:poison/overdose";
 pub const CH_DUGU_V2_CAST: &str = "bong:dugu_v2/cast";
 pub const CH_DUGU_V2_SELF_CURE: &str = "bong:dugu_v2/self_cure";
 pub const CH_DUGU_V2_REVERSE: &str = "bong:dugu_v2/reverse";
@@ -229,6 +231,8 @@ mod tests {
         assert_eq!(CH_ZHENMAI_SKILL_EVENT, "bong:zhenmai/skill_event");
         assert_eq!(CH_ZHENFA_V2_EVENT, "bong:zhenfa/v2_event");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
+        assert_eq!(CH_POISON_DOSE_EVENT, "bong:poison/dose");
+        assert_eq!(CH_POISON_OVERDOSE_EVENT, "bong:poison/overdose");
         assert_eq!(CH_DUGU_V2_CAST, "bong:dugu_v2/cast");
         assert_eq!(CH_DUGU_V2_SELF_CURE, "bong:dugu_v2/self_cure");
         assert_eq!(CH_DUGU_V2_REVERSE, "bong:dugu_v2/reverse");

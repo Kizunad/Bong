@@ -412,6 +412,12 @@ fn overdose_none_when_under_capacity() {
         .is_none());
 }
 #[test]
+fn consume_chi_tuo_reports_base_lifespan_cost_without_overdose() {
+    let outcome = consume_once(PoisonPillKind::ChiTuoZhiSui, 0.0);
+    assert_eq!(outcome.base_lifespan_cost_years, 1.0);
+    assert!(outcome.overdose_event.is_none());
+}
+#[test]
 fn overdose_mild_when_small_overflow() {
     assert_eq!(
         calculate_overdose_severity(10.0, 100.0),
@@ -751,6 +757,26 @@ fn side_effect_fu_duration_is_permanent_marker() {
 #[test]
 fn recipe_ids_have_five_entries() {
     assert_eq!(poison_alchemy_recipe_ids().len(), 5);
+}
+#[test]
+fn poison_trait_recipes_do_not_use_dugu_insidious_color() {
+    let recipes = [
+        include_str!("../../../assets/alchemy/recipes/poison_trait_chi_tuo_zhi_sui_v1.json"),
+        include_str!("../../../assets/alchemy/recipes/poison_trait_fu_xin_xuan_gui_v1.json"),
+        include_str!("../../../assets/alchemy/recipes/poison_trait_qing_lin_man_tuo_v1.json"),
+        include_str!("../../../assets/alchemy/recipes/poison_trait_tie_fu_she_dan_v1.json"),
+        include_str!("../../../assets/alchemy/recipes/poison_trait_wu_sui_san_xin_v1.json"),
+    ];
+    for recipe in recipes {
+        assert!(
+            !recipe.contains("\"toxin_color\": \"Insidious\""),
+            "毒性真元毒丹不得使用毒蛊专属 Insidious 染色"
+        );
+        assert!(
+            recipe.contains("\"toxin_color\": \"Turbid\""),
+            "毒性真元毒丹 perfect/good 档应使用可洗 Turbid 染色"
+        );
+    }
 }
 #[test]
 fn craft_recipe_wu_outputs_three_powders() {

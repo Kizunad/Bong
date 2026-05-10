@@ -10,6 +10,7 @@ use valence::prelude::Entity;
 pub struct PoisonConsumeOutcome {
     pub dose_event: PoisonDoseEvent,
     pub overdose_event: Option<PoisonOverdoseEvent>,
+    pub base_lifespan_cost_years: f32,
 }
 
 pub fn consume_poison_pill_now(
@@ -58,7 +59,7 @@ pub fn consume_poison_pill_now(
                 player,
                 severity,
                 overflow,
-                lifespan_penalty_years: severity.lifespan_penalty_years() + spec.lifespan_years,
+                lifespan_penalty_years: severity.lifespan_penalty_years(),
                 micro_tear_probability: severity
                     .micro_tear_probability()
                     .max(spec.micro_tear_probability),
@@ -69,6 +70,7 @@ pub fn consume_poison_pill_now(
     PoisonConsumeOutcome {
         dose_event,
         overdose_event,
+        base_lifespan_cost_years: spec.lifespan_years,
     }
 }
 

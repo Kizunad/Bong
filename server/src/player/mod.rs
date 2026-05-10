@@ -15,6 +15,7 @@ use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
+use crate::cultivation::poison_trait::{DigestionLoad, PoisonToxicity};
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::persistence::persist_player_cultivation_bundle;
 use crate::persistence::PersistenceSettings;
@@ -74,6 +75,8 @@ type CultivationBundleQueryItem<'a> = (
     &'a InsightModifiers,
     Option<&'a TutorialState>,
     Option<&'a MeridianSeveredPermanent>,
+    Option<&'a PoisonToxicity>,
+    Option<&'a DigestionLoad>,
 );
 
 pub fn register(app: &mut App) {
@@ -287,6 +290,8 @@ pub(crate) fn despawn_disconnected_clients(
         &InsightModifiers,
         Option<&TutorialState>,
         Option<&MeridianSeveredPermanent>,
+        Option<&PoisonToxicity>,
+        Option<&DigestionLoad>,
     )>,
 ) {
     for entity in disconnected_clients.read() {
@@ -317,6 +322,8 @@ pub(crate) fn despawn_disconnected_clients(
                 insight_modifiers,
                 tutorial_state,
                 severed,
+                poison_toxicity,
+                digestion_load,
             )) = cultivation_bundle.get(entity)
             {
                 let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
@@ -335,6 +342,8 @@ pub(crate) fn despawn_disconnected_clients(
                     insight_modifiers,
                     tutorial_state,
                     &severed_owned,
+                    poison_toxicity,
+                    digestion_load,
                 ) {
                     tracing::warn!(
                         "[bong][player] failed to persist cultivation bundle for disconnected client `{}`: {error}",
@@ -406,6 +415,8 @@ fn flush_connected_players_on_shutdown(
         &InsightModifiers,
         Option<&TutorialState>,
         Option<&MeridianSeveredPermanent>,
+        Option<&PoisonToxicity>,
+        Option<&DigestionLoad>,
     )>,
 ) {
     if app_exit.read().next().is_none() {
@@ -440,6 +451,8 @@ fn flush_connected_players_on_shutdown(
             insight_modifiers,
             tutorial_state,
             severed,
+            poison_toxicity,
+            digestion_load,
         )) = cultivation_bundle.get(entity)
         {
             let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
@@ -458,6 +471,8 @@ fn flush_connected_players_on_shutdown(
                 insight_modifiers,
                 tutorial_state,
                 &severed_owned,
+                poison_toxicity,
+                digestion_load,
             ) {
                 tracing::warn!(
                     "[bong][player] failed to persist cultivation bundle during shutdown flush for `{}`: {error}",
@@ -576,6 +591,8 @@ fn autosave_player_cultivation_bundles(
         insight_modifiers,
         tutorial_state,
         severed,
+        poison_toxicity,
+        digestion_load,
     ) in &players
     {
         let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
@@ -594,6 +611,8 @@ fn autosave_player_cultivation_bundles(
             insight_modifiers,
             tutorial_state,
             &severed_owned,
+            poison_toxicity,
+            digestion_load,
         ) {
             Ok(()) => saved_count += 1,
             Err(error) => tracing::warn!(

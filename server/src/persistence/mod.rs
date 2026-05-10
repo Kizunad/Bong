@@ -3875,6 +3875,8 @@ pub fn persist_player_cultivation_bundle(
     insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
     tutorial_state: Option<&crate::world::spawn_tutorial::TutorialState>,
     meridian_severed: &crate::cultivation::meridian::severed::MeridianSeveredPermanent,
+    poison_toxicity: Option<&crate::cultivation::poison_trait::PoisonToxicity>,
+    digestion_load: Option<&crate::cultivation::poison_trait::DigestionLoad>,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let bundle = serde_json::json!({
@@ -3891,6 +3893,8 @@ pub fn persist_player_cultivation_bundle(
         "insight_modifiers": insight_modifiers,
         "tutorial_state": tutorial_state,
         "meridian_severed": meridian_severed,
+        "poison_toxicity": poison_toxicity,
+        "digestion_load": digestion_load,
     });
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

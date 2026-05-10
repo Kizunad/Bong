@@ -646,7 +646,31 @@ fn attach_cultivation_to_joined_clients(
             }
         }
 
-        let digestion_load = DigestionLoad::for_realm(cultivation.realm);
+        let mut poison_toxicity = PoisonToxicity::default();
+        let mut digestion_load = DigestionLoad::for_realm(cultivation.realm);
+        if let Some(persisted_bundle) = persisted_bundle.as_ref() {
+            if let Some(value) = persisted_bundle.get("poison_toxicity") {
+                match serde_json::from_value::<PoisonToxicity>(value.clone()) {
+                    Ok(decoded) => poison_toxicity = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "poison_toxicity", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("digestion_load") {
+                match serde_json::from_value::<DigestionLoad>(value.clone()) {
+                    Ok(decoded) => {
+                        digestion_load = decoded;
+                        digestion_load.capacity = digestion_load
+                            .capacity
+                            .max(DigestionLoad::for_realm(cultivation.realm).capacity);
+                    }
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "digestion_load", error)
+                    }
+                }
+            }
+        }
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
@@ -664,7 +688,7 @@ fn attach_cultivation_to_joined_clients(
             DuguPractice::default(),
             severed_permanent,
         ));
-        entity_commands.insert((PoisonToxicity::default(), digestion_load));
+        entity_commands.insert((poison_toxicity, digestion_load));
         if restored_lifespan.is_none() {
             entity_commands.insert(default_lifespan);
         }

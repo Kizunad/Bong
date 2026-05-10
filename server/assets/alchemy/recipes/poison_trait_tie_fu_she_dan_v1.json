@@ -15,8 +15,8 @@
     "tolerance": { "temp_band": 0.08, "duration_band": 25 }
   },
   "outcomes": {
-    "perfect": { "pill": "poison_pill_tie_fu_she_dan", "quality": 1.0, "toxin_amount": 0.40, "toxin_color": "Insidious" },
-    "good": { "pill": "poison_pill_tie_fu_she_dan", "quality": 0.7, "toxin_amount": 0.58, "toxin_color": "Insidious" },
+    "perfect": { "pill": "poison_pill_tie_fu_she_dan", "quality": 1.0, "toxin_amount": 0.40, "toxin_color": "Turbid" },
+    "good": { "pill": "poison_pill_tie_fu_she_dan", "quality": 0.7, "toxin_amount": 0.58, "toxin_color": "Turbid" },
     "flawed": { "pill": "poison_pill_tie_fu_she_dan", "quality": 0.4, "toxin_amount": 0.82, "toxin_color": "Sharp" },
     "waste": null,
     "explode": { "damage": 14.0, "meridian_crack": 0.05 }

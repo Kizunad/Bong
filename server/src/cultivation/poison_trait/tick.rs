@@ -16,6 +16,14 @@ use crate::cultivation::tick::CultivationClock;
 pub const TICKS_PER_HOUR: u64 = 60 * 60 * 20;
 pub const HEAVY_TOXICITY_THRESHOLD: f32 = 70.0;
 
+type PoisonPillConsumerQueryItem<'a> = (
+    Entity,
+    &'a mut PoisonToxicity,
+    &'a mut DigestionLoad,
+    Option<&'a Cultivation>,
+    Option<&'a mut LifespanComponent>,
+);
+
 pub fn decay_poison_toxicity(toxicity: &mut PoisonToxicity, elapsed_ticks: u64) -> f32 {
     if elapsed_ticks == 0 || toxicity.level <= 0.0 {
         return 0.0;
@@ -66,15 +74,10 @@ pub fn consume_poison_pill_system(
     mut dose_events: EventWriter<PoisonDoseEvent>,
     mut overdose_events: EventWriter<PoisonOverdoseEvent>,
     mut digestion_events: EventWriter<DigestionOverloadEvent>,
-    mut players: Query<(
-        Entity,
-        &mut PoisonToxicity,
-        &mut DigestionLoad,
-        Option<&Cultivation>,
-    )>,
+    mut players: Query<PoisonPillConsumerQueryItem<'_>>,
 ) {
     for intent in intents.read() {
-        let Ok((_entity, mut toxicity, mut digestion, cultivation)) =
+        let Ok((_entity, mut toxicity, mut digestion, cultivation, lifespan)) =
             players.get_mut(intent.entity)
         else {
             tracing::warn!(
@@ -93,6 +96,11 @@ pub fn consume_poison_pill_system(
             &mut digestion,
             at_tick,
         );
+        if outcome.base_lifespan_cost_years > 0.0 {
+            if let Some(mut lifespan) = lifespan {
+                add_lifespan_years_lived(&mut lifespan, outcome.base_lifespan_cost_years);
+            }
+        }
         if let Some(overdose) = outcome.overdose_event {
             digestion_events.send(DigestionOverloadEvent {
                 player: overdose.player,
@@ -127,6 +135,11 @@ pub fn digestion_load_decay_tick(
     for mut digestion in players.iter_mut() {
         let elapsed = now.saturating_sub(digestion.last_decay_tick);
         if digestion.decay_rate <= 0.0 {
+            tracing::warn!(
+                "[bong][poison_trait] invalid digestion.decay_rate={} reset to {}",
+                digestion.decay_rate,
+                DIGESTION_DECAY_PER_HOUR
+            );
             digestion.decay_rate = DIGESTION_DECAY_PER_HOUR;
         }
         decay_digestion_load(&mut digestion, now, elapsed);
@@ -141,8 +154,7 @@ pub fn apply_poison_overdose_costs(
 ) {
     for event in overdose_events.read() {
         if let Ok(mut lifespan) = lifespans.get_mut(event.player) {
-            lifespan.years_lived =
-                (lifespan.years_lived + f64::from(event.lifespan_penalty_years)).max(0.0);
+            add_lifespan_years_lived(&mut lifespan, event.lifespan_penalty_years);
         }
         if poison_micro_tear_roll(event.player, event.at_tick) < event.micro_tear_probability {
             crack_events.send(MeridianCrackEvent {
@@ -153,6 +165,14 @@ pub fn apply_poison_overdose_costs(
             });
         }
     }
+}
+
+fn add_lifespan_years_lived(lifespan: &mut LifespanComponent, years: f32) {
+    if years <= 0.0 || !years.is_finite() {
+        return;
+    }
+    lifespan.years_lived =
+        (lifespan.years_lived + f64::from(years)).clamp(0.0, lifespan.cap_by_realm as f64);
 }
 
 pub fn poison_micro_tear_roll(entity: Entity, tick: u64) -> f32 {

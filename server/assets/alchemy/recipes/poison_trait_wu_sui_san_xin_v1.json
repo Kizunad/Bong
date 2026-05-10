@@ -15,8 +15,8 @@
     "tolerance": { "temp_band": 0.12, "duration_band": 30 }
   },
   "outcomes": {
-    "perfect": { "pill": "poison_pill_wu_sui_san_xin", "quality": 1.0, "toxin_amount": 0.15, "toxin_color": "Insidious" },
-    "good": { "pill": "poison_pill_wu_sui_san_xin", "quality": 0.7, "toxin_amount": 0.25, "toxin_color": "Insidious" },
+    "perfect": { "pill": "poison_pill_wu_sui_san_xin", "quality": 1.0, "toxin_amount": 0.15, "toxin_color": "Turbid" },
+    "good": { "pill": "poison_pill_wu_sui_san_xin", "quality": 0.7, "toxin_amount": 0.25, "toxin_color": "Turbid" },
     "flawed": { "pill": "poison_pill_wu_sui_san_xin", "quality": 0.4, "toxin_amount": 0.40, "toxin_color": "Turbid" },
     "waste": null,
     "explode": { "damage": 6.0, "meridian_crack": 0.02 }
