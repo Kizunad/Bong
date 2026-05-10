@@ -32,6 +32,8 @@ public class ItemTooltipPanel extends BaseComponent {
     private static final int PADDING_BOTTOM = 4;
     private static final int DESC_LINE_STEP = 1;
     private static final int BLOCK_LINE_STEP = 2;
+    private static final int QUALITY_BAR_HEIGHT = 3;
+    private static final int QUALITY_TRACK_COLOR = 0x66000000;
 
     private InventoryItem hoveredItem;
     private int currentHeight = DEFAULT_HEIGHT;
@@ -58,7 +60,7 @@ public class ItemTooltipPanel extends BaseComponent {
         int lineBlock = textRenderer.fontHeight + BLOCK_LINE_STEP;
 
         // 顶部固定：padding + name + meta +（可选）status
-        int needed = PADDING_TOP + lineBlock + lineBlock;
+        int needed = PADDING_TOP + lineBlock + lineBlock + lineBlock + QUALITY_BAR_HEIGHT + 2;
         if (!formatStatusLine(item).isEmpty()) {
             needed += lineBlock;
         }
@@ -136,6 +138,11 @@ public class ItemTooltipPanel extends BaseComponent {
         }
         context.drawTextWithShadow(textRenderer, Text.literal(meta), cx, cy, 0xFF888888);
         cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+
+        context.drawTextWithShadow(textRenderer, Text.literal(spiritQualityLabel(hoveredItem)), cx, cy, qualityBarColor(hoveredItem.spiritQuality()));
+        cy += textRenderer.fontHeight + 1;
+        drawSpiritQualityBar(context, x + ICON_MARGIN, cy, PANEL_WIDTH - ICON_MARGIN * 2, hoveredItem.spiritQuality());
+        cy += QUALITY_BAR_HEIGHT + BLOCK_LINE_STEP;
 
         // 真元 / 耐久 —— 仅当 < 1.0 时显示，避免新玩家信息过载。
         String status = formatStatusLine(hoveredItem);
@@ -254,7 +261,38 @@ public class ItemTooltipPanel extends BaseComponent {
             if (status.length() > 0) status.append("  ");
             status.append(String.format(Locale.ROOT, "耐久 %.0f%%", item.durability() * 100));
         }
+        if (item.isAncientRelic() && item.charges() != null) {
+            if (status.length() > 0) status.append("  ");
+            status.append("⚡ ×").append(item.charges()).append(" 上古遗物·一次性");
+        }
         return status.toString();
+    }
+
+    public static String spiritQualityLabel(InventoryItem item) {
+        if (item == null || item.isEmpty()) return "灵质 0%";
+        return String.format(Locale.ROOT, "灵质 %.0f%%", item.spiritQuality() * 100);
+    }
+
+    public static int qualityBarFillWidth(int totalWidth, double spiritQuality) {
+        int safeWidth = Math.max(0, totalWidth);
+        double clamped = Math.max(0.0, Math.min(1.0, spiritQuality));
+        return (int) Math.round(safeWidth * clamped);
+    }
+
+    public static int qualityBarColor(double spiritQuality) {
+        double clamped = Math.max(0.0, Math.min(1.0, spiritQuality));
+        if (clamped < 0.5) {
+            return lerpRgb(0x888888, 0x22CC22, clamped / 0.5);
+        }
+        return lerpRgb(0x22CC22, 0xFFAA00, (clamped - 0.5) / 0.5);
+    }
+
+    private static void drawSpiritQualityBar(OwoUIDrawContext context, int left, int top, int width, double spiritQuality) {
+        context.fill(left, top, left + width, top + QUALITY_BAR_HEIGHT, QUALITY_TRACK_COLOR);
+        int fillWidth = qualityBarFillWidth(width, spiritQuality);
+        if (fillWidth > 0) {
+            context.fill(left, top, left + fillWidth, top + QUALITY_BAR_HEIGHT, 0xFF000000 | qualityBarColor(spiritQuality));
+        }
     }
 
     private static int statusColor(InventoryItem item) {
@@ -270,6 +308,20 @@ public class ItemTooltipPanel extends BaseComponent {
             context.fill(bx, by, bx + filled, by + 3, BotanySpiritQualityVisuals.barColor(item));
         }
         context.fill(bx, by + 3, bx + width, by + 4, 0xFF3A3A3A);
+    }
+
+    private static int lerpRgb(int from, int to, double t) {
+        double clamped = Math.max(0.0, Math.min(1.0, t));
+        int fr = (from >> 16) & 0xFF;
+        int fg = (from >> 8) & 0xFF;
+        int fb = from & 0xFF;
+        int tr = (to >> 16) & 0xFF;
+        int tg = (to >> 8) & 0xFF;
+        int tb = to & 0xFF;
+        int r = (int) Math.round(fr + (tr - fr) * clamped);
+        int g = (int) Math.round(fg + (tg - fg) * clamped);
+        int b = (int) Math.round(fb + (tb - fb) * clamped);
+        return (r << 16) | (g << 8) | b;
     }
 
     private static String renderMitigationCell(String kind, float mitigation) {

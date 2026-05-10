@@ -318,20 +318,38 @@ public final class InventoryEventHandler implements ServerDataHandler {
     }
 
     private static InventoryItem withStack(InventoryItem item, int stackCount) {
-        return InventoryItem.createFull(
+        return InventoryItem.createFullWithVisualMeta(
             item.instanceId(), item.itemId(), item.displayName(),
             item.gridWidth(), item.gridHeight(), item.weight(),
             item.rarity(), item.description(),
-            stackCount, item.spiritQuality(), item.durability()
+            stackCount, item.spiritQuality(), item.durability(),
+            item.charges(),
+            item.scrollKind(),
+            item.scrollSkillId(),
+            item.scrollXpGrant(),
+            item.forgeQuality(),
+            item.forgeColor(),
+            item.forgeSideEffects(),
+            item.forgeAchievedTier(),
+            item.alchemyLines()
         );
     }
 
     private static InventoryItem withDurability(InventoryItem item, double durability) {
-        return InventoryItem.createFull(
+        return InventoryItem.createFullWithVisualMeta(
             item.instanceId(), item.itemId(), item.displayName(),
             item.gridWidth(), item.gridHeight(), item.weight(),
             item.rarity(), item.description(),
-            item.stackCount(), item.spiritQuality(), durability
+            item.stackCount(), item.spiritQuality(), durability,
+            item.charges(),
+            item.scrollKind(),
+            item.scrollSkillId(),
+            item.scrollXpGrant(),
+            item.forgeQuality(),
+            item.forgeColor(),
+            item.forgeSideEffects(),
+            item.forgeAchievedTier(),
+            item.alchemyLines()
         );
     }
 
@@ -348,6 +366,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        Integer charges = readOptionalInt(itemObject, "charges");
 
         if (instanceId == null || itemId == null || displayName == null
             || gridWidth == null || gridHeight == null || weight == null
@@ -355,11 +374,12 @@ public final class InventoryEventHandler implements ServerDataHandler {
             || spiritQuality == null || durability == null
             || gridWidth < 1 || gridHeight < 1 || weight < 0.0 || stackCount < 1
             || spiritQuality < 0.0 || spiritQuality > 1.0
-            || durability < 0.0 || durability > 1.0) {
+            || durability < 0.0 || durability > 1.0
+            || (charges != null && (charges < 0 || charges > 5))) {
             return null;
         }
 
-        return InventoryItem.createFull(
+        return InventoryItem.createFullWithVisualMeta(
             instanceId,
             itemId,
             displayName,
@@ -370,7 +390,16 @@ public final class InventoryEventHandler implements ServerDataHandler {
             description,
             stackCount,
             spiritQuality,
-            durability
+            durability,
+            charges,
+            "",
+            "",
+            0,
+            null,
+            "",
+            java.util.List.of(),
+            null,
+            java.util.List.of()
         );
     }
 
@@ -529,5 +558,13 @@ public final class InventoryEventHandler implements ServerDataHandler {
             return null;
         }
         return value.intValue();
+    }
+
+    private static Integer readOptionalInt(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        return readRequiredInt(object, fieldName);
     }
 }

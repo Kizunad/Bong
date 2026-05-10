@@ -279,6 +279,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        Integer charges = readOptionalInt(itemObject, "charges");
         String scrollKind = readOptionalString(itemObject, "scroll_kind");
         String scrollSkillId = readOptionalString(itemObject, "scroll_skill_id");
         Integer scrollXpGrant = readOptionalInt(itemObject, "scroll_xp_grant");
@@ -297,12 +298,13 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             || durability < 0.0 || durability > 1.0
             || forgeSideEffects == null
             || alchemyLines == null
+            || (charges != null && (charges < 0 || charges > 5))
             || (forgeQuality != null && (forgeQuality < 0.0 || forgeQuality > 1.0))
             || (forgeAchievedTier != null && (forgeAchievedTier < 1 || forgeAchievedTier > 4))) {
             return null;
         }
 
-        return InventoryItem.createFullWithAlchemyMeta(
+        return InventoryItem.createFullWithVisualMeta(
             instanceId,
             itemId,
             displayName,
@@ -314,6 +316,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             stackCount,
             spiritQuality,
             durability,
+            charges,
             scrollKind,
             scrollSkillId,
             scrollXpGrant == null ? 0 : scrollXpGrant,
