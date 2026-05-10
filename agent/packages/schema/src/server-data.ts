@@ -17,6 +17,11 @@ import { CarrierStateV1 } from "./combat-carrier.js";
 import { DuguPoisonStateV1 } from "./dugu.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { IdentityPanelStateV1 } from "./identity.js";
+import {
+  PoisonDoseEventV1,
+  PoisonOverdoseEventV1,
+  PoisonTraitStateV1,
+} from "./poison-trait.js";
 import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
   InventoryEventDroppedV1,
@@ -188,6 +193,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("weapon_broken"),
   Type.Literal("treasure_equipped"),
   Type.Literal("dugu_poison_state"),
+  Type.Literal("poison_dose_event"),
+  Type.Literal("poison_overdose_event"),
+  Type.Literal("poison_trait_state"),
   Type.Literal("carrier_state"),
   Type.Literal("rift_portal_state"),
   Type.Literal("rift_portal_removed"),
@@ -937,6 +945,33 @@ export const ServerDataDuguPoisonStateV1 = Type.Object(
 );
 export type ServerDataDuguPoisonStateV1 = Static<typeof ServerDataDuguPoisonStateV1>;
 
+export const ServerDataPoisonDoseEventV1 = Type.Object(
+  {
+    type: Type.Literal("poison_dose_event"),
+    ...PoisonDoseEventV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataPoisonDoseEventV1 = Static<typeof ServerDataPoisonDoseEventV1>;
+
+export const ServerDataPoisonOverdoseEventV1 = Type.Object(
+  {
+    type: Type.Literal("poison_overdose_event"),
+    ...PoisonOverdoseEventV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataPoisonOverdoseEventV1 = Static<typeof ServerDataPoisonOverdoseEventV1>;
+
+export const ServerDataPoisonTraitStateV1 = Type.Object(
+  {
+    type: Type.Literal("poison_trait_state"),
+    ...PoisonTraitStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataPoisonTraitStateV1 = Static<typeof ServerDataPoisonTraitStateV1>;
+
 export const ServerDataCarrierStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1446,6 +1481,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillConfigSnapshotV1,
   ServerDataVortexStateV1,
   ServerDataDuguPoisonStateV1,
+  ServerDataPoisonDoseEventV1,
+  ServerDataPoisonOverdoseEventV1,
+  ServerDataPoisonTraitStateV1,
   ServerDataCarrierStateV1,
   ServerDataFalseSkinStateV1,
   ServerDataHealerNpcAiStateV1,

@@ -2,6 +2,7 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "type",
     "v",
     "player_entity_id",
     "dose_amount",
@@ -11,6 +12,10 @@
     "at_tick"
   ],
   "properties": {
+    "type": {
+      "const": "poison_dose_event",
+      "type": "string"
+    },
     "v": {
       "const": 1,
       "type": "number"

@@ -2,7 +2,7 @@ import { type Static, Type } from "@sinclair/typebox";
 
 import { type ValidationResult, validate } from "./validate.js";
 
-const EntityId = Type.Integer({ minimum: 0 });
+const EntityId = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 
 export const PoisonSideEffectTagV1 = Type.Union([
   Type.Literal("qi_focus_drift_2h"),
@@ -28,7 +28,7 @@ export const PoisonDoseEventV1 = Type.Object(
     side_effect_tag: PoisonSideEffectTagV1,
     poison_level_after: Type.Number({ minimum: 0, maximum: 100 }),
     digestion_after: Type.Number({ minimum: 0 }),
-    at_tick: Type.Integer({ minimum: 0 }),
+    at_tick: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
   },
   { additionalProperties: false },
 );
@@ -42,7 +42,7 @@ export const PoisonOverdoseEventV1 = Type.Object(
     overflow: Type.Number({ minimum: 0 }),
     lifespan_penalty_years: Type.Number({ minimum: 0 }),
     micro_tear_probability: Type.Number({ minimum: 0, maximum: 1 }),
-    at_tick: Type.Integer({ minimum: 0 }),
+    at_tick: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
   },
   { additionalProperties: false },
 );

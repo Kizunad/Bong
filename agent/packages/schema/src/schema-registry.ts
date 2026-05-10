@@ -277,6 +277,9 @@ import {
   ServerDataVortexStateV1,
   ServerDataCarrierStateV1,
   ServerDataDuguPoisonStateV1,
+  ServerDataPoisonDoseEventV1,
+  ServerDataPoisonOverdoseEventV1,
+  ServerDataPoisonTraitStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataHealerNpcAiStateV1,
@@ -641,6 +644,9 @@ export const SCHEMA_REGISTRY = {
   duguSelfCureProgressV1: DuguSelfCureProgressV1,
   duguReverseTriggeredV1: DuguReverseTriggeredV1,
   serverDataDuguPoisonStateV1: ServerDataDuguPoisonStateV1,
+  serverDataPoisonDoseEventV1: ServerDataPoisonDoseEventV1,
+  serverDataPoisonOverdoseEventV1: ServerDataPoisonOverdoseEventV1,
+  serverDataPoisonTraitStateV1: ServerDataPoisonTraitStateV1,
   carrierStateV1: CarrierStateV1,
   carrierChargedEventV1: CarrierChargedEventV1,
   carrierImpactEventV1: CarrierImpactEventV1,
@@ -1075,6 +1081,12 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.duguReverseTriggeredV1,
   "server-data-dugu-poison-state-v1.json":
     SCHEMA_REGISTRY.serverDataDuguPoisonStateV1,
+  "server-data-poison-dose-event-v1.json":
+    SCHEMA_REGISTRY.serverDataPoisonDoseEventV1,
+  "server-data-poison-overdose-event-v1.json":
+    SCHEMA_REGISTRY.serverDataPoisonOverdoseEventV1,
+  "server-data-poison-trait-state-v1.json":
+    SCHEMA_REGISTRY.serverDataPoisonTraitStateV1,
   "false-skin-kind-v1.json": SCHEMA_REGISTRY.falseSkinKindV1,
   "false-skin-state-v1.json": SCHEMA_REGISTRY.falseSkinStateV1,
   "shed-event-v1.json": SCHEMA_REGISTRY.shedEventV1,

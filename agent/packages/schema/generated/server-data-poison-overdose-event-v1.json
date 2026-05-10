@@ -2,15 +2,20 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "type",
     "v",
     "player_entity_id",
-    "dose_amount",
-    "side_effect_tag",
-    "poison_level_after",
-    "digestion_after",
+    "severity",
+    "overflow",
+    "lifespan_penalty_years",
+    "micro_tear_probability",
     "at_tick"
   ],
   "properties": {
+    "type": {
+      "const": "poison_overdose_event",
+      "type": "string"
+    },
     "v": {
       "const": 1,
       "type": "number"
@@ -20,41 +25,33 @@
       "maximum": 9007199254740991,
       "type": "integer"
     },
-    "dose_amount": {
-      "minimum": 0,
-      "type": "number"
-    },
-    "side_effect_tag": {
+    "severity": {
       "anyOf": [
         {
-          "const": "qi_focus_drift_2h",
+          "const": "mild",
           "type": "string"
         },
         {
-          "const": "rage_burst_30min",
+          "const": "moderate",
           "type": "string"
         },
         {
-          "const": "hallucin_tint_6h",
-          "type": "string"
-        },
-        {
-          "const": "digest_lock_6h",
-          "type": "string"
-        },
-        {
-          "const": "toxicity_tier_unlock",
+          "const": "severe",
           "type": "string"
         }
       ]
     },
-    "poison_level_after": {
+    "overflow": {
       "minimum": 0,
-      "maximum": 100,
       "type": "number"
     },
-    "digestion_after": {
+    "lifespan_penalty_years": {
       "minimum": 0,
+      "type": "number"
+    },
+    "micro_tear_probability": {
+      "minimum": 0,
+      "maximum": 1,
       "type": "number"
     },
     "at_tick": {

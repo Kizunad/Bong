@@ -12907,6 +12907,184 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "type",
+        "v",
+        "player_entity_id",
+        "dose_amount",
+        "side_effect_tag",
+        "poison_level_after",
+        "digestion_after",
+        "at_tick"
+      ],
+      "properties": {
+        "type": {
+          "const": "poison_dose_event",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_entity_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "dose_amount": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "side_effect_tag": {
+          "anyOf": [
+            {
+              "const": "qi_focus_drift_2h",
+              "type": "string"
+            },
+            {
+              "const": "rage_burst_30min",
+              "type": "string"
+            },
+            {
+              "const": "hallucin_tint_6h",
+              "type": "string"
+            },
+            {
+              "const": "digest_lock_6h",
+              "type": "string"
+            },
+            {
+              "const": "toxicity_tier_unlock",
+              "type": "string"
+            }
+          ]
+        },
+        "poison_level_after": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "digestion_after": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "player_entity_id",
+        "severity",
+        "overflow",
+        "lifespan_penalty_years",
+        "micro_tear_probability",
+        "at_tick"
+      ],
+      "properties": {
+        "type": {
+          "const": "poison_overdose_event",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_entity_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "const": "mild",
+              "type": "string"
+            },
+            {
+              "const": "moderate",
+              "type": "string"
+            },
+            {
+              "const": "severe",
+              "type": "string"
+            }
+          ]
+        },
+        "overflow": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "lifespan_penalty_years": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "micro_tear_probability": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "player_entity_id",
+        "poison_toxicity",
+        "digestion_current",
+        "digestion_capacity",
+        "toxicity_tier_unlocked"
+      ],
+      "properties": {
+        "type": {
+          "const": "poison_trait_state",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_entity_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "poison_toxicity": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "digestion_current": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "digestion_capacity": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "toxicity_tier_unlocked": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "v",
         "type",
         "carrier",

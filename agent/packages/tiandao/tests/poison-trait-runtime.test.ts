@@ -1,58 +1,124 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { CHANNELS, type PoisonSideEffectTagV1 } from "@bong/schema";
 
-import type { PoisonDoseEventV1, PoisonOverdoseEventV1 } from "@bong/schema";
 import {
+  PoisonTraitNarrationRuntime,
   poisonSideEffectText,
-  renderPoisonDoseNarration,
-  renderPoisonOverdoseNarration,
+  type PoisonTraitRuntimeClient,
 } from "../src/poison-trait-runtime.js";
 
-describe("poison trait narration", () => {
-  it("renders all five side effect tags without modern phrasing", () => {
-    const tags = [
-      "qi_focus_drift_2h",
-      "rage_burst_30min",
-      "hallucin_tint_6h",
-      "digest_lock_6h",
-      "toxicity_tier_unlock",
-    ] as const;
-    for (const tag of tags) {
-      const text = poisonSideEffectText(tag);
-      expect(text.length).toBeGreaterThan(8);
-      expect(text).not.toMatch(/buff|debuff|DPS|level/i);
-    }
+const { AGENT_NARRATE, POISON_DOSE_EVENT, POISON_OVERDOSE_EVENT } = CHANNELS;
+
+class FakePubSub implements PoisonTraitRuntimeClient {
+  public published: Array<{ channel: string; message: string }> = [];
+  public subscribedChannels: string[] = [];
+  public listeners: Array<(channel: string, message: string) => void> = [];
+
+  async subscribe(channel: string): Promise<void> {
+    this.subscribedChannels.push(channel);
+  }
+
+  on(_event: string, listener: (channel: string, message: string) => void) {
+    this.listeners.push(listener);
+    return this;
+  }
+
+  off(_event: string, listener: (channel: string, message: string) => void) {
+    this.listeners = this.listeners.filter((entry) => entry !== listener);
+    return this;
+  }
+
+  async unsubscribe(): Promise<void> {}
+
+  disconnect(): void {}
+
+  async publish(channel: string, message: string): Promise<number> {
+    this.published.push({ channel, message });
+    return 1;
+  }
+}
+
+const silent = { info: vi.fn(), warn: vi.fn() };
+
+describe("PoisonTraitNarrationRuntime", () => {
+  it("subscribes to poison dose and overdose Redis channels", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new PoisonTraitNarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.connect();
+
+    expect(sub.subscribedChannels).toEqual([POISON_DOSE_EVENT, POISON_OVERDOSE_EVENT]);
   });
 
-  it("renders dose narration with toxicity and digestion numbers", () => {
-    const event: PoisonDoseEventV1 = {
-      v: 1,
-      player_entity_id: 7,
-      dose_amount: 15,
-      side_effect_tag: "toxicity_tier_unlock",
-      poison_level_after: 73,
-      digestion_after: 90,
-      at_tick: 120,
-    };
-    const narration = renderPoisonDoseNarration(event);
-    expect(narration.target).toBe("poison_dose:7|tick:120");
-    expect(narration.text).toContain("73");
-    expect(narration.text).toContain("90");
-    expect(narration.text).toContain("门槛");
+  it("publishes dose narration to agent narration channel", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new PoisonTraitNarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.handlePayload(
+      POISON_DOSE_EVENT,
+      JSON.stringify({
+        v: 1,
+        player_entity_id: 7,
+        dose_amount: 5,
+        side_effect_tag: "qi_focus_drift_2h",
+        poison_level_after: 17,
+        digestion_after: 50,
+        at_tick: 100,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toMatchObject({
+      scope: "player",
+      target: "poison_dose:7|tick:100",
+      style: "narration",
+    });
+    expect(envelope.narrations[0].text).toContain("毒性真元升至 17");
   });
 
-  it("renders overdose narration with lifespan and micro tear hint", () => {
-    const event: PoisonOverdoseEventV1 = {
-      v: 1,
-      player_entity_id: 7,
-      severity: "severe",
-      overflow: 30,
-      lifespan_penalty_years: 8,
-      micro_tear_probability: 0.3,
-      at_tick: 240,
-    };
-    const narration = renderPoisonOverdoseNarration(event);
-    expect(narration.target).toBe("poison_overdose:7|tick:240");
-    expect(narration.text).toContain("重度反噬");
-    expect(narration.text).toMatch(/寿元|微裂/);
+  it("publishes overdose narration with lifespan cost", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new PoisonTraitNarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.handlePayload(
+      POISON_OVERDOSE_EVENT,
+      JSON.stringify({
+        v: 1,
+        player_entity_id: 7,
+        severity: "moderate",
+        overflow: 30,
+        lifespan_penalty_years: 1,
+        micro_tear_probability: 0.1,
+        at_tick: 120,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0].target).toBe("poison_overdose:7|tick:120");
+    expect(envelope.narrations[0].text).toContain("寿元折去 1.0 年");
+  });
+
+  it("rejects malformed payloads without publishing", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new PoisonTraitNarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.handlePayload(
+      POISON_DOSE_EVENT,
+      JSON.stringify({ v: 1, player_entity_id: Number.MAX_SAFE_INTEGER + 1 }),
+    );
+
+    expect(pub.published).toHaveLength(0);
+    expect(runtime.stats.rejectedContract).toBe(1);
+  });
+
+  it("keeps a fallback side effect line for unknown tags", () => {
+    expect(poisonSideEffectText("unknown" as PoisonSideEffectTagV1)).toContain("丹毒");
   });
 });
