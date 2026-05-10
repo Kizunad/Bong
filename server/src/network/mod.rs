@@ -3061,13 +3061,14 @@ mod tests {
         #[test]
         fn world_state_prefers_realm_collapse_over_tsy_race_out() {
             let (mut app, rx_outbound) = setup_publish_app(true);
-            let zone = app
-                .world_mut()
-                .resource_mut::<ZoneRegistry>()
-                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                .expect("spawn zone should exist");
-            zone.active_events.push(EVENT_TSY_RACE_OUT.to_string());
-            zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
+            {
+                let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+                let zone = zones
+                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                    .expect("spawn zone should exist");
+                zone.active_events.push(EVENT_TSY_RACE_OUT.to_string());
+                zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
+            }
 
             let state = publish_once(&mut app, &rx_outbound);
             let spawn_zone = state
