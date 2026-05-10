@@ -215,7 +215,7 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 - `dirty_qi_collision()` 已把 `DUGU_RHO` 限定在 `rejection_rate()`，`purity` 仅保留声学阈值语义。
 - `StyleBalanceTelemetryEventV1` 发布前会 trim 空 style、clamp ratio、过滤非有限数并把 quantity 下限收敛到 0；DeathEvent-only collector 暂不伪造缺失的碰撞 outcome。
-- `style_telemetry_replay.py` 按 `distance_blocks` 分桶，并在中性环境 / 默认 medium 下把距离衰减纳入 expected efficiency。
+- `style_telemetry_replay.py` 按 1 block `distance_blocks` 分桶，并在中性环境 / 默认 medium 下把距离衰减纳入 expected efficiency。
 - Review 修复验证：`cargo fmt --check`、`RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings`、`RUSTFLAGS="-C debuginfo=0" cargo test qi_physics::collision`、`RUSTFLAGS="-C debuginfo=0" cargo test dirty_qi_collision`、`RUSTFLAGS="-C debuginfo=0" cargo test style_telemetry`、`RUSTFLAGS="-C debuginfo=0" cargo test style_balance`、`npm run check -w @bong/schema`、`npm test -w @bong/schema`、`npm run build`、`python3 scripts/balance/style_collision_sim.py`、`python3 scripts/balance/style_telemetry_replay.py --sample` 均通过。
 
 ### 跨仓库核验
