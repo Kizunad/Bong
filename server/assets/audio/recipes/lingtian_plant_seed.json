@@ -1,0 +1,10 @@
+{
+  "id": "lingtian_plant_seed",
+  "layers": [
+    { "sound": "minecraft:block.grass.place", "volume": 0.28, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:block.azalea_leaves.place", "volume": 0.16, "pitch": 1.35, "delay_ticks": 3 }
+  ],
+  "priority": 30,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

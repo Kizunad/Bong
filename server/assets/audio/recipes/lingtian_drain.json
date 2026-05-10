@@ -1,0 +1,10 @@
+{
+  "id": "lingtian_drain",
+  "layers": [
+    { "sound": "minecraft:block.pointed_dripstone.drip_lava", "volume": 0.28, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:block.sculk_catalyst.bloom", "volume": 0.12, "pitch": 0.65, "delay_ticks": 4 }
+  ],
+  "priority": 40,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

@@ -6,11 +6,15 @@
 
 use valence::prelude::{Client, EventReader, EventWriter, Position, Query, UniqueId, With};
 
+use crate::botany::components::HarvestTerminalEvent;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed};
+use crate::lingtian::events::{
+    DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
+};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
@@ -22,6 +26,12 @@ const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
 const ANIM_HIT_RECOIL: &str = "bong:hit_recoil";
 const ANIM_BREAKTHROUGH_BURST: &str = "bong:breakthrough_burst";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
+const BOTANY_HARVEST_VFX: &str = "bong:botany_harvest";
+const LINGTIAN_TILL_VFX: &str = "bong:lingtian_till";
+const LINGTIAN_PLANT_VFX: &str = "bong:lingtian_plant";
+const LINGTIAN_REPLENISH_VFX: &str = "bong:lingtian_replenish";
+const LINGTIAN_HARVEST_VFX: &str = "bong:lingtian_harvest";
+const LINGTIAN_DRAIN_VFX: &str = "bong:lingtian_drain";
 const WOLIU_PRIORITY: u16 = 1300;
 
 const COMBAT_PRIORITY: u16 = 1000;
@@ -175,6 +185,84 @@ pub fn emit_woliu_v2_visual_triggers(
     }
 }
 
+pub fn emit_botany_harvest_visual_triggers(
+    mut terminal: EventReader<HarvestTerminalEvent>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in terminal.read() {
+        if !event.completed || event.interrupted {
+            continue;
+        }
+        let Some(pos) = event.target_pos else {
+            continue;
+        };
+        emit_spawn_particle(
+            &mut vfx_events,
+            BOTANY_HARVEST_VFX,
+            valence::prelude::DVec3::new(pos[0], pos[1] + 0.45, pos[2]),
+            "#88CC55",
+            0.85,
+            12,
+            36,
+        );
+    }
+}
+
+pub fn emit_lingtian_visual_triggers(
+    mut tills: EventReader<TillCompleted>,
+    mut plantings: EventReader<PlantingCompleted>,
+    mut harvests: EventReader<HarvestCompleted>,
+    mut replenishes: EventReader<ReplenishCompleted>,
+    mut drains: EventReader<DrainQiCompleted>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in tills.read() {
+        emit_block_decal(
+            &mut vfx_events,
+            LINGTIAN_TILL_VFX,
+            event.pos,
+            "#44CCCC",
+            0.65,
+        );
+    }
+    for event in plantings.read() {
+        emit_block_decal(
+            &mut vfx_events,
+            LINGTIAN_PLANT_VFX,
+            event.pos,
+            "#55EE88",
+            0.75,
+        );
+    }
+    for event in harvests.read() {
+        emit_block_decal(
+            &mut vfx_events,
+            LINGTIAN_HARVEST_VFX,
+            event.pos,
+            "#88FF66",
+            0.85,
+        );
+    }
+    for event in replenishes.read() {
+        emit_block_decal(
+            &mut vfx_events,
+            LINGTIAN_REPLENISH_VFX,
+            event.pos,
+            "#44DDCC",
+            (0.55 + event.plot_qi_added).clamp(0.55, 1.0),
+        );
+    }
+    for event in drains.read() {
+        emit_block_decal(
+            &mut vfx_events,
+            LINGTIAN_DRAIN_VFX,
+            event.pos,
+            "#888888",
+            0.7,
+        );
+    }
+}
+
 fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
     match skill {
         WoliuSkillId::Hold => "#244872",
@@ -183,6 +271,51 @@ fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
         WoliuSkillId::Pull => "#382058",
         WoliuSkillId::Heart => "#100818",
     }
+}
+
+fn emit_block_decal(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    event_id: &'static str,
+    pos: valence::prelude::BlockPos,
+    color: &'static str,
+    strength: f32,
+) {
+    emit_spawn_particle(
+        vfx_events,
+        event_id,
+        valence::prelude::DVec3::new(
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y) + 1.01,
+            f64::from(pos.z) + 0.5,
+        ),
+        color,
+        strength,
+        1,
+        80,
+    );
+}
+
+fn emit_spawn_particle(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    event_id: &'static str,
+    origin: valence::prelude::DVec3,
+    color: &'static str,
+    strength: f32,
+    count: u16,
+    duration_ticks: u16,
+) {
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: event_id.to_string(),
+            origin: [origin.x, origin.y, origin.z],
+            direction: None,
+            color: Some(color.to_string()),
+            strength: Some(strength.clamp(0.0, 1.0)),
+            count: Some(count),
+            duration_ticks: Some(duration_ticks),
+        },
+    ));
 }
 
 fn attack_anim_for_wound_kind(kind: WoundKind) -> &'static str {
@@ -367,6 +500,100 @@ mod tests {
         assert!(drain_vfx(&mut app).is_empty());
     }
 
+    #[test]
+    fn completed_botany_harvest_emits_leaf_burst_particle() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_botany_harvest_visual_triggers);
+        let player = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(HarvestTerminalEvent {
+            client_entity: player,
+            session_id: "offline:Azure".to_string(),
+            target_id: "plant-1".to_string(),
+            target_name: "ci_she_hao".to_string(),
+            plant_kind: "ci_she_hao".to_string(),
+            mode: crate::botany::components::BotanyHarvestMode::Manual,
+            interrupted: false,
+            completed: true,
+            detail: "done".to_string(),
+            target_pos: Some([10.0, 64.0, 10.0]),
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_spawn_particle(&emitted[0], BOTANY_HARVEST_VFX, Some(12));
+    }
+
+    #[test]
+    fn lingtian_completion_events_emit_plot_rune_particles() {
+        let mut app = App::new();
+        app.add_event::<TillCompleted>();
+        app.add_event::<PlantingCompleted>();
+        app.add_event::<HarvestCompleted>();
+        app.add_event::<ReplenishCompleted>();
+        app.add_event::<DrainQiCompleted>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_lingtian_visual_triggers);
+        let player = app.world_mut().spawn_empty().id();
+        let pos = valence::prelude::BlockPos::new(2, 65, 7);
+
+        app.world_mut().send_event(TillCompleted {
+            player,
+            pos,
+            hoe: crate::lingtian::hoe::HoeKind::Iron,
+            hoe_instance_id: 1,
+        });
+        app.world_mut().send_event(PlantingCompleted {
+            player,
+            pos,
+            plant_id: "ci_she_hao".to_string(),
+        });
+        app.world_mut().send_event(HarvestCompleted {
+            player,
+            pos,
+            plant_id: "ci_she_hao".to_string(),
+            seed_dropped: false,
+        });
+        app.world_mut().send_event(ReplenishCompleted {
+            player,
+            pos,
+            source: crate::lingtian::session::ReplenishSource::Zone,
+            plot_qi_added: 0.25,
+            overflow_to_zone: 0.0,
+        });
+        app.world_mut().send_event(DrainQiCompleted {
+            player,
+            pos,
+            plot_qi_drained: 0.5,
+            qi_to_player: 0.4,
+            qi_to_zone: 0.1,
+        });
+
+        app.update();
+
+        let ids: Vec<_> = drain_vfx(&mut app)
+            .into_iter()
+            .map(|req| match req.payload {
+                VfxEventPayloadV1::SpawnParticle { event_id, .. } => event_id,
+                other => panic!("expected SpawnParticle, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                LINGTIAN_TILL_VFX,
+                LINGTIAN_PLANT_VFX,
+                LINGTIAN_HARVEST_VFX,
+                LINGTIAN_REPLENISH_VFX,
+                LINGTIAN_DRAIN_VFX,
+            ]
+        );
+    }
+
     fn assert_play_anim(request: &VfxEventRequest, expected_anim: &str, expected_priority: u16) {
         match &request.payload {
             VfxEventPayloadV1::PlayAnim {
@@ -376,6 +603,22 @@ mod tests {
                 assert_eq!(*priority, expected_priority);
             }
             other => panic!("expected PlayAnim, got {other:?}"),
+        }
+    }
+
+    fn assert_spawn_particle(
+        request: &VfxEventRequest,
+        expected_event_id: &str,
+        expected_count: Option<u16>,
+    ) {
+        match &request.payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id, count, ..
+            } => {
+                assert_eq!(event_id, expected_event_id);
+                assert_eq!(*count, expected_count);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
         }
     }
 }
