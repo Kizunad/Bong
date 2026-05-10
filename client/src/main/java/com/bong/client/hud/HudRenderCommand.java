@@ -12,6 +12,7 @@ public final class HudRenderCommand {
     private final int height;
     private final int color;
     private final double intensity;
+    private final double textScale;
     private final String texturePath;
 
     private HudRenderCommand(
@@ -24,6 +25,7 @@ public final class HudRenderCommand {
         int height,
         int color,
         double intensity,
+        double textScale,
         String texturePath
     ) {
         this.layer = Objects.requireNonNull(layer, "layer");
@@ -35,40 +37,45 @@ public final class HudRenderCommand {
         this.height = height;
         this.color = color;
         this.intensity = sanitizeIntensity(intensity);
+        this.textScale = sanitizeTextScale(textScale);
         this.texturePath = texturePath == null ? "" : texturePath;
     }
 
     public static HudRenderCommand text(HudRenderLayer layer, String text, int x, int y, int color) {
-        return new HudRenderCommand(layer, Kind.TEXT, text, x, y, 0, 0, color, 0.0, null);
+        return new HudRenderCommand(layer, Kind.TEXT, text, x, y, 0, 0, color, 0.0, 1.0, null);
+    }
+
+    public static HudRenderCommand scaledText(HudRenderLayer layer, String text, int x, int y, int color, double scale) {
+        return new HudRenderCommand(layer, Kind.SCALED_TEXT, text, x, y, 0, 0, color, 0.0, scale, null);
     }
 
     public static HudRenderCommand screenTint(HudRenderLayer layer, int color) {
-        return new HudRenderCommand(layer, Kind.SCREEN_TINT, "", 0, 0, 0, 0, color, 0.0, null);
+        return new HudRenderCommand(layer, Kind.SCREEN_TINT, "", 0, 0, 0, 0, color, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand edgeVignette(HudRenderLayer layer, int color) {
-        return new HudRenderCommand(layer, Kind.EDGE_VIGNETTE, "", 0, 0, 0, 0, color, 0.0, null);
+        return new HudRenderCommand(layer, Kind.EDGE_VIGNETTE, "", 0, 0, 0, 0, color, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand edgeInkWash(HudRenderLayer layer, int color) {
         // NOTE(plan-skill-v1 P2): 一字修 — 原 commit 051479fa 漏了 texturePath 参数，阻塞全量 build。
-        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color, 0.0, null);
+        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand toast(HudRenderLayer layer) {
-        return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0, 0, 0, 0.0, null);
+        return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0, 0, 0, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand toast(HudRenderLayer layer, String text, int x, int y, int color) {
-        return new HudRenderCommand(layer, Kind.TOAST, text, x, y, 0, 0, color, 0.0, null);
+        return new HudRenderCommand(layer, Kind.TOAST, text, x, y, 0, 0, color, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand rect(HudRenderLayer layer, int x, int y, int width, int height, int color) {
-        return new HudRenderCommand(layer, Kind.RECT, "", x, y, width, height, color, 0.0, null);
+        return new HudRenderCommand(layer, Kind.RECT, "", x, y, width, height, color, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand edgeIndicator(HudRenderLayer layer, String kind, int x, int y, int color, double intensity) {
-        return new HudRenderCommand(layer, Kind.EDGE_INDICATOR, kind, x, y, 0, 0, color, intensity, null);
+        return new HudRenderCommand(layer, Kind.EDGE_INDICATOR, kind, x, y, 0, 0, color, intensity, 1.0, null);
     }
 
     /**
@@ -84,7 +91,7 @@ public final class HudRenderCommand {
         int height,
         int color
     ) {
-        return new HudRenderCommand(layer, Kind.TEXTURED_RECT, "", x, y, width, height, color, 0.0, texturePath);
+        return new HudRenderCommand(layer, Kind.TEXTURED_RECT, "", x, y, width, height, color, 0.0, 1.0, texturePath);
     }
 
     /**
@@ -93,12 +100,17 @@ public final class HudRenderCommand {
      * Source PNG is assumed 128×128 (matches {@code GridSlotComponent}).
      */
     public static HudRenderCommand itemTexture(HudRenderLayer layer, String itemId, int x, int y, int size) {
-        return new HudRenderCommand(layer, Kind.ITEM_TEXTURE, itemId == null ? "" : itemId, x, y, size, size, 0, 0.0, null);
+        return new HudRenderCommand(layer, Kind.ITEM_TEXTURE, itemId == null ? "" : itemId, x, y, size, size, 0, 0.0, 1.0, null);
     }
 
     private static double sanitizeIntensity(double intensity) {
         if (!Double.isFinite(intensity)) return 0.0;
         return Math.max(0.0, Math.min(1.0, intensity));
+    }
+
+    private static double sanitizeTextScale(double scale) {
+        if (!Double.isFinite(scale)) return 1.0;
+        return Math.max(0.25, Math.min(8.0, scale));
     }
 
     public HudRenderLayer layer() {
@@ -137,12 +149,20 @@ public final class HudRenderCommand {
         return intensity;
     }
 
+    public double textScale() {
+        return textScale;
+    }
+
     public boolean isText() {
         return kind == Kind.TEXT;
     }
 
     public boolean isScreenTint() {
         return kind == Kind.SCREEN_TINT;
+    }
+
+    public boolean isScaledText() {
+        return kind == Kind.SCALED_TEXT;
     }
 
     public boolean isEdgeVignette() {
@@ -179,6 +199,7 @@ public final class HudRenderCommand {
 
     public enum Kind {
         TEXT,
+        SCALED_TEXT,
         SCREEN_TINT,
         EDGE_VIGNETTE,
         EDGE_INK_WASH,

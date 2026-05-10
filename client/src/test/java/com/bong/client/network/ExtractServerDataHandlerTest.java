@@ -64,6 +64,16 @@ public class ExtractServerDataHandlerTest {
     }
 
     @Test
+    void portalOccupiedAbortUsesDedicatedRaceOutCopy() {
+        new ExtractServerDataHandler().handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"extract_aborted\",\"player_id\":\"offline:Kiz\",\"reason\":\"portal_occupied\"}"
+        ));
+
+        assertTrue(ExtractStateStore.snapshot().message().contains("无法撤离"));
+        assertTrue(ExtractStateStore.snapshot().message().contains("裂口被占，换下一个"));
+    }
+
+    @Test
     void collapsePayloadStartsCountdown() {
         new ExtractServerDataHandler().handle(parseEnvelope(
             "{\"v\":1,\"type\":\"tsy_collapse_started_ipc\",\"family_id\":\"tsy_lingxu_01\",\"at_tick\":100,\"remaining_ticks\":600,\"collapse_tear_entity_ids\":[1,2,3]}"
