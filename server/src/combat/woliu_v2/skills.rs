@@ -451,27 +451,28 @@ fn apply_v3_runtime_effects(world: &mut bevy_ecs::world::World, ctx: V3RuntimeEf
                     ctx.now_tick,
                 );
             }
-            let caster_pos = world
-                .get::<Position>(ctx.caster)
-                .map(|position| position.get())
-                .unwrap_or(ctx.center);
-            let facing = world
-                .get::<Look>(ctx.caster)
-                .and_then(horizontal_facing_from_look)
-                .unwrap_or(DVec3::X);
-            let recoil_origin = caster_pos + facing;
-            if let Some(actual_displacement) =
-                apply_radial_displacement(world, ctx.caster, recoil_origin, 2.0, true)
-            {
-                send_event_if_present(
-                    world,
-                    EntityDisplacedByVortexPull {
-                        caster: ctx.caster,
-                        target: ctx.caster,
-                        displacement_blocks: actual_displacement,
-                        tick: ctx.now_tick,
-                    },
-                );
+            if let (Some(caster_pos), Some(facing)) = (
+                world
+                    .get::<Position>(ctx.caster)
+                    .map(|position| position.get()),
+                world
+                    .get::<Look>(ctx.caster)
+                    .and_then(horizontal_facing_from_look),
+            ) {
+                let recoil_origin = caster_pos + facing;
+                if let Some(actual_displacement) =
+                    apply_radial_displacement(world, ctx.caster, recoil_origin, 2.0, true)
+                {
+                    send_event_if_present(
+                        world,
+                        EntityDisplacedByVortexPull {
+                            caster: ctx.caster,
+                            target: ctx.caster,
+                            displacement_blocks: actual_displacement,
+                            tick: ctx.now_tick,
+                        },
+                    );
+                }
             }
         }
         _ => {}
@@ -698,7 +699,7 @@ fn emit_cast_events(
     );
 }
 
-fn apply_target_siphon(
+pub(super) fn apply_target_siphon(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     target: Option<Entity>,
@@ -715,11 +716,24 @@ fn apply_target_siphon(
     if target == caster {
         return 0.0;
     }
+    let Some(caster_remaining_qi) = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| (cultivation.qi_max - cultivation.qi_current).max(0.0))
+    else {
+        return 0.0;
+    };
+    if caster_remaining_qi <= f64::EPSILON {
+        return 0.0;
+    }
     let drained = {
         let Some(mut target_cultivation) = world.get_mut::<Cultivation>(target) else {
             return 0.0;
         };
-        let drained = target_cultivation.qi_current.min(requested).max(0.0);
+        let drained = target_cultivation
+            .qi_current
+            .min(requested)
+            .min(caster_remaining_qi)
+            .max(0.0);
         target_cultivation.qi_current = (target_cultivation.qi_current - drained).max(0.0);
         drained
     };

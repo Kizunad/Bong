@@ -29,7 +29,8 @@ use super::physics::{
     turbulence_decay_step, StirInput,
 };
 use super::skills::{
-    declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill, skill_spec, visual_for,
+    apply_target_siphon, declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill,
+    skill_spec, visual_for,
 };
 use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
 
@@ -786,6 +787,35 @@ fn resolve_vacuum_palm_pulls_target_and_siphons_qi() {
 }
 
 #[test]
+fn target_siphon_caps_drain_by_caster_remaining_qi() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 95.0);
+    app.world_mut()
+        .get_mut::<Cultivation>(actor)
+        .unwrap()
+        .qi_max = 100.0;
+    let target = spawn_actor(&mut app, Realm::Induce, 40.0);
+
+    let drained = apply_target_siphon(
+        app.world_mut(),
+        actor,
+        Some(target),
+        WoliuSkillId::VacuumPalm,
+        skill_spec(WoliuSkillId::VacuumPalm, Realm::Condense),
+    );
+
+    assert_eq!(drained, 5.0);
+    assert_eq!(
+        app.world().get::<Cultivation>(target).unwrap().qi_current,
+        35.0
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(actor).unwrap().qi_current,
+        100.0
+    );
+}
+
+#[test]
 fn resolve_vortex_shield_emits_damage_reduction_status() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
@@ -952,6 +982,39 @@ fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
         (caster_after.x - caster_start.x).abs() < 1e-5,
         "recoil should follow facing direction instead of hard-coding an X-axis offset; start={caster_start:?}, after={caster_after:?}"
     );
+}
+
+#[test]
+fn resolve_turbulence_burst_without_look_skips_caster_recoil() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    let caster_start = app.world().get::<Position>(actor).unwrap().get();
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut().entity_mut(target).insert(Wounds::default());
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::TurbulenceBurst,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Position>(actor).unwrap().get(),
+        caster_start,
+        "caster without Look should not fall back to a fixed-axis recoil"
+    );
+    assert!(!app
+        .world()
+        .resource::<Events<EntityDisplacedByVortexPull>>()
+        .iter_current_update_events()
+        .any(|event| event.target == actor));
 }
 
 #[test]
