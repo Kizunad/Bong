@@ -28,11 +28,11 @@
 
 ## §0 设计轴心
 
-- [ ] **凡物级**：这些盔甲是普通修士日常防护，不是灵器——防御值低、耐久有限、手搓可得
-- [ ] **暂用 vanilla 换色**：用 MC leather armor 的 `DyeableArmorItem` API 做颜色区分，不做自定义模型
-- [ ] **6 种材质 = 6 种颜色**：骨甲(灰白) / 兽皮甲(棕) / 铁甲(深灰) / 铜甲(古铜) / 灵布衫(淡青) / 残卷缠甲(暗黄)
-- [ ] **接 craft 系统**：每套甲 = 对应材料 ×4-6 手搓产出，配方注册到 CraftRegistry
-- [ ] **耐久可见**：装备后 armor icon tooltip 显示耐久条（复用 MC durability bar）
+- [x] **凡物级**：这些盔甲是普通修士日常防护，不是灵器——防御值低、耐久有限、手搓可得
+- [x] **暂用 vanilla 换色**：用 MC leather armor 的 `DyeableArmorItem` API 做颜色区分，不做自定义模型
+- [x] **6 种材质 = 6 种颜色**：骨甲(灰白) / 兽皮甲(棕) / 铁甲(深灰) / 铜甲(古铜) / 灵布衫(淡青) / 残卷缠甲(暗黄)
+- [x] **接 craft 系统**：每套甲 = 对应材料 ×4-6 手搓产出，配方注册到 CraftRegistry
+- [x] **耐久可见**：装备后 armor icon tooltip 显示耐久条（复用 MC durability bar）
 
 ---
 
@@ -55,15 +55,15 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | server 6 套盔甲物品注册 + ArmorComponent 填充 + craft 配方注册 + 基础测试 | ⬜ |
-| P1 | client armor tint 系统（material → color 映射）+ 装备穿戴视觉验证 | ⬜ |
-| P2 | 6 张物品 icon 生成（gen.py item 档）+ tooltip 耐久条 + 材质名显示 | ⬜ |
-| P3 | 装备增强视觉：穿戴时微粒子 flash + 破损警告（耐久 < 20% 闪红）+ 破碎音效 | ⬜ |
-| P4 | 6 套 × 4 件 × craft/equip/durability 饱和化测试 | ⬜ |
+| P0 | server 6 套盔甲物品注册 + ArmorComponent 填充 + craft 配方注册 + 基础测试 | ✅ 2026-05-11 |
+| P1 | client armor tint 系统（material → color 映射）+ 装备穿戴视觉验证 | ✅ 2026-05-11 |
+| P2 | 6 张物品 icon 生成（gen.py item 档）+ tooltip 耐久条 + 材质名显示 | ✅ 2026-05-11 |
+| P3 | 装备增强视觉：穿戴时微粒子 flash + 破损警告（耐久 < 20% 闪红）+ 破碎音效 | ✅ 2026-05-11 |
+| P4 | 6 套 × 4 件 × craft/equip/durability 饱和化测试 | ✅ 2026-05-11 |
 
 ---
 
-## P0 — server 物品 + craft 配方 ⬜
+## P0 — server 物品 + craft 配方 ✅ 2026-05-11
 
 ### 交付物
 
@@ -87,7 +87,7 @@
 
 ---
 
-## P1 — client armor tint ⬜
+## P1 — client armor tint ✅ 2026-05-11
 
 ### 交付物
 
@@ -109,7 +109,7 @@
 
 ---
 
-## P2 — 物品 icon + tooltip ⬜
+## P2 — 物品 icon + tooltip ✅ 2026-05-11
 
 ### 交付物
 
@@ -130,7 +130,7 @@
 
 ---
 
-## P3 — 装备视觉增强 ⬜
+## P3 — 装备视觉增强 ✅ 2026-05-11
 
 ### 交付物
 
@@ -145,7 +145,7 @@
 
 ---
 
-## P4 — 饱和化测试 ⬜
+## P4 — 饱和化测试 ✅ 2026-05-11
 
 ### 交付物
 
@@ -159,8 +159,28 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：server `armor::mundane::*` / 24 物品 / 6 craft 配方 / client `ArmorTintRegistry` / 6 icon / tooltip / 穿戴 flash / 破损警告 / 破碎音效+粒子
-- **关键 commit**：P0-P4 各自 hash
-- **遗留 / 后续**：自定义 3D 盔甲模型（需 plan-armor-model-v1 + BlockBench）/ 灵器级盔甲走 forge 而非 craft / 盔甲附着（灵核/符文）视觉
+- **落地清单**：
+  - P0 server：`server/src/armor/mundane.rs` / `server/src/armor/mod.rs` 注册 6 材质 × 4 部位凡物盔甲；`server/assets/items/armor.toml` 提供原料与 24 件 armor item；`server/src/combat/armor.rs` / `server/src/combat/resolve.rs` 接入 ArmorProfile 与破碎音效；`server/src/inventory/mod.rs` 限制 armor 只能进匹配装备槽且破损不可穿。
+  - P0 craft/schema：`server/src/craft/mod.rs` / `server/src/craft/recipe.rs` 注册 `ArmorCraft`；`server/src/schema/craft.rs` 与 `agent/packages/schema/src/craft.ts` 同步 craft category；`client/src/main/java/com/bong/client/craft/CraftCategory.java` 同步 client enum。
+  - P1/P2 client：`client/src/main/java/com/bong/client/armor/ArmorTintRegistry.java`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityArmor.java` 将 Bong armor 映射为染色 leather armor；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_*.png` 提供 6 张图标；`ItemIconRegistry` / `ItemTooltipPanel` 显示 armor icon、材质、防御、损坏与修复提示。
+  - P3/P4 反馈与测试：`ArmorBreakParticles`、`InventoryEventHandler`、`VisualEffectState/Profile/Planner`、`GridSlotComponent` 接入装备 flash、低耐久红闪、toast、破碎粒子与 `server/assets/audio/recipes/armor_break.json`；client/server/schema 测试覆盖 tint、装备规则、tooltip、icon、craft、视觉事件、音频 recipe 与 armor 注册。
+- **关键 commit**：
+  - `cf358c41e` · 2026-05-11 · `plan-armor-visual-v1: 注册凡物盔甲与手搓配方`
+  - `4f8a4528c` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
+- **测试结果**：
+  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 3984 passed。
+  - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）：通过，BUILD SUCCESSFUL。
+  - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（336 files）。
+  - `npm run build`（agent）：通过。
+  - `npm test`（agent/packages/schema）：通过，16 files / 355 tests。
+  - `git diff --check`：通过。
+- **跨仓库核验**：
+  - server：`register_mundane_armors` / `register_mundane_armor_recipes` / `CraftCategory::ArmorCraft` / `armor_break`。
+  - agent/schema：`CraftCategorySchema` 包含 `ArmorCraft`，generated artifacts check 无漂移。
+  - client：`ArmorTintRegistry` / `MixinPlayerEntityArmor` / `ArmorBreakParticles` / `InventoryEquipRules` / `VisualEffectProfile.ARMOR_*`。
+- **遗留 / 后续**：
+  - 本 plan 明确不做自定义 3D 盔甲模型；真实 BlockBench 模型、灵器级盔甲、盔甲附着（灵核/符文）视觉留给后续 plan。
+  - `scripts/images/.env` 在本 worktree 不存在，本次 6 张 icon 使用 deterministic PNG 生成并由 `GeneratedItemIconAssetsTest` 锁定；后续美术 plan 可替换为正式 gen.py 后端产物。
+  - 本轮未执行 WSLg `runClient` 截图验收；颜色区分、图标存在、tooltip 与视觉事件均由自动化测试覆盖。
