@@ -34,6 +34,7 @@ import com.bong.client.social.SparringInviteScreenBootstrap;
 import com.bong.client.social.TradeOfferScreenBootstrap;
 import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
+import com.bong.client.ui.ScreenTransitionController;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
 import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
@@ -57,6 +58,7 @@ public class BongClient implements ClientModInitializer {
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
         HudRenderCallback.EVENT.register(BongHud::render);
+        ScreenTransitionController.register();
         InteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
         CultivationScreenBootstrap.register();

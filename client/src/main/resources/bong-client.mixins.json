@@ -12,6 +12,7 @@
     "MixinFogPerZone",
     "MixinGameRenderer",
     "MixinHeldItemRenderer",
+    "MixinElementInputLock",
     "MixinInGameHudRealmVignette",
     "MixinKeyboardSkillKeys",
     "MixinInGameHud",
@@ -19,6 +20,9 @@
     "MixinMouse",
     "MixinPlayerEntityDrop",
     "MixinPlayerEntityHeldItem",
+    "MixinScreenInputLock",
+    "MixinScreenTransitionRender",
+    "ScreenSetMixin",
     "MixinSkyPerZone"
   ],
   "injectors": {
