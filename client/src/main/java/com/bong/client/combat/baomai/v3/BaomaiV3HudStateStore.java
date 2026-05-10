@@ -48,8 +48,13 @@ public final class BaomaiV3HudStateStore {
     }
 
     static void recordMeridianRippleScar(double severity, long nowMs) {
+        double clampedSeverity = clamp01(severity);
+        if (scarUpdatedMs == 0L || nowMs - scarUpdatedMs > SCAR_VISIBLE_MS) {
+            scarSeverity = clampedSeverity;
+        } else {
+            scarSeverity = Math.max(scarSeverity, clampedSeverity);
+        }
         scarUpdatedMs = nowMs;
-        scarSeverity = Math.max(scarSeverity, clamp01(severity));
     }
 
     public static Snapshot snapshot(long nowMs) {
