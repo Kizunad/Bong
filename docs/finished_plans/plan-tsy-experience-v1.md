@@ -107,10 +107,10 @@
 ## Finish Evidence
 
 - 实现提交：`0ff4530ba`（`实现坍缩渊体验层反馈闭环`）
-- P0：client 注册 `tsy_portal_idle` / `tsy_portal_deep` / `tsy_portal_tear` / `tsy_collapse_burst`，server 在 portal、collapse、extract、race-out 路径 emit VFX/audio，新增 4 个 TSY audio recipe。
+- P0：client 注册 `tsy_portal_idle` / `tsy_portal_deep` / `tsy_portal_tear` / `tsy_collapse_burst`，server 在 portal、collapse、extract、race-out 路径 emit VFX/audio，新增 3 个 TSY audio recipe（`tsy_race_out_alarm.json`、`tsy_collapse_rumble.json`、`tsy_extract_success.json`）。
 - P1：接入 `TsyPressureOverlay`、FOV offset、Fuya aura VFX，以及上古遗物 tooltip/grid/drop glow 与 `charges` 显示。
 - P2：容器搜刮 start/complete VFX/audio、loot pop 方向、`ZoneStatusV1::race_out` schema 与 tiandao context/insight 文案、`tsy_gaoshou_01_{shallow,mid,deep}` POI 契约补全。
-- CI follow-up：snapshot workflow 复现 Valence layer panic 后，将 NPC dehydrate 从裸 `despawn()` 改为插入 `Despawned`，避免 dormant 化 NPC 未走 Valence cleanup 标记。
+- 顺带修复（CI follow-up）：snapshot workflow 复现 Valence layer panic 后，将 NPC dehydrate 从裸 `despawn()` 改为插入 `Despawned`，避免 dormant 化 NPC 绕过 Valence cleanup 标记。
 - 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（3633 passed）、`./gradlew test build`（JDK 17）、`npm run build`、`agent/packages/tiandao npm test`、`agent/packages/schema npm test`、`agent/packages/schema npm run generate:check`、`git diff --check`。
 
 ## 前置依赖
