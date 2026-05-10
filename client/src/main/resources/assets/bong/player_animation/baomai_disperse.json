@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "baomai_disperse",
+  "description": "爆脉 v3 散功：化虚体修短暂撑开凡躯，双臂外张承受脉流十倍过载。",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 20,
+    "stopTick": 24,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.4 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.4 } },
+      { "tick": 5, "easing": "INOUTSINE", "body": { "y": 0.06 } },
+      { "tick": 5, "easing": "INOUTSINE", "torso": { "pitch": -0.18 } },
+      { "tick": 5, "easing": "INOUTSINE", "leftArm": { "pitch": -1.25, "yaw": 0.72, "bend": 0.15 } },
+      { "tick": 5, "easing": "INOUTSINE", "rightArm": { "pitch": -1.25, "yaw": -0.72, "bend": 0.15 } },
+      { "tick": 14, "easing": "INOUTSINE", "body": { "y": 0.08 } },
+      { "tick": 14, "easing": "INOUTSINE", "torso": { "pitch": -0.12 } },
+      { "tick": 14, "easing": "INOUTSINE", "leftArm": { "pitch": -1.45, "yaw": 0.9, "bend": 0.05 } },
+      { "tick": 14, "easing": "INOUTSINE", "rightArm": { "pitch": -1.45, "yaw": -0.9, "bend": 0.05 } },
+      { "tick": 20, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 20, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 20, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "bend": 0.0 } },
+      { "tick": 20, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "bend": 0.0 } }
+    ]
+  }
+}

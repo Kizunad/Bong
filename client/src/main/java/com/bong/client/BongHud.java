@@ -279,6 +279,7 @@ public class BongHud {
             surface,
             com.bong.client.lingtian.state.LingtianSessionStore.snapshot()
         );
+        com.bong.client.combat.baomai.v3.BaomaiV3Hud.render(surface, snapshot.nowMs());
     }
 
     /**
