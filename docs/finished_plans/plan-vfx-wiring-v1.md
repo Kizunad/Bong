@@ -151,6 +151,8 @@
 - `05fb45e8b`（2026-05-10）`vfx-wiring-v1：接入服务端游戏事件 VFX`
 - `4bd061a31`（2026-05-10）`vfx-wiring-v1：注册客户端游戏 VFX players`
 - `5f0fdc5a8`（2026-05-10）`vfx-wiring-v1：补齐社交关系 VFX 接线`
+- `6dfaeac95`（2026-05-10）`归档 plan-vfx-wiring-v1：游戏事件 VFX 接线`
+- `b420233df`（2026-05-10）`vfx-wiring-v1：处理 review VFX 细节`
 
 ### 测试结果
 
@@ -158,9 +160,10 @@
 - `cd server && cargo check` ✅
 - `cd server && cargo check --tests` ✅
 - `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && CARGO_BUILD_JOBS=1 cargo test poison_ambient_emits_mist_vfx_every_sixty_ticks -- --nocapture` ✅（1 passed）
 - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests com.bong.client.visual.particle.VfxRegistryTest` ✅
 - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅
-- `cd server && cargo test emits -- --nocapture` ⚠️ 本地两次在 test binary 链接阶段被 `rustc` `signal: 9, SIGKILL` 杀掉，无测试断言失败输出；已用 `cargo check --tests` + clippy 覆盖测试编译/lint，PR CI 继续覆盖完整 `cargo test`。
+- `cd server && cargo test emits -- --nocapture` ⚠️ 前序本地两次在 test binary 链接阶段被 `rustc` `signal: 9, SIGKILL` 杀掉，无测试断言失败输出；已用 `cargo check --tests` + clippy 覆盖测试编译/lint，PR CI 继续覆盖完整 `cargo test`。
 
 ### 跨仓库核验
 
@@ -171,4 +174,4 @@
 ### 遗留 / 后续
 
 - 未新增贴图资产；全部复用既有 particle sprites/providers。
-- 本地云环境无法链接 server test binary，完整 `cargo test` 以 PR CI 为准。
+- 本地云环境对较大 server test binary 链接不稳定；本轮新增毒雾环境 VFX 单测已单独通过，完整 `cargo test` 以 PR CI 为准。
