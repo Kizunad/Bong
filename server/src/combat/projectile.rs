@@ -60,6 +60,10 @@ impl StyleAttack for AnqiStyleAttack {
         self.qi_payload
     }
 
+    fn rejection_rate(&self) -> f64 {
+        0.45
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind {
             color: self.color,
@@ -135,6 +139,7 @@ mod tests {
 
         assert_eq!(attack.style_color(), ColorKind::Sharp);
         assert_eq!(attack.injected_qi(), 12.0);
+        assert_eq!(attack.rejection_rate(), 0.45);
         assert_eq!(attack.medium().carrier, QiCarrierGrade::AncientRelic);
     }
 }

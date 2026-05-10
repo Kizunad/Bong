@@ -61,6 +61,10 @@ impl StyleAttack for BengQuanStyleAttack {
         self.integrity_snapshot.clamp(0.0, 1.0)
     }
 
+    fn rejection_rate(&self) -> f64 {
+        0.65
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind::bare(ColorKind::Heavy)
     }
@@ -578,5 +582,6 @@ mod tests {
         assert_eq!(attack.style_color(), ColorKind::Heavy);
         assert_eq!(attack.injected_qi(), 12.0);
         assert_eq!(attack.purity(), 0.7);
+        assert_eq!(attack.rejection_rate(), 0.65);
     }
 }

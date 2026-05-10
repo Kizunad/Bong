@@ -2,9 +2,9 @@
 qi_collision 流派对策模拟器 v2。
 
 三套公式并排对比:
-  - CURRENT:  现行代码 (resistance 二次减免 + purity 代理 ρ)
-  - FIX_A:    resistance hard cap 0.95 + rejection_rate 替代 purity
-  - FIX_B:    去掉 defender_lost 的 (1-r) 二次减免 + rejection_rate
+  - LEGACY:   旧代码 (resistance 二次减免 + purity 代理 ρ)
+  - RUST_LIVE: 当前 Rust 公式 (resistance hard cap 0.95 + rejection_rate 替代 purity)
+  - FIX_B:    备选公式：去掉 defender_lost 的 (1-r) 二次减免 + rejection_rate
 
 输出交互式 HTML 热力图,可切公式版本 / 距离 / 指标。
 """
@@ -68,7 +68,7 @@ def collision_current(
     resistance: float, drain_affinity: float, distance: float,
     rejection_rate: float,  # ignored in current
 ) -> CollisionOutcome:
-    """现行代码 1:1 翻译"""
+    """旧公式 1:1 翻译，用来对照 Rust live 公式。"""
     injected = max(0.0, injected_qi)
     attenuated = qi_distance_atten(injected, distance, medium)
     p = max(0.0, min(1.0, purity))
@@ -127,9 +127,9 @@ def collision_fix_b(
 
 
 FORMULA_VARIANTS = {
-    "current": ("现行公式", collision_current),
-    "fix_a": ("方案A: cap 0.95 + ρ", collision_fix_a),
-    "fix_b": ("方案B: 去二次减免 + ρ", collision_fix_b),
+    "legacy": ("旧公式: purity 代理 ρ", collision_current),
+    "rust_live": ("Rust live: cap 0.95 + ρ", collision_fix_a),
+    "fix_b": ("备选B: 去二次减免 + ρ", collision_fix_b),
 }
 
 # ─── 流派定义 ────────────────────────────────────────────────────────────
@@ -332,7 +332,7 @@ def generate_html(all_data: dict) -> str:
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Bong 流派对策模拟 v2 — 三套公式对比</title>
+<title>Bong 流派对策模拟 v2 — Rust live 公式对比</title>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 body {{ font-family: "SF Mono", "Cascadia Code", "Consolas", monospace; background: #0a0a0a; color: #e0e0e0; padding: 24px; }}
@@ -370,23 +370,23 @@ table.matrix .corner {{ position: sticky; left: 0; top: 0; z-index: 4; backgroun
 </style>
 </head>
 <body>
-<h1>Bong · qi_collision 流派对策 — 三套公式涌现对比</h1>
-<p class="subtitle">现行公式 vs 方案A (resistance cap 0.95 + rejection_rate ρ) vs 方案B (去 defender_lost 二次减免 + ρ)</p>
+<h1>Bong · qi_collision 流派对策 — Rust live 公式涌现对比</h1>
+<p class="subtitle">旧公式 vs Rust live (resistance cap 0.95 + rejection_rate ρ) vs 备选B (去 defender_lost 二次减免 + ρ)</p>
 
 <div class="formula-box">
 <strong>rejection 公式变化</strong><br>
 <span class="old"><code>rejection = attenuated × 0.30 × (1 - purity + resistance × 0.5)</code></span> 现行: purity 代理 ρ<br>
 <span class="fix"><code>rejection = attenuated × 0.30 × (rejection_rate + resistance × 0.5)</code></span> 修正: rejection_rate (ρ) 独立参数<br><br>
 <strong>defender_lost 变化</strong><br>
-<span class="old"><code>defender_lost = effective_hit × (1 - resistance)</code></span> 现行: resistance 二次减免<br>
-<span class="fix"><code>方案A: defender_lost = effective_hit × (1 - min(resistance, 0.95))</code></span> hard cap 95%<br>
+<span class="old"><code>defender_lost = effective_hit × (1 - resistance)</code></span> 旧公式: resistance 二次减免<br>
+<span class="fix"><code>Rust live: defender_lost = effective_hit × (1 - min(resistance, 0.95))</code></span> hard cap 95%<br>
 <span class="fix"><code>方案B: defender_lost = effective_hit</code></span> 去掉二次减免,rejection 阶段已过滤
 </div>
 
 <div class="controls">
   <label>公式:</label>
-  <button class="btn formula-btn active" data-formula="current">现行公式</button>
-  <button class="btn formula-btn" data-formula="fix_a">方案A: cap+ρ</button>
+  <button class="btn formula-btn" data-formula="legacy">旧公式</button>
+  <button class="btn formula-btn active" data-formula="rust_live">Rust live: cap+ρ</button>
   <button class="btn formula-btn" data-formula="fix_b">方案B: 去减免+ρ</button>
 
   <label style="margin-left:16px">距离:</label>
@@ -419,7 +419,7 @@ const ATK = {json.dumps(atk_names)};
 const DEF = {json.dumps(def_names)};
 const FORMULA_LABELS = {json.dumps(formula_labels)};
 
-let curFormula = 'current';
+let curFormula = 'rust_live';
 let curMetric = 'defender_lost';
 
 function colorScale(val, maxVal) {{

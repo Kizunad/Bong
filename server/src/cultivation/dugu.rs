@@ -85,6 +85,10 @@ impl StyleAttack for PendingDuguInfusion {
         }
     }
 
+    fn rejection_rate(&self) -> f64 {
+        0.05
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind::bare(ColorKind::Insidious)
     }
@@ -1348,5 +1352,6 @@ mod tests {
         assert_eq!(infusion.style_color(), ColorKind::Insidious);
         assert_eq!(infusion.injected_qi(), DUGU_INFUSE_COST);
         assert!(infusion.purity() > 0.8);
+        assert_eq!(infusion.rejection_rate(), 0.05);
     }
 }

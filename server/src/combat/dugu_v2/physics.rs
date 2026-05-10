@@ -301,6 +301,10 @@ impl StyleAttack for DirtyQiAttack {
         self.purity
     }
 
+    fn rejection_rate(&self) -> f64 {
+        DUGU_RHO
+    }
+
     fn medium(&self) -> MediumKind {
         MediumKind::bare(ColorKind::Insidious)
     }
