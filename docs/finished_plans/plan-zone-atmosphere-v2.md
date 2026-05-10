@@ -280,9 +280,9 @@
   - P4：`SeasonState` 驱动的 summer / winter / tide-turn profile override，dead-zone skip guard。
   - P5：`ZoneAtmosphereCommand.estimatedFrameCostMs()`、`ZoneAtmosphereTest.atmosphere_matrix_perf_stays_under_budget`、`scripts/atmosphere_matrix_test.sh`。
 - **关键 commit**：
-  - `15434f085`（2026-05-10）`feat(client): 建立区域氛围 profile 基础`
-  - `6d69de1f5`（2026-05-10）`feat(client): 接入区域氛围渲染链路`
-  - `aade05c14`（2026-05-10）`test(client): 增加区域氛围矩阵验证入口`
+  - `d34bdf35e`（2026-05-10）`feat(client): 建立区域氛围 profile 基础`
+  - `38b30d9b7`（2026-05-10）`feat(client): 接入区域氛围渲染链路`
+  - `48d2268c5`（2026-05-10）`test(client): 增加区域氛围矩阵验证入口`
 - **测试结果**：
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test --tests com.bong.client.atmosphere.ZoneAtmosphereTest` → PASS
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` → PASS
