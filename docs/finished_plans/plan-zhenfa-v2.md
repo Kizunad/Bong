@@ -340,3 +340,35 @@ HUD 组件（plan-HUD-v1 接入）：
 ## §7 进度日志
 
 - 2026-05-06：骨架创建。承接 plan-zhenfa-v1 ✅ finished（commit b82b02a0；P0/P1 诡雷 + 警戒场已实装）。v2 范围明确：4 大类剩余 3 类（护龛 / 聚灵 / 欺天）+ 幻阵 + 化虚跨位面阵 + 5 经脉依赖 + 熟练度生长 + 反 MMO 物理推导。化虚跨位面阵走 worldview §三:187 + §十三 末法无传送（**信号投射非物质传送**）。欺天阵走 worldview §八:614-618 气运劫持（**不是免疫**，是真元场扰动天道感应器，被识破反噬 ×3）。聚灵阵天道阈值落地（v1 Q14）。坐标派 / 信息派定调，与暗器单点 / 截脉接触面 / 毒蛊渗透 / 替尸钱包 / 体修肉体 / 涡流环境改造区分。
+
+## Finish Evidence
+
+### 落地清单
+
+- **server 阵法核心**：在 `server/src/zhenfa/mod.rs` 复用 v1 `ZhenfaRegistry` / 阵眼生命周期，扩展 `ZhenfaKind::{ShrineWard,Lingju,DeceiveHeaven,Illusion}`，新增 `ArrayImprint`、`ArrayMastery`、四阵 deploy 事件、统一 decay / breakthrough 事件与欺天暴露专用事件。
+- **护龛 / 聚灵 / 欺天 / 幻阵**：护龛阵按 owner + `Relationships` 盟友 + `Renown.fame >= 80` 放行，未授权目标进入范围会被阻挡和烧伤；聚灵阵写入密度倍率与天道注视权重 profile；欺天阵固元+ gate、定 tick 识破后触发 `JueBiTriggerEvent::ZhenfaDeceptionExposed`；幻阵使用独立 `reveal_threshold` 契约，不复用 `radius`。
+- **经脉与 mastery**：布阵前检查 `MeridianSeveredPermanent`，四阵经脉依赖分别接任督 / Kidney / Heart；`ArrayMastery` 按 cast +0.3、触发 +1.0 增长，并参与 cast time / 持续时间 profile。
+- **qi_physics**：`server/src/qi_physics/field.rs` 新增 `inverse_diffusion`、`density_amplifier`、`tiandao_signal_distort`，阵法模块只消费底盘算子，不在 plan 内另造物理公式。
+- **craft 接入**：`server/src/craft/mod.rs` 注册 `register_zhenfa_v2_recipes()`，落地 4 个阵法预埋件和 2 档阵旗配方，并保持 `zhenfa.*` 命名空间。
+- **跨栈契约 / IPC**：新增 `server/src/schema/zhenfa_v2.rs`、`server/src/network/zhenfa_v2_event_bridge.rs`、`CH_ZHENFA_V2_EVENT`、`RedisOutbound::ZhenfaV2Event`；agent schema 新增 `ZhenfaV2EventV1` 与 generated JSON；client request schema / Java enum 同步 4 个新 kind。
+- **agent narration**：`agent/packages/tiandao/src/zhenfa-v2-runtime.ts` 订阅 `bong:zhenfa/v2_event`，覆盖 deploy / decay / breakthrough / `deceive_heaven_exposed` 叙事，并在 `main.ts` 启动 runtime。
+- **client 协议**：`ClientRequestProtocol.ZhenfaKind` 支持 `shrine_ward`、`lingju`、`deceive_heaven`、`illusion`，并补 `deceive_heaven` 编码回归；本 PR 不宣称完成计划中 P4 的专用动画 / 粒子 / 音效 / HUD 资产。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：通过。
+- `cd server && cargo check`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test zhenfa`：通过，26 passed / 0 failed / 3617 filtered out。
+- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：通过，3643 passed / 0 failed。
+- `cd agent && npm run generate -w @bong/schema`：通过，326 schemas exported。
+- `cd agent && npm run build`：通过。
+- `cd agent && npm test -w @bong/schema`：通过，15 files / 353 tests。
+- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 327 tests。
+- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" PATH="/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL。
+- `git diff --check`：通过。
+
+### 备注 / 后续
+
+- 普通 `CARGO_BUILD_JOBS=1 cargo test zhenfa` 在本机 debug test binary 链接阶段曾被 `SIGKILL`；使用 `RUSTFLAGS="-C debuginfo=0"` 后定向与全量 server 测试均通过，判定为本地链接内存压力而非源码失败。
+- plan 文本早期写过"跨位面阵"和 P4 专用视觉/HUD 全量交付；2026-05-10 范围已收敛为 v2 runtime / contract / physics / craft / narration / protocol 闭环，跨位面阵留 zhenfa-v3，专用视觉资产留后续 plan。
