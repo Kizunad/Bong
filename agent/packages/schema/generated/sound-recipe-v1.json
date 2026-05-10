@@ -39,7 +39,7 @@
             "type": "number"
           },
           "pitch": {
-            "minimum": 0.5,
+            "minimum": 0.1,
             "maximum": 2,
             "type": "number"
           },

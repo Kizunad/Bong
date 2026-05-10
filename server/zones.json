@@ -8,6 +8,7 @@
       },
       "spirit_qi": 0.3,
       "danger_level": 1,
+      "ambient_recipe_id": "ambient_spawn_plain",
       "active_events": [],
       "patrol_anchors": [
         [-240.0, 70.0, -160.0],
@@ -23,6 +24,7 @@
       },
       "spirit_qi": 0.5,
       "danger_level": 2,
+      "ambient_recipe_id": "ambient_qingyun_peaks",
       "active_events": [],
       "patrol_anchors": [
         [-3380.0, 128.0, -2320.0],
@@ -39,6 +41,7 @@
       },
       "spirit_qi": 0.7,
       "danger_level": 3,
+      "ambient_recipe_id": "ambient_spring_marsh",
       "active_events": [],
       "patrol_anchors": [
         [-2860.0, 66.0, 2250.0],
@@ -55,6 +58,7 @@
       },
       "spirit_qi": 0.3,
       "danger_level": 4,
+      "ambient_recipe_id": "ambient_rift_valley",
       "active_events": [],
       "patrol_anchors": [
         [2720.0, 74.0, -3000.0],
@@ -71,6 +75,7 @@
       },
       "spirit_qi": 0.4,
       "danger_level": 4,
+      "ambient_recipe_id": "ambient_wilderness",
       "active_events": [],
       "patrol_anchors": [
         [1760.0, 28.0, 2720.0],
@@ -87,6 +92,7 @@
       },
       "spirit_qi": 0.05,
       "danger_level": 5,
+      "ambient_recipe_id": "ambient_north_wastes",
       "active_events": [],
       "patrol_anchors": [
         [-900.0, 72.0, -7600.0],

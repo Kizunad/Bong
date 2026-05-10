@@ -1,0 +1,11 @@
+{
+  "id": "ambient_north_wastes",
+  "layers": [
+    { "sound": "minecraft:weather.rain", "volume": 0.08, "pitch": 0.1, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.phantom.flap", "volume": 0.03, "pitch": 0.2, "delay_ticks": 30 }
+  ],
+  "loop": { "interval_ticks": 120, "while_flag": "audio_world" },
+  "priority": 24,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

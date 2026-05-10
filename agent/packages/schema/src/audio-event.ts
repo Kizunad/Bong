@@ -6,9 +6,17 @@ const RECIPE_ID_PATTERN = "^[a-z0-9_]+$";
 const IDENTIFIER_PATTERN = "^[a-z0-9_.-]+:[a-z0-9_./-]+$";
 
 export const AUDIO_VOLUME_MAX = 4;
-export const AUDIO_PITCH_MIN = 0.5;
+export const AUDIO_PITCH_MIN = 0.1;
 export const AUDIO_PITCH_MAX = 2;
 export const AUDIO_PRIORITY_MAX = 100;
+
+export const AudioSeasonV1 = Type.Union([
+  Type.Literal("summer"),
+  Type.Literal("summer_to_winter"),
+  Type.Literal("winter"),
+  Type.Literal("winter_to_summer"),
+]);
+export type AudioSeasonV1 = Static<typeof AudioSeasonV1>;
 
 export const AudioAttenuationV1 = Type.Union([
   Type.Literal("player_local"),
@@ -85,8 +93,38 @@ export const StopSoundRecipeEventV1 = Type.Object(
 );
 export type StopSoundRecipeEventV1 = Static<typeof StopSoundRecipeEventV1>;
 
+export const AmbientZoneEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    zone_name: Type.String({ minLength: 1, maxLength: 128 }),
+    ambient_recipe_id: Type.String({ pattern: RECIPE_ID_PATTERN, maxLength: 128 }),
+    music_state: Type.Union([
+      Type.Literal("AMBIENT"),
+      Type.Literal("COMBAT"),
+      Type.Literal("CULTIVATION"),
+      Type.Literal("TSY"),
+      Type.Literal("TRIBULATION"),
+    ]),
+    is_night: Type.Boolean(),
+    season: AudioSeasonV1,
+    tsy_depth: Type.Optional(Type.Union([
+      Type.Literal("shallow"),
+      Type.Literal("mid"),
+      Type.Literal("deep"),
+    ])),
+    fade_ticks: Type.Integer({ minimum: 0 }),
+    pos: Type.Optional(Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()])),
+    volume_mul: Type.Number({ minimum: 0, maximum: AUDIO_VOLUME_MAX }),
+    pitch_shift: Type.Number({ minimum: -1, maximum: 1 }),
+    recipe: SoundRecipeV1,
+  },
+  { additionalProperties: false },
+);
+export type AmbientZoneEventV1 = Static<typeof AmbientZoneEventV1>;
+
 export const AudioEventV1 = Type.Union([
   PlaySoundRecipeEventV1,
   StopSoundRecipeEventV1,
+  AmbientZoneEventV1,
 ]);
 export type AudioEventV1 = Static<typeof AudioEventV1>;

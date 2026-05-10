@@ -1,0 +1,11 @@
+{
+  "id": "ambient_tsy",
+  "layers": [
+    { "sound": "minecraft:ambient.nether_wastes.mood", "volume": 0.12, "pitch": 0.3, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.enderman.stare", "volume": 0.04, "pitch": 0.2, "delay_ticks": 60 }
+  ],
+  "loop": { "interval_ticks": 160, "while_flag": "audio_world" },
+  "priority": 68,
+  "attenuation": "player_local",
+  "category": "AMBIENT"
+}

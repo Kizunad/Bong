@@ -1,0 +1,10 @@
+{
+  "id": "ambient_wilderness",
+  "layers": [
+    { "sound": "minecraft:ambient.cave", "volume": 0.05, "pitch": 0.5, "delay_ticks": 0 }
+  ],
+  "loop": { "interval_ticks": 180, "while_flag": "audio_world" },
+  "priority": 18,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

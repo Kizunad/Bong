@@ -7,7 +7,7 @@
 //!   * zone.spirit_qi >= 0.3 才推进（阈值内不能打通）
 //!   * 打通本身消耗 qi（cost = progress_delta × COST_FACTOR）
 
-use valence::prelude::{bevy_ecs, Component, Entity, Events, Position, Query, Res, ResMut};
+use valence::prelude::{bevy_ecs, Component, Entity, Event, Events, Position, Query, Res, ResMut};
 
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -24,6 +24,12 @@ use crate::skill::events::{SkillXpGain, XpGainSource};
 /// 玩家客户端发起的"选择下一条经脉"目标。未选目标时此 component 不存在。
 #[derive(Debug, Clone, Copy, Component)]
 pub struct MeridianTarget(pub MeridianId);
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct MeridianOpenedEvent {
+    pub entity: Entity,
+    pub origin: valence::prelude::DVec3,
+}
 
 pub const MIN_ZONE_QI_TO_OPEN: f64 = 0.3;
 pub const BASE_OPEN_RATE: f64 = 0.01;
@@ -131,6 +137,7 @@ pub fn meridian_open_tick(
     mut entities: Query<MeridianOpenItem<'_>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut meridian_opened_events: Option<ResMut<Events<MeridianOpenedEvent>>>,
 ) {
     let Some(zones) = zones else {
         return;
@@ -162,6 +169,12 @@ pub fn meridian_open_tick(
             now,
         ) {
             if just_opened {
+                if let Some(meridian_opened_events) = meridian_opened_events.as_deref_mut() {
+                    meridian_opened_events.send(MeridianOpenedEvent {
+                        entity,
+                        origin: pos.0,
+                    });
+                }
                 if let Some(mut life) = life {
                     life.push(BiographyEntry::MeridianOpened {
                         id: target.0,
@@ -393,5 +406,41 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn meridian_open_emits_opened_event() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.insert_resource(zones);
+        app.add_event::<MeridianOpenedEvent>();
+        app.add_systems(Update, meridian_open_tick);
+
+        let mut cultivation = player_with_qi(1000.0);
+        cultivation.qi_max = 1000.0;
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).open_progress = 0.999;
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung),
+                cultivation,
+                meridians,
+            ))
+            .id();
+
+        app.update();
+
+        let events = app.world().resource::<Events<MeridianOpenedEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("meridian open should emit MeridianOpenedEvent");
+        assert_eq!(emitted.entity, player);
+        assert_eq!(emitted.origin, valence::prelude::DVec3::new(8.0, 66.0, 8.0));
     }
 }
