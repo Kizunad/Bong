@@ -129,6 +129,11 @@
 - P0：新增 `bong:npc_metadata` server→client 同步、client `NpcMetadataStore` / nametag renderer / inspect UI，并在断线时清理 NPC metadata。
 - P1：新增 `npc_trade_request` C2S 契约、client trade UI、server 信誉定价/拒绝校验、骨币扣款与背包快照回推。
 - P2：新增 dialogue choice C2S、server 下发 greeting text、基础 dialogue UI，以及 NPC greeting/refuse/hurt/death/aggro audio recipe 与触发。
+- 关键 commit：
+  - `603c52dfe`（2026-05-10）：接入 server NPC 元数据、NPC audio recipe、信誉定价 helper 与 C2S schema。
+  - `e71bcabce`（2026-05-10）：补齐 client NPC metadata store、nametag、inspect/dialogue/trade UI 与 agent schema registry/generated JSON。
+  - `002d18692`（2026-05-10）：接入 server NPC inspect/dialogue/trade request handler，校验存活距离、信誉、骨币与背包快照回推。
+  - `a3ae67688`（2026-05-10）：归档 `plan-npc-engagement-v1` 到 `docs/finished_plans/`。
 - 验证：
   - `cd server && cargo fmt --check`
   - `cd server && cargo check`
@@ -138,4 +143,5 @@
   - `cd agent && npm run build`
   - `cd agent && npm test -w @bong/schema`
   - `git diff --check`
-- 备注：`CARGO_PROFILE_TEST_DEBUG=0 cargo test npc_metadata_packet_serializes -j1` 在本机测试二进制链接阶段被 SIGKILL，未进入断言执行；server 侧用 `cargo check` 与 `clippy --all-targets` 覆盖类型/测试目标编译。
+  - rebase 冲突核验：`find server/assets/audio/recipes -maxdepth 1 -name '*.json' | wc -l` → `47`
+- 备注：`CARGO_PROFILE_TEST_DEBUG=0 cargo test npc_metadata_packet_serializes -j1` 与 `CARGO_PROFILE_TEST_DEBUG=0 cargo test loads_default_audio_recipes -j1` 均在本机测试二进制链接阶段被 SIGKILL，未进入断言执行；server 侧用 `cargo check` 与 `clippy --all-targets` 覆盖类型/测试目标编译。
