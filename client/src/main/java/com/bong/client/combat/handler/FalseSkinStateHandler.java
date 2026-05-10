@@ -27,7 +27,7 @@ public final class FalseSkinStateHandler implements ServerDataHandler {
         float absorbedContam = readNonNegativeFloat(payload, "absorbed_contam", 0d);
         long equippedAtTick = Math.max(0L, Math.round(readDouble(payload, "equipped_at_tick", 0d)));
 
-        FalseSkinHudStateStore.replace(new FalseSkinHudStateStore.State(
+        FalseSkinHudStateStore.State nextFalseSkinState = new FalseSkinHudStateStore.State(
             targetId,
             kind,
             layers,
@@ -35,7 +35,9 @@ public final class FalseSkinStateHandler implements ServerDataHandler {
             absorbedContam,
             equippedAtTick,
             readLayers(payload)
-        ));
+        );
+        FalseSkinHudStateStore.replace(nextFalseSkinState);
+        int normalizedLayers = nextFalseSkinState.layersRemaining();
 
         DerivedAttrsStore.State current = DerivedAttrsStore.snapshot();
         DerivedAttrsStore.replace(new DerivedAttrsStore.State(
@@ -47,12 +49,12 @@ public final class FalseSkinStateHandler implements ServerDataHandler {
             current.tribulationLocked(),
             current.tribulationStage(),
             current.throughputPeakNorm(),
-            layers,
+            normalizedLayers,
             current.vortexActive()
         ));
         return ServerDataDispatch.handled(
             envelope.type(),
-            "Applied false_skin_state (layers_remaining=" + layers + ")"
+            "Applied false_skin_state (layers_remaining=" + normalizedLayers + ")"
         );
     }
 

@@ -24,7 +24,7 @@ public final class TuikeFalseSkinParticlePlayer implements VfxPlayer {
         if (world == null) return;
 
         double[] origin = payload.origin();
-        if (origin.length < 3) return;
+        if (origin == null || origin.length < 3) return;
 
         double ox = origin[0];
         double oy = origin[1];

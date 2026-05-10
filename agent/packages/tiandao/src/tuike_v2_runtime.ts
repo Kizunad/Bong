@@ -113,7 +113,9 @@ export class TuikeV2NarrationRuntime {
 
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel !== TUIKE_V2_SKILL_EVENT) return;
-    void this.handlePayload(message);
+    this.handlePayload(message).catch((error) => {
+      this.logger.warn("[tuike-v2-runtime] failed to handle payload:", error);
+    });
   };
 
   constructor(config: TuikeV2RuntimeConfig) {
@@ -125,9 +127,9 @@ export class TuikeV2NarrationRuntime {
   }
 
   async connect(): Promise<void> {
-    await this.sub.subscribe(TUIKE_V2_SKILL_EVENT);
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
+    await this.sub.subscribe(TUIKE_V2_SKILL_EVENT);
     this.logger.info("[tuike-v2-runtime] subscribed");
   }
 
@@ -164,11 +166,16 @@ export class TuikeV2NarrationRuntime {
       ]);
       narration = parseNarration(normalizeLlmChatResult(result, this.model).content, fallback);
       if (narration.text === fallback.text) this.stats.fallbackUsed += 1;
-    } catch {
+    } catch (error) {
       this.stats.fallbackUsed += 1;
+      this.logger.warn("[tuike-v2-runtime] narration fallback used:", error);
     }
 
-    await this.pub.publish(AGENT_NARRATE, JSON.stringify({ v: 1, narrations: [narration] }));
-    this.stats.published += 1;
+    try {
+      await this.pub.publish(AGENT_NARRATE, JSON.stringify({ v: 1, narrations: [narration] }));
+      this.stats.published += 1;
+    } catch (error) {
+      this.logger.warn("[tuike-v2-runtime] failed to publish narration:", error);
+    }
   }
 }
