@@ -267,6 +267,7 @@ pub fn weather_environment_sync_system(/* WeatherLifecycleEvent → ZoneEnvironm
   - `d30b3d23e`（2026-05-10）`plan-zone-weather-v1: 修复 zone roll 与视野 profile`
   - `df24209c9`（2026-05-10）`plan-zone-weather-v1: 收敛第二轮 review 反馈`
   - `d383fe5a0`（2026-05-10）`plan-zone-weather-v1: 修正天气叙述 metadata tick`
+  - `104288437`（2026-05-10）`plan-zone-weather-v1: 锁定天气叙述单次发布`
 - 测试结果：
   - `cd server && cargo fmt --check` ✅
   - `cd server && cargo clippy --all-targets -- -D warnings` ✅
