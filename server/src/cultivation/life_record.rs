@@ -177,6 +177,16 @@ pub enum BiographyEntry {
         choice_idx: Option<u32>,
         tick: u64,
     },
+    /// plan-tribulation-v2 P0：绝壁劫中存活，公开标记“天道记住你了”。
+    JueBiSurvived {
+        source: String,
+        tick: u64,
+    },
+    /// plan-tribulation-v2 P0：绝壁劫殁亡，区分于普通渡虚失败。
+    JueBiKilled {
+        source: String,
+        tick: u64,
+    },
     /// plan-social-v1 §6.2 — 交易写入双方生平卷。只记物品摘要与匿名对手。
     TradeCompleted {
         counterparty_id: String,
@@ -516,6 +526,10 @@ fn format_entry(entry: &BiographyEntry) -> String {
             choice_idx,
             tick,
         } => format!("t{tick}:heart_demon:{outcome:?}:{choice_idx:?}"),
+        BiographyEntry::JueBiSurvived { source, tick } => {
+            format!("t{tick}:jue_bi_survived:{source}")
+        }
+        BiographyEntry::JueBiKilled { source, tick } => format!("t{tick}:jue_bi_killed:{source}"),
         BiographyEntry::TradeCompleted {
             counterparty_id,
             offered_item,

@@ -96,6 +96,7 @@ pub struct EnvField {
     pub tsy_intensity: f64,
     pub ambient_pressure: f64,
     pub turbulence_intensity: f64,
+    pub law_disruption: f64,
 }
 
 impl EnvField {
@@ -116,6 +117,15 @@ impl EnvField {
 
     pub fn with_turbulence(mut self, intensity: f64) -> Self {
         self.turbulence_intensity = if intensity.is_finite() {
+            intensity.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self
+    }
+
+    pub fn with_law_disruption(mut self, intensity: f64) -> Self {
+        self.law_disruption = if intensity.is_finite() {
             intensity.clamp(0.0, 1.0)
         } else {
             0.0
@@ -154,6 +164,18 @@ impl EnvField {
     pub fn turbulence_defense_drain_factor(self) -> f64 {
         1.0 + self.turbulence_intensity.clamp(0.0, 1.0) * VORTEX_TURBULENCE_DEFENSE_DRAIN_BONUS
     }
+
+    pub fn law_disruption_backfire_fraction(self) -> f64 {
+        self.law_disruption.clamp(0.0, 1.0) * 0.4
+    }
+
+    pub fn law_disruption_channeling_multiplier(self) -> f64 {
+        1.0 + self.law_disruption.clamp(0.0, 1.0) * 2.0
+    }
+
+    pub fn law_disruption_distance_multiplier(self) -> f64 {
+        1.0 + self.law_disruption.clamp(0.0, 1.0)
+    }
 }
 
 impl Default for EnvField {
@@ -164,6 +186,7 @@ impl Default for EnvField {
             tsy_intensity: 0.0,
             ambient_pressure: 0.0,
             turbulence_intensity: 0.0,
+            law_disruption: 0.0,
         }
     }
 }
@@ -216,5 +239,13 @@ mod tests {
         assert_eq!(env.turbulence_absorption_factor(), 0.0);
         assert_eq!(env.turbulence_cast_precision_factor(), 0.5);
         assert_eq!(env.turbulence_defense_drain_factor(), 1.2);
+    }
+
+    #[test]
+    fn law_disruption_exposes_juebi_multipliers() {
+        let env = EnvField::default().with_law_disruption(1.0);
+        assert_eq!(env.law_disruption_backfire_fraction(), 0.4);
+        assert_eq!(env.law_disruption_channeling_multiplier(), 3.0);
+        assert_eq!(env.law_disruption_distance_multiplier(), 2.0);
     }
 }

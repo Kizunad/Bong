@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use valence::prelude::{Client, Entity, EventReader, Local, Position, Query, With};
 
 use crate::cultivation::tribulation::{
-    TribulationAnnounce, TribulationLocked, TribulationSettled, TribulationWaveCleared,
+    JueBiTriggeredEvent, TribulationAnnounce, TribulationLocked, TribulationSettled,
+    TribulationWaveCleared,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
@@ -49,6 +50,7 @@ pub fn emit_tribulation_broadcast_payloads(
     mut clients: Query<(&mut Client, Option<&Position>), With<Client>>,
     mut active_broadcasts: Local<HashMap<Entity, ActiveTribulationBroadcast>>,
     mut announce: EventReader<TribulationAnnounce>,
+    mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
@@ -57,6 +59,16 @@ pub fn emit_tribulation_broadcast_payloads(
         let data = ActiveTribulationBroadcast::active(
             ev.actor_name.clone(),
             "warn",
+            ev.epicenter[0],
+            ev.epicenter[2],
+        );
+        active_broadcasts.insert(ev.entity, data.clone());
+        broadcast(&mut clients, data);
+    }
+    for ev in juebi_triggered.read() {
+        let data = ActiveTribulationBroadcast::active(
+            "绝壁劫",
+            "jue_bi",
             ev.epicenter[0],
             ev.epicenter[2],
         );
@@ -200,6 +212,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_systems(Update, emit_tribulation_broadcast_payloads);
 
         let mut near = spawn_mock_client_at(&mut app, "Near", [30.0, 66.0, 40.0]);
@@ -236,6 +249,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_systems(Update, emit_tribulation_broadcast_payloads);
 
         let mut helper = spawn_mock_client_at(&mut app, "Near", [120.0, 66.0, -80.0]);

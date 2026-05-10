@@ -27,6 +27,7 @@ use super::color::{
 };
 use super::components::{ColorKind, Cultivation, MeridianSystem, QiColor, Realm};
 use super::lifespan::LifespanComponent;
+use super::tribulation::JueBiAftershockDebuff;
 
 /// 全局 tick 计数器 — 用于标记 last_qi_zero_at 等时间戳。
 #[derive(Debug, Default, Resource)]
@@ -65,6 +66,7 @@ pub fn qi_regen_and_zone_drain_tick(
         Option<&StatusEffects>,
         Option<&Exhausted>,
         Option<&TurbulenceExposure>,
+        Option<&JueBiAftershockDebuff>,
     )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -84,6 +86,7 @@ pub fn qi_regen_and_zone_drain_tick(
         statuses,
         exhausted,
         turbulence,
+        juebi_aftershock,
     ) in players.iter_mut()
     {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
@@ -143,12 +146,17 @@ pub fn qi_regen_and_zone_drain_tick(
         let turbulence_multiplier = turbulence
             .map(|exposure| exposure.absorption_multiplier())
             .unwrap_or(1.0);
+        let juebi_aftershock_multiplier = juebi_aftershock
+            .filter(|debuff| clock.tick <= debuff.until_tick)
+            .map(|debuff| debuff.rhythm_multiplier.clamp(0.0, 1.0))
+            .unwrap_or(1.0);
         let (gain, drain) = compute_regen(
             zone.spirit_qi,
             rate * wind_candle_multiplier
                 * humility_multiplier
                 * exhausted_multiplier
-                * turbulence_multiplier,
+                * turbulence_multiplier
+                * juebi_aftershock_multiplier,
             avg_integrity,
             qi_room,
         );
@@ -400,6 +408,50 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert!((exhausted_qi - normal_qi * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn juebi_aftershock_debuff_halves_qi_recovery_until_expired() {
+        fn run_once(aftershock: Option<JueBiAftershockDebuff>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if let Some(debuff) = aftershock {
+                entity.insert(debuff);
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let normal_qi = run_once(None);
+        let debuffed_qi = run_once(Some(JueBiAftershockDebuff {
+            until_tick: 100,
+            rhythm_multiplier: 0.5,
+        }));
+        let expired_qi = run_once(Some(JueBiAftershockDebuff {
+            until_tick: 0,
+            rhythm_multiplier: 0.5,
+        }));
+
+        assert!(normal_qi > 0.0);
+        assert!((debuffed_qi - normal_qi * 0.5).abs() < 1e-6);
+        assert!((expired_qi - normal_qi).abs() < 1e-6);
     }
 
     #[test]

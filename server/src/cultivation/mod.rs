@@ -140,14 +140,18 @@ use self::tick::{
 use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
-    heart_demon_timeout_system, record_tribulation_interceptor_system, start_du_xu_request_system,
-    start_tribulation_system, tribulation_aoe_system, tribulation_escape_boundary_system,
-    tribulation_failure_system, tribulation_intercept_death_system,
-    tribulation_omen_cloud_block_overlay_system, tribulation_phase_tick_system,
-    tribulation_wave_system, AscensionQuotaOccupied, AscensionQuotaOpened,
-    HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationFled, TribulationLocked, TribulationOmenCloudBlocks,
-    TribulationOriginDimension, TribulationSettled, TribulationState, TribulationWaveCleared,
+    heart_demon_timeout_system, juebi_phase_effect_system, juebi_settlement_system,
+    juebi_terrain_seed_system, juebi_terrain_tick_system, juebi_zone_aftershock_system,
+    record_tribulation_interceptor_system, schedule_juebi_triggers_system,
+    start_du_xu_request_system, start_due_juebi_triggers_system, start_tribulation_system,
+    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
+    tribulation_intercept_death_system, tribulation_omen_cloud_block_overlay_system,
+    tribulation_phase_tick_system, tribulation_wave_system, AscensionQuotaOccupied,
+    AscensionQuotaOpened, HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, JueBiTerrainOverlay,
+    JueBiTriggerEvent, JueBiTriggeredEvent, JueBiZoneAftershocks, PendingJueBiTriggers,
+    StartDuXuRequest, TribulationAnnounce, TribulationFailed, TribulationFled, TribulationLocked,
+    TribulationOmenCloudBlocks, TribulationOriginDimension, TribulationSettled, TribulationState,
+    TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::npc::possession::DuoSheIntentForwardSet;
@@ -178,6 +182,10 @@ pub fn register(app: &mut App) {
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
     app.insert_resource(TribulationOmenCloudBlocks::default());
+    app.insert_resource(PendingJueBiTriggers::default());
+    app.insert_resource(self::tribulation::JueBiNullFields::default());
+    app.insert_resource(JueBiTerrainOverlay::default());
+    app.insert_resource(JueBiZoneAftershocks::default());
     app.insert_resource(self::tribulation::VoidQuotaConfig::from_env());
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
@@ -208,6 +216,8 @@ pub fn register(app: &mut App) {
     app.add_event::<TribulationFailed>();
     app.add_event::<TribulationFled>();
     app.add_event::<TribulationSettled>();
+    app.add_event::<JueBiTriggerEvent>();
+    app.add_event::<JueBiTriggeredEvent>();
     app.add_event::<AscensionQuotaOpened>();
     app.add_event::<AscensionQuotaOccupied>();
     app.add_event::<HeartDemonChoiceSubmitted>();
@@ -297,12 +307,25 @@ pub fn register(app: &mut App) {
         (
             // plan §3.2 渡劫：单独分组，避免 Bevy 0.14 tuple arity 上限。
             start_du_xu_request_system,
+            schedule_juebi_triggers_system,
+            start_due_juebi_triggers_system.after(schedule_juebi_triggers_system),
             start_tribulation_system.after(start_du_xu_request_system),
-            tribulation_phase_tick_system.after(start_tribulation_system),
+            tribulation_phase_tick_system
+                .after(start_tribulation_system)
+                .after(start_due_juebi_triggers_system),
             tribulation_omen_cloud_block_overlay_system.after(start_tribulation_system),
             emit_tribulation_boundary_vfx_system.after(tribulation_phase_tick_system),
-            tribulation_aoe_system.after(emit_tribulation_boundary_vfx_system),
-            heart_demon_choice_system.after(tribulation_aoe_system),
+            juebi_terrain_seed_system.after(emit_tribulation_boundary_vfx_system),
+            juebi_terrain_tick_system.after(juebi_terrain_seed_system),
+            tribulation_aoe_system.after(juebi_terrain_tick_system),
+            juebi_phase_effect_system.after(tribulation_aoe_system),
+            juebi_zone_aftershock_system.after(juebi_phase_effect_system),
+            heart_demon_choice_system.after(juebi_zone_aftershock_system),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             heart_demon_timeout_system.after(heart_demon_choice_system),
             tribulation_failure_system.after(heart_demon_timeout_system),
             abort_du_xu_on_client_removed
@@ -312,6 +335,7 @@ pub fn register(app: &mut App) {
             record_tribulation_interceptor_system
                 .after(crate::combat::lifecycle::sync_combat_state_from_events),
             tribulation_wave_system.after(tribulation_escape_boundary_system),
+            juebi_settlement_system.after(tribulation_wave_system),
             tribulation_intercept_death_system
                 .after(crate::combat::lifecycle::death_arbiter_tick)
                 .before(crate::inventory::apply_death_drop_on_revive),
@@ -963,6 +987,7 @@ mod tests {
         app.insert_resource(settings.clone());
         app.add_event::<tribulation::TribulationWaveCleared>();
         app.add_event::<tribulation::TribulationSettled>();
+        app.add_event::<tribulation::JueBiTriggeredEvent>();
         app.add_event::<tribulation::AscensionQuotaOccupied>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<crate::skill::events::SkillCapChanged>();

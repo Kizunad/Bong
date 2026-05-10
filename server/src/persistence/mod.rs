@@ -4363,6 +4363,8 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::FalseSkinShed { .. } => "false_skin_shed",
         BiographyEntry::SpawnTutorialCompleted { .. } => "spawn_tutorial_completed",
         BiographyEntry::VoidAction { .. } => "void_action",
+        BiographyEntry::JueBiSurvived { .. } => "jue_bi_survived",
+        BiographyEntry::JueBiKilled { .. } => "jue_bi_killed",
     }
 }
 
@@ -4447,7 +4449,9 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::AnqiSniped { tick, .. }
         | BiographyEntry::FalseSkinShed { tick, .. }
         | BiographyEntry::SpawnTutorialCompleted { tick, .. }
-        | BiographyEntry::VoidAction { tick, .. } => *tick,
+        | BiographyEntry::VoidAction { tick, .. }
+        | BiographyEntry::JueBiSurvived { tick, .. }
+        | BiographyEntry::JueBiKilled { tick, .. } => *tick,
     }
 }
 

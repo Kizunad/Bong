@@ -11,16 +11,16 @@
 
 use valence::prelude::{
     bevy_ecs, BlockPos, BlockState, ChunkLayer, Client, Commands, Component, Entity, Event,
-    EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
-    Username, With,
+    EventReader, EventWriter, Events, Or, Position, Query, RemovedComponents, Res, ResMut,
+    Resource, Username, With,
 };
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
-use crate::cultivation::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
+use crate::cultivation::death_hooks::CultivationDeathTrigger;
 use crate::cultivation::life_record::{BiographyEntry, HeartDemonOutcome, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
@@ -38,6 +38,7 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::karma::KarmaWeightStore;
 use crate::world::zone::ZoneRegistry;
 
 use super::breakthrough::skill_cap_for_realm;
@@ -61,6 +62,9 @@ pub const DUXU_LOCK_RADIUS_HARD: f64 = 20.0;
 pub const DUXU_LOCK_RADIUS_FINAL: f64 = 10.0;
 pub const DUXU_BOUNDARY_VFX_EVENT_ID: &str = "bong:tribulation_boundary";
 pub const DUXU_OMEN_CLOUD_VFX_EVENT_ID: &str = "bong:tribulation_omen_cloud";
+pub const JUEBI_BOUNDARY_VFX_EVENT_ID: &str = "bong:juebi_boundary";
+pub const JUEBI_FISSURE_VFX_EVENT_ID: &str = "bong:juebi_fissure";
+pub const JUEBI_ERUPTION_VFX_EVENT_ID: &str = "bong:juebi_eruption";
 
 const DUXU_DEFAULT_WAVES: u32 = 3;
 const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
@@ -78,6 +82,27 @@ const DUXU_FULL_QI_EPSILON: f64 = 0.001;
 const DUXU_OMEN_CLOUD_BLOCK_Y_OFFSET: i32 = 24;
 const DUXU_OMEN_CLOUD_BLOCK_OFFSETS: [i32; 5] = [-8, -4, 0, 4, 8];
 const VOID_QUOTA_K_ENV: &str = "BONG_VOID_QUOTA_K";
+
+pub const JUEBI_OMEN_TICKS: u64 = 10 * 20;
+pub const JUEBI_PHASE_TICKS: u64 = 15 * 20;
+pub const JUEBI_AFTERSHOCK_TICKS: u64 = 24 * 60 * 60 * 20;
+pub const JUEBI_NULL_FIELD_MAX_RADIUS: f64 = 150.0;
+pub const JUEBI_ZONE_RADIUS: f64 = 300.0;
+pub const JUEBI_CORE_RADIUS: f64 = 50.0;
+pub const JUEBI_HEAVY_RADIUS: f64 = 150.0;
+pub const JUEBI_PRESSURE_DRAIN_PER_TICK: f64 = 0.02;
+pub const JUEBI_NULL_VOID_DECAY_PER_TICK: f64 = 0.03;
+pub const JUEBI_NULL_SPIRIT_DECAY_PER_TICK: f64 = 0.01;
+pub const JUEBI_INTENSITY_BASE: f32 = 1.5;
+pub const JUEBI_WAVES_TOTAL: u32 = 3;
+const JUEBI_TERRAIN_BUDGET_PER_TICK: usize = 200;
+const JUEBI_FISSURE_COUNT: usize = 8;
+const JUEBI_FISSURE_RADIUS: i32 = 80;
+const JUEBI_CONE_COUNT: usize = 6;
+const JUEBI_CONE_MAX_RADIUS: i32 = 50;
+const JUEBI_UPHEAVAL_INNER_RADIUS: i32 = 50;
+const JUEBI_UPHEAVAL_OUTER_RADIUS: i32 = 120;
+const JUEBI_UPHEAVAL_DENSITY_PER_MILLE: u32 = 350;
 
 pub const DEFAULT_VOID_QUOTA_K: f64 = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
 pub const VOID_QUOTA_BASIS: &str = "world_qi_budget.current_total";
@@ -181,6 +206,157 @@ pub struct TribulationOmenCloudBlocks {
     blocks: Vec<TribulationOmenCloudBlock>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JueBiTriggerSource {
+    VoidQuotaExceeded,
+    VoidActionExplodeZone,
+    DuguReverse,
+    BaomaiDisperse,
+    WoliuVortexHeart,
+    ZhenfaDeceptionExposed,
+    KarmaThreshold,
+}
+
+impl JueBiTriggerSource {
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::VoidQuotaExceeded => "void_quota_exceeded",
+            Self::VoidActionExplodeZone => "void_action_explode_zone",
+            Self::DuguReverse => "dugu_reverse",
+            Self::BaomaiDisperse => "baomai_disperse",
+            Self::WoliuVortexHeart => "woliu_vortex_heart",
+            Self::ZhenfaDeceptionExposed => "zhenfa_deception_exposed",
+            Self::KarmaThreshold => "karma_threshold",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct JueBiTriggerEvent {
+    pub entity: Entity,
+    pub source: JueBiTriggerSource,
+    pub delay_ticks: u64,
+    pub triggered_at_tick: u64,
+    pub epicenter: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingJueBiTrigger {
+    entity: Entity,
+    source: JueBiTriggerSource,
+    trigger_at_tick: u64,
+    epicenter: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct PendingJueBiTriggers {
+    pending: Vec<PendingJueBiTrigger>,
+}
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct JueBiTriggeredEvent {
+    pub entity: Entity,
+    pub source: JueBiTriggerSource,
+    pub epicenter: [f64; 3],
+    pub waves_total: u32,
+    pub started_tick: u64,
+    pub intensity: f32,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct JueBiAfterDuXuQuota {
+    pub occupied_slots: u32,
+    pub quota_limit: u32,
+    pub total_world_qi: f64,
+    pub quota_k: f64,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct JueBiPressureCollapse {
+    pub epicenter: BlockPos,
+    pub phase_start_tick: u64,
+    pub distance: f64,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct JueBiLawDisruption {
+    pub epicenter: BlockPos,
+    pub distance: f64,
+    pub seed: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct JueBiNullField {
+    pub epicenter: BlockPos,
+    pub dimension: DimensionKind,
+    pub current_radius: f64,
+    pub expansion_rate: f64,
+    pub max_radius: f64,
+    pub started_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct JueBiNullFields {
+    fields: Vec<JueBiNullField>,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct JueBiNullified {
+    pub entered_tick: u64,
+    pub accumulated_null_time: f64,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct JueBiAftershockDebuff {
+    pub until_tick: u64,
+    pub rhythm_multiplier: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerrainModOp {
+    pos: BlockPos,
+    new_state: BlockState,
+    anim_order: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JueBiTerrainBlock {
+    pos: BlockPos,
+    original: BlockState,
+    restore_at_tick: u64,
+    scar_permanent: bool,
+}
+
+#[derive(Debug, Resource)]
+pub struct JueBiTerrainOverlay {
+    pending: VecDeque<TerrainModOp>,
+    placed: Vec<JueBiTerrainBlock>,
+    budget_per_tick: usize,
+}
+
+impl Default for JueBiTerrainOverlay {
+    fn default() -> Self {
+        Self {
+            pending: VecDeque::new(),
+            placed: Vec::new(),
+            budget_per_tick: JUEBI_TERRAIN_BUDGET_PER_TICK,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct JueBiZoneAftershock {
+    name: String,
+    original_qi: f64,
+    started_tick: u64,
+    restore_until_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct JueBiZoneAftershocks {
+    zones: Vec<JueBiZoneAftershock>,
+}
+
 fn tribulation_dimension_for_participant(
     current_dimension: Option<&CurrentDimension>,
 ) -> DimensionKind {
@@ -220,6 +396,7 @@ pub enum TribulationKind {
     DuXu,
     ZoneCollapse,
     Targeted,
+    JueBi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +429,18 @@ impl TribulationState {
     }
 
     pub fn lock_radius(&self, now_tick: u64) -> f64 {
+        if self.kind == TribulationKind::JueBi {
+            return match self.phase {
+                TribulationPhase::Omen => JUEBI_ZONE_RADIUS,
+                TribulationPhase::Wave(1) => JUEBI_HEAVY_RADIUS,
+                TribulationPhase::Wave(2) | TribulationPhase::Wave(3) => {
+                    JUEBI_NULL_FIELD_MAX_RADIUS
+                }
+                TribulationPhase::Settle => 0.0,
+                TribulationPhase::Lock | TribulationPhase::HeartDemon => JUEBI_HEAVY_RADIUS,
+                TribulationPhase::Wave(_) => JUEBI_HEAVY_RADIUS,
+            };
+        }
         match self.phase {
             TribulationPhase::Omen => {
                 if now_tick.saturating_sub(self.started_tick) >= DUXU_OMEN_TICKS / 2 {
@@ -418,8 +607,8 @@ pub fn start_tribulation_system(
     void_quota: Res<VoidQuotaConfig>,
     mut events: EventReader<InitiateXuhuaTribulation>,
     mut announce: EventWriter<TribulationAnnounce>,
-    mut settled: EventWriter<TribulationSettled>,
-    mut death_triggers: EventWriter<CultivationDeathTrigger>,
+    mut _settled: EventWriter<TribulationSettled>,
+    mut _death_triggers: EventWriter<CultivationDeathTrigger>,
     mut players: Query<(
         &Cultivation,
         &MeridianSystem,
@@ -492,50 +681,24 @@ pub fn start_tribulation_system(
                 }
             };
             let quota_check = check_void_quota(occupied_slots, &budget, &void_quota);
-            if quota_check.exceeded {
-                death_triggers.send(CultivationDeathTrigger {
-                    entity: ev.entity,
-                    cause: CultivationDeathCause::VoidQuotaExceeded,
-                    context: serde_json::json!({
-                        "reason": VOID_QUOTA_EXCEEDED_REASON,
-                        "waves_survived": 0,
-                        "total_world_qi": quota_check.total_world_qi,
-                        "quota_k": quota_check.quota_k,
-                    }),
-                });
-                settled.send(TribulationSettled {
-                    entity: ev.entity,
-                    result: DuXuResultV1 {
-                        char_id: lifecycle.character_id.clone(),
-                        outcome: DuXuOutcomeV1::Killed,
-                        killer: None,
-                        waves_survived: 0,
-                        reason: Some(VOID_QUOTA_EXCEEDED_REASON.to_string()),
-                    },
-                });
+            let juebi_after_quota = if quota_check.exceeded {
                 tracing::info!(
-                    "[bong][cultivation] {:?} void-quota tribulation rejected as terminal death (quota {}/{}, total_world_qi={}, quota_k={})",
+                    "[bong][cultivation] {:?} void-quota exceeded; DuXu may continue but settlement will trigger JueBi (quota {}/{}, total_world_qi={}, quota_k={})",
                     ev.entity,
                     quota_check.occupied_slots,
                     quota_check.quota_limit,
                     quota_check.total_world_qi,
                     quota_check.quota_k,
                 );
-                vfx_events.send(VfxEventRequest::new(
-                    p,
-                    VfxEventPayloadV1::SpawnParticle {
-                        event_id: "bong:tribulation_lightning".to_string(),
-                        origin: [p.x, p.y, p.z],
-                        direction: None,
-                        color: Some("#D0C8FF".to_string()),
-                        strength: Some(1.0),
-                        count: Some(3),
-                        duration_ticks: Some(14),
-                    },
-                ));
-                accepted_this_tick.insert(ev.entity);
-                continue;
-            }
+                Some(JueBiAfterDuXuQuota {
+                    occupied_slots: quota_check.occupied_slots,
+                    quota_limit: quota_check.quota_limit,
+                    total_world_qi: quota_check.total_world_qi,
+                    quota_k: quota_check.quota_k,
+                })
+            } else {
+                None
+            };
             let origin_dimension = tribulation_dimension_for_participant(current_dimension);
             let state = TribulationState {
                 kind: TribulationKind::DuXu,
@@ -567,9 +730,11 @@ pub fn start_tribulation_system(
                 continue;
             }
             reserved_occupied_slots = Some(occupied_slots.saturating_add(1));
-            commands
-                .entity(ev.entity)
-                .insert((state, TribulationOriginDimension(origin_dimension)));
+            let mut entity_commands = commands.entity(ev.entity);
+            entity_commands.insert((state, TribulationOriginDimension(origin_dimension)));
+            if let Some(marker) = juebi_after_quota {
+                entity_commands.insert(marker);
+            }
             announce.send(TribulationAnnounce {
                 entity: ev.entity,
                 char_id: lifecycle.character_id.clone(),
@@ -622,6 +787,10 @@ pub fn tribulation_phase_tick_system(
     mut cleared: EventWriter<TribulationWaveCleared>,
 ) {
     for (entity, mut state, heart_demon, pregen, lifecycle, username) in &mut query {
+        if state.kind == TribulationKind::JueBi {
+            tick_juebi_phase(&mut state, entity, clock.tick, &mut cleared);
+            continue;
+        }
         match state.phase {
             TribulationPhase::Omen
                 if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_OMEN_TICKS =>
@@ -675,6 +844,180 @@ pub fn tribulation_phase_tick_system(
             _ => {}
         }
     }
+}
+
+fn tick_juebi_phase(
+    state: &mut TribulationState,
+    entity: Entity,
+    tick: u64,
+    cleared: &mut EventWriter<TribulationWaveCleared>,
+) {
+    match state.phase {
+        TribulationPhase::Omen
+            if tick.saturating_sub(state.phase_started_tick) >= JUEBI_OMEN_TICKS =>
+        {
+            begin_juebi_phase(state, entity, 1, tick, cleared);
+        }
+        TribulationPhase::Wave(wave)
+            if wave < state.waves_total
+                && tick.saturating_sub(state.phase_started_tick) >= JUEBI_PHASE_TICKS =>
+        {
+            begin_juebi_phase(state, entity, wave.saturating_add(1), tick, cleared);
+        }
+        TribulationPhase::Wave(wave)
+            if wave >= state.waves_total
+                && tick.saturating_sub(state.phase_started_tick) >= JUEBI_PHASE_TICKS =>
+        {
+            state.phase = TribulationPhase::Settle;
+            state.phase_started_tick = tick;
+            state.next_wave_tick = tick;
+        }
+        _ => {}
+    }
+}
+
+fn begin_juebi_phase(
+    state: &mut TribulationState,
+    entity: Entity,
+    wave: u32,
+    tick: u64,
+    cleared: &mut EventWriter<TribulationWaveCleared>,
+) {
+    state.phase = TribulationPhase::Wave(wave);
+    state.wave_current = state.wave_current.max(wave.saturating_sub(1));
+    state.phase_started_tick = tick;
+    state.next_wave_tick = tick.saturating_add(JUEBI_PHASE_TICKS);
+    cleared.send(TribulationWaveCleared { entity, wave });
+}
+
+pub fn schedule_juebi_triggers_system(
+    mut events: EventReader<JueBiTriggerEvent>,
+    mut pending: ResMut<PendingJueBiTriggers>,
+) {
+    for event in events.read() {
+        pending.pending.push(PendingJueBiTrigger {
+            entity: event.entity,
+            source: event.source,
+            trigger_at_tick: event.triggered_at_tick.saturating_add(event.delay_ticks),
+            epicenter: event.epicenter,
+        });
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn start_due_juebi_triggers_system(
+    clock: Res<CombatClock>,
+    mut pending: ResMut<PendingJueBiTriggers>,
+    karma: Option<Res<KarmaWeightStore>>,
+    mut commands: Commands,
+    actors: Query<(
+        &Lifecycle,
+        Option<&Username>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&TribulationState>,
+    )>,
+    mut triggered: EventWriter<JueBiTriggeredEvent>,
+) {
+    let mut waiting = Vec::with_capacity(pending.pending.len());
+    for item in pending.pending.drain(..) {
+        if item.trigger_at_tick > clock.tick {
+            waiting.push(item);
+            continue;
+        }
+        let Ok((lifecycle, username, position, current_dimension, active)) =
+            actors.get(item.entity)
+        else {
+            continue;
+        };
+        if active.is_some() {
+            tracing::warn!(
+                "[bong][cultivation] JueBi trigger ignored for {:?}; active tribulation already exists",
+                item.entity,
+            );
+            continue;
+        }
+        let p = item.epicenter.unwrap_or_else(|| {
+            position
+                .map(|position| {
+                    let p = position.get();
+                    [p.x, p.y, p.z]
+                })
+                .unwrap_or([0.0, 64.0, 0.0])
+        });
+        let dimension = tribulation_dimension_for_participant(current_dimension);
+        let intensity = juebi_intensity_for_source(item.source, lifecycle, karma.as_deref());
+        let state = juebi_state(p, clock.tick, lifecycle.character_id.clone());
+        commands
+            .entity(item.entity)
+            .insert((state, TribulationOriginDimension(dimension)));
+        let _actor_name = username
+            .map(|username| username.0.clone())
+            .unwrap_or_else(|| lifecycle.character_id.clone());
+        triggered.send(JueBiTriggeredEvent {
+            entity: item.entity,
+            source: item.source,
+            epicenter: p,
+            waves_total: JUEBI_WAVES_TOTAL,
+            started_tick: clock.tick,
+            intensity,
+        });
+        tracing::info!(
+            "[bong][cultivation] {:?} started JueBi from {} intensity={}",
+            item.entity,
+            item.source.wire_name(),
+            intensity,
+        );
+    }
+    pending.pending = waiting;
+}
+
+fn juebi_state(
+    epicenter: [f64; 3],
+    started_tick: u64,
+    primary_participant: String,
+) -> TribulationState {
+    TribulationState {
+        kind: TribulationKind::JueBi,
+        phase: TribulationPhase::Omen,
+        epicenter,
+        wave_current: 0,
+        waves_total: JUEBI_WAVES_TOTAL,
+        started_tick,
+        phase_started_tick: started_tick,
+        next_wave_tick: started_tick.saturating_add(JUEBI_OMEN_TICKS),
+        participants: vec![primary_participant],
+        failed: false,
+    }
+}
+
+fn juebi_intensity_for_source(
+    source: JueBiTriggerSource,
+    lifecycle: &Lifecycle,
+    karma: Option<&KarmaWeightStore>,
+) -> f32 {
+    let source_bonus = match source {
+        JueBiTriggerSource::VoidQuotaExceeded => 0.15,
+        JueBiTriggerSource::VoidActionExplodeZone => 0.10,
+        JueBiTriggerSource::WoliuVortexHeart => 0.10,
+        JueBiTriggerSource::ZhenfaDeceptionExposed => 0.25,
+        JueBiTriggerSource::DuguReverse
+        | JueBiTriggerSource::BaomaiDisperse
+        | JueBiTriggerSource::KarmaThreshold => 0.0,
+    };
+    let karma_bonus = karma
+        .map(|karma| karma.weight_for_player(&lifecycle.character_id) * 0.35)
+        .unwrap_or(0.0);
+    (JUEBI_INTENSITY_BASE + source_bonus + karma_bonus).clamp(JUEBI_INTENSITY_BASE, 2.0)
+}
+
+fn juebi_intensity_for_quota_marker(marker: &JueBiAfterDuXuQuota) -> f32 {
+    let pressure = if marker.quota_limit == 0 {
+        0.35
+    } else {
+        marker.occupied_slots.saturating_sub(marker.quota_limit) as f32 * 0.10
+    };
+    (JUEBI_INTENSITY_BASE + 0.15 + pressure).clamp(JUEBI_INTENSITY_BASE, 2.0)
 }
 
 fn next_tribulation_wave(state: &TribulationState, heart_demon_resolved: bool) -> u32 {
@@ -849,9 +1192,711 @@ pub fn tribulation_aoe_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
+pub fn juebi_phase_effect_system(
+    clock: Res<CombatClock>,
+    mut commands: Commands,
+    mut null_fields: ResMut<JueBiNullFields>,
+    tribulations: Query<(
+        &TribulationState,
+        Option<&CurrentDimension>,
+        Option<&TribulationOriginDimension>,
+    )>,
+    mut targets: Query<(
+        Entity,
+        &Position,
+        Option<&CurrentDimension>,
+        &mut Cultivation,
+        Option<&mut Wounds>,
+        Option<&Lifecycle>,
+    )>,
+    marked_targets: Query<
+        Entity,
+        Or<(
+            With<JueBiPressureCollapse>,
+            With<JueBiLawDisruption>,
+            With<JueBiNullified>,
+        )>,
+    >,
+    mut deaths: EventWriter<DeathEvent>,
+) {
+    null_fields.fields.clear();
+    for entity in &marked_targets {
+        commands
+            .entity(entity)
+            .remove::<(JueBiPressureCollapse, JueBiLawDisruption, JueBiNullified)>();
+    }
+
+    for (state, current_dimension, origin_dimension) in &tribulations {
+        if state.kind != TribulationKind::JueBi {
+            continue;
+        }
+        let TribulationPhase::Wave(wave) = state.phase else {
+            continue;
+        };
+        let dimension = active_tribulation_dimension(origin_dimension, current_dimension);
+        let epicenter_vec =
+            valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
+        let epicenter_block = block_pos_from_epicenter(state.epicenter);
+        if wave == 3 {
+            let elapsed = clock.tick.saturating_sub(state.phase_started_tick);
+            null_fields.fields.push(JueBiNullField {
+                epicenter: epicenter_block,
+                dimension,
+                current_radius: juebi_null_radius(elapsed),
+                expansion_rate: JUEBI_NULL_FIELD_MAX_RADIUS / JUEBI_PHASE_TICKS as f64,
+                max_radius: JUEBI_NULL_FIELD_MAX_RADIUS,
+                started_tick: state.phase_started_tick,
+            });
+        }
+
+        for (entity, position, target_dimension, mut cultivation, wounds, lifecycle) in &mut targets
+        {
+            if tribulation_dimension_for_participant(target_dimension) != dimension {
+                continue;
+            }
+            let distance = position.get().distance(epicenter_vec);
+            if distance > JUEBI_ZONE_RADIUS {
+                continue;
+            }
+            if clock.tick == state.phase_started_tick {
+                apply_juebi_phase_damage(
+                    entity,
+                    wave,
+                    distance,
+                    &cultivation,
+                    wounds,
+                    lifecycle,
+                    state,
+                    clock.tick,
+                    &mut deaths,
+                );
+            }
+            match wave {
+                1 => {
+                    let factor = juebi_near_factor(distance);
+                    if factor <= 0.0 {
+                        continue;
+                    }
+                    commands.entity(entity).insert(JueBiPressureCollapse {
+                        epicenter: epicenter_block,
+                        phase_start_tick: state.phase_started_tick,
+                        distance,
+                    });
+                    let before = cultivation.qi_current;
+                    cultivation.qi_current = (cultivation.qi_current
+                        * (1.0 - JUEBI_PRESSURE_DRAIN_PER_TICK * factor))
+                        .max(0.0);
+                    if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
+                        deaths.send(DeathEvent {
+                            target: entity,
+                            cause: "绝壁劫·灵压坍缩".to_string(),
+                            attacker: None,
+                            attacker_player_id: None,
+                            at_tick: clock.tick,
+                        });
+                    }
+                }
+                2 => {
+                    let factor = juebi_near_factor(distance);
+                    if factor <= 0.0 {
+                        continue;
+                    }
+                    commands.entity(entity).insert(JueBiLawDisruption {
+                        epicenter: epicenter_block,
+                        distance,
+                        seed: juebi_hash3(
+                            state.started_tick,
+                            entity.index() as u64,
+                            distance.round().max(0.0) as u64,
+                        ),
+                    });
+                }
+                3 => {
+                    let radius =
+                        juebi_null_radius(clock.tick.saturating_sub(state.phase_started_tick));
+                    if distance > radius {
+                        continue;
+                    }
+                    commands.entity(entity).insert(JueBiNullified {
+                        entered_tick: clock.tick,
+                        accumulated_null_time: clock.tick.saturating_sub(state.phase_started_tick)
+                            as f64,
+                    });
+                    let decay = juebi_null_decay_for_realm(cultivation.realm);
+                    if decay <= 0.0 {
+                        continue;
+                    }
+                    let before = cultivation.qi_current;
+                    cultivation.qi_current = (cultivation.qi_current * (1.0 - decay)).max(0.0);
+                    if cultivation.realm == Realm::Void
+                        && before > 0.0
+                        && cultivation.qi_current <= f64::EPSILON
+                    {
+                        deaths.send(DeathEvent {
+                            target: entity,
+                            cause: "绝壁劫·凡躯崩解".to_string(),
+                            attacker: None,
+                            attacker_player_id: None,
+                            at_tick: clock.tick,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_juebi_phase_damage(
+    entity: Entity,
+    wave: u32,
+    distance: f64,
+    cultivation: &Cultivation,
+    wounds: Option<valence::prelude::Mut<'_, Wounds>>,
+    lifecycle: Option<&Lifecycle>,
+    state: &TribulationState,
+    tick: u64,
+    deaths: &mut EventWriter<DeathEvent>,
+) {
+    let Some(mut wounds) = wounds else {
+        return;
+    };
+    let damage = juebi_phase_damage(wave, distance, cultivation.realm);
+    if damage <= 0.0 {
+        return;
+    }
+    let was_alive = wounds.health_current > 0.0;
+    wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+    wounds.entries.push(Wound {
+        location: BodyPart::Chest,
+        kind: WoundKind::Concussion,
+        severity: damage,
+        bleeding_per_sec: 0.0,
+        created_at_tick: tick,
+        inflicted_by: Some("jue_bi_tribulation".to_string()),
+    });
+    if !was_alive || wounds.health_current > 0.0 {
+        return;
+    }
+    let is_primary = lifecycle
+        .map(|lifecycle| state.is_primary_tribulator(&lifecycle.character_id))
+        .unwrap_or(false);
+    deaths.send(DeathEvent {
+        target: entity,
+        cause: if is_primary {
+            "绝壁劫·殁".to_string()
+        } else {
+            "绝壁劫波及而亡".to_string()
+        },
+        attacker: None,
+        attacker_player_id: None,
+        at_tick: tick,
+    });
+}
+
+fn juebi_phase_damage(wave: u32, distance: f64, realm: Realm) -> f32 {
+    let realm_factor = match realm {
+        Realm::Void => 1.0,
+        Realm::Spirit => 0.65,
+        Realm::Solidify | Realm::Condense => 0.18,
+        Realm::Induce | Realm::Awaken => 0.08,
+    };
+    let distance_factor = if distance <= JUEBI_CORE_RADIUS {
+        1.5
+    } else if distance <= JUEBI_HEAVY_RADIUS {
+        1.0
+    } else if distance <= JUEBI_ZONE_RADIUS {
+        0.5
+    } else {
+        0.0
+    };
+    (DUXU_AOE_DAMAGE_BASE * wave as f32 * JUEBI_INTENSITY_BASE * realm_factor * distance_factor)
+        .max(0.0)
+}
+
+fn juebi_near_factor(distance: f64) -> f64 {
+    if !distance.is_finite() || distance < 0.0 {
+        return 0.0;
+    }
+    if distance <= JUEBI_CORE_RADIUS {
+        1.0
+    } else if distance <= JUEBI_HEAVY_RADIUS {
+        1.0 - (distance - JUEBI_CORE_RADIUS) / (JUEBI_HEAVY_RADIUS - JUEBI_CORE_RADIUS)
+    } else {
+        0.0
+    }
+}
+
+fn juebi_null_radius(elapsed_ticks: u64) -> f64 {
+    let progress = (elapsed_ticks as f64 / JUEBI_PHASE_TICKS as f64).clamp(0.0, 1.0);
+    JUEBI_NULL_FIELD_MAX_RADIUS * progress
+}
+
+fn juebi_null_decay_for_realm(realm: Realm) -> f64 {
+    match realm {
+        Realm::Void => JUEBI_NULL_VOID_DECAY_PER_TICK,
+        Realm::Spirit => JUEBI_NULL_SPIRIT_DECAY_PER_TICK,
+        Realm::Awaken | Realm::Induce | Realm::Condense | Realm::Solidify => 0.0,
+    }
+}
+
+pub fn juebi_zone_aftershock_system(
+    clock: Res<CombatClock>,
+    mut triggered: EventReader<JueBiTriggeredEvent>,
+    mut aftershocks: ResMut<JueBiZoneAftershocks>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+) {
+    let Some(zones) = zones.as_deref_mut() else {
+        triggered.clear();
+        return;
+    };
+
+    for event in triggered.read() {
+        let p =
+            valence::math::DVec3::new(event.epicenter[0], event.epicenter[1], event.epicenter[2]);
+        for zone in &mut zones.zones {
+            if zone.dimension != DimensionKind::Overworld || !zone.contains(p) {
+                continue;
+            }
+            if !aftershocks
+                .zones
+                .iter()
+                .any(|aftershock| aftershock.name == zone.name)
+            {
+                aftershocks.zones.push(JueBiZoneAftershock {
+                    name: zone.name.clone(),
+                    original_qi: zone.spirit_qi,
+                    started_tick: clock.tick,
+                    restore_until_tick: clock.tick.saturating_add(5 * 60 * 20),
+                });
+            }
+            zone.spirit_qi = 0.0;
+            if !zone
+                .active_events
+                .iter()
+                .any(|event| event == "jue_bi_scar")
+            {
+                zone.active_events.push("jue_bi_scar".to_string());
+            }
+        }
+    }
+
+    aftershocks.zones.retain(|aftershock| {
+        let Some(zone) = zones
+            .zones
+            .iter_mut()
+            .find(|zone| zone.name == aftershock.name)
+        else {
+            return false;
+        };
+        if clock.tick >= aftershock.restore_until_tick {
+            zone.spirit_qi = (aftershock.original_qi * 0.5).clamp(-1.0, 1.0);
+            return false;
+        }
+        let span = aftershock
+            .restore_until_tick
+            .saturating_sub(aftershock.started_tick)
+            .max(1);
+        let elapsed = clock.tick.saturating_sub(aftershock.started_tick);
+        let ratio = (elapsed as f64 / span as f64).clamp(0.0, 1.0);
+        zone.spirit_qi = (aftershock.original_qi * 0.5 * ratio).clamp(-1.0, 1.0);
+        true
+    });
+}
+
+pub fn juebi_terrain_seed_system(
+    mut triggered: EventReader<JueBiTriggeredEvent>,
+    mut overlay: ResMut<JueBiTerrainOverlay>,
+) {
+    for event in triggered.read() {
+        enqueue_juebi_terrain_ops(&mut overlay.pending, event.epicenter, event.started_tick);
+    }
+}
+
+pub fn juebi_terrain_tick_system(
+    clock: Res<CombatClock>,
+    mut overlay: ResMut<JueBiTerrainOverlay>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+) {
+    let Ok(mut layer) = layers.get_single_mut() else {
+        return;
+    };
+
+    let mut remaining = Vec::with_capacity(overlay.placed.len());
+    for block in overlay.placed.drain(..) {
+        if block.scar_permanent || clock.tick < block.restore_at_tick {
+            remaining.push(block);
+        } else {
+            layer.set_block(block.pos, block.original);
+        }
+    }
+    overlay.placed = remaining;
+
+    for _ in 0..overlay.budget_per_tick {
+        let Some(op) = overlay.pending.pop_front() else {
+            break;
+        };
+        let original = layer
+            .block(op.pos)
+            .map(|block| block.state)
+            .unwrap_or(BlockState::AIR);
+        overlay.placed.push(JueBiTerrainBlock {
+            pos: op.pos,
+            original,
+            restore_at_tick: clock.tick.saturating_add(5 * 60 * 20),
+            scar_permanent: false,
+        });
+        layer.set_block(op.pos, op.new_state);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
+pub fn juebi_settlement_system(
+    settings: Res<PersistenceSettings>,
+    clock: Res<CombatClock>,
+    mut commands: Commands,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
+    mut settled: EventWriter<TribulationSettled>,
+    mut quota_occupied: EventWriter<AscensionQuotaOccupied>,
+    mut players: Query<(
+        Entity,
+        &mut Cultivation,
+        &Lifecycle,
+        Option<&mut LifespanComponent>,
+        Option<&mut LifeRecord>,
+        &TribulationState,
+        Option<&JueBiAfterDuXuQuota>,
+    )>,
+) {
+    for (entity, mut cultivation, lifecycle, lifespan, life_record, state, quota_marker) in
+        &mut players
+    {
+        if state.kind != TribulationKind::JueBi || !matches!(state.phase, TribulationPhase::Settle)
+        {
+            continue;
+        }
+        let survived = cultivation.qi_current > f64::EPSILON;
+        if let Some(mut life_record) = life_record {
+            life_record.push(if survived {
+                BiographyEntry::JueBiSurvived {
+                    source: quota_marker
+                        .map(|_| JueBiTriggerSource::VoidQuotaExceeded.wire_name())
+                        .unwrap_or("extreme_operation")
+                        .to_string(),
+                    tick: clock.tick,
+                }
+            } else {
+                BiographyEntry::JueBiKilled {
+                    source: quota_marker
+                        .map(|_| JueBiTriggerSource::VoidQuotaExceeded.wire_name())
+                        .unwrap_or("extreme_operation")
+                        .to_string(),
+                    tick: clock.tick,
+                }
+            });
+        }
+
+        if survived && quota_marker.is_some() && cultivation.realm == Realm::Spirit {
+            let quota = match complete_tribulation_ascension(
+                &settings,
+                lifecycle.character_id.as_str(),
+            ) {
+                Ok(quota) => quota,
+                Err(error) => {
+                    tracing::error!(
+                        "[bong][cultivation] failed to finalize void-quota JueBi ascension for {:?}: {error}",
+                        entity,
+                    );
+                    continue;
+                }
+            };
+            quota_occupied.send(AscensionQuotaOccupied {
+                occupied_slots: quota.occupied_slots,
+            });
+            cultivation.realm = Realm::Void;
+            cultivation.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+            if let Some(mut lifespan) = lifespan {
+                lifespan.apply_cap(LifespanCapTable::VOID);
+            }
+            let new_cap = skill_cap_for_realm(Realm::Void);
+            for skill in SkillId::ALL {
+                skill_cap_events.send(SkillCapChanged {
+                    char_entity: entity,
+                    skill,
+                    new_cap,
+                });
+            }
+        }
+        if !survived && quota_marker.is_some() {
+            if let Err(error) =
+                delete_active_tribulation(&settings, lifecycle.character_id.as_str())
+            {
+                tracing::warn!(
+                    "[bong][cultivation] failed to delete over-quota JueBi death for {:?}: {error}",
+                    entity,
+                );
+            }
+        }
+
+        settled.send(TribulationSettled {
+            entity,
+            result: DuXuResultV1 {
+                char_id: lifecycle.character_id.clone(),
+                outcome: if survived {
+                    DuXuOutcomeV1::Ascended
+                } else {
+                    DuXuOutcomeV1::Killed
+                },
+                killer: None,
+                waves_survived: state.waves_total,
+                reason: quota_marker.map(|_| VOID_QUOTA_EXCEEDED_REASON.to_string()),
+            },
+        });
+        if survived {
+            commands.entity(entity).insert(JueBiAftershockDebuff {
+                until_tick: clock.tick.saturating_add(JUEBI_AFTERSHOCK_TICKS),
+                rhythm_multiplier: 0.5,
+            });
+        }
+        commands.entity(entity).remove::<(
+            TribulationState,
+            TribulationOriginDimension,
+            HeartDemonResolution,
+            PendingHeartDemonOffer,
+            JueBiAfterDuXuQuota,
+            JueBiPressureCollapse,
+            JueBiLawDisruption,
+            JueBiNullified,
+        )>();
+    }
+}
+
+fn enqueue_juebi_terrain_ops(pending: &mut VecDeque<TerrainModOp>, epicenter: [f64; 3], seed: u64) {
+    let origin = block_pos_from_epicenter(epicenter);
+    let mut ops = Vec::new();
+    generate_radial_fissures(&mut ops, origin, seed);
+    generate_eruption_cones(&mut ops, origin, seed.rotate_left(17));
+    generate_surface_upheaval(&mut ops, origin, seed.rotate_left(31));
+    ops.sort_by_key(|op| op.anim_order);
+    pending.extend(ops);
+}
+
+fn generate_radial_fissures(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: u64) {
+    for crack in 0..JUEBI_FISSURE_COUNT {
+        let base_angle = std::f64::consts::TAU * crack as f64 / JUEBI_FISSURE_COUNT as f64;
+        let jitter = (hash_unit(seed, crack as u64) - 0.5) * 0.6;
+        let mut angle = base_angle + jitter;
+        let mut x = origin.x as f64;
+        let mut z = origin.z as f64;
+        let length = (JUEBI_FISSURE_RADIUS as f64
+            * (0.6 + hash_unit(seed ^ 0xA11CE, crack as u64) * 0.4)) as i32;
+        for step in 0..length {
+            x += angle.cos();
+            z += angle.sin();
+            angle += (hash_unit(seed ^ step as u64, crack as u64) - 0.5) * 0.52;
+            let ratio = step as f64 / length.max(1) as f64;
+            let depth = crack_depth(ratio, seed, crack as u64, step as u64);
+            let width = crack_width(ratio);
+            let perp_sin = angle.sin();
+            let perp_cos = angle.cos();
+            for dw in -(width / 2)..=(width / 2) {
+                let wx = (x + dw as f64 * perp_sin).round() as i32;
+                let wz = (z - dw as f64 * perp_cos).round() as i32;
+                let surface_y = origin.y;
+                for dy in 0..depth {
+                    let pos = BlockPos::new(wx, (surface_y - dy).clamp(-64, 319), wz);
+                    let new_state = if dy >= depth - 1 {
+                        BlockState::MAGMA_BLOCK
+                    } else if dy >= depth.saturating_sub(3) {
+                        BlockState::DEEPSLATE
+                    } else {
+                        BlockState::AIR
+                    };
+                    ops.push(TerrainModOp {
+                        pos,
+                        new_state,
+                        anim_order: step as u32,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn generate_eruption_cones(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: u64) {
+    for cone in 0..JUEBI_CONE_COUNT {
+        let theta = hash_unit(seed, cone as u64) * std::f64::consts::TAU;
+        let radius = 8.0
+            + (1.0 - hash_unit(seed ^ 0xC0E, cone as u64).sqrt())
+                * (JUEBI_CONE_MAX_RADIUS as f64 - 8.0);
+        let cx = origin.x + (radius * theta.cos()).round() as i32;
+        let cz = origin.z + (radius * theta.sin()).round() as i32;
+        let dist_ratio = (radius / JUEBI_CONE_MAX_RADIUS as f64).clamp(0.0, 1.0);
+        let height = (100.0 - 50.0 * dist_ratio
+            + (hash_unit(seed ^ 0x51A7, cone as u64) - 0.5) * 16.0)
+            .round()
+            .clamp(50.0, 100.0) as i32;
+        let base_radius = (18.0 - 8.0 * dist_ratio
+            + (hash_unit(seed ^ 0xB45E, cone as u64) - 0.5) * 4.0)
+            .round()
+            .clamp(10.0, 18.0) as i32;
+        for dy in 0..height {
+            let layer_ratio = dy as f64 / height.max(1) as f64;
+            let layer_radius = base_radius as f64 * (1.0 - layer_ratio * 0.93);
+            let r_ceil = layer_radius.ceil() as i32 + 1;
+            for dx in -r_ceil..=r_ceil {
+                for dz in -r_ceil..=r_ceil {
+                    let dist = ((dx * dx + dz * dz) as f64).sqrt();
+                    let noise = (hash_unit(seed ^ dy as u64, (dx as i64 as u64) ^ dz as u64) - 0.5)
+                        * layer_radius
+                        * 0.35;
+                    if dist > layer_radius + noise {
+                        continue;
+                    }
+                    ops.push(TerrainModOp {
+                        pos: BlockPos::new(cx + dx, (origin.y + dy).clamp(-64, 319), cz + dz),
+                        new_state: cone_block(dy, height, dist, layer_radius, seed),
+                        anim_order: 220 + dy as u32,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn generate_surface_upheaval(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: u64) {
+    for x in (origin.x - JUEBI_UPHEAVAL_OUTER_RADIUS)..=(origin.x + JUEBI_UPHEAVAL_OUTER_RADIUS) {
+        for z in (origin.z - JUEBI_UPHEAVAL_OUTER_RADIUS)..=(origin.z + JUEBI_UPHEAVAL_OUTER_RADIUS)
+        {
+            let dx = (x - origin.x) as f64;
+            let dz = (z - origin.z) as f64;
+            let dist = (dx * dx + dz * dz).sqrt();
+            if dist < JUEBI_UPHEAVAL_INNER_RADIUS as f64
+                || dist > JUEBI_UPHEAVAL_OUTER_RADIUS as f64
+            {
+                continue;
+            }
+            if (juebi_hash3(seed, x as i64 as u64, z as i64 as u64) % 1000)
+                > JUEBI_UPHEAVAL_DENSITY_PER_MILLE as u64
+            {
+                continue;
+            }
+            let ratio = (dist - JUEBI_UPHEAVAL_INNER_RADIUS as f64)
+                / (JUEBI_UPHEAVAL_OUTER_RADIUS - JUEBI_UPHEAVAL_INNER_RADIUS) as f64;
+            let max_shift = 5.0 - ratio * 4.0;
+            let signed = hash_unit(seed ^ 0xD15C, (x as i64 as u64) ^ z as u64) * 2.0 - 1.0;
+            let shift = (signed * max_shift).round() as i32;
+            if shift == 0 {
+                continue;
+            }
+            if shift > 0 {
+                for dy in 1..=shift {
+                    ops.push(TerrainModOp {
+                        pos: BlockPos::new(x, (origin.y + dy).clamp(-64, 319), z),
+                        new_state: BlockState::DEEPSLATE,
+                        anim_order: 560 + dist.round() as u32,
+                    });
+                }
+            } else {
+                for dy in 0..shift.unsigned_abs() as i32 {
+                    ops.push(TerrainModOp {
+                        pos: BlockPos::new(x, (origin.y - dy).clamp(-64, 319), z),
+                        new_state: BlockState::AIR,
+                        anim_order: 560 + dist.round() as u32,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn crack_depth(ratio: f64, seed: u64, crack: u64, step: u64) -> i32 {
+    let jitter = (hash_unit(seed ^ crack, step) * 5.0).round() as i32;
+    match ratio {
+        r if r < 0.2 => 40 + jitter.clamp(0, 10),
+        r if r < 0.5 => 20 + jitter.clamp(0, 20),
+        r if r < 0.8 => 8 + jitter.clamp(0, 12),
+        _ => 2 + jitter.clamp(0, 6),
+    }
+}
+
+fn crack_width(ratio: f64) -> i32 {
+    match ratio {
+        r if r < 0.2 => 5,
+        r if r < 0.5 => 3,
+        r if r < 0.8 => 2,
+        _ => 1,
+    }
+}
+
+fn cone_block(
+    dy: i32,
+    total_height: i32,
+    dist_from_axis: f64,
+    layer_radius: f64,
+    seed: u64,
+) -> BlockState {
+    let height_ratio = dy as f64 / total_height.max(1) as f64;
+    let edge_ratio = dist_from_axis / layer_radius.max(1.0);
+    let shell = edge_ratio > 0.75;
+    if height_ratio < 0.25 {
+        if shell {
+            BlockState::COBBLED_DEEPSLATE
+        } else {
+            BlockState::DEEPSLATE
+        }
+    } else if height_ratio < 0.65 {
+        if hash_unit(seed ^ dy as u64, dist_from_axis.round() as u64) < 0.12 {
+            BlockState::CRYING_OBSIDIAN
+        } else if shell {
+            BlockState::POLISHED_BASALT
+        } else {
+            BlockState::BASALT
+        }
+    } else if height_ratio < 0.90 {
+        if hash_unit(seed ^ 0xB1A, dy as u64) < 0.20 {
+            BlockState::CRYING_OBSIDIAN
+        } else {
+            BlockState::BLACKSTONE
+        }
+    } else {
+        BlockState::OBSIDIAN
+    }
+}
+
+fn block_pos_from_epicenter(epicenter: [f64; 3]) -> BlockPos {
+    BlockPos::new(
+        epicenter[0].round() as i32,
+        (epicenter[1].round() as i32).clamp(-64, 319),
+        epicenter[2].round() as i32,
+    )
+}
+
+fn hash_unit(seed: u64, salt: u64) -> f64 {
+    (juebi_hash3(seed, salt, 0) as f64) / (u64::MAX as f64)
+}
+
+fn juebi_hash3(a: u64, b: u64, c: u64) -> u64 {
+    let mut x = a ^ 0x9E37_79B9_7F4A_7C15;
+    x ^= b.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = x.rotate_left(27);
+    x ^= c.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn emit_tribulation_boundary_vfx_system(
     clock: Res<CombatClock>,
     mut announce: EventReader<TribulationAnnounce>,
+    mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut omen_soft_emitted: valence::prelude::Local<HashSet<Entity>>,
@@ -885,6 +1930,24 @@ pub fn emit_tribulation_boundary_vfx_system(
             200,
         );
     }
+    for ev in juebi_triggered.read() {
+        emit_juebi_vfx(
+            &mut vfx_events,
+            ev.epicenter,
+            JUEBI_BOUNDARY_VFX_EVENT_ID,
+            JUEBI_ZONE_RADIUS,
+            220,
+            ev.intensity,
+        );
+        emit_juebi_vfx(
+            &mut vfx_events,
+            ev.epicenter,
+            JUEBI_FISSURE_VFX_EVENT_ID,
+            JUEBI_HEAVY_RADIUS,
+            240,
+            ev.intensity,
+        );
+    }
     for ev in locked.read() {
         emit_tribulation_boundary_vfx(&mut vfx_events, ev.epicenter, DUXU_LOCK_RADIUS_HARD, 160);
     }
@@ -892,12 +1955,28 @@ pub fn emit_tribulation_boundary_vfx_system(
         let Ok((_, state)) = states.get(ev.entity) else {
             continue;
         };
-        emit_tribulation_boundary_vfx(
-            &mut vfx_events,
-            state.epicenter,
-            DUXU_LOCK_RADIUS_FINAL,
-            100,
-        );
+        if state.kind == TribulationKind::JueBi {
+            let event_id = match ev.wave {
+                1 => JUEBI_FISSURE_VFX_EVENT_ID,
+                2 => JUEBI_BOUNDARY_VFX_EVENT_ID,
+                _ => JUEBI_ERUPTION_VFX_EVENT_ID,
+            };
+            emit_juebi_vfx(
+                &mut vfx_events,
+                state.epicenter,
+                event_id,
+                state.lock_radius(clock.tick),
+                180,
+                JUEBI_INTENSITY_BASE,
+            );
+        } else {
+            emit_tribulation_boundary_vfx(
+                &mut vfx_events,
+                state.epicenter,
+                DUXU_LOCK_RADIUS_FINAL,
+                100,
+            );
+        }
     }
 }
 
@@ -937,6 +2016,29 @@ fn emit_tribulation_omen_cloud_vfx(
             strength: Some(0.85),
             count: Some(36),
             duration_ticks: Some(200),
+        },
+    ));
+}
+
+fn emit_juebi_vfx(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    epicenter: [f64; 3],
+    event_id: &str,
+    radius: f64,
+    duration_ticks: u16,
+    intensity: f32,
+) {
+    let origin = valence::math::DVec3::new(epicenter[0], epicenter[1], epicenter[2]);
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: event_id.to_string(),
+            origin: epicenter,
+            direction: Some([radius, 0.0, radius]),
+            color: Some("#140D18".to_string()),
+            strength: Some((intensity / JUEBI_INTENSITY_BASE).clamp(0.5, 1.6)),
+            count: Some(48),
+            duration_ticks: Some(duration_ticks),
         },
     ));
 }
@@ -1231,7 +2333,7 @@ pub fn record_tribulation_interceptor_system(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn tribulation_wave_system(
     settings: Res<PersistenceSettings>,
     mut cleared: EventReader<TribulationWaveCleared>,
@@ -1241,19 +2343,44 @@ pub fn tribulation_wave_system(
         &MeridianSystem,
         &Lifecycle,
         Option<&mut LifespanComponent>,
+        Option<&JueBiAfterDuXuQuota>,
     )>,
     mut commands: Commands,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut settled: EventWriter<TribulationSettled>,
     mut quota_occupied: EventWriter<AscensionQuotaOccupied>,
+    mut juebi_triggered: EventWriter<JueBiTriggeredEvent>,
 ) {
     for ev in cleared.read() {
-        if let Ok((mut c, mut state, _, lifecycle, lifespan)) = players.get_mut(ev.entity) {
+        if let Ok((mut c, mut state, _, lifecycle, lifespan, juebi_after_quota)) =
+            players.get_mut(ev.entity)
+        {
             if state.failed {
                 continue;
             }
             state.wave_current = state.wave_current.max(ev.wave);
+            if state.kind == TribulationKind::JueBi {
+                continue;
+            }
             if state.wave_current >= state.waves_total {
+                if let Some(quota_marker) = juebi_after_quota {
+                    let epicenter = state.epicenter;
+                    let started_tick = state.phase_started_tick;
+                    *state = juebi_state(epicenter, started_tick, lifecycle.character_id.clone());
+                    juebi_triggered.send(JueBiTriggeredEvent {
+                        entity: ev.entity,
+                        source: JueBiTriggerSource::VoidQuotaExceeded,
+                        epicenter,
+                        waves_total: JUEBI_WAVES_TOTAL,
+                        started_tick,
+                        intensity: juebi_intensity_for_quota_marker(quota_marker),
+                    });
+                    tracing::info!(
+                        "[bong][cultivation] {:?} cleared over-quota DuXu; JueBi sequence appended",
+                        ev.entity,
+                    );
+                    continue;
+                }
                 // 渡劫成功。先落库占用名额，再修改 ECS；否则 SQLite 失败会制造未持久化的化虚者。
                 let quota = match complete_tribulation_ascension(
                     &settings,
@@ -1734,6 +2861,7 @@ pub fn tribulation_intercept_death_system(
 pub fn publish_tribulation_events(
     redis: Res<RedisBridgeResource>,
     mut announce: EventReader<TribulationAnnounce>,
+    mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
@@ -1746,6 +2874,32 @@ pub fn publish_tribulation_events(
             TribulationPhaseV1::Omen,
             Some(ev.char_id.clone()),
             Some(ev.actor_name.clone()),
+            Some(ev.epicenter),
+            Some(0),
+            Some(ev.waves_total),
+            None,
+        );
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+    for ev in juebi_triggered.read() {
+        let (char_id, actor_name) = actors
+            .get(ev.entity)
+            .ok()
+            .map(|(lifecycle, username)| {
+                let char_id = lifecycle.map(|lifecycle| lifecycle.character_id.clone());
+                let actor_name = username
+                    .map(|name| name.0.clone())
+                    .or_else(|| char_id.clone());
+                (char_id, actor_name)
+            })
+            .unwrap_or((None, None));
+        let payload = TribulationEventV1::jue_bi(
+            TribulationPhaseV1::Omen,
+            char_id,
+            actor_name,
+            Some(ev.source.wire_name().to_string()),
             Some(ev.epicenter),
             Some(0),
             Some(ev.waves_total),
@@ -1784,15 +2938,27 @@ pub fn publish_tribulation_events(
         } else {
             TribulationPhaseV1::Wave { wave: ev.wave }
         };
-        let payload = TribulationEventV1::du_xu(
-            phase,
-            char_id,
-            actor_name,
-            Some(state.epicenter),
-            Some(ev.wave),
-            Some(state.waves_total),
-            None,
-        );
+        let payload = match state.kind {
+            TribulationKind::JueBi => TribulationEventV1::jue_bi(
+                phase,
+                char_id,
+                actor_name,
+                None,
+                Some(state.epicenter),
+                Some(ev.wave),
+                Some(state.waves_total),
+                None,
+            ),
+            _ => TribulationEventV1::du_xu(
+                phase,
+                char_id,
+                actor_name,
+                Some(state.epicenter),
+                Some(ev.wave),
+                Some(state.waves_total),
+                None,
+            ),
+        };
         let _ = redis
             .tx_outbound
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
@@ -2359,19 +3525,20 @@ mod tests {
             .get::<TribulationState>(first)
             .expect("first tribulation should start");
         assert_eq!(first_state.kind, TribulationKind::DuXu);
+        let second_state = app
+            .world()
+            .get::<TribulationState>(second)
+            .expect("second over-quota DuXu should start before appending JueBi");
+        assert_eq!(second_state.kind, TribulationKind::DuXu);
         assert!(
-            app.world().get::<TribulationState>(second).is_none(),
-            "second over-quota tribulation should not enter the regular wave loop"
+            app.world().get::<JueBiAfterDuXuQuota>(second).is_some(),
+            "second over-quota DuXu should carry a JueBi follow-up marker"
         );
         let settled = app.world().resource::<Events<TribulationSettled>>();
         let settled_events: Vec<_> = settled.get_reader().read(settled).cloned().collect();
-        assert_eq!(settled_events.len(), 1);
-        assert_eq!(settled_events[0].entity, second);
-        assert_eq!(settled_events[0].result.outcome, DuXuOutcomeV1::Killed);
-        assert_eq!(settled_events[0].result.waves_survived, 0);
-        assert_eq!(
-            settled_events[0].result.reason.as_deref(),
-            Some(VOID_QUOTA_EXCEEDED_REASON)
+        assert!(
+            settled_events.is_empty(),
+            "over-quota DuXu should no longer settle as instant quota death"
         );
         let death_triggers = app.world().resource::<Events<CultivationDeathTrigger>>();
         let deaths: Vec<_> = death_triggers
@@ -2379,9 +3546,10 @@ mod tests {
             .read(death_triggers)
             .cloned()
             .collect();
-        assert_eq!(deaths.len(), 1);
-        assert_eq!(deaths[0].entity, second);
-        assert_eq!(deaths[0].cause, CultivationDeathCause::VoidQuotaExceeded);
+        assert!(
+            deaths.is_empty(),
+            "over-quota DuXu should no longer emit instant quota death"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2454,17 +3622,18 @@ mod tests {
         app.update();
 
         assert!(
-            app.world().get::<TribulationState>(second).is_none(),
-            "later tick starter should see the in-flight reservation"
+            app.world().get::<TribulationState>(second).is_some(),
+            "later tick over-quota starter should enter DuXu and append JueBi at settlement"
+        );
+        assert!(
+            app.world().get::<JueBiAfterDuXuQuota>(second).is_some(),
+            "later tick over-quota starter should carry a JueBi follow-up marker"
         );
         let settled = app.world().resource::<Events<TribulationSettled>>();
         let settled_events: Vec<_> = settled.get_reader().read(settled).cloned().collect();
-        assert_eq!(settled_events.len(), 1);
-        assert_eq!(settled_events[0].entity, second);
-        assert_eq!(settled_events[0].result.outcome, DuXuOutcomeV1::Killed);
-        assert_eq!(
-            settled_events[0].result.reason.as_deref(),
-            Some(VOID_QUOTA_EXCEEDED_REASON)
+        assert!(
+            settled_events.is_empty(),
+            "over-quota DuXu should defer settlement until JueBi resolves"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -2625,6 +3794,7 @@ mod tests {
         app.add_event::<SkillCapChanged>();
         app.add_event::<TribulationSettled>();
         app.add_event::<AscensionQuotaOccupied>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_systems(Update, tribulation_wave_system);
 
         let entity = app
@@ -2707,6 +3877,7 @@ mod tests {
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_tribulation_boundary_vfx_system);
 
@@ -2841,6 +4012,7 @@ mod tests {
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_tribulation_boundary_vfx_system);
 
@@ -2877,6 +4049,7 @@ mod tests {
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_tribulation_boundary_vfx_system);
 
@@ -3715,6 +4888,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_systems(Update, publish_tribulation_events);
 
@@ -3758,6 +4932,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_systems(Update, publish_tribulation_events);
 
@@ -3818,6 +4993,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_systems(Update, publish_tribulation_events);
 
@@ -3876,6 +5052,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_systems(Update, publish_tribulation_events);
 
@@ -4485,7 +5662,7 @@ mod tests {
     }
 
     #[test]
-    fn void_quota_exceeded_start_emits_terminal_death_and_does_not_occupy_quota() {
+    fn void_quota_exceeded_start_marks_du_xu_for_juebi_instead_of_terminal_death() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("void-quota-exceeded-start");
         let char_id = "offline:Azure";
@@ -4543,7 +5720,11 @@ mod tests {
         app.update();
 
         let entity_ref = app.world().entity(entity);
-        assert!(entity_ref.get::<TribulationState>().is_none());
+        let state = entity_ref
+            .get::<TribulationState>()
+            .expect("over-quota DuXu should still start and append JueBi at settlement");
+        assert_eq!(state.kind, TribulationKind::DuXu);
+        assert!(entity_ref.get::<JueBiAfterDuXuQuota>().is_some());
 
         let death_triggers = app.world().resource::<Events<CultivationDeathTrigger>>();
         let deaths: Vec<_> = death_triggers
@@ -4551,33 +5732,181 @@ mod tests {
             .read(death_triggers)
             .cloned()
             .collect();
-        assert_eq!(deaths.len(), 1);
-        assert_eq!(deaths[0].entity, entity);
-        assert_eq!(deaths[0].cause, CultivationDeathCause::VoidQuotaExceeded);
-        assert_eq!(
-            deaths[0].context["reason"].as_str(),
-            Some(VOID_QUOTA_EXCEEDED_REASON)
-        );
+        assert!(deaths.is_empty());
 
         let settled = app.world().resource::<Events<TribulationSettled>>();
         let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
-        assert_eq!(emitted[0].result.waves_survived, 0);
-        assert_eq!(
-            emitted[0].result.reason.as_deref(),
-            Some(VOID_QUOTA_EXCEEDED_REASON)
-        );
+        assert!(emitted.is_empty());
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")
-                .is_none(),
-            "void quota death should not create an active row"
+                .is_some(),
+            "over-quota DuXu should persist until JueBi settlement"
         );
         let quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(quota.occupied_slots, 0);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn juebi_trigger_event_starts_juebi_state_after_delay() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 40 });
+        app.insert_resource(PendingJueBiTriggers::default());
+        app.add_event::<JueBiTriggerEvent>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(
+            Update,
+            (
+                schedule_juebi_triggers_system,
+                start_due_juebi_triggers_system.after(schedule_juebi_triggers_system),
+            ),
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+                Position::new([12.0, 66.0, -3.0]),
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 300.0,
+                    qi_max: 300.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(JueBiTriggerEvent {
+            entity,
+            source: JueBiTriggerSource::VoidActionExplodeZone,
+            delay_ticks: 0,
+            triggered_at_tick: 40,
+            epicenter: None,
+        });
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("JueBi trigger should insert active tribulation");
+        assert_eq!(state.kind, TribulationKind::JueBi);
+        assert_eq!(state.phase, TribulationPhase::Omen);
+        assert_eq!(state.epicenter, [12.0, 66.0, -3.0]);
+        let events = app.world().resource::<Events<JueBiTriggeredEvent>>();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn juebi_pressure_collapse_drains_qi_and_marks_targets() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(JueBiNullFields::default());
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, juebi_phase_effect_system);
+        let tribulator = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::JueBi,
+                phase: TribulationPhase::Wave(1),
+                epicenter: [0.0, 64.0, 0.0],
+                wave_current: 0,
+                waves_total: JUEBI_WAVES_TOTAL,
+                started_tick: 0,
+                phase_started_tick: 100,
+                next_wave_tick: 100 + JUEBI_PHASE_TICKS,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+            })
+            .id();
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([10.0, 64.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Wounds::default(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let _ = tribulator;
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(target).unwrap();
+        assert!(cultivation.qi_current < 100.0);
+        assert!(app.world().get::<JueBiPressureCollapse>(target).is_some());
+    }
+
+    #[test]
+    fn juebi_phase_effect_clears_stale_phase_markers() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.insert_resource(JueBiNullFields::default());
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, juebi_phase_effect_system);
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::JueBi,
+            phase: TribulationPhase::Wave(2),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: 1,
+            waves_total: JUEBI_WAVES_TOTAL,
+            started_tick: 0,
+            phase_started_tick: 200,
+            next_wave_tick: 200 + JUEBI_PHASE_TICKS,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+        });
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([10.0, 64.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Wounds::default(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                JueBiPressureCollapse {
+                    epicenter: BlockPos::new(0, 64, 0),
+                    phase_start_tick: 100,
+                    distance: 10.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<JueBiPressureCollapse>(target).is_none());
+        assert!(app.world().get::<JueBiLawDisruption>(target).is_some());
+    }
+
+    #[test]
+    fn juebi_terrain_generation_keeps_animation_order() {
+        let mut pending = VecDeque::new();
+        enqueue_juebi_terrain_ops(&mut pending, [0.0, 64.0, 0.0], 42);
+        assert!(pending.len() > 10_000);
+        let mut last = 0;
+        for op in pending {
+            assert!(op.anim_order >= last);
+            last = op.anim_order;
+        }
     }
 
     #[test]

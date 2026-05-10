@@ -6,6 +6,7 @@ pub enum TribulationKindV1 {
     DuXu,
     ZoneCollapse,
     Targeted,
+    JueBi,
     AscensionQuotaOpen,
 }
 
@@ -54,6 +55,8 @@ pub struct TribulationEventV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub epicenter: Option<[f64; 3]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wave_current: Option<u32>,
@@ -82,6 +85,7 @@ impl TribulationEventV1 {
             char_id,
             actor_name,
             zone: None,
+            source: None,
             epicenter,
             wave_current,
             wave_total,
@@ -102,6 +106,7 @@ impl TribulationEventV1 {
             char_id: None,
             actor_name: None,
             zone,
+            source: None,
             epicenter,
             wave_current: None,
             wave_total: None,
@@ -122,6 +127,7 @@ impl TribulationEventV1 {
             char_id: None,
             actor_name: None,
             zone,
+            source: None,
             epicenter,
             wave_current: None,
             wave_total: None,
@@ -138,11 +144,39 @@ impl TribulationEventV1 {
             char_id: None,
             actor_name: None,
             zone: None,
+            source: None,
             epicenter: None,
             wave_current: None,
             wave_total: None,
             result: None,
             occupied_slots,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn jue_bi(
+        phase: TribulationPhaseV1,
+        char_id: Option<String>,
+        actor_name: Option<String>,
+        source: Option<String>,
+        epicenter: Option<[f64; 3]>,
+        wave_current: Option<u32>,
+        wave_total: Option<u32>,
+        result: Option<DuXuResultV1>,
+    ) -> Self {
+        Self {
+            v: 1,
+            kind: TribulationKindV1::JueBi,
+            phase,
+            char_id,
+            actor_name,
+            zone: None,
+            source,
+            epicenter,
+            wave_current,
+            wave_total,
+            result,
+            occupied_slots: None,
         }
     }
 }

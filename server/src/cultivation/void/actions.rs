@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
     ResMut, Username, With,
@@ -9,6 +10,7 @@ use crate::cultivation::death_hooks::{CultivationDeathCause, CultivationDeathTri
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::tick::CultivationClock;
+use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::npc::tsy_hostile::{DaoxiangInstinctCooldown, TsyHostileMarker};
 use crate::persistence::{persist_void_action_cooldown, PersistenceSettings};
@@ -29,6 +31,8 @@ use super::ledger_hooks::{
 };
 use super::legacy::{apply_legacy_assignment, persist_legacy_letterbox, LegacyLetterbox};
 
+const JUEBI_VOID_ACTION_DELAY_TICKS: u64 = 30 * 20;
+
 #[derive(Debug, Clone, Event)]
 pub struct VoidActionIntent {
     pub caster: Entity,
@@ -39,6 +43,13 @@ pub struct VoidActionIntent {
 #[derive(Debug, Clone, Event)]
 pub struct VoidActionBroadcast {
     pub payload: VoidActionBroadcastV1,
+}
+
+#[derive(SystemParam)]
+pub struct VoidActionEventWriters<'w> {
+    deaths: EventWriter<'w, CultivationDeathTrigger>,
+    broadcasts: EventWriter<'w, VoidActionBroadcast>,
+    juebi_triggers: EventWriter<'w, JueBiTriggerEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,8 +166,7 @@ pub fn resolve_void_action_intents(
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut tsy_states: Option<ResMut<TsyZoneStateRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
-    mut deaths: EventWriter<CultivationDeathTrigger>,
-    mut broadcasts: EventWriter<VoidActionBroadcast>,
+    mut events: VoidActionEventWriters,
     mut actors: Query<(
         &mut Cultivation,
         &mut LifespanComponent,
@@ -264,6 +274,18 @@ pub fn resolve_void_action_intents(
 
         match result {
             Ok(outcome) => {
+                if kind == VoidActionKind::ExplodeZone {
+                    events.juebi_triggers.send(JueBiTriggerEvent {
+                        entity: intent.caster,
+                        source: JueBiTriggerSource::VoidActionExplodeZone,
+                        delay_ticks: JUEBI_VOID_ACTION_DELAY_TICKS,
+                        triggered_at_tick: now_tick,
+                        epicenter: position.map(|position| {
+                            let p = position.get();
+                            [p.x, p.y, p.z]
+                        }),
+                    });
+                }
                 cooldowns.set_used(&actor_id, kind, now_tick);
                 let ready_at_tick = cooldowns.ready_at(&actor_id, kind);
                 if ready_at_tick > now_tick {
@@ -296,9 +318,9 @@ pub fn resolve_void_action_intents(
                         .tx_outbound
                         .send(RedisOutbound::VoidAction(payload.clone()));
                 }
-                broadcasts.send(VoidActionBroadcast { payload });
+                events.broadcasts.send(VoidActionBroadcast { payload });
                 if outcome.caused_death {
-                    deaths.send(CultivationDeathTrigger {
+                    events.deaths.send(CultivationDeathTrigger {
                         entity: intent.caster,
                         cause: CultivationDeathCause::VoidActionBacklash,
                         context: serde_json::json!({
@@ -675,6 +697,61 @@ mod tests {
             precheck_void_action(VoidActionKind::LegacyAssign, input),
             Ok(())
         );
+    }
+
+    #[test]
+    fn explode_zone_void_action_emits_juebi_trigger() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(VoidActionCooldowns::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(WorldQiBudget::from_total(1_000.0));
+        app.insert_resource(VoidQiReturnSchedule::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<VoidActionIntent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VoidActionBroadcast>();
+        app.add_event::<JueBiTriggerEvent>();
+        app.add_systems(Update, resolve_void_action_intents);
+
+        let actor = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 500.0,
+                    qi_max: 500.0,
+                    ..Default::default()
+                },
+                LifespanComponent::new(500),
+                LifeRecord::new("offline:Void"),
+                Username("Void".to_string()),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+        app.world_mut().send_event(VoidActionIntent {
+            caster: actor,
+            request: VoidActionRequestV1::ExplodeZone {
+                zone_id: "spawn".to_string(),
+            },
+            requested_at_tick: 42,
+        });
+
+        app.update();
+
+        let events = app.world().resource::<Events<JueBiTriggerEvent>>();
+        let triggers: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].entity, actor);
+        assert_eq!(
+            triggers[0].source,
+            JueBiTriggerSource::VoidActionExplodeZone
+        );
+        assert_eq!(triggers[0].delay_ticks, JUEBI_VOID_ACTION_DELAY_TICKS);
+        assert_eq!(triggers[0].triggered_at_tick, 42);
+        assert_eq!(triggers[0].epicenter, Some([8.0, 66.0, 8.0]));
     }
 
     #[test]

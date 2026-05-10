@@ -4,7 +4,7 @@ use super::constants::{
     QI_ACOUSTIC_THRESHOLD, QI_DRAIN_CLAMP, QI_EXCRETION_BASE, QI_NEGATIVE_FIELD_K,
     QI_NEGATIVE_FIELD_MIN_RADIUS_BLOCKS,
 };
-use super::distance::qi_distance_atten;
+use super::distance::qi_distance_atten_in_env;
 use super::env::EnvField;
 use super::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use super::traits::{StyleAttack, StyleDefense};
@@ -16,6 +16,7 @@ pub struct CollisionOutcome {
     pub attenuated_qi: f64,
     pub effective_hit: f64,
     pub attacker_spent: f64,
+    pub attacker_backfire: f64,
     pub defender_lost: f64,
     pub defender_absorbed: f64,
     pub transfers: Vec<QiTransfer>,
@@ -76,13 +77,14 @@ pub fn qi_collision(
     env: &EnvField,
 ) -> CollisionOutcome {
     let injected = atk.injected_qi().max(0.0);
-    let attenuated = qi_distance_atten(injected, distance_blocks, atk.medium());
+    let attenuated = qi_distance_atten_in_env(injected, distance_blocks, atk.medium(), env);
     let purity = atk.purity().clamp(0.0, 1.0);
     if purity < QI_ACOUSTIC_THRESHOLD {
         return CollisionOutcome {
             attenuated_qi: attenuated,
             effective_hit: 0.0,
             attacker_spent: injected,
+            attacker_backfire: 0.0,
             defender_lost: 0.0,
             defender_absorbed: 0.0,
             transfers: Vec::new(),
@@ -92,7 +94,9 @@ pub fn qi_collision(
     let resistance = def.resistance().clamp(0.0, 1.0);
     let rejection = attenuated * QI_EXCRETION_BASE * (1.0 - purity + resistance * 0.5);
     let effective_hit = (attenuated - rejection).max(0.0) * env.rhythm_factor();
-    let defender_lost = effective_hit * (1.0 - resistance);
+    let backfire_fraction = env.law_disruption_backfire_fraction();
+    let attacker_backfire = effective_hit * backfire_fraction;
+    let defender_lost = effective_hit * (1.0 - resistance) * (1.0 - backfire_fraction);
     let defender_absorbed =
         (defender_lost * def.drain_affinity().clamp(0.0, 1.0)).min(injected * QI_DRAIN_CLAMP);
 
@@ -102,6 +106,16 @@ pub fn qi_collision(
             defender_id.clone(),
             environment_id.clone(),
             defender_lost,
+            QiTransferReason::Collision,
+        ) {
+            transfers.push(transfer);
+        }
+    }
+    if attacker_backfire > 0.0 {
+        if let Ok(transfer) = QiTransfer::new(
+            attacker_id.clone(),
+            environment_id.clone(),
+            attacker_backfire,
             QiTransferReason::Collision,
         ) {
             transfers.push(transfer);
@@ -122,6 +136,7 @@ pub fn qi_collision(
         attenuated_qi: attenuated,
         effective_hit,
         attacker_spent: injected,
+        attacker_backfire,
         defender_lost,
         defender_absorbed,
         transfers,
@@ -300,6 +315,27 @@ mod tests {
         let far = qi_negative_field_drain_ratio(0.8, 2.0);
         assert!((near - 0.8).abs() < 1e-9);
         assert!((far - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn law_disruption_backfires_part_of_collision_to_attacker() {
+        let (attacker_id, defender_id, environment_id) = ids();
+        let atk = SimpleStyleAttack::new(ColorKind::Sharp, 10.0);
+        let def = SimpleStyleDefense::new(ColorKind::Solid, 0.0);
+        let outcome = qi_collision(
+            &attacker_id,
+            &defender_id,
+            &environment_id,
+            &atk,
+            &def,
+            0.0,
+            &EnvField::default().with_law_disruption(1.0),
+        );
+        assert!(outcome.attacker_backfire > 0.0);
+        assert!(outcome
+            .transfers
+            .iter()
+            .any(|transfer| transfer.from == attacker_id && transfer.to == environment_id));
     }
 
     #[test]

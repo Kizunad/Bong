@@ -18,7 +18,8 @@ use crate::cultivation::overload::MeridianOverloadEvent;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::cultivation::qi_zero_decay::RealmRegressed;
 use crate::cultivation::tribulation::{
-    TribulationAnnounce, TribulationFailed, TribulationWaveCleared,
+    JueBiTriggeredEvent, TribulationAnnounce, TribulationFailed, TribulationKind, TribulationState,
+    TribulationWaveCleared,
 };
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted, TemperingHit};
@@ -163,9 +164,11 @@ pub fn emit_cultivation_audio_triggers(
 
 pub fn emit_tribulation_audio_triggers(
     mut announces: EventReader<TribulationAnnounce>,
+    mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut waves: EventReader<TribulationWaveCleared>,
     mut failures: EventReader<TribulationFailed>,
     positions: Query<&Position>,
+    states: Query<&TribulationState>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in announces.read() {
@@ -183,13 +186,40 @@ pub fn emit_tribulation_audio_triggers(
         );
     }
 
-    for event in waves.read() {
+    for event in juebi_triggered.read() {
         let Ok(position) = positions.get(event.entity) else {
             continue;
         };
         emit_play(
             &mut audio,
-            "tribulation_wave_impact",
+            "ground_crack_rumble",
+            event.entity,
+            position.get(),
+            None,
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in waves.read() {
+        let Ok(position) = positions.get(event.entity) else {
+            continue;
+        };
+        let recipe = if states
+            .get(event.entity)
+            .is_ok_and(|state| state.kind == TribulationKind::JueBi)
+        {
+            match event.wave {
+                1 => "pressure_collapse_whoosh",
+                2 => "ground_crack_rumble",
+                _ => "pillar_eruption_boom",
+            }
+        } else {
+            "tribulation_wave_impact"
+        };
+        emit_play(
+            &mut audio,
+            recipe,
             event.entity,
             position.get(),
             None,

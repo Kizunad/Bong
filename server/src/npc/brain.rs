@@ -3716,6 +3716,7 @@ mod tests {
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationFailed>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<crate::cultivation::tribulation::JueBiTriggeredEvent>();
         app.add_event::<crate::cultivation::tribulation::AscensionQuotaOccupied>();
         app.add_event::<crate::cultivation::death_hooks::CultivationDeathTrigger>();
 
