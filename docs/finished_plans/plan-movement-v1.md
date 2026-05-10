@@ -203,17 +203,18 @@
   - 资源：`client/src/main/resources/assets/bong/player_animation/{dash_forward,slide_low,double_jump}.json`、`client/src/main/resources/assets/bong/particles/cloud256_dust.json`、`server/assets/audio/recipes/movement_{dash,slide,double_jump}.json`。
   - 协议：`agent/packages/schema/src/movement.ts`、generated schema/sample、`client_request.movement_action` 与 `server_data.movement_state` registry 均已接入。
 - **关键 commit**：
-  - `119d3d975`（2026-05-11）`feat(movement): 接入服务端移动状态机`
-  - `391ba4d42`（2026-05-11）`feat(schema): 补齐 movement 协议契约`
-  - `1414b5d97`（2026-05-11）`feat(client): 接入 movement 动作反馈`
-  - `f109491ee`（2026-05-11）`fix(client): 适配 movement HUD 沉浸布局`
+  - `119d3d975`（2026-05-11T04:31:13+12:00）`feat(movement): 接入服务端移动状态机`
+  - `391ba4d42`（2026-05-11T04:31:13+12:00）`feat(schema): 补齐 movement 协议契约`
+  - `1414b5d97`（2026-05-11T04:31:57+12:00）`feat(client): 接入 movement 动作反馈`
+  - `f109491ee`（2026-05-11T04:39:18+12:00）`fix(client): 适配 movement HUD 沉浸布局`
+  - `d1ba39531`（2026-05-11T11:56:51+12:00）`fix(movement): 收紧移动状态契约与同步边界`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ cargo test` ✅ 4031 passed
+  - `server/ cargo test` ✅ 4035 passed
   - `agent/packages/schema npm test` ✅ 17 files / 359 tests
   - `agent npm run build` ✅
-  - `client/ JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ 1197 tests, 0 failures, 0 errors
+  - `client/ JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ 1200 tests, 0 failures, 0 errors
   - `client/ ./gradlew test --tests com.bong.client.hud.HudLayoutPresetTest --tests com.bong.client.hud.MovementHudPlannerTest --tests com.bong.client.hud.HudImmersionModeTest` ✅
 - **跨仓库核验**：server `movement_state`/`MovementActionIntent`/audio recipes，agent `movement.ts`/generated artifacts，client `MovementStateStore`/`MovementHudPlanner`/`MOVEMENT_HUD`/VFX registry 均有测试或 build 覆盖。
 - **遗留 / 后续**：轻功、御风、墙跑、真实 runClient 手感调参仍留给 `plan-movement-v2`；本 plan 未在当前 headless 流水线里跑图形化 `runClient` 手动流程。
