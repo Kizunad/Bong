@@ -187,6 +187,7 @@
 - `ce2580c13`（2026-05-10）`fix(client): 收敛实体模型注册合约`
 - `b2b33be88`（2026-05-10）`fix(assets): 替换实体模型占位资源`
 - `fb97d8744`（2026-05-10）`docs(client): 说明灵田方块注册边界`
+- `cb5954462`（2026-05-10）`fix(server): 同步实体视觉 metadata 时序`
 
 ### 测试结果
 
@@ -201,8 +202,8 @@
   - `BUILD SUCCESSFUL`
 - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo check --bin bong-server`
   - `Finished dev profile`
-- `cd server && CARGO_BUILD_JOBS=1 cargo test entity_model -- --nocapture`
-  - 环境结果：`rustc` 在 `bong-server` test binary 编译阶段被 `SIGKILL`，无 Rust 诊断；代码编译正确性由上方 `cargo check --bin bong-server` 覆盖，定向 test 待资源空闲或 CI 复核。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test entity_model -- --nocapture`
+  - `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3630 filtered out`
 
 ### 跨仓库核验
 
@@ -221,4 +222,4 @@
 
 ### 遗留 / 后续
 
-- 已通过本地 client 测试覆盖 Fabric 注册表、GeckoLib 资源路径、BlockBench 源文件和状态贴图存在性；server raw id / metadata 合约已补测试代码，本地 test binary 编译受当前机器资源影响待 CI 复核。实际 WSLg `runClient` 视觉走查仍属于人工验收，不在本次云端自动测试内。
+- 已通过本地 client 测试覆盖 Fabric 注册表、GeckoLib 资源路径、BlockBench 源文件和状态贴图存在性；server 定向测试覆盖 raw id、DataTracker metadata 字节和同 tick metadata flush。实际 WSLg `runClient` 视觉走查仍属于人工验收，不在本次云端自动测试内。
