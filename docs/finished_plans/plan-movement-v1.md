@@ -30,11 +30,11 @@
 
 ## §0 设计轴心
 
-- [ ] **整体减速**：vanilla 默认 ×0.75（走 3.24 m/s / 跑 4.21 m/s）—— 末法残土比 vanilla 更沉重
-- [ ] **境界修正**：每升一境 +5% 移速（化虚 = ×0.75 × 1.30 = ×0.975 ≈ 接近 vanilla 速度）
-- [ ] **体力消耗**：冲刺/滑铲/二段跳均消耗 stamina，stamina 耗尽 → 动作不可用
-- [ ] **HUD 自动隐藏**：移动技能 HUD 仅在使用时短暂 hover 显示（冷却弧线 + stamina 消耗指示），3s 不使用自动 fade out
-- [ ] **zone 移速修正**：死域 ×0.8 / 负灵域 ×0.9 + 移速波动 / 残灰方块 ×0.7
+- [x] **整体减速**：vanilla 默认 ×0.75（走 3.24 m/s / 跑 4.21 m/s）—— 末法残土比 vanilla 更沉重
+- [x] **境界修正**：每升一境 +5% 移速（化虚 = ×0.75 × 1.30 = ×0.975 ≈ 接近 vanilla 速度）
+- [x] **体力消耗**：冲刺/滑铲/二段跳均消耗 stamina，stamina 耗尽 → 动作不可用
+- [x] **HUD 自动隐藏**：移动技能 HUD 仅在使用时短暂 hover 显示（冷却弧线 + stamina 消耗指示），3s 不使用自动 fade out
+- [x] **zone 移速修正**：死域 ×0.8 / 负灵域 ×0.9 + 移速波动 / 残灰方块 ×0.7
 
 ---
 
@@ -42,15 +42,15 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 全局移速调整 server 实装 + 境界/zone 修正 + 基础 stamina 消耗框架 | ⬜ |
-| P1 | 冲刺（Sprint Dash）全流程：server 逻辑 + 动画 + 粒子 + 音效 + HUD | ⬜ |
-| P2 | 滑铲（Slide）全流程：server 逻辑 + 动画 + 粒子 + 音效 + HUD | ⬜ |
-| P3 | 二段跳（Double Jump）全流程：server 逻辑 + 动画 + 粒子 + 音效 + HUD | ⬜ |
-| P4 | HUD auto-hide 策略 + 全动作 × 全境界 × 全 zone 饱和化测试 | ⬜ |
+| P0 | 全局移速调整 server 实装 + 境界/zone 修正 + 基础 stamina 消耗框架 | ✅ |
+| P1 | 冲刺（Sprint Dash）全流程：server 逻辑 + 动画 + 粒子 + 音效 + HUD | ✅ |
+| P2 | 滑铲（Slide）全流程：server 逻辑 + 动画 + 粒子 + 音效 + HUD | ✅ |
+| P3 | 二段跳（Double Jump）全流程：server 逻辑 + 动画 + 粒子 + 音效 + HUD | ✅ |
+| P4 | HUD auto-hide 策略 + 全动作 × 全境界 × 全 zone 饱和化测试 | ✅ |
 
 ---
 
-## P0 — 全局移速调整 ⬜
+## P0 — 全局移速调整 ✅
 
 ### 交付物
 
@@ -81,7 +81,7 @@
 
 ---
 
-## P1 — 冲刺 ⬜
+## P1 — 冲刺 ✅
 
 ### 交付物
 
@@ -111,7 +111,7 @@
 
 ---
 
-## P2 — 滑铲 ⬜
+## P2 — 滑铲 ✅
 
 ### 交付物
 
@@ -138,7 +138,7 @@
 
 ---
 
-## P3 — 二段跳 ⬜
+## P3 — 二段跳 ✅
 
 ### 交付物
 
@@ -168,7 +168,7 @@
 
 ---
 
-## P4 — HUD auto-hide + 饱和化测试 ⬜
+## P4 — HUD auto-hide + 饱和化测试 ✅
 
 ### 交付物
 
@@ -195,9 +195,25 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：server `movement::*` / BASE_MOVE_SPEED_MULTIPLIER / realm+zone modifier / 3 动作状态机 / client 3 动画 + 3 粒子 + 3 音效 / `MovementHudPlanner` auto-hide / `MovementStateS2c` packet
-- **关键 commit**：P0-P4 各自 hash
-- **测试结果**：144 矩阵 + 连招压测
-- **遗留 / 后续**：轻功/御风/墙跑 → 需要更高境界解锁 → 独立 plan-movement-v2
+- **落地清单**：
+  - P0：`server/src/movement/mod.rs`、`server/src/schema/movement.rs`、`server/src/main.rs`、`server/src/network.rs` 接入基础移速、realm/zone/stamina modifier、movement_state S2C 与 movement_action C2S。
+  - P1-P3：server 状态机覆盖 dash/slide/double_jump；client `MovementKeyRouter` / `MovementKeybindings` / `MovementStateHandler` / `MovementVfxPlayer` / `MovementHudPlanner` 负责输入、协议消费、动画粒子音效与 HUD。
+  - 资源：`client/src/main/resources/assets/bong/player_animation/{dash_forward,slide_low,double_jump}.json`、`client/src/main/resources/assets/bong/particles/cloud256_dust.json`、`server/assets/audio/recipes/movement_{dash,slide,double_jump}.json`。
+  - 协议：`agent/packages/schema/src/movement.ts`、generated schema/sample、`client_request.movement_action` 与 `server_data.movement_state` registry 均已接入。
+- **关键 commit**：
+  - `119d3d975`（2026-05-11）`feat(movement): 接入服务端移动状态机`
+  - `391ba4d42`（2026-05-11）`feat(schema): 补齐 movement 协议契约`
+  - `1414b5d97`（2026-05-11）`feat(client): 接入 movement 动作反馈`
+  - `f109491ee`（2026-05-11）`fix(client): 适配 movement HUD 沉浸布局`
+- **测试结果**：
+  - `server/ cargo fmt --check` ✅
+  - `server/ cargo clippy --all-targets -- -D warnings` ✅
+  - `server/ cargo test` ✅ 4031 passed
+  - `agent/packages/schema npm test` ✅ 17 files / 359 tests
+  - `agent npm run build` ✅
+  - `client/ JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ 1197 tests, 0 failures, 0 errors
+  - `client/ ./gradlew test --tests com.bong.client.hud.HudLayoutPresetTest --tests com.bong.client.hud.MovementHudPlannerTest --tests com.bong.client.hud.HudImmersionModeTest` ✅
+- **跨仓库核验**：server `movement_state`/`MovementActionIntent`/audio recipes，agent `movement.ts`/generated artifacts，client `MovementStateStore`/`MovementHudPlanner`/`MOVEMENT_HUD`/VFX registry 均有测试或 build 覆盖。
+- **遗留 / 后续**：轻功、御风、墙跑、真实 runClient 手感调参仍留给 `plan-movement-v2`；本 plan 未在当前 headless 流水线里跑图形化 `runClient` 手动流程。
