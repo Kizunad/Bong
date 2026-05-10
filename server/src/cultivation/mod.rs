@@ -61,6 +61,7 @@ pub mod realm_taint;
 pub mod realm_vision;
 pub mod skill_registry;
 pub mod spiritual_sense;
+pub mod style_modifier;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;

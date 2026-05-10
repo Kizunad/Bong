@@ -35,6 +35,7 @@ pub mod session;
 pub mod systems;
 pub mod terrain;
 pub mod weather;
+pub mod weather_profile;
 
 #[allow(unused_imports)]
 pub use contamination::{apply_dye_contamination_on_replenish, dye_contamination_decay_tick};
@@ -50,9 +51,12 @@ pub use pressure::{
 };
 #[allow(unused_imports)]
 pub use weather::{
-    try_roll_weather_for_zone, weather_apply_to_plot_system, weather_generator_system,
+    try_roll_weather_for_zone, try_roll_weather_for_zone_with_profile,
+    weather_apply_to_plot_system, weather_generator_system, weather_generator_system_zone_aware,
     ActiveWeather, ActiveWeatherEntry, WeatherEvent, WeatherLifecycleEvent, WeatherRng,
 };
+#[allow(unused_imports)]
+pub use weather_profile::{ZoneWeatherProfile, ZoneWeatherProfileRegistry};
 
 #[allow(unused_imports)]
 pub use events::{
@@ -124,6 +128,16 @@ pub fn register(app: &mut App) {
     // plan-lingtian-weather-v1 §3 — 单 zone MVP
     app.insert_resource(ActiveWeather::new());
     app.insert_resource(WeatherRng::default());
+    let weather_profiles = weather_profile::ZoneWeatherProfileRegistry::load_default()
+        .unwrap_or_else(|error| {
+            tracing::error!("[bong][lingtian][weather] weather profile load failed: {error}");
+            weather_profile::ZoneWeatherProfileRegistry::new()
+        });
+    tracing::info!(
+        "[bong][lingtian][weather] loaded {} zone weather profile(s)",
+        weather_profiles.len()
+    );
+    app.insert_resource(weather_profiles);
     let processing_registry =
         processing::ProcessingRecipeRegistry::load_default().unwrap_or_else(|error| {
             tracing::error!("[bong][lingtian][processing] recipe load failed: {error}");
@@ -171,7 +185,7 @@ pub fn register(app: &mut App) {
         (
             // plan-lingtian-weather-v1 §3 —— 必须先于 growth_tick / pressure 跑
             // （expire 清完 + 新事件就位再做生长 / 压力计算）
-            weather::weather_generator_system,
+            weather::weather_generator_system_zone_aware,
             weather::weather_apply_to_plot_system,
             systems::lingtian_growth_tick,
             // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）

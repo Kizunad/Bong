@@ -355,7 +355,7 @@ pub fn register(app: &mut App) {
             weather_bridge::publish_weather_lifecycle_events
                 .after(crate::lingtian::weather::weather_apply_to_plot_system),
             zone_environment_bridge::mark_zone_environment_dirty_for_new_clients
-                .after(crate::world::environment::sync_zone_environment_effects),
+                .after(crate::world::weather_to_environment::weather_environment_sync_system),
             zone_environment_bridge::zone_environment_broadcast_system
                 .after(zone_environment_bridge::mark_zone_environment_dirty_for_new_clients),
         ),

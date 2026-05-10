@@ -1,0 +1,19 @@
+{
+  "profiles": {
+    "blood_valley_east_scorch": {
+      "thunderstorm_multiplier": 5.0,
+      "drought_wind_multiplier": 2.0,
+      "lightning_strike_per_min_override": 3.0
+    },
+    "north_waste_east_scorch": {
+      "thunderstorm_multiplier": 5.0,
+      "drought_wind_multiplier": 2.0,
+      "lightning_strike_per_min_override": 3.0
+    },
+    "drift_scorch_001": {
+      "thunderstorm_multiplier": 5.0,
+      "drought_wind_multiplier": 2.0,
+      "lightning_strike_per_min_override": 2.0
+    }
+  }
+}

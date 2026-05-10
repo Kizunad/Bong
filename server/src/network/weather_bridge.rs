@@ -1,5 +1,5 @@
 //! plan-lingtian-weather-v1 §3 / §4.4 — 把 ECS `WeatherLifecycleEvent` 转译成
-//! `RedisOutbound::WeatherEventUpdate`，单 zone MVP 用 `DEFAULT_ZONE` 标识。
+//! `RedisOutbound::WeatherEventUpdate`，zone-weather-v1 起直接透传 event zone。
 //!
 //! 同 `zone_pressure_bridge.rs` 的"读 Bevy event → 写 RedisOutbound"模式。
 
@@ -7,7 +7,6 @@ use valence::prelude::{EventReader, Res};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
-use crate::lingtian::qi_account::DEFAULT_ZONE;
 use crate::lingtian::weather::WeatherLifecycleEvent;
 use crate::schema::lingtian_weather::{WeatherEventDataV1, WeatherEventUpdateV1};
 
@@ -16,22 +15,24 @@ pub fn publish_weather_lifecycle_events(
     mut events: EventReader<WeatherLifecycleEvent>,
 ) {
     for ev in events.read() {
-        let envelope = match *ev {
+        let envelope = match ev {
             WeatherLifecycleEvent::Started {
+                zone,
                 event,
                 started_at_lingtian_tick,
                 expires_at_lingtian_tick,
             } => {
                 let data = WeatherEventDataV1::new(
-                    DEFAULT_ZONE,
-                    event,
-                    started_at_lingtian_tick,
-                    expires_at_lingtian_tick,
-                    started_at_lingtian_tick,
+                    zone,
+                    *event,
+                    *started_at_lingtian_tick,
+                    *expires_at_lingtian_tick,
+                    *started_at_lingtian_tick,
                 );
                 WeatherEventUpdateV1::started(data)
             }
             WeatherLifecycleEvent::Expired {
+                zone,
                 event,
                 started_at_lingtian_tick,
                 expired_at_lingtian_tick,
@@ -40,11 +41,11 @@ pub fn publish_weather_lifecycle_events(
                 // 过来，保持 wire payload `started_at <= expires_at` 不变量
                 // （消费方据此区分"自然过期"与"刚开始就 expire"）。
                 let data = WeatherEventDataV1::new(
-                    DEFAULT_ZONE,
-                    event,
-                    started_at_lingtian_tick,
-                    expired_at_lingtian_tick,
-                    expired_at_lingtian_tick,
+                    zone,
+                    *event,
+                    *started_at_lingtian_tick,
+                    *expired_at_lingtian_tick,
+                    *expired_at_lingtian_tick,
                 );
                 WeatherEventUpdateV1::expired(data)
             }
@@ -85,6 +86,7 @@ mod tests {
     fn started_event_publishes_redis_outbound_with_started_kind() {
         let (mut app, rx) = build_app();
         app.world_mut().send_event(WeatherLifecycleEvent::Started {
+            zone: "blood_valley".to_string(),
             event: WeatherEvent::Thunderstorm,
             started_at_lingtian_tick: 1440,
             expires_at_lingtian_tick: 1620,
@@ -102,7 +104,7 @@ mod tests {
                     env.data.kind,
                     crate::schema::lingtian_weather::WeatherEventKindV1::Thunderstorm
                 );
-                assert_eq!(env.data.zone_id, DEFAULT_ZONE);
+                assert_eq!(env.data.zone_id, "blood_valley");
                 assert_eq!(env.data.started_at_lingtian_tick, 1440);
                 assert_eq!(env.data.expires_at_lingtian_tick, 1620);
                 assert_eq!(env.data.remaining_ticks, 180);
@@ -115,6 +117,7 @@ mod tests {
     fn expired_event_publishes_redis_outbound_with_expired_kind() {
         let (mut app, rx) = build_app();
         app.world_mut().send_event(WeatherLifecycleEvent::Expired {
+            zone: "north_wastes".to_string(),
             event: WeatherEvent::Blizzard,
             started_at_lingtian_tick: 800,
             expired_at_lingtian_tick: 2000,
@@ -147,11 +150,13 @@ mod tests {
         // Started → Expired 配对：expired payload 应保留原 started_at_lingtian_tick
         let (mut app, rx) = build_app();
         app.world_mut().send_event(WeatherLifecycleEvent::Started {
+            zone: "spawn".to_string(),
             event: WeatherEvent::Thunderstorm,
             started_at_lingtian_tick: 1000,
             expires_at_lingtian_tick: 1200,
         });
         app.world_mut().send_event(WeatherLifecycleEvent::Expired {
+            zone: "spawn".to_string(),
             event: WeatherEvent::Thunderstorm,
             started_at_lingtian_tick: 1000,
             expired_at_lingtian_tick: 1200,
@@ -188,11 +193,13 @@ mod tests {
     fn multiple_events_publish_in_order() {
         let (mut app, rx) = build_app();
         app.world_mut().send_event(WeatherLifecycleEvent::Started {
+            zone: "lingquan_marsh".to_string(),
             event: WeatherEvent::LingMist,
             started_at_lingtian_tick: 100,
             expires_at_lingtian_tick: 200,
         });
         app.world_mut().send_event(WeatherLifecycleEvent::Expired {
+            zone: "blood_valley".to_string(),
             event: WeatherEvent::Thunderstorm,
             started_at_lingtian_tick: 50,
             expired_at_lingtian_tick: 150,

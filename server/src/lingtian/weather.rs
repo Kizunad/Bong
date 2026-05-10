@@ -21,13 +21,16 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{bevy_ecs, Event, EventWriter, Res, ResMut, Resource};
 
 use crate::world::season::{Season, WorldSeasonState};
+use crate::world::zone::ZoneRegistry;
 
 use super::pressure::LINGTIAN_TICKS_PER_DAY;
 use super::qi_account::{LingtianTickAccumulator, DEFAULT_ZONE};
 use super::systems::LingtianClock;
+use super::weather_profile::{ZoneWeatherProfile, ZoneWeatherProfileRegistry};
 
 /// plan-lingtian-weather-v1 §3 — 天气事件类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -197,9 +200,9 @@ pub struct ActiveWeatherEntry {
 #[derive(Debug, Default, Resource)]
 pub struct ActiveWeather {
     by_zone: HashMap<String, ActiveWeatherEntry>,
-    /// 已 roll 过的 game-day 编号（lingtian-tick / LINGTIAN_TICKS_PER_DAY）。
-    /// generator 每 day 边界跨过时才 roll，避免一 day 内多次 roll。
-    last_rolled_day: Option<u64>,
+    /// 每个 zone 已 roll 过的 game-day 编号（lingtian-tick / LINGTIAN_TICKS_PER_DAY）。
+    /// zone-aware generator 每 day 边界逐 zone roll，避免 A zone 的去重挡住 B zone。
+    last_rolled_day_by_zone: HashMap<String, u64>,
 }
 
 impl ActiveWeather {
@@ -248,11 +251,19 @@ impl ActiveWeather {
     }
 
     pub fn last_rolled_day(&self) -> Option<u64> {
-        self.last_rolled_day
+        self.last_rolled_day_for(DEFAULT_ZONE)
     }
 
     pub fn set_last_rolled_day(&mut self, day: u64) {
-        self.last_rolled_day = Some(day);
+        self.set_last_rolled_day_for(DEFAULT_ZONE, day);
+    }
+
+    pub fn last_rolled_day_for(&self, zone: &str) -> Option<u64> {
+        self.last_rolled_day_by_zone.get(zone).copied()
+    }
+
+    pub fn set_last_rolled_day_for(&mut self, zone: impl Into<String>, day: u64) {
+        self.last_rolled_day_by_zone.insert(zone.into(), day);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -272,14 +283,16 @@ impl ActiveWeather {
 /// `Expired` 同时携带 `started_at_lingtian_tick` 与 `expired_at_lingtian_tick`，
 /// 让 bridge 派生的 wire payload 能保持 `started_at <= expires_at` 不变量
 /// （消费方据此区分"自然过期"与"刚开始就 expire"，避免信息丢失）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Event)]
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub enum WeatherLifecycleEvent {
     Started {
+        zone: String,
         event: WeatherEvent,
         started_at_lingtian_tick: u64,
         expires_at_lingtian_tick: u64,
     },
     Expired {
+        zone: String,
         event: WeatherEvent,
         started_at_lingtian_tick: u64,
         expired_at_lingtian_tick: u64,
@@ -368,23 +381,59 @@ pub fn try_roll_weather_for_zone(
     active: &mut ActiveWeather,
     rng: &mut WeatherRng,
 ) -> Option<WeatherEvent> {
+    try_roll_weather_for_zone_with_profile(
+        zone,
+        season,
+        now_lingtian_tick,
+        active,
+        rng,
+        &ZoneWeatherProfile::default(),
+    )
+}
+
+/// plan-zone-weather-v1 P0 — profile-aware weather roll for one zone.
+///
+/// `force_event` bypasses RNG but still respects the "already active means no refresh"
+/// invariant. Probability multipliers are applied per event and clamped into [0, 1].
+pub fn try_roll_weather_for_zone_with_profile(
+    zone: &str,
+    season: Season,
+    now_lingtian_tick: u64,
+    active: &mut ActiveWeather,
+    rng: &mut WeatherRng,
+    profile: &ZoneWeatherProfile,
+) -> Option<WeatherEvent> {
     if active.current(zone).is_some() {
         return None;
     }
+    if let Some(ev) = profile.force_event {
+        insert_weather_event(zone, ev, now_lingtian_tick, active, rng);
+        return Some(ev);
+    }
     for ev in WeatherEvent::all() {
-        let p = ev.daily_probability(season);
+        let p = profile.effective_probability(ev, season);
         if p <= 0.0 {
             continue;
         }
         if rng.next_f32() < p {
-            let (min_dur, max_dur) = ev.duration_range_lingtian_ticks();
-            let dur = rng.next_u64_range(min_dur, max_dur);
-            let expires_at = now_lingtian_tick.saturating_add(dur);
-            active.insert(zone.to_string(), ev, now_lingtian_tick, expires_at);
+            insert_weather_event(zone, ev, now_lingtian_tick, active, rng);
             return Some(ev);
         }
     }
     None
+}
+
+fn insert_weather_event(
+    zone: &str,
+    event: WeatherEvent,
+    now_lingtian_tick: u64,
+    active: &mut ActiveWeather,
+    rng: &mut WeatherRng,
+) {
+    let (min_dur, max_dur) = event.duration_range_lingtian_ticks();
+    let dur = rng.next_u64_range(min_dur, max_dur);
+    let expires_at = now_lingtian_tick.saturating_add(dur);
+    active.insert(zone.to_string(), event, now_lingtian_tick, expires_at);
 }
 
 /// plan §3 — 每 game-day（1440 lingtian-tick）边界跨过时 RNG roll 一次。
@@ -412,8 +461,9 @@ pub fn weather_generator_system(
     active.set_last_rolled_day(current_day);
 
     // 先清过期事件（emit Expired），再 roll 新事件。
-    for (_zone, entry) in active.prune_expired(now) {
+    for (zone, entry) in active.prune_expired(now) {
         lifecycle.send(WeatherLifecycleEvent::Expired {
+            zone,
             event: entry.event,
             started_at_lingtian_tick: entry.started_at_lingtian_tick,
             expired_at_lingtian_tick: now,
@@ -431,10 +481,95 @@ pub fn weather_generator_system(
             .current_entry(DEFAULT_ZONE)
             .expect("just inserted by try_roll_weather_for_zone");
         lifecycle.send(WeatherLifecycleEvent::Started {
+            zone: DEFAULT_ZONE.to_string(),
             event,
             started_at_lingtian_tick: now,
             expires_at_lingtian_tick: entry.expires_at_lingtian_tick,
         });
+    }
+}
+
+/// plan-zone-weather-v1 P0 — zone-aware generator.
+///
+/// 与单 zone MVP 共存：缺 `ZoneRegistry` 时退回 DEFAULT_ZONE；缺 profile registry
+/// 时每个 zone 使用默认 profile，即等价于 lingtian-weather 原概率表。
+#[derive(SystemParam)]
+pub struct ZoneAwareWeatherGenerationParams<'w> {
+    accumulator: Res<'w, LingtianTickAccumulator>,
+    clock: Res<'w, LingtianClock>,
+    season_state: Option<Res<'w, WorldSeasonState>>,
+    zone_registry: Option<Res<'w, ZoneRegistry>>,
+    profile_registry: Option<Res<'w, ZoneWeatherProfileRegistry>>,
+}
+
+pub fn weather_generator_system_zone_aware(
+    params: ZoneAwareWeatherGenerationParams,
+    mut active: ResMut<ActiveWeather>,
+    mut rng: ResMut<WeatherRng>,
+    mut lifecycle: EventWriter<WeatherLifecycleEvent>,
+) {
+    if params.accumulator.raw() != 0 {
+        return;
+    }
+    let now = params.clock.lingtian_tick;
+    let current_day = now / LINGTIAN_TICKS_PER_DAY;
+
+    for (zone, entry) in active.prune_expired(now) {
+        lifecycle.send(WeatherLifecycleEvent::Expired {
+            zone,
+            event: entry.event,
+            started_at_lingtian_tick: entry.started_at_lingtian_tick,
+            expired_at_lingtian_tick: now,
+        });
+    }
+
+    let season = params
+        .season_state
+        .as_deref()
+        .map(|s| s.current.season)
+        .unwrap_or_default();
+    let zone_names: Vec<String> = params
+        .zone_registry
+        .as_ref()
+        .map(|registry| {
+            registry
+                .zones
+                .iter()
+                .map(|zone| zone.name.clone())
+                .collect::<Vec<_>>()
+        })
+        .filter(|zones| !zones.is_empty())
+        .unwrap_or_else(|| vec![DEFAULT_ZONE.to_string()]);
+
+    for zone in zone_names {
+        if active.last_rolled_day_for(zone.as_str()) == Some(current_day) {
+            continue;
+        }
+        active.set_last_rolled_day_for(zone.clone(), current_day);
+        let profile = params
+            .profile_registry
+            .as_deref()
+            .and_then(|registry| registry.get(zone.as_str()))
+            .cloned()
+            .unwrap_or_default();
+        if let Some(event) = try_roll_weather_for_zone_with_profile(
+            zone.as_str(),
+            season,
+            now,
+            &mut active,
+            &mut rng,
+            &profile,
+        ) {
+            let entry = active
+                .current_entry(zone.as_str())
+                .expect("just inserted by try_roll_weather_for_zone_with_profile");
+            lifecycle.send(WeatherLifecycleEvent::Started {
+                zone,
+                event,
+                started_at_lingtian_tick: now,
+                expires_at_lingtian_tick: entry.expires_at_lingtian_tick,
+            });
+        }
     }
 }
 
@@ -462,8 +597,9 @@ pub fn weather_apply_to_plot_system(
         return;
     }
     let now = clock.lingtian_tick;
-    for (_zone, entry) in active.prune_expired(now) {
+    for (zone, entry) in active.prune_expired(now) {
         lifecycle.send(WeatherLifecycleEvent::Expired {
+            zone,
             event: entry.event,
             started_at_lingtian_tick: entry.started_at_lingtian_tick,
             expired_at_lingtian_tick: now,
@@ -474,6 +610,23 @@ pub fn weather_apply_to_plot_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lingtian::weather_profile::{ZoneWeatherProfile, ZoneWeatherProfileRegistry};
+    use crate::world::dimension::DimensionKind;
+    use crate::world::zone::{Zone, ZoneRegistry};
+    use valence::prelude::{App, DVec3, Events, Update};
+
+    fn test_zone(name: &str, x: f64) -> Zone {
+        Zone {
+            name: name.to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(x, 60.0, 0.0), DVec3::new(x + 10.0, 90.0, 10.0)),
+            spirit_qi: 0.3,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        }
+    }
 
     #[test]
     fn weather_wire_str_round_trip_round_for_all_variants() {
@@ -895,6 +1048,151 @@ mod tests {
             (min_d..=max_d).contains(&dur),
             "{ev:?} duration {dur} 不在 [{min_d}, {max_d}]"
         );
+    }
+
+    #[test]
+    fn force_event_overrides_rng() {
+        let mut active = ActiveWeather::new();
+        let mut rng = WeatherRng::new(1);
+        let profile = ZoneWeatherProfile {
+            force_event: Some(WeatherEvent::LingMist),
+            ..Default::default()
+        };
+
+        let event = try_roll_weather_for_zone_with_profile(
+            "z",
+            Season::Summer,
+            1000,
+            &mut active,
+            &mut rng,
+            &profile,
+        );
+
+        assert_eq!(event, Some(WeatherEvent::LingMist));
+        assert_eq!(active.current("z"), Some(WeatherEvent::LingMist));
+    }
+
+    #[test]
+    fn force_event_does_not_refresh_active_timer() {
+        let mut active = ActiveWeather::new();
+        active.insert("z", WeatherEvent::Thunderstorm, 100, 200);
+        let mut rng = WeatherRng::new(1);
+        let profile = ZoneWeatherProfile {
+            force_event: Some(WeatherEvent::LingMist),
+            ..Default::default()
+        };
+
+        let event = try_roll_weather_for_zone_with_profile(
+            "z",
+            Season::Summer,
+            150,
+            &mut active,
+            &mut rng,
+            &profile,
+        );
+
+        assert_eq!(event, None);
+        let entry = active.current_entry("z").expect("existing event remains");
+        assert_eq!(entry.event, WeatherEvent::Thunderstorm);
+        assert_eq!(entry.started_at_lingtian_tick, 100);
+        assert_eq!(entry.expires_at_lingtian_tick, 200);
+    }
+
+    #[test]
+    fn zone_aware_generator_rolls_each_zone_independently() {
+        let mut profiles = ZoneWeatherProfileRegistry::new();
+        profiles
+            .insert(
+                "zone_a",
+                ZoneWeatherProfile {
+                    force_event: Some(WeatherEvent::Thunderstorm),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        profiles
+            .insert(
+                "zone_b",
+                ZoneWeatherProfile {
+                    force_event: Some(WeatherEvent::Blizzard),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut app = App::new();
+        app.insert_resource(LingtianTickAccumulator::new());
+        app.insert_resource(LingtianClock::default());
+        app.insert_resource(ActiveWeather::new());
+        app.insert_resource(WeatherRng::new(1));
+        app.insert_resource(profiles);
+        app.insert_resource(ZoneRegistry {
+            zones: vec![test_zone("zone_a", 0.0), test_zone("zone_b", 20.0)],
+        });
+        app.add_event::<WeatherLifecycleEvent>();
+        app.add_systems(Update, weather_generator_system_zone_aware);
+
+        app.update();
+
+        let active = app.world().resource::<ActiveWeather>();
+        assert_eq!(active.current("zone_a"), Some(WeatherEvent::Thunderstorm));
+        assert_eq!(active.current("zone_b"), Some(WeatherEvent::Blizzard));
+        let events = app.world().resource::<Events<WeatherLifecycleEvent>>();
+        let started = events
+            .iter_current_update_events()
+            .filter(|event| matches!(event, WeatherLifecycleEvent::Started { .. }))
+            .count();
+        assert_eq!(started, 2, "两个 zone 应各自 emit started lifecycle");
+    }
+
+    #[test]
+    fn zone_aware_generator_per_zone_last_rolled_day_dedup() {
+        let mut profiles = ZoneWeatherProfileRegistry::new();
+        profiles
+            .insert(
+                "zone_a",
+                ZoneWeatherProfile {
+                    force_event: Some(WeatherEvent::Thunderstorm),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut active = ActiveWeather::new();
+        let mut rng = WeatherRng::new(1);
+        let profile = profiles.profile_for("zone_a");
+
+        active.set_last_rolled_day_for("zone_a", 0);
+        let event = if active.last_rolled_day_for("zone_a") == Some(0) {
+            None
+        } else {
+            try_roll_weather_for_zone_with_profile(
+                "zone_a",
+                Season::Summer,
+                0,
+                &mut active,
+                &mut rng,
+                &profile,
+            )
+        };
+
+        assert_eq!(event, None);
+        assert_eq!(active.current("zone_a"), None);
+    }
+
+    #[test]
+    fn single_zone_mvp_compat_when_no_zone_registry_registered() {
+        let mut app = App::new();
+        app.insert_resource(LingtianTickAccumulator::new());
+        app.insert_resource(LingtianClock::default());
+        app.insert_resource(ActiveWeather::new());
+        app.insert_resource(WeatherRng::new(1));
+        app.insert_resource(ZoneWeatherProfileRegistry::new());
+        app.add_event::<WeatherLifecycleEvent>();
+        app.add_systems(Update, weather_generator_system_zone_aware);
+
+        app.update();
+
+        let active = app.world().resource::<ActiveWeather>();
+        assert_eq!(active.last_rolled_day_for(DEFAULT_ZONE), Some(0));
     }
 
     // -------- plan-lingtian-weather-v1 §6 P4 hooks --------
