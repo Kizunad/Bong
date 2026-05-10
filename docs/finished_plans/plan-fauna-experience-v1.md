@@ -127,7 +127,7 @@
 ### 测试结果
 
 - rebase 前本地全量：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过，`3639 passed; 0 failed`；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` 通过。
-- review 修复后本地增量：`cd server && cargo fmt --check` 通过；`cd server && CARGO_BUILD_JOBS=1 cargo check` 通过；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test --tests com.bong.client.audio.SoundRecipePlayerTest` 通过。
+- review 修复后本地增量：`cd server && cargo fmt --check` 通过；`cd server && CARGO_BUILD_JOBS=1 cargo check --tests` 通过；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` 通过。
 - review 修复后本地 `cargo test fuya_pressure_hum_audio_emits_on_aura_spawn` 在 test binary 链接阶段被系统 SIGKILL，无 Rust 诊断；该路径需由 PR CI 的 server/e2e 阶段继续核验。
 
 ### 跨仓库核验
