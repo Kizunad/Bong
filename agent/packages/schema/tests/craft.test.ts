@@ -15,6 +15,7 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
         v: 1,
         player_id: "offline:Alice",
         recipe_id: "craft.example.eclipse_needle.iron",
+        quantity: 3,
         ts: 1234567,
       });
       expect(result.ok).toBe(true);
@@ -24,6 +25,7 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
         v: 1,
         player_id: "x",
         recipe_id: "y",
+        quantity: 1,
         ts: 1,
         extra: "not allowed",
       });
@@ -34,6 +36,17 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
         v: 2,
         player_id: "x",
         recipe_id: "y",
+        quantity: 1,
+        ts: 1,
+      });
+      expect(result.ok).toBe(false);
+    });
+    it("rejects zero quantity", () => {
+      const result = validateCraftStartReqV1Contract({
+        v: 1,
+        player_id: "x",
+        recipe_id: "y",
+        quantity: 0,
         ts: 1,
       });
       expect(result.ok).toBe(false);
@@ -49,6 +62,8 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
         recipe_id: "craft.example.poison_decoction.fan",
         elapsed_ticks: 60,
         total_ticks: 1800,
+        completed_count: 1,
+        total_count: 3,
         ts: 1,
       });
       expect(result.ok).toBe(true);
@@ -60,6 +75,8 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
         active: false,
         elapsed_ticks: 0,
         total_ticks: 0,
+        completed_count: 0,
+        total_count: 0,
         ts: 1,
       });
       expect(result.ok).toBe(true);
@@ -72,6 +89,8 @@ describe("plan-craft-v1 §3 IPC schema (TypeBox)", () => {
         recipe_id: "y",
         elapsed_ticks: -1,
         total_ticks: 100,
+        completed_count: 0,
+        total_count: 1,
         ts: 1,
       });
       expect(result.ok).toBe(false);
