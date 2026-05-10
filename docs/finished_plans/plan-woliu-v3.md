@@ -120,9 +120,12 @@
 - **关键 commit**：
   - `7e3eec26c`（2026-05-11）`plan-woliu-v3: 接入涡流真空五招`
   - `442e4a90d`（2026-05-11）`plan-woliu-v3: 补齐真空五招运行效果`
+  - `6ba3043ec`（2026-05-11）`fix(plan-woliu-v3): 按朝向计算紊流爆发反冲`
+  - `eea30ac4d`（2026-05-11）`fix(plan-woliu-v3): 收敛 review 证据与伤害常量`
+  - `820b3d570`（2026-05-11）`fix(plan-woliu-v3): 修复吸取容量与无朝向反冲边界`
 - **测试结果**：
-  - server：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test -j 1` ✅ 4023 passed。
-  - server targeted：`CARGO_BUILD_JOBS=1 cargo test -j 1 combat::woliu_v2` ✅ 144 passed；`cargo test loads_default_audio_recipes` ✅ 1 passed；`cargo test woliu_v3_techniques_require_breath_and_heart_meridians` ✅ 1 passed。
+  - server：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test -j 1` ✅ 4025 passed。
+  - server targeted：`CARGO_BUILD_JOBS=1 cargo test -j 1 combat::woliu_v2` ✅ 146 passed；`cargo test loads_default_audio_recipes` ✅ 1 passed；`cargo test woliu_v3_techniques_require_breath_and_heart_meridians` ✅ 1 passed。
   - agent：`npm run build` ✅；`npm run generate:check -w @bong/schema` ✅ 338 generated schema files fresh；`npm test -w @bong/schema` ✅ 358 passed；`npm test -w @bong/tiandao -- woliu_v2_runtime` ✅ 3 passed。
   - client：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` ✅ BUILD SUCCESSFUL。
   - animation render：已对 `woliu_vacuum_palm.json`、`woliu_vortex_shield.json`、`woliu_vacuum_lock.json`、`woliu_vortex_resonance.json`、`woliu_turbulence_burst.json` 运行本地渲染 harness；grid 预览为本地临时校验产物，不写入仓库归档。
