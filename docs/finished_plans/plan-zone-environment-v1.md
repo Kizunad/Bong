@@ -292,7 +292,7 @@ public interface EmitterBehavior {
   - `d0cce7023` 2026-05-10 — `修复 zone environment review follow-up`
   - `6c07237f7` 2026-05-10 — `修复环境天空与广播重试`
 - 测试结果：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3512 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3513 passed。
   - `cd agent && npm run generate:check -w @bong/schema` ✅ generated schema artifacts are fresh，325 files。
   - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅ schema 351 passed，tiandao 320 passed。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 983 tests。
