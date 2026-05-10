@@ -136,16 +136,19 @@
   - `c2e55ad39`（2026-05-10）：兼容旧 client-request 测试 harness 未注册 NPC 音效事件的场景。
   - `94417228a`（2026-05-10）：收敛 review 反馈，补跨维度拦截、骨币-only 交易边界、NPC schema 独立导出与客户端边界校验。
   - `982669700`（2026-05-10）：收敛 follow-up review，统一 NPC metadata channel 常量、补境界 rank/负 entity 回归，并让 `reputation_to_player` 叠加当前玩家 active identity 声望。
+  - `4b9e4c87a`（2026-05-10）：对齐 NPC 元数据境界中文到 worldview 正典（醒灵/引气/凝脉/固元/通灵/化虚），并补回归测试。
   - `9d66f5a9d`（2026-05-10）：归档 `plan-npc-engagement-v1` 到 `docs/finished_plans/`。
 - 验证：
   - `cd server && cargo fmt --check`
   - `cd server && cargo check`
   - `cd server && cargo clippy -- -D warnings`
   - `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -j1 -- -D warnings`
+  - `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j1 realm_label_matches_worldview_canon -- --nocapture` → `1 passed; 0 failed; 3811 filtered out`
+  - `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j1` → `3812 passed; 0 failed`
   - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`
   - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test --tests "com.bong.client.npc.NpcNametagRendererTest" --tests "com.bong.client.npc.NpcMetadataHandlerTest"`
   - `cd agent && npm run build`
   - `cd agent && npm test -w @bong/schema`
   - `git diff --check`
   - rebase 冲突核验：`find server/assets/audio/recipes -maxdepth 1 -name '*.json' | wc -l` → `67`
-- 备注：`CARGO_PROFILE_TEST_DEBUG=0 cargo test npc_metadata -- --nocapture`、`CARGO_PROFILE_TEST_DEBUG=0 cargo test npc_metadata_packet_serializes -j1`、`CARGO_PROFILE_TEST_DEBUG=0 cargo test loads_default_audio_recipes -j1` 与 `CARGO_PROFILE_TEST_DEBUG=0 cargo test unsupported_client_request_version_is_ignored_without_side_effects -j1` 均在本机测试二进制链接阶段被 SIGKILL，未进入断言执行；server 侧用 `cargo check` 与 `clippy --all-targets` 覆盖类型/测试目标编译。
+- 备注：此前本机 server 测试二进制链接阶段曾出现 SIGKILL；本轮正典修复后已在当前 head 通过 targeted `realm_label_matches_worldview_canon` 与 server 全量 `cargo test -j1`。
