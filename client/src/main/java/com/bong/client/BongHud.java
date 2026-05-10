@@ -10,6 +10,7 @@ import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.SpellVolumeStore;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.UnlockedStylesStore;
+import com.bong.client.combat.baomai.v3.BaomaiV3Hud;
 import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
@@ -163,6 +164,12 @@ public class BongHud {
             }
         }
 
+        renderBaomaiV3HudForProduction(
+            new DrawContextHudSurface(context, client),
+            nowMillis,
+            visibility
+        );
+
         int scaledWidth = client.getWindow().getScaledWidth();
         int scaledHeight = client.getWindow().getScaledHeight();
         for (HudRenderCommand command : commands) {
@@ -173,6 +180,16 @@ public class BongHud {
             } else if (command.isEdgeInkWash()) {
                 InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
+        }
+    }
+
+    static void renderBaomaiV3HudForProduction(
+        HudSurface surface,
+        long nowMs,
+        ScreenHudVisibility visibility
+    ) {
+        if (visibility == ScreenHudVisibility.FULL) {
+            BaomaiV3Hud.render(surface, nowMs);
         }
     }
 
@@ -331,6 +348,7 @@ public class BongHud {
             surface,
             com.bong.client.lingtian.state.LingtianSessionStore.snapshot()
         );
+        com.bong.client.combat.baomai.v3.BaomaiV3Hud.render(surface, snapshot.nowMs());
     }
 
     /**
@@ -374,6 +392,46 @@ public class BongHud {
             TOAST_BACKGROUND_COLOR
         );
         surface.drawText(toast.text(), x, y, toast.color(), true);
+    }
+
+    private static final class DrawContextHudSurface implements HudSurface {
+        private final DrawContext context;
+        private final MinecraftClient client;
+
+        private DrawContextHudSurface(DrawContext context, MinecraftClient client) {
+            this.context = context;
+            this.client = client;
+        }
+
+        @Override
+        public int windowWidth() {
+            return client.getWindow().getScaledWidth();
+        }
+
+        @Override
+        public int windowHeight() {
+            return client.getWindow().getScaledHeight();
+        }
+
+        @Override
+        public int measureText(String text) {
+            return client.textRenderer.getWidth(text);
+        }
+
+        @Override
+        public void fill(int x1, int y1, int x2, int y2, int color) {
+            context.fill(x1, y1, x2, y2, color);
+        }
+
+        @Override
+        public void drawTextWithShadow(String text, int x, int y, int color) {
+            context.drawTextWithShadow(client.textRenderer, text, x, y, color);
+        }
+
+        @Override
+        public void drawText(String text, int x, int y, int color, boolean shadow) {
+            context.drawText(client.textRenderer, text, x, y, color, shadow);
+        }
     }
 
     public interface HudSurface {

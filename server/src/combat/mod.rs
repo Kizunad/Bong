@@ -2,6 +2,7 @@ pub mod anqi_v2;
 pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
+pub mod baomai_v3;
 pub mod carrier;
 pub mod components;
 #[cfg(test)]
@@ -198,6 +199,7 @@ pub fn register(app: &mut App) {
     woliu_v2::register(app);
     zhenmai_v2::register(app);
     dugu_v2::register(app);
+    baomai_v3::register(app);
     tuike_v2::register(app);
 
     app.add_systems(

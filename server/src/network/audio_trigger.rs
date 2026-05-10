@@ -8,6 +8,7 @@ use valence::prelude::{
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
 use crate::botany::components::HarvestTerminalEvent;
+use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
@@ -475,6 +476,37 @@ pub fn emit_woliu_v2_audio_triggers(
     }
 }
 
+pub fn emit_baomai_v3_audio_triggers(
+    mut events: EventReader<BaomaiSkillEvent>,
+    positions: Query<&Position>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for event in events.read() {
+        let Ok(position) = positions.get(event.caster) else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            baomai_recipe_for_skill(event.skill),
+            event.caster,
+            position.get(),
+            Some(event.skill.wire_kind().to_string()),
+            1.0,
+            0.0,
+        );
+    }
+}
+
+fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
+    match skill {
+        BaomaiSkillId::BengQuan | BaomaiSkillId::FullPowerRelease => "meridian_crack",
+        BaomaiSkillId::FullPowerCharge => "stance_switch",
+        BaomaiSkillId::MountainShake => "mountain_shake_rumble",
+        BaomaiSkillId::BloodBurn => "blood_burn_sizzle",
+        BaomaiSkillId::Disperse => "transcendence_thunder",
+    }
+}
+
 pub fn emit_tuike_v2_audio_triggers(
     mut don_events: EventReader<DonFalseSkinEvent>,
     mut shed_events: EventReader<FalseSkinSheddedEvent>,
@@ -708,10 +740,11 @@ fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
         | "exposure_name"
         | "narration_cue"
         | "skill_lv_up"
+        | "stance_switch"
         | "npc_refuse"
         | "npc_greeting_cultivator"
         | "npc_greeting_commoner"
-        | "stance_switch" => AudioAttenuation::PlayerLocal,
+        | "blood_burn_sizzle" => AudioAttenuation::PlayerLocal,
         "tribulation_thunder_distant" => AudioAttenuation::GlobalHint,
         "realm_breakthrough" => AudioAttenuation::ZoneBroadcast,
         _ => AudioAttenuation::World3d,
@@ -854,6 +887,14 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "skill_lv_up");
         assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == player));
+    }
+
+    #[test]
+    fn blood_burn_audio_is_player_local() {
+        assert_eq!(
+            attenuation_for_recipe("blood_burn_sizzle"),
+            AudioAttenuation::PlayerLocal
+        );
     }
 
     #[test]

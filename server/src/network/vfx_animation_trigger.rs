@@ -8,6 +8,7 @@ use valence::prelude::{EventReader, EventWriter, Position, Query, UniqueId};
 
 use crate::botany::components::HarvestTerminalEvent;
 use crate::botany::lifecycle::botany_quality_color;
+use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
@@ -25,6 +26,7 @@ const ANIM_SWORD_STAB: &str = "bong:sword_stab";
 const ANIM_FIST_PUNCH_RIGHT: &str = "bong:fist_punch_right";
 const ANIM_PALM_STRIKE: &str = "bong:palm_strike";
 const ANIM_PARRY_BLOCK: &str = "bong:parry_block";
+const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
 const ANIM_HURT_STAGGER: &str = "bong:hurt_stagger";
 const ANIM_BREAKTHROUGH_YINQI: &str = "bong:breakthrough_yinqi";
 const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
@@ -40,6 +42,7 @@ const LINGTIAN_REPLENISH_VFX: &str = "bong:lingtian_replenish";
 const LINGTIAN_HARVEST_VFX: &str = "bong:lingtian_harvest";
 const LINGTIAN_DRAIN_VFX: &str = "bong:lingtian_drain";
 const WOLIU_PRIORITY: u16 = 1300;
+const BAOMAI_PRIORITY: u16 = 1500;
 const TUIKE_PRIORITY: u16 = 1350;
 
 const COMBAT_PRIORITY: u16 = 1000;
@@ -225,6 +228,23 @@ pub fn emit_botany_harvest_visual_triggers(
     }
 }
 
+pub fn emit_baomai_v3_visual_triggers(
+    mut events: EventReader<BaomaiSkillEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in events.read() {
+        emit_play_for_entity(
+            event.caster,
+            baomai_anim_for_skill(event.skill),
+            BAOMAI_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+    }
+}
+
 pub fn emit_lingtian_visual_triggers(
     mut tills: EventReader<TillCompleted>,
     mut plantings: EventReader<PlantingCompleted>,
@@ -286,6 +306,17 @@ pub fn emit_lingtian_visual_triggers(
             "#888888",
             0.7,
         );
+    }
+}
+
+fn baomai_anim_for_skill(skill: BaomaiSkillId) -> &'static str {
+    match skill {
+        BaomaiSkillId::BengQuan => "bong:beng_quan",
+        BaomaiSkillId::FullPowerCharge => ANIM_GUARD_RAISE,
+        BaomaiSkillId::FullPowerRelease => ANIM_FIST_PUNCH_RIGHT,
+        BaomaiSkillId::MountainShake => "bong:baomai_mountain_shake",
+        BaomaiSkillId::BloodBurn => "bong:baomai_blood_burn",
+        BaomaiSkillId::Disperse => "bong:baomai_disperse",
     }
 }
 

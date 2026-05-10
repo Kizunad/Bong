@@ -43,6 +43,32 @@ pub struct DuguReverseBurstOutcome {
     pub returned_zone_qi: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AoeGroundWaveOutcome {
+    pub qi_spent: f64,
+    pub radius_blocks: f32,
+    pub shock_damage: f32,
+    pub stagger_ticks: u64,
+    pub knockback_blocks: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BloodBurnConversionOutcome {
+    pub hp_burned: f32,
+    pub qi_multiplier: f32,
+    pub duration_ticks: u64,
+    pub ends_in_near_death: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BodyTranscendenceOutcome {
+    pub qi_max_before: f64,
+    pub qi_max_after: f64,
+    pub qi_max_lost: f64,
+    pub flow_rate_multiplier: f64,
+    pub duration_ticks: u64,
+}
+
 pub fn density_echo(
     local_qi_density: f64,
     base_threshold: f64,
@@ -189,6 +215,74 @@ where
     }
 }
 
+/// 爆脉 v3 撼山：把真元沿地表传导为短半径震波。
+pub fn aoe_ground_wave(
+    qi_spent: f64,
+    radius_blocks: f32,
+    shock_damage: f32,
+) -> Result<AoeGroundWaveOutcome, QiPhysicsError> {
+    let qi_spent = finite_non_negative(qi_spent, "ground_wave.qi_spent")?;
+    let radius = finite_non_negative(f64::from(radius_blocks), "ground_wave.radius")? as f32;
+    let damage = finite_non_negative(f64::from(shock_damage), "ground_wave.damage")? as f32;
+    Ok(AoeGroundWaveOutcome {
+        qi_spent,
+        radius_blocks: radius,
+        shock_damage: damage,
+        stagger_ticks: 10,
+        knockback_blocks: 0.75,
+    })
+}
+
+/// 爆脉 v3 焚血：把当前生命直接换成短时真元投入倍率。
+pub fn blood_burn_conversion(
+    hp_current: f32,
+    hp_burn: f32,
+    qi_multiplier: f32,
+    duration_ticks: u64,
+) -> Result<BloodBurnConversionOutcome, QiPhysicsError> {
+    let hp_current = finite_non_negative(f64::from(hp_current), "blood_burn.hp_current")? as f32;
+    let hp_burned = finite_non_negative(f64::from(hp_burn), "blood_burn.hp_burn")? as f32;
+    if hp_burned > hp_current {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "blood_burn.hp_burn",
+            value: f64::from(hp_burned),
+        });
+    }
+    let multiplier =
+        finite_non_negative(f64::from(qi_multiplier), "blood_burn.qi_multiplier")? as f32;
+    Ok(BloodBurnConversionOutcome {
+        hp_burned,
+        qi_multiplier: multiplier.max(1.0),
+        duration_ticks,
+        ends_in_near_death: hp_current - hp_burned <= hp_current.max(1.0) * 0.10,
+    })
+}
+
+/// 爆脉 v3 散功：永久烧 qi_max，换取短时 flow_rate 放大窗口。
+pub fn body_transcendence(
+    qi_max: f64,
+    loss_ratio: f64,
+    flow_rate_multiplier: f64,
+    duration_ticks: u64,
+) -> Result<BodyTranscendenceOutcome, QiPhysicsError> {
+    let qi_max = finite_non_negative(qi_max, "body_transcendence.qi_max")?;
+    let loss_ratio =
+        finite_non_negative(loss_ratio, "body_transcendence.loss_ratio")?.clamp(0.0, 1.0);
+    let multiplier = finite_non_negative(
+        flow_rate_multiplier,
+        "body_transcendence.flow_rate_multiplier",
+    )?
+    .max(1.0);
+    let qi_max_lost = qi_max * loss_ratio;
+    Ok(BodyTranscendenceOutcome {
+        qi_max_before: qi_max,
+        qi_max_after: (qi_max - qi_max_lost).max(0.0),
+        qi_max_lost,
+        flow_rate_multiplier: multiplier,
+        duration_ticks,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShedToCarrierOutcome {
     pub damage_absorbed: f64,
@@ -303,6 +397,42 @@ mod tests {
         assert_eq!(out.total_taint_intensity, 5.0);
         assert_eq!(out.burst_damage, 60.0);
         assert!((out.returned_zone_qi - 4.95).abs() < 1e-9);
+    }
+
+    #[test]
+    fn aoe_ground_wave_preserves_input_damage_and_control_window() {
+        let out = aoe_ground_wave(35.0, 6.0, 90.0).unwrap();
+        assert_eq!(out.qi_spent, 35.0);
+        assert_eq!(out.radius_blocks, 6.0);
+        assert_eq!(out.shock_damage, 90.0);
+        assert_eq!(out.stagger_ticks, 10);
+    }
+
+    #[test]
+    fn blood_burn_conversion_marks_near_death_boundary() {
+        let out = blood_burn_conversion(100.0, 91.0, 2.5, 500).unwrap();
+        assert!(out.ends_in_near_death);
+        assert_eq!(out.qi_multiplier, 2.5);
+    }
+
+    #[test]
+    fn blood_burn_conversion_rejects_more_hp_than_available() {
+        let err = blood_burn_conversion(20.0, 21.0, 2.0, 500).unwrap_err();
+        assert!(matches!(
+            err,
+            QiPhysicsError::InvalidAmount {
+                field: "blood_burn.hp_burn",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn body_transcendence_burns_qi_max_without_immunity_field() {
+        let out = body_transcendence(10_700.0, 0.5, 10.0, 100).unwrap();
+        assert_eq!(out.qi_max_before, 10_700.0);
+        assert_eq!(out.qi_max_after, 5_350.0);
+        assert_eq!(out.flow_rate_multiplier, 10.0);
     }
 
     #[test]

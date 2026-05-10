@@ -174,8 +174,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            81,
-            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, dugu-v2 recipes, NPC engagement cues, tuike-v2 recipes, and audio-world ambient/music loops"
+            84,
+            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, and audio-world ambient/music loops"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -211,6 +211,9 @@ mod tests {
         assert!(registry.get("dugu_needle_hiss").is_some());
         assert!(registry.get("dugu_self_cure_drink").is_some());
         assert!(registry.get("dugu_curse_cackle").is_some());
+        assert!(registry.get("mountain_shake_rumble").is_some());
+        assert!(registry.get("blood_burn_sizzle").is_some());
+        assert!(registry.get("transcendence_thunder").is_some());
         assert!(registry.get("npc_refuse").is_some());
         assert!(registry.get("npc_greeting_cultivator").is_some());
         assert!(registry.get("npc_greeting_commoner").is_some());
