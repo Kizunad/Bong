@@ -111,6 +111,7 @@
 - P1：接入 `TsyPressureOverlay`、FOV offset、Fuya aura VFX，以及上古遗物 tooltip/grid/drop glow 与 `charges` 显示。
 - P2：容器搜刮 start/complete VFX/audio、loot pop 方向、`ZoneStatusV1::race_out` schema 与 tiandao context/insight 文案、`tsy_gaoshou_01_{shallow,mid,deep}` POI 契约补全。
 - 顺带修复（CI follow-up）：snapshot workflow 复现 Valence layer panic 后，将 NPC dehydrate 从裸 `despawn()` 改为插入 `Despawned`，避免 dormant 化 NPC 绕过 Valence cleanup 标记。
+- 顺带修复（CI follow-up）：snapshot workflow 复现 client 启动 raw_id guard 后，将 whale/fauna server `EntityKind` 与当前打包 Fabric client 注册位号同步到 133/134..141。
 - 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（3633 passed）、`./gradlew test build`（JDK 17）、`npm run build`、`agent/packages/tiandao npm test`、`agent/packages/schema npm test`、`agent/packages/schema npm run generate:check`、`git diff --check`。
 
 ## 前置依赖
