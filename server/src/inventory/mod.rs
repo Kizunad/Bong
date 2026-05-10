@@ -353,6 +353,41 @@ pub struct PlayerInventory {
     pub max_weight: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearScope {
+    PackOnly,
+    PackAndHotbar,
+    All,
+}
+
+pub fn clear_player_inventory(inventory: &mut PlayerInventory, scope: ClearScope) {
+    match scope {
+        ClearScope::PackOnly => {
+            if let Some(container) = inventory
+                .containers
+                .iter_mut()
+                .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+            {
+                container.items.clear();
+            }
+        }
+        ClearScope::PackAndHotbar => {
+            for container in &mut inventory.containers {
+                container.items.clear();
+            }
+            inventory.hotbar = Default::default();
+        }
+        ClearScope::All => {
+            for container in &mut inventory.containers {
+                container.items.clear();
+            }
+            inventory.hotbar = Default::default();
+            inventory.equipped.clear();
+        }
+    }
+    bump_revision(inventory);
+}
+
 #[derive(Debug, Clone, Copy, Component, PartialEq)]
 pub struct OverloadedMarker {
     pub current_weight: f64,
@@ -3729,6 +3764,30 @@ mod tests {
         }
     }
 
+    fn populated_clear_inventory() -> PlayerInventory {
+        let mut inv = empty_inventory(2, 2);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(1, "main_item"),
+        });
+        inv.containers.push(ContainerState {
+            id: "side_pack".to_string(),
+            name: "侧袋".to_string(),
+            rows: 1,
+            cols: 1,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(2, "side_item"),
+            }],
+        });
+        inv.hotbar[0] = Some(make_test_item_instance(3, "hotbar_item"));
+        inv.equipped
+            .insert("weapon".to_string(), make_test_item_instance(4, "sword"));
+        inv
+    }
+
     fn assert_container_has_no_overlaps(container: &ContainerState) {
         for (left_index, left) in container.items.iter().enumerate() {
             for right in container.items.iter().skip(left_index + 1) {
@@ -3740,6 +3799,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn clear_player_inventory_pack_only_preserves_other_storage() {
+        let mut inv = populated_clear_inventory();
+
+        clear_player_inventory(&mut inv, ClearScope::PackOnly);
+
+        assert!(inv.containers[0].items.is_empty());
+        assert_eq!(inv.containers[1].items.len(), 1);
+        assert!(inv.hotbar[0].is_some());
+        assert_eq!(inv.equipped.len(), 1);
+        assert_eq!(inv.revision, InventoryRevision(1));
+    }
+
+    #[test]
+    fn clear_player_inventory_pack_and_hotbar_preserves_equipment() {
+        let mut inv = populated_clear_inventory();
+
+        clear_player_inventory(&mut inv, ClearScope::PackAndHotbar);
+
+        assert!(inv
+            .containers
+            .iter()
+            .all(|container| container.items.is_empty()));
+        assert!(inv.hotbar.iter().all(Option::is_none));
+        assert_eq!(inv.equipped.len(), 1);
+        assert_eq!(inv.revision, InventoryRevision(1));
+    }
+
+    #[test]
+    fn clear_player_inventory_all_removes_equipment() {
+        let mut inv = populated_clear_inventory();
+
+        clear_player_inventory(&mut inv, ClearScope::All);
+
+        assert!(inv
+            .containers
+            .iter()
+            .all(|container| container.items.is_empty()));
+        assert!(inv.hotbar.iter().all(Option::is_none));
+        assert!(inv.equipped.is_empty());
+        assert_eq!(inv.revision, InventoryRevision(1));
     }
 
     #[test]
