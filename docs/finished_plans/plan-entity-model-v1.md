@@ -189,6 +189,7 @@
 - `0f160ae4e`（2026-05-10）`docs(client): 说明灵田方块注册边界`
 - `068d5fc47`（2026-05-10）`fix(server): 同步实体视觉 metadata 时序`
 - `185a43121`（2026-05-10）`fix(entity): 避让 fauna 实体 raw id 区间`
+- `dc1ad4f19`（2026-05-10）`fix(server): 同步阵法核心视觉状态`
 
 ### 测试结果
 
@@ -203,8 +204,12 @@
   - `BUILD SUCCESSFUL`
 - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo check --bin bong-server`
   - `Finished dev profile`
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`
+  - `Finished dev profile`
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test entity_model -- --nocapture`
-  - `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3647 filtered out`
+  - `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3648 filtered out`
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test zhenfa_anchor_visual_state_reflects_registry_lifecycle -- --nocapture`
+  - `test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3650 filtered out`
 
 ### 跨仓库核验
 
@@ -219,6 +224,7 @@
   - `server/src/world/tsy.rs` / `server/src/world/tsy_container.rs`：`LootContainer`
 - client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=134..144`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=125` 与 `fauna raw_id=126..133` 之后。
 - server 新增 `world::entity_model` 将 gameplay component 映射到 `EntityKind::new(134..144)` 视觉 marker，`VisualState` 使用 DataTracker index `8`、type `INTEGER`、VarInt 编码，与 `BongModeledEntity.VISUAL_STATE` 对齐。
+- 阵法核心视觉状态由 `ZhenfaRegistry::anchor_visual_state` 提供，覆盖 inactive / active / exhausted，避免 marker 层写死 active。
 - 未新增 server_data / Redis event；视觉状态走实体 metadata 的 `VisualState` tracker 映射到状态贴图。
 
 ### 遗留 / 后续
