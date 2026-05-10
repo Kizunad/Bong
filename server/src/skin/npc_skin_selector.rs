@@ -152,7 +152,7 @@ pub fn initial_age_ratio(archetype: NpcArchetype, initial_age_ticks: f64) -> f64
     if max_age_ticks <= f64::EPSILON {
         1.0
     } else {
-        (initial_age_ticks.max(0.0) / max_age_ticks).clamp(0.0, 16.0)
+        (initial_age_ticks.max(0.0) / max_age_ticks).clamp(0.0, 1.0)
     }
 }
 
@@ -215,5 +215,16 @@ mod tests {
         assert_eq!(fading, NpcAgeBand::Fading);
         assert!(elder.is_elderly());
         assert!(fading.is_elderly());
+    }
+
+    #[test]
+    fn initial_age_ratio_is_normalized() {
+        let max_age_ticks = NpcArchetype::Rogue.default_max_age_ticks();
+
+        assert_eq!(initial_age_ratio(NpcArchetype::Rogue, -1.0), 0.0);
+        assert_eq!(
+            initial_age_ratio(NpcArchetype::Rogue, max_age_ticks * 2.0),
+            1.0
+        );
     }
 }
