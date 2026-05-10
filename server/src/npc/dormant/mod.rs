@@ -14,7 +14,9 @@ use crate::cultivation::breakthrough::{
     breakthrough_qi_cost, next_realm, try_breakthrough, BreakthroughError, BreakthroughSuccess,
     RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH, MIN_ZONE_QI_TO_GUYUAN,
 };
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
@@ -27,7 +29,8 @@ use crate::npc::loot::NpcLootTable;
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index, seed_position_for_zone};
 use crate::qi_physics::{
-    qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    constants::QI_ZONE_UNIT_CAPACITY, qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer,
+    QiTransferReason, WorldQiAccount,
 };
 use crate::social::components::CharId;
 use crate::world::dimension::DimensionKind;
@@ -391,7 +394,7 @@ fn dormant_global_tick_system(
             u64::from(config.dormant_tick_interval_ticks.max(1))
         };
         snapshot.last_dormant_tick_processed = tick;
-        advance_dormant_position(snapshot, elapsed_ticks);
+        advance_dormant_position(snapshot, elapsed_ticks, tick);
         snapshot.lifespan.age_ticks +=
             elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
 
@@ -412,10 +415,11 @@ fn dormant_global_tick_system(
         }
     }
 
+    let removed_expired = !expired.is_empty();
     for char_id in expired {
         store.snapshots.remove(&char_id);
     }
-    if !store.snapshots.is_empty() {
+    if removed_expired {
         store.rebuild_indexes();
     }
 }
@@ -492,6 +496,8 @@ fn dormant_rogue_seed_snapshot(
     let (position, patrol_target) = seed_position_for_zone(zone, index);
     let char_id = format!("dormant:rogue:{index}");
     let cultivation = Cultivation::default();
+    let mut meridian_system = MeridianSystem::default();
+    meridian_system.get_mut(MeridianId::Lung).opened = true;
     let lifespan = NpcLifespan::new(
         initial_age_for_index(
             index,
@@ -514,7 +520,7 @@ fn dormant_rogue_seed_snapshot(
         zone_name: zone.name.clone(),
         position: vec3_to_array(position),
         cultivation: cultivation.clone(),
-        meridian_system: MeridianSystem::default(),
+        meridian_system,
         meridian_severed: MeridianSeveredPermanent::default(),
         contamination: Contamination::default(),
         lifespan,
@@ -533,12 +539,16 @@ fn dormant_rogue_seed_snapshot(
     }
 }
 
-pub fn advance_dormant_position(snapshot: &mut NpcDormantSnapshot, elapsed_ticks: u64) {
+pub fn advance_dormant_position(
+    snapshot: &mut NpcDormantSnapshot,
+    elapsed_ticks: u64,
+    salt_tick: u64,
+) {
     let seconds = elapsed_ticks as f64 / 20.0;
     let current = snapshot.position_vec();
     let next = match &snapshot.intent {
         DormantBehaviorIntent::Wander { drift_radius } => {
-            let seed = deterministic_unit(snapshot.char_id.as_str(), elapsed_ticks);
+            let seed = deterministic_unit(snapshot.char_id.as_str(), salt_tick);
             let angle = seed * std::f64::consts::TAU;
             let step = seconds.clamp(0.0, 60.0);
             let drift_cap = drift_radius.max(0.0);
@@ -615,7 +625,10 @@ pub fn apply_dormant_regen(
         return None;
     }
 
-    let rate = snapshot.meridian_system.sum_rate().max(0.1);
+    let rate = snapshot.meridian_system.sum_rate();
+    if rate <= 0.0 {
+        return None;
+    }
     let integrity_count = snapshot.meridian_system.iter().count() as f64;
     let avg_integrity = if integrity_count > 0.0 {
         snapshot
@@ -636,7 +649,10 @@ pub fn apply_dormant_regen(
     let zone_account = QiAccountId::zone(zone.name.clone());
     let npc_account = QiAccountId::npc(snapshot.char_id.clone());
     ledger
-        .set_balance(zone_account.clone(), zone.spirit_qi.max(0.0))
+        .set_balance(
+            zone_account.clone(),
+            zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+        )
         .ok()?;
     ledger
         .set_balance(
@@ -748,14 +764,21 @@ pub fn release_dormant_qi_to_zone(
     let npc_account = QiAccountId::npc(snapshot.char_id.clone());
     let zone_account = QiAccountId::zone(zone.name.clone());
     ledger.set_balance(npc_account.clone(), amount).ok()?;
+    let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
     ledger
-        .set_balance(zone_account.clone(), zone.spirit_qi.max(0.0))
+        .set_balance(zone_account.clone(), zone_current)
         .ok()?;
-    let outcome =
-        qi_release_to_zone(amount, npc_account, zone_account, zone.spirit_qi, 1.0).ok()?;
+    let outcome = qi_release_to_zone(
+        amount,
+        npc_account,
+        zone_account,
+        zone_current,
+        QI_ZONE_UNIT_CAPACITY,
+    )
+    .ok()?;
     let transfer = outcome.transfer?;
     ledger.transfer(transfer.clone()).ok()?;
-    zone.spirit_qi = outcome.zone_after.clamp(-1.0, 1.0);
+    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
     snapshot.cultivation.qi_current = 0.0;
     snapshot.qi_ledger_net -= outcome.accepted;
     Some(transfer)
@@ -872,6 +895,7 @@ mod tests {
     #[test]
     fn dormant_regen_moves_qi_through_ledger() {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        open_regular_meridians(&mut snapshot, 1);
         let mut zones = ZoneRegistry {
             zones: vec![zone()],
         };
@@ -893,6 +917,33 @@ mod tests {
         assert!(
             (snapshot.qi_ledger_net - transfer.amount).abs() < f64::EPSILON,
             "qi_ledger_net must audit the same amount as the ledger transfer"
+        );
+        assert!(
+            (ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME))
+                - zones
+                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi
+                    * QI_ZONE_UNIT_CAPACITY)
+                .abs()
+                < 1e-9,
+            "ledger zone balance must use absolute qi units matching normalized zone drain"
+        );
+    }
+
+    #[test]
+    fn dormant_regen_requires_open_meridian_flow() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut ledger = WorldQiAccount::default();
+
+        assert!(apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none());
+        assert_eq!(snapshot.cultivation.qi_current, 0.1);
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME)),
+            0.0
         );
     }
 
@@ -918,6 +969,69 @@ mod tests {
                 .spirit_qi
                 > 0.8
         );
+        assert!(
+            (ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME))
+                - zones
+                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi
+                    * QI_ZONE_UNIT_CAPACITY)
+                .abs()
+                < 1e-9,
+            "ledger zone balance must use the same absolute qi unit as normalized zone state"
+        );
+    }
+
+    #[test]
+    fn dormant_wander_uses_absolute_tick_salt() {
+        let mut snapshot = snapshot("npc_a", DVec3::ZERO);
+        snapshot.intent = DormantBehaviorIntent::Wander {
+            drift_radius: 10_000.0,
+        };
+        let start = snapshot.position_vec();
+
+        advance_dormant_position(&mut snapshot, 1200, 1200);
+        let first = snapshot.position_vec();
+        advance_dormant_position(&mut snapshot, 1200, 2400);
+        let second = snapshot.position_vec();
+
+        let straight_line_second = DVec3::new(
+            start.x + (first.x - start.x) * 2.0,
+            start.y,
+            start.z + (first.z - start.z) * 2.0,
+        );
+        assert!(
+            planar_distance(second, straight_line_second) > 1e-6,
+            "wander angle must vary across absolute ticks instead of repeating one straight-line heading"
+        );
+    }
+
+    #[test]
+    fn dormant_global_tick_clears_indexes_when_all_snapshots_expire() {
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..Default::default()
+        });
+        app.insert_resource(GameTick(1));
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone()],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        let mut expired = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
+        let mut store = NpcDormantStore::default();
+        store.insert(expired);
+        app.insert_resource(store);
+        app.add_systems(Update, dormant_global_tick_system);
+
+        app.update();
+
+        let store = app.world().resource::<NpcDormantStore>();
+        assert!(store.is_empty());
+        assert!(store.ids_by_archetype(NpcArchetype::Rogue).is_empty());
+        assert!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME).is_empty());
     }
 
     #[test]
