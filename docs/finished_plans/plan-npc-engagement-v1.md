@@ -130,13 +130,13 @@
 - P1：新增 `npc_trade_request` C2S 契约、client trade UI、server 信誉定价/拒绝校验、骨币扣款与背包快照回推；本版交易只接受骨币结算，非空 `offered_items` 会被明确拒绝。
 - P2：新增 dialogue choice C2S、server 下发 greeting text、基础 dialogue UI，以及 NPC greeting/refuse/hurt/death/aggro audio recipe 与触发。
 - 关键 commit：
-  - `1fae62625`（2026-05-10）：接入 server NPC 元数据、NPC audio recipe、信誉定价 helper 与 C2S schema。
-  - `ed7d9d72a`（2026-05-10）：补齐 client NPC metadata store、nametag、inspect/dialogue/trade UI 与 agent schema registry/generated JSON。
-  - `0caf10d0a`（2026-05-10）：接入 server NPC inspect/dialogue/trade request handler，校验存活距离、信誉、骨币与背包快照回推。
-  - `4d77b3e14`（2026-05-10）：兼容旧 client-request 测试 harness 未注册 NPC 音效事件的场景。
-  - `acf4adce6`（2026-05-10）：收敛 review 反馈，补跨维度拦截、骨币-only 交易边界、NPC schema 独立导出与客户端边界校验。
-  - `e2f7f6ddf`（2026-05-10）：收敛 follow-up review，统一 NPC metadata channel 常量、补境界 rank/负 entity 回归，并让 `reputation_to_player` 叠加当前玩家 active identity 声望。
-  - `9aa000c58`（2026-05-10）：归档 `plan-npc-engagement-v1` 到 `docs/finished_plans/`。
+  - `a6700f951`（2026-05-10）：接入 server NPC 元数据、NPC audio recipe、信誉定价 helper 与 C2S schema。
+  - `a6476af9`（2026-05-10）：补齐 client NPC metadata store、nametag、inspect/dialogue/trade UI 与 agent schema registry/generated JSON。
+  - `02db71a17`（2026-05-10）：接入 server NPC inspect/dialogue/trade request handler，校验存活距离、信誉、骨币与背包快照回推。
+  - `a97c88f9d`（2026-05-10）：兼容旧 client-request 测试 harness 未注册 NPC 音效事件的场景。
+  - `0e996c607`（2026-05-10）：收敛 review 反馈，补跨维度拦截、骨币-only 交易边界、NPC schema 独立导出与客户端边界校验。
+  - `322381e5f`（2026-05-10）：收敛 follow-up review，统一 NPC metadata channel 常量、补境界 rank/负 entity 回归，并让 `reputation_to_player` 叠加当前玩家 active identity 声望。
+  - `1a5975c06`（2026-05-10）：归档 `plan-npc-engagement-v1` 到 `docs/finished_plans/`。
 - 验证：
   - `cd server && cargo fmt --check`
   - `cd server && cargo check`
@@ -147,5 +147,5 @@
   - `cd agent && npm run build`
   - `cd agent && npm test -w @bong/schema`
   - `git diff --check`
-  - rebase 冲突核验：`find server/assets/audio/recipes -maxdepth 1 -name '*.json' | wc -l` → `60`
+  - rebase 冲突核验：`find server/assets/audio/recipes -maxdepth 1 -name '*.json' | wc -l` → `63`
 - 备注：`CARGO_PROFILE_TEST_DEBUG=0 cargo test npc_metadata -- --nocapture`、`CARGO_PROFILE_TEST_DEBUG=0 cargo test npc_metadata_packet_serializes -j1`、`CARGO_PROFILE_TEST_DEBUG=0 cargo test loads_default_audio_recipes -j1` 与 `CARGO_PROFILE_TEST_DEBUG=0 cargo test unsupported_client_request_version_is_ignored_without_side_effects -j1` 均在本机测试二进制链接阶段被 SIGKILL，未进入断言执行；server 侧用 `cargo check` 与 `clippy --all-targets` 覆盖类型/测试目标编译。
