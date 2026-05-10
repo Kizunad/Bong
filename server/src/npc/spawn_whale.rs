@@ -2,9 +2,10 @@
 //!
 //! 渲染契约：客户端 Fabric mod (`com.bong.client.whale`) 在
 //! `BongClient.onInitializeClient` 第 N 个注册的 EntityType 是 `bong:whale`。
-//! Vanilla MC 1.20.1 有 124 entity_type（id 0..=123）；BongClient 注册顺序
-//! `BotanyPlantRenderBootstrap`（→ 124） → `WhaleRenderBootstrap`（→ **125**）。
-//! 因此 server 端用 `EntityKind::new(125)` 与 Fabric 注册位号对齐。
+//! Vanilla MC 1.20.1 有 124 entity_type（id 0..=123）；当前打包 client 依赖
+//! 还会先注册 8 个非 Bong custom entity。BongClient 注册顺序为
+//! `BotanyPlantRenderBootstrap`（→ 132） → `WhaleRenderBootstrap`（→ **133**）。
+//! 因此 server 端用 `EntityKind::new(133)` 与 Fabric 注册位号对齐。
 //!
 //! ⚠️ FRAGILE：这个 ID 依赖于 Fabric mod 注册顺序。任何向 Bong client 加入新
 //! EntityType 注册都必须确保排在 `WhaleRenderBootstrap.register()` 之后，
@@ -28,7 +29,7 @@ use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::npc::whale_narration::WhaleSpawnNarrationPending;
 
 /// Fabric 客户端为 `bong:whale` 注册得到的 raw id。详见模块顶部 FRAGILE 注释。
-pub const WHALE_ENTITY_KIND: EntityKind = EntityKind::new(125);
+pub const WHALE_ENTITY_KIND: EntityKind = EntityKind::new(133);
 
 /// Thinker 的 score 阈值。当前只一种行为（drift），阈值放低保证一直触发。
 const WHALE_THINKER_THRESHOLD: f32 = 0.01;
@@ -255,10 +256,10 @@ mod tests {
 
     #[test]
     fn spawn_whale_uses_custom_entity_kind_not_phantom_or_marker() {
-        // 鲸用 ID 125（自定义 EntityKind）：绝不能等于 vanilla phantom(71)
+        // 鲸用 ID 133（自定义 EntityKind）：绝不能等于 vanilla phantom(71)
         // 也不能漏过 marker(默认 bundle 的 kind)。bundle 是 MarkerEntityBundle
         // 是为了精简 tracked components 与 client `WhaleEntity extends Entity`
-        // 对齐，但 kind 必须显式 override 成 125。
+        // 对齐，但 kind 必须显式 override 成 133。
         let scenario = ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
@@ -274,7 +275,7 @@ mod tests {
         assert_eq!(kind, Some(WHALE_ENTITY_KIND));
         assert_ne!(kind, Some(EntityKind::PHANTOM));
         assert_ne!(kind, Some(EntityKind::MARKER));
-        assert_eq!(WHALE_ENTITY_KIND.get(), 125);
+        assert_eq!(WHALE_ENTITY_KIND.get(), 133);
     }
 
     #[test]
@@ -478,9 +479,9 @@ mod tests {
     }
 
     #[test]
-    fn whale_entity_kind_constant_is_125() {
+    fn whale_entity_kind_constant_is_133() {
         // pin 测试：alignment with Fabric register ordering; 任何变更必须连同
         // client BongClient.java 的 register 顺序一并改，否则协议错位。
-        assert_eq!(WHALE_ENTITY_KIND.get(), 125);
+        assert_eq!(WHALE_ENTITY_KIND.get(), 133);
     }
 }

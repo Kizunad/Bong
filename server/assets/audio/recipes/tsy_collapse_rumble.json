@@ -1,0 +1,10 @@
+{
+  "id": "tsy_collapse_rumble",
+  "layers": [
+    { "sound": "minecraft:entity.ender_dragon.growl", "volume": 0.6, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.anvil.land", "volume": 0.55, "pitch": 0.7, "delay_ticks": 10 }
+  ],
+  "priority": 80,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

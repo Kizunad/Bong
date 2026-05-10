@@ -1,0 +1,13 @@
+{
+  "id": "tsy_race_out_alarm",
+  "layers": [
+    { "sound": "minecraft:block.note_block.pling", "volume": 0.6, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.note_block.pling", "volume": 0.45, "pitch": 1.1, "delay_ticks": 10 },
+    { "sound": "minecraft:block.note_block.pling", "volume": 0.55, "pitch": 1.8, "delay_ticks": 20 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.8, "pitch": 0.8, "delay_ticks": 0 }
+  ],
+  "loop": { "interval_ticks": 20, "while_flag": "tsy_race_out" },
+  "priority": 90,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

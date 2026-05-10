@@ -1,0 +1,9 @@
+{
+  "id": "tsy_extract_success",
+  "layers": [
+    { "sound": "minecraft:entity.player.levelup", "volume": 0.4, "pitch": 1.5, "delay_ticks": 0 }
+  ],
+  "priority": 60,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

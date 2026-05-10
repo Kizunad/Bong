@@ -42,6 +42,15 @@ public final class VfxBootstrap {
         registry.register(BaomaiV3VfxPlayer.BODY_TRANSCENDENCE_PILLAR,     baomaiV3);
         registry.register(BaomaiV3VfxPlayer.MERIDIAN_RIPPLE_SCAR,          baomaiV3);
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
+        TsyPortalVortexPlayer tsyPortal = new TsyPortalVortexPlayer();
+        registry.register(TsyPortalVortexPlayer.MAIN_RIFT,        tsyPortal);
+        registry.register(TsyPortalVortexPlayer.DEEP_RIFT,        tsyPortal);
+        registry.register(TsyPortalVortexPlayer.COLLAPSE_TEAR,    tsyPortal);
+        registry.register(TsyCollapseBurstPlayer.EVENT_ID,        new TsyCollapseBurstPlayer());
+        registry.register(TsyFuyaAuraPlayer.EVENT_ID,             new TsyFuyaAuraPlayer());
+        TsySearchFeedbackPlayer tsySearch = new TsySearchFeedbackPlayer();
+        registry.register(TsySearchFeedbackPlayer.DUST,           tsySearch);
+        registry.register(TsySearchFeedbackPlayer.LOOT_POP,       tsySearch);
         registry.register(BotanyAuraPlayer.EVENT_ID,             new BotanyAuraPlayer());
         registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     new BotanyHarvestBurstPlayer());
         registry.register(BotanyPlantStagePlayer.ROUTE_ID,       new BotanyPlantStagePlayer());
@@ -74,5 +83,43 @@ public final class VfxBootstrap {
             new SwordQiSlashPlayer()
         );
         registry.register(VortexSpiralPlayer.EVENT_ID,           new VortexSpiralPlayer());
+        registry.register(CultivationAbsorbPlayer.EVENT_ID,      new CultivationAbsorbPlayer());
+        registry.register(MeridianOpenFlashPlayer.EVENT_ID,      new MeridianOpenFlashPlayer());
+        registry.register(BreakthroughFailPlayer.EVENT_ID,       new BreakthroughFailPlayer());
+        registry.register(CombatHitDirectionPlayer.HIT,          new CombatHitDirectionPlayer(false));
+        registry.register(CombatHitDirectionPlayer.PARRY,        new CombatHitDirectionPlayer(true));
+        registry.register(ForgeHammerStrikePlayer.HAMMER,
+            new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.HAMMER));
+        registry.register(ForgeHammerStrikePlayer.INSCRIPTION,
+            new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.INSCRIPTION));
+        registry.register(ForgeHammerStrikePlayer.CONSECRATION,
+            new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.CONSECRATION));
+        registry.register(AlchemyBrewVaporPlayer.BREW,
+            new AlchemyBrewVaporPlayer(AlchemyBrewVaporPlayer.Kind.BREW));
+        registry.register(AlchemyBrewVaporPlayer.OVERHEAT,
+            new AlchemyBrewVaporPlayer(AlchemyBrewVaporPlayer.Kind.OVERHEAT));
+        registry.register(AlchemyBrewVaporPlayer.COMPLETE,
+            new AlchemyBrewVaporPlayer(AlchemyBrewVaporPlayer.Kind.COMPLETE));
+        registry.register(AlchemyBrewVaporPlayer.EXPLODE,
+            new AlchemyBrewVaporPlayer(AlchemyBrewVaporPlayer.Kind.EXPLODE));
+        registry.register(LingtianActionVfxPlayer.TILL,
+            new LingtianActionVfxPlayer(LingtianActionVfxPlayer.Kind.TILL));
+        registry.register(LingtianActionVfxPlayer.PLANT,
+            new LingtianActionVfxPlayer(LingtianActionVfxPlayer.Kind.PLANT));
+        registry.register(LingtianActionVfxPlayer.REPLENISH,
+            new LingtianActionVfxPlayer(LingtianActionVfxPlayer.Kind.REPLENISH));
+        registry.register(ZhenfaActionVfxPlayer.TRAP,
+            new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.TRAP));
+        registry.register(ZhenfaActionVfxPlayer.WARD,
+            new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.WARD));
+        registry.register(ZhenfaActionVfxPlayer.DEPLETE,
+            new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.DEPLETE));
+        registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH,
+            new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.NICHE_ESTABLISH));
+        registry.register(SocialLinkVfxPlayer.PACT_LINK,
+            new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.PACT_LINK));
+        registry.register(SocialLinkVfxPlayer.FEUD_MARK,
+            new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.FEUD_MARK));
+        registry.register(PoisonMistPlayer.EVENT_ID,            new PoisonMistPlayer());
     }
 }

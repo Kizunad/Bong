@@ -17,6 +17,7 @@ use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
 use crate::combat::woliu_v2::state::TurbulenceExposure;
 use crate::cultivation::full_power_strike::Exhausted;
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::qi_physics::regen_from_zone;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -55,6 +56,7 @@ pub fn qi_regen_and_zone_drain_tick(
     zone_registry: Option<ResMut<ZoneRegistry>>,
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
     mut players: Query<(
         Entity,
         &Position,
@@ -166,6 +168,25 @@ pub fn qi_regen_and_zone_drain_tick(
 
         cultivation.qi_current += gain;
         zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
+        if clock.tick.is_multiple_of(40) {
+            if let Some(events) = vfx_events.as_deref_mut() {
+                let origin = pos.get() + valence::prelude::DVec3::new(0.0, 0.9, 0.0);
+                let spirit_qi = zone.spirit_qi.clamp(0.0, 1.0) as f32;
+                let count = (spirit_qi * 10.0).round().clamp(1.0, 16.0) as u32;
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::CULTIVATION_ABSORB,
+                        origin,
+                        None,
+                        "#66FFCC",
+                        spirit_qi.max(0.2),
+                        count,
+                        30,
+                    ),
+                );
+            }
+        }
 
         if cultivation.qi_current > 0.0 {
             cultivation.last_qi_zero_at = None;
@@ -490,6 +511,37 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert_eq!(turbulent_qi, 0.0);
+    }
+
+    #[test]
+    fn meditate_emits_absorb_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 39 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            meridians,
+            Cultivation::default(),
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("qi regen tick should emit cultivation_absorb vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::CULTIVATION_ABSORB);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]
