@@ -32,14 +32,19 @@ pub struct StyleBalanceTelemetryEventV1 {
     pub defender_resistance: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub defender_drain_affinity: Option<f64>,
+    /// Injected qi before distance attenuation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attacker_qi: Option<f64>,
+    /// Collision distance in blocks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance_blocks: Option<f64>,
+    /// Post-rejection hit value before defender mitigation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_hit: Option<f64>,
+    /// Qi lost by the defender after mitigation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub defender_lost: Option<f64>,
+    /// Qi absorbed by defender drain affinity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub defender_absorbed: Option<f64>,
     pub cause: String,

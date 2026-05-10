@@ -260,22 +260,27 @@
     },
     "attacker_qi": {
       "minimum": 0,
+      "description": "Injected qi before distance attenuation.",
       "type": "number"
     },
     "distance_blocks": {
       "minimum": 0,
+      "description": "Collision distance in blocks.",
       "type": "number"
     },
     "effective_hit": {
       "minimum": 0,
+      "description": "Post-rejection hit value before defender mitigation.",
       "type": "number"
     },
     "defender_lost": {
       "minimum": 0,
+      "description": "Qi lost by the defender after mitigation.",
       "type": "number"
     },
     "defender_absorbed": {
       "minimum": 0,
+      "description": "Qi absorbed by defender drain affinity.",
       "type": "number"
     },
     "cause": {

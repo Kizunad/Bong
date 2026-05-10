@@ -227,7 +227,8 @@ pub fn dirty_qi_collision(
 ) -> DirtyQiOutcome {
     let attack = DirtyQiAttack {
         injected_qi,
-        purity: 1.0 - DUGU_RHO,
+        // DUGU_RHO belongs to rejection_rate(); purity only gates acoustic activation.
+        purity: 1.0,
     };
     let defense = DirtyQiDefense {
         resistance: defender_resistance,

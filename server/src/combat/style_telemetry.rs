@@ -85,6 +85,8 @@ pub fn collect_hunyuan_pvp_telemetry(
             attacker_rejection_rate,
             defender_resistance: defender_profile.and_then(|profile| profile.resistance),
             defender_drain_affinity: defender_profile.and_then(|profile| profile.drain_affinity),
+            // DeathEvent-only collection has no collision outcome context; a
+            // future combat-resolution producer should populate these fields.
             attacker_qi: None,
             distance_blocks: None,
             effective_hit: None,
@@ -111,16 +113,16 @@ pub fn publish_style_balance_telemetry_events(
             defender_player_id: event.defender_player_id.clone(),
             attacker_color: event.attacker_color.clone(),
             defender_color: event.defender_color.clone(),
-            attacker_style: event.attacker_style.clone(),
-            defender_style: event.defender_style.clone(),
-            attacker_rejection_rate: event.attacker_rejection_rate,
-            defender_resistance: event.defender_resistance,
-            defender_drain_affinity: event.defender_drain_affinity,
-            attacker_qi: event.attacker_qi,
-            distance_blocks: event.distance_blocks,
-            effective_hit: event.effective_hit,
-            defender_lost: event.defender_lost,
-            defender_absorbed: event.defender_absorbed,
+            attacker_style: normalize_style(&event.attacker_style),
+            defender_style: normalize_style(&event.defender_style),
+            attacker_rejection_rate: normalize_ratio(event.attacker_rejection_rate),
+            defender_resistance: normalize_ratio(event.defender_resistance),
+            defender_drain_affinity: normalize_ratio(event.defender_drain_affinity),
+            attacker_qi: normalize_quantity(event.attacker_qi),
+            distance_blocks: normalize_quantity(event.distance_blocks),
+            effective_hit: normalize_quantity(event.effective_hit),
+            defender_lost: normalize_quantity(event.defender_lost),
+            defender_absorbed: normalize_quantity(event.defender_absorbed),
             cause: event.cause.clone(),
             resolved_at_tick: event.resolved_at_tick,
         };
@@ -133,6 +135,27 @@ pub fn publish_style_balance_telemetry_events(
             );
         }
     }
+}
+
+fn normalize_style(value: &Option<String>) -> Option<String> {
+    let trimmed = value.as_deref()?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_ratio(value: Option<f64>) -> Option<f64> {
+    value
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(0.0, 1.0))
+}
+
+fn normalize_quantity(value: Option<f64>) -> Option<f64> {
+    value
+        .filter(|value| value.is_finite())
+        .map(|value| value.max(0.0))
 }
 
 impl From<&QiColor> for StyleTelemetryColorSnapshotV1 {
@@ -243,6 +266,50 @@ mod tests {
         assert_eq!(collected.attacker_rejection_rate, Some(0.65));
         assert_eq!(collected.defender_resistance, Some(0.95));
         assert_eq!(collected.defender_drain_affinity, Some(0.2));
+    }
+
+    #[test]
+    fn telemetry_publish_normalizes_optional_physics_fields() {
+        let (mut app, rx_outbound) = setup_app();
+        let attacker = app.world_mut().spawn_empty().id();
+        let defender = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(StyleBalanceTelemetryEvent {
+            attacker,
+            attacker_player_id: "offline:Killer".to_string(),
+            defender,
+            defender_player_id: "offline:Defender".to_string(),
+            attacker_color: None,
+            defender_color: None,
+            attacker_style: Some("  baomai  ".to_string()),
+            defender_style: Some("   ".to_string()),
+            attacker_rejection_rate: Some(1.5),
+            defender_resistance: Some(-0.25),
+            defender_drain_affinity: Some(f64::NAN),
+            attacker_qi: Some(-5.0),
+            distance_blocks: Some(3.5),
+            effective_hit: Some(f64::INFINITY),
+            defender_lost: Some(-1.0),
+            defender_absorbed: Some(0.4),
+            cause: "test".to_string(),
+            resolved_at_tick: 89,
+        });
+        app.update();
+
+        let outbound = rx_outbound.try_recv().expect("expected telemetry outbound");
+        let RedisOutbound::StyleBalanceTelemetry(collected) = outbound else {
+            panic!("expected style balance telemetry outbound, got {outbound:?}");
+        };
+        assert_eq!(collected.attacker_style.as_deref(), Some("baomai"));
+        assert_eq!(collected.defender_style, None);
+        assert_eq!(collected.attacker_rejection_rate, Some(1.0));
+        assert_eq!(collected.defender_resistance, Some(0.0));
+        assert_eq!(collected.defender_drain_affinity, None);
+        assert_eq!(collected.attacker_qi, Some(0.0));
+        assert_eq!(collected.distance_blocks, Some(3.5));
+        assert_eq!(collected.effective_hit, None);
+        assert_eq!(collected.defender_lost, Some(0.0));
+        assert_eq!(collected.defender_absorbed, Some(0.4));
     }
 
     #[test]

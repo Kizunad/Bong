@@ -12,7 +12,7 @@
 
 ---
 
-## 消费前代码实地核验（2026-05-11）
+## 消费前代码实地核验（2026-05-11, Pacific/Auckland）
 
 - **前置已满足**：`plan-qi-physics-v1` / `plan-qi-physics-patch-v1` 已归档；当前 `server/src/qi_physics` 已有 `StyleAttack` / `StyleDefense` / `qi_collision()` 稳定接入点。
 - **公式缺口仍在**：`server/src/qi_physics/traits.rs` 的 `StyleAttack` 只有 `style_color()` / `injected_qi()` / `purity()` / `medium()`，尚无 `rejection_rate()`；`server/src/qi_physics/collision.rs` 仍用 `1.0 - purity + resistance * 0.5` 计算 rejection，并用 `effective_hit * (1.0 - resistance)` 造成 `resistance == 1.0` 时 `defender_lost == 0.0`。
@@ -122,10 +122,10 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ✅ 2026-05-11 | 修复 qi_collision: resistance cap + rejection_rate trait + 各流派 impl 补 ρ 值 | `cargo test` 全绿 + 模拟器验证涌现结果无"无敌盾" + 毒蛊低排斥符合预期 |
-| **P1** ✅ 2026-05-11 | 饱和攻防验证测试（主矩阵 + 距离/载体/防御边界）+ 模拟器 HTML 对比报告 | 组合测试全绿,无 0.00 行（除声学阈值 fail）,克制方向符合 worldview |
-| **P2** ✅ 2026-05-11 | PVP telemetry 增强：加 attacker_style / defender_style / ρ 观测字段 | Rust schema / TS schema / Redis 推送对齐，事件仍兼容颜色快照聚合 |
-| **P3** ✅ 2026-05-11 | telemetry 聚合 + 校准脚本：偏差 >30% 的调底层物理参数（rejection_rate / resistance 系数）,不改公式结构 | 离线 replay + 小样本实战报告能定位偏差；大规模真实对战样本作为后续运营校准输入 |
+| **P0** ✅ 2026-05-11（Pacific/Auckland） | 修复 qi_collision: resistance cap + rejection_rate trait + 各流派 impl 补 ρ 值 | `cargo test` 全绿 + 模拟器验证涌现结果无"无敌盾" + 毒蛊低排斥符合预期 |
+| **P1** ✅ 2026-05-11（Pacific/Auckland） | 饱和攻防验证测试（主矩阵 + 距离/载体/防御边界）+ 模拟器 HTML 对比报告 | 组合测试全绿,无 0.00 行（除声学阈值 fail）,克制方向符合 worldview |
+| **P2** ✅ 2026-05-11（Pacific/Auckland） | PVP telemetry 增强：加 attacker_style / defender_style / ρ 观测字段 | Rust schema / TS schema / Redis 推送对齐，事件仍兼容颜色快照聚合 |
+| **P3** ✅ 2026-05-11（Pacific/Auckland） | telemetry 聚合 + 校准脚本：偏差 >30% 的调底层物理参数（rejection_rate / resistance 系数）,不改公式结构 | 离线 replay + 小样本实战报告能定位偏差；大规模真实对战样本作为后续运营校准输入 |
 
 ---
 
@@ -145,7 +145,7 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 ## §3 验证矩阵
 
-```
+```text
 4 攻（体修/暗器/阵法/毒蛊）× 3 防（截脉/替尸/涡流）= 12 对主组合
 4 攻互克 = 12 对（各攻击方 vs 无防御下的相对效率排序）
 3 防互克 = 6 对（各防御方 vs 标准攻击下的减免率排序）
@@ -165,15 +165,15 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 ## §4 开放问题
 
 - [x] resistance 修正选方案 A（hard cap 0.95）— 2026-05-10 模拟对比后定,方案 B 防御层次感塌了
-- [x] 涡流既是攻击又是防御（`StyleAttack` + 负场 drain）,rejection_rate 0.30 是否合理? — 2026-05-11 采用默认裸真元排斥率 0.30，并由矩阵测试锁定涡流防御的高 drain_affinity 表现
+- [x] 涡流既是攻击又是防御（`StyleAttack` + 负场 drain）,rejection_rate 0.30 是否合理? — 2026-05-11（Pacific/Auckland）采用默认裸真元排斥率 0.30，并由矩阵测试锁定涡流防御的高 drain_affinity 表现
 - [ ] 各流派 v2 上线后 rejection_rate 是否需要按招式细分(同流派不同招不同 ρ)?
 
 ## §5 进度日志
 
 - 2026-05-01：骨架创建。plan-gameplay-journey-v1 §P / O.9 派生。
 - 2026-05-10：重写方向——从 const 矩阵查表改为涌现验证框架。发现 resistance≥1.0 无敌 bug + purity/ρ 语义混淆。`scripts/balance/style_collision_sim.py` 模拟器 v2 三方案对比,选定方案 A（cap 0.95 + rejection_rate ρ）。
-- 2026-05-11：实地核验当前 Rust / TS / simulator 状态，确认前置已满足且旧公式缺口仍存在；升 active，后续可直接消费实现。
-- 2026-05-11：完成消费。Rust live 公式已改为 cap 0.95 + `rejection_rate`;telemetry/schema 增加可聚合物理字段；模拟器与 replay 校准脚本已同步。
+- 2026-05-11（Pacific/Auckland）：实地核验当前 Rust / TS / simulator 状态，确认前置已满足且旧公式缺口仍存在；升 active，后续可直接消费实现。
+- 2026-05-11（Pacific/Auckland）：完成消费。Rust live 公式已改为 cap 0.95 + `rejection_rate`;telemetry/schema 增加可聚合物理字段；模拟器与 replay 校准脚本已同步。
 
 ## Finish Evidence
 
@@ -187,10 +187,10 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 ### 关键 commit
 
-- `6e5858b83` — 2026-05-11 — `docs(plan-style-balance-v1): 升级 active 计划`
-- `db16e51fb` — 2026-05-11 — `fix(style-balance): 引入 rejection_rate 并修正 qi_collision`
-- `ad0e0b8c3` — 2026-05-11 — `feat(style-balance): 扩展 telemetry 物理观测字段`
-- `c0c1e63ba` — 2026-05-11 — `docs(plan-style-balance-v1): finish evidence 并归档至 finished_plans`
+- `6e5858b83` — 2026-05-11（Pacific/Auckland） — `docs(plan-style-balance-v1): 升级 active 计划`
+- `db16e51fb` — 2026-05-11（Pacific/Auckland） — `fix(style-balance): 引入 rejection_rate 并修正 qi_collision`
+- `ad0e0b8c3` — 2026-05-11（Pacific/Auckland） — `feat(style-balance): 扩展 telemetry 物理观测字段`
+- `c0c1e63ba` — 2026-05-11（Pacific/Auckland） — `docs(plan-style-balance-v1): finish evidence 并归档至 finished_plans`
 
 ### 测试结果
 
@@ -210,6 +210,13 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 - 归档后：`rg -n "docs/plan-style-balance-v1\\.md" README.md docs scripts` — no matches
 - 归档后：`cd server && cargo test qi_physics::collision` — pass，19 passed
 - rebase 后：`RUSTFLAGS="-C debuginfo=0" cargo test qi_physics::collision` — pass，19 passed（默认 debuginfo 链接在本机连续两次被 SIGKILL，无 Rust 诊断）
+
+### Review follow-up
+
+- `dirty_qi_collision()` 已把 `DUGU_RHO` 限定在 `rejection_rate()`，`purity` 仅保留声学阈值语义。
+- `StyleBalanceTelemetryEventV1` 发布前会 trim 空 style、clamp ratio、过滤非有限数并把 quantity 下限收敛到 0；DeathEvent-only collector 暂不伪造缺失的碰撞 outcome。
+- `style_telemetry_replay.py` 按 `distance_blocks` 分桶，并在中性环境 / 默认 medium 下把距离衰减纳入 expected efficiency。
+- Review 修复验证：`cargo fmt --check`、`RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings`、`RUSTFLAGS="-C debuginfo=0" cargo test qi_physics::collision`、`RUSTFLAGS="-C debuginfo=0" cargo test dirty_qi_collision`、`RUSTFLAGS="-C debuginfo=0" cargo test style_telemetry`、`RUSTFLAGS="-C debuginfo=0" cargo test style_balance`、`npm run check -w @bong/schema`、`npm test -w @bong/schema`、`npm run build`、`python3 scripts/balance/style_collision_sim.py`、`python3 scripts/balance/style_telemetry_replay.py --sample` 均通过。
 
 ### 跨仓库核验
 

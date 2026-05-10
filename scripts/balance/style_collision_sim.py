@@ -128,7 +128,7 @@ def collision_fix_b(
 
 FORMULA_VARIANTS = {
     "legacy": ("旧公式: purity 代理 ρ", collision_current),
-    "rust_live": ("Rust live: cap 0.95 + ρ", collision_fix_a),
+    "rust_live": ("Rust core: neutral env/no backfire + cap 0.95 + rho", collision_fix_a),
     "fix_b": ("备选B: 去二次减免 + ρ", collision_fix_b),
 }
 
@@ -371,7 +371,7 @@ table.matrix .corner {{ position: sticky; left: 0; top: 0; z-index: 4; backgroun
 </head>
 <body>
 <h1>Bong · qi_collision 流派对策 — Rust live 公式涌现对比</h1>
-<p class="subtitle">旧公式 vs Rust live (resistance cap 0.95 + rejection_rate ρ) vs 备选B (去 defender_lost 二次减免 + ρ)</p>
+<p class="subtitle">旧公式 vs Rust core neutral env/no backfire (resistance cap 0.95 + rejection_rate rho) vs 备选B (去 defender_lost 二次减免 + rho)</p>
 
 <div class="formula-box">
 <strong>rejection 公式变化</strong><br>
@@ -379,14 +379,14 @@ table.matrix .corner {{ position: sticky; left: 0; top: 0; z-index: 4; backgroun
 <span class="fix"><code>rejection = attenuated × 0.30 × (rejection_rate + resistance × 0.5)</code></span> 修正: rejection_rate (ρ) 独立参数<br><br>
 <strong>defender_lost 变化</strong><br>
 <span class="old"><code>defender_lost = effective_hit × (1 - resistance)</code></span> 旧公式: resistance 二次减免<br>
-<span class="fix"><code>Rust live: defender_lost = effective_hit × (1 - min(resistance, 0.95))</code></span> hard cap 95%<br>
+<span class="fix"><code>Rust core neutral env/no backfire: defender_lost = effective_hit × (1 - min(resistance, 0.95))</code></span> hard cap 95%<br>
 <span class="fix"><code>方案B: defender_lost = effective_hit</code></span> 去掉二次减免,rejection 阶段已过滤
 </div>
 
 <div class="controls">
   <label>公式:</label>
   <button class="btn formula-btn" data-formula="legacy">旧公式</button>
-  <button class="btn formula-btn active" data-formula="rust_live">Rust live: cap+ρ</button>
+  <button class="btn formula-btn active" data-formula="rust_live">Rust core: neutral env/no backfire</button>
   <button class="btn formula-btn" data-formula="fix_b">方案B: 去减免+ρ</button>
 
   <label style="margin-left:16px">距离:</label>

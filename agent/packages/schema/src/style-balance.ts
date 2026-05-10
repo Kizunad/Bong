@@ -28,11 +28,26 @@ export const StyleBalanceTelemetryEventV1 = Type.Object(
     attacker_rejection_rate: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
     defender_resistance: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
     defender_drain_affinity: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
-    attacker_qi: Type.Optional(Type.Number({ minimum: 0 })),
-    distance_blocks: Type.Optional(Type.Number({ minimum: 0 })),
-    effective_hit: Type.Optional(Type.Number({ minimum: 0 })),
-    defender_lost: Type.Optional(Type.Number({ minimum: 0 })),
-    defender_absorbed: Type.Optional(Type.Number({ minimum: 0 })),
+    attacker_qi: Type.Optional(Type.Number({
+      minimum: 0,
+      description: "Injected qi before distance attenuation.",
+    })),
+    distance_blocks: Type.Optional(Type.Number({
+      minimum: 0,
+      description: "Collision distance in blocks.",
+    })),
+    effective_hit: Type.Optional(Type.Number({
+      minimum: 0,
+      description: "Post-rejection hit value before defender mitigation.",
+    })),
+    defender_lost: Type.Optional(Type.Number({
+      minimum: 0,
+      description: "Qi lost by the defender after mitigation.",
+    })),
+    defender_absorbed: Type.Optional(Type.Number({
+      minimum: 0,
+      description: "Qi absorbed by defender drain affinity.",
+    })),
     cause: Type.String({ minLength: 1 }),
     resolved_at_tick: Type.Integer({ minimum: 0 }),
   },

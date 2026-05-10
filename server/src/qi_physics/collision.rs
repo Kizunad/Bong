@@ -94,6 +94,8 @@ pub fn qi_collision(
     let rejection_rate = atk.rejection_rate().clamp(0.0, 1.0);
     let resistance = def.resistance().clamp(0.0, 1.0);
     let mitigation_resistance = resistance.min(0.95);
+    // Resistance contributes to rejection and mitigation independently; only
+    // the mitigation path is capped so high resistance still leaves a gap.
     let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 0.5);
     let effective_hit = (attenuated - rejection).max(0.0) * env.rhythm_factor();
     let backfire_fraction = env.law_disruption_backfire_fraction();
