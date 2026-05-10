@@ -202,13 +202,14 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 - `cd server && cargo test style_balance` — pass，3 passed
 - `cd server && cargo test pvp_death_publishes_hunyuan_telemetry_snapshot` — pass，1 passed
 - `cd server && cargo test publishes_combat_realtime_and_summary_on_correct_channels` — pass，1 passed
-- `cd agent && npm run check -w @bong/schema` — pass，generated schema artifacts fresh（334 files）
+- `cd agent && npm run check -w @bong/schema` — pass，generated schema artifacts fresh（336 files，rebase 后主线新增 schema 已对齐）
 - `cd agent && npm test -w @bong/schema` — pass，356 passed
 - `cd agent && npm run build` — pass
 - `python3 scripts/balance/style_collision_sim.py` — pass，重生成 `scripts/balance/style_collision_sim.html`
 - `python3 scripts/balance/style_telemetry_replay.py --sample` — pass，3 个 sample group 均为 `OK`
 - 归档后：`rg -n "docs/plan-style-balance-v1\\.md" README.md docs scripts` — no matches
 - 归档后：`cd server && cargo test qi_physics::collision` — pass，19 passed
+- rebase 后：`RUSTFLAGS="-C debuginfo=0" cargo test qi_physics::collision` — pass，19 passed（默认 debuginfo 链接在本机连续两次被 SIGKILL，无 Rust 诊断）
 
 ### 跨仓库核验
 
