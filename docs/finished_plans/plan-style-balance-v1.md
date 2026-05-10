@@ -12,7 +12,7 @@
 
 ---
 
-## 当前代码实地核验（2026-05-11）
+## 消费前代码实地核验（2026-05-11）
 
 - **前置已满足**：`plan-qi-physics-v1` / `plan-qi-physics-patch-v1` 已归档；当前 `server/src/qi_physics` 已有 `StyleAttack` / `StyleDefense` / `qi_collision()` 稳定接入点。
 - **公式缺口仍在**：`server/src/qi_physics/traits.rs` 的 `StyleAttack` 只有 `style_color()` / `injected_qi()` / `purity()` / `medium()`，尚无 `rejection_rate()`；`server/src/qi_physics/collision.rs` 仍用 `1.0 - purity + resistance * 0.5` 计算 rejection，并用 `effective_hit * (1.0 - resistance)` 造成 `resistance == 1.0` 时 `defender_lost == 0.0`。
@@ -122,24 +122,24 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | 修复 qi_collision: resistance cap + rejection_rate trait + 各流派 impl 补 ρ 值 | `cargo test` 全绿 + 模拟器验证涌现结果无"无敌盾" + 毒蛊低排斥符合预期 |
-| **P1** ⬜ | 饱和攻防验证测试（主矩阵 + 距离/载体/防御边界）+ 模拟器 HTML 对比报告 | 组合测试全绿,无 0.00 行（除声学阈值 fail）,克制方向符合 worldview |
-| **P2** ⬜ | PVP telemetry 增强：加 attacker_style / defender_style / ρ 观测字段 | Rust schema / TS schema / Redis 推送对齐，事件仍兼容颜色快照聚合 |
-| **P3** ⬜ | telemetry 聚合 + 校准脚本：偏差 >30% 的调底层物理参数（rejection_rate / resistance 系数）,不改公式结构 | 离线 replay + 小样本实战报告能定位偏差；大规模真实对战样本作为后续运营校准输入 |
+| **P0** ✅ 2026-05-11 | 修复 qi_collision: resistance cap + rejection_rate trait + 各流派 impl 补 ρ 值 | `cargo test` 全绿 + 模拟器验证涌现结果无"无敌盾" + 毒蛊低排斥符合预期 |
+| **P1** ✅ 2026-05-11 | 饱和攻防验证测试（主矩阵 + 距离/载体/防御边界）+ 模拟器 HTML 对比报告 | 组合测试全绿,无 0.00 行（除声学阈值 fail）,克制方向符合 worldview |
+| **P2** ✅ 2026-05-11 | PVP telemetry 增强：加 attacker_style / defender_style / ρ 观测字段 | Rust schema / TS schema / Redis 推送对齐，事件仍兼容颜色快照聚合 |
+| **P3** ✅ 2026-05-11 | telemetry 聚合 + 校准脚本：偏差 >30% 的调底层物理参数（rejection_rate / resistance 系数）,不改公式结构 | 离线 replay + 小样本实战报告能定位偏差；大规模真实对战样本作为后续运营校准输入 |
 
 ---
 
 ## §2 数据契约
 
-- [ ] `server/src/qi_physics/traits.rs` — `StyleAttack` trait 加 `fn rejection_rate(&self) -> f64 { 0.30 }`
-- [ ] `server/src/qi_physics/collision.rs` — rejection 公式用 `rejection_rate` 替换 `(1-purity)`;defender_lost 的 resistance 加 hard cap 或去除二次减免
-- [ ] `server/src/cultivation/burst_meridian.rs` — `BengQuanStyleAttack` 加 `rejection_rate() -> 0.65`
-- [ ] `server/src/combat/projectile.rs` — `AnqiStyleAttack` 加 `rejection_rate() -> 0.45`
-- [ ] `server/src/cultivation/dugu.rs` — `PendingDuguInfusion` 加 `rejection_rate() -> 0.05`
-- [ ] `server/src/combat/woliu.rs` — `VortexField` 加 `rejection_rate() -> 0.30`
-- [ ] `server/src/zhenfa/mod.rs` — `ZhenfaInstance` 加 `rejection_rate() -> 0.35`
-- [ ] `server/src/combat/style_telemetry.rs` — 加 attacker_style / defender_style 字段
-- [ ] `scripts/balance/style_collision_sim.py` — 模拟器同步更新公式 + 对比报告
+- [x] `server/src/qi_physics/traits.rs` — `StyleAttack` trait 加 `fn rejection_rate(&self) -> f64 { 0.30 }`
+- [x] `server/src/qi_physics/collision.rs` — rejection 公式用 `rejection_rate` 替换 `(1-purity)`;defender_lost 的 resistance 使用 hard cap 0.95
+- [x] `server/src/cultivation/burst_meridian.rs` — `BengQuanStyleAttack` 加 `rejection_rate() -> 0.65`
+- [x] `server/src/combat/projectile.rs` — `AnqiStyleAttack` 加 `rejection_rate() -> 0.45`
+- [x] `server/src/cultivation/dugu.rs` — `PendingDuguInfusion` 加 `rejection_rate() -> 0.05`
+- [x] `server/src/combat/woliu.rs` — `VortexField` 加 `rejection_rate() -> 0.30`
+- [x] `server/src/zhenfa/mod.rs` — `ZhenfaInstance` 加 `rejection_rate() -> 0.35`
+- [x] `server/src/combat/style_telemetry.rs` — 加 attacker_style / defender_style / ρ / resistance / outcome 观测字段
+- [x] `scripts/balance/style_collision_sim.py` — 模拟器同步到 Rust live 公式 + 对比报告
 
 ---
 
@@ -165,7 +165,7 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 ## §4 开放问题
 
 - [x] resistance 修正选方案 A（hard cap 0.95）— 2026-05-10 模拟对比后定,方案 B 防御层次感塌了
-- [ ] 涡流既是攻击又是防御（`StyleAttack` + 负场 drain）,rejection_rate 0.30 是否合理?
+- [x] 涡流既是攻击又是防御（`StyleAttack` + 负场 drain）,rejection_rate 0.30 是否合理? — 2026-05-11 采用默认裸真元排斥率 0.30，并由矩阵测试锁定涡流防御的高 drain_affinity 表现
 - [ ] 各流派 v2 上线后 rejection_rate 是否需要按招式细分(同流派不同招不同 ρ)?
 
 ## §5 进度日志
@@ -173,3 +173,46 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 - 2026-05-01：骨架创建。plan-gameplay-journey-v1 §P / O.9 派生。
 - 2026-05-10：重写方向——从 const 矩阵查表改为涌现验证框架。发现 resistance≥1.0 无敌 bug + purity/ρ 语义混淆。`scripts/balance/style_collision_sim.py` 模拟器 v2 三方案对比,选定方案 A（cap 0.95 + rejection_rate ρ）。
 - 2026-05-11：实地核验当前 Rust / TS / simulator 状态，确认前置已满足且旧公式缺口仍存在；升 active，后续可直接消费实现。
+- 2026-05-11：完成消费。Rust live 公式已改为 cap 0.95 + `rejection_rate`;telemetry/schema 增加可聚合物理字段；模拟器与 replay 校准脚本已同步。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 公式修正**：`server/src/qi_physics/traits.rs` 新增 `StyleAttack::rejection_rate()`；`server/src/qi_physics/collision.rs` 使用 `rejection_rate + resistance * 0.5` 计算 rejection，并把 `defender_lost` 的 resistance mitigation cap 到 0.95。
+- **P0 流派 ρ 值**：`server/src/cultivation/burst_meridian.rs` 体修 0.65；`server/src/combat/projectile.rs` 暗器 0.45；`server/src/cultivation/dugu.rs` / `server/src/combat/dugu_v2/physics.rs` 毒蛊 0.05；`server/src/combat/woliu.rs` 涡流 0.30；`server/src/zhenfa/mod.rs` 阵法 0.35。
+- **P1 验证框架**：`server/src/qi_physics/collision.rs` 增加 resistance 穿透、ρ 独立、4 攻 × 3 防方向矩阵、距离/载体衰减测试；`scripts/balance/style_collision_sim.py` / `.html` 改为旧公式 vs Rust live vs 备选 B 对比。
+- **P2 telemetry/schema**：`server/src/combat/style_telemetry.rs` 增加 `StyleBalanceTelemetryProfile` 和 optional 物理观测字段；`server/src/schema/style_balance.rs`、`agent/packages/schema/src/style-balance.ts`、`agent/packages/schema/generated/style-balance-telemetry-event-v1.json` 对齐。
+- **P3 聚合校准**：`scripts/balance/style_telemetry_replay.py` 支持 JSONL telemetry 聚合，按 `attacker_rejection_rate` / `defender_resistance` 估算期望效率并标记 >30% drift。
+
+### 关键 commit
+
+- `a6450ceb7` — 2026-05-11 — `docs(plan-style-balance-v1): 升级 active 计划`
+- `b356aeeab` — 2026-05-11 — `fix(style-balance): 引入 rejection_rate 并修正 qi_collision`
+- `5edfef712` — 2026-05-11 — `feat(style-balance): 扩展 telemetry 物理观测字段`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` — pass
+- `cd server && cargo clippy --all-targets -- -D warnings` — pass
+- `cd server && cargo test` — pass，3845 passed（首次完整跑出现一次 SQLite pressure 测试 `database is locked` 抖动；单测重跑通过，第二次完整 `cargo test` 全绿）
+- `cd server && cargo test qi_physics::collision` — pass，19 passed
+- `cd server && cargo test style_attack` — pass，5 passed
+- `cd server && cargo test style_balance` — pass，3 passed
+- `cd server && cargo test pvp_death_publishes_hunyuan_telemetry_snapshot` — pass，1 passed
+- `cd server && cargo test publishes_combat_realtime_and_summary_on_correct_channels` — pass，1 passed
+- `cd agent && npm run check -w @bong/schema` — pass，generated schema artifacts fresh（334 files）
+- `cd agent && npm test -w @bong/schema` — pass，356 passed
+- `cd agent && npm run build` — pass
+- `python3 scripts/balance/style_collision_sim.py` — pass，重生成 `scripts/balance/style_collision_sim.html`
+- `python3 scripts/balance/style_telemetry_replay.py --sample` — pass，3 个 sample group 均为 `OK`
+
+### 跨仓库核验
+
+- **server**：`StyleAttack::rejection_rate`、`qi_collision`、`StyleBalanceTelemetryEventV1`、`StyleBalanceTelemetryProfile`、`RedisOutbound::StyleBalanceTelemetry` 均有测试覆盖。
+- **agent/schema**：`StyleBalanceTelemetryEventV1` TypeBox schema、validator、generated JSON 已更新并通过 `check` / `vitest`。
+- **scripts**：`style_collision_sim.py` 与 `style_telemetry_replay.py` 共同覆盖公式对比和 replay 聚合校准。
+
+### 遗留 / 后续
+
+- 各流派 v2 上线后，是否把 `rejection_rate` 从流派级细分到招式级，留给对应 v2 plan 决定；本 plan 不引入克制查表，也不改公式结构。
