@@ -385,39 +385,40 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 
 ### 落地清单
 
-- **P0 / 设计门收口**：`server/src/combat/tuike_v2/state.rs` / `physics.rs` 固化三招数值、`FalseSkinTier` 五档、`TUIKE_BETA = 1.2`、境界叠穿层数、10-30min 残骸腐烂窗口、化虚上古级永久标记吸收规则。
+- **P0 / 设计门收口**：`server/src/combat/tuike_v2/state.rs` / `physics.rs` 固化三招数值、`FalseSkinTier` 五档、境界叠穿层数、10-30min 残骸腐烂窗口、化虚上古级永久标记吸收规则；`TUIKE_BETA = 1.2` 归入 `server/src/qi_physics/constants.rs`。
 - **P1 / server 三招与物理**：`server/src/combat/tuike_v2/{mod,state,physics,events,skills,tick,tests}.rs` 实装 `tuike.don` / `tuike.shed` / `tuike.transfer_taint`，接入 `SkillRegistry`、`KnownTechnique`、`DerivedAttrs.tuike_layers`、`PracticeLog` 凝实色维持折扣、`PermanentQiMaxDecay` hard counter、独立 `FalseSkinResidue` 地面残骸。
 - **P1 / qi_physics 与 craft**：`server/src/qi_physics/field.rs` 增加 `shed_to_carrier` 算子，`server/src/craft/mod.rs` 注册 `tuike.false_skin.light` / `mid` / `heavy` / `ancient` 四档伪皮配方。
 - **P2 / client UI 与视觉**：`client/src/main/java/com/bong/client/combat/store/FalseSkinHudStateStore.java`、`client/src/main/java/com/bong/client/hud/FalseSkinStackHud.java`、`ContamLoadHud.java`、`BongHudOrchestrator.java`、`TuikeFalseSkinParticlePlayer.java`、`VfxBootstrap.java`、`BongAnimations.java`，以及三份 `client/src/main/resources/assets/bong/player_animation/tuike_*.json`。
 - **P3 / 音效与 agent 叙事**：`server/assets/audio/recipes/{don_skin_low_thud,shed_skin_burst,contam_transfer_hum}.json`，`server/src/network/{tuike_event_bridge,vfx_animation_trigger,audio_trigger,false_skin_state_emit,redis_bridge}.rs`，`agent/packages/schema/src/tuike-v2.ts`，`agent/packages/tiandao/src/tuike_v2_runtime.ts`。
-- **P4 / 联调钩子**：`PracticeLog` 凝实色折扣、化虚上古伪皮吸永久标记、`FalseSkinStackStateV1` HUD 状态、`TuikeSkillEventV1` 叙事/视觉/音频事件、上古级配方材料与境界门槛均已落入可测 contract。
+- **P4 / 联调钩子**：`PracticeLog` 凝实色折扣、化虚上古伪皮吸永久标记、`FalseSkinStateV1.layers` 多层 HUD payload、`TuikeSkillEventV1` 叙事/视觉/音频事件、上古级配方材料与境界门槛均已落入可测 contract。
 
 ### 关键 commit
 
 - `32f9e83fe` / 2026-05-10 / `feat(tuike): 实现蜕壳三招完整链路`：server + agent + client 跨栈实现、100 个 server 单测、schema/generated、HUD/VFX/动画/音频/叙事事件接入；rebase 到 `origin/main` 后保留 botany/fauna/lingtian 上游 VFX/音频注册并合入替尸 v2 注册。
 - `c067592f3` / 2026-05-10 / `fix(tuike): 对齐音效 recipe schema`：替尸 v2 三份音效 recipe 改用当前合法 `HOSTILE` category，并把污染转移 hum pitch 收进 schema 下限。
+- `ca65d4411` / 2026-05-10 / `修复替尸 review 阻断项`：补 server `false_skin_state` 真实 `layers` 数组、裸壳期承伤放大、普通/永久污染转移 cooldown 分流、qi 不足自动蜕最外层、替尸空经脉依赖声明、`TUIKE_BETA` 归位 qi_physics、K_shed 真元释放入 zone/overflow 账本。
 
 ### 测试结果
 
 - `git diff --check`：通过。
 - `cd server && cargo fmt --check`：通过。
-- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test combat::tuike_v2`：通过，`100 passed`。
-- `grep -rcE '#\[test\]' server/src/combat/tuike_v2/`：`tests.rs:100`，满足 P1 `>= 80`。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test combat::tuike_v2`：通过，`105 passed`。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test network::false_skin_state_emit::tests::emits_tuike_v2_layer_details_on_stack_change`：通过，锁定多层 HUD payload。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test combat::resolve::tests::resolver_applies_tuike_naked_window_damage_penalty`：通过，锁定裸壳期承伤放大。
+- `grep -rcE '#\[test\]' server/src/combat/tuike_v2/`：`tests.rs:105`，满足 P1 `>= 80`。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings`：通过。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test audio`：通过，22 passed；验证替尸 v2 三份音效 recipe 符合当前音频 schema。
-- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3752 passed。
-- `cd agent && npm ci`：通过。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3759 passed。
 - `cd agent && npm run generate -w @bong/schema`：通过。
 - `cd agent && npm run generate:check -w @bong/schema`：通过，327 个 generated schema 文件保持 fresh。
 - `cd agent && npm run build`：通过。
 - `cd agent && npm test -w @bong/schema -- --maxWorkers=1`：通过，14 files / 351 tests。
 - `cd agent && npm test -w @bong/tiandao`：通过，47 files / 329 tests。
-- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test --tests ...`：新增 client 定向测试通过。
 - `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test build`：通过。
 
 ### 跨仓库核验
 
-- **server**：`combat::tuike_v2::*`、`TuikeSkillId`、`FalseSkinTier`、`StackedFalseSkins`、`FalseSkinResidue`、`PermanentQiMaxDecay`、`shed_to_carrier`、`register_tuike_v2_recipes`、`TuikeSkillEventV1`、`FalseSkinStackStateV1`。
+- **server**：`combat::tuike_v2::*`、`TuikeSkillId`、`FalseSkinTier`、`StackedFalseSkins`、`FalseSkinResidue`、`PermanentQiMaxDecay`、`shed_to_carrier`、`register_tuike_v2_recipes`、`TuikeSkillEventV1`、`FalseSkinStateV1.layers`、`FalseSkinStackStateV1`。
 - **agent/schema**：`CH_TUIKE_V2_SKILL_EVENT`、`CH_FALSE_SKIN_STACK_STATE`、`tuikeV2SkillEventV1`、`falseSkinStackStateV1`、`createTuikeV2Runtime`。
 - **client**：`FalseSkinStateHandler`、`FalseSkinHudStateStore`、`FalseSkinStackHud`、`ContamLoadHud`、`TuikeFalseSkinParticlePlayer`、`FALSE_SKIN_DON_DUST` / `FALSE_SKIN_SHED_BURST` / `ANCIENT_SKIN_GLOW`。
 
