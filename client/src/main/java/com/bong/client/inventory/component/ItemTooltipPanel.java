@@ -1,5 +1,6 @@
 package com.bong.client.inventory.component;
 
+import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.RarityVisuals;
 import com.bong.client.inventory.model.InventoryItem;
@@ -83,6 +84,9 @@ public class ItemTooltipPanel extends BaseComponent {
         if (com.bong.client.combat.ArmorProfileStore.isArmor(item.itemId())) {
             needed += lineBlock * 2;
         }
+        if (ArmorTintRegistry.isMundaneArmor(item.itemId())) {
+            needed += lineBlock * (item.durability() <= 0.0 ? 4 : 3);
+        }
 
         // top 部分至少保证 icon 高度（描述推到 icon 底部之下显示）。
         needed = Math.max(needed, ICON_MARGIN + ICON_SIZE);
@@ -131,7 +135,7 @@ public class ItemTooltipPanel extends BaseComponent {
         // Item name with rarity color
         context.drawTextWithShadow(textRenderer,
             Text.literal(hoveredItem.displayName()),
-            cx, cy, hoveredItem.rarityColor());
+            cx, cy, nameColor(hoveredItem));
         cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
 
         // Rarity + size
@@ -188,6 +192,19 @@ public class ItemTooltipPanel extends BaseComponent {
 
         for (String line : hoveredItem.alchemyLines()) {
             context.drawTextWithShadow(textRenderer, Text.literal(line), cx, cy, 0xFFE0B060);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        }
+
+        if (ArmorTintRegistry.isMundaneArmor(hoveredItem.itemId())) {
+            context.drawTextWithShadow(textRenderer, Text.literal(armorMaterialLine(hoveredItem)), cx, cy, 0xFF9A9A9A);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+            context.drawTextWithShadow(textRenderer, Text.literal(armorDefenseLine(hoveredItem)), cx, cy, 0xFF6FD080);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+            if (hoveredItem.durability() <= 0.0) {
+                context.drawTextWithShadow(textRenderer, Text.literal(armorBrokenLine(hoveredItem)), cx, cy, 0xFFFF6666);
+                cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+            }
+            context.drawTextWithShadow(textRenderer, Text.literal(armorRepairLine(hoveredItem)), cx, cy, 0xFFAA8866);
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
@@ -269,6 +286,26 @@ public class ItemTooltipPanel extends BaseComponent {
         return status.toString();
     }
 
+    public static String armorMaterialLine(InventoryItem item) {
+        if (item == null || item.isEmpty()) return "";
+        return ArmorTintRegistry.materialLine(item.itemId());
+    }
+
+    public static String armorDefenseLine(InventoryItem item) {
+        if (item == null || item.isEmpty()) return "";
+        return ArmorTintRegistry.defenseLine(item.itemId());
+    }
+
+    public static String armorBrokenLine(InventoryItem item) {
+        if (item == null || item.isEmpty() || !ArmorTintRegistry.isMundaneArmor(item.itemId())) return "";
+        return item.durability() <= 0.0 ? "已损坏·不可穿戴" : "";
+    }
+
+    public static String armorRepairLine(InventoryItem item) {
+        if (item == null || item.isEmpty()) return "";
+        return ArmorTintRegistry.repairLine(item.itemId());
+    }
+
     public static String spiritQualityLabel(InventoryItem item) {
         if (item == null || item.isEmpty()) return "灵质 0%";
         return String.format(Locale.ROOT, "灵质 %.0f%%", item.spiritQuality() * 100);
@@ -299,6 +336,10 @@ public class ItemTooltipPanel extends BaseComponent {
     private static int statusColor(InventoryItem item) {
         return (item.spiritQuality() < 0.3 || item.durability() < 0.3)
             ? 0xFFFF6666 : 0xFFAA8866;
+    }
+
+    private static int nameColor(InventoryItem item) {
+        return ArmorTintRegistry.argbForItemIdOrDefault(item.itemId(), item.rarityColor());
     }
 
     private static void appendSpiritQualityBar(OwoUIDrawContext context, InventoryItem item, int bx, int by) {

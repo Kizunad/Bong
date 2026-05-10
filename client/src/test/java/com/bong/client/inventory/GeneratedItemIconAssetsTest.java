@@ -14,6 +14,7 @@ class GeneratedItemIconAssetsTest {
     private static final Path ITEM_TEXTURE_DIR = Path.of(
         "src", "main", "resources", "assets", "bong-client", "textures", "gui", "items"
     );
+    private static final Path ARMOR_TEXTURE_DIR = ITEM_TEXTURE_DIR.resolve("armor");
     private static final List<String> FIRST_BATCH_IDS = List.of(
         "bone_coin_5",
         "bone_coin_15",
@@ -64,6 +65,26 @@ class GeneratedItemIconAssetsTest {
     void firstBatchGeneratedIconsAre128RgbaPngs() throws Exception {
         for (String itemId : FIRST_BATCH_IDS) {
             Path path = ITEM_TEXTURE_DIR.resolve(itemId + ".png");
+            assertTrue(java.nio.file.Files.exists(path), itemId + " icon should exist");
+            var image = ImageIO.read(path.toFile());
+            assertNotNull(image, itemId + " icon should be readable");
+            assertEquals(128, image.getWidth(), itemId + " icon width");
+            assertEquals(128, image.getHeight(), itemId + " icon height");
+            assertTrue(image.getColorModel().hasAlpha(), itemId + " icon should keep transparent alpha");
+        }
+    }
+
+    @Test
+    void mundaneArmorRepresentativeIconsAre128RgbaPngs() throws Exception {
+        for (String itemId : List.of(
+            "armor_bone",
+            "armor_hide",
+            "armor_iron",
+            "armor_copper",
+            "armor_spirit_cloth",
+            "armor_scroll_wrap"
+        )) {
+            Path path = ARMOR_TEXTURE_DIR.resolve(itemId + ".png");
             assertTrue(java.nio.file.Files.exists(path), itemId + " icon should exist");
             var image = ImageIO.read(path.toFile());
             assertNotNull(image, itemId + " icon should be readable");

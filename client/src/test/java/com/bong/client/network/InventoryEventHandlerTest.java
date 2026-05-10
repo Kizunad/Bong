@@ -4,6 +4,7 @@ import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.state.VisualEffectState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -175,6 +176,91 @@ public class InventoryEventHandlerTest {
         ServerDataDispatch.ToastSpec toast = dispatch.alertToast().orElseThrow();
         assertEquals("胸甲破损", toast.text());
         assertEquals(1_200L, toast.durationMillis());
+        assertEquals(
+            VisualEffectState.EffectType.ARMOR_BREAK_FLASH,
+            dispatch.visualEffectState().orElseThrow().effectType()
+        );
+    }
+
+    @Test
+    void durabilityChangedCrossingArmorLowThresholdEmitsWarningToastAndRedFlash() {
+        InventoryModel baseline = InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .equip(
+                com.bong.client.inventory.model.EquipSlotType.CHEST,
+                InventoryItem.createFull(
+                    1004L,
+                    "armor_iron_chestplate",
+                    "铁甲胸甲",
+                    2,
+                    2,
+                    5.0,
+                    "common",
+                    "fixture",
+                    1,
+                    0.8,
+                    0.21
+                )
+            )
+            .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"durability_changed","revision":6,"instance_id":1004,"durability":0.19}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertEquals("甲胄将破", dispatch.alertToast().orElseThrow().text());
+        assertEquals(
+            VisualEffectState.EffectType.ARMOR_LOW_DURABILITY_FLASH,
+            dispatch.visualEffectState().orElseThrow().effectType()
+        );
+    }
+
+    @Test
+    void movedEquippingMundaneArmorEmitsWearFlash() {
+        InventoryModel baseline = InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .gridItem(
+                InventoryItem.createFull(
+                    1005L,
+                    "armor_bone_chestplate",
+                    "骨甲胸甲",
+                    2,
+                    2,
+                    1.4,
+                    "common",
+                    "fixture",
+                    1,
+                    0.8,
+                    1.0
+                ),
+                InventoryModel.PRIMARY_CONTAINER_ID,
+                0,
+                0
+            )
+            .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1005,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "to":{"kind":"equip","slot":"chest"}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertTrue(dispatch.alertToast().isEmpty());
+        assertEquals(
+            VisualEffectState.EffectType.ARMOR_EQUIP_FLASH,
+            dispatch.visualEffectState().orElseThrow().effectType()
+        );
+        assertEquals(
+            "armor_bone_chestplate",
+            InventoryStateStore.snapshot()
+                .equipped()
+                .get(com.bong.client.inventory.model.EquipSlotType.CHEST)
+                .itemId()
+        );
     }
 
     @Test

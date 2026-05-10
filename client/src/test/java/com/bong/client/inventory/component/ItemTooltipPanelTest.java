@@ -67,6 +67,28 @@ class ItemTooltipPanelTest {
     }
 
     @Test
+    void mundaneArmorTooltipLinesShowMaterialDefenseAndRepairHint() {
+        InventoryItem armor = InventoryItem.createFull(
+            88L,
+            "armor_copper_chestplate",
+            "铜甲胸甲",
+            2,
+            2,
+            2.1,
+            "common",
+            "",
+            1,
+            1.0,
+            0.0
+        );
+
+        assertEquals("凡物·铜制", ItemTooltipPanel.armorMaterialLine(armor));
+        assertEquals("防御: +2.80", ItemTooltipPanel.armorDefenseLine(armor));
+        assertEquals("已损坏·不可穿戴", ItemTooltipPanel.armorBrokenLine(armor));
+        assertEquals("修复: 同材质 ×2 hand-craft", ItemTooltipPanel.armorRepairLine(armor));
+    }
+
+    @Test
     void rarityLabelsCoverAllSixTiers() {
         assertRarityLabelAndColor("common", "普通", 0x808080);
         assertRarityLabelAndColor("uncommon", "精良", 0x22CC22);

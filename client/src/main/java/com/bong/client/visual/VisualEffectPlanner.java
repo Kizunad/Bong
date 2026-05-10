@@ -65,7 +65,8 @@ public final class VisualEffectPlanner {
                 0,
                 DECREE_TEXT_Y_DIVISOR
             );
-            case BLOOD_MOON, ENLIGHTENMENT_FLASH, WEAPON_BREAK_FLASH -> List.of(HudRenderCommand.screenTint(
+            case BLOOD_MOON, ENLIGHTENMENT_FLASH, WEAPON_BREAK_FLASH,
+                 ARMOR_EQUIP_FLASH, ARMOR_LOW_DURABILITY_FLASH, ARMOR_BREAK_FLASH -> List.of(HudRenderCommand.screenTint(
                 HudRenderLayer.VISUAL,
                 HudTextHelper.withAlpha(profile.baseColor(), alpha)
             ));

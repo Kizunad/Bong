@@ -169,6 +169,33 @@ enum VisualEffectProfile {
         160,
         null
     ),
+    ARMOR_EQUIP_FLASH(
+        VisualEffectState.EffectType.ARMOR_EQUIP_FLASH,
+        0xFFFFFF,
+        0.1,
+        100L,
+        60L,
+        96,
+        null
+    ),
+    ARMOR_LOW_DURABILITY_FLASH(
+        VisualEffectState.EffectType.ARMOR_LOW_DURABILITY_FLASH,
+        0xFF3030,
+        1.0,
+        700L,
+        250L,
+        112,
+        null
+    ),
+    ARMOR_BREAK_FLASH(
+        VisualEffectState.EffectType.ARMOR_BREAK_FLASH,
+        0xFF3030,
+        1.0,
+        300L,
+        120L,
+        176,
+        null
+    ),
     // 水墨边框：入定/回忆常态，四角墨晕贴图（中心透明），替代 MEDITATION_CALM 的纯色 vignette 走沉浸视觉
     MEDITATION_INK_WASH(
         VisualEffectState.EffectType.MEDITATION_INK_WASH,
@@ -229,6 +256,9 @@ enum VisualEffectProfile {
             case PRESSURE_JITTER -> PRESSURE_JITTER;
             case HIT_PUSHBACK -> HIT_PUSHBACK;
             case WEAPON_BREAK_FLASH -> WEAPON_BREAK_FLASH;
+            case ARMOR_EQUIP_FLASH -> ARMOR_EQUIP_FLASH;
+            case ARMOR_LOW_DURABILITY_FLASH -> ARMOR_LOW_DURABILITY_FLASH;
+            case ARMOR_BREAK_FLASH -> ARMOR_BREAK_FLASH;
             case MEDITATION_INK_WASH -> MEDITATION_INK_WASH;
             case NONE -> null;
         };
