@@ -41,15 +41,15 @@
 ## 接入面 Checklist
 
 - **进料**：KosmX PlayerAnimator gradle 依赖 / 可控骨骼列表（plan-player-animation-v1 已锚定：head/body/leftArm/rightArm/leftLeg/rightLeg + torso/leftForeArm/rightForeArm）/ `PlayerAnimationAccess` API / `AnimationStack.addAnimLayer` / server combat/cultivation/skill 事件
-- **出料**：`BongAnimationRegistry`（client 侧动画注册表，anim_id → PlayerAnimator JSON/Java 动画）+ `BongAnimationTriggerS2c`（server→client CustomPayload `{ entity_id, anim_id, priority, loop }`）+ `AnimationLayerManager`（多层叠加管理：上身/下身/全身/表情）+ 首批 25+ 动画 + `client/tools/gen_*.py` 动画生成器
-- **跨仓库契约**：server `animation::AnimationTrigger { entity, anim_id, priority, loop }` component → emit `BongAnimationTriggerS2c` → client `BongAnimationRegistry.play()`
+- **出料**：`BongAnimationRegistry`（client 侧动画注册表，anim_id → PlayerAnimator JSON/Java 动画）+ 复用 `bong:vfx_event` 的 `play_anim` / `stop_anim` 载荷 + `AnimationLayerManager`（多层叠加管理：上身/下身/全身/表情）+ 首批 25+ 动画 + `client/tools/gen_*.py` 动画生成器
+- **跨仓库契约**：server `animation::AnimationTrigger { entity, anim_id, priority, loop }` component → emit `VfxEventPayloadV1::PlayAnim` / `StopAnim` → client `ClientAnimationBridge` → `AnimationLayerManager.play()`
 
 ---
 
 ## §0 设计轴心
 
 - [x] **零 Blender/Blockbench**：全部 Java 代码 + JSON 生产线（`client/tools/gen_*.py` + `render_animation.py` headless 验证）
-- [x] **多层叠加**：上半身动作(priority 100) / 下半身行走(priority 200) / 全身姿态(priority 300) / 表情(priority 50) 独立通道
+- [x] **多层叠加**：表情/轻量 idle(priority 100+) / 下半身行走(priority 500+) / 上半身战斗(priority 1000+) / 全身剧情(priority 3000+) 独立通道；生产路径由 `ClientAnimationBridge` 进入 `AnimationLayerManager`
 - [x] **服务端权威触发**：server 决定何时播什么动画，client 纯表演
 - [x] **animation = 表演**：不做判定、不参与网络同步（动画中 entity 照常移动/受击）
 - [x] **PlayerAnimator 四大坑位**（已知，plan-player-animation-v1 调研记录）：循环单帧衰减到 defaultValue / MC 无 IK 导致 leg.pitch 断腿 / body 走 MatrixStack 非 updatePart / bend 需 bendy-lib 否则静默 no-op
@@ -61,12 +61,12 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | gradle 集成 + BongAnimationRegistry 骨架 + AnimationLayerManager + 3 验证动画 + server→client 协议 | ✅ 2026-05-11 |
-| P1 | 战斗动画 8 个 + 姿态动画 5 个 | ✅ 2026-05-11 |
-| P2 | NPC 行为动画 5 个 + 产出交互动画 4 个 | ✅ 2026-05-11 |
-| P3 | 流派专属 stance 7 个 + 伤口/负重 limping | ✅ 2026-05-11 |
-| P4 | 突破 4 境动画 + 死亡/重生动画 | ✅ 2026-05-11 |
-| P5 | 流派 vN+1 联调 + gen_*.py 生产线收口 + 饱和化测试 | ✅ 2026-05-11 |
+| P0 | gradle 集成 + 复用 `bong:vfx_event` + AnimationLayerManager 生产接入 + 验证动画资产 | ✅ 2026-05-11 |
+| P1 | 战斗/姿态资产 + combat/parry/hit/botany/lingtian 等已接线触发 | ✅ 2026-05-11；⏳ meditate/idle/dodge/loot/stealth/inventory 待后续 |
+| P2 | NPC 行为动画 5 个 + 产出交互动画 4 个 | ✅ 资产就绪；⏳ NPC/forge/alchemy/inventory 触发待后续 |
+| P3 | 流派专属 stance 7 个 + 伤口/负重 limping | ✅ 资产就绪；⏳ stance/wound 自动触发待后续 |
+| P4 | 突破 4 境动画 + 死亡/重生动画 | ✅ 突破触发 + death/rebirth 资产；⏳ death/rebirth lifecycle 触发待后续 |
+| P5 | 流派 vN+1 联调 + gen_*.py 生产线收口 + 饱和化测试 | ✅ 生成器/manifest/headless 核验；⏳ 截图矩阵/FPS 压测待后续 |
 
 ---
 
@@ -87,17 +87,17 @@
 
 3. **`AnimationLayerManager`**（`client/src/main/java/com/bong/client/animation/AnimationLayerManager.java`）
    - 4 层通道管理：
-     - `EXPRESSION` (priority 50)：表情/头部微动
-     - `UPPER_BODY` (priority 100)：攻击/施法/采集（仅影响 head/body/arms）
-     - `LOWER_BODY` (priority 200)：行走/跑步/跳跃（仅影响 legs）
-     - `FULL_BODY` (priority 300)：打坐/倒地/突破（覆盖全部骨骼）
+     - `EXPRESSION` (priority 100)：表情/头部微动
+     - `LOWER_BODY` (priority 500)：行走/跑步/跳跃（仅影响 legs）
+     - `UPPER_BODY` (priority 1000)：攻击/施法/采集（仅影响 head/body/arms）
+     - `FULL_BODY` (priority 3000)：打坐/倒地/突破（覆盖全部骨骼）
    - 同层新动画自动替换旧动画（带 0.15s crossfade）
    - 高 priority 层覆盖低 priority 层的同名骨骼
 
-4. **`BongAnimationTriggerS2c` 协议**（`server/src/network/animation_trigger.rs` + `client/.../AnimationTriggerHandler.java`）
-   - `BongAnimationTriggerS2c { entity_id: u32, anim_id: String, priority: u8, loop: bool, duration_ticks: Option<u16> }`
-   - 注册 `bong:animation_trigger` CustomPayload channel
-   - server 侧 `animation::trigger_system`：扫描 `AnimationTrigger` component → emit packet → 清除 component
+4. **动画触发协议复用**（`server/src/network/animation_trigger.rs` + `client/src/main/java/com/bong/client/animation/ClientAnimationBridge.java`）
+   - 未新增平行 `BongAnimationTriggerS2c` / `bong:animation_trigger` channel。
+   - server 侧 `AnimationTrigger { target_entity, anim_id, action, priority, fade_* }` component 统一转成既有 `VfxEventPayloadV1::PlayAnim` / `StopAnim`。
+   - client 侧 `ClientAnimationBridge` 按 priority range 映射 `AnimationLayerManager.Channel`，通过 `AnimationLayerManager.play()` / `stop()` 维持同语义层替换。
 
 5. **3 个验证动画**
    - `sword_swing_right.json`：右臂横扫 90°（rightArm pitch 0→-90° + body yaw 0→20°，duration 8 tick，easing ease-out）
@@ -115,7 +115,7 @@
 
 ---
 
-## P1 — 战斗动画 + 姿态动画 ✅ 2026-05-11
+## P1 — 战斗动画 + 姿态动画 ✅ 资产与已接线子集 / ⏳ 部分触发后续
 
 ### 交付物
 
@@ -136,13 +136,10 @@
    - `stealth_crouch.json`：潜行伏低（body lower 50% + legs wide + head slight up，loop）
    - `idle_breathe.json`：站立呼吸（body scale sin wave ±1%，arms slight sway，loop 40 tick cycle，EXPRESSION priority）
 
-3. **server 侧触发接线**
-   - `combat::resolve_system`：hit 命中时 → `AnimationTrigger { anim_id: attack_type.to_anim(), priority: UPPER_BODY }`
-   - `combat::parry_system`：格挡成功 → parry_block
-   - `combat::dodge_system`：闪避 → dodge_roll
-   - `cultivation::meditate_system`：开始打坐 → meditate_sit（loop）/ 结束 → stop
-   - `lingtian::harvest_system`：采集 → harvest_crouch
-   - idle_breathe：client 侧自动播（无 server 触发，entity 静止 5s 后自动开始，移动时停止）
+3. **server/client 侧触发接线现实**
+   - ✅ `combat` attack / defense / hit recoil 已通过 `server/src/network/vfx_animation_trigger.rs` 映射到 `fist_punch_*` / `palm_strike` / `sword_slash_down` / `parry_block` / `hurt_stagger` 等动画。
+   - ✅ `botany` harvest、`lingtian` till、breakthrough、tribulation、woliu 等已接到 `AnimationTrigger` → `VfxEventPayloadV1::PlayAnim`。
+   - ⏳ `combat::dodge_system` → `dodge_roll`、`cultivation::meditate_system` → `meditate_sit`、client 静止 5s → `idle_breathe`、`loot_bend` / `stealth_crouch` / `inventory_reach` 仍待后续触发计划。
 
 ### 验收抓手
 
@@ -151,7 +148,7 @@
 
 ---
 
-## P2 — NPC 行为动画 + 产出交互动画 ✅ 2026-05-11
+## P2 — NPC 行为动画 + 产出交互动画 ✅ 资产就绪 / ⏳ 部分触发后续
 
 ### 交付物
 
@@ -170,15 +167,12 @@
    - `inventory_reach.json`：背包翻找（rightArm reach to hip + body slight turn，4 tick，配合 ui-transition-animation-v1 背包打开）
 
 3. **NPC 动画触发**
-   - NPC big-brain action 切换时 → server emit `AnimationTrigger` with NPC entity_id
-   - `PatrolAction` → npc_patrol_walk / `ChopTreeAction` → npc_chop_tree / `FleeAction` → npc_flee_run
-   - 与 npc-visual-v1 配合：不同 archetype 的 NPC 播同一动画但穿着不同 → 视觉差异化
+   - ⏳ NPC big-brain action 切换 → `npc_patrol_walk` / `npc_chop_tree` / `npc_mine` / `npc_crouch_wave` / `npc_flee_run` 仍待后续接线。
+   - ✅ 当前基础能力已支持带 `UniqueId` 的 skinned player shell 作为动画目标；不同 archetype 复用同一动画的视觉差异化留给 npc-visual / npc-interaction 后续联调。
 
 4. **产出动画触发**
-   - `forge::session_system`：锤击步骤 → forge_hammer（与 vfx-wiring-v1 的 forge hammer VFX 同步）
-   - `alchemy::session_system`：炼制中 → alchemy_stir loop（与 vfx-wiring-v1 的 alchemy vapor VFX 同步）
-   - `lingtian::action_system`：开垦 → lingtian_till
-   - 动画 + VFX 叠加：玩家锤击时既有 rightArm 挥锤动画 又有 forge hammer VFX 火星粒子
+   - ✅ `lingtian` / botany 侧已有动画触发映射。
+   - ⏳ `forge::session_system` → `forge_hammer`、`alchemy::session_system` → `alchemy_stir`、`inventory_reach` 背包交互仍待后续接线。
 
 ### 验收抓手
 
@@ -187,7 +181,7 @@
 
 ---
 
-## P3 — 流派 stance + 伤口 limping ✅ 2026-05-11
+## P3 — 流派 stance + 伤口 limping ✅ 资产就绪 / ⏳ 自动触发后续
 
 ### 交付物
 
@@ -199,7 +193,7 @@
    - `stance_zhenmai.json`：截脉侧身蓄劲（body turn 45° + rightArm draw back + leftArm guard，loop idle）
    - `stance_woliu.json`：涡流双掌开合（both palms face each other at chest level + slow open/close cycle 40 tick，loop）
    - `stance_tuike.json`：蜕壳披壳（body slight hunch + arms wrap around torso + head slight tilt，loop idle）
-   - 触发：进入战斗 + 已装备流派 → 自动切 stance（FULL_BODY priority 覆盖 idle_breathe）
+   - ⏳ 触发：进入战斗 + 已装备流派 → 自动切 stance（FULL_BODY priority 覆盖 idle_breathe）仍待流派 vN+1 后续接线。
 
 2. **伤口/负重 limping**（`assets/bong/animations/status/`）
    - `limp_left.json`：左腿伤 → 行走动画左步短/右步长（leftLeg swing amplitude ×0.6，rightLeg ×1.0，loop替换默认 walk）
@@ -207,7 +201,7 @@
    - `arm_injured_left.json`：左臂伤 → 左臂下垂（leftArm hang at -5° pitch，不参与 swing，覆盖 UPPER_BODY idle）
    - `arm_injured_right.json`：右臂伤 → 右臂下垂
    - `exhausted_walk.json`：虚弱走 → 全身动画 amplitude ×0.5 + body slight stagger per step
-   - 触发：`cultivation::Wounds` component 变化 → server emit 对应 AnimationTrigger
+   - ⏳ 触发：`cultivation::Wounds` component 变化 → server emit 对应 AnimationTrigger 仍待 wound/gamefeel 后续接线。
    - 与 combat-gamefeel-v1 P3 配合：gamefeel 做视觉 tint + 粒子，本 plan 做骨骼姿态
 
 3. **stance → 攻击动画衔接**
@@ -222,7 +216,7 @@
 
 ---
 
-## P4 — 突破 + 死亡动画 ✅ 2026-05-11
+## P4 — 突破 + 死亡动画 ✅ 突破触发与资产 / ⏳ 死亡重生触发后续
 
 ### 交付物
 
@@ -241,8 +235,8 @@
 
 3. **触发接线**
    - `cultivation::breakthrough_system`：按 realm transition 选择对应 breakthrough 动画
-   - `death_lifecycle::death_system`：死亡 → death_collapse → 1s → death_disintegrate
-   - `death_lifecycle::rebirth_system`：重生 → rebirth_wake
+   - ⏳ `death_lifecycle::death_system`：死亡 → death_collapse → 1s → death_disintegrate 待后续 cinematic/lifecycle 接线。
+   - ⏳ `death_lifecycle::rebirth_system`：重生 → rebirth_wake 待后续 cinematic/lifecycle 接线。
 
 ### 验收抓手
 
@@ -251,13 +245,13 @@
 
 ---
 
-## P5 — 流派联调 + 生产线 + 饱和化测试 ✅ 2026-05-11
+## P5 — 流派联调 + 生产线 + 饱和化测试 ✅ 生成器/测试基线 / ⏳ 完整矩阵后续
 
 ### 交付物
 
 1. **流派 vN+1 联调 demo**
    - 给 baomai-v3 / dugu-v2 / tuike-v2 / zhenfa-v2 各提供 1-2 招动画 JSON demo
-   - 确认 `SkillCastEvent` → `AnimationTrigger` → `BongAnimationRegistry.play()` 全链路通
+   - 确认 `SkillCastEvent` → `AnimationTrigger` → `ClientAnimationBridge` → `AnimationLayerManager.play()` 全链路通
    - 文档：每个流派 plan 如何引用 `BongAnimationRegistry` + 如何用 `gen_*.py` 生成新动画
 
 2. **`client/tools/gen_*.py` 生产线收口**
@@ -284,10 +278,10 @@
 
 - **落地清单**：
   - client 既有 PlayerAnimator 基线继续复用：`client/build.gradle` / `client/src/main/resources/fabric.mod.json` 已接 `player-animation-lib`，`BongAnimationRegistry`、`BongAnimationPlayer`、`ClientAnimationBridge`、`VfxEventRouter` 已承接 `play_anim` / `stop_anim`。
-  - 本 plan 新增 `client/src/main/java/com/bong/client/animation/AnimationLayerManager.java`，把 `EXPRESSION` / `LOWER_BODY` / `UPPER_BODY` / `FULL_BODY` 映射到稳定 priority，并保证同语义层替换、跨语义层共存。
+  - 本 plan 新增并接入 `client/src/main/java/com/bong/client/animation/AnimationLayerManager.java`，把 `EXPRESSION` / `LOWER_BODY` / `UPPER_BODY` / `FULL_BODY` 映射到稳定 priority range；`ClientAnimationBridge`、`BongAnimCommand`、`BongPunchCombo` 均已走该入口，保证同语义层替换、跨语义层共存。
   - 本 plan 扩展 `BongAnimations.IMPLEMENTATION_V1_ANIMATIONS`，新增 39 个 PlayerAnimator JSON；`assets/bong/player_animation/` 当前共 67 个动画资源，覆盖战斗、姿态、NPC、产出交互、七流派 stance、伤口/虚弱步态、突破、死亡/重生。
   - 新增 `client/tools/gen_player_animation_implementation_v1.py`、`client/tools/gen_stance.py`、`client/tools/gen_breakthrough.py`，继续使用 `render_animation.py` 做 headless 资源核验。
-  - Review 收尾：`AnimationLayerManager` 仅在 stop 成功后更新通道追踪，并在生成器基线补齐 head/torso `roll=0` 边界复位，防止 `dodge_roll` / limping 类动画残留侧倾。
+  - Review 收尾：`AnimationLayerManager` 仅在 stop 成功后更新通道追踪，并在生成器基线补齐 head/torso `roll=0` 边界复位，防止 `dodge_roll` / limping 类动画残留侧倾；生产播放路径已接入 LayerManager。
   - server 新增 `server/src/network/animation_trigger.rs`：`AnimationTrigger` component 适配到既有 `VfxEventPayloadV1::PlayAnim` / `StopAnim`，并在同 tick 清除 component。
   - `server/src/network/vfx_animation_trigger.rs` 已把 combat attack / defense / hit recoil / breakthrough / tribulation / woliu / botany harvest / lingtian till 事件映射到骨骼动画；目标查询放宽到 `Position + UniqueId`，支持带 skinned player shell 的 NPC。
   - 协议决议：未新增平行 `bong:animation_trigger` CustomPayload，统一复用既有 `bong:vfx_event` 动画 payload，避免两套 server→client 表演协议并存。
@@ -296,12 +290,15 @@
   - `cbc563b47` · 2026-05-11 · `接入 player-animation 服务端触发适配`
   - `067e60794` · 2026-05-11 · `补强 player-animation 事件触发覆盖`
   - `e7a8e85a1` · 2026-05-11 · `修复 player-animation review 反馈`
+  - `af567f34a` · 2026-05-11 · `接入 player-animation 分层播放入口`
 - **测试结果**：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3650 passed。
   - `cd server && cargo test vfx_animation_trigger && cargo test animation_trigger` → 8 passed + 10 passed，覆盖 `PlayAnim` / `StopAnim` component 适配、combat/breakthrough/botany/lingtian 映射、skinned NPC `UniqueId` 目标。
   - Java 17 (`$HOME/.sdkman/candidates/java/17.0.18-amzn`) 下 `cd client && ./gradlew test --tests "com.bong.client.animation.*"` → BUILD SUCCESSFUL。
   - Java 17 下 `cd client && ./gradlew test build` → BUILD SUCCESSFUL。
   - Review 收尾后 Java 17 下 `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build` → BUILD SUCCESSFUL。
+  - LayerManager 生产接入后 Java 17 下 `cd client && ./gradlew test --tests "com.bong.client.animation.AnimationLayerManagerTest"` → BUILD SUCCESSFUL。
+  - LayerManager 生产接入后 Java 17 下 `cd client && ./gradlew test build` → BUILD SUCCESSFUL。
   - `python3 -m py_compile client/tools/gen_player_animation_implementation_v1.py client/tools/gen_stance.py client/tools/gen_breakthrough.py` → pass。
   - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/stance_baomai.json --ticks "0,10,20" -o /tmp/bong-player-animation-implementation-v1-render` → wrote `stance_baomai_grid.png`。
 - **跨仓库核验**：
@@ -310,6 +307,8 @@
   - client：`BongAnimationRegistry`、`BongAnimationPlayer`、`ClientAnimationBridge`、`AnimationLayerManager`、`BongAnimations.IMPLEMENTATION_V1_ANIMATIONS`。
 - **遗留 / 后续**：
   - 当前环境未执行 WSLg `./gradlew runClient` 手测；以 headless renderer、Java 17 build/test 和 server 单元/全量测试替代。
+  - 已接线触发范围明确为：combat attack / defense / hit recoil、breakthrough、tribulation、woliu、botany harvest、lingtian till；其余资产先作为可播放资源与后续 plan 接入面。
+  - 待后续触发接线：`meditate_sit`、`idle_breathe`、`dodge_roll`、`loot_bend`、`stealth_crouch`、`inventory_reach`、`npc_patrol_walk` / `npc_chop_tree` / `npc_mine` / `npc_crouch_wave` / `npc_flee_run`、`forge_hammer`、`alchemy_stir`、七流派 `stance_*` 自动切换、`limp_*` / `arm_injured_*` / `exhausted_walk` wound 步态、`death_collapse` / `death_disintegrate` / `rebirth_wake` lifecycle 触发。
   - 原文 P5 的 750+ 截图矩阵与 5-player FPS 压测未落成自动脚本，后续可独立做 `animation_matrix_test.sh` / screenshot diff plan。
   - 非 player-shell 的 GeckoLib/fauna entity 仍走独立 renderer；本 plan 的 NPC 动画覆盖带 `UniqueId` 且客户端可按 player model resolve 的 NPC。
   - 第一人称手臂、bendy-lib 肢体弯曲、死亡倒地分阶段 stop/hold 细化仍适合拆后续 polish plan。
