@@ -1,0 +1,249 @@
+package com.bong.client.entity;
+
+import net.minecraft.entity.EntityDimensions;
+import net.minecraft.util.Identifier;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+
+public enum BongEntityModelKind {
+    SPIRIT_NICHE(
+        "spirit_niche",
+        "SpiritNiche.bbmodel",
+        126,
+        0.9f,
+        1.5f,
+        64,
+        10,
+        0.35f,
+        "inactive",
+        "active",
+        "invaded"
+    ),
+    SPIRIT_EYE(
+        "spirit_eye",
+        "SpiritEye.bbmodel",
+        127,
+        1.0f,
+        2.0f,
+        96,
+        5,
+        0.0f,
+        "qi_050",
+        "qi_070",
+        "qi_100"
+    ),
+    RIFT_PORTAL(
+        "rift_portal",
+        "RiftPortal.bbmodel",
+        128,
+        2.0f,
+        3.0f,
+        128,
+        3,
+        0.0f,
+        "main_rift",
+        "deep_rift",
+        "collapse_tear"
+    ),
+    FORGE_STATION(
+        "forge_station",
+        "ForgeStation.bbmodel",
+        129,
+        1.0f,
+        1.0f,
+        64,
+        10,
+        0.35f,
+        "idle",
+        "working"
+    ),
+    ALCHEMY_FURNACE(
+        "alchemy_furnace",
+        "AlchemyFurnace.bbmodel",
+        130,
+        1.0f,
+        1.5f,
+        64,
+        10,
+        0.35f,
+        "idle",
+        "brewing"
+    ),
+    FORMATION_CORE(
+        "formation_core",
+        "FormationCore.bbmodel",
+        131,
+        1.0f,
+        0.35f,
+        64,
+        10,
+        0.15f,
+        "inactive",
+        "active",
+        "exhausted"
+    ),
+    LINGTIAN_PLOT(
+        "lingtian_plot",
+        "LingtianPlot.bbmodel",
+        132,
+        0.9f,
+        0.2f,
+        64,
+        10,
+        0.05f,
+        "wild",
+        "tilled",
+        "planted",
+        "mature"
+    ),
+    DRY_CORPSE(
+        "dry_corpse",
+        "DryCorpse.bbmodel",
+        133,
+        1.0f,
+        0.45f,
+        64,
+        10,
+        0.12f,
+        "intact",
+        "searching",
+        "looted"
+    ),
+    BONE_SKELETON(
+        "bone_skeleton",
+        "BoneSkeleton.bbmodel",
+        134,
+        1.0f,
+        0.35f,
+        64,
+        10,
+        0.12f,
+        "intact",
+        "searching",
+        "looted"
+    ),
+    STORAGE_POUCH(
+        "storage_pouch",
+        "StoragePouch.bbmodel",
+        135,
+        0.55f,
+        0.45f,
+        64,
+        10,
+        0.12f,
+        "intact",
+        "searching",
+        "looted"
+    ),
+    STONE_CASKET(
+        "stone_casket",
+        "StoneCasket.bbmodel",
+        136,
+        1.2f,
+        0.65f,
+        64,
+        10,
+        0.18f,
+        "intact",
+        "searching",
+        "looted"
+    );
+
+    private static final String MOD_ID = "bong";
+
+    private final String entityId;
+    private final String blockbenchFileName;
+    private final int expectedRawId;
+    private final EntityDimensions dimensions;
+    private final int trackingRange;
+    private final int trackingTickInterval;
+    private final float shadowRadius;
+    private final List<String> textureStates;
+
+    BongEntityModelKind(
+        String entityId,
+        String blockbenchFileName,
+        int expectedRawId,
+        float width,
+        float height,
+        int trackingRange,
+        int trackingTickInterval,
+        float shadowRadius,
+        String... textureStates
+    ) {
+        this.entityId = entityId;
+        this.blockbenchFileName = blockbenchFileName;
+        this.expectedRawId = expectedRawId;
+        this.dimensions = EntityDimensions.fixed(width, height);
+        this.trackingRange = trackingRange;
+        this.trackingTickInterval = trackingTickInterval;
+        this.shadowRadius = shadowRadius;
+        this.textureStates = List.copyOf(Arrays.asList(textureStates));
+    }
+
+    public String entityId() {
+        return entityId;
+    }
+
+    public Identifier identifier() {
+        return new Identifier(MOD_ID, entityId);
+    }
+
+    public int expectedRawId() {
+        return expectedRawId;
+    }
+
+    public EntityDimensions dimensions() {
+        return dimensions;
+    }
+
+    public int trackingRange() {
+        return trackingRange;
+    }
+
+    public int trackingTickInterval() {
+        return trackingTickInterval;
+    }
+
+    public float shadowRadius() {
+        return shadowRadius;
+    }
+
+    public Identifier modelResource() {
+        return new Identifier(MOD_ID, "geo/" + entityId + ".geo.json");
+    }
+
+    public Identifier animationResource() {
+        return new Identifier(MOD_ID, "animations/" + entityId + ".animation.json");
+    }
+
+    public String idleAnimationName() {
+        return "animation.bong." + entityId + ".idle";
+    }
+
+    public Identifier textureForState(int visualState) {
+        String suffix = textureStates.get(Math.floorMod(visualState, textureStates.size()));
+        return new Identifier(MOD_ID, "textures/entity/" + entityId + "_" + suffix + ".png");
+    }
+
+    public int stateCount() {
+        return textureStates.size();
+    }
+
+    public List<String> textureStates() {
+        return textureStates;
+    }
+
+    public String blockbenchFileName() {
+        return blockbenchFileName;
+    }
+
+    public String displayLabel() {
+        return Arrays.stream(entityId.split("_"))
+            .filter(part -> !part.isBlank())
+            .map(part -> part.substring(0, 1).toUpperCase(Locale.ROOT) + part.substring(1))
+            .reduce("", String::concat);
+    }
+}
