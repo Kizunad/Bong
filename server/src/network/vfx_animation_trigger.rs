@@ -376,6 +376,11 @@ fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
         WoliuSkillId::Mouth => "#1E2440",
         WoliuSkillId::Pull => "#382058",
         WoliuSkillId::Heart => "#100818",
+        WoliuSkillId::VacuumPalm => "#9966CC",
+        WoliuSkillId::VortexShield => "#B48CFF",
+        WoliuSkillId::VacuumLock => "#7A4CC2",
+        WoliuSkillId::VortexResonance => "#8F5BE0",
+        WoliuSkillId::TurbulenceBurst => "#E8D9FF",
     }
 }
 

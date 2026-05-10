@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "woliu_vortex_resonance",
+  "description": "woliu-v3 slow floating resonance stance with palms raised.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 80,
+    "stopTick": 84,
+    "isLoop": true,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.50, "yaw": -0.40, "roll": -0.20, "bend": 0.95, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.50, "yaw": 0.40, "roll": 0.20, "bend": 0.95, "axis": 3.1415927 } },
+      { "tick": 40, "easing": "INOUTSINE", "body": { "y": 0.18 } },
+      { "tick": 40, "easing": "INOUTSINE", "torso": { "pitch": -0.06 } },
+      { "tick": 40, "easing": "INOUTSINE", "rightArm": { "pitch": -1.35, "yaw": -0.32, "roll": -0.50, "bend": 0.68, "axis": 3.1415927 } },
+      { "tick": 40, "easing": "INOUTSINE", "leftArm": { "pitch": -1.35, "yaw": 0.32, "roll": 0.50, "bend": 0.68, "axis": 3.1415927 } },
+      { "tick": 80, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 80, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } }
+    ]
+  }
+}

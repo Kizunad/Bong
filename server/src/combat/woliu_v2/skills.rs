@@ -32,7 +32,13 @@ pub const WOLIU_BURST_SKILL_ID: &str = "woliu.burst";
 pub const WOLIU_MOUTH_SKILL_ID: &str = "woliu.mouth";
 pub const WOLIU_PULL_SKILL_ID: &str = "woliu.pull";
 pub const WOLIU_HEART_SKILL_ID: &str = "woliu.heart";
-pub const WOLIU_REQUIRED_MERIDIANS: [MeridianId; 1] = [MeridianId::Lung];
+pub const WOLIU_VACUUM_PALM_SKILL_ID: &str = "woliu.vacuum_palm";
+pub const WOLIU_VORTEX_SHIELD_SKILL_ID: &str = "woliu.vortex_shield";
+pub const WOLIU_VACUUM_LOCK_SKILL_ID: &str = "woliu.vacuum_lock";
+pub const WOLIU_VORTEX_RESONANCE_SKILL_ID: &str = "woliu.vortex_resonance";
+pub const WOLIU_TURBULENCE_BURST_SKILL_ID: &str = "woliu.turbulence_burst";
+pub const WOLIU_V2_REQUIRED_MERIDIANS: [MeridianId; 1] = [MeridianId::Lung];
+pub const WOLIU_V3_REQUIRED_MERIDIANS: [MeridianId; 2] = [MeridianId::Lung, MeridianId::Heart];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WoliuSkillSpec {
@@ -75,6 +81,11 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(WOLIU_MOUTH_SKILL_ID, cast_mouth);
     registry.register(WOLIU_PULL_SKILL_ID, cast_pull);
     registry.register(WOLIU_HEART_SKILL_ID, cast_heart);
+    registry.register(WOLIU_VACUUM_PALM_SKILL_ID, cast_vacuum_palm);
+    registry.register(WOLIU_VORTEX_SHIELD_SKILL_ID, cast_vortex_shield);
+    registry.register(WOLIU_VACUUM_LOCK_SKILL_ID, cast_vacuum_lock);
+    registry.register(WOLIU_VORTEX_RESONANCE_SKILL_ID, cast_vortex_resonance);
+    registry.register(WOLIU_TURBULENCE_BURST_SKILL_ID, cast_turbulence_burst);
 }
 
 pub fn declare_woliu_v2_meridian_dependencies(mut deps: ResMut<SkillMeridianDependencies>) {
@@ -85,7 +96,16 @@ pub fn declare_woliu_v2_meridian_dependencies(mut deps: ResMut<SkillMeridianDepe
         WOLIU_PULL_SKILL_ID,
         WOLIU_HEART_SKILL_ID,
     ] {
-        deps.declare(skill_id, WOLIU_REQUIRED_MERIDIANS.to_vec());
+        deps.declare(skill_id, WOLIU_V2_REQUIRED_MERIDIANS.to_vec());
+    }
+    for skill_id in [
+        WOLIU_VACUUM_PALM_SKILL_ID,
+        WOLIU_VORTEX_SHIELD_SKILL_ID,
+        WOLIU_VACUUM_LOCK_SKILL_ID,
+        WOLIU_VORTEX_RESONANCE_SKILL_ID,
+        WOLIU_TURBULENCE_BURST_SKILL_ID,
+    ] {
+        deps.declare(skill_id, WOLIU_V3_REQUIRED_MERIDIANS.to_vec());
     }
 }
 
@@ -134,6 +154,51 @@ pub fn cast_heart(
     resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::Heart)
 }
 
+pub fn cast_vacuum_palm(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VacuumPalm)
+}
+
+pub fn cast_vortex_shield(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VortexShield)
+}
+
+pub fn cast_vacuum_lock(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VacuumLock)
+}
+
+pub fn cast_vortex_resonance(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VortexResonance)
+}
+
+pub fn cast_turbulence_burst(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::TurbulenceBurst)
+}
+
 pub fn resolve_woliu_v2_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -178,7 +243,7 @@ pub fn resolve_woliu_v2_skill(
         };
         let severed = world.get::<MeridianSeveredPermanent>(caster);
         if let Err(blocking) =
-            check_meridian_runtime_integrity(&WOLIU_REQUIRED_MERIDIANS, meridians, severed)
+            check_meridian_runtime_integrity(required_meridians_for(skill), meridians, severed)
         {
             return rejected(CastRejectReason::MeridianSevered(Some(blocking)));
         }
@@ -224,6 +289,7 @@ pub fn resolve_woliu_v2_skill(
             apply_backfire_to_hand_meridians(&mut meridians, level);
         }
     }
+    let target_siphoned_qi = apply_target_siphon(world, caster, target, skill, spec);
     record_stir_contamination(world, caster, stir.contamination_gain, now_tick);
 
     let cooldown_until_tick = now_tick.saturating_add(spec.cooldown_ticks);
@@ -269,6 +335,7 @@ pub fn resolve_woliu_v2_skill(
         skill,
         spec,
         stir,
+        target_siphoned_qi,
         backfire,
         &zone_context,
         center,
@@ -289,6 +356,7 @@ fn emit_cast_events(
     skill: WoliuSkillId,
     spec: WoliuSkillSpec,
     stir: StirOutcome,
+    target_siphoned_qi: f64,
     backfire: Option<(BackfireLevel, BackfireCauseV2)>,
     zone_context: &ZoneContext,
     center: DVec3,
@@ -304,7 +372,7 @@ fn emit_cast_events(
             lethal_radius: spec.lethal_radius,
             influence_radius: spec.influence_radius,
             turbulence_radius: spec.turbulence_radius,
-            absorbed_qi: stir.actual_absorbed as f32,
+            absorbed_qi: (stir.actual_absorbed + target_siphoned_qi) as f32,
             swirl_qi: stir.rotational_swirl as f32,
             backfire_level: backfire.map(|(level, _)| level),
             visual: spec.visual,
@@ -337,7 +405,7 @@ fn emit_cast_events(
             },
         );
     }
-    if skill == WoliuSkillId::Pull {
+    if matches!(skill, WoliuSkillId::Pull | WoliuSkillId::VacuumPalm) {
         if let Some(target) = target {
             let caster_qi = world
                 .get::<Cultivation>(caster)
@@ -347,7 +415,11 @@ fn emit_cast_events(
                 .get::<Cultivation>(target)
                 .map(|c| c.qi_current)
                 .unwrap_or(0.0);
-            let displacement = pull_displacement_blocks(caster_qi, target_qi, spec.pull_force);
+            let displacement = if skill == WoliuSkillId::VacuumPalm {
+                spec.pull_force as f32
+            } else {
+                pull_displacement_blocks(caster_qi, target_qi, spec.pull_force)
+            };
             if let Some(actual_displacement) =
                 apply_pull_displacement(world, caster, target, displacement, spec.influence_radius)
             {
@@ -366,6 +438,9 @@ fn emit_cast_events(
     for transfer in build_stir_transfers(caster, zone_context, stir) {
         send_event_if_present(world, transfer);
     }
+    if let Some(target_siphon) = build_target_siphon_transfer(caster, target, target_siphoned_qi) {
+        send_event_if_present(world, target_siphon);
+    }
     send_event_if_present(
         world,
         SkillXpGain {
@@ -378,6 +453,58 @@ fn emit_cast_events(
             },
         },
     );
+}
+
+fn apply_target_siphon(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    target: Option<Entity>,
+    skill: WoliuSkillId,
+    spec: WoliuSkillSpec,
+) -> f64 {
+    let requested = target_siphon_amount(skill, spec);
+    if requested <= f64::EPSILON {
+        return 0.0;
+    }
+    let Some(target) = target else {
+        return 0.0;
+    };
+    if target == caster {
+        return 0.0;
+    }
+    let drained = {
+        let Some(mut target_cultivation) = world.get_mut::<Cultivation>(target) else {
+            return 0.0;
+        };
+        let drained = target_cultivation.qi_current.min(requested).max(0.0);
+        target_cultivation.qi_current = (target_cultivation.qi_current - drained).max(0.0);
+        drained
+    };
+
+    if let Some(mut caster_cultivation) = world.get_mut::<Cultivation>(caster) {
+        caster_cultivation.qi_current =
+            (caster_cultivation.qi_current + drained).clamp(0.0, caster_cultivation.qi_max);
+    }
+    drained
+}
+
+fn target_siphon_amount(skill: WoliuSkillId, spec: WoliuSkillSpec) -> f64 {
+    match skill {
+        WoliuSkillId::VacuumPalm => 15.0,
+        WoliuSkillId::VacuumLock => spec.drain_qi_per_sec * spec.duration_seconds(),
+        _ => 0.0,
+    }
+}
+
+fn required_meridians_for(skill: WoliuSkillId) -> &'static [MeridianId] {
+    match skill {
+        WoliuSkillId::VacuumPalm
+        | WoliuSkillId::VortexShield
+        | WoliuSkillId::VacuumLock
+        | WoliuSkillId::VortexResonance
+        | WoliuSkillId::TurbulenceBurst => &WOLIU_V3_REQUIRED_MERIDIANS,
+        _ => &WOLIU_V2_REQUIRED_MERIDIANS,
+    }
 }
 
 fn apply_pull_displacement(
@@ -442,6 +569,17 @@ fn cast_center(
             ),
             None => Ok(caster_pos),
         },
+        WoliuSkillId::VacuumPalm | WoliuSkillId::VacuumLock => {
+            let target = target.ok_or(CastRejectReason::InvalidTarget)?;
+            validated_target_position(
+                world,
+                caster_pos,
+                caster_dim,
+                target,
+                spec.influence_radius,
+                true,
+            )
+        }
         WoliuSkillId::Pull => {
             let target = target.ok_or(CastRejectReason::InvalidTarget)?;
             validated_target_position(
@@ -568,6 +706,24 @@ fn build_stir_transfers(
     transfers
 }
 
+fn build_target_siphon_transfer(
+    caster: Entity,
+    target: Option<Entity>,
+    amount: f64,
+) -> Option<QiTransfer> {
+    if amount <= f64::EPSILON {
+        return None;
+    }
+    let target = target?;
+    QiTransfer::new(
+        QiAccountId::player(format!("entity:{}", target.to_bits())),
+        QiAccountId::player(format!("entity:{}", caster.to_bits())),
+        amount,
+        QiTransferReason::Channeling,
+    )
+    .ok()
+}
+
 fn turbulence_intensity(spec: &WoliuSkillSpec, stir: StirOutcome) -> f32 {
     if spec.turbulence_radius <= 0.0 || stir.rotational_swirl <= 0.0 {
         return 0.0;
@@ -622,6 +778,106 @@ pub fn skill_spec(skill: WoliuSkillId, realm: Realm) -> WoliuSkillSpec {
         WoliuSkillId::Mouth => mouth_spec(realm),
         WoliuSkillId::Pull => pull_spec(realm),
         WoliuSkillId::Heart => heart_spec(realm),
+        WoliuSkillId::VacuumPalm => vacuum_palm_spec(),
+        WoliuSkillId::VortexShield => vortex_shield_spec(),
+        WoliuSkillId::VacuumLock => vacuum_lock_spec(),
+        WoliuSkillId::VortexResonance => vortex_resonance_spec(),
+        WoliuSkillId::TurbulenceBurst => turbulence_burst_spec(),
+    }
+}
+
+fn vacuum_palm_spec() -> WoliuSkillSpec {
+    WoliuSkillSpec {
+        skill: WoliuSkillId::VacuumPalm,
+        field_strength: 0.35,
+        lethal_radius: 1.0,
+        influence_radius: 8.0,
+        turbulence_radius: 1.5,
+        startup_qi: 20.0,
+        maintain_qi_per_sec: 0.0,
+        duration_ticks: TICKS_PER_SECOND * 3 / 2,
+        cooldown_ticks: 3 * TICKS_PER_SECOND,
+        cast_ticks: 6,
+        pull_force: 3.0,
+        drain_qi_per_sec: 10.0,
+        passive_default_enabled: false,
+        visual: visual_for(WoliuSkillId::VacuumPalm),
+    }
+}
+
+fn vortex_shield_spec() -> WoliuSkillSpec {
+    WoliuSkillSpec {
+        skill: WoliuSkillId::VortexShield,
+        field_strength: 0.45,
+        lethal_radius: 0.0,
+        influence_radius: 2.0,
+        turbulence_radius: 2.0,
+        startup_qi: 25.0,
+        maintain_qi_per_sec: 5.0,
+        duration_ticks: 5 * TICKS_PER_SECOND,
+        cooldown_ticks: 12 * TICKS_PER_SECOND,
+        cast_ticks: 10,
+        pull_force: 1.0,
+        drain_qi_per_sec: 1.0,
+        passive_default_enabled: false,
+        visual: visual_for(WoliuSkillId::VortexShield),
+    }
+}
+
+fn vacuum_lock_spec() -> WoliuSkillSpec {
+    WoliuSkillSpec {
+        skill: WoliuSkillId::VacuumLock,
+        field_strength: 0.55,
+        lethal_radius: 1.5,
+        influence_radius: 12.0,
+        turbulence_radius: 1.5,
+        startup_qi: 35.0,
+        maintain_qi_per_sec: 0.0,
+        duration_ticks: 3 * TICKS_PER_SECOND,
+        cooldown_ticks: 15 * TICKS_PER_SECOND,
+        cast_ticks: 8,
+        pull_force: 0.0,
+        drain_qi_per_sec: 10.0,
+        passive_default_enabled: false,
+        visual: visual_for(WoliuSkillId::VacuumLock),
+    }
+}
+
+fn vortex_resonance_spec() -> WoliuSkillSpec {
+    WoliuSkillSpec {
+        skill: WoliuSkillId::VortexResonance,
+        field_strength: 0.65,
+        lethal_radius: 0.0,
+        influence_radius: 6.0,
+        turbulence_radius: 6.0,
+        startup_qi: 50.0,
+        maintain_qi_per_sec: 0.0,
+        duration_ticks: 4 * TICKS_PER_SECOND,
+        cooldown_ticks: 20 * TICKS_PER_SECOND,
+        cast_ticks: 80,
+        pull_force: 1.6,
+        drain_qi_per_sec: 3.0,
+        passive_default_enabled: false,
+        visual: visual_for(WoliuSkillId::VortexResonance),
+    }
+}
+
+fn turbulence_burst_spec() -> WoliuSkillSpec {
+    WoliuSkillSpec {
+        skill: WoliuSkillId::TurbulenceBurst,
+        field_strength: 0.80,
+        lethal_radius: 6.0,
+        influence_radius: 6.0,
+        turbulence_radius: 6.0,
+        startup_qi: 80.0,
+        maintain_qi_per_sec: 0.0,
+        duration_ticks: 2 * TICKS_PER_SECOND,
+        cooldown_ticks: 30 * TICKS_PER_SECOND,
+        cast_ticks: 40,
+        pull_force: 4.0,
+        drain_qi_per_sec: 8.0,
+        passive_default_enabled: false,
+        visual: visual_for(WoliuSkillId::TurbulenceBurst),
     }
 }
 
@@ -795,6 +1051,41 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             sound_recipe_id: "vortex_low_hum",
             hud_hint: "heart",
             icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+        },
+        WoliuSkillId::VacuumPalm => WoliuSkillVisual {
+            animation_id: "bong:woliu_vacuum_palm",
+            particle_id: "bong:woliu_vacuum_palm_spiral",
+            sound_recipe_id: "woliu_vacuum_palm",
+            hud_hint: "vacuum_palm",
+            icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+        },
+        WoliuSkillId::VortexShield => WoliuSkillVisual {
+            animation_id: "bong:woliu_vortex_shield",
+            particle_id: "bong:woliu_vortex_shield_sphere",
+            sound_recipe_id: "woliu_vortex_shield",
+            hud_hint: "vortex_shield",
+            icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+        },
+        WoliuSkillId::VacuumLock => WoliuSkillVisual {
+            animation_id: "bong:woliu_vacuum_lock",
+            particle_id: "bong:woliu_vacuum_lock_cage",
+            sound_recipe_id: "woliu_vacuum_lock",
+            hud_hint: "vacuum_lock",
+            icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+        },
+        WoliuSkillId::VortexResonance => WoliuSkillVisual {
+            animation_id: "bong:woliu_vortex_resonance",
+            particle_id: "bong:woliu_vortex_resonance_field",
+            sound_recipe_id: "woliu_vortex_resonance",
+            hud_hint: "vortex_resonance",
+            icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+        },
+        WoliuSkillId::TurbulenceBurst => WoliuSkillVisual {
+            animation_id: "bong:woliu_turbulence_burst",
+            particle_id: "bong:woliu_turbulence_burst_wave",
+            sound_recipe_id: "woliu_turbulence_burst",
+            hud_hint: "turbulence_burst",
+            icon_texture: "bong:textures/gui/skill/woliu_burst.png",
         },
     }
 }

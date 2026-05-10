@@ -28,7 +28,7 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 28] = [
+const TECHNIQUE_IDS: [&str; 33] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -46,6 +46,11 @@ const TECHNIQUE_IDS: [&str; 28] = [
     "woliu.mouth",
     "woliu.pull",
     "woliu.heart",
+    "woliu.vacuum_palm",
+    "woliu.vortex_shield",
+    "woliu.vacuum_lock",
+    "woliu.vortex_resonance",
+    "woliu.turbulence_burst",
     "dugu.shoot_needle",
     "dugu.infuse_poison",
     "tuike.don",
@@ -80,7 +85,18 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 28] = [
+const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
+    TechniqueRequiredMeridian {
+        channel: "Lung",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "Heart",
+        min_health: 0.01,
+    },
+];
+
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -352,6 +368,71 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 28] = [
         icon_texture: "bong:textures/gui/skill/woliu_heart.png",
     },
     TechniqueDefinition {
+        id: "woliu.vacuum_palm",
+        display_name: "吸涡掌",
+        grade: "yellow",
+        description: "近距展掌开涡，把单个有真元目标拉近并抽取少量真元回掌。",
+        required_realm: "Awaken",
+        required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
+        qi_cost: 20.0,
+        cast_ticks: 6,
+        cooldown_ticks: 60,
+        range: 8.0,
+        icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+    },
+    TechniqueDefinition {
+        id: "woliu.vortex_shield",
+        display_name: "涡流护体",
+        grade: "yellow",
+        description: "身周撑开真空层，偏转来袭真元并制造淡紫紊流护罩。",
+        required_realm: "Awaken",
+        required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
+        qi_cost: 50.0,
+        cast_ticks: 10,
+        cooldown_ticks: 240,
+        range: 2.0,
+        icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+    },
+    TechniqueDefinition {
+        id: "woliu.vacuum_lock",
+        display_name: "真空锁",
+        grade: "profound",
+        description: "在目标周身合拢真空笼，短时锁住行动并加速其真元逸散。",
+        required_realm: "Awaken",
+        required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
+        qi_cost: 35.0,
+        cast_ticks: 8,
+        cooldown_ticks: 300,
+        range: 12.0,
+        icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+    },
+    TechniqueDefinition {
+        id: "woliu.vortex_resonance",
+        display_name: "涡流共振",
+        grade: "profound",
+        description: "以自身为心铺开群体涡旋，把多目标卷入同一低压场。",
+        required_realm: "Awaken",
+        required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
+        qi_cost: 50.0,
+        cast_ticks: 80,
+        cooldown_ticks: 400,
+        range: 6.0,
+        icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+    },
+    TechniqueDefinition {
+        id: "woliu.turbulence_burst",
+        display_name: "紊流爆发",
+        grade: "earth",
+        description: "蓄出真空场后瞬间碎裂，向外释放物理冲击与高强紊流。",
+        required_realm: "Awaken",
+        required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
+        qi_cost: 80.0,
+        cast_ticks: 40,
+        cooldown_ticks: 600,
+        range: 6.0,
+        icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+    },
+    TechniqueDefinition {
         id: "dugu.shoot_needle",
         display_name: "凝针",
         grade: "yellow",
@@ -556,6 +637,25 @@ mod tests {
                 technique_definition(id).is_some(),
                 "default technique id must have a definition: {id}"
             );
+        }
+    }
+
+    #[test]
+    fn woliu_v3_techniques_require_breath_and_heart_meridians() {
+        for id in [
+            "woliu.vacuum_palm",
+            "woliu.vortex_shield",
+            "woliu.vacuum_lock",
+            "woliu.vortex_resonance",
+            "woliu.turbulence_burst",
+        ] {
+            let definition = technique_definition(id).expect("woliu-v3 technique must exist");
+            let channels = definition
+                .required_meridians
+                .iter()
+                .map(|meridian| meridian.channel)
+                .collect::<Vec<_>>();
+            assert_eq!(channels, ["Lung", "Heart"]);
         }
     }
 }

@@ -25,6 +25,25 @@ describe("plan-woliu-v2 schema contracts", () => {
     }).ok).toBe(true);
   });
 
+  it("accepts woliu-v3 vacuum package skill ids", () => {
+    for (const skill of ["vacuum_palm", "vortex_shield", "vacuum_lock", "vortex_resonance", "turbulence_burst"] as const) {
+      expect(validateWoliuSkillCastV1Contract({
+        caster: "player:kiz",
+        skill,
+        tick: 121,
+        lethal_radius: 1,
+        influence_radius: 8,
+        turbulence_radius: 1.5,
+        absorbed_qi: 15,
+        swirl_qi: 2,
+        animation_id: `bong:woliu_${skill}`,
+        particle_id: `bong:woliu_${skill}_spiral`,
+        sound_recipe_id: `woliu_${skill}`,
+        icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+      }).ok).toBe(true);
+    }
+  });
+
   it("rejects unknown skill ids", () => {
     expect(validateWoliuSkillCastV1Contract({
       caster: "player:kiz",

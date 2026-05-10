@@ -1,0 +1,10 @@
+{
+  "id": "woliu_vacuum_lock",
+  "layers": [
+    { "sound": "minecraft:entity.generic.drink", "volume": 0.4, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.chain.place", "volume": 0.18, "pitch": 0.6, "delay_ticks": 6 }
+  ],
+  "priority": 66,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

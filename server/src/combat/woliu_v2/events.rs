@@ -9,16 +9,26 @@ pub enum WoliuSkillId {
     Mouth,
     Pull,
     Heart,
+    VacuumPalm,
+    VortexShield,
+    VacuumLock,
+    VortexResonance,
+    TurbulenceBurst,
 }
 
 impl WoliuSkillId {
     #[cfg(test)]
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 10] = [
         Self::Hold,
         Self::Burst,
         Self::Mouth,
         Self::Pull,
         Self::Heart,
+        Self::VacuumPalm,
+        Self::VortexShield,
+        Self::VacuumLock,
+        Self::VortexResonance,
+        Self::TurbulenceBurst,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -28,6 +38,11 @@ impl WoliuSkillId {
             Self::Mouth => "woliu.mouth",
             Self::Pull => "woliu.pull",
             Self::Heart => "woliu.heart",
+            Self::VacuumPalm => "woliu.vacuum_palm",
+            Self::VortexShield => "woliu.vortex_shield",
+            Self::VacuumLock => "woliu.vacuum_lock",
+            Self::VortexResonance => "woliu.vortex_resonance",
+            Self::TurbulenceBurst => "woliu.turbulence_burst",
         }
     }
 
@@ -37,6 +52,10 @@ impl WoliuSkillId {
             Self::Burst | Self::Mouth => 2,
             Self::Pull => 3,
             Self::Heart => 5,
+            Self::VacuumPalm | Self::VortexShield => 2,
+            Self::VacuumLock => 3,
+            Self::VortexResonance => 4,
+            Self::TurbulenceBurst => 5,
         }
     }
 }

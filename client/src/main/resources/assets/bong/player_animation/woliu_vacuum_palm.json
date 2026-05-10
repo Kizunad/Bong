@@ -1,0 +1,23 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "woliu_vacuum_palm",
+  "description": "woliu-v3 single palm vacuum draw with a short inward recoil.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 8,
+    "stopTick": 10,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.35, "yaw": -0.25, "roll": -0.08, "bend": 0.75, "axis": 3.1415927 } },
+      { "tick": 4, "easing": "OUTSINE", "torso": { "pitch": -0.10 } },
+      { "tick": 4, "easing": "OUTSINE", "rightArm": { "pitch": -1.25, "yaw": -0.12, "roll": -0.36, "bend": 0.55, "axis": 3.1415927 } },
+      { "tick": 8, "easing": "INOUTSINE", "torso": { "pitch": 0.03 } },
+      { "tick": 8, "easing": "INOUTSINE", "rightArm": { "pitch": -0.82, "yaw": -0.42, "roll": -0.28, "bend": 0.86, "axis": 3.1415927 } }
+    ]
+  }
+}

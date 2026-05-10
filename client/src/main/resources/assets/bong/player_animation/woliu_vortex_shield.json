@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "woliu_vortex_shield",
+  "description": "woliu-v3 circular shield stance with both hands closing a vacuum shell.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 18,
+    "stopTick": 22,
+    "isLoop": true,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": -0.02 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.82, "yaw": -0.42, "roll": -0.58, "bend": 1.10, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.82, "yaw": 0.42, "roll": 0.58, "bend": 1.10, "axis": 3.1415927 } },
+      { "tick": 9, "easing": "INOUTSINE", "torso": { "yaw": 0.18 } },
+      { "tick": 9, "easing": "INOUTSINE", "rightArm": { "pitch": -1.05, "yaw": -0.20, "roll": -0.10, "bend": 1.34, "axis": 3.1415927 } },
+      { "tick": 9, "easing": "INOUTSINE", "leftArm": { "pitch": -0.60, "yaw": 0.62, "roll": 0.36, "bend": 0.92, "axis": 3.1415927 } },
+      { "tick": 18, "easing": "INOUTSINE", "torso": { "yaw": -0.16 } },
+      { "tick": 18, "easing": "INOUTSINE", "rightArm": { "pitch": -0.60, "yaw": -0.62, "roll": -0.36, "bend": 0.92, "axis": 3.1415927 } },
+      { "tick": 18, "easing": "INOUTSINE", "leftArm": { "pitch": -1.05, "yaw": 0.20, "roll": 0.10, "bend": 1.34, "axis": 3.1415927 } }
+    ]
+  }
+}
