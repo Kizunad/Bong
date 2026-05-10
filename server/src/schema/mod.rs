@@ -8,6 +8,7 @@ pub mod alchemy;
 pub mod anticheat;
 pub mod armor_event;
 pub mod audio;
+pub mod baomai_v3;
 pub mod botany;
 pub mod channels;
 pub mod chat_message;

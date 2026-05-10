@@ -95,6 +95,7 @@ pub const CH_WOLIU_V2_CAST: &str = "bong:woliu_v2/cast";
 pub const CH_WOLIU_V2_BACKFIRE: &str = "bong:woliu_v2/backfire";
 pub const CH_WOLIU_V2_TURBULENCE: &str = "bong:woliu_v2/turbulence";
 pub const CH_ZHENMAI_SKILL_EVENT: &str = "bong:zhenmai/skill_event";
+pub const CH_BAOMAI_V3_SKILL_EVENT: &str = "bong:baomai_v3/skill_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
 pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
@@ -222,6 +223,7 @@ mod tests {
         assert_eq!(CH_WOLIU_V2_BACKFIRE, "bong:woliu_v2/backfire");
         assert_eq!(CH_WOLIU_V2_TURBULENCE, "bong:woliu_v2/turbulence");
         assert_eq!(CH_ZHENMAI_SKILL_EVENT, "bong:zhenmai/skill_event");
+        assert_eq!(CH_BAOMAI_V3_SKILL_EVENT, "bong:baomai_v3/skill_event");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
         assert_eq!(CH_ANQI_CARRIER_CHARGED, "bong:combat/carrier_charged");
         assert_eq!(CH_ANQI_CARRIER_IMPACT, "bong:combat/carrier_impact");

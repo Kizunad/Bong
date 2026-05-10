@@ -6,6 +6,7 @@ pub mod anticheat_bridge;
 pub mod ascension_quota_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
+pub mod baomai_v3_event_bridge;
 pub mod burst_event_emit;
 pub mod carrier_state_emit;
 pub mod cast_emit;
@@ -419,6 +420,7 @@ pub fn register(app: &mut App) {
             woliu_event_bridge::publish_woliu_v2_cast_events,
             woliu_event_bridge::publish_woliu_v2_backfire_events,
             woliu_event_bridge::publish_woliu_v2_turbulence_events,
+            baomai_v3_event_bridge::publish_baomai_v3_skill_events,
         ),
     );
     app.add_systems(
@@ -500,6 +502,7 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_woliu_v2_visual_triggers,
             vfx_animation_trigger::emit_botany_harvest_visual_triggers,
             vfx_animation_trigger::emit_lingtian_visual_triggers,
+            vfx_animation_trigger::emit_baomai_v3_visual_triggers,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
@@ -515,6 +518,7 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_botany_audio_triggers,
             audio_trigger::emit_lingtian_audio_triggers,
             audio_trigger::emit_woliu_v2_audio_triggers,
+            audio_trigger::emit_baomai_v3_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),
