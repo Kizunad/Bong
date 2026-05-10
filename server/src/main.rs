@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 mod alchemy;
+mod armor;
 mod audio;
 mod botany;
 mod cmd;

@@ -174,8 +174,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            89,
-            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, audio-world ambient/music loops, and woliu-v3 recipes"
+            90,
+            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2/v3, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, audio-world ambient/music loops, and armor break cue"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -231,6 +231,7 @@ mod tests {
         assert!(registry.get("cultivation_meditate").is_some());
         assert!(registry.get("meridian_open_chime").is_some());
         assert!(registry.get("tribulation_atmosphere").is_some());
+        assert!(registry.get("armor_break").is_some());
     }
 
     #[test]

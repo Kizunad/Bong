@@ -61,13 +61,22 @@ class CraftHandlerTest {
                  "time_ticks":600,
                  "output":["herb_knife_iron",1],
                  "requirements":{},
+                 "unlocked":true},
+                {"id":"armor.mundane.iron.chestplate",
+                 "category":"armor_craft",
+                 "display_name":"铁甲胸甲",
+                 "materials":[["iron_ore",15],["bone_coin_5",9]],
+                 "qi_cost":0.0,
+                 "time_ticks":800,
+                 "output":["armor_iron_chestplate",1],
+                 "requirements":{},
                  "unlocked":true}
               ]
             }
             """;
         ServerDataDispatch dispatch = new CraftRecipeListHandler().handle(envelope(json));
         assertTrue(dispatch.handled());
-        assertEquals(2, CraftStore.recipes().size());
+        assertEquals(3, CraftStore.recipes().size());
         CraftRecipe needle = CraftStore.recipe("craft.example.eclipse_needle.iron").orElseThrow();
         assertEquals(CraftCategory.ANQI_CARRIER, needle.category());
         assertFalse(needle.unlocked());
@@ -79,6 +88,10 @@ class CraftHandlerTest {
         // requirements 缺省时不应有任何字段被填
         assertNull(knife.requirements().realmMin());
         assertNull(knife.requirements().qiColorKind());
+        assertEquals(
+            CraftCategory.ARMOR_CRAFT,
+            CraftStore.recipe("armor.mundane.iron.chestplate").orElseThrow().category()
+        );
     }
 
     @Test

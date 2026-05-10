@@ -149,6 +149,7 @@ pub enum ItemCategory {
     RecipeFragment,
     RecipeHint,
     Weapon,
+    Armor,
     Treasure,
     BoneCoin,
     Tool,
@@ -1290,7 +1291,8 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         ItemCategory::Herb => 64,
         ItemCategory::BoneCoin => u32::MAX,
         ItemCategory::Pill | ItemCategory::Misc => 16,
-        ItemCategory::Weapon
+        ItemCategory::Armor
+        | ItemCategory::Weapon
         | ItemCategory::Tool
         | ItemCategory::Treasure
         | ItemCategory::RecipeFragment
@@ -1521,6 +1523,7 @@ fn parse_item_category(
         "recipe_fragment" | "recipe-fragment" => Ok(ItemCategory::RecipeFragment),
         "recipe_hint" | "recipe-hint" => Ok(ItemCategory::RecipeHint),
         "weapon" => Ok(ItemCategory::Weapon),
+        "armor" | "armour" => Ok(ItemCategory::Armor),
         "treasure" => Ok(ItemCategory::Treasure),
         "bonecoin" | "bone_coin" | "bone-coins" | "bone_coins" => Ok(ItemCategory::BoneCoin),
         "tool" => Ok(ItemCategory::Tool),
@@ -2994,6 +2997,12 @@ fn validate_move_semantics(
                 item.template_id
             ))
         }
+        InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Armor) => {
+            Err(format!(
+                "armor `{}` cannot move to hotbar; armor must stay in equipped slots",
+                item.template_id
+            ))
+        }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
@@ -3096,7 +3105,41 @@ fn validate_move_semantics(
                 }
                 Ok(())
             }
-            _ => Ok(()),
+            EquipSlotV1::Head | EquipSlotV1::Chest | EquipSlotV1::Legs | EquipSlotV1::Feet => {
+                if !matches!(template.category, ItemCategory::Armor) {
+                    return Err(format!(
+                        "item `{}` cannot equip to {}; expected armor",
+                        item.template_id,
+                        equip_slot_key(slot)
+                    ));
+                }
+                if item.durability <= 0.0 {
+                    return Err(format!(
+                        "armor `{}` cannot equip to {}; durability is 0",
+                        item.template_id,
+                        equip_slot_key(slot)
+                    ));
+                }
+                let expected_slot = crate::armor::mundane::equip_slot_for_item_id(
+                    &item.template_id,
+                )
+                .ok_or_else(|| {
+                    format!(
+                        "armor `{}` cannot equip to {}; unknown armor slot",
+                        item.template_id,
+                        equip_slot_key(slot)
+                    )
+                })?;
+                if expected_slot != *slot {
+                    return Err(format!(
+                        "armor `{}` cannot equip to {}; expected {}",
+                        item.template_id,
+                        equip_slot_key(slot),
+                        equip_slot_key(&expected_slot)
+                    ));
+                }
+                Ok(())
+            }
         },
         _ => Ok(()),
     }
@@ -3909,6 +3952,18 @@ max_stack_count = 0
             .expect("tool category should parse");
 
         assert_eq!(category, ItemCategory::Tool);
+    }
+
+    #[test]
+    fn parse_item_category_accepts_armor_alias() {
+        let category = parse_item_category(
+            "armor",
+            Path::new("<inline-items.toml>"),
+            "armor_bone_chestplate",
+        )
+        .expect("armor category should parse");
+
+        assert_eq!(category, ItemCategory::Armor);
     }
 
     #[test]
@@ -4978,6 +5033,114 @@ cols = 4
     }
 
     #[test]
+    fn item_registry_loads_all_24_mundane_armor_templates() {
+        let registry = load_item_registry().expect("item registry should load");
+
+        for item in crate::armor::mundane::all_mundane_armor_items() {
+            let template = registry
+                .get(item.item_id().as_str())
+                .unwrap_or_else(|| panic!("{} should load from armor.toml", item.item_id()));
+            assert_eq!(template.category, ItemCategory::Armor);
+            assert_eq!(template.max_stack_count, 1);
+        }
+    }
+
+    #[test]
+    fn apply_move_allows_mundane_armor_to_matching_slot() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "armor_bone_chestplate".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲胸甲".to_string();
+        inv.containers[0].items[0].instance.grid_w = 2;
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::Chest,
+            },
+        )
+        .expect("chestplate should equip to chest");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_CHEST)
+                .map(|item| item.template_id.as_str()),
+            Some("armor_bone_chestplate")
+        );
+    }
+
+    #[test]
+    fn apply_move_rejects_mundane_armor_to_wrong_slot() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "armor_bone_chestplate".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲胸甲".to_string();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::Head,
+            },
+        )
+        .expect_err("chestplate should not equip to head");
+
+        assert!(error.contains("expected chest"));
+    }
+
+    #[test]
+    fn apply_move_rejects_broken_armor_unequippable() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "armor_bone_chestplate".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲胸甲".to_string();
+        inv.containers[0].items[0].instance.durability = 0.0;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::Chest,
+            },
+        )
+        .expect_err("broken armor should be rejected");
+
+        assert!(error.contains("durability is 0"));
+    }
+
+    #[test]
     fn apply_move_rejects_tool_to_main_hand_when_two_hand_occupied() {
         use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
 
@@ -5078,6 +5241,31 @@ cols = 4
         .expect_err("tool should be rejected from hotbar");
 
         assert!(error.contains("tool `cai_yao_dao` cannot move to hotbar"));
+    }
+
+    #[test]
+    fn apply_move_rejects_armor_to_hotbar() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "armor_bone_boots".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲靴".to_string();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("armor should be rejected from hotbar");
+
+        assert!(error.contains("armor `armor_bone_boots` cannot move to hotbar"));
     }
 
     #[test]

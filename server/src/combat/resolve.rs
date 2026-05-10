@@ -44,6 +44,9 @@ use crate::inventory::{
     InventoryDurabilityChangedEvent, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN,
     EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -150,6 +153,7 @@ pub struct CombatResolveEventWriters<'w> {
     qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
     multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
     death_events: EventWriter<'w, DeathEvent>,
     durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
 }
@@ -734,6 +738,7 @@ pub fn resolve_attack_intents(
                             let next_abs = (cur_abs - ARMOR_HIT_DURABILITY_COST_POINTS).max(0.0);
                             let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
                             if next_ratio < cur_ratio {
+                                let broke_now = next_ratio <= 0.0 && cur_ratio > 0.0;
                                 match set_item_instance_durability(
                                     &mut inventory,
                                     instance_id,
@@ -748,6 +753,24 @@ pub fn resolve_attack_intents(
                                                 durability: update.durability,
                                             },
                                         );
+                                        if broke_now {
+                                            if let Some(audio_events) =
+                                                event_writers.audio_events.as_deref_mut()
+                                            {
+                                                audio_events.send(PlaySoundRecipeRequest {
+                                                    recipe_id: "armor_break".to_string(),
+                                                    instance_id: 0,
+                                                    pos: None,
+                                                    flag: None,
+                                                    volume_mul: 1.0,
+                                                    pitch_shift: 0.0,
+                                                    recipient: AudioRecipient::Radius {
+                                                        origin: target_position,
+                                                        radius: AUDIO_BROADCAST_RADIUS,
+                                                    },
+                                                });
+                                            }
+                                        }
                                     }
                                     Err(error) => {
                                         tracing::warn!(

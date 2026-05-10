@@ -176,6 +176,25 @@ impl ArmorProfileRegistry {
         self.by_template_id.get(template_id)
     }
 
+    pub fn register_template(
+        &mut self,
+        template_id: impl Into<String>,
+        profile: ArmorProfile,
+    ) -> Result<(), String> {
+        let template_id = template_id.into();
+        if template_id.trim().is_empty() {
+            return Err("armor profile template_id must not be empty".to_string());
+        }
+        if self.by_template_id.contains_key(&template_id) {
+            return Err(format!("duplicate armor profile template_id {template_id}"));
+        }
+        profile
+            .validate()
+            .map_err(|reason| format!("invalid armor profile {template_id}: {reason}"))?;
+        self.by_template_id.insert(template_id, profile);
+        Ok(())
+    }
+
     pub fn load_dir(path: impl AsRef<Path>) -> Result<Self, ArmorProfileLoadError> {
         let dir = path.as_ref();
         let mut reg = Self::new();

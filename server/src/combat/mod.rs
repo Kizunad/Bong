@@ -151,6 +151,10 @@ pub fn register(app: &mut App) {
         tracing::error!("[bong][combat][armor] armor profile load failed: {e}");
         armor::ArmorProfileRegistry::new()
     });
+    let mut armor_registry = armor_registry;
+    if let Err(error) = crate::armor::mundane::register_mundane_armors(&mut armor_registry) {
+        tracing::error!("[bong][combat][armor] mundane armor registration failed: {error}");
+    }
     tracing::info!(
         "[bong][combat][armor] loaded {} armor profile(s)",
         armor_registry.len()
