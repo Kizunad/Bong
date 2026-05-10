@@ -81,7 +81,10 @@ public final class ZoneAtmosphereProfileParser {
 
     private static double readDrift(JsonObject object, int index) {
         JsonElement drift = object.get("drift");
-        if (drift != null && drift.isJsonArray()) {
+        if (drift != null && !drift.isJsonNull()) {
+            if (!drift.isJsonArray()) {
+                throw new IllegalArgumentException("drift must be a vec3");
+            }
             JsonArray array = drift.getAsJsonArray();
             if (array.size() != 3) {
                 throw new IllegalArgumentException("drift must be a vec3");

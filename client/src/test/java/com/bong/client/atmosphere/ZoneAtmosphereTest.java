@@ -134,6 +134,27 @@ class ZoneAtmosphereTest {
     }
 
     @Test
+    void parser_rejects_non_vec3_drift() {
+        ZoneAtmosphereProfileParser.ParseResult result = ZoneAtmosphereProfileParser.parse(
+            """
+            {
+              "zone_id":"spawn_plain",
+              "fog_color":"#112233",
+              "fog_density":0.77,
+              "ambient_particle":{"type":"cloud256_dust","tint":"#445566","density":0.2,"drift":"bad"},
+              "sky_tint":"#223344",
+              "entry_transition_fx":"FADE",
+              "ambient_recipe_id":"ambient_spawn_plain"
+            }
+            """,
+            "spawn_plain"
+        );
+
+        assertFalse(result.ok());
+        assertTrue(result.error().contains("drift must be a vec3"));
+    }
+
+    @Test
     void all_zones_have_profile() {
         ZoneAtmosphereProfileRegistry registry = ZoneAtmosphereProfileRegistry.loadDefault();
 
