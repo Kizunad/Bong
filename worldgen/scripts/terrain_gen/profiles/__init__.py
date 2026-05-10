@@ -13,6 +13,7 @@ from .rift_valley import RiftValleyGenerator
 from .sky_isle import SkyIsleGenerator
 from .spawn_plain import SpawnPlainGenerator
 from .spring_marsh import SpringMarshGenerator
+from .tribulation_scorch import TribulationScorchGenerator
 from .tsy_daneng_crater import TsyDanengCraterGenerator
 from .tsy_gaoshou_hermitage import TsyGaoshouHermitageGenerator
 from .tsy_zhanchang import TsyZhanchangGenerator
@@ -35,6 +36,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         AshDeadZoneGenerator(),
         AbyssalMazeGenerator(),
         AncientBattlefieldGenerator(),
+        TribulationScorchGenerator(),
         TsyZongmenRuinGenerator(),
         TsyDanengCraterGenerator(),
         TsyZhanchangGenerator(),

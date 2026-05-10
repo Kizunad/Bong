@@ -231,6 +231,124 @@
       ]
     },
     {
+      "name": "blood_valley_east_scorch",
+      "display_name": "血谷东陲焦土",
+      "aabb": {
+        "min": [3500.0, 50.0, -2700.0],
+        "max": [4500.0, 110.0, -2300.0]
+      },
+      "center_xz": [4000.0, -2500.0],
+      "size_xz": [1000.0, 400.0],
+      "spirit_qi": 0.30,
+      "danger_level": 6,
+      "active_events": ["tribulation_scorch"],
+      "patrol_anchors": [
+        [3720.0, 78.0, -2600.0],
+        [4230.0, 80.0, -2410.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tribulation_scorch",
+        "shape": "elongated",
+        "boundary": { "mode": "hard", "width": 80 },
+        "height_model": { "base": [70, 88], "peak": 96 },
+        "surface_palette": ["coarse_dirt", "gravel", "sand", "blackstone", "basalt", "glass"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling"],
+        "landmarks": ["lodestone_vortex", "lightning_basalt_pit"],
+        "notes": "血谷东侧长期天劫累积带；与血谷主峡谷相邻但不复用 rift_valley profile。"
+      },
+      "pois": [
+        {
+          "kind": "stele",
+          "name": "焦土雷痕碑",
+          "pos_xyz": [4060.0, 82.0, -2520.0],
+          "tags": ["tribulation_scorch", "warning", "blood_valley"],
+          "unlock": "雷雨天接近可见碑面蓝白电痕",
+          "qi_affinity": -0.1,
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "north_waste_east_scorch",
+      "display_name": "北荒东陲焦土",
+      "aabb": {
+        "min": [1500.0, 60.0, -8500.0],
+        "max": [2700.0, 100.0, -7500.0]
+      },
+      "center_xz": [2100.0, -8000.0],
+      "size_xz": [1200.0, 1000.0],
+      "spirit_qi": 0.28,
+      "danger_level": 7,
+      "active_events": ["tribulation_scorch", "tianjie_ascension_pit"],
+      "patrol_anchors": [
+        [1800.0, 82.0, -8280.0],
+        [2320.0, 84.0, -7740.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tribulation_scorch",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "hard", "width": 80 },
+        "height_model": { "base": [70, 88], "peak": 96 },
+        "surface_palette": ["coarse_dirt", "gravel", "sand", "blackstone", "basalt", "glass"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling_abyss"],
+        "landmarks": ["charred_husk_tree", "tianjie_ascension_pit"],
+        "ascension_pit_xz": [2100.0, -8000.0],
+        "ascension_pit_radius": 34.0,
+        "notes": "world-0004 北荒东陲已殒锚点；化虚遗迹由 ascension_pit_xz 单点生成。"
+      },
+      "pois": [
+        {
+          "kind": "tianjie_ascension_pit",
+          "name": "北荒东陲渡虚劫坑",
+          "pos_xyz": [2100.0, 80.0, -8000.0],
+          "tags": ["tribulation_scorch", "ascension_pit", "xujie_canxie"],
+          "unlock": "凝脉以上灵识扫过时，可读到残留的渡虚劫回声",
+          "qi_affinity": -0.4,
+          "danger_bias": 3
+        }
+      ]
+    },
+    {
+      "name": "drift_scorch_001",
+      "display_name": "游离焦土",
+      "aabb": {
+        "min": [-4500.0, 60.0, 3500.0],
+        "max": [-3500.0, 95.0, 4500.0]
+      },
+      "center_xz": [-4000.0, 4000.0],
+      "size_xz": [1000.0, 1000.0],
+      "spirit_qi": 0.32,
+      "danger_level": 5,
+      "active_events": ["tribulation_scorch"],
+      "patrol_anchors": [
+        [-4300.0, 76.0, 3740.0],
+        [-3740.0, 78.0, 4280.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tribulation_scorch",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "hard", "width": 80 },
+        "height_model": { "base": [70, 88], "peak": 96 },
+        "surface_palette": ["coarse_dirt", "gravel", "sand", "blackstone", "basalt", "glass"],
+        "biome_mix": ["mofa:si_yu", "mofa:kui_zeng"],
+        "landmarks": ["glass_fulgurite", "lodestone_vortex"],
+        "notes": "游离风暴留下的焦土孤岛；无化虚遗迹。"
+      },
+      "pois": [
+        {
+          "kind": "ruin",
+          "name": "游雷玻璃滩",
+          "pos_xyz": [-4000.0, 78.0, 4000.0],
+          "tags": ["tribulation_scorch", "glass_fulgurite"],
+          "qi_affinity": -0.05,
+          "danger_bias": 1
+        }
+      ]
+    },
+    {
       "name": "rift_mouth_north_001",
       "display_name": "渊口荒丘·枯木崖",
       "aabb": {

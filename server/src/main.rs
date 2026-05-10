@@ -55,6 +55,8 @@ mod shelflife;
 mod skill;
 #[allow(dead_code)]
 mod tools;
+#[allow(dead_code)]
+mod tribulation;
 mod world;
 #[allow(dead_code)]
 mod worldgen;

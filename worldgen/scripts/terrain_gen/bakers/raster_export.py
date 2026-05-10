@@ -17,6 +17,7 @@ from ..profiles import (
 )
 from ..profiles.base import DecorationSpec, EcologySpec
 from ..profiles.spawn_plain import spawn_tutorial_pois_for_zone
+from ..structures.ascension_pit import ascension_pits_for_zone
 from ..structures.corpse_mound import corpse_mounds_for_zone
 from ..structures.whale_fossil import fossil_bboxes_for_zone
 from ...poi_novice_selector import build_novice_poi_manifest_payload
@@ -117,6 +118,7 @@ def export_rasters(
     collapsed_zones_payload = _collect_collapsed_zone_payload(plan)
     fossil_bboxes = _collect_fossil_bboxes(plan.blueprint_zones)
     corpse_mounds = _collect_corpse_mounds(plan.blueprint_zones)
+    ascension_pits = _collect_ascension_pits(plan.blueprint_zones)
 
     manifest = {
         "version": 1,
@@ -172,6 +174,7 @@ def export_rasters(
         "structure_layers": [name for name in ("fossil_bbox",) if name in LAYER_REGISTRY],
         "fossil_bboxes": fossil_bboxes,
         "corpse_mounds": corpse_mounds,
+        "ascension_pits": ascension_pits,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
@@ -188,6 +191,7 @@ def export_rasters(
             "Structure: fossil_bbox (0 none, 1 outer, 2 core) marks whalefall fossils;",
             "  manifest.fossil_bboxes carries AABB metadata for mineral anchor materialization.",
             "Ash dead zone corpse_mounds carry dried surface loot: fan tie, rotten bone coin, dried herb.",
+            "Tribulation scorch ascension_pits carry single-point basalt/obsidian pit metadata and xujie_canxie loot.",
             "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
             "Realm collapse: realm_collapse_mask=1 marks persisted collapsed zones; keep blocks",
             "  but disable qi-dependent structures / shrines / furnaces in those columns.",
@@ -244,6 +248,13 @@ def _collect_corpse_mounds(zones: list[BlueprintZone]) -> list[dict[str, object]
     payload: list[dict[str, object]] = []
     for zone in zones:
         payload.extend(corpse_mounds_for_zone(zone))
+    return payload
+
+
+def _collect_ascension_pits(zones: list[BlueprintZone]) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for zone in zones:
+        payload.extend(ascension_pits_for_zone(zone))
     return payload
 
 

@@ -3629,6 +3629,7 @@ mod tests {
             load_item_registry().expect("item registry should load from assets/items/*.toml");
         assert!(registry.len() >= 1);
         assert!(registry.get("starter_talisman").is_some());
+        assert!(registry.get("xujie_canxie").is_some());
         assert!(matches!(
             registry.get("life_extension_pill").and_then(|item| item.effect.as_ref()),
             Some(ItemEffect::LifespanExtension {
