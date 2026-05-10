@@ -187,10 +187,10 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 ### 关键 commit
 
-- `a6450ceb7` — 2026-05-11 — `docs(plan-style-balance-v1): 升级 active 计划`
-- `b356aeeab` — 2026-05-11 — `fix(style-balance): 引入 rejection_rate 并修正 qi_collision`
-- `5edfef712` — 2026-05-11 — `feat(style-balance): 扩展 telemetry 物理观测字段`
-- `2fb31a5d4` — 2026-05-11 — `docs(plan-style-balance-v1): finish evidence 并归档至 finished_plans`
+- `6e5858b83` — 2026-05-11 — `docs(plan-style-balance-v1): 升级 active 计划`
+- `db16e51fb` — 2026-05-11 — `fix(style-balance): 引入 rejection_rate 并修正 qi_collision`
+- `ad0e0b8c3` — 2026-05-11 — `feat(style-balance): 扩展 telemetry 物理观测字段`
+- `c0c1e63ba` — 2026-05-11 — `docs(plan-style-balance-v1): finish evidence 并归档至 finished_plans`
 
 ### 测试结果
 
