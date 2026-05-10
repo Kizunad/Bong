@@ -1364,7 +1364,7 @@ fn build_npc_digest(
         realm: cultivation.map(|cultivation| realm_to_string(cultivation.realm).to_string()),
         faction_id: faction_membership
             .as_ref()
-            .map(|membership| membership.faction_id.as_str().to_string()),
+            .map(|membership| membership.faction_id),
         position: position.map(vec3_to_array),
         disciple: faction_membership.map(build_disciple_summary),
     })

@@ -112,7 +112,7 @@ pub struct NpcDigestV1 {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub realm: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub faction_id: Option<String>,
+    pub faction_id: Option<FactionId>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub position: Option<Vec3>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

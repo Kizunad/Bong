@@ -38,6 +38,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::zone::ZoneRegistry;
 
 const DORMANT_TRIBULATION_MIN_QI_RATIO: f64 = 0.8;
+type PlayerPosition = (DimensionKind, valence::prelude::DVec3);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering hydrate/dehydrate bridge");
@@ -58,7 +59,7 @@ pub fn hydrate_dormant_near_players_system(
     mut store: ResMut<NpcDormantStore>,
     mut commands: Commands,
     dimension_layers: Option<Res<DimensionLayers>>,
-    players: Query<&Position, With<ClientMarker>>,
+    players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     registry: Option<Res<NpcRegistry>>,
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
 ) {
@@ -67,7 +68,10 @@ pub fn hydrate_dormant_near_players_system(
         return;
     }
 
-    let player_positions = players.iter().map(|pos| pos.get()).collect::<Vec<_>>();
+    let player_positions = players
+        .iter()
+        .map(|(pos, dimension)| (dimension_kind(dimension), pos.get()))
+        .collect::<Vec<_>>();
     let Some(dimension_layers) = dimension_layers.as_deref() else {
         return;
     };
@@ -75,11 +79,11 @@ pub fn hydrate_dormant_near_players_system(
     let mut to_hydrate = BTreeMap::<String, bool>::new();
     for (char_id, snapshot) in &store.snapshots {
         let tribulation_ready = dormant_tribulation_ready(snapshot);
-        let near_player = !player_positions.is_empty()
-            && player_positions.iter().any(|player_pos| {
-                planar_distance(snapshot.position_vec(), *player_pos)
-                    <= config.hydrate_radius_blocks
-            });
+        let near_player = nearest_same_dimension_player_distance(
+            snapshot.position_vec(),
+            snapshot.dimension,
+            &player_positions,
+        ) <= config.hydrate_radius_blocks;
         if tribulation_ready || near_player {
             to_hydrate.insert(char_id.clone(), tribulation_ready);
         }
@@ -120,7 +124,7 @@ pub fn dehydrate_far_npcs_system(
     mut store: ResMut<NpcDormantStore>,
     mut commands: Commands,
     zone_registry: Option<Res<ZoneRegistry>>,
-    players: Query<&Position, With<ClientMarker>>,
+    players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     npcs: Query<
         (
             Entity,
@@ -149,7 +153,10 @@ pub fn dehydrate_far_npcs_system(
         return;
     }
 
-    let player_positions = players.iter().map(|pos| pos.get()).collect::<Vec<_>>();
+    let player_positions = players
+        .iter()
+        .map(|(pos, dimension)| (dimension_kind(dimension), pos.get()))
+        .collect::<Vec<_>>();
     if player_positions.is_empty() && !config.dehydrate_without_players {
         return;
     }
@@ -170,22 +177,15 @@ pub fn dehydrate_far_npcs_system(
         patrol,
     ) in npcs.iter()
     {
-        let nearest = if player_positions.is_empty() {
-            f64::INFINITY
-        } else {
-            player_positions
-                .iter()
-                .map(|player_pos| planar_distance(position.get(), *player_pos))
-                .fold(f64::INFINITY, f64::min)
-        };
+        let dimension = current_dimension
+            .map(|dimension| dimension.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let nearest =
+            nearest_same_dimension_player_distance(position.get(), dimension, &player_positions);
 
         if !player_positions.is_empty() && nearest <= config.dehydrate_radius_blocks {
             continue;
         }
-
-        let dimension = current_dimension
-            .map(|dimension| dimension.0)
-            .unwrap_or(DimensionKind::Overworld);
         let zone_name = zone_registry
             .and_then(|zones| zones.find_zone(dimension, position.get()))
             .map(|zone| zone.name.clone())
@@ -261,7 +261,7 @@ pub fn dehydrate_far_npcs_system(
     candidates.sort_by(|left, right| left.1.cmp(&right.1));
     for (entity, char_id, mut snapshot) in candidates {
         if !can_insert_dormant_snapshot(&store, char_id.as_str(), config.max_dormant_count) {
-            break;
+            continue;
         }
         snapshot.patrol = snapshot.patrol.or_else(|| {
             Some(DormantPatrolSnapshot {
@@ -284,6 +284,22 @@ fn can_insert_dormant_snapshot(
     max_dormant_count: usize,
 ) -> bool {
     store.contains(char_id) || store.len() < max_dormant_count
+}
+
+fn dimension_kind(dimension: Option<&CurrentDimension>) -> DimensionKind {
+    dimension.map(|dimension| dimension.0).unwrap_or_default()
+}
+
+fn nearest_same_dimension_player_distance(
+    position: valence::prelude::DVec3,
+    dimension: DimensionKind,
+    player_positions: &[PlayerPosition],
+) -> f64 {
+    player_positions
+        .iter()
+        .filter(|(player_dimension, _)| *player_dimension == dimension)
+        .map(|(_, player_pos)| planar_distance(position, *player_pos))
+        .fold(f64::INFINITY, f64::min)
 }
 
 fn spawn_from_snapshot(
@@ -504,6 +520,28 @@ mod tests {
 
         assert!(!can_insert_dormant_snapshot(&store, "npc_new", 1));
         assert!(can_insert_dormant_snapshot(&store, "npc_existing", 1));
+    }
+
+    #[test]
+    fn player_proximity_ignores_other_dimensions() {
+        let players = vec![(DimensionKind::Tsy, DVec3::new(10.0, 64.0, 10.0))];
+
+        assert_eq!(
+            nearest_same_dimension_player_distance(
+                DVec3::new(10.0, 64.0, 10.0),
+                DimensionKind::Overworld,
+                &players,
+            ),
+            f64::INFINITY
+        );
+        assert_eq!(
+            nearest_same_dimension_player_distance(
+                DVec3::new(10.0, 64.0, 10.0),
+                DimensionKind::Tsy,
+                &players,
+            ),
+            0.0
+        );
     }
 
     #[test]

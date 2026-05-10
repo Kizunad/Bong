@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use serde_json::{Map, Value};
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -91,6 +91,7 @@ use crate::schema::zong_formation::ZongCoreActivationV1;
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(1);
+const REDIS_HASH_REPLACE_TIMEOUT: Duration = Duration::from_secs(1);
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
@@ -1285,23 +1286,12 @@ async fn execute_hash_replace(
     key: &'static str,
     entries: &[(String, String)],
 ) -> Result<(), String> {
-    let operation = async {
-        let _: i64 = redis::cmd("DEL").arg(key).query_async(pub_conn).await?;
-        if !entries.is_empty() {
-            let field_pairs = entries
-                .iter()
-                .map(|(field, value)| (field.as_str(), value.as_str()))
-                .collect::<Vec<_>>();
-            let _: i64 = redis::cmd("HSET")
-                .arg(key)
-                .arg(field_pairs)
-                .query_async(pub_conn)
-                .await?;
-        }
-        Ok::<(), redis::RedisError>(())
-    };
-
-    match tokio::time::timeout(REDIS_IO_TIMEOUT, operation).await {
+    match tokio::time::timeout(
+        REDIS_HASH_REPLACE_TIMEOUT,
+        execute_hash_replace_atomic(pub_conn, key, entries),
+    )
+    .await
+    {
         Ok(Ok(())) => {
             tracing::debug!(
                 "[bong][redis] replaced hash {key}; entries={}",
@@ -1312,9 +1302,63 @@ async fn execute_hash_replace(
         Ok(Err(error)) => Err(format!("failed to replace hash {key}: {error}")),
         Err(_) => Err(format!(
             "timed out replacing hash {key} after {:?}",
-            REDIS_IO_TIMEOUT
+            REDIS_HASH_REPLACE_TIMEOUT
         )),
     }
+}
+
+async fn execute_hash_replace_atomic(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    key: &'static str,
+    entries: &[(String, String)],
+) -> Result<(), redis::RedisError> {
+    if entries.is_empty() {
+        let _: i64 = redis::cmd("DEL").arg(key).query_async(pub_conn).await?;
+        return Ok(());
+    }
+
+    let temp_key = format!("{key}:tmp:{}", redis_temp_key_nonce());
+    let _: i64 = redis::cmd("DEL")
+        .arg(temp_key.as_str())
+        .query_async(pub_conn)
+        .await?;
+    let field_pairs = entries
+        .iter()
+        .map(|(field, value)| (field.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    let write_result = redis::cmd("HSET")
+        .arg(temp_key.as_str())
+        .arg(field_pairs)
+        .query_async::<i64>(pub_conn)
+        .await;
+    if let Err(error) = write_result {
+        let _: Result<i64, _> = redis::cmd("DEL")
+            .arg(temp_key.as_str())
+            .query_async(pub_conn)
+            .await;
+        return Err(error);
+    }
+
+    let rename_result = redis::cmd("RENAME")
+        .arg(temp_key.as_str())
+        .arg(key)
+        .query_async::<String>(pub_conn)
+        .await;
+    if let Err(error) = rename_result {
+        let _: Result<i64, _> = redis::cmd("DEL")
+            .arg(temp_key.as_str())
+            .query_async(pub_conn)
+            .await;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn redis_temp_key_nonce() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }
 
 async fn execute_publish(
@@ -3348,6 +3392,14 @@ mod redis_bridge_tests {
         assert_eq!(
             publish_timeout_for_channel(CH_AGENT_COMMAND),
             REDIS_IO_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn hash_replace_uses_batch_timeout_budget() {
+        assert!(
+            REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
+            "dormant HASH replace writes batches and should not share the tiny per-command timeout"
         );
     }
 

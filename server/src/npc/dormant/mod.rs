@@ -32,6 +32,7 @@ use crate::qi_physics::{
     constants::QI_ZONE_UNIT_CAPACITY, qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer,
     QiTransferReason, WorldQiAccount,
 };
+use crate::schema::cultivation::realm_to_string;
 use crate::social::components::CharId;
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
@@ -173,13 +174,13 @@ impl NpcDormantSnapshot {
     }
 
     pub fn realm_label(&self) -> String {
-        format!("{:?}", self.cultivation.realm).to_ascii_lowercase()
+        realm_to_string(self.cultivation.realm).to_string()
     }
 
-    pub fn faction_id_label(&self) -> Option<String> {
+    pub fn faction_id_label(&self) -> Option<crate::npc::faction::FactionId> {
         self.faction
             .as_ref()
-            .map(|membership| membership.faction_id.as_str().to_string())
+            .map(|membership| membership.faction_id)
     }
 }
 
@@ -188,6 +189,8 @@ pub struct NpcDormantStore {
     pub snapshots: HashMap<CharId, NpcDormantSnapshot>,
     pub by_archetype: HashMap<NpcArchetype, Vec<CharId>>,
     pub by_zone: HashMap<String, Vec<CharId>>,
+    #[serde(skip, default)]
+    restore_failed: bool,
 }
 
 impl NpcDormantStore {
@@ -197,6 +200,14 @@ impl NpcDormantStore {
 
     pub fn is_empty(&self) -> bool {
         self.snapshots.is_empty()
+    }
+
+    pub fn mark_restore_failed(&mut self) {
+        self.restore_failed = true;
+    }
+
+    pub fn restore_failed(&self) -> bool {
+        self.restore_failed
     }
 
     pub fn insert(&mut self, snapshot: NpcDormantSnapshot) -> Option<NpcDormantSnapshot> {
@@ -302,7 +313,8 @@ fn load_dormant_store_from_redis_system(mut store: ResMut<NpcDormantStore>) {
             tracing::info!("[bong][npc] loaded {count} dormant NPC snapshot(s) from Redis HASH")
         }
         Err(error) => {
-            tracing::debug!("[bong][npc] skipped dormant Redis HASH restore: {error}");
+            tracing::warn!("[bong][npc] failed dormant Redis HASH restore: {error}");
+            store.mark_restore_failed();
         }
     }
 }
@@ -328,12 +340,24 @@ fn load_dormant_snapshots_from_hash_entries(
     if entries.is_empty() {
         return Ok(0);
     }
+    let mut skipped = 0usize;
     for (char_id, payload) in entries {
-        let snapshot = serde_json::from_str::<NpcDormantSnapshot>(&payload)
-            .map_err(|error| format!("invalid dormant snapshot `{char_id}`: {error}"))?;
-        store.snapshots.insert(snapshot.char_id.clone(), snapshot);
+        match serde_json::from_str::<NpcDormantSnapshot>(&payload) {
+            Ok(snapshot) => {
+                store.snapshots.insert(snapshot.char_id.clone(), snapshot);
+            }
+            Err(error) => {
+                skipped += 1;
+                tracing::warn!("[bong][npc] skipped invalid dormant snapshot `{char_id}`: {error}");
+            }
+        }
     }
     store.rebuild_indexes();
+    if skipped > 0 && store.is_empty() {
+        return Err(format!(
+            "all {skipped} dormant Redis snapshot entries were invalid"
+        ));
+    }
     Ok(store.len())
 }
 
@@ -384,17 +408,20 @@ fn dormant_global_tick_system(
     ids.sort();
 
     let mut expired = Vec::new();
+    let mut indexes_dirty = false;
     for char_id in ids {
         let Some(snapshot) = store.snapshots.get_mut(&char_id) else {
             continue;
         };
-        let elapsed_ticks = if tick > snapshot.last_dormant_tick_processed {
-            tick - snapshot.last_dormant_tick_processed
-        } else {
-            u64::from(config.dormant_tick_interval_ticks.max(1))
-        };
+        let elapsed_ticks = tick.saturating_sub(snapshot.last_dormant_tick_processed);
         snapshot.last_dormant_tick_processed = tick;
+        if elapsed_ticks == 0 {
+            continue;
+        }
         advance_dormant_position(snapshot, elapsed_ticks, tick);
+        if let Some(zones) = zones.as_deref() {
+            indexes_dirty |= refresh_snapshot_zone_name(snapshot, zones);
+        }
         snapshot.lifespan.age_ticks +=
             elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
 
@@ -419,7 +446,7 @@ fn dormant_global_tick_system(
     for char_id in expired {
         store.snapshots.remove(&char_id);
     }
-    if removed_expired {
+    if removed_expired || indexes_dirty {
         store.rebuild_indexes();
     }
 }
@@ -433,6 +460,11 @@ fn seed_initial_dormant_population_on_startup(
     mut seeded: valence::prelude::Local<bool>,
 ) {
     if *seeded || seed_config.target_count == 0 {
+        return;
+    }
+    if store.restore_failed() {
+        *seeded = true;
+        tracing::warn!("[bong][npc] skipped dormant seed population because Redis restore failed");
         return;
     }
     if !store.is_empty() {
@@ -681,6 +713,17 @@ fn dormant_zone_qi(snapshot: &NpcDormantSnapshot, zones: &ZoneRegistry) -> Optio
         .map(|zone| zone.spirit_qi)
 }
 
+fn refresh_snapshot_zone_name(snapshot: &mut NpcDormantSnapshot, zones: &ZoneRegistry) -> bool {
+    let Some(zone) = zones.find_zone(snapshot.dimension, snapshot.position_vec()) else {
+        return false;
+    };
+    if snapshot.zone_name == zone.name {
+        return false;
+    }
+    snapshot.zone_name = zone.name.clone();
+    true
+}
+
 pub fn advance_dormant_breakthrough(
     snapshot: &mut NpcDormantSnapshot,
     zone_qi: Option<f64>,
@@ -779,7 +822,7 @@ pub fn release_dormant_qi_to_zone(
     let transfer = outcome.transfer?;
     ledger.transfer(transfer.clone()).ok()?;
     zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
-    snapshot.cultivation.qi_current = 0.0;
+    snapshot.cultivation.qi_current = outcome.overflow;
     snapshot.qi_ledger_net -= outcome.accepted;
     Some(transfer)
 }
@@ -948,6 +991,14 @@ mod tests {
     }
 
     #[test]
+    fn dormant_realm_label_uses_shared_schema_serializer() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.realm = Realm::Condense;
+
+        assert_eq!(snapshot.realm_label(), "Condense");
+    }
+
+    #[test]
     fn expired_dormant_npc_releases_qi_to_zone() {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
         snapshot.cultivation.qi_current = 0.4;
@@ -979,6 +1030,29 @@ mod tests {
                 .abs()
                 < 1e-9,
             "ledger zone balance must use the same absolute qi unit as normalized zone state"
+        );
+    }
+
+    #[test]
+    fn death_qi_release_preserves_zone_overflow_on_npc_account() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.qi_current = 2.0;
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 0.99;
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = release_dormant_qi_to_zone(&mut snapshot, &mut zones, &mut ledger)
+            .expect("near-full zone should still accept the available room");
+
+        assert!((transfer.amount - 0.5).abs() < 1e-9);
+        assert!((snapshot.cultivation.qi_current - 1.5).abs() < 1e-9);
+        assert!(
+            (ledger.balance(&QiAccountId::npc("npc_a")) - snapshot.cultivation.qi_current).abs()
+                < 1e-9,
+            "overflow must stay in the NPC ledger account instead of disappearing"
         );
     }
 
@@ -1032,6 +1106,46 @@ mod tests {
         assert!(store.is_empty());
         assert!(store.ids_by_archetype(NpcArchetype::Rogue).is_empty());
         assert!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME).is_empty());
+    }
+
+    #[test]
+    fn dormant_global_tick_refreshes_zone_index_after_movement() {
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..Default::default()
+        });
+        app.insert_resource(GameTick(2400));
+        let second_zone = Zone {
+            name: "east".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(120.0, 0.0, 0.0), DVec3::new(200.0, 128.0, 80.0)),
+            spirit_qi: 0.5,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone(), second_zone],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        let mut mover = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        mover.intent = DormantBehaviorIntent::PatrolToward {
+            target: [130.0, 64.0, 10.0],
+        };
+        let mut store = NpcDormantStore::default();
+        store.insert(mover);
+        app.insert_resource(store);
+        app.add_systems(Update, dormant_global_tick_system);
+
+        app.update();
+
+        let store = app.world().resource::<NpcDormantStore>();
+        assert_eq!(store.snapshots["npc_a"].zone_name, "east");
+        assert!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME).is_empty());
+        assert_eq!(store.ids_by_zone("east"), &["npc_a"]);
     }
 
     #[test]
@@ -1095,5 +1209,34 @@ mod tests {
         assert_eq!(count, 1);
         assert!(store.contains("npc_a"));
         assert_eq!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME), &["npc_a"]);
+    }
+
+    #[test]
+    fn redis_hash_restore_skips_bad_entries_without_losing_good_snapshots() {
+        let source = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
+        let entries = HashMap::from([
+            (source.char_id.clone(), payload),
+            ("npc_bad".to_string(), "{not-json".to_string()),
+        ]);
+        let mut store = NpcDormantStore::default();
+
+        let count = load_dormant_snapshots_from_hash_entries(&mut store, entries).expect("load");
+
+        assert_eq!(count, 1);
+        assert!(store.contains("npc_a"));
+        assert!(!store.contains("npc_bad"));
+    }
+
+    #[test]
+    fn redis_hash_restore_fails_when_every_entry_is_invalid() {
+        let entries = HashMap::from([("npc_bad".to_string(), "{not-json".to_string())]);
+        let mut store = NpcDormantStore::default();
+
+        let error = load_dormant_snapshots_from_hash_entries(&mut store, entries)
+            .expect_err("all invalid entries should fail restore");
+
+        assert!(error.contains("all 1 dormant Redis snapshot"));
+        assert!(store.is_empty());
     }
 }
