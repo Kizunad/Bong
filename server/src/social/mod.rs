@@ -1193,7 +1193,8 @@ pub fn conclude_sparring_defeat(
 fn apply_social_relationships(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRelationshipEvent>,
-    mut players: Query<(&Lifecycle, &mut Relationships), With<Client>>,
+    mut players: Query<(&Lifecycle, Option<&Position>, &mut Relationships), With<Client>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for event in events.read() {
         let left_relationship = Relationship {
@@ -1227,13 +1228,79 @@ fn apply_social_relationships(
             }
         }
 
-        for (lifecycle, mut relationships) in &mut players {
+        let mut left_position = None;
+        let mut right_position = None;
+        for (lifecycle, position, mut relationships) in &mut players {
             if lifecycle.character_id == event.left {
+                left_position = position.map(|position| position.get());
                 relationships.upsert(left_relationship.clone());
             } else if lifecycle.character_id == event.right {
+                right_position = position.map(|position| position.get());
                 relationships.upsert(right_relationship.clone());
             }
         }
+        emit_social_relationship_vfx(
+            vfx_events.as_deref_mut(),
+            event,
+            left_position,
+            right_position,
+        );
+    }
+}
+
+fn emit_social_relationship_vfx(
+    events: Option<&mut Events<VfxEventRequest>>,
+    event: &SocialRelationshipEvent,
+    left_position: Option<DVec3>,
+    right_position: Option<DVec3>,
+) {
+    let Some(events) = events else {
+        return;
+    };
+    match event.left_kind {
+        RelationshipKindV1::Pact => {
+            if event
+                .metadata
+                .get("broken")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let (Some(left), Some(right)) = (left_position, right_position) else {
+                return;
+            };
+            let midpoint = (left + right) * 0.5 + DVec3::new(0.0, 1.0, 0.0);
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::SOCIAL_PACT_LINK,
+                    midpoint,
+                    Some([right.x - left.x, right.y - left.y, right.z - left.z]),
+                    "#C4E0FF",
+                    0.8,
+                    8,
+                    60,
+                ),
+            );
+        }
+        RelationshipKindV1::Feud => {
+            for position in [left_position, right_position].into_iter().flatten() {
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::SOCIAL_FEUD_MARK,
+                        position + DVec3::new(0.0, 2.0, 0.0),
+                        Some([0.0, 0.6, 0.0]),
+                        "#FF3344",
+                        0.85,
+                        6,
+                        20,
+                    ),
+                );
+            }
+        }
+        _ => {}
     }
 }
 
@@ -3170,6 +3237,60 @@ mod tests {
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn pact_relationship_emits_link_vfx_for_online_participants() {
+        let mut app = App::new();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, apply_social_relationships);
+
+        let (alice_bundle, _alice_helper) = create_mock_client("Alice");
+        let alice = app.world_mut().spawn(alice_bundle).id();
+        app.world_mut().entity_mut(alice).insert((
+            Lifecycle {
+                character_id: "char:alice".to_string(),
+                ..Default::default()
+            },
+            Position::new([0.0, 64.0, 0.0]),
+            Relationships::default(),
+        ));
+        let (bob_bundle, _bob_helper) = create_mock_client("Bob");
+        let bob = app.world_mut().spawn(bob_bundle).id();
+        app.world_mut().entity_mut(bob).insert((
+            Lifecycle {
+                character_id: "char:bob".to_string(),
+                ..Default::default()
+            },
+            Position::new([2.0, 64.0, 0.0]),
+            Relationships::default(),
+        ));
+        app.world_mut().send_event(SocialRelationshipEvent {
+            left: "char:alice".to_string(),
+            right: "char:bob".to_string(),
+            left_kind: RelationshipKindV1::Pact,
+            right_kind: RelationshipKindV1::Pact,
+            tick: 81,
+            metadata: serde_json::json!({
+                "terms": "同渡此劫",
+                "broken": false,
+            }),
+        });
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("online pact should emit link vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::SOCIAL_PACT_LINK);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

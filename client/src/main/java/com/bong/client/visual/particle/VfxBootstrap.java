@@ -100,7 +100,12 @@ public final class VfxBootstrap {
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.WARD));
         registry.register(ZhenfaActionVfxPlayer.DEPLETE,
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.DEPLETE));
-        registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH, new SocialLinkVfxPlayer());
+        registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH,
+            new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.NICHE_ESTABLISH));
+        registry.register(SocialLinkVfxPlayer.PACT_LINK,
+            new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.PACT_LINK));
+        registry.register(SocialLinkVfxPlayer.FEUD_MARK,
+            new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.FEUD_MARK));
         registry.register(PoisonMistPlayer.EVENT_ID,            new PoisonMistPlayer());
     }
 }
