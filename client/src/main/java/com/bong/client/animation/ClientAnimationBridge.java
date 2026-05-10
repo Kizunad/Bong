@@ -12,12 +12,12 @@ import java.util.UUID;
 
 /**
  * {@link VfxEventAnimationBridge} 生产实现：按 UUID 在当前 {@link ClientWorld} 里找玩家，
- * 然后派发到 {@link BongAnimationPlayer}。
+ * 然后派发到 {@link AnimationLayerManager}。
  *
  * <p>Phase 1 行为：
  * <ul>
  *   <li>目标玩家不在线（离视距 / 跨世界） → 返回 false，路由层降级 warn</li>
- *   <li>动画 id 未注册 → {@link BongAnimationPlayer#play} 返回 false 透传</li>
+ *   <li>动画 id 未注册 → {@link AnimationLayerManager#play} 返回 false 透传</li>
  *   <li>fade ticks 缺省 → 走 {@code BongAnimationPlayer.DEFAULT_FADE_*_TICKS}</li>
  * </ul>
  *
@@ -36,7 +36,7 @@ public final class ClientAnimationBridge implements VfxEventAnimationBridge {
             return false;
         }
         int ticks = fadeInTicks.orElse(BongAnimationPlayer.DEFAULT_FADE_IN_TICKS);
-        return BongAnimationPlayer.play(player, animId, priority, ticks);
+        return AnimationLayerManager.play(player, animId, priority, ticks);
     }
 
     @Override
@@ -55,7 +55,7 @@ public final class ClientAnimationBridge implements VfxEventAnimationBridge {
         return BongAnimationRegistry.registerInlineJsonForPlayback(
             animId,
             animJson,
-            () -> BongAnimationPlayer.play(player, animId, priority, ticks)
+            () -> AnimationLayerManager.play(player, animId, priority, ticks)
         );
     }
 
@@ -70,7 +70,7 @@ public final class ClientAnimationBridge implements VfxEventAnimationBridge {
             return false;
         }
         int ticks = fadeOutTicks.orElse(BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS);
-        return BongAnimationPlayer.stop(player, animId, ticks);
+        return AnimationLayerManager.stop(player, animId, ticks);
     }
 
     private static AbstractClientPlayerEntity resolvePlayer(UUID uuid) {

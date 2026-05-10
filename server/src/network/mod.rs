@@ -1,6 +1,7 @@
 pub mod agent_bridge;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod animation_trigger;
 pub mod anqi_event_bridge;
 pub mod anticheat_bridge;
 pub mod ascension_quota_emit;
@@ -515,6 +516,7 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_woliu_v2_visual_triggers,
             vfx_animation_trigger::emit_botany_harvest_visual_triggers,
             vfx_animation_trigger::emit_lingtian_visual_triggers,
+            animation_trigger::emit_animation_trigger_components,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
