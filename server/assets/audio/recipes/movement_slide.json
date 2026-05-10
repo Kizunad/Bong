@@ -1,0 +1,10 @@
+{
+  "id": "movement_slide",
+  "layers": [
+    { "sound": "minecraft:entity.player.swim", "volume": 0.30, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.gravel.step", "volume": 0.20, "pitch": 1.2, "delay_ticks": 1 }
+  ],
+  "priority": 56,
+  "attenuation": "world_3d",
+  "category": "VOICE"
+}

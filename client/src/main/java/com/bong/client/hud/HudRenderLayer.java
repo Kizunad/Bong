@@ -26,6 +26,7 @@ public enum HudRenderLayer {
     PROCESSING_HUD,
     LINGTIAN_OVERLAY,
     STAMINA_BAR,
+    MOVEMENT_HUD,
     SEARCH_PROGRESS,
     DAMAGE_FLOATER,
     FLIGHT_HUD,

@@ -70,6 +70,22 @@ public final class ClientRequestProtocol {
         }
     }
 
+    public enum MovementAction {
+        DASH("dash"),
+        SLIDE("slide"),
+        DOUBLE_JUMP("double_jump");
+
+        private final String wireName;
+
+        MovementAction(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
     public enum ZhenfaKind {
         TRAP("trap"),
         WARD("ward"),
@@ -921,6 +937,15 @@ public final class ClientRequestProtocol {
 
     public static String encodeJiemai() {
         return envelope("jiemai").toString();
+    }
+
+    public static String encodeMovementAction(MovementAction action) {
+        if (action == null) {
+            throw new IllegalArgumentException("movement action must not be null");
+        }
+        JsonObject obj = envelope("movement_action");
+        obj.addProperty("action", action.wireName());
+        return obj.toString();
     }
 
     public static String encodeStartExtractRequest(long portalEntityId) {

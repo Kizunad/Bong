@@ -38,6 +38,7 @@ public final class BongParticles {
     public static final DefaultParticleType DUGU_DARK_GREEN_MIST = FabricParticleTypes.simple();
     public static final DefaultParticleType DUGU_TAINT_PULSE     = FabricParticleTypes.simple();
     public static final DefaultParticleType DUGU_REVERSE_BURST   = FabricParticleTypes.simple();
+    public static final DefaultParticleType CLOUD_DUST           = FabricParticleTypes.simple();
 
     // SpriteProvider 缓存，由 Factory 注册回调注入，VfxPlayer 通过它取 sprite。
     public static volatile SpriteProvider swordQiTrailSprites;
@@ -53,6 +54,7 @@ public final class BongParticles {
     public static volatile SpriteProvider duguDarkGreenMistSprites;
     public static volatile SpriteProvider duguTaintPulseSprites;
     public static volatile SpriteProvider duguReverseBurstSprites;
+    public static volatile SpriteProvider cloudDustSprites;
 
     private BongParticles() {
     }
@@ -72,6 +74,7 @@ public final class BongParticles {
         reg("dugu_dark_green_mist", DUGU_DARK_GREEN_MIST);
         reg("dugu_taint_pulse",     DUGU_TAINT_PULSE);
         reg("dugu_reverse_burst",   DUGU_REVERSE_BURST);
+        reg("cloud256_dust",        CLOUD_DUST);
     }
 
     /** Client 侧：注册 Factory，抓住 SpriteProvider 引用。 */
@@ -90,6 +93,7 @@ public final class BongParticles {
         pfr.register(DUGU_DARK_GREEN_MIST, provider -> { duguDarkGreenMistSprites = provider; return spriteFactory(provider); });
         pfr.register(DUGU_TAINT_PULSE,     provider -> { duguTaintPulseSprites    = provider; return groundDecalFactory(provider); });
         pfr.register(DUGU_REVERSE_BURST,   provider -> { duguReverseBurstSprites  = provider; return lineFactory(provider); });
+        pfr.register(CLOUD_DUST,           provider -> { cloudDustSprites          = provider; return spriteFactory(provider); });
     }
 
     private static void reg(String id, DefaultParticleType type) {

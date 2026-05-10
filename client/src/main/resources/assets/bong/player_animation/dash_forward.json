@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "dash_forward",
+  "description": "Movement dash: torso leans forward with arms swept back.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 4,
+    "stopTick": 6,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0, "roll": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "head": { "pitch": 0.0, "roll": 0.0 } },
+      { "tick": 1, "easing": "INOUTSINE", "torso": { "pitch": 0.4363323 } },
+      { "tick": 1, "easing": "INOUTSINE", "rightArm": { "pitch": 0.65, "yaw": 0.18 } },
+      { "tick": 1, "easing": "INOUTSINE", "leftArm": { "pitch": 0.65, "yaw": -0.18 } },
+      { "tick": 2, "easing": "INOUTSINE", "rightLeg": { "pitch": -0.55 } },
+      { "tick": 2, "easing": "INOUTSINE", "leftLeg": { "pitch": 0.42 } },
+      { "tick": 4, "easing": "INOUTSINE", "torso": { "pitch": 0.0, "roll": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "head": { "pitch": 0.0, "roll": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "rightLeg": { "pitch": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "leftLeg": { "pitch": 0.0 } }
+    ]
+  }
+}

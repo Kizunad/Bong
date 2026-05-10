@@ -51,6 +51,18 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendMovementActionUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendMovementAction(ClientRequestProtocol.MovementAction.SLIDE);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"slide\"}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendForgeRequestIncludesMeridianAndAxis() {
         install();
         ClientRequestSender.sendForgeRequest(

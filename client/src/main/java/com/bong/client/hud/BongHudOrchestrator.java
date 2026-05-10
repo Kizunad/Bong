@@ -336,6 +336,7 @@ public final class BongHudOrchestrator {
             commands.addAll(StaminaBarHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
             ));
+            commands.addAll(MovementHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(ThroughputPeakHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
             ));

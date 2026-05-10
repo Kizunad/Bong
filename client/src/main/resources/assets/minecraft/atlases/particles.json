@@ -1,6 +1,7 @@
 {
     "sources": [
         { "type": "single", "resource": "bong:particle/breakthrough_pillar" },
+        { "type": "single", "resource": "bong:particle/cloud256_dust" },
         { "type": "single", "resource": "bong:particle/enlightenment_dust" },
         { "type": "single", "resource": "bong:particle/flying_sword_trail" },
         { "type": "single", "resource": "bong:particle/lingqi_ripple" },

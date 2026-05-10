@@ -251,6 +251,12 @@ public class VfxRegistryTest {
             "bootstrap should register social_feud_mark");
         assertTrue(VfxRegistry.instance().contains(PoisonMistPlayer.EVENT_ID),
             "bootstrap should register poison_mist");
+        assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.DASH),
+            "bootstrap should register movement_dash");
+        assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.SLIDE),
+            "bootstrap should register movement_slide");
+        assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.DOUBLE_JUMP),
+            "bootstrap should register movement_double_jump");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 
