@@ -542,6 +542,7 @@ fn active_record_for_state(
     char_id: &str,
     state: &TribulationState,
     runtime: Option<&JueBiRuntimeContext>,
+    origin_dimension: Option<DimensionKind>,
 ) -> ActiveTribulationRecord {
     ActiveTribulationRecord {
         char_id: char_id.to_string(),
@@ -549,6 +550,7 @@ fn active_record_for_state(
         source: runtime
             .map(|runtime| runtime.source.wire_name().to_string())
             .unwrap_or_default(),
+        origin_dimension: origin_dimension.map(|dimension| dimension.ident_str().to_string()),
         wave_current: state.wave_current,
         waves_total: state.waves_total,
         started_tick: state.started_tick,
@@ -569,10 +571,16 @@ fn persist_active_state(
     lifecycle: &Lifecycle,
     state: &TribulationState,
     runtime: Option<&JueBiRuntimeContext>,
+    origin_dimension: Option<DimensionKind>,
 ) -> std::io::Result<()> {
     persist_active_tribulation(
         settings,
-        &active_record_for_state(lifecycle.character_id.as_str(), state, runtime),
+        &active_record_for_state(
+            lifecycle.character_id.as_str(),
+            state,
+            runtime,
+            origin_dimension,
+        ),
     )
 }
 
@@ -816,7 +824,9 @@ pub fn start_tribulation_system(
                 participants: vec![lifecycle.character_id.clone()],
                 failed: false,
             };
-            if let Err(error) = persist_active_state(&settings, lifecycle, &state, None) {
+            if let Err(error) =
+                persist_active_state(&settings, lifecycle, &state, None, Some(origin_dimension))
+            {
                 tracing::warn!(
                     "[bong][cultivation] failed to persist active tribulation for {:?}: {error}",
                     ev.entity,
@@ -1048,7 +1058,9 @@ pub fn start_due_juebi_triggers_system(
             intensity,
         };
         if let Some(settings) = settings.as_deref() {
-            if let Err(error) = persist_active_state(settings, lifecycle, &state, Some(&runtime)) {
+            if let Err(error) =
+                persist_active_state(settings, lifecycle, &state, Some(&runtime), Some(dimension))
+            {
                 tracing::warn!(
                     "[bong][cultivation] failed to persist JueBi trigger for {:?}: {error}",
                     item.entity,
@@ -2552,7 +2564,13 @@ pub fn tribulation_wave_system(
             }
             state.wave_current = state.wave_current.max(ev.wave);
             if state.kind == TribulationKind::JueBi {
-                if let Err(error) = persist_active_state(&settings, lifecycle, &state, runtime) {
+                if let Err(error) = persist_active_state(
+                    &settings,
+                    lifecycle,
+                    &state,
+                    runtime,
+                    origin_dimension.map(|origin| origin.0),
+                ) {
                     tracing::warn!(
                         "[bong][cultivation] failed to update active JueBi for {:?}: {error}",
                         ev.entity,
@@ -2572,9 +2590,13 @@ pub fn tribulation_wave_system(
                         source: JueBiTriggerSource::VoidQuotaExceeded,
                         intensity,
                     };
-                    if let Err(error) =
-                        persist_active_state(&settings, lifecycle, &next_state, Some(&next_runtime))
-                    {
+                    if let Err(error) = persist_active_state(
+                        &settings,
+                        lifecycle,
+                        &next_state,
+                        Some(&next_runtime),
+                        Some(dimension),
+                    ) {
                         tracing::warn!(
                             "[bong][cultivation] failed to persist over-quota JueBi for {:?}: {error}",
                             ev.entity,
@@ -2654,7 +2676,13 @@ pub fn tribulation_wave_system(
                     DuXuOutcomeV1::Ascended,
                     state.waves_total
                 );
-            } else if let Err(error) = persist_active_state(&settings, lifecycle, &state, None) {
+            } else if let Err(error) = persist_active_state(
+                &settings,
+                lifecycle,
+                &state,
+                None,
+                origin_dimension.map(|origin| origin.0),
+            ) {
                 tracing::warn!(
                     "[bong][cultivation] failed to update active tribulation for {:?}: {error}",
                     ev.entity,
@@ -6226,6 +6254,7 @@ mod tests {
                 source: JueBiTriggerSource::VoidActionExplodeZone
                     .wire_name()
                     .to_string(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: JUEBI_WAVES_TOTAL,
                 waves_total: JUEBI_WAVES_TOTAL,
                 started_tick: 120,
@@ -6404,6 +6433,7 @@ mod tests {
                 char_id: char_id.to_string(),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 2,
                 waves_total: 5,
                 started_tick: 120,
@@ -7170,6 +7200,7 @@ mod tests {
                 char_id: char_id.to_string(),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 80,
@@ -7280,6 +7311,7 @@ mod tests {
                 char_id: char_id.to_string(),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 80,
@@ -7379,6 +7411,7 @@ mod tests {
                 char_id: char_id.to_string(),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 80,

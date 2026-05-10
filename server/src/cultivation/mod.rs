@@ -164,7 +164,7 @@ use crate::player::state::{
     PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
-use crate::world::dimension::CurrentDimension;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 
 pub fn register(app: &mut App) {
@@ -408,13 +408,21 @@ type CultivationAttachQueryItem<'a> = (
     Option<&'a LifespanComponent>,
 );
 
+fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
+    match value {
+        "minecraft:overworld" | "overworld" => Some(DimensionKind::Overworld),
+        "bong:tsy" | "tsy" => Some(DimensionKind::Tsy),
+        _ => None,
+    }
+}
+
 fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, current_dimension, restored_lifespan) in &joined_clients {
+    for (entity, username, player_state, _current_dimension, restored_lifespan) in &joined_clients {
         let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
         {
             Ok(value) => value,
@@ -540,23 +548,32 @@ fn attach_cultivation_to_joined_clients(
                 None
             }
         };
+        let restored_origin_dimension = active_tribulation.as_ref().and_then(|record| {
+            record
+                .origin_dimension
+                .as_deref()
+                .and_then(|origin_dimension| {
+                    parse_persisted_tribulation_dimension(origin_dimension).or_else(|| {
+                        tracing::warn!(
+                            "[bong][cultivation] unknown persisted tribulation origin dimension `{}` for char_id={} kind={}",
+                            origin_dimension,
+                            record.char_id,
+                            record.kind,
+                        );
+                        None
+                    })
+                })
+        });
         let restored_tribulation = active_tribulation.as_ref().map(|record| {
-            (
-                TribulationState::restored_for_kind(
-                    record.kind.as_str(),
-                    record
-                        .wave_current
-                        .saturating_add(1)
-                        .min(record.waves_total),
-                    record.waves_total,
-                    record.started_tick,
-                    record.epicenter,
-                ),
-                TribulationOriginDimension(
-                    current_dimension
-                        .map(|current_dimension| current_dimension.0)
-                        .unwrap_or_default(),
-                ),
+            TribulationState::restored_for_kind(
+                record.kind.as_str(),
+                record
+                    .wave_current
+                    .saturating_add(1)
+                    .min(record.waves_total),
+                record.waves_total,
+                record.started_tick,
+                record.epicenter,
             )
         });
         let restored_juebi_runtime = active_tribulation
@@ -625,6 +642,9 @@ fn attach_cultivation_to_joined_clients(
         }
         if let Some(restored_tribulation) = restored_tribulation {
             entity_commands.insert(restored_tribulation);
+        }
+        if let Some(restored_origin_dimension) = restored_origin_dimension {
+            entity_commands.insert(TribulationOriginDimension(restored_origin_dimension));
         }
         if let Some(restored_juebi_runtime) = restored_juebi_runtime {
             entity_commands.insert(restored_juebi_runtime);
@@ -826,6 +846,7 @@ mod tests {
                 char_id: canonical_player_id("Alice"),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 2,
                 waves_total: 5,
                 started_tick: 1440,
@@ -875,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn joined_clients_restore_active_tribulation_origin_dimension() {
+    fn joined_clients_restore_persisted_tribulation_origin_dimension() {
         let temp_root = std::env::temp_dir().join(format!(
             "bong-cultivation-tribulation-restore-dim-{}-{}",
             std::process::id(),
@@ -898,6 +919,7 @@ mod tests {
                 char_id: canonical_player_id("Azure"),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 2,
                 waves_total: 5,
                 started_tick: 1440,
@@ -930,7 +952,68 @@ mod tests {
             .world()
             .get::<TribulationOriginDimension>(entity)
             .expect("tribulation origin dimension should restore");
-        assert_eq!(origin.0, DimensionKind::Tsy);
+        assert_eq!(origin.0, DimensionKind::Overworld);
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn joined_clients_do_not_bind_missing_tribulation_origin_to_current_dimension() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-tribulation-restore-no-dim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: None,
+                wave_current: 2,
+                waves_total: 5,
+                started_tick: 1440,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("legacy active tribulation should persist without origin dimension");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                CurrentDimension(DimensionKind::Tsy),
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationOriginDimension>(entity).is_none(),
+            "legacy rows without origin_dimension should defer origin binding instead of using current dimension"
+        );
 
         let _ = std::fs::remove_dir_all(temp_root);
     }
@@ -959,6 +1042,7 @@ mod tests {
                 char_id: canonical_player_id("Azure"),
                 kind: "jue_bi".to_string(),
                 source: "void_action_explode_zone".to_string(),
+                origin_dimension: Some("bong:tsy".to_string()),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 2880,
@@ -997,6 +1081,11 @@ mod tests {
         assert_eq!(cultivation.realm, Realm::Awaken);
         assert_eq!(tribulation.kind, tribulation::TribulationKind::JueBi);
         assert_eq!(tribulation.epicenter, [12.0, 66.0, -3.0]);
+        let origin = app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .expect("JueBi origin dimension should restore");
+        assert_eq!(origin.0, DimensionKind::Tsy);
         let runtime = app
             .world()
             .get::<JueBiRuntimeContext>(entity)
@@ -1031,6 +1120,7 @@ mod tests {
                 char_id: canonical_player_id("Azure"),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 5,
                 waves_total: 5,
                 started_tick: 1888,
@@ -1093,6 +1183,7 @@ mod tests {
                 char_id: canonical_player_id("Azure"),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 4,
                 waves_total: 5,
                 started_tick: 2880,
@@ -1210,6 +1301,21 @@ mod tests {
     #[test]
     fn void_realm_regression_releases_ascension_quota() {
         let (settings, root) = temp_persistence_settings("void-regression-release-quota");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active tribulation should persist before quota setup");
         crate::persistence::complete_tribulation_ascension(
             &settings,
             canonical_player_id("Azure").as_str(),

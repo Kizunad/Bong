@@ -225,6 +225,7 @@ mod tests {
                 char_id: "offline:Azure".to_string(),
                 kind: "du_xu".to_string(),
                 source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 100,
