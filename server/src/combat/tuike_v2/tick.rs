@@ -66,11 +66,15 @@ pub fn sync_false_skin_stack_from_inventory(
                 ));
                 1
             }
-            (None, Some(_), _) => {
-                commands
-                    .entity(entity)
-                    .remove::<StackedFalseSkins>()
-                    .remove::<WornFalseSkin>();
+            (None, Some(stack), _) => {
+                let stack_expired = stack.is_empty()
+                    && now_tick >= stack.naked_until_tick
+                    && now_tick >= stack.transfer_permanent_cooldown_until_tick;
+                let mut entity_commands = commands.entity(entity);
+                entity_commands.remove::<WornFalseSkin>();
+                if stack_expired {
+                    entity_commands.remove::<StackedFalseSkins>();
+                }
                 0
             }
             (None, None, Some(_)) => {
@@ -187,6 +191,6 @@ pub fn false_skin_residue_decay_tick(
             output_item_id: residue.tier.residue_output_item_id().to_string(),
             tick,
         });
-        commands.entity(entity).remove::<FalseSkinResidue>();
+        commands.entity(entity).despawn();
     }
 }

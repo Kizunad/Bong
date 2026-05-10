@@ -32,7 +32,10 @@ use super::state::{
     StackedFalseSkins, WornFalseSkin, FALSE_SKIN_ANCIENT_ITEM_ID, FALSE_SKIN_FAN_ITEM_ID,
     FALSE_SKIN_HEAVY_ITEM_ID, FALSE_SKIN_LIGHT_ITEM_ID, FALSE_SKIN_MID_ITEM_ID,
 };
-use super::tick::false_skin_maintenance_tick;
+use super::tick::{
+    false_skin_maintenance_tick, false_skin_residue_decay_tick,
+    sync_false_skin_stack_from_inventory,
+};
 
 fn cultivation(realm: Realm, qi_current: f64, qi_max: f64) -> Cultivation {
     Cultivation {
@@ -629,6 +632,88 @@ fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
 }
 
 #[test]
+fn sync_inventory_missing_preserves_empty_stack_until_naked_window_expires() {
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 150 });
+    app.add_systems(Update, sync_false_skin_stack_from_inventory);
+    let entity = app
+        .world_mut()
+        .spawn((
+            PlayerInventory {
+                revision: InventoryRevision(1),
+                containers: Vec::new(),
+                equipped: HashMap::new(),
+                hotbar: std::array::from_fn(|_| None),
+                bone_coins: 0,
+                max_weight: 45.0,
+            },
+            StackedFalseSkins {
+                layers: Vec::new(),
+                naked_until_tick: 200,
+                transfer_permanent_cooldown_until_tick: 0,
+            },
+            WornFalseSkin {
+                instance_id: 1001,
+                tier: FalseSkinTier::Fan,
+                spirit_quality: 1.0,
+                contam_load: 0.0,
+                permanent_taint_load: 0.0,
+            },
+            DerivedAttrs {
+                tuike_layers: 1,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.update();
+
+    let stack = app.world().get::<StackedFalseSkins>(entity).unwrap();
+    assert!(stack.is_empty());
+    assert_eq!(stack.naked_until_tick, 200);
+    assert!(app.world().get::<WornFalseSkin>(entity).is_none());
+    assert_eq!(
+        app.world()
+            .get::<DerivedAttrs>(entity)
+            .unwrap()
+            .tuike_layers,
+        0
+    );
+}
+
+#[test]
+fn residue_decay_despawns_entity_after_emitting_ash_event() {
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 200 });
+    app.add_event::<FalseSkinDecayedToAshEvent>();
+    app.add_systems(Update, false_skin_residue_decay_tick);
+    let owner = app.world_mut().spawn_empty().id();
+    let residue = app
+        .world_mut()
+        .spawn(FalseSkinResidue {
+            owner,
+            tier: FalseSkinTier::Fan,
+            contam_load: 0.0,
+            permanent_taint_load: 0.0,
+            dropped_at_tick: 100,
+            decay_at_tick: 199,
+            picked_up: false,
+        })
+        .id();
+
+    app.update();
+
+    assert!(app.world().get_entity(residue).is_none());
+    assert_eq!(
+        app.world()
+            .resource::<Events<FalseSkinDecayedToAshEvent>>()
+            .get_reader()
+            .len(app.world().resource::<Events<FalseSkinDecayedToAshEvent>>()),
+        1
+    );
+}
+
+#[test]
 fn naked_defense_window_amplifies_incoming_damage_only_while_empty() {
     let stack = StackedFalseSkins {
         naked_until_tick: 200,
@@ -669,6 +754,18 @@ fn shed_to_carrier_records_contam_load() {
     let mut l = layer(FalseSkinTier::Mid, 1.0);
     shed_to_carrier(&mut l, 0.0, 7.0);
     assert_eq!(l.contam_load, 7.0);
+}
+
+#[test]
+fn shed_to_carrier_reports_actual_contam_written_after_clamp() {
+    let mut l = layer(FalseSkinTier::Fan, 1.0);
+    l.contam_load = 98.0;
+
+    let outcome = shed_to_carrier(&mut l, 0.0, 7.0);
+
+    assert_eq!(l.contam_load, 100.0);
+    assert_eq!(outcome.contam_absorbed, 2.0);
+    assert_eq!(outcome.contam_overflow, 5.0);
 }
 
 #[test]
@@ -840,6 +937,49 @@ fn cast_don_adds_outer_skin_and_event() {
             .get_reader()
             .len(world.resource::<Events<DonFalseSkinEvent>>()),
         1
+    );
+}
+
+#[test]
+fn cast_don_rejects_duplicate_outer_skin_without_cooldown_event_or_xp() {
+    let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);
+    assert_started(cast_don(&mut world, entity, 0, None));
+    let don_events_before = world
+        .resource::<Events<DonFalseSkinEvent>>()
+        .get_reader()
+        .len(world.resource::<Events<DonFalseSkinEvent>>());
+    let xp_events_before = world
+        .resource::<Events<crate::skill::events::SkillXpGain>>()
+        .get_reader()
+        .len(world.resource::<Events<crate::skill::events::SkillXpGain>>());
+    let practice_before = world.get::<PracticeLog>(entity).unwrap().total();
+
+    assert_rejected(
+        cast_don(&mut world, entity, 1, None),
+        CastRejectReason::InvalidTarget,
+    );
+
+    assert!(!world
+        .get::<SkillBarBindings>(entity)
+        .unwrap()
+        .is_on_cooldown(1, 100));
+    assert_eq!(
+        world
+            .resource::<Events<DonFalseSkinEvent>>()
+            .get_reader()
+            .len(world.resource::<Events<DonFalseSkinEvent>>()),
+        don_events_before
+    );
+    assert_eq!(
+        world
+            .resource::<Events<crate::skill::events::SkillXpGain>>()
+            .get_reader()
+            .len(world.resource::<Events<crate::skill::events::SkillXpGain>>()),
+        xp_events_before
+    );
+    assert_eq!(
+        world.get::<PracticeLog>(entity).unwrap().total(),
+        practice_before
     );
 }
 

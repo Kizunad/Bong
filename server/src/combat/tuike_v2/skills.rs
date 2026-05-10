@@ -68,14 +68,10 @@ pub fn cast_don(
     let layers_after = {
         let mut entity = world.entity_mut(caster);
         let mut stack = entity.take::<StackedFalseSkins>().unwrap_or_default();
-        if stack
+        let duplicate_outer = stack
             .outer()
-            .is_some_and(|outer| outer.instance_id == instance_id)
-        {
-            let layers_after = stack.layer_count() as u8;
-            entity.insert(stack);
-            layers_after
-        } else if !stack.push_outer(layer, max_layers) {
+            .is_some_and(|outer| outer.instance_id == instance_id);
+        if duplicate_outer || !stack.push_outer(layer, max_layers) {
             entity.insert(stack);
             return rejected(CastRejectReason::InvalidTarget);
         } else {

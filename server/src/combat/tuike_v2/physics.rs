@@ -165,13 +165,21 @@ pub fn shed_to_carrier(
         incoming_contam_percent,
     );
     layer.damage_taken += physics.damage_absorbed;
+    let contam_before = layer.contam_load;
+    let incoming_contam = if incoming_contam_percent.is_finite() {
+        incoming_contam_percent.max(0.0)
+    } else {
+        0.0
+    };
     layer.contam_load =
-        (layer.contam_load + physics.contam_absorbed).clamp(0.0, layer.contam_capacity_percent());
+        (contam_before + physics.contam_absorbed).clamp(0.0, layer.contam_capacity_percent());
+    let actual_contam_absorbed = (layer.contam_load - contam_before).max(0.0);
+    let actual_contam_overflow = (incoming_contam - actual_contam_absorbed).max(0.0);
     ShedToCarrierOutcome {
         damage_absorbed: physics.damage_absorbed,
         damage_overflow: physics.damage_overflow,
-        contam_absorbed: physics.contam_absorbed,
-        contam_overflow: physics.contam_overflow,
+        contam_absorbed: actual_contam_absorbed,
+        contam_overflow: actual_contam_overflow,
         depleted: layer.remaining_damage_capacity() <= f64::EPSILON
             || layer.remaining_contam_capacity_percent() <= f64::EPSILON,
     }
