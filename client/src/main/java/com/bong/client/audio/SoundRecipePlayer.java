@@ -21,6 +21,8 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     private static final int PREEMPT_PRIORITY = 85;
     private static final int DUCK_TRANSITION_TICKS = 40;
     private static final float COMBAT_AMBIENT_VOLUME = 0.3f;
+    private static final float AUDIO_PITCH_MIN = 0.1f;
+    private static final float AUDIO_PITCH_MAX = 2.0f;
 
     private static final SoundRecipePlayer INSTANCE =
         new SoundRecipePlayer(new MinecraftSoundSink(), SoundRecipePlayer::defaultFlagActive);
@@ -153,7 +155,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             if (payload.recipe().category() == AudioCategory.AMBIENT) {
                 volume *= ambientVolumeFactor;
             }
-            float pitch = (float) clamp(layer.pitch() * Math.pow(2.0, payload.pitchShift()), 0.5, 2.0);
+            float pitch = (float) clamp(layer.pitch() * Math.pow(2.0, payload.pitchShift()), AUDIO_PITCH_MIN, AUDIO_PITCH_MAX);
             anyPlayed |= sink.play(new AudioScheduledSound(
                 payload.instanceId(),
                 layer.sound(),
@@ -173,6 +175,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             return true;
         }
         return switch (flag) {
+            case "hp_below_20" -> CombatHudStateStore.snapshot().hpPercent() < 0.2f;
             case "hp_below_30" -> CombatHudStateStore.snapshot().hpPercent() < 0.3f;
             case "lingtian_drain_active" -> {
                 LingtianSessionStore.Snapshot snapshot = LingtianSessionStore.snapshot();

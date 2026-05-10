@@ -43,6 +43,18 @@ public class SoundRecipePlayerTest {
     }
 
     @Test
+    void preservesAudioWorldLowPitchFloor() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false);
+
+        player.play(playPayload(lowPitchRecipe(), 1.0f, -1.0f));
+        player.tick();
+
+        assertEquals(1, sink.played.size());
+        assertEquals(0.1f, sink.played.get(0).pitch(), 0.0001f);
+    }
+
+    @Test
     void loopReplaysWhileFlagStaysTrueAndStopsWhenFalse() {
         RecordingSink sink = new RecordingSink();
         AtomicBoolean active = new AtomicBoolean(true);
@@ -200,6 +212,17 @@ public class SoundRecipePlayerTest {
             70,
             AudioAttenuation.PLAYER_LOCAL,
             AudioCategory.HOSTILE
+        );
+    }
+
+    private static AudioRecipe lowPitchRecipe() {
+        return new AudioRecipe(
+            "ambient_north_wastes",
+            List.of(new AudioLayer(new Identifier("minecraft", "weather.rain"), 0.08f, 0.1f, 0)),
+            Optional.empty(),
+            24,
+            AudioAttenuation.ZONE_BROADCAST,
+            AudioCategory.AMBIENT
         );
     }
 

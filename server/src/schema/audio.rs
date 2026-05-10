@@ -12,7 +12,7 @@ use super::common::MAX_PAYLOAD_BYTES;
 pub const AUDIO_EVENT_VERSION: u8 = 1;
 pub const AUDIO_VOLUME_MIN: f32 = 0.0;
 pub const AUDIO_VOLUME_MAX: f32 = 4.0;
-pub const AUDIO_PITCH_MIN: f32 = 0.5;
+pub const AUDIO_PITCH_MIN: f32 = 0.1;
 pub const AUDIO_PITCH_MAX: f32 = 2.0;
 pub const AUDIO_PRIORITY_MAX: u8 = 100;
 
@@ -203,6 +203,85 @@ impl StopSoundRecipePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AmbientZoneS2c {
+    pub v: u8,
+    pub zone_name: String,
+    pub ambient_recipe_id: String,
+    pub music_state: String,
+    pub is_night: bool,
+    pub season: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tsy_depth: Option<String>,
+    pub fade_ticks: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pos: Option<[i32; 3]>,
+    pub volume_mul: f32,
+    pub pitch_shift: f32,
+    pub recipe: SoundRecipe,
+}
+
+impl AmbientZoneS2c {
+    pub fn to_json_bytes_checked(&self) -> Result<Vec<u8>, AudioEventBuildError> {
+        if self.v != AUDIO_EVENT_VERSION {
+            return Err(AudioEventBuildError::InvalidPlayPayload(format!(
+                "ambient_zone version must be {AUDIO_EVENT_VERSION}, got {}",
+                self.v
+            )));
+        }
+        if self.zone_name.trim().is_empty() {
+            return Err(AudioEventBuildError::InvalidPlayPayload(
+                "zone_name must not be blank".to_string(),
+            ));
+        }
+        validate_recipe_id(&self.ambient_recipe_id)
+            .map_err(AudioEventBuildError::InvalidPlayPayload)?;
+        if self.ambient_recipe_id != self.recipe.id {
+            return Err(AudioEventBuildError::InvalidPlayPayload(format!(
+                "ambient_recipe_id `{}` does not match recipe.id `{}`",
+                self.ambient_recipe_id, self.recipe.id
+            )));
+        }
+        if !matches!(
+            self.music_state.as_str(),
+            "AMBIENT" | "COMBAT" | "CULTIVATION" | "TSY" | "TRIBULATION"
+        ) {
+            return Err(AudioEventBuildError::InvalidPlayPayload(format!(
+                "unsupported music_state `{}`",
+                self.music_state
+            )));
+        }
+        if !matches!(
+            self.season.as_str(),
+            "summer" | "summer_to_winter" | "winter" | "winter_to_summer"
+        ) {
+            return Err(AudioEventBuildError::InvalidPlayPayload(format!(
+                "unsupported season `{}`",
+                self.season
+            )));
+        }
+        if !self.volume_mul.is_finite()
+            || self.volume_mul < 0.0
+            || self.volume_mul > AUDIO_VOLUME_MAX
+        {
+            return Err(AudioEventBuildError::InvalidPlayPayload(format!(
+                "volume_mul must be finite in [0, {AUDIO_VOLUME_MAX}], got {}",
+                self.volume_mul
+            )));
+        }
+        if !self.pitch_shift.is_finite() || self.pitch_shift < -1.0 || self.pitch_shift > 1.0 {
+            return Err(AudioEventBuildError::InvalidPlayPayload(format!(
+                "pitch_shift must be finite in [-1, 1], got {}",
+                self.pitch_shift
+            )));
+        }
+        self.recipe
+            .validate()
+            .map_err(AudioEventBuildError::InvalidRecipe)?;
+        json_bytes_checked(self)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaySoundRecipeEventV1 {
     pub v: u8,
     #[serde(flatten)]
@@ -368,6 +447,54 @@ mod tests {
         assert!(matches!(
             payload.to_json_bytes_checked(),
             Err(AudioEventBuildError::InvalidStopPayload(_))
+        ));
+    }
+
+    #[test]
+    fn ambient_zone_rejects_wrong_version() {
+        let payload = AmbientZoneS2c {
+            v: AUDIO_EVENT_VERSION + 1,
+            zone_name: "spawn".to_string(),
+            ambient_recipe_id: "pill_consume".to_string(),
+            music_state: "AMBIENT".to_string(),
+            is_night: false,
+            season: "summer".to_string(),
+            tsy_depth: None,
+            fade_ticks: 60,
+            pos: Some([1, 64, -2]),
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipe: sample_recipe(),
+        };
+
+        assert!(matches!(
+            payload.to_json_bytes_checked(),
+            Err(AudioEventBuildError::InvalidPlayPayload(error))
+                if error.contains("version")
+        ));
+    }
+
+    #[test]
+    fn ambient_zone_rejects_unknown_season() {
+        let payload = AmbientZoneS2c {
+            v: AUDIO_EVENT_VERSION,
+            zone_name: "spawn".to_string(),
+            ambient_recipe_id: "pill_consume".to_string(),
+            music_state: "AMBIENT".to_string(),
+            is_night: false,
+            season: "monsoon".to_string(),
+            tsy_depth: None,
+            fade_ticks: 60,
+            pos: Some([1, 64, -2]),
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipe: sample_recipe(),
+        };
+
+        assert!(matches!(
+            payload.to_json_bytes_checked(),
+            Err(AudioEventBuildError::InvalidPlayPayload(error))
+                if error.contains("season")
         ));
     }
 }

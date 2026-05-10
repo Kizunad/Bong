@@ -528,7 +528,7 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 - `cd server && cargo fmt --check` ✅
 - `cd server && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings` ✅
 - `cd server && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test baomai_v3 -j 1` ✅ 34 passed。
-- `cd server && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3999 passed；其中 baomai 相关当前 34 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发、焚血/散功通用 `BaomaiSkillEvent`、过载断脉仅首次发事件和契约映射；`qi_physics::field` 与 `network::audio_trigger` 已补焚血 HP 越界拒绝和 `blood_burn_sizzle` 本地衰减回归；本轮同步 `origin/main` 后保留 tuike-v2 主线新增测试。
+- `cd server && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 4014 passed；其中 baomai 相关当前 34 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发、焚血/散功通用 `BaomaiSkillEvent`、过载断脉仅首次发事件和契约映射；`qi_physics::field` 与 `network::audio_trigger` 已补焚血 HP 越界拒绝和 `blood_burn_sizzle` 本地衰减回归；本轮同步 `origin/main` 后保留 tuike-v2 与 audio-world 主线新增测试。
 - `cd agent && npm run build` ✅
 - `cd agent/packages/schema && npm test` ✅ 357 passed；`npm run generate:check` ✅ 338 files fresh。
 - `cd agent/packages/tiandao && npm test` ✅ 342 passed。

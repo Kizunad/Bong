@@ -1,0 +1,9 @@
+{
+  "id": "meridian_open_chime",
+  "layers": [
+    { "sound": "minecraft:block.amethyst_cluster.break", "volume": 0.3, "pitch": 1.5, "delay_ticks": 0 }
+  ],
+  "priority": 72,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

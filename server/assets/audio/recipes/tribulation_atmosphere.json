@@ -1,0 +1,11 @@
+{
+  "id": "tribulation_atmosphere",
+  "layers": [
+    { "sound": "minecraft:entity.lightning_bolt.thunder", "volume": 0.2, "pitch": 0.4, "delay_ticks": 40 },
+    { "sound": "minecraft:music.dragon", "volume": 0.2, "pitch": 0.3, "delay_ticks": 0 }
+  ],
+  "loop": { "interval_ticks": 100, "while_flag": "audio_world" },
+  "priority": 98,
+  "attenuation": "global_hint",
+  "category": "AMBIENT"
+}

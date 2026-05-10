@@ -1,5 +1,7 @@
 //! SoundRecipe registry: JSON-defined vanilla sound layers for audio v1.
 
+pub mod ambient;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -159,6 +161,7 @@ pub fn register(app: &mut App) {
         DEFAULT_AUDIO_RECIPES_DIR
     );
     app.insert_resource(registry);
+    ambient::register(app);
 }
 
 #[cfg(test)]
@@ -171,8 +174,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            73,
-            "audio registry should include MVP cues plus JueBi, botany visual cues, TSY experience, fauna-experience-v1 creature recipes, woliu-v2, dugu-v2, baomai-v3, tuike-v2, and NPC engagement cues"
+            84,
+            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, and audio-world ambient/music loops"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -217,6 +220,12 @@ mod tests {
         assert!(registry.get("npc_hurt").is_some());
         assert!(registry.get("npc_death").is_some());
         assert!(registry.get("npc_aggro").is_some());
+        assert!(registry.get("ambient_spawn_plain").is_some());
+        assert!(registry.get("ambient_tsy").is_some());
+        assert!(registry.get("combat_music").is_some());
+        assert!(registry.get("cultivation_meditate").is_some());
+        assert!(registry.get("meridian_open_chime").is_some());
+        assert!(registry.get("tribulation_atmosphere").is_some());
     }
 
     #[test]

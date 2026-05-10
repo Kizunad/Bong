@@ -41,6 +41,40 @@ pub struct CultivationClock {
 #[derive(Debug, Default, Resource)]
 pub struct CultivationSessionPracticeAccumulator {
     ticks_by_entity: HashMap<Entity, u64>,
+    last_gain_tick_by_entity: HashMap<Entity, u64>,
+}
+
+impl CultivationSessionPracticeAccumulator {
+    pub const AUDIO_RECENT_WINDOW_TICKS: u64 = 5 * 20;
+
+    pub fn is_recently_practicing(&self, entity: Entity, now_tick: u64) -> bool {
+        self.last_gain_tick_by_entity
+            .get(&entity)
+            .is_some_and(|last_tick| {
+                now_tick >= *last_tick
+                    && now_tick.saturating_sub(*last_tick) <= Self::AUDIO_RECENT_WINDOW_TICKS
+            })
+    }
+
+    fn note_practice_tick(&mut self, entity: Entity, now_tick: u64) -> u64 {
+        self.last_gain_tick_by_entity.insert(entity, now_tick);
+
+        let ticks = self.ticks_by_entity.entry(entity).or_default();
+        *ticks = ticks.saturating_add(1);
+
+        let minutes = *ticks / CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
+        if minutes == 0 {
+            return 0;
+        }
+
+        *ticks %= CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
+        minutes
+    }
+
+    #[cfg(test)]
+    pub fn note_practice_tick_for_tests(&mut self, entity: Entity, now_tick: u64) {
+        self.note_practice_tick(entity, now_tick);
+    }
 }
 
 /// 纯函数：给定 zone 浓度、rate、可用额度（qi_max - qi_current - qi_max_frozen 等）
@@ -200,6 +234,7 @@ pub fn qi_regen_and_zone_drain_tick(
                 accumulator,
                 events,
                 entity,
+                clock.tick,
                 qi_color
                     .map(|color| color.main)
                     .unwrap_or(ColorKind::Mellow),
@@ -212,17 +247,14 @@ pub fn accumulate_cultivation_session_practice_tick(
     accumulator: &mut CultivationSessionPracticeAccumulator,
     events: &mut Events<CultivationSessionPracticeEvent>,
     entity: Entity,
+    now_tick: u64,
     active_color: ColorKind,
 ) -> u64 {
-    let ticks = accumulator.ticks_by_entity.entry(entity).or_default();
-    *ticks = ticks.saturating_add(1);
-
-    let minutes = *ticks / CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
+    let minutes = accumulator.note_practice_tick(entity, now_tick);
     if minutes == 0 {
         return 0;
     }
 
-    *ticks %= CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
     events.send(CultivationSessionPracticeEvent {
         entity,
         active_color,
@@ -237,6 +269,9 @@ pub fn prune_cultivation_session_practice_accumulator(
 ) {
     accumulator
         .ticks_by_entity
+        .retain(|entity, _| live_cultivators.get(*entity).is_ok());
+    accumulator
+        .last_gain_tick_by_entity
         .retain(|entity, _| live_cultivators.get(*entity).is_ok());
 }
 
@@ -609,6 +644,16 @@ mod tests {
             accumulator.ticks_by_entity.insert(despawned_entity, 24);
             accumulator.ticks_by_entity.insert(uncultivated_entity, 30);
             accumulator.ticks_by_entity.insert(missing_entity, 36);
+            accumulator.last_gain_tick_by_entity.insert(live_entity, 12);
+            accumulator
+                .last_gain_tick_by_entity
+                .insert(despawned_entity, 24);
+            accumulator
+                .last_gain_tick_by_entity
+                .insert(uncultivated_entity, 30);
+            accumulator
+                .last_gain_tick_by_entity
+                .insert(missing_entity, 36);
         }
 
         app.update();
@@ -622,6 +667,39 @@ mod tests {
             .ticks_by_entity
             .contains_key(&uncultivated_entity));
         assert!(!accumulator.ticks_by_entity.contains_key(&missing_entity));
+        assert_eq!(
+            accumulator.last_gain_tick_by_entity.get(&live_entity),
+            Some(&12)
+        );
+        assert!(!accumulator
+            .last_gain_tick_by_entity
+            .contains_key(&despawned_entity));
+        assert!(!accumulator
+            .last_gain_tick_by_entity
+            .contains_key(&uncultivated_entity));
+        assert!(!accumulator
+            .last_gain_tick_by_entity
+            .contains_key(&missing_entity));
+    }
+
+    #[test]
+    fn practice_accumulator_exposes_recent_actual_gain_for_audio() {
+        let entity = Entity::from_raw(7);
+        let mut accumulator = CultivationSessionPracticeAccumulator::default();
+
+        assert!(!accumulator.is_recently_practicing(entity, 10));
+
+        accumulator.note_practice_tick_for_tests(entity, 20);
+
+        assert!(accumulator.is_recently_practicing(entity, 20));
+        assert!(accumulator.is_recently_practicing(
+            entity,
+            20 + CultivationSessionPracticeAccumulator::AUDIO_RECENT_WINDOW_TICKS
+        ));
+        assert!(!accumulator.is_recently_practicing(
+            entity,
+            21 + CultivationSessionPracticeAccumulator::AUDIO_RECENT_WINDOW_TICKS
+        ));
     }
 
     #[test]

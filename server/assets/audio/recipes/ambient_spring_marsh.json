@@ -1,0 +1,10 @@
+{
+  "id": "ambient_spring_marsh",
+  "layers": [
+    { "sound": "minecraft:block.pointed_dripstone.drip_water", "volume": 0.08, "pitch": 0.8, "delay_ticks": 0 }
+  ],
+  "loop": { "interval_ticks": 80, "while_flag": "audio_world" },
+  "priority": 22,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

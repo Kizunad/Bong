@@ -98,7 +98,7 @@
                     "type": "number"
                   },
                   "pitch": {
-                    "minimum": 0.5,
+                    "minimum": 0.1,
                     "maximum": 2,
                     "type": "number"
                   },
@@ -201,6 +201,254 @@
         "fade_out_ticks": {
           "minimum": 0,
           "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "zone_name",
+        "ambient_recipe_id",
+        "music_state",
+        "is_night",
+        "season",
+        "fade_ticks",
+        "volume_mul",
+        "pitch_shift",
+        "recipe"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "zone_name": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "ambient_recipe_id": {
+          "pattern": "^[a-z0-9_]+$",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "music_state": {
+          "anyOf": [
+            {
+              "const": "AMBIENT",
+              "type": "string"
+            },
+            {
+              "const": "COMBAT",
+              "type": "string"
+            },
+            {
+              "const": "CULTIVATION",
+              "type": "string"
+            },
+            {
+              "const": "TSY",
+              "type": "string"
+            },
+            {
+              "const": "TRIBULATION",
+              "type": "string"
+            }
+          ]
+        },
+        "is_night": {
+          "type": "boolean"
+        },
+        "season": {
+          "anyOf": [
+            {
+              "const": "summer",
+              "type": "string"
+            },
+            {
+              "const": "summer_to_winter",
+              "type": "string"
+            },
+            {
+              "const": "winter",
+              "type": "string"
+            },
+            {
+              "const": "winter_to_summer",
+              "type": "string"
+            }
+          ]
+        },
+        "tsy_depth": {
+          "anyOf": [
+            {
+              "const": "shallow",
+              "type": "string"
+            },
+            {
+              "const": "mid",
+              "type": "string"
+            },
+            {
+              "const": "deep",
+              "type": "string"
+            }
+          ]
+        },
+        "fade_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "volume_mul": {
+          "minimum": 0,
+          "maximum": 4,
+          "type": "number"
+        },
+        "pitch_shift": {
+          "minimum": -1,
+          "maximum": 1,
+          "type": "number"
+        },
+        "recipe": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "id",
+            "layers",
+            "priority",
+            "attenuation",
+            "category"
+          ],
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9_]+$",
+              "maxLength": 128,
+              "type": "string"
+            },
+            "layers": {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "sound",
+                  "volume",
+                  "pitch",
+                  "delay_ticks"
+                ],
+                "properties": {
+                  "sound": {
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "volume": {
+                    "minimum": 0,
+                    "maximum": 4,
+                    "type": "number"
+                  },
+                  "pitch": {
+                    "minimum": 0.1,
+                    "maximum": 2,
+                    "type": "number"
+                  },
+                  "delay_ticks": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "loop": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "interval_ticks",
+                "while_flag"
+              ],
+              "properties": {
+                "interval_ticks": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "while_flag": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                }
+              }
+            },
+            "priority": {
+              "minimum": 0,
+              "maximum": 100,
+              "type": "integer"
+            },
+            "attenuation": {
+              "anyOf": [
+                {
+                  "const": "player_local",
+                  "type": "string"
+                },
+                {
+                  "const": "world_3d",
+                  "type": "string"
+                },
+                {
+                  "const": "global_hint",
+                  "type": "string"
+                },
+                {
+                  "const": "zone_broadcast",
+                  "type": "string"
+                }
+              ]
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "const": "MASTER",
+                  "type": "string"
+                },
+                {
+                  "const": "HOSTILE",
+                  "type": "string"
+                },
+                {
+                  "const": "AMBIENT",
+                  "type": "string"
+                },
+                {
+                  "const": "VOICE",
+                  "type": "string"
+                },
+                {
+                  "const": "BLOCKS",
+                  "type": "string"
+                }
+              ]
+            }
+          }
         }
       }
     }
