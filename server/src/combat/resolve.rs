@@ -1631,7 +1631,13 @@ mod tests {
         let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
         let emitted = vfx_events
             .iter_current_update_events()
-            .next()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_HIT
+                )
+            })
             .expect("resolved hit should emit combat_hit vfx");
         match &emitted.payload {
             crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {

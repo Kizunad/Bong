@@ -189,12 +189,30 @@ public class VfxRegistryTest {
             "bootstrap should register combat_parry");
         assertTrue(VfxRegistry.instance().contains(ForgeHammerStrikePlayer.HAMMER),
             "bootstrap should register forge_hammer_strike");
+        assertTrue(VfxRegistry.instance().contains(ForgeHammerStrikePlayer.INSCRIPTION),
+            "bootstrap should register forge_inscription");
+        assertTrue(VfxRegistry.instance().contains(ForgeHammerStrikePlayer.CONSECRATION),
+            "bootstrap should register forge_consecration");
         assertTrue(VfxRegistry.instance().contains(AlchemyBrewVaporPlayer.BREW),
             "bootstrap should register alchemy_brew_vapor");
+        assertTrue(VfxRegistry.instance().contains(AlchemyBrewVaporPlayer.OVERHEAT),
+            "bootstrap should register alchemy_overheat");
+        assertTrue(VfxRegistry.instance().contains(AlchemyBrewVaporPlayer.COMPLETE),
+            "bootstrap should register alchemy_complete");
+        assertTrue(VfxRegistry.instance().contains(AlchemyBrewVaporPlayer.EXPLODE),
+            "bootstrap should register alchemy_explode");
         assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.TILL),
             "bootstrap should register lingtian_till");
+        assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.PLANT),
+            "bootstrap should register lingtian_plant");
+        assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.REPLENISH),
+            "bootstrap should register lingtian_replenish");
         assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.TRAP),
             "bootstrap should register zhenfa_trap");
+        assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.WARD),
+            "bootstrap should register zhenfa_ward");
+        assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.DEPLETE),
+            "bootstrap should register zhenfa_deplete");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
             "bootstrap should register social_niche_establish");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.PACT_LINK),

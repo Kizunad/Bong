@@ -1142,7 +1142,13 @@ mod tests {
         let events = app.world().resource::<Events<VfxEventRequest>>();
         let emitted = events
             .iter_current_update_events()
-            .next()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::POISON_MIST
+                )
+            })
             .expect("dugu poison tick should emit poison mist vfx");
         match &emitted.payload {
             crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
@@ -1177,7 +1183,16 @@ mod tests {
         let events = app.world().resource::<Events<VfxEventRequest>>();
         let emitted = events
             .iter_current_update_events()
-            .next()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                        event_id,
+                        count,
+                        ..
+                    } if event_id == gameplay_vfx::POISON_MIST && *count == Some(2)
+                )
+            })
             .expect("dugu poison ambient tick should emit poison mist vfx");
         match &emitted.payload {
             crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {

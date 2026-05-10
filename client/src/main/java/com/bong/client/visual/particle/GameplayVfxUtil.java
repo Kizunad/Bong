@@ -6,6 +6,10 @@ import net.minecraft.client.particle.SpriteProvider;
 import net.minecraft.client.world.ClientWorld;
 
 final class GameplayVfxUtil {
+    private static final int MIN_DURATION_TICKS = 1;
+    private static final int MAX_DURATION_TICKS = 600;
+    private static final double[] DEFAULT_DIRECTION = new double[] { 0.0, 1.0, 0.0 };
+
     private GameplayVfxUtil() {
     }
 
@@ -27,7 +31,7 @@ final class GameplayVfxUtil {
     }
 
     static int duration(VfxEventPayload.SpawnParticle payload, int fallback) {
-        return payload.durationTicks().orElse(fallback);
+        return clamp(payload.durationTicks().orElse(fallback), MIN_DURATION_TICKS, MAX_DURATION_TICKS);
     }
 
     static double strength(VfxEventPayload.SpawnParticle payload, double fallback) {
@@ -83,7 +87,7 @@ final class GameplayVfxUtil {
         int maxAge,
         double halfWidth
     ) {
-        if (provider == null) {
+        if (client == null || world == null || provider == null || client.particleManager == null) {
             return;
         }
         BongLineParticle particle = new BongLineParticle(world, x, y, z, vx, vy, vz);
@@ -107,7 +111,7 @@ final class GameplayVfxUtil {
         int maxAge,
         double halfSize
     ) {
-        if (provider == null) {
+        if (client == null || world == null || provider == null || client.particleManager == null) {
             return;
         }
         BongGroundDecalParticle particle = new BongGroundDecalParticle(world, x, y, z);
@@ -121,7 +125,13 @@ final class GameplayVfxUtil {
     }
 
     static double[] direction(VfxEventPayload.SpawnParticle payload, double[] fallback) {
+        if (fallback == null || fallback.length < 3) {
+            fallback = DEFAULT_DIRECTION;
+        }
         double[] dir = payload.direction().orElse(fallback);
+        if (dir == null || dir.length < 3) {
+            return fallback;
+        }
         double len = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
         if (len <= 1e-6) {
             return fallback;

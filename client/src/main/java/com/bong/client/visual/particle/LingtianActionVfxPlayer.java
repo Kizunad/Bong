@@ -44,7 +44,7 @@ public final class LingtianActionVfxPlayer implements VfxPlayer {
             double vy = kind == Kind.REPLENISH ? -0.05 : 0.08 + world.random.nextDouble() * 0.08;
             double py = kind == Kind.REPLENISH ? oy + 1.5 + world.random.nextDouble() * 0.5 : oy;
             GameplayVfxUtil.spawnSprite(client, world,
-                kind == Kind.REPLENISH ? BongParticles.qiAuraSprites : BongParticles.qiAuraSprites,
+                BongParticles.qiAuraSprites,
                 ox + (world.random.nextDouble() - 0.5) * 0.8,
                 py,
                 oz + (world.random.nextDouble() - 0.5) * 0.8,

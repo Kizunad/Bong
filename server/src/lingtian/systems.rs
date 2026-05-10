@@ -670,7 +670,7 @@ pub fn apply_completed_sessions(
                 }
             }
             ActiveSession::Planting(s) => {
-                apply_planting_completion(
+                let planted = apply_planting_completion(
                     player,
                     &s.pos,
                     &s.plant_id,
@@ -680,15 +680,17 @@ pub fn apply_completed_sessions(
                     &mut writers.planting,
                     &mut skill_xp_events,
                 );
-                emit_lingtian_vfx(
-                    writers.vfx_events.as_deref_mut(),
-                    gameplay_vfx::LINGTIAN_PLANT,
-                    s.pos,
-                    "#44AA44",
-                    0.75,
-                    6,
-                    30,
-                );
+                if planted {
+                    emit_lingtian_vfx(
+                        writers.vfx_events.as_deref_mut(),
+                        gameplay_vfx::LINGTIAN_PLANT,
+                        s.pos,
+                        "#44AA44",
+                        0.75,
+                        6,
+                        30,
+                    );
+                }
             }
             ActiveSession::Harvest(s) => {
                 apply_harvest_completion(
@@ -716,7 +718,7 @@ pub fn apply_completed_sessions(
             }
             ActiveSession::Replenish(s) => {
                 let residue_tick = time.residue_tick();
-                apply_replenish_completion(
+                let replenished = apply_replenish_completion(
                     player,
                     &s.pos,
                     s.source,
@@ -730,15 +732,17 @@ pub fn apply_completed_sessions(
                     &mut writers.dye_warning,
                     &mut skill_xp_events,
                 );
-                emit_lingtian_vfx(
-                    writers.vfx_events.as_deref_mut(),
-                    gameplay_vfx::LINGTIAN_REPLENISH,
-                    s.pos,
-                    "#66FFCC",
-                    0.8,
-                    8,
-                    30,
-                );
+                if replenished {
+                    emit_lingtian_vfx(
+                        writers.vfx_events.as_deref_mut(),
+                        gameplay_vfx::LINGTIAN_REPLENISH,
+                        s.pos,
+                        "#66FFCC",
+                        0.8,
+                        8,
+                        30,
+                    );
+                }
             }
             ActiveSession::DrainQi(s) => {
                 apply_drain_qi_completion(
@@ -870,13 +874,13 @@ fn apply_planting_completion(
     seeds: &SeedRegistry,
     planting_completed: &mut EventWriter<PlantingCompleted>,
     skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
-) {
+) -> bool {
     let Some(seed_id) = seeds.seed_for_plant(plant_id).cloned() else {
         tracing::warn!(
             "[bong][lingtian] PlantingSession finished but plant_id={} no longer in SeedRegistry",
             plant_id
         );
-        return;
+        return false;
     };
     // 玩家复验种子仍在；NPC 散修没有 PlayerInventory，按自带低阶种子处理。
     let mut inventory = inventories.get_mut(actor).ok();
@@ -887,14 +891,14 @@ fn apply_planting_completion(
         tracing::warn!(
             "[bong][lingtian] PlantingSession finished but target plot at {pos:?} no longer plantable"
         );
-        return;
+        return false;
     };
     if let Some(inv) = inventory.as_deref_mut() {
         if !consume_one_seed(inv, &seed_id) {
             tracing::warn!(
                 "[bong][lingtian] PlantingSession finished but seed `{seed_id}` no longer in inventory"
             );
-            return;
+            return false;
         }
     } else {
         tracing::debug!(
@@ -908,6 +912,7 @@ fn apply_planting_completion(
         plant_id: plant_id.clone(),
     });
     emit_lingtian_skill_xp(skill_xp_events, actor, 1, "plant");
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1304,10 +1309,10 @@ fn apply_replenish_completion(
     replenish_completed: &mut EventWriter<ReplenishCompleted>,
     dye_warning_events: &mut EventWriter<DyeContaminationWarning>,
     skill_xp_events: &mut Option<ResMut<Events<SkillXpGain>>>,
-) {
+) -> bool {
     let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
         tracing::warn!("[bong][lingtian] ReplenishSession finished but plot at {pos:?} vanished");
-        return;
+        return false;
     };
 
     // 复验 / 扣材料：plan §1.4 来源材料**不退**，若 session 期间被消耗也照付
@@ -1368,7 +1373,7 @@ fn apply_replenish_completion(
         tracing::warn!(
             "[bong][lingtian] ReplenishSession finished but material vanished mid-session (source={source:?}); aborted"
         );
-        return;
+        return false;
     }
 
     // 注入 plot_qi，溢出回馈 zone（plan §1.4）
@@ -1409,6 +1414,7 @@ fn apply_replenish_completion(
         overflow_to_zone: overflow,
     });
     emit_lingtian_skill_xp(skill_xp_events, player, 1, "replenish");
+    true
 }
 
 fn residue_now_tick(combat_clock: Option<&CombatClock>, lingtian_clock: &LingtianClock) -> u64 {

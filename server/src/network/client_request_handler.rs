@@ -6761,38 +6761,32 @@ fn handle_alchemy_take_back(
             let resolved = crate::alchemy::resolver::resolve_with_meta(&ended, recipe, registry);
             let bucket = resolved.bucket;
             let outcome = resolved.outcome;
-            if let Some(events) = vfx_events {
-                let (event_id, color, strength, count, duration) =
-                    if matches!(&outcome, crate::alchemy::ResolvedOutcome::Explode { .. }) {
-                        (gameplay_vfx::ALCHEMY_EXPLODE, "#FF5533", 1.0, 18, 30)
-                    } else {
-                        (gameplay_vfx::ALCHEMY_COMPLETE, "#FFD700", 0.9, 10, 40)
-                    };
-                gameplay_vfx::send_spawn(
-                    events,
-                    gameplay_vfx::spawn_request(
-                        event_id,
-                        alchemy_furnace_origin(furnace_pos),
-                        Some([0.0, 0.8, 0.0]),
-                        color,
-                        strength,
-                        count,
-                        duration,
-                    ),
-                );
-            }
             let event_recipe_id = Some(recipe.id.clone());
             match &outcome {
                 crate::alchemy::ResolvedOutcome::Explode {
                     damage,
                     meridian_crack,
                 } => {
+                    if let Some(events) = vfx_events {
+                        gameplay_vfx::send_spawn(
+                            events,
+                            gameplay_vfx::spawn_request(
+                                gameplay_vfx::ALCHEMY_EXPLODE,
+                                alchemy_furnace_origin(furnace_pos),
+                                Some([0.0, 0.8, 0.0]),
+                                "#FF5533",
+                                1.0,
+                                18,
+                                30,
+                            ),
+                        );
+                    }
                     let scaled_damage = scale_alchemy_explosion_damage(*damage, furnace.tier);
                     let scaled_meridian_crack =
                         scale_alchemy_explosion_crack(*meridian_crack, furnace.tier);
                     furnace.apply_explode((*damage / 100.0).clamp(0.05, 0.75));
                     if let Some(instance_allocator) = instance_allocator.as_deref_mut() {
-                        grant_alchemy_outcome_item(
+                        let _granted = grant_alchemy_outcome_item(
                             entity,
                             &mut client,
                             username.0.as_str(),
@@ -6832,7 +6826,7 @@ fn handle_alchemy_take_back(
                         );
                         return;
                     };
-                    grant_alchemy_outcome_item(
+                    let granted = grant_alchemy_outcome_item(
                         entity,
                         &mut client,
                         username.0.as_str(),
@@ -6845,6 +6839,23 @@ fn handle_alchemy_take_back(
                         item_registry,
                         instance_allocator,
                     );
+                    if !granted {
+                        return;
+                    }
+                    if let Some(events) = vfx_events {
+                        gameplay_vfx::send_spawn(
+                            events,
+                            gameplay_vfx::spawn_request(
+                                gameplay_vfx::ALCHEMY_COMPLETE,
+                                alchemy_furnace_origin(furnace_pos),
+                                Some([0.0, 0.8, 0.0]),
+                                "#FFD700",
+                                0.9,
+                                10,
+                                40,
+                            ),
+                        );
+                    }
                     if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
                         outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
                             furnace: furnace_entity,
@@ -6880,7 +6891,7 @@ fn grant_alchemy_outcome_item(
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
     instance_allocator: &mut InventoryInstanceIdAllocator,
-) {
+) -> bool {
     let (template_id, alchemy, reason) =
         if let Some(residue_kind) = residue_kind_for_recyclable_outcome(outcome) {
             (
@@ -6910,7 +6921,7 @@ fn grant_alchemy_outcome_item(
                 "alchemy_outcome_grant",
             )
         } else {
-            return;
+            return false;
         };
     let Ok(mut inventory) = inventories.get_mut(entity) else {
         send_alchemy_error(
@@ -6918,7 +6929,7 @@ fn grant_alchemy_outcome_item(
             player_id,
             "未找到背包，炼丹产物无法入袋".to_string(),
         );
-        return;
+        return false;
     };
     if let Err(error) = add_item_to_player_inventory_with_alchemy(
         &mut inventory,
@@ -6929,7 +6940,7 @@ fn grant_alchemy_outcome_item(
         alchemy,
     ) {
         send_alchemy_error(client, player_id, format!("炼丹产物入袋失败：{error}"));
-        return;
+        return false;
     }
     if let (Ok(player_state), Ok(cultivation)) =
         (player_states.get(entity), cultivations.get(entity))
@@ -6944,6 +6955,7 @@ fn grant_alchemy_outcome_item(
             reason,
         );
     }
+    true
 }
 
 #[derive(Debug, PartialEq, Eq)]
