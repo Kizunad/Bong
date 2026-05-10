@@ -4,7 +4,7 @@
 //! `vfx_event_emit`; this module only decides which first-party animation id should
 //! represent an already-authoritative server event.
 
-use valence::prelude::{Client, EventReader, EventWriter, Position, Query, UniqueId, With};
+use valence::prelude::{EventReader, EventWriter, Position, Query, UniqueId};
 
 use crate::botany::components::HarvestTerminalEvent;
 use crate::botany::lifecycle::botany_quality_color;
@@ -30,6 +30,8 @@ const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
 const ANIM_BREAKTHROUGH_GUYUAN: &str = "bong:breakthrough_guyuan";
 const ANIM_BREAKTHROUGH_TONGLING: &str = "bong:breakthrough_tongling";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
+const ANIM_HARVEST_CROUCH: &str = "bong:harvest_crouch";
+const ANIM_LINGTIAN_TILL: &str = "bong:lingtian_till";
 const BOTANY_HARVEST_VFX: &str = "bong:botany_harvest";
 const LINGTIAN_TILL_VFX: &str = "bong:lingtian_till";
 const LINGTIAN_PLANT_VFX: &str = "bong:lingtian_plant";
@@ -43,7 +45,7 @@ const HIT_RECOIL_PRIORITY: u16 = 2000;
 const STORY_PRIORITY: u16 = 3000;
 
 type PlayerAnimTargetItem<'a> = (&'a Position, &'a UniqueId);
-type PlayerAnimTargetFilter = With<Client>;
+type PlayerAnimTargetFilter = ();
 
 /// Combat intent -> attacker action animation.
 ///
@@ -191,12 +193,21 @@ pub fn emit_woliu_v2_visual_triggers(
 
 pub fn emit_botany_harvest_visual_triggers(
     mut terminal: EventReader<HarvestTerminalEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in terminal.read() {
         if !event.completed || event.interrupted {
             continue;
         }
+        emit_play_for_entity(
+            event.client_entity,
+            ANIM_HARVEST_CROUCH,
+            COMBAT_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
         let Some(pos) = event.target_pos else {
             continue;
         };
@@ -219,8 +230,17 @@ pub fn emit_lingtian_visual_triggers(
     mut replenishes: EventReader<ReplenishCompleted>,
     mut drains: EventReader<DrainQiCompleted>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
 ) {
     for event in tills.read() {
+        emit_play_for_entity(
+            event.player,
+            ANIM_LINGTIAN_TILL,
+            COMBAT_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
         emit_block_decal(
             &mut vfx_events,
             LINGTIAN_TILL_VFX,
@@ -378,6 +398,7 @@ fn emit_play_for_entity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use valence::prelude::{App, Events, Update};
     use valence::testing::create_mock_client;
 
@@ -390,6 +411,19 @@ mod tests {
         let (mut bundle, _helper) = create_mock_client(name);
         bundle.player.position = Position::new(pos);
         app.world_mut().spawn(bundle).id()
+    }
+
+    fn spawn_skinned_npc_target(
+        app: &mut App,
+        name: &str,
+        pos: [f64; 3],
+    ) -> valence::prelude::Entity {
+        app.world_mut()
+            .spawn((
+                Position::new(pos),
+                UniqueId(Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes())),
+            ))
+            .id()
     }
 
     fn drain_vfx(app: &mut App) -> Vec<VfxEventRequest> {
@@ -450,7 +484,33 @@ mod tests {
     }
 
     #[test]
-    fn combat_hit_emits_recoil_for_player_target_only() {
+    fn skinned_npc_with_unique_id_can_receive_action_animation() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_attack_animation_triggers);
+        let attacker = spawn_skinned_npc_target(&mut app, "npc:rogue-1", [0.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: None,
+            issued_at_tick: 1,
+            reach: AttackReach::new(1.0, 0.0),
+            qi_invest: 1.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_play_anim(&emitted[0], ANIM_FIST_PUNCH_RIGHT, COMBAT_PRIORITY);
+    }
+
+    #[test]
+    fn combat_hit_emits_recoil_for_unique_id_target() {
         let mut app = App::new();
         app.add_event::<CombatEvent>();
         app.add_event::<VfxEventRequest>();
