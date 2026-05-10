@@ -149,12 +149,12 @@
 
 ### 关键 commits
 
-- `cf70c7eaf` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
-- `7faa2d0f7` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
-- `daccb1d7d` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
-- `d5e62ba88` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
-- `43a62b480` 2026-05-11 `fix(audio): 收紧 ambient zone 边界`
-- `2381e154e` 2026-05-11 `fix(audio): 补齐 ambient review 边界`
+- `a054d1b8e` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
+- `30068afde` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
+- `ce3450786` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
+- `c9e2488ef` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
+- `04413b5e5` 2026-05-11 `fix(audio): 收紧 ambient zone 边界`
+- `bb005bc04` 2026-05-11 `fix(audio): 补齐 ambient review 边界`
 
 ### 测试结果
 
