@@ -96,4 +96,13 @@ class ConnectionStatusIndicatorTest {
 
         assertEquals("天道重注", BongToast.current(13_001L).text().getString());
     }
+
+    @Test
+    void connection_status_uses_measuring_time_without_breaking_toast_wall_time() {
+        ClientConnectionStatusStore.markDisconnected(1_000L);
+        ClientConnectionStatusStore.tick(12_000L, 50_000L);
+
+        assertFalse(BongToast.current(50_001L).isEmpty());
+        assertEquals(53_000L, BongToast.current(50_001L).expiresAtMillis());
+    }
 }

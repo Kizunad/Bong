@@ -19,6 +19,7 @@ import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.ui.ClientConnectionStatusStore;
+import com.bong.client.ui.ScreenTransition;
 import com.bong.client.ui.ScreenTransitionOverlay;
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.Vec3d;
@@ -37,6 +38,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Util;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,7 +57,7 @@ public class BongHud {
     public static void render(DrawContext context, float tickDelta) {
         MinecraftClient client = MinecraftClient.getInstance();
         long nowMillis = System.currentTimeMillis();
-        ClientConnectionStatusStore.tick(nowMillis);
+        ClientConnectionStatusStore.tick(Util.getMeasuringTimeMs(), nowMillis);
 
         // Tick cast-state + defense-window expiries so they self-clear each frame.
         CastStateStore.tick(nowMillis);
@@ -66,7 +68,7 @@ public class BongHud {
 
         Screen currentScreen = client.currentScreen;
         if (currentScreen == null) {
-            ScreenTransitionOverlay.render(context, client, nowMillis);
+            ScreenTransitionOverlay.render(context, client, ScreenTransition.nowMillis());
         }
         ScreenHudVisibility visibility = ScreenHudVisibility.forScreen(currentScreen);
         if (visibility == ScreenHudVisibility.HIDDEN) {

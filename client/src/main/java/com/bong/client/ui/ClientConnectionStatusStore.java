@@ -61,14 +61,18 @@ public final class ClientConnectionStatusStore {
     }
 
     public static void tick(long nowMs) {
+        tick(nowMs, nowMs);
+    }
+
+    public static void tick(long nowMs, long toastNowMs) {
         ConnectionStatusIndicator.Snapshot snapshot = snapshot(nowMs);
         ConnectionStatusIndicator.Status current = snapshot.status();
         ConnectionStatusIndicator.Status previous = lastStatus;
         if (current != previous) {
             if (current == ConnectionStatusIndicator.Status.RED) {
-                BongToast.show("与天道失联", 0xFFFFAA55, nowMs, 3_000L);
+                BongToast.show("与天道失联", 0xFFFFAA55, toastNowMs, 3_000L);
             } else if (current == ConnectionStatusIndicator.Status.GREEN && previous == ConnectionStatusIndicator.Status.RED) {
-                BongToast.show("天道重注", 0xFFAAFFAA, nowMs, 3_000L);
+                BongToast.show("天道重注", 0xFFAAFFAA, toastNowMs, 3_000L);
             }
             lastStatus = current;
         }
