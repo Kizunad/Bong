@@ -291,9 +291,9 @@
   - `server/src/network/vfx_animation_trigger.rs` 已把 combat attack / defense / hit recoil / breakthrough / tribulation / woliu / botany harvest / lingtian till 事件映射到骨骼动画；目标查询放宽到 `Position + UniqueId`，支持带 skinned player shell 的 NPC。
   - 协议决议：未新增平行 `bong:animation_trigger` CustomPayload，统一复用既有 `bong:vfx_event` 动画 payload，避免两套 server→client 表演协议并存。
 - **关键 commit**：
-  - `9ceed5560` · 2026-05-11 · `实现 player-animation 动画资源与分层管理`
-  - `06fcfbdb0` · 2026-05-11 · `接入 player-animation 服务端触发适配`
-  - `6f4d85914` · 2026-05-11 · `补强 player-animation 事件触发覆盖`
+  - `304717dc6` · 2026-05-11 · `实现 player-animation 动画资源与分层管理`
+  - `a34b51a79` · 2026-05-11 · `接入 player-animation 服务端触发适配`
+  - `cf17ac3b0` · 2026-05-11 · `补强 player-animation 事件触发覆盖`
 - **测试结果**：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3650 passed。
   - `cd server && cargo test vfx_animation_trigger && cargo test animation_trigger` → 8 passed + 10 passed，覆盖 `PlayAnim` / `StopAnim` component 适配、combat/breakthrough/botany/lingtian 映射、skinned NPC `UniqueId` 目标。
