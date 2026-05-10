@@ -52,6 +52,17 @@ describe("zone weather narration", () => {
         }),
       )?.text,
     ).not.toContain("焦土");
+
+    expect(
+      renderWeatherNarration(
+        weather({
+          data: {
+            ...weather().data,
+            zone_id: "unregistered_scorch",
+          },
+        }),
+      )?.text,
+    ).not.toContain("焦土");
   });
 
   it("ignores expired events to avoid duplicate narration", () => {

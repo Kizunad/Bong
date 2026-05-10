@@ -57,6 +57,7 @@ pub fn weather_vision_obscure_system(
     mut clients: WeatherVisionClientQuery<'_, '_>,
 ) {
     let Some(zones) = zones else {
+        restore_all_weather_vision(&mut commands, &mut clients);
         return;
     };
     for (entity, position, current_dimension, mut view_distance, restore) in &mut clients {
@@ -75,14 +76,31 @@ pub fn weather_vision_obscure_system(
             .iter()
             .any(is_opaque_fog_veil);
         if should_obscure {
-            if restore.is_none() {
-                let restore = obscure_vision(
+            let radius = profile_vision_radius(profiles.as_deref(), zone.name.as_str());
+            match restore.copied() {
+                Some(restore) => obscure_vision_from_original(
                     &mut view_distance,
-                    profile_vision_radius(profiles.as_deref(), zone.name.as_str()),
-                );
-                commands.entity(entity).insert(restore);
+                    restore.original_chunks,
+                    radius,
+                ),
+                None => {
+                    let restore = obscure_vision(&mut view_distance, radius);
+                    commands.entity(entity).insert(restore);
+                }
             }
         } else if let Some(restore) = restore.copied() {
+            restore_vision(&mut view_distance, restore);
+            commands.entity(entity).remove::<WeatherVisionRestore>();
+        }
+    }
+}
+
+fn restore_all_weather_vision(
+    commands: &mut Commands,
+    clients: &mut WeatherVisionClientQuery<'_, '_>,
+) {
+    for (entity, _, _, mut view_distance, restore) in clients.iter_mut() {
+        if let Some(restore) = restore.copied() {
             restore_vision(&mut view_distance, restore);
             commands.entity(entity).remove::<WeatherVisionRestore>();
         }
@@ -93,6 +111,15 @@ fn profile_vision_radius(profiles: Option<&ZoneWeatherProfileRegistry>, zone: &s
     profiles
         .map(|profiles| profiles.profile_for(zone).vision_obscure_radius())
         .unwrap_or(DEFAULT_VISION_OBSCURE_RADIUS)
+}
+
+fn obscure_vision_from_original(
+    view_distance: &mut ViewDistance,
+    original_chunks: u8,
+    radius_blocks: f32,
+) {
+    let target = chunks_for_radius(radius_blocks);
+    view_distance.set(original_chunks.min(target));
 }
 
 fn is_opaque_fog_veil(effect: &EnvironmentEffect) -> bool {
@@ -156,5 +183,33 @@ mod tests {
             profile_vision_radius(None, "fog_zone"),
             DEFAULT_VISION_OBSCURE_RADIUS
         );
+    }
+
+    #[test]
+    fn obscure_vision_from_original_updates_when_profile_radius_changes() {
+        let mut view_distance = ViewDistance::new(10);
+        obscure_vision_from_original(&mut view_distance, 10, 16.0);
+        let first_target = view_distance.get();
+
+        obscure_vision_from_original(&mut view_distance, 10, 48.0);
+        let wider_target = view_distance.get();
+
+        assert!(
+            wider_target >= first_target,
+            "larger profile radius should relax toward original chunks"
+        );
+        assert!(
+            wider_target <= 10,
+            "profile update must not exceed the original player view distance"
+        );
+    }
+
+    #[test]
+    fn obscure_vision_from_original_restores_original_when_radius_exceeds_view() {
+        let mut view_distance = ViewDistance::new(10);
+
+        obscure_vision_from_original(&mut view_distance, 10, 10_000.0);
+
+        assert_eq!(view_distance.get(), 10);
     }
 }

@@ -852,7 +852,7 @@ function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["
 }
 
 function isScorchWeatherZone(zone: string): boolean {
-  return SCORCH_WEATHER_ZONE_IDS.has(zone) || zone.endsWith("_scorch");
+  return SCORCH_WEATHER_ZONE_IDS.has(zone);
 }
 
 export async function processLocustSwarmEvents(args: {
