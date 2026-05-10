@@ -633,15 +633,16 @@ fn dehydrate_far_npcs(
 - `90877e201` · 2026-05-10 · `fix(npc): 修复 dormant review 边界回归`
 - `662892d94` · 2026-05-10 · `fix(npc): 收敛 dormant review 数据一致性`
 - `34d5cb71c` · 2026-05-10 · `fix(npc): 保留 dormant 特殊 NPC 元数据`
+- `9d1619363` · 2026-05-10 · `fix(npc): 收敛 dormant 守恒与渡劫 review`
 
 ### 测试结果
 
 - `cargo fmt --check` ✅
 - `cargo clippy --all-targets -- -D warnings` ✅
-- `cargo test` ✅ `3543 passed; 0 failed`
-- `cargo test npc::dormant` ✅ `9 passed; 0 failed`
-- `cargo test npc::hydrate` ✅ `4 passed; 0 failed`
-- `cargo test publishes_dormant_npcs_in_world_state_and_redis_hash` ✅
+- `cargo test` ✅ `3544 passed; 0 failed`
+- `cargo test npc::dormant::tests::` ✅ `15 passed; 0 failed`
+- `cargo test npc::hydrate::tests::` ✅ `7 passed; 0 failed`
+- `cargo test network::tests::world_state_tests::publishes_dormant_npcs_in_world_state_and_redis_hash` ✅ `1 passed; 0 failed`
 - `cargo test replaces_dormant_npc_hash` ✅
 - `agent/ npm run build` ✅
 - `agent/packages/schema npm test` ✅ `14 files; 344 tests`
