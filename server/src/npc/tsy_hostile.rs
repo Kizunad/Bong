@@ -915,13 +915,9 @@ pub fn emit_fuya_pressure_hum_audio_system(
 
 pub fn stop_fuya_pressure_hum_audio_on_death_system(
     mut deaths: EventReader<crate::combat::events::DeathEvent>,
-    fuyas: Query<(), With<FuyaAura>>,
     mut audio_events: EventWriter<StopSoundRecipeRequest>,
 ) {
     for death in deaths.read() {
-        if fuyas.get(death.target).is_err() {
-            continue;
-        }
         audio_events.send(StopSoundRecipeRequest {
             instance_id: fuya_pressure_audio_instance_id(death.target),
             fade_out_ticks: 20,
@@ -2040,7 +2036,7 @@ mod tests {
     }
 
     #[test]
-    fn fuya_pressure_hum_stops_on_death() {
+    fn fuya_pressure_hum_stop_is_tied_to_death_event_even_after_component_removal() {
         let mut app = valence::prelude::App::new();
         app.add_event::<crate::combat::events::DeathEvent>();
         app.add_event::<StopSoundRecipeRequest>();
@@ -2048,10 +2044,7 @@ mod tests {
             valence::prelude::Update,
             stop_fuya_pressure_hum_audio_on_death_system,
         );
-        let fuya = app
-            .world_mut()
-            .spawn((Position::new([0.0, 64.0, 0.0]), FuyaAura::default()))
-            .id();
+        let fuya = app.world_mut().spawn_empty().id();
         app.world_mut()
             .send_event(crate::combat::events::DeathEvent {
                 target: fuya,

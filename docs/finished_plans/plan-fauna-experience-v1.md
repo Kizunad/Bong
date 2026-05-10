@@ -8,7 +8,7 @@
 
 - **进料**：`fauna::BeastKind` ✅ / `fauna::drop` ✅ / `npc::tsy_hostile::TsyHostileArchetype` ✅ / `npc::brain_rat::RatPhase` ✅ / `whale::WhaleRenderer` ✅ / `vfx::VfxRegistry` ✅ / `audio::SoundRecipePlayer` ✅
 - **出料**：GeckoLib 模型 → `client/src/main/resources/assets/bong/geo/` / VFX player → `VfxBootstrap` / audio recipe → `server/assets/audio/recipes/` / 自定义 Renderer → `client/src/main/java/com/bong/client/fauna/`
-- **共享类型/event**：复用 `VfxEventRequest` / `AudioTriggerS2c` / `DeathEvent`，新增 `FaunaSpawnS2c` 告知 client 生物种类以选择 renderer
+- **共享类型/event**：复用既有 `VfxEventRequest` / `VfxEventPayloadV1::SpawnParticle` / `PlaySoundRecipeRequest` / `StopSoundRecipeRequest` / `DeathEvent`，未新增 agent/schema wire type
 - **跨仓库契约**：server spawn 时附带 `BeastKind` metadata → client 按 kind 选择 GeckoLib model + renderer
 - **worldview 锚点**：§七 动态生物生态 / §十六 坍缩渊敌对实体
 
@@ -123,7 +123,7 @@
 - `3d49ec185`（2026-05-10）接入异变兽客户端渲染资源：client 侧 GeckoLib fauna entity/model/renderer/bootstrap、8 个非鲸视觉壳模型、贴图、动画、VFX player 与注册测试。
 - `4d5f146ff`（2026-05-10）fix(fauna-experience-v1): 避免鲸误挂异变兽视觉壳：保留已有鲸 `WHALE_ENTITY_KIND=125` / WhaleRenderer 语义，非本 plan 视觉壳不覆盖鲸。
 - `0d0cc1fd3`（2026-05-10）fix(fauna-experience-v1): 接通 Fuya 压力嗡鸣 loop：client 侧 `SoundRecipePlayer` 支持 payload-owned loop flag，server 侧 Fuya spawn/death 负责 play/stop。
-- review hardening（2026-05-10）：按 CodeRabbit 反馈补 raw_id fail-fast、`FaunaEntity.visualKind` 非空保护、fauna 粒子寿命 clamp、RatBite 消费侧 Rat tag 校验、Beast visual optional 契约断言、TSY hostile archetype 显式映射与 Fuya aura query type alias。
+- review hardening（2026-05-10）：按 CodeRabbit 反馈补 raw_id fail-fast、`FaunaEntity.visualKind` 非空保护、fauna 粒子寿命 clamp、RatBite 消费侧 Rat tag 校验、Beast visual optional 契约断言、TSY hostile archetype 显式映射、Fuya aura query type alias、Fuya 死亡 stop loop 顺序防护与 wire type 文档漂移修正。
 
 ### 测试结果
 
