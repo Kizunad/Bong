@@ -18,13 +18,13 @@
 
 | 阶段 | 目标 | 状态 |
 |------|------|------|
-| P0 | 灵龛 + 灵眼 + 裂缝传送门（3 最高频遭遇实体） | ⬜ |
-| P1 | 炼器台 + 丹炉 + 阵法核心（3 产出工作台） | ⬜ |
-| P2 | 灵田地块 + TSY 容器（4 类）（7 种交互物） | ⬜ |
+| P0 | 灵龛 + 灵眼 + 裂缝传送门（3 最高频遭遇实体） | ✅ 2026-05-10 |
+| P1 | 炼器台 + 丹炉 + 阵法核心（3 产出工作台） | ✅ 2026-05-10 |
+| P2 | 灵田地块 + TSY 容器（4 类）（7 种交互物） | ✅ 2026-05-10 |
 
 ---
 
-## P0 — 灵龛 + 灵眼 + 裂缝传送门 ⬜
+## P0 — 灵龛 + 灵眼 + 裂缝传送门 ✅ 2026-05-10
 
 ### 交付物
 
@@ -57,7 +57,7 @@
 
 ---
 
-## P1 — 炼器台 + 丹炉 + 阵法核心 ⬜
+## P1 — 炼器台 + 丹炉 + 阵法核心 ✅ 2026-05-10
 
 ### 交付物
 
@@ -88,14 +88,14 @@
 
 ---
 
-## P2 — 灵田地块 + TSY 容器 ⬜
+## P2 — 灵田地块 + TSY 容器 ✅ 2026-05-10
 
 ### 交付物
 
 1. **灵田地块自定义方块**（`LingtianPlotBlock.java` / `LingtianPlotBlockEntity.java`）
    - 外观：略低于地面的方形土畦（0.9×0.9×0.1 block），表面有灵纹沟渠
    - 4 状态贴图：未开垦(干裂土) / 已开垦(湿润+灵纹) / 种植中(幼苗+灵纹) / 成熟(植物+发光灵纹)
-   - 注册为 Fabric 自定义方块（server 放置 + client 渲染）
+   - 注册为 Fabric 自定义方块渲染面；服务端通过 `EntityKind::new(132)` 视觉 marker 同步灵田状态，避免 Valence 端放置未注册 Fabric block 造成协议漂移。
 
 2. **TSY 容器模型**（4 类）
    - `DryCorpse.bbmodel`：干尸（蜷缩人形骨架，半埋土中）
@@ -137,10 +137,10 @@
 ### 落地清单
 
 - P0 灵龛 / 灵眼 / 裂缝传送门：
+  - `server/src/world/entity_model.rs`：下发 `EntityKind::new(126..128)` 视觉 marker，并用 DataTracker `VisualState` metadata 驱动状态贴图。
   - `client/src/main/java/com/bong/client/entity/BongEntityRegistry.java`
   - `client/src/main/java/com/bong/client/entity/BongEntityRenderBootstrap.java`
   - `client/src/main/java/com/bong/client/entity/SpiritNicheRenderer.java`
-  - `client/src/main/java/com/bong/client/entity/SpiritNicheRenderBootstrap.java`
   - `client/src/main/java/com/bong/client/entity/SpiritEyeRenderer.java`
   - `client/src/main/java/com/bong/client/entity/RiftPortalRenderer.java`
   - `local_models/SpiritNiche.bbmodel`
@@ -150,6 +150,7 @@
   - `client/src/main/resources/assets/bong/animations/{spirit_niche,spirit_eye,rift_portal}.animation.json`
   - `client/src/main/resources/assets/bong/textures/entity/{spirit_niche_*,spirit_eye_*,rift_portal_*}.png`
 - P1 炼器台 / 丹炉 / 阵法核心：
+  - `server/src/world/entity_model.rs`：下发 `EntityKind::new(129..131)`，按工作台 session / furnace busy / zhenfa anchor 状态同步视觉状态。
   - `client/src/main/java/com/bong/client/entity/ForgeStationRenderer.java`
   - `client/src/main/java/com/bong/client/entity/AlchemyFurnaceRenderer.java`
   - `client/src/main/java/com/bong/client/entity/FormationCoreRenderer.java`
@@ -158,6 +159,7 @@
   - `client/src/main/resources/assets/bong/animations/{forge_station,alchemy_furnace,formation_core}.animation.json`
   - `client/src/main/resources/assets/bong/textures/entity/{forge_station_*,alchemy_furnace_*,formation_core_*}.png`
 - P2 灵田地块 / TSY 容器：
+  - `server/src/world/entity_model.rs`：下发 `EntityKind::new(132..136)`，按灵田 crop 成熟度与 TSY 容器 kind / searched / depleted 状态同步视觉状态。
   - `client/src/main/java/com/bong/client/entity/LingtianPlotRenderer.java`
   - `client/src/main/java/com/bong/client/entity/LingtianPlotBlock.java`
   - `client/src/main/java/com/bong/client/entity/LingtianPlotBlockEntity.java`
@@ -170,6 +172,7 @@
   - `client/src/main/resources/assets/bong/animations/{lingtian_plot,dry_corpse,bone_skeleton,storage_pouch,stone_casket}.animation.json`
   - `client/src/main/resources/assets/bong/textures/entity/{lingtian_plot_*,dry_corpse_*,bone_skeleton_*,storage_pouch_*,stone_casket_*}.png`
 - 通用注册与契约：
+  - `server/src/world/mod.rs`：注册 `world::entity_model`，在现有 gameplay component 之外提供只负责视觉的同步层。
   - `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java`：统一维护 11 个实体的 `bong:*` id、raw id、尺寸、状态贴图、geo/animation 资源路径。
   - `client/src/main/java/com/bong/client/BongClient.java`：在 `WhaleRenderBootstrap.register()` 之后注册新实体，避免破坏既有 `whale raw_id=125`。
   - `client/src/test/java/com/bong/client/entity/BongEntityModelRegistryTest.java`
@@ -180,16 +183,23 @@
 - `266029ed1`（2026-05-10）`feat(client): 接入游戏实体模型渲染注册`
 - `bbabeee8a`（2026-05-10）`feat(client): 补齐游戏实体模型资产`
 - `11bc6b7f9`（2026-05-10）`test(client): 锁定实体模型渲染资产`
+- `727b9a448`（2026-05-10）`feat(server): 接入实体模型视觉桥接`
+- `ce2580c13`（2026-05-10）`fix(client): 收敛实体模型注册合约`
+- `b2b33be88`（2026-05-10）`fix(assets): 替换实体模型占位资源`
 
 ### 测试结果
 
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test`
   - `BUILD SUCCESSFUL`
-  - `client/build/test-results/test`: `tests=997 failures=0 errors=0 skipped=0`
-  - 新增 `BongEntityModelRegistryTest`: `tests=9 failures=0 errors=0 skipped=0`
+  - `client/build/test-results/test`: `tests=999 failures=0 errors=0 skipped=0`
+  - 新增 `BongEntityModelRegistryTest`: `tests=11 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build`
   - `BUILD SUCCESSFUL`
+- `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo check --bin bong-server`
+  - `Finished dev profile`
+- `cd server && CARGO_BUILD_JOBS=1 cargo test entity_model -- --nocapture`
+  - 环境结果：`rustc` 在 `bong-server` test binary 编译阶段被 `SIGKILL`，无 Rust 诊断；代码编译正确性由上方 `cargo check --bin bong-server` 覆盖，定向 test 待资源空闲或 CI 复核。
 
 ### 跨仓库核验
 
@@ -203,8 +213,9 @@
   - `server/src/lingtian/plot.rs`：`LingtianPlot`
   - `server/src/world/tsy.rs` / `server/src/world/tsy_container.rs`：`LootContainer`
 - client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=126..136`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=125` 之后。
+- server 新增 `world::entity_model` 将 gameplay component 映射到 `EntityKind::new(126..136)` 视觉 marker，`VisualState` 使用 DataTracker index `8`、type `INTEGER`、VarInt 编码，与 `BongModeledEntity.VISUAL_STATE` 对齐。
 - 未新增 server_data / Redis event；视觉状态走实体 metadata 的 `VisualState` tracker 映射到状态贴图。
 
 ### 遗留 / 后续
 
-- CI 已覆盖 Fabric 注册表、GeckoLib 资源路径、BlockBench 源文件和状态贴图存在性；实际 WSLg `runClient` 视觉走查仍属于人工验收，不在本次云端自动测试内。
+- 已通过本地 client 测试覆盖 Fabric 注册表、GeckoLib 资源路径、BlockBench 源文件和状态贴图存在性；server raw id / metadata 合约已补测试代码，本地 test binary 编译受当前机器资源影响待 CI 复核。实际 WSLg `runClient` 视觉走查仍属于人工验收，不在本次云端自动测试内。
