@@ -514,12 +514,13 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 - `eaf696088`（2026-05-10）`plan-baomai-v3: 接入爆脉五招 server 链路`
 - `7fcf68a82`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
 - `5aef42aa6`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
+- `b9142c391`（2026-05-10）`修复 plan-baomai-v3 review：接通 HUD 与散功边界`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3683 passed；其中 `server/src/combat/baomai_v3/` 当前 30 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射。
+- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3684 passed；其中 `server/src/combat/baomai_v3/` 当前 33 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射。
 - `cd agent && npm run build` ✅
 - `cd agent/packages/schema && npm test` ✅ 353 passed；`npm run generate:check` ✅ 327 schemas fresh。
 - `cd agent/packages/tiandao && npm test` ✅ 329 passed。
