@@ -190,6 +190,7 @@
 - `068d5fc47`（2026-05-10）`fix(server): 同步实体视觉 metadata 时序`
 - `185a43121`（2026-05-10）`fix(entity): 避让 fauna 实体 raw id 区间`
 - `dc1ad4f19`（2026-05-10）`fix(server): 同步阵法核心视觉状态`
+- `9e1be3ec1`（2026-05-10）`fix(entity): 收敛实体模型 review 边界`
 
 ### 测试结果
 
@@ -223,7 +224,9 @@
   - `server/src/lingtian/plot.rs`：`LingtianPlot`
   - `server/src/world/tsy.rs` / `server/src/world/tsy_container.rs`：`LootContainer`
 - client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=134..144`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=125` 与 `fauna raw_id=126..133` 之后。
+- `BongEntityRenderBootstrap` 对 renderer binding 重复 / 缺失做 fail-fast；`LingtianPlotBlockEntity` 仅在视觉状态变化时标脏。
 - server 新增 `world::entity_model` 将 gameplay component 映射到 `EntityKind::new(134..144)` 视觉 marker，`VisualState` 使用 DataTracker index `8`、type `INTEGER`、VarInt 编码，与 `BongModeledEntity.VISUAL_STATE` 对齐。
+- `SpiritEyeRegistry` stale visual cleanup 先从 `by_eye_id` 收集移除，再批量提交 despawn，避免 retain 闭包内混合 map 修改与 Commands 操作。
 - 阵法核心视觉状态由 `ZhenfaRegistry::anchor_visual_state` 提供，覆盖 inactive / active / exhausted，避免 marker 层写死 active。
 - 未新增 server_data / Redis event；视觉状态走实体 metadata 的 `VisualState` tracker 映射到状态贴图。
 
