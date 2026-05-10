@@ -1,0 +1,14 @@
+{
+  "id": "fauna_rat_death",
+  "layers": [
+    {
+      "sound": "minecraft:entity.silverfish.death",
+      "volume": 0.35,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 72,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

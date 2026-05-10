@@ -1,0 +1,14 @@
+{
+  "id": "fauna_void_distorted_attack",
+  "layers": [
+    {
+      "sound": "minecraft:entity.enderman.scream",
+      "volume": 0.36,
+      "pitch": 0.55,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

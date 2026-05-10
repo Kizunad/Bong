@@ -1,0 +1,147 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.zhinian",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 2.2,
+        "visible_bounds_height": 3.5,
+        "visible_bounds_offset": [
+          0,
+          1.0,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "Body",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4,
+                7,
+                -2
+              ],
+              "size": [
+                8,
+                11,
+                4
+              ],
+              "uv": [
+                0,
+                0
+              ],
+              "inflate": 0.02
+            }
+          ]
+        },
+        {
+          "name": "Head",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -3,
+                18,
+                -3
+              ],
+              "size": [
+                6,
+                6,
+                6
+              ],
+              "uv": [
+                0,
+                24
+              ],
+              "inflate": 0.02
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Mist",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -6,
+                6,
+                -4
+              ],
+              "size": [
+                12,
+                13,
+                8
+              ],
+              "uv": [
+                28,
+                16
+              ],
+              "inflate": 0.01
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Arms",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -7,
+                8,
+                -1
+              ],
+              "size": [
+                3,
+                11,
+                3
+              ],
+              "uv": [
+                28,
+                0
+              ]
+            },
+            {
+              "origin": [
+                4,
+                8,
+                -1
+              ],
+              "size": [
+                3,
+                11,
+                3
+              ],
+              "uv": [
+                28,
+                0
+              ]
+            }
+          ],
+          "parent": "Body"
+        }
+      ]
+    }
+  ]
+}

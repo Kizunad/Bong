@@ -1,0 +1,14 @@
+{
+  "id": "fauna_ash_spider_ambient",
+  "layers": [
+    {
+      "sound": "minecraft:entity.spider.ambient",
+      "volume": 0.22,
+      "pitch": 1.45,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

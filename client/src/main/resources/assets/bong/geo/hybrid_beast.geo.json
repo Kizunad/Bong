@@ -1,0 +1,147 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.hybrid_beast",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 4,
+        "visible_bounds_height": 3,
+        "visible_bounds_offset": [
+          0,
+          0.8,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "Body",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -7,
+                3,
+                -7
+              ],
+              "size": [
+                14,
+                10,
+                14
+              ],
+              "uv": [
+                0,
+                0
+              ],
+              "inflate": 0.02
+            }
+          ]
+        },
+        {
+          "name": "Head",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4,
+                9,
+                -12
+              ],
+              "size": [
+                8,
+                7,
+                6
+              ],
+              "uv": [
+                0,
+                28
+              ],
+              "inflate": 0.01
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Hump",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -5,
+                13,
+                -2
+              ],
+              "size": [
+                10,
+                5,
+                8
+              ],
+              "uv": [
+                28,
+                0
+              ],
+              "inflate": 0.01
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Stitches",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -8,
+                8,
+                -1
+              ],
+              "size": [
+                1,
+                1,
+                6
+              ],
+              "uv": [
+                46,
+                0
+              ]
+            },
+            {
+              "origin": [
+                7,
+                8,
+                -1
+              ],
+              "size": [
+                1,
+                1,
+                6
+              ],
+              "uv": [
+                46,
+                0
+              ]
+            }
+          ],
+          "parent": "Body"
+        }
+      ]
+    }
+  ]
+}

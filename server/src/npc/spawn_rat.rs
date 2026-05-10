@@ -1,15 +1,16 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::entity::{CustomName, NameVisible};
-use valence::entity::silverfish::SilverfishEntityBundle;
+use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{
-    bevy_ecs, ChunkPos, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, Position,
+    bevy_ecs, ChunkPos, Commands, Component, DVec3, Entity, EntityLayerId, Position,
 };
 
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::rat_phase::{
     chunk_pos_from_world, rat_phase_display_name, PressureSensor, RatGroupId, RatPhase,
 };
+use crate::fauna::visual::{FaunaVisualKind, DEVOUR_RAT_ENTITY_KIND};
 use crate::npc::brain::{WanderAction, WanderScorer, WanderState};
 use crate::npc::brain_rat::{
     DrainedChunkAvoidScorer, GroupCohesionScorer, QiSourceProximityScorer, RegroupAction,
@@ -78,8 +79,8 @@ pub fn spawn_rat_npc_at(
     let group_id = rat_blackboard.group_id;
     let initial_phase = RatPhase::Solitary;
     let entity = commands
-        .spawn(SilverfishEntityBundle {
-            kind: EntityKind::SILVERFISH,
+        .spawn(MarkerEntityBundle {
+            kind: DEVOUR_RAT_ENTITY_KIND,
             layer: EntityLayerId(layer),
             position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
             entity_custom_name: CustomName(Some(rat_phase_display_name(&initial_phase))),
@@ -100,6 +101,7 @@ pub fn spawn_rat_npc_at(
             loadout.melee_profile(),
             NpcArchetype::Beast,
             FaunaTag::new(BeastKind::Rat),
+            FaunaVisualKind::DevourRat,
             NpcLodTier::Dormant,
             initial_phase,
             group_id,
@@ -158,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_rat_npc_at_uses_silverfish_entity_kind() {
+    fn spawn_rat_npc_at_uses_devour_rat_entity_kind() {
         let scenario = ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
@@ -172,8 +174,8 @@ mod tests {
         app.world_mut().flush();
 
         assert_eq!(
-            app.world().get::<EntityKind>(rat),
-            Some(&EntityKind::SILVERFISH)
+            app.world().get::<valence::prelude::EntityKind>(rat),
+            Some(&DEVOUR_RAT_ENTITY_KIND)
         );
         assert_eq!(
             app.world()
