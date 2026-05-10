@@ -6,17 +6,17 @@
         "identifier": "geometry.bong.formation_core",
         "texture_width": 64,
         "texture_height": 64,
-        "visible_bounds_width": 1.6,
-        "visible_bounds_height": 1,
+        "visible_bounds_width": 1.5,
+        "visible_bounds_height": 0.7,
         "visible_bounds_offset": [
           0,
-          0.16,
+          0.08,
           0
         ]
       },
       "bones": [
         {
-          "name": "Root",
+          "name": "Disk",
           "pivot": [
             0,
             0,
@@ -25,14 +25,102 @@
           "cubes": [
             {
               "origin": [
-                -8.0,
+                -8,
                 0,
-                -8.0
+                -8
               ],
               "size": [
                 16,
-                5,
+                2,
                 16
+              ],
+              "inflate": 0.01,
+              "uv": [
+                0,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -6,
+                2,
+                -6
+              ],
+              "size": [
+                12,
+                1,
+                12
+              ],
+              "inflate": 0.01,
+              "uv": [
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Runes",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -7,
+                3,
+                -1
+              ],
+              "size": [
+                14,
+                1,
+                2
+              ],
+              "inflate": 0.01,
+              "uv": [
+                0,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -1,
+                3,
+                -7
+              ],
+              "size": [
+                2,
+                1,
+                14
+              ],
+              "inflate": 0.01,
+              "uv": [
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Glow",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -3,
+                4,
+                -3
+              ],
+              "size": [
+                6,
+                1,
+                6
               ],
               "inflate": 0.01,
               "uv": [
