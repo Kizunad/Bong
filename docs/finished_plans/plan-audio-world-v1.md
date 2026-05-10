@@ -149,10 +149,10 @@
 
 ### 关键 commits
 
-- `a8ebb4240` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
-- `8ad2afb52` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
-- `693a5a783` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
-- `a5081e0e8` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
+- `2a86cd467` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
+- `d8df7ef0d` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
+- `aa6fc4f0e` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
+- `a0e87d64e` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
 
 ### 测试结果
 
@@ -161,16 +161,16 @@
 - `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings` ✅
 - `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test audio::` ✅ 15 passed
 - `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test practice_accumulator` ✅ 2 passed
-- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test` ✅ 3659 passed
+- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0 -C link-arg=-Wl,--no-keep-memory" cargo test` ✅ 3816 passed
 - `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.audio.MusicStateMachineTest" --tests "com.bong.client.network.AmbientZoneHandlerTest"` ✅ BUILD SUCCESSFUL
 - `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL
 - `agent/`: `npm run build` ✅
-- `agent/packages/schema`: `npm test` ✅ 351 passed
+- `agent/`: `npm test -w @bong/schema` ✅ 353 passed
 - `agent/packages/tiandao`: `npm test` ✅ 325 passed
 
 ### 验证备注
 
-- 默认 debug `CARGO_BUILD_JOBS=1 cargo test` 在本机链接测试二进制时被 SIGKILL；同一代码用 `RUSTFLAGS="-C debuginfo=0"` 完整跑过 3656 tests。此前一次 full test 的唯一失败为 unrelated SQLite contention 用例，定向重跑该用例通过，随后 full test 复跑全绿。
+- 默认 debug `CARGO_BUILD_JOBS=1 cargo test` 在本机链接测试二进制时被 SIGKILL；同一代码用 `RUSTFLAGS="-C debuginfo=0 -C link-arg=-Wl,--no-keep-memory"` 完整跑过 3816 tests。
 - `ambient_north_wastes.json` 用 `minecraft:entity.phantom.flap` 替代 plan 中的 `minecraft:entity.wind_charge.wind_burst`；当前 Fabric/MC 1.20.1 没有 wind charge 音效。
 
 ### 遗留 / 后续
