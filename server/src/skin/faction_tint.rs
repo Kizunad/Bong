@@ -273,7 +273,7 @@ fn dyed_leather(item: ItemKind, rgb: i32) -> ItemStack {
 
 #[cfg(test)]
 mod tests {
-    use super::super::npc_skin_selector::{NpcAgeBand, NpcSkinPoolKey, NpcSkinTier};
+    use super::super::npc_skin_selector::{select_npc_visual_profile, NpcAgeBand};
     use super::*;
     use valence::nbt::Value;
 
@@ -281,19 +281,23 @@ mod tests {
         faction_id: Option<FactionId>,
         faction_rank: Option<FactionRank>,
         age_band: NpcAgeBand,
-        skin_tier: NpcSkinTier,
+        realm: Realm,
     ) -> NpcVisualProfile {
-        NpcVisualProfile {
-            archetype: NpcArchetype::Disciple,
-            skin_tier,
-            skin_pool_key: NpcSkinPoolKey(skin_tier),
-            age_band,
-            high_realm: matches!(
-                skin_tier,
-                NpcSkinTier::RogueHigh | NpcSkinTier::DiscipleHigh
-            ),
+        select_npc_visual_profile(
+            NpcArchetype::Disciple,
+            realm,
             faction_id,
             faction_rank,
+            age_ratio_for_band(age_band),
+        )
+    }
+
+    fn age_ratio_for_band(age_band: NpcAgeBand) -> f64 {
+        match age_band {
+            NpcAgeBand::Young => 0.2,
+            NpcAgeBand::Adult => 0.5,
+            NpcAgeBand::Elder => 0.75,
+            NpcAgeBand::Fading => 0.95,
         }
     }
 
@@ -314,15 +318,15 @@ mod tests {
             Some(FactionId::Attack),
             Some(FactionRank::Disciple),
             NpcAgeBand::Adult,
-            NpcSkinTier::DiscipleLow,
+            Realm::Awaken,
         );
         let defend = profile(
             Some(FactionId::Defend),
             Some(FactionRank::Disciple),
             NpcAgeBand::Adult,
-            NpcSkinTier::DiscipleLow,
+            Realm::Awaken,
         );
-        let neutral = profile(None, None, NpcAgeBand::Adult, NpcSkinTier::DiscipleLow);
+        let neutral = profile(None, None, NpcAgeBand::Adult, Realm::Awaken);
 
         let attack_equipment = visual_equipment(&attack);
         let defend_equipment = visual_equipment(&defend);
@@ -343,12 +347,12 @@ mod tests {
 
     #[test]
     fn age_and_rank_markers_do_not_conflict() {
-        let elder = profile(None, None, NpcAgeBand::Elder, NpcSkinTier::RogueMid);
+        let elder = profile(None, None, NpcAgeBand::Elder, Realm::Condense);
         let leader = profile(
             Some(FactionId::Attack),
             Some(FactionRank::Leader),
             NpcAgeBand::Fading,
-            NpcSkinTier::DiscipleHigh,
+            Realm::Spirit,
         );
 
         let elder_equipment = visual_equipment(&elder);
@@ -364,9 +368,9 @@ mod tests {
     }
 
     #[test]
-    fn high_realm_death_burst_only_emits_for_high_tier() {
-        let high = profile(None, None, NpcAgeBand::Adult, NpcSkinTier::RogueHigh);
-        let low = profile(None, None, NpcAgeBand::Adult, NpcSkinTier::RogueLow);
+    fn high_realm_death_burst_only_emits_for_high_realm_profile() {
+        let high = profile(None, None, NpcAgeBand::Adult, Realm::Spirit);
+        let low = profile(None, None, NpcAgeBand::Adult, Realm::Induce);
 
         let request = npc_death_qi_burst_request(DVec3::new(1.0, 2.0, 3.0), Some(&high))
             .expect("high realm NPC death should emit qi burst");
