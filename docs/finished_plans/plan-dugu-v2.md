@@ -1,4 +1,4 @@
-# Bong · plan-dugu-v2 · 骨架
+# Bong · plan-dugu-v2 · 完成
 
 毒蛊功法五招完整包：动画 / 特效 / 音效 / 伤害 / 真元消耗 / 反噬 / 暴露身份 / 客户端 UI 全流程。承接 `plan-dugu-v1` ✅ finished（PR #126 commit 44a6ff9b 归档，shoot_needle P0 已实装）—— v2 引入**脏真元物理**（ρ=0.05 几乎无异体排斥）+ **永久阈值分三档**（低三段仅 HP/qi / 固元短期 / 通灵+ 永久 qi_max 衰减）+ **自蕴**（自身经脉养成毒源）+ **暴露概率系统** + **阴诡色形貌异化**，五招完整规格（蚀针 / 自蕴 / 侵染 / 神识遮蔽 / 倒蚀），无境界 gate 只有威力门坎。**严守 worldview §五 + §六 正典**，不引入"蛊母 / 蛊虫 / 虫卵"等偏离虫子叙事 ——「蛊」在本 plan 内仅作汉字"诡毒"意，不出现具体虫子。
 
@@ -40,7 +40,7 @@
 
 ## §0 设计轴心
 
-- [ ] **脏真元物理（区别于普通真元）**：worldview §五:425 寄生虫机制 + §六:618 阴诡色物理化身。
+- [x] **脏真元物理（区别于普通真元）**：worldview §五:425 寄生虫机制 + §六:618 阴诡色物理化身。
   ```
   普通真元 ρ ∈ [0.15, 0.65]    异体排斥率（攻方真元被宿主免疫）
   脏真元 ρ = 0.05               几乎无异体排斥（伪装成宿主真元混入经脉）
@@ -56,7 +56,7 @@
     失败永久废经脉：解蛊药使用失败 → 受影响经脉 SEVERED
   ```
 
-- [ ] **永久阈值分三档（worldview §三:368 越级原则物理化身）**：
+- [x] **永久阈值分三档（worldview §三:368 越级原则物理化身）**：
   | 受害者境界 | 蚀针后果 | 物理依据 |
   |---|---|---|
   | 醒灵 / 引气 / 凝脉 | 仅即时 HP + qi 扣，无任何持续 | 低境界宿主真元免疫系统中和脏真元 |
@@ -65,7 +65,7 @@
 
   设计意图：**只有通灵以上的毒蛊师能造成永久标记**——低境毒蛊师只能放血追猎，是 worldview §三 越级原则的真物理化身。
 
-- [ ] **自蕴（自身经脉养成毒源）**：worldview §六:621「自身经脉慢性侵蚀，需持续养」物理化身。**不是养虫**，是**养自己**：
+- [x] **自蕴（自身经脉养成毒源）**：worldview §六:621「自身经脉慢性侵蚀，需持续养」物理化身。**不是养虫**，是**养自己**：
   ```
   服食毒草煎汤 + 自身真元淬炼 → 阴诡色累积
   阴诡色 % = 全部蛊毒招式威力乘数（×1.0 → ×3.0）
@@ -87,7 +87,7 @@
   
   代价：阴诡色不可洗（worldview §六:631 普通可洗，但毒蛊师自蕴产生的是**永久结构改变**）。形貌异化 ≥ 60% 触发 IdentityProfile 自动写入 `dugu_self_revealed`——你不主动出招也会被高境 NPC 识破
 
-- [ ] **暴露概率系统（区别于其他流派）**：worldview §五:530-535 毒蛊师暴露=全服追杀。每次主动招式（蚀针/侵染/倒蚀/伪示失败）触发暴露 roll：
+- [x] **暴露概率系统（区别于其他流派）**：worldview §五:530-535 毒蛊师暴露=全服追杀。每次主动招式（蚀针/侵染/倒蚀/伪示失败）触发暴露 roll：
   ```
   P(reveal) = base_rate × (1 - 神识遮蔽强度) × distance_factor × victim_realm_factor
 
@@ -98,18 +98,18 @@
   ```
   被识破 → emit `DuguRevealedEvent { caster, victim, location }` → plan-identity-v1 写入 LifeRecord，IdentityProfile.npc_reaction baseline -50（worldview §十一:962-970 毒蛊师社会默认）
 
-- [ ] **流派识别痕迹（毒蛊专属 EnvField 边界）**：worldview §五:537 流派由组合涌现的物理化身。三种形态：
+- [x] **流派识别痕迹（毒蛊专属 EnvField 边界）**：worldview §五:537 流派由组合涌现的物理化身。三种形态：
   - **脏真元残留**（受害者侧）：被蚀针中过的实体 spirit_quality 标记 `dugu_tainted = { caster_id, intensity, since_tick }`，高境玩家 inspect 可见，低境隐匿
   - **自蕴气息**（毒蛊师周身 5 格 EnvField）：阴诡色 ≥ 30% 后，自身周围常驻雾气，凡器在手抖动，植物枯萎加速 ×1.5
   - **倒蚀余响**（化虚倒蚀触发后受害者位置）：暗绿蛊云覆盖 30s，半径 10 格内 zone qi 状态被覆盖（其他玩家可视，是身份暴露的物理风险源）
   - **守恒**：脏真元最终散回受害者所在 zone qi 静态值（worldview §二 真元极易挥发末法分解），但过渡态对受害者经脉造成永久结构改变（这是毒蛊不同于涡流"99% 紊流自然耗散"的关键 —— 化学侵蚀不可逆）
 
-- [ ] **无境界 gate，只有威力门坎**（worldview §五:537）：5 招都允许任何境界 cast，三层物理自然惩罚：
+- [x] **无境界 gate，只有威力门坎**（worldview §五:537）：5 招都允许任何境界 cast，三层物理自然惩罚：
   - qi_current 不足 → server `Rejected{ QiInsufficient }`
   - 永久阈值未达（醒灵-凝脉无永久效果）→ HUD「蚀针擦皮」/「蛊毒入肉」表示触发但威力低
   - 倒蚀通灵以下 → 「指无应」（无已种入永久标记可引爆）
 
-- [ ] **化虚倒蚀触发绝壁劫**（plan-tribulation-v2）：化虚级 zone 量级倒蚀 → emit `JueBiTriggerEvent`（30s 延迟）→ 天地排异三相。化虚毒蛊师每次清算 = 引天道下来 = 极端孤注，跟涡心化虚一致格调
+- [x] **化虚倒蚀触发绝壁劫**（plan-tribulation-v2）：化虚级 zone 量级倒蚀 → emit `JueBiTriggerEvent`（30s 延迟）→ 天地排异三相。化虚毒蛊师每次清算 = 引天道下来 = 极端孤注，跟涡心化虚一致格调
 
 ---
 
@@ -117,11 +117,11 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | 决策门：5 招数值表锁定 + 永久阈值分三档对齐 + 自蕴时间曲线锚定 + 暴露概率公式 + §5 七决策门收口 + qi_physics 接入面定稿 + 与 plan-style-balance-v1 ρ/W 矩阵对齐 + EnvField 三种痕迹 design | 数值矩阵 + 物理公式落 plan §2 / qi_physics::env 痕迹 design 对齐 |
-| **P1** ⬜ | server `combat::dugu_v2::*` 5 招 logic + 脏真元物理 + 永久阈值分级 + 自蕴累积 + 暴露概率 + EnvField 痕迹写入 + qi_physics 算子调用 + ≥120 单测（每招 ≥15 测覆盖 happy/边界/暴露/永久阈值跨档/守恒断言）| `cargo test combat::dugu_v2` 全过 / 守恒断言（脏真元 99% 散回 zone）/ 永久阈值分档测试每档完整 / `grep -rcE '#\[test\]' server/src/combat/dugu_v2/` ≥ 120 |
-| **P2** ⬜ | client 4 动画（蚀针掷出 / 自蕴服毒 / 神识遮蔽姿态 / 倒蚀远指）+ 3 粒子（DUGU_DARK_GREEN_MIST / DUGU_TAINT_PULSE / DUGU_REVERSE_BURST）+ 4 HUD 组件（DuguTaintWarningHud / DuguTaintIndicator / RevealRiskHud / SelfCureProgressHud） | render_animation.py headless 验证通过 / WSLg 实跑 5 招视觉确认 / HUD 4 组件渲染无闪烁 |
-| **P3** ⬜ | 3 音效 recipe（dugu_needle_hiss / dugu_self_cure_drink / dugu_curse_cackle）+ agent 5 招 narration template + 暴露身份江湖传闻型叙事（plan-narrative-political-v1 联调）+ 受害者 qi_max 永久衰减心理叙事 + 自蕴形貌异化叙事 + 化虚倒蚀绝壁劫预兆 | narration-eval ✅ 5 招 + 暴露 + 永久衰减心理 + 化虚级清算预兆 全过古意检测 |
-| **P4** ⬜ | PVP telemetry 校准 / 缜密色 hook 改成阴诡色 hook（PracticeLog → QiColor 阴诡色累积演化）/ 坍缩渊负灵域内毒蛊行为（毒蛊师在坍缩渊内 不能 自蕴 因为环境真元极薄，需 plan-tsy-zone-v1 配合）/ 化虚绝壁劫触发链（plan-tribulation-v1）+ identity 暴露后社会追杀联调（plan-narrative-political-v1）| 7 流派 4×3 攻防对位毒蛊行通过 / 阴诡色长期累积演化测试 / 暴露后江湖传闻 narration 实测 |
+| **P0** ✅ 2026-05-10 | 决策门：5 招数值表锁定 + 永久阈值分三档对齐 + 自蕴时间曲线锚定 + 暴露概率公式 + §5 七决策门收口 + qi_physics 接入面定稿 + 与 plan-style-balance-v1 ρ/W 矩阵对齐 + EnvField 三种痕迹 design | 数值矩阵 + 物理公式落 plan §2 / qi_physics::env 痕迹 design 对齐 |
+| **P1** ✅ 2026-05-10 | server `combat::dugu_v2::*` 5 招 logic + 脏真元物理 + 永久阈值分级 + 自蕴累积 + 暴露概率 + EnvField 痕迹写入 + qi_physics 算子调用 + ≥120 单测（每招 ≥15 测覆盖 happy/边界/暴露/永久阈值跨档/守恒断言）| `cargo test combat::dugu_v2` 全过 / 守恒断言（脏真元 99% 散回 zone）/ 永久阈值分档测试每档完整 / `grep -rcE '#\[test\]' server/src/combat/dugu_v2/` ≥ 120 |
+| **P2** ✅ 2026-05-10 | client 4 动画（蚀针掷出 / 自蕴服毒 / 神识遮蔽姿态 / 倒蚀远指）+ 3 粒子（DUGU_DARK_GREEN_MIST / DUGU_TAINT_PULSE / DUGU_REVERSE_BURST）+ 4 HUD 组件（DuguTaintWarningHud / DuguTaintIndicator / RevealRiskHud / SelfCureProgressHud） | render_animation.py headless 验证通过 / WSLg 实跑 5 招视觉确认 / HUD 4 组件渲染无闪烁 |
+| **P3** ✅ 2026-05-10 | 3 音效 recipe（dugu_needle_hiss / dugu_self_cure_drink / dugu_curse_cackle）+ agent 5 招 narration template + 暴露身份江湖传闻型叙事（plan-narrative-political-v1 联调）+ 受害者 qi_max 永久衰减心理叙事 + 自蕴形貌异化叙事 + 化虚倒蚀绝壁劫预兆 | narration-eval ✅ 5 招 + 暴露 + 永久衰减心理 + 化虚级清算预兆 全过古意检测 |
+| **P4** ✅ 2026-05-10 | PVP telemetry 校准 / 缜密色 hook 改成阴诡色 hook（PracticeLog → QiColor 阴诡色累积演化）/ 坍缩渊负灵域内毒蛊行为（毒蛊师在坍缩渊内 不能 自蕴 因为环境真元极薄，需 plan-tsy-zone-v1 配合）/ 化虚绝壁劫触发链（plan-tribulation-v1）+ identity 暴露后社会追杀联调（plan-narrative-political-v1）| 7 流派 4×3 攻防对位毒蛊行通过 / 阴诡色长期累积演化测试 / 暴露后江湖传闻 narration 实测 |
 
 **P0 决策门**：完成前 §5 七问题必须有答案，否则五招实装方向分裂。
 
