@@ -1011,11 +1011,20 @@ public final class ClientRequestProtocol {
 
     /** plan-craft-v1 §2 — 玩家点 [开始手搓]。recipe_id 为 server `RecipeId.as_str()`。 */
     public static String encodeCraftStart(String recipeId) {
+        return encodeCraftStart(recipeId, 1);
+    }
+
+    /** plan-craft-ux-v1 P2 — 批量制作数量。server 端低版本会按 1 处理。 */
+    public static String encodeCraftStart(String recipeId, int quantity) {
         if (recipeId == null || recipeId.isEmpty()) {
             throw new IllegalArgumentException("recipeId must not be empty");
         }
+        if (quantity < 1) {
+            throw new IllegalArgumentException("quantity must be >= 1");
+        }
         JsonObject obj = envelope("craft_start");
         obj.addProperty("recipe_id", recipeId);
+        obj.addProperty("quantity", quantity);
         return obj.toString();
     }
 

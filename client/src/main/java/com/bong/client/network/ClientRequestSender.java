@@ -401,6 +401,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeCraftStart(recipeId));
     }
 
+    /** plan-craft-ux-v1 P2 — 带数量的起手请求。 */
+    public static void sendCraftStart(String recipeId, int quantity) {
+        dispatch(ClientRequestProtocol.encodeCraftStart(recipeId, quantity));
+    }
+
     /** plan-craft-v1 §5 决策门 #3 — 取消进行中的 craft session（70% 材料返还，qi 不退）。 */
     public static void sendCraftCancel() {
         dispatch(ClientRequestProtocol.encodeCraftCancel());

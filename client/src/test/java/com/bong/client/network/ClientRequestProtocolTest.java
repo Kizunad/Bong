@@ -425,6 +425,16 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesCraftStartQuantity() {
+        assertEquals(
+            "{\"type\":\"craft_start\",\"v\":1,\"recipe_id\":\"craft.example.herb_knife.iron\",\"quantity\":3}",
+            ClientRequestProtocol.encodeCraftStart("craft.example.herb_knife.iron", 3)
+        );
+        assertThrows(IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeCraftStart("craft.example.herb_knife.iron", 0));
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(

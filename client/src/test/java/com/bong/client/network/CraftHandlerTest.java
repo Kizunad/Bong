@@ -93,7 +93,7 @@ class CraftHandlerTest {
         String json = """
             {"v":1,"type":"craft_session_state","player_id":"offline:A","active":true,
              "recipe_id":"craft.example.eclipse_needle.iron","elapsed_ticks":600,
-             "total_ticks":3600,"ts":2}
+             "total_ticks":3600,"completed_count":1,"total_count":3,"ts":2}
             """;
         ServerDataDispatch dispatch = new CraftSessionStateHandler().handle(envelope(json));
         assertTrue(dispatch.handled());
@@ -102,6 +102,8 @@ class CraftHandlerTest {
         assertEquals("craft.example.eclipse_needle.iron", view.recipeId().orElseThrow());
         assertEquals(600, view.elapsedTicks());
         assertEquals(3600, view.totalTicks());
+        assertEquals(1, view.completedCount());
+        assertEquals(3, view.totalCount());
     }
 
     @Test
