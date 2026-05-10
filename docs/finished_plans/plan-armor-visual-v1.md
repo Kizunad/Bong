@@ -165,19 +165,20 @@
   - P0 server：`server/src/armor/mundane.rs` / `server/src/armor/mod.rs` 注册 6 材质 × 4 部位凡物盔甲；`server/assets/items/armor.toml` 提供原料与 24 件 armor item；`server/src/combat/armor.rs` / `server/src/combat/resolve.rs` 接入 ArmorProfile 与破碎音效；`server/src/inventory/mod.rs` 限制 armor 只能进匹配装备槽且破损不可穿。
   - P0 craft/schema：`server/src/craft/mod.rs` / `server/src/craft/recipe.rs` 注册 `ArmorCraft`；`server/src/schema/craft.rs` 与 `agent/packages/schema/src/craft.ts` 同步 craft category；`client/src/main/java/com/bong/client/craft/CraftCategory.java` 同步 client enum。
   - P1/P2 client：`client/src/main/java/com/bong/client/armor/ArmorTintRegistry.java`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityArmor.java` 将 Bong armor 映射为染色 leather armor；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_*.png` 提供 6 张图标；`ItemIconRegistry` / `ItemTooltipPanel` 显示 armor icon、材质、防御、损坏与修复提示。
-  - P3/P4 反馈与测试：`ArmorBreakParticles`、`InventoryEventHandler`、`VisualEffectState/Profile/Planner`、`GridSlotComponent` 接入装备 flash、低耐久红闪、toast、破碎粒子与 `server/assets/audio/recipes/armor_break.json`；client/server/schema 测试覆盖 tint、装备规则、tooltip、icon、craft、视觉事件、音频 recipe 与 armor 注册。
+  - P3/P4 反馈与测试：`ArmorBreakParticles`、`InventoryEventHandler`、`VisualEffectState/Profile/Planner`、`GridSlotComponent` 接入装备 flash、低耐久红闪、toast、破碎粒子与 `server/assets/audio/recipes/armor_break.json`（`PLAYERS` 音频分类）；client/server/schema 测试覆盖 tint、装备规则、tooltip、icon、craft、视觉事件、音频 recipe 与 armor 注册。
 - **关键 commit**：
   - `cf358c41e` · 2026-05-11 · `plan-armor-visual-v1: 注册凡物盔甲与手搓配方`
   - `4f8a4528c` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
+  - `8c76d463e` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐盔甲破碎音频分类`
 - **测试结果**：
-  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 3984 passed。
+  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 3985 passed。
   - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）：通过，BUILD SUCCESSFUL。
   - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（336 files）。
   - `npm run build`（agent）：通过。
   - `npm test`（agent/packages/schema）：通过，16 files / 355 tests。
   - `git diff --check`：通过。
 - **跨仓库核验**：
-  - server：`register_mundane_armors` / `register_mundane_armor_recipes` / `CraftCategory::ArmorCraft` / `armor_break`。
+  - server：`register_mundane_armors` / `register_mundane_armor_recipes` / `CraftCategory::ArmorCraft` / `AudioSoundCategory::Players` / `armor_break`。
   - agent/schema：`CraftCategorySchema` 包含 `ArmorCraft`，generated artifacts check 无漂移。
   - client：`ArmorTintRegistry` / `MixinPlayerEntityArmor` / `ArmorBreakParticles` / `InventoryEquipRules` / `VisualEffectProfile.ARMOR_*`。
 - **遗留 / 后续**：
