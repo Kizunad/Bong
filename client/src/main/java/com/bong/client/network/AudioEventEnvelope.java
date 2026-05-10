@@ -23,7 +23,7 @@ public final class AudioEventEnvelope {
     public static final int EXPECTED_VERSION = 1;
     public static final int MAX_PAYLOAD_BYTES = 8192;
     public static final float AUDIO_VOLUME_MAX = 4.0f;
-    public static final float AUDIO_PITCH_MIN = 0.5f;
+    public static final float AUDIO_PITCH_MIN = 0.1f;
     public static final float AUDIO_PITCH_MAX = 2.0f;
     public static final int AUDIO_PRIORITY_MAX = 100;
 
@@ -115,7 +115,7 @@ public final class AudioEventEnvelope {
         return AudioEventParseResult.success(new AudioEventPayload.StopSoundRecipe(instanceId, fadeOutTicks));
     }
 
-    private static JsonObject parseRoot(String jsonPayload, int payloadSizeBytes) {
+    static JsonObject parseRoot(String jsonPayload, int payloadSizeBytes) {
         if (jsonPayload == null || payloadSizeBytes < 0 || payloadSizeBytes > MAX_PAYLOAD_BYTES) {
             return null;
         }
@@ -127,7 +127,7 @@ public final class AudioEventEnvelope {
         }
     }
 
-    private static AudioRecipe parseRecipe(JsonElement element) {
+    static AudioRecipe parseRecipe(JsonElement element) {
         if (element == null || !element.isJsonObject()) {
             return null;
         }
@@ -207,7 +207,7 @@ public final class AudioEventEnvelope {
         return Optional.of(new AudioLoopConfig(intervalTicks, whileFlag));
     }
 
-    private static Optional<AudioPosition> readOptionalPos(JsonObject root, String fieldName) {
+    static Optional<AudioPosition> readOptionalPos(JsonObject root, String fieldName) {
         JsonElement element = root.get(fieldName);
         if (element == null || element.isJsonNull()) {
             return Optional.empty();
@@ -255,7 +255,7 @@ public final class AudioEventEnvelope {
         return raw != null && RECIPE_ID_PATTERN.matcher(raw).matches();
     }
 
-    private static Integer readRequiredInteger(JsonObject root, String fieldName) {
+    static Integer readRequiredInteger(JsonObject root, String fieldName) {
         return readIntegerElement(root.get(fieldName));
     }
 
@@ -298,7 +298,7 @@ public final class AudioEventEnvelope {
         }
     }
 
-    private static Float readRequiredFloat(JsonObject root, String fieldName) {
+    static Float readRequiredFloat(JsonObject root, String fieldName) {
         JsonElement element = root.get(fieldName);
         if (element == null || !element.isJsonPrimitive()) {
             return null;
@@ -310,7 +310,7 @@ public final class AudioEventEnvelope {
         return primitive.getAsFloat();
     }
 
-    private static String readRequiredString(JsonObject root, String fieldName) {
+    static String readRequiredString(JsonObject root, String fieldName) {
         JsonElement element = root.get(fieldName);
         if (element == null || !element.isJsonPrimitive()) {
             return null;

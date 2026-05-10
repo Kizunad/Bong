@@ -7,6 +7,7 @@ import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
 import com.bong.client.network.LocustSwarmWarningHandler;
 import com.bong.client.network.ServerDataDispatch;
@@ -43,6 +44,8 @@ public class BongNetworkHandler {
     private static final VfxEventRouter VFX_ROUTER =
         new VfxEventRouter(new ClientAnimationBridge(), new BongVfxParticleBridge());
     private static final AudioEventRouter AUDIO_ROUTER = new AudioEventRouter(SoundRecipePlayer.instance());
+    private static final AmbientZoneHandler AMBIENT_ZONE_HANDLER =
+        new AmbientZoneHandler(com.bong.client.audio.MusicStateMachine.instance());
     private static final LocustSwarmWarningHandler LOCUST_SWARM_WARNING_HANDLER = new LocustSwarmWarningHandler();
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
     private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
@@ -61,6 +64,7 @@ public class BongNetworkHandler {
         registerVfxEventChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
+        registerAmbientZoneChannel();
         registerZoneEnvironmentChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
@@ -70,6 +74,7 @@ public class BongNetworkHandler {
                 RealmCollapseHudStateStore.clearOnDisconnect();
                 NpcMetadataStore.clearAll();
                 ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
+                com.bong.client.audio.MusicStateMachine.instance().clear();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -225,6 +230,26 @@ public class BongNetworkHandler {
                     return;
                 }
                 BongClient.LOGGER.info("Processed bong:audio/stop payload: {}", result.logMessage());
+            });
+        });
+    }
+
+    private static void registerAmbientZoneChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "audio/ambient_zone"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                AmbientZoneHandler.RouteResult result = AMBIENT_ZONE_HANDLER.route(jsonPayload, readableBytes);
+                if (result.isParseError()) {
+                    BongClient.LOGGER.error("Failed to parse bong:audio/ambient_zone payload: {}", result.logMessage());
+                    return;
+                }
+                if (result.isHandled()) {
+                    BongClient.LOGGER.info("Processed bong:audio/ambient_zone payload: {}", result.logMessage());
+                }
             });
         });
     }
