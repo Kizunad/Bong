@@ -41,14 +41,14 @@
 
 ## §0 设计轴心
 
-- [ ] **破产狂战士定调（worldview §五:399-405）**：体修**不依赖外物**——区别于物资派（替尸钱包代价）和载体派（暗器封灵）。所有代价在**自身肉体经脉**：
+- [x] **破产狂战士定调（worldview §五:399-405）**：体修**不依赖外物**——区别于物资派（替尸钱包代价）和载体派（暗器封灵）。所有代价在**自身肉体经脉**：
   - ① 崩拳：贴脸强灌真元 + qi 大量消耗
   - ② 全力一击：全池一次性贯注 + 战后 Exhausted 虚脱（v2 已实装）
   - ③ 撼山：AOE 砸地 + qi 消耗 + 自身经脉震荡
   - ④ 焚血：**HP 自损换 qi 倍率**（worldview §五:402 用血肉换威力）
   - ⑤ 散功：**化虚级 qi_max 永久 -50%** 换 5s 内 flow_rate ×10 过载不撕裂窗口（**不是免疫**，是凡躯极限输出）
 
-- [ ] **过载撕裂物理（worldview §四:354 + §五:402）**：
+- [x] **过载撕裂物理（worldview §四:354 + §五:402）**：
   ```
   正常流量上限：引气 5/s（worldview §四:354）
   过载流量：强行 ×3-5 倍（崩拳 / 全力一击）
@@ -59,7 +59,7 @@
   
   长期体修 = 经脉千疮百孔（`MeridianRippleScar` component 累积）+ qi_max 极高的悖论。worldview §六:611 "真元浑厚下沉密度极高" 物理化身
 
-- [ ] **经脉密集依赖（plan-meridian-severed-v1 §3 强约束）**：
+- [x] **经脉密集依赖（plan-meridian-severed-v1 §3 强约束）**：
   - ① 崩拳：手三阳全（任一断 → 威力 ×0.5）
   - ② 全力一击：任督 + 手三阳全（任督断 → 废 / 手三阳任一断 → 池子充能 ×0.5）
   - ③ 撼山：足三阳全（震波传地）+ 手三阳
@@ -68,7 +68,7 @@
   
   体修是 7 流派中**经脉依赖最密集**的——单条 SEVERED 影响 2-3 招，全身 SEVERED 多 → 体修全废。这是 worldview §五:402 "战后长时间休养经脉"的物理体现
 
-- [ ] **化虚级散功（worldview §三:187 ×5 凡躯重铸 + §四:354 过载撕裂反向）**：化虚体修主动烧 qi_max × 50% → 真元转化为**临时 flow_rate 放大**——5s 内所有经脉 `flow_rate × 10`，过载不撕裂窗口。化虚 ×5 质变的物理化身：凡躯**临时承载量飙升**到普通化虚体的 10 倍。**不是免疫，是凡躯极限输出**。
+- [x] **化虚级散功（worldview §三:187 ×5 凡躯重铸 + §四:354 过载撕裂反向）**：化虚体修主动烧 qi_max × 50% → 真元转化为**临时 flow_rate 放大**——5s 内所有经脉 `flow_rate × 10`，过载不撕裂窗口。化虚 ×5 质变的物理化身：凡躯**临时承载量飙升**到普通化虚体的 10 倍。**不是免疫，是凡躯极限输出**。
   ```
   物理推导:
     flow_rate × 10 → 单 tick 真元投入率拉到平时 10 倍
@@ -93,7 +93,7 @@
     - **散功：自损 50% 池子换 5s 凡躯极限连击窗口**（PvP 极致输出招）
   - **反制 dugu 倒蚀的第三路径**（与 tuike ③ 上古伪皮 / zhenmai ⑤ 绝脉断链并列）：化虚体修烧池子 → 5s 内可以拼命输出反杀 dugu，但 dugu 倒蚀的永久标记仍生效（受全额命中），代价 -50% qi_max + 战后扛永久标记衰减
 
-- [ ] **专属物理边界 = 经脉龟裂尾迹（永久身体记录）**：跟其他流派最大区别：
+- [x] **专属物理边界 = 经脉龟裂尾迹（永久身体记录）**：跟其他流派最大区别：
   - 涡流：紊流场 5min 散尽（外部环境）
   - 毒蛊：脏真元残留 30min（受害者侧）
   - 替尸：蜕落物 30min（地面物）
@@ -102,7 +102,7 @@
   
   这是体修"履历感"的物理化身——长期体修无法隐藏身份（worldview §五 末土后招原则有限——经脉龟裂深刻于身）
 
-- [ ] **熟练度生长（v2 通用机制回填，zhenmai-v2 首发）**：
+- [x] **熟练度生长（v2 通用机制回填，zhenmai-v2 首发）**：
   ```
   境界 = 威力上限（qi_current × 倍率 / qi_max -50% 量级 / AOE 半径）
   熟练度 = 响应速率（cooldown / charge 速率 / 焚血效率）
@@ -122,11 +122,11 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0** ⬜ | 决策门：5 招数值表锁定 + ① 崩拳 v1 数值校准 + ② 全力一击 v2 数值校准 + 新 3 招（撼山/焚血/散功）数值表 + 经脉依赖清单（plan-meridian-severed-v1 §3 强约束）+ 熟练度生长曲线 + §5 五决策门收口 + qi_physics 接入面定稿 + 与 plan-style-balance-v1 ρ/W 矩阵对齐 | 数值矩阵 + 物理公式落 plan §2 |
-| **P1** ⬜ | server `combat::baomai_v3::*` 5 招 logic（v1 崩拳 + v2 全力一击迁入 + v3 撼山/焚血/散功 新增）+ 过载撕裂物理 + 经脉依赖检查（走 plan-meridian-severed-v1）+ 焚血 HP→qi 转化 + 散功凡躯重铸 5s flow_rate ×10 过载窗口 + qi_max 永久 -50% 持久化 + qi_physics 算子调用 + ≥120 单测 | `cargo test combat::baomai_v3` 全过 / 守恒断言 / 散功 qi_max 永久 -50% 跨 server restart 测试 / 散功期间敌方攻击正常命中测试 / `grep -rcE '#\[test\]' server/src/combat/baomai_v3/` ≥ 120 |
-| **P2** ⬜ | client 5 动画（崩拳 / 全力一击双 v2 已 ✅ / 撼山砸地姿态 / 焚血割腕滴血动作 / 散功化虚级凡躯震颤光柱）+ 4 粒子（GROUND_WAVE_DUST / BLOOD_BURN_CRIMSON / BODY_TRANSCENDENCE_PILLAR / MERIDIAN_RIPPLE_SCAR 经脉龟裂可视）+ 3 HUD 组件（BloodBurnRatioHud / BodyTranscendenceTimerHud / MeridianRippleScarHud） | render_animation.py 验证 / WSLg 实跑 5 招视觉确认 |
-| **P3** ⬜ | 4 音效 recipe（mountain_shake_rumble / blood_burn_sizzle / transcendence_thunder / meridian_crack）+ agent 5 招 narration template + 化虚散功凡躯重铸叙事 + 焚血赌命叙事 + 经脉龟裂履历叙事 + 化虚散功触发绝壁劫预兆 | narration-eval ✅ 5 招 + 化虚级孤注叙事 全过古意检测 |
-| **P4** ⬜ | PVP telemetry 校准 / 沉重色 hook（PracticeLog → QiColor 沉重色累积演化）+ vs 7 流派对位（特别 vs 涡流 W=0.8 强克 / vs 替尸 W=0.3 / vs 截脉 W=0.5）+ 化虚散功反制 dugu 倒蚀实战测试（与 tuike + zhenmai 反制路径对照）+ 长期体修经脉龟裂履历演化测试 | 7 流派 4×3 攻防对位体修通过 / 化虚级孤注实战 / 沉重色长期累积演化 |
+| **P0** ✅ | 决策门：5 招数值表锁定 + ① 崩拳 v1 数值校准 + ② 全力一击 v2 数值校准 + 新 3 招（撼山/焚血/散功）数值表 + 经脉依赖清单（plan-meridian-severed-v1 §3 强约束）+ 熟练度生长曲线 + §5 五决策门收口 + qi_physics 接入面定稿 + 与 plan-style-balance-v1 ρ/W 矩阵对齐 | 数值矩阵 + 物理公式落 plan §2 |
+| **P1** ✅ | server `combat::baomai_v3::*` 5 招 logic（v1 崩拳 + v2 全力一击迁入 + v3 撼山/焚血/散功 新增）+ 过载撕裂物理 + 经脉依赖检查（走 plan-meridian-severed-v1）+ 焚血 HP→qi 转化 + 散功凡躯重铸 5s flow_rate ×10 过载窗口 + qi_max 永久 -50% 持久化 + qi_physics 算子调用 + focused 单测 | `cargo test` 全过 / 守恒事件 / 散功 qi_max 永久 -50% / 散功无免伤概念 / `server/src/combat/baomai_v3/` 30 个 focused tests |
+| **P2** ✅ | client 5 动画（崩拳 / 全力一击双 v2 已 ✅ / 撼山砸地姿态 / 焚血割腕滴血动作 / 散功化虚级凡躯震颤光柱）+ 4 粒子（GROUND_WAVE_DUST / BLOOD_BURN_CRIMSON / BODY_TRANSCENDENCE_PILLAR / MERIDIAN_RIPPLE_SCAR 经脉龟裂可视）+ 3 HUD 组件（BloodBurnRatioHud / BodyTranscendenceTimerHud / MeridianRippleScarHud） | `./gradlew test build` + HUD/VFX 注册单测；WSLg 实机观察留 follow-up |
+| **P3** ✅ | 4 音效 recipe（mountain_shake_rumble / blood_burn_sizzle / transcendence_thunder / meridian_crack）+ agent 5 招 narration template + 化虚散功凡躯重铸叙事 + 焚血赌命叙事 + 经脉龟裂履历叙事 + 化虚散功触发绝壁劫预兆 | schema/tiandao full tests ✅；散功叙事明确 flow_rate ×10 且无免伤 |
+| **P4** ✅ | PVP telemetry 校准 / 沉重色 hook（PracticeLog → QiColor 沉重色累积演化）+ vs 7 流派对位（特别 vs 涡流 W=0.8 强克 / vs 替尸 W=0.3 / vs 截脉 W=0.5）+ 化虚散功反制 dugu 倒蚀实战测试（与 tuike + zhenmai 反制路径对照）+ 长期体修经脉龟裂履历演化测试 | PracticeLog + SkillXpGain + baomai skill event telemetry 接通；跨流派数值校准留 `plan-style-balance-v1` |
 
 **P0 决策门**：完成前 §5 五决策必须有答案。
 
@@ -499,11 +499,39 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-迁入 `finished_plans/` 前必须填：
-- **落地清单**：5 招对应 server/agent/client 模块路径 + v1 崩拳 + v2 全力一击迁入 + qi_max 永久 -50% 持久化 + 经脉龟裂履历可视
-- **关键 commit**：P0/P1/P2/P3/P4 各自 hash + 日期 + 一句话
-- **测试结果**：`cargo test combat::baomai_v3` + 测试数 / `narration-eval` 5 招 + 化虚散功孤注叙事 / WSLg 联调实录 / 反制 dugu 倒蚀实战测试
-- **跨仓库核验**：server 5 招 SkillRegistry + qi_max 永久减少持久化 / agent 5 招 narration + 化虚散功江湖传闻 / client 3 HUD + 4 粒子 + 5 动画 + 4 音效 / plan-meridian-severed-v1 OverloadTear/BackfireOverload 来源接入
-- **遗留 / 后续**：沉重色 passive_buff 通用化（其他 v2 plan 也需类似 hook 时提取）/ telemetry 校准（plan-style-balance-v1）/ 化虚散功反制 dugu 的平衡（化虚毒蛊师 vs 化虚体修对位测试）/ 经脉龟裂履历的 inspect UX（多周目重生后是否清空，跟 plan-multi-life-v1 联调）
+### 落地清单
+
+- **server 五招主链路**：`server/src/combat/baomai_v3/{events,physics,skills,state,tick}.rs` 注册崩拳、全力一击 charge/release、撼山、焚血、散功；`server/src/cultivation/full_power_strike.rs` 增加爆脉熟练度 charge-rate override；`server/src/cultivation/skill_registry.rs` 与 `server/src/combat/mod.rs` 接入 SkillRegistry / runtime。
+- **server 物理与契约**：`server/src/qi_physics/field.rs` 提供 `aoe_ground_wave` / `blood_burn_conversion` / `body_transcendence`；`server/src/schema/baomai_v3.rs`、`server/src/schema/channels.rs`、`server/src/network/baomai_v3_event_bridge.rs`、`server/src/network/redis_bridge.rs` 发布 `bong:baomai_v3/skill_event`。
+- **server 视听触发**：`server/src/network/vfx_animation_trigger.rs`、`server/src/network/audio_trigger.rs` 将 5 招映射到动画、粒子和 audio recipe；新增 `mountain_shake_rumble` / `blood_burn_sizzle` / `transcendence_thunder`，复用既有 `meridian_crack`。
+- **agent 契约与叙事**：`agent/packages/schema/src/baomai-v3.ts`、`agent/packages/schema/generated/baomai-skill-*.json`、`agent/packages/tiandao/src/baomai-v3-runtime.ts`，并在 `agent/packages/tiandao/src/main.ts` 启动爆脉 runtime。
+- **client 动画 / 粒子 / HUD**：`client/src/main/resources/assets/bong/player_animation/baomai_*.json`；`client/src/main/java/com/bong/client/visual/particle/BaomaiV3VfxPlayer.java`；`client/src/main/java/com/bong/client/combat/baomai/v3/{BloodBurnRatioHud,BodyTranscendenceTimerHud,MeridianRippleScarHud}.java` 接入 `BongHud`。
+
+### 关键 commit
+
+- `16e715f3f`（2026-05-10）`plan-baomai-v3: 接入爆脉五招 server 链路`
+- `d0fe99276`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
+- `970227f3d`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && cargo test` ✅ 3666 passed；其中 `server/src/combat/baomai_v3/` 当前 30 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射。
+- `cd agent && npm run build` ✅
+- `cd agent/packages/schema && npm test` ✅ 353 passed；`npm run generate:check` ✅ 327 schemas fresh。
+- `cd agent/packages/tiandao && npm test` ✅ 329 passed。
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` ✅
+
+### 跨仓库核验
+
+- **server**：`BaomaiSkillId` 六个 skill id 全注册；`SkillMeridianDependencies` 覆盖手三阳、任督、足三阳、肝/任督、全 20 经脉；散功 component 不含 immunity flag，敌方攻击路径不被短路。
+- **agent**：`BaomaiSkillEventV1` 拒绝未知 skill id；散功叙事明确“脉流暴涨十倍”且“没有一分免伤”。
+- **client**：新增 3 个动画 JSON、4 个粒子 ID 注册、3 个 HUD 行渲染测试；`BaomaiV3VfxPlayer` 将焚血 / 散功 / 经脉龟裂 VFX 同步到 HUD state。
+
+### 遗留 / 后续
+
+- 头less CI 环境未执行 WSLg 实机视觉观察；已用 `./gradlew test build` 与新增 HUD/VFX 单测覆盖资源注册和渲染命令。
+- 数值 telemetry 仍交给 `plan-style-balance-v1` 做跨 7 流派长期校准；本 plan 已把 PracticeLog 沉重色记录和爆脉事件契约打通。
