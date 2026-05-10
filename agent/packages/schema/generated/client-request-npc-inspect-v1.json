@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "npc_entity_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "npc_inspect_request",
+      "type": "string"
+    },
+    "npc_entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

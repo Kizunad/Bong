@@ -13,6 +13,8 @@ import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.network.VfxEventRouter;
+import com.bong.client.npc.NpcMetadataHandler;
+import com.bong.client.npc.NpcMetadataStore;
 import com.bong.client.visual.particle.BongVfxParticleBridge;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
@@ -52,6 +54,7 @@ public class BongNetworkHandler {
 
     public static void register() {
         registerServerDataChannel();
+        registerNpcMetadataChannel();
         registerLocustSwarmWarningChannel();
         registerVfxEventChannel();
         registerAudioPlayChannel();
@@ -61,8 +64,27 @@ public class BongNetworkHandler {
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
         ClientPlayConnectionEvents.DISCONNECT.register(
-            (handler, client) -> client.execute(RealmCollapseHudStateStore::clearOnDisconnect)
+            (handler, client) -> client.execute(() -> {
+                RealmCollapseHudStateStore.clearOnDisconnect();
+                NpcMetadataStore.clearAll();
+            })
         );
+    }
+
+    private static void registerNpcMetadataChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(NpcMetadataHandler.CHANNEL_NAMESPACE, NpcMetadataHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                boolean handled = NpcMetadataHandler.handle(jsonPayload, readableBytes);
+                if (!handled) {
+                    BongClient.LOGGER.warn("Ignoring bong:npc_metadata payload");
+                }
+            });
+        });
     }
 
     private static void registerServerDataChannel() {

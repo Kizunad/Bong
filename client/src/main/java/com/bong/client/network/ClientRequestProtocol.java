@@ -689,6 +689,51 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeNpcInspectRequest(int npcEntityId) {
+        if (npcEntityId < 0) {
+            throw new IllegalArgumentException("npcEntityId must be >= 0, got " + npcEntityId);
+        }
+        JsonObject obj = envelope("npc_inspect_request");
+        obj.addProperty("npc_entity_id", npcEntityId);
+        return obj.toString();
+    }
+
+    public static String encodeNpcDialogueChoice(int npcEntityId, String optionId) {
+        if (npcEntityId < 0) {
+            throw new IllegalArgumentException("npcEntityId must be >= 0, got " + npcEntityId);
+        }
+        if (optionId == null || optionId.isBlank()) {
+            throw new IllegalArgumentException("optionId must not be blank");
+        }
+        JsonObject obj = envelope("npc_dialogue_choice");
+        obj.addProperty("npc_entity_id", npcEntityId);
+        obj.addProperty("option_id", optionId.trim());
+        return obj.toString();
+    }
+
+    public static String encodeNpcTradeRequest(int npcEntityId, List<Long> offeredItems, String requestedItemId) {
+        if (npcEntityId < 0) {
+            throw new IllegalArgumentException("npcEntityId must be >= 0, got " + npcEntityId);
+        }
+        if (requestedItemId == null || requestedItemId.isBlank()) {
+            throw new IllegalArgumentException("requestedItemId must not be blank");
+        }
+        JsonObject obj = envelope("npc_trade_request");
+        obj.addProperty("npc_entity_id", npcEntityId);
+        JsonArray offered = new JsonArray();
+        if (offeredItems != null) {
+            for (Long item : offeredItems) {
+                if (item == null || item < 0) {
+                    throw new IllegalArgumentException("offeredItems must contain only non-negative ids");
+                }
+                offered.add(item.longValue());
+            }
+        }
+        obj.add("offered_items", offered);
+        obj.addProperty("requested_item_id", requestedItemId.trim());
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);

@@ -140,6 +140,35 @@ pub enum CultivatorPlayerReaction {
     StealPlot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NpcTradeRejectReason {
+    HostileReputation,
+}
+
+pub fn trade_price_multiplier_for_reputation(reputation_to_player: i32) -> Option<f64> {
+    if reputation_to_player < -30 {
+        None
+    } else if reputation_to_player > 50 {
+        Some(0.8)
+    } else {
+        Some(1.0)
+    }
+}
+
+pub fn should_attack_for_reputation(reputation_to_player: i32) -> bool {
+    reputation_to_player < -70
+}
+
+pub fn trade_price_for_reputation(
+    base_price_bone_coin: u64,
+    reputation_to_player: i32,
+) -> Result<u64, NpcTradeRejectReason> {
+    let Some(multiplier) = trade_price_multiplier_for_reputation(reputation_to_player) else {
+        return Err(NpcTradeRejectReason::HostileReputation);
+    };
+    Ok(((base_price_bone_coin as f64) * multiplier).ceil().max(1.0) as u64)
+}
+
 pub fn choose_player_reaction(
     temperament: FarmingTemperament,
     player_realm: Realm,
@@ -396,6 +425,23 @@ mod tests {
         let memory = app.world().resource::<ScatteredCultivatorSocialMemory>();
         assert!(!memory.linger_started_at.contains_key(&(cultivator, player)));
         assert!(!memory.intrusion_sent_at.contains_key(&(cultivator, player)));
+    }
+
+    #[test]
+    fn trade_reputation_pricing() {
+        assert_eq!(trade_price_for_reputation(100, 51), Ok(80));
+        assert_eq!(trade_price_for_reputation(100, 0), Ok(100));
+        assert_eq!(trade_price_for_reputation(1, 90), Ok(1));
+    }
+
+    #[test]
+    fn trade_reject_low_reputation() {
+        assert_eq!(
+            trade_price_for_reputation(100, -31),
+            Err(NpcTradeRejectReason::HostileReputation)
+        );
+        assert!(should_attack_for_reputation(-71));
+        assert!(!should_attack_for_reputation(-70));
     }
 
     trait ScatteredCultivatorTestExt {

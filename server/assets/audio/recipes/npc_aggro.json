@@ -1,0 +1,9 @@
+{
+  "id": "npc_aggro",
+  "layers": [
+    { "sound": "minecraft:entity.pillager.celebrate", "volume": 0.6, "pitch": 0.5, "delay_ticks": 0 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

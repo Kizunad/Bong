@@ -196,6 +196,18 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeTradeOfferResponse(offerId, accepted, requestedInstanceId));
     }
 
+    public static void sendNpcInspectRequest(int npcEntityId) {
+        dispatch(ClientRequestProtocol.encodeNpcInspectRequest(npcEntityId));
+    }
+
+    public static void sendNpcDialogueChoice(int npcEntityId, String optionId) {
+        dispatch(ClientRequestProtocol.encodeNpcDialogueChoice(npcEntityId, optionId));
+    }
+
+    public static void sendNpcTradeRequest(int npcEntityId, List<Long> offeredItems, String requestedItemId) {
+        dispatch(ClientRequestProtocol.encodeNpcTradeRequest(npcEntityId, offeredItems, requestedItemId));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,

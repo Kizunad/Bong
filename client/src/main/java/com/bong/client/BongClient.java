@@ -27,6 +27,7 @@ import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.npc.NpcNametagRenderer;
 import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
 import com.bong.client.social.SparringInviteScreenBootstrap;
@@ -54,6 +55,7 @@ public class BongClient implements ClientModInitializer {
         LOGGER.info("Initializing Bong Client...");
 
         BongNetworkHandler.register();
+        NpcNametagRenderer.register();
         HudRenderCallback.EVENT.register(BongHud::render);
         InteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
