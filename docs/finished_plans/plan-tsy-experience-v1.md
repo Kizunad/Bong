@@ -110,7 +110,7 @@
 - P0：client 注册 `tsy_portal_idle` / `tsy_portal_deep` / `tsy_portal_tear` / `tsy_collapse_burst`，server 在 portal、collapse、extract、race-out 路径 emit VFX/audio，新增 4 个 TSY audio recipe。
 - P1：接入 `TsyPressureOverlay`、FOV offset、Fuya aura VFX，以及上古遗物 tooltip/grid/drop glow 与 `charges` 显示。
 - P2：容器搜刮 start/complete VFX/audio、loot pop 方向、`ZoneStatusV1::race_out` schema 与 tiandao context/insight 文案、`tsy_gaoshou_01_{shallow,mid,deep}` POI 契约补全。
-- 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（3612 passed）、`./gradlew test build`（JDK 17）、`npm run build`、`agent/packages/tiandao npm test`、`agent/packages/schema npm test`、`npm run generate:check`、`git diff --check`。
+- 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（3633 passed）、`./gradlew test build`（JDK 17）、`npm run build`、`agent/packages/tiandao npm test`、`agent/packages/schema npm test`、`agent/packages/schema npm run generate:check`、`git diff --check`。
 
 ## 前置依赖
 
