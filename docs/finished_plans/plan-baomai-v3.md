@@ -521,6 +521,7 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 - `3d483417f`（2026-05-10）`Merge remote-tracking branch 'origin/main' into auto/plan-baomai-v3`
 - `2cab12576`（2026-05-10）`Merge remote-tracking branch 'origin/main' into auto/plan-baomai-v3`
 - `70939e3c0`（2026-05-10）`修复 plan-baomai-v3 review：收紧事件调度与测试注册`
+- `60fa03ffc`（2026-05-10）`Merge remote-tracking branch 'origin/main' into auto/plan-baomai-v3`
 
 ### 测试结果
 
