@@ -1,0 +1,9 @@
+{
+  "id": "transcendence_thunder",
+  "layers": [
+    { "sound": "minecraft:entity.lightning_bolt.thunder", "volume": 0.8, "pitch": 1.3, "delay_ticks": 0 }
+  ],
+  "priority": 86,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

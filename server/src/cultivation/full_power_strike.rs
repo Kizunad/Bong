@@ -44,6 +44,11 @@ pub struct ChargingState {
     pub target_qi: f64,
 }
 
+#[derive(Debug, Clone, Copy, Component, PartialEq)]
+pub struct FullPowerChargeRateOverride {
+    pub rate_per_tick: f64,
+}
+
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct Exhausted {
     pub started_at_tick: u64,
@@ -220,7 +225,10 @@ pub fn release_full_power_fn(
 
     let qi_released = state.qi_committed.max(0.0);
     let exhausted = Exhausted::from_committed_qi(now_tick, qi_released);
-    world.entity_mut(caster).remove::<ChargingState>();
+    world
+        .entity_mut(caster)
+        .remove::<ChargingState>()
+        .remove::<FullPowerChargeRateOverride>();
     world.entity_mut(caster).insert(exhausted);
     if let Some(mut bindings) = world.get_mut::<crate::combat::components::SkillBarBindings>(caster)
     {
@@ -260,10 +268,20 @@ pub fn release_full_power_fn(
     }
 }
 
-pub fn charge_tick_system(mut q: Query<(&mut ChargingState, &mut Cultivation)>) {
-    for (mut charging, mut cultivation) in &mut q {
+pub fn charge_tick_system(
+    mut q: Query<(
+        &mut ChargingState,
+        &mut Cultivation,
+        Option<&FullPowerChargeRateOverride>,
+    )>,
+) {
+    for (mut charging, mut cultivation, rate_override) in &mut q {
         let remaining = (charging.target_qi - charging.qi_committed).max(0.0);
-        let to_consume = FULL_POWER_CHARGE_RATE_PER_TICK
+        let charge_rate = rate_override
+            .map(|override_rate| override_rate.rate_per_tick)
+            .unwrap_or(FULL_POWER_CHARGE_RATE_PER_TICK)
+            .max(0.0);
+        let to_consume = charge_rate
             .min(cultivation.qi_current.max(0.0))
             .min(remaining);
         if to_consume <= f64::EPSILON {
@@ -331,7 +349,10 @@ pub fn charge_interrupt_system(
             cultivation.qi_current =
                 (cultivation.qi_current + qi_refunded).clamp(0.0, cultivation.qi_max);
         }
-        commands.entity(event.target).remove::<ChargingState>();
+        commands
+            .entity(event.target)
+            .remove::<ChargingState>()
+            .remove::<FullPowerChargeRateOverride>();
         interrupted.send(ChargeInterruptedEvent {
             caster: event.target,
             qi_lost,

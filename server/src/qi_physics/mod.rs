@@ -33,8 +33,10 @@ pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
 pub use field::{
-    density_echo, multi_point_dispersion, reverse_burst_all_marks, sever_meridian,
-    DuguReverseBurstOutcome, EchoFractalOutcome,
+    aoe_ground_wave, blood_burn_conversion, body_transcendence, density_echo,
+    multi_point_dispersion, reverse_burst_all_marks, sever_meridian, AoeGroundWaveOutcome,
+    BloodBurnConversionOutcome, BodyTranscendenceOutcome, DuguReverseBurstOutcome,
+    EchoFractalOutcome,
 };
 pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,

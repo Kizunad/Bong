@@ -95,6 +95,7 @@ pub const CH_WOLIU_V2_CAST: &str = "bong:woliu_v2/cast";
 pub const CH_WOLIU_V2_BACKFIRE: &str = "bong:woliu_v2/backfire";
 pub const CH_WOLIU_V2_TURBULENCE: &str = "bong:woliu_v2/turbulence";
 pub const CH_ZHENMAI_SKILL_EVENT: &str = "bong:zhenmai/skill_event";
+pub const CH_BAOMAI_V3_SKILL_EVENT: &str = "bong:baomai_v3/skill_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 pub const CH_DUGU_V2_CAST: &str = "bong:dugu_v2/cast";
 pub const CH_DUGU_V2_SELF_CURE: &str = "bong:dugu_v2/self_cure";
@@ -225,6 +226,7 @@ mod tests {
         assert_eq!(CH_WOLIU_V2_BACKFIRE, "bong:woliu_v2/backfire");
         assert_eq!(CH_WOLIU_V2_TURBULENCE, "bong:woliu_v2/turbulence");
         assert_eq!(CH_ZHENMAI_SKILL_EVENT, "bong:zhenmai/skill_event");
+        assert_eq!(CH_BAOMAI_V3_SKILL_EVENT, "bong:baomai_v3/skill_event");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
         assert_eq!(CH_DUGU_V2_CAST, "bong:dugu_v2/cast");
         assert_eq!(CH_DUGU_V2_SELF_CURE, "bong:dugu_v2/self_cure");

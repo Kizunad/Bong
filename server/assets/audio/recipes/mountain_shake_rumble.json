@@ -1,0 +1,10 @@
+{
+  "id": "mountain_shake_rumble",
+  "layers": [
+    { "sound": "minecraft:entity.generic.explode", "volume": 0.7, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.stone.break", "volume": 0.5, "pitch": 0.6, "delay_ticks": 2 }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

@@ -8,6 +8,7 @@ use valence::prelude::{
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
 use crate::botany::components::HarvestTerminalEvent;
+use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::CombatEvent;
 use crate::combat::woliu_v2::VortexCastEvent;
@@ -423,6 +424,37 @@ pub fn emit_woliu_v2_audio_triggers(
             1.0,
             0.0,
         );
+    }
+}
+
+pub fn emit_baomai_v3_audio_triggers(
+    mut events: EventReader<BaomaiSkillEvent>,
+    positions: Query<&Position>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for event in events.read() {
+        let Ok(position) = positions.get(event.caster) else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            baomai_recipe_for_skill(event.skill),
+            event.caster,
+            position.get(),
+            Some(event.skill.wire_kind().to_string()),
+            1.0,
+            0.0,
+        );
+    }
+}
+
+fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
+    match skill {
+        BaomaiSkillId::BengQuan | BaomaiSkillId::FullPowerRelease => "meridian_crack",
+        BaomaiSkillId::FullPowerCharge => "stance_switch",
+        BaomaiSkillId::MountainShake => "mountain_shake_rumble",
+        BaomaiSkillId::BloodBurn => "blood_burn_sizzle",
+        BaomaiSkillId::Disperse => "transcendence_thunder",
     }
 }
 
