@@ -93,6 +93,9 @@ def load_items(items_root: Path) -> dict[str, ItemSpec]:
             name = str(raw.get("name", item_id)).strip()
             if not item_id:
                 continue
+            if item_id in items:
+                existing = items[item_id].source_path
+                raise ValueError(f"duplicate item id {item_id!r}: {existing} and {path}")
             items[item_id] = ItemSpec(
                 item_id=item_id,
                 name=name or item_id,
@@ -109,8 +112,13 @@ def prompt_for(item: ItemSpec) -> str:
 
 def parse_ids(values: list[str]) -> list[str]:
     ids: list[str] = []
+    seen: set[str] = set()
     for value in values:
-        ids.extend(part.strip() for part in value.split(",") if part.strip())
+        for part in value.split(","):
+            item_id = part.strip()
+            if item_id and item_id not in seen:
+                seen.add(item_id)
+                ids.append(item_id)
     return ids
 
 

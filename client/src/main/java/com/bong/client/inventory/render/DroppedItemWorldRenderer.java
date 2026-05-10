@@ -14,6 +14,7 @@ import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
@@ -154,7 +155,16 @@ public final class DroppedItemWorldRenderer {
         if (DroppedLootRarityVisuals.shouldHum(rarity)
             && client.player != null
             && Math.floorMod(tick + entry.instanceId(), 80L) == 0L) {
-            client.player.playSound(SoundEvents.BLOCK_BEACON_ACTIVATE, 0.2f, 2.0f);
+            world.playSound(
+                entry.worldPosX(),
+                entry.worldPosY(),
+                entry.worldPosZ(),
+                SoundEvents.BLOCK_BEACON_ACTIVATE,
+                SoundCategory.BLOCKS,
+                0.2f,
+                2.0f,
+                false
+            );
         }
     }
 

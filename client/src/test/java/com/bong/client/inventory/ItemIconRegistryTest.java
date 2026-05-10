@@ -12,7 +12,7 @@ class ItemIconRegistryTest {
     void buildsCanonicalItemTexturePaths() {
         assertEquals(
             "bong-client:textures/gui/items/bone_coin_40.png",
-            ItemIconRegistry.itemTexturePath("bone_coin_40")
+            ItemIconRegistry.itemTexturePath("Bone_Coin_40")
         );
     }
 

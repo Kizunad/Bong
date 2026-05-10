@@ -46,6 +46,38 @@ rarity = "common"
 
         self.assertEqual(["shu_gu"], [item.item_id for item in selected])
 
+    def test_load_items_rejects_duplicate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.toml"
+            second = root / "second.toml"
+            first.write_text(
+                """
+[[item]]
+id = "bone_coin_5"
+name = "封灵骨币·五"
+category = "bone_coin"
+""",
+                encoding="utf-8",
+            )
+            second.write_text(
+                """
+[[item]]
+id = "bone_coin_5"
+name = "重复骨币"
+category = "bone_coin"
+""",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "duplicate item id"):
+                batch.load_items(root)
+
+    def test_parse_ids_deduplicates_while_preserving_order(self) -> None:
+        ids = batch.parse_ids(["bone_coin_5, shu_gu", "bone_coin_5", "zhu_gu"])
+
+        self.assertEqual(["bone_coin_5", "shu_gu", "zhu_gu"], ids)
+
     def test_generation_command_calls_project_gen_py_with_item_style(self) -> None:
         item = batch.ItemSpec("shu_gu", "噬元鼠骨", "misc", Path("fauna.toml"), "common")
         command = batch.gen_command(item, Path("out"), "cliproxy")

@@ -4,6 +4,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.InvalidIdentifierException;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -109,6 +110,6 @@ public final class ItemIconRegistry {
     }
 
     private static String normalize(String itemId) {
-        return itemId == null ? "" : itemId.trim();
+        return itemId == null ? "" : itemId.trim().toLowerCase(Locale.ROOT);
     }
 }
