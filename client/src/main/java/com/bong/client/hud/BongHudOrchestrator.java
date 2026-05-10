@@ -5,6 +5,8 @@ import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.ui.ClientConnectionStatusStore;
+import com.bong.client.ui.ConnectionStatusIndicator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -294,6 +296,11 @@ public final class BongHudOrchestrator {
         ));
         commands.addAll(MeridianOpenHudPlanner.buildCommands(widthMeasurer, screenWidth, screenHeight));
         commands.addAll(IdentityHudCornerLabel.buildCommands(widthMeasurer, screenWidth));
+        commands.addAll(ConnectionStatusIndicator.buildCommands(
+            ClientConnectionStatusStore.snapshot(nowMillis),
+            screenWidth,
+            screenHeight
+        ));
 
         HudImmersionMode.Mode mode = HudImmersionMode.resolve(
             combatSnapshot.combatHudState(),

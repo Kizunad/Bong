@@ -153,7 +153,7 @@ public final class BongToast {
         return !isEmpty() && Math.max(0L, nowMillis) < expiresAtMillis;
     }
 
-    static void resetForTests() {
+    public static void resetForTests() {
         activeToast = empty();
     }
 

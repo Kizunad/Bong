@@ -19,6 +19,9 @@
     "MixinMouse",
     "MixinPlayerEntityDrop",
     "MixinPlayerEntityHeldItem",
+    "MixinScreenInputLock",
+    "MixinScreenTransitionRender",
+    "ScreenSetMixin",
     "MixinSkyPerZone"
   ],
   "injectors": {
