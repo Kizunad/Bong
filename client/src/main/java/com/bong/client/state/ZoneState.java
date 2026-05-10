@@ -10,25 +10,40 @@ public final class ZoneState {
     private final String zoneId;
     private final String zoneLabel;
     private final double spiritQiNormalized;
+    private final double spiritQiRaw;
     private final int dangerLevel;
     private final String status;
     private final boolean noCadence;
+    private final boolean dimensionTransition;
     private final String perceptionText;
     private final long changedAtMillis;
 
-    private ZoneState(String zoneId, String zoneLabel, double spiritQiNormalized, int dangerLevel, String status, boolean noCadence, String perceptionText, long changedAtMillis) {
+    private ZoneState(
+        String zoneId,
+        String zoneLabel,
+        double spiritQiNormalized,
+        double spiritQiRaw,
+        int dangerLevel,
+        String status,
+        boolean noCadence,
+        boolean dimensionTransition,
+        String perceptionText,
+        long changedAtMillis
+    ) {
         this.zoneId = Objects.requireNonNull(zoneId, "zoneId");
         this.zoneLabel = Objects.requireNonNull(zoneLabel, "zoneLabel");
         this.spiritQiNormalized = spiritQiNormalized;
+        this.spiritQiRaw = spiritQiRaw;
         this.dangerLevel = dangerLevel;
         this.status = Objects.requireNonNull(status, "status");
         this.noCadence = noCadence;
+        this.dimensionTransition = dimensionTransition;
         this.perceptionText = Objects.requireNonNull(perceptionText, "perceptionText");
         this.changedAtMillis = changedAtMillis;
     }
 
     public static ZoneState empty() {
-        return new ZoneState("", "", 0.0, 0, "normal", false, "", 0L);
+        return new ZoneState("", "", 0.0, 0.0, 0, "normal", false, false, "", 0L);
     }
 
     public static ZoneState create(String zoneId, String zoneLabel, double spiritQiNormalized, int dangerLevel, long changedAtMillis) {
@@ -93,9 +108,11 @@ public final class ZoneState {
             normalizedZoneId,
             normalizedZoneLabel,
             clamp(spiritQiNormalized, 0.0, 1.0),
+            Double.isFinite(spiritQiNormalized) ? spiritQiNormalized : 0.0,
             clamp(dangerLevel, MIN_DANGER_LEVEL, MAX_DANGER_LEVEL),
             normalizeStatus(status),
             containsNoCadence(activeEvents),
+            containsDimensionTransition(status, activeEvents),
             normalizeText(perceptionText),
             Math.max(0L, changedAtMillis)
         );
@@ -109,6 +126,26 @@ public final class ZoneState {
             .filter(Objects::nonNull)
             .map(String::trim)
             .anyMatch("no_cadence"::equalsIgnoreCase);
+    }
+
+    private static boolean containsDimensionTransition(String status, Set<String> activeEvents) {
+        if (isDimensionTransitionToken(status)) {
+            return true;
+        }
+        if (activeEvents == null || activeEvents.isEmpty()) {
+            return false;
+        }
+        return activeEvents.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .anyMatch(ZoneState::isDimensionTransitionToken);
+    }
+
+    private static boolean isDimensionTransitionToken(String token) {
+        String normalized = normalizeText(token).toLowerCase(java.util.Locale.ROOT);
+        return "dimension_transition".equals(normalized)
+            || "tsy_transition".equals(normalized)
+            || "tianshuiyao_transition".equals(normalized);
     }
 
     private static String normalizeText(String value) {
@@ -143,6 +180,14 @@ public final class ZoneState {
         return spiritQiNormalized;
     }
 
+    public double spiritQiRaw() {
+        return spiritQiRaw;
+    }
+
+    public boolean negativeSpiritQi() {
+        return spiritQiRaw < 0.0;
+    }
+
     public int dangerLevel() {
         return dangerLevel;
     }
@@ -157,6 +202,10 @@ public final class ZoneState {
 
     public boolean noCadence() {
         return noCadence;
+    }
+
+    public boolean dimensionTransition() {
+        return dimensionTransition;
     }
 
     public String perceptionText() {

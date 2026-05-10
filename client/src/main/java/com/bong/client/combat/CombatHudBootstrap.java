@@ -1,6 +1,7 @@
 package com.bong.client.combat;
 
 import com.bong.client.BongClient;
+import com.bong.client.hud.HudImmersionMode;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 
 /**
@@ -90,5 +91,6 @@ public final class CombatHudBootstrap {
         com.bong.client.combat.inspect.WeaponTreasurePanel.resetForTests();
         com.bong.client.social.SocialStateStore.clearOnDisconnect();
         TreasureEquippedStore.resetForTests();
+        HudImmersionMode.resetForTests();
     }
 }

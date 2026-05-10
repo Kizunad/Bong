@@ -11,6 +11,8 @@ import com.bong.client.cultivation.ColorKind;
 import com.bong.client.cultivation.QiColorVectorHud;
 import com.bong.client.cultivation.QiColorObservedState;
 import com.bong.client.cultivation.QiColorObservedStore;
+import com.bong.client.inspect.ItemInspectLongPressTracker;
+import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.component.*;
 import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
@@ -59,6 +61,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
+    private final ItemInspectLongPressTracker itemInspectLongPress = new ItemInspectLongPressTracker();
     /** Screen 存活期间持有的 InventoryStateStore 订阅，close 时解绑避免泄漏。 */
     private Consumer<InventoryModel> inventoryListener;
 
@@ -1421,7 +1424,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Mouse interaction ====================
 
     @Override
+    public void tick() {
+        super.tick();
+        InventoryItem ready = itemInspectLongPress.consumeReady(System.currentTimeMillis());
+        if (ready != null && client != null) {
+            client.setScreen(new ItemInspectScreen(ready));
+        }
+    }
+
+    @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button != 1) {
+            itemInspectLongPress.cancel();
+        }
+
         if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
             return true;
         }
@@ -1435,6 +1451,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     pillContextMenu = null;
                     pendingMeridianUse = null;
                 }
+                itemInspectLongPress.cancel();
                 return true;
             }
 
@@ -1445,12 +1462,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 } else {
                     weaponContextMenu = null;
                 }
+                itemInspectLongPress.cancel();
                 return true;
             }
 
             if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
+                    itemInspectLongPress.cancel();
                     return true;
                 }
             }
@@ -1461,6 +1480,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
                     if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
+                        itemInspectLongPress.cancel();
                         return true;
                     }
                 }
@@ -1469,13 +1489,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             if (hIdx >= 0 && hotbarItems[hIdx] != null
                     && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
+                itemInspectLongPress.cancel();
                 return true;
             }
 
             if (pendingMeridianUse != null) {
                 pendingMeridianUse = null;
+                itemInspectLongPress.cancel();
                 return true;
             }
+            itemInspectLongPress.start(itemAtScreen(mouseX, mouseY), mouseX, mouseY, System.currentTimeMillis());
         }
 
         if (button == 0) {
@@ -1589,6 +1612,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        itemInspectLongPress.move(mouseX, mouseY);
         if (dragState.isDragging()) {
             dragState.updateMouse(mouseX, mouseY);
             updateHighlights(mouseX, mouseY);
@@ -1599,11 +1623,34 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 1) {
+            itemInspectLongPress.cancel();
+        }
         if (button == 0 && dragState.isDragging()) {
             attemptDrop(mouseX, mouseY);
             return true;
         }
         return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    private InventoryItem itemAtScreen(double mouseX, double mouseY) {
+        BackpackGridPanel grid = activeGrid();
+        if (grid.containsPoint(mouseX, mouseY)) {
+            var pos = grid.screenToGrid(mouseX, mouseY);
+            if (pos != null) {
+                InventoryItem item = grid.itemAt(pos.row(), pos.col());
+                if (item != null) return item;
+            }
+        }
+        if (activeTab == TAB_EQUIP) {
+            var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+            if (eq != null && eq.item() != null) return eq.item();
+        }
+        int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+        if (hIdx >= 0 && hotbarItems[hIdx] != null) return hotbarItems[hIdx];
+        int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
+        if (qIdx >= 0 && quickUseItems[qIdx] != null) return quickUseItems[qIdx];
+        return null;
     }
 
     @Override

@@ -37,7 +37,7 @@ public class BongZoneHudTest {
     void collapsedZoneOverlayShowsDeadZoneStatus() {
         ZoneState zoneState = ZoneState.create("blood_valley", "Blood Valley", 0.0, 5, "collapsed", 1_000L);
 
-        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 3_000L, FIXED_WIDTH, 400, 10, 22, 320, 180);
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 4_000L, FIXED_WIDTH, 400, 10, 22, 320, 180);
 
         assertEquals(1, commands.size());
         assertEquals("区域Blood Valley 死域 灵气[░░░░░░░░░░] 危☠☠☠☠☠", commands.get(0).text());
@@ -45,9 +45,38 @@ public class BongZoneHudTest {
 
     @Test
     void fadeAlphaDropsDuringFinalHalfSecondAndExpiresAtTwoSeconds() {
-        assertEquals(255, BongZoneHud.centeredTitleAlpha(1_000L, 2_500L));
-        assertEquals(128, BongZoneHud.centeredTitleAlpha(1_000L, 2_750L));
-        assertEquals(0, BongZoneHud.centeredTitleAlpha(1_000L, 3_000L));
+        assertEquals(255, BongZoneHud.centeredTitleAlpha(1_000L, 3_000L));
+        assertEquals(128, BongZoneHud.centeredTitleAlpha(1_000L, 3_500L));
+        assertEquals(0, BongZoneHud.centeredTitleAlpha(1_000L, 4_000L));
+    }
+
+    @Test
+    void negativeSpiritQiAddsWarningAndRedTitle() {
+        ZoneState zoneState = ZoneState.create("rift", "裂谷", -0.25, 4, 1_000L);
+
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 1_200L, FIXED_WIDTH, 320, 10, 22, 320, 180);
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("负灵域")));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.color() == HudTextHelper.withAlpha(BongZoneHud.NEGATIVE_TITLE_COLOR, 255)));
+    }
+
+    @Test
+    void dimensionTransitionStartsWithBlackoutTint() {
+        ZoneState zoneState = ZoneState.create(
+            "tsy_void",
+            "天水窑",
+            0.3,
+            2,
+            "dimension_transition",
+            Set.of(),
+            1_000L
+        );
+
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 1_100L, FIXED_WIDTH, 320, 10, 22, 320, 180);
+
+        assertTrue(commands.get(0).isScreenTint());
+        assertTrue(BongZoneHud.dimensionBlackoutAlpha(zoneState, 1_100L) > 0);
+        assertEquals(0, BongZoneHud.dimensionBlackoutAlpha(zoneState, 1_500L));
     }
 
     @Test
