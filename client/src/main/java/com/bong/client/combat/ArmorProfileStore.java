@@ -4,6 +4,7 @@ import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.inventory.model.EquipSlotType;
 import net.minecraft.entity.EquipmentSlot;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -53,7 +54,7 @@ public final class ArmorProfileStore {
 
     public static ArmorMitigation mitigationForItemId(String itemId) {
         if (itemId == null) return null;
-        ArmorMitigation legacy = BY_ITEM_ID.get(itemId.trim());
+        ArmorMitigation legacy = BY_ITEM_ID.get(normalizeLegacyItemId(itemId));
         if (legacy != null) return legacy;
 
         ArmorTintRegistry.ArmorItemSpec mundane = ArmorTintRegistry.item(itemId);
@@ -72,7 +73,8 @@ public final class ArmorProfileStore {
         if (mundane != null) {
             return fromEquipmentSlot(mundane.slot());
         }
-        return BY_ITEM_ID.containsKey(itemId == null ? "" : itemId.trim()) ? EquipSlotType.CHEST : null;
+        String legacyId = itemId == null ? "" : normalizeLegacyItemId(itemId);
+        return BY_ITEM_ID.containsKey(legacyId) ? EquipSlotType.CHEST : null;
     }
 
     private static EquipSlotType fromEquipmentSlot(EquipmentSlot slot) {
@@ -86,7 +88,7 @@ public final class ArmorProfileStore {
     }
 
     public static String kindLabel(String kindSnakeCase) {
-        String k = Objects.requireNonNullElse(kindSnakeCase, "").trim().toLowerCase(java.util.Locale.ROOT);
+        String k = Objects.requireNonNullElse(kindSnakeCase, "").trim().toLowerCase(Locale.ROOT);
         return switch (k) {
             case "cut" -> "斩";
             case "blunt" -> "钝";
@@ -95,5 +97,9 @@ public final class ArmorProfileStore {
             case "concussion" -> "震";
             default -> "?";
         };
+    }
+
+    private static String normalizeLegacyItemId(String itemId) {
+        return itemId.trim().toLowerCase(Locale.ROOT);
     }
 }

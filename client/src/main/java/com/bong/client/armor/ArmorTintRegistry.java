@@ -142,12 +142,9 @@ public final class ArmorTintRegistry {
 
     private static Map<String, ArmorItemSpec> buildItems() {
         Map<String, ArmorItemSpec> out = new HashMap<>();
-        registerAll(out, MATERIALS.get("bone"));
-        registerAll(out, MATERIALS.get("hide"));
-        registerAll(out, MATERIALS.get("iron"));
-        registerAll(out, MATERIALS.get("copper"));
-        registerAll(out, MATERIALS.get("spirit_cloth"));
-        registerAll(out, MATERIALS.get("scroll_wrap"));
+        for (ArmorMaterialSpec material : MATERIALS.values()) {
+            registerAll(out, material);
+        }
         return Map.copyOf(out);
     }
 

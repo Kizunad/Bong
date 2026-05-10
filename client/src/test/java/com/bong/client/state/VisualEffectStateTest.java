@@ -75,5 +75,17 @@ public class VisualEffectStateTest {
             VisualEffectState.EffectType.ARMOR_BREAK_FLASH,
             VisualEffectState.create("armor_break", 1.0, 300L, 0L).effectType()
         );
+        assertEquals(
+            VisualEffectState.EffectType.ARMOR_EQUIP_FLASH,
+            VisualEffectState.create("armor_equip_flash", 1.0, 100L, 0L).effectType()
+        );
+        assertEquals(
+            VisualEffectState.EffectType.ARMOR_LOW_DURABILITY_FLASH,
+            VisualEffectState.create("armor_low_durability_flash", 1.0, 700L, 0L).effectType()
+        );
+        assertEquals(
+            VisualEffectState.EffectType.ARMOR_BREAK_FLASH,
+            VisualEffectState.create("armor_break_flash", 1.0, 300L, 0L).effectType()
+        );
     }
 }

@@ -173,7 +173,7 @@ impl ArmorProfileRegistry {
     }
 
     pub fn get(&self, template_id: &str) -> Option<&ArmorProfile> {
-        self.by_template_id.get(template_id)
+        self.by_template_id.get(template_id.trim())
     }
 
     pub fn register_template(
@@ -181,8 +181,8 @@ impl ArmorProfileRegistry {
         template_id: impl Into<String>,
         profile: ArmorProfile,
     ) -> Result<(), String> {
-        let template_id = template_id.into();
-        if template_id.trim().is_empty() {
+        let template_id = template_id.into().trim().to_string();
+        if template_id.is_empty() {
             return Err("armor profile template_id must not be empty".to_string());
         }
         if self.by_template_id.contains_key(&template_id) {
@@ -259,6 +259,16 @@ impl ArmorProfileRegistry {
 mod tests {
     use super::*;
 
+    fn valid_profile() -> ArmorProfile {
+        ArmorProfile {
+            slot: EquipSlotV1::Chest,
+            body_coverage: vec![BodyPart::Chest],
+            kind_mitigation: HashMap::from([(WoundKind::Cut, 0.1)]),
+            durability_max: 10,
+            broken_multiplier: 0.3,
+        }
+    }
+
     #[test]
     fn empty_registry_is_empty() {
         let r = ArmorProfileRegistry::new();
@@ -276,6 +286,20 @@ mod tests {
             broken_multiplier: 0.3,
         };
         assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn register_template_trims_template_id_before_insert_and_duplicate_check() {
+        let mut registry = ArmorProfileRegistry::new();
+        registry
+            .register_template(" fake_spirit_hide ", valid_profile())
+            .expect("trimmed template id should register");
+
+        assert!(registry.get("fake_spirit_hide").is_some());
+        let error = registry
+            .register_template("fake_spirit_hide", valid_profile())
+            .expect_err("trim-equivalent template id should be duplicate");
+        assert!(error.contains("duplicate armor profile template_id fake_spirit_hide"));
     }
 
     #[test]

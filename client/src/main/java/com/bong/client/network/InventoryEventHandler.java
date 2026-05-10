@@ -12,6 +12,7 @@ import com.bong.client.state.VisualEffectState;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import net.minecraft.entity.EquipmentSlot;
 
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -363,9 +364,19 @@ public final class InventoryEventHandler implements ServerDataHandler {
         }
         ArmorTintRegistry.ArmorItemSpec mundane = ArmorTintRegistry.item(item.itemId());
         if (mundane != null) {
-            return ArmorProfileStore.equipSlotForItemId(item.itemId()) == slot;
+            return fromEquipmentSlot(mundane.slot()) == slot;
         }
         return ArmorProfileStore.isArmor(item.itemId()) && ArmorProfileStore.equipSlotForItemId(item.itemId()) == slot;
+    }
+
+    private static EquipSlotType fromEquipmentSlot(EquipmentSlot slot) {
+        return switch (slot) {
+            case HEAD -> EquipSlotType.HEAD;
+            case CHEST -> EquipSlotType.CHEST;
+            case LEGS -> EquipSlotType.LEGS;
+            case FEET -> EquipSlotType.FEET;
+            default -> null;
+        };
     }
 
     private static EquipSlotType armorSlotForInstance(InventoryModel model, long instanceId) {

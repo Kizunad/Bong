@@ -1,5 +1,6 @@
 package com.bong.client.combat;
 
+import com.bong.client.inventory.model.EquipSlotType;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,15 @@ class ArmorProfileStoreCrossCheckTest {
                 .filter(p -> p.getFileName().toString().endsWith(".json"))
                 .forEach(this::assertMatchesClient);
         }
+    }
+
+    @Test
+    void legacyProfileLookupNormalizesCaseAndWhitespace() {
+        ArmorProfileStore.ArmorMitigation mitigation = ArmorProfileStore.mitigationForItemId(" IRON_PLATE_CHEST ");
+
+        assertNotNull(mitigation);
+        assertEquals(0.50f, mitigation.cut(), TOLERANCE);
+        assertEquals(EquipSlotType.CHEST, ArmorProfileStore.equipSlotForItemId(" IRON_PLATE_CHEST "));
     }
 
     private void assertMatchesClient(Path jsonFile) {

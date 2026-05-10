@@ -45,6 +45,72 @@ spirit_quality_initial = 0.4
 description = "残卷边角，缠在甲上能挡住一两下碎石和利刃。"
 
 [[item]]
+id = "scroll_armor_bone"
+name = "骨甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "记着兽骨绑甲手法的残卷，可解锁骨甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_hide"
+name = "兽皮甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "旧猎修留下的缝皮残页，可解锁兽皮甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_iron"
+name = "铁甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "炉灰熏黑的铁甲图样，可解锁铁甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_copper"
+name = "铜甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "薄铜片压出的旧图样，可解锁铜甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_spirit_cloth"
+name = "灵布衫配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "夹着灵草纤维的布甲残页，可解锁灵布衫手搓配方。"
+
+[[item]]
+id = "scroll_armor_scroll_wrap"
+name = "残卷缠甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "残卷里再夹残卷的怪图样，可解锁残卷缠甲手搓配方。"
+
+[[item]]
 id = "armor_bone_helmet"
 name = "骨甲盔"
 category = "armor"

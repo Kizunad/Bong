@@ -3957,15 +3957,17 @@ max_stack_count = 0
     }
 
     #[test]
-    fn parse_item_category_accepts_armor_alias() {
-        let category = parse_item_category(
-            "armor",
-            Path::new("<inline-items.toml>"),
-            "armor_bone_chestplate",
-        )
-        .expect("armor category should parse");
+    fn parse_item_category_accepts_armor_aliases() {
+        for alias in ["armor", "armour"] {
+            let category = parse_item_category(
+                alias,
+                Path::new("<inline-items.toml>"),
+                "armor_bone_chestplate",
+            )
+            .expect("armor category alias should parse");
 
-        assert_eq!(category, ItemCategory::Armor);
+            assert_eq!(category, ItemCategory::Armor);
+        }
     }
 
     #[test]
@@ -5044,6 +5046,21 @@ cols = 4
                 .unwrap_or_else(|| panic!("{} should load from armor.toml", item.item_id()));
             assert_eq!(template.category, ItemCategory::Armor);
             assert_eq!(template.max_stack_count, 1);
+        }
+    }
+
+    #[test]
+    fn item_registry_loads_mundane_armor_unlock_scroll_templates() {
+        let registry = load_item_registry().expect("item registry should load");
+
+        for material in crate::armor::mundane::MundaneArmorMaterial::ALL {
+            let id = format!("scroll_armor_{}", material.id());
+            let template = registry
+                .get(id.as_str())
+                .unwrap_or_else(|| panic!("{id} should load from armor.toml"));
+            assert_eq!(template.category, ItemCategory::Misc);
+            assert_eq!(template.grid_w, 1);
+            assert_eq!(template.grid_h, 2);
         }
     }
 
