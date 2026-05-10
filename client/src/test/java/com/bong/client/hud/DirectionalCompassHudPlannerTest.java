@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.state.ZoneState;
 import com.bong.client.tsy.ExtractState;
+import com.bong.client.tsy.RiftPortalView;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -60,6 +61,42 @@ class DirectionalCompassHudPlannerTest {
 
         assertTrue(commands.stream().anyMatch(cmd ->
             cmd.isRect() && (cmd.color() & 0x00FFFFFF) == (DirectionalCompassHudPlanner.NICHE_MARKER & 0x00FFFFFF)
+        ));
+    }
+
+    @Test
+    void collapseMarkerUsesFrameTimestamp() {
+        ExtractState extractState = new ExtractState(
+            List.of(new RiftPortalView(42L, "collapse_tear", "exit", "tsy_lingxu_01", 0.0, 64.0, 10.0, 2.0, 0, null)),
+            null,
+            "",
+            0,
+            0,
+            false,
+            "",
+            0xFFFFFFFF,
+            0L,
+            "tsy_lingxu_01",
+            1_000L,
+            100,
+            0L,
+            0,
+            2_000L
+        );
+
+        List<HudRenderCommand> commands = DirectionalCompassHudPlanner.buildCommands(
+            ZoneState.create("tsy", "坍缩渊", 0.5, 1, 0L),
+            extractState,
+            HudImmersionMode.Mode.PEACE,
+            HudRuntimeContext.empty(),
+            WIDTH,
+            320,
+            180,
+            2_000L
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd ->
+            cmd.isRect() && (cmd.color() & 0x00FFFFFF) == (DirectionalCompassHudPlanner.COLLAPSE_EXIT_MARKER & 0x00FFFFFF)
         ));
     }
 }

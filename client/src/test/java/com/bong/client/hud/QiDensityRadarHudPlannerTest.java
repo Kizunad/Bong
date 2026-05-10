@@ -3,10 +3,12 @@ package com.bong.client.hud;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.state.ZoneState;
 import com.bong.client.visual.realm_vision.PerceptionEdgeState;
+import com.bong.client.visual.realm_vision.SenseKind;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -76,6 +78,37 @@ class QiDensityRadarHudPlannerTest {
         );
 
         assertTrue(tsy.size() > normal.size());
+    }
+
+    @Test
+    void cultivatorDotsRotateWithPlayerYaw() {
+        PerceptionEdgeState perception = new PerceptionEdgeState(
+            List.of(new PerceptionEdgeState.SenseEntry(SenseKind.LIVING_QI, 0.0, 64.0, 6.0, 0.8)),
+            1L
+        );
+        HudRuntimeContext runtime = new HudRuntimeContext(90.0, 0.0, 64.0, 0.0, false, List.of());
+
+        List<HudRenderCommand> commands = QiDensityRadarHudPlanner.buildCommands(
+            player("Condense"),
+            ZoneState.create("jade", "青谷", 0.8, 1, 0L),
+            perception,
+            HudImmersionMode.Mode.COMBAT,
+            HudEnvironmentVariant.NORMAL,
+            runtime,
+            1_000L,
+            320,
+            180
+        );
+
+        HudRenderCommand dot = commands.stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == QiDensityRadarHudPlanner.CULTIVATOR_DOT)
+            .findFirst()
+            .orElseThrow();
+        int centerX = MiniBodyHudPlanner.MARGIN_X + MiniBodyHudPlanner.PANEL_W + 8 + QiDensityRadarHudPlanner.PANEL / 2;
+        int centerY = 180 - QiDensityRadarHudPlanner.PANEL - MiniBodyHudPlanner.MARGIN_Y + QiDensityRadarHudPlanner.PANEL / 2;
+
+        assertEquals(centerX - (QiDensityRadarHudPlanner.RADIUS - 6), dot.x() + 1);
+        assertEquals(centerY, dot.y() + 1);
     }
 
     private static PlayerStateViewModel player(String realm) {

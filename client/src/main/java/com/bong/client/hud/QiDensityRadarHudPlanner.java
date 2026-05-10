@@ -130,9 +130,13 @@ public final class QiDensityRadarHudPlanner {
             if (distanceSq > 64.0 || distanceSq <= 0.0001) {
                 continue;
             }
-            double angle = Math.atan2(dx, dz);
-            int x = centerX + (int) Math.round(Math.sin(angle) * (RADIUS - 6));
-            int y = centerY + (int) Math.round(Math.cos(angle) * (RADIUS - 6));
+            double bearing = DirectionalCompassHudPlanner.bearingDegrees(
+                runtime.playerX(), runtime.playerZ(), entry.x(), entry.z()
+            );
+            double delta = DirectionalCompassHudPlanner.signedDelta(bearing, runtime.yawDegrees());
+            double radians = Math.toRadians(delta);
+            int x = centerX + (int) Math.round(Math.sin(radians) * (RADIUS - 6));
+            int y = centerY - (int) Math.round(Math.cos(radians) * (RADIUS - 6));
             out.add(HudRenderCommand.rect(HudRenderLayer.QI_RADAR, x - 1, y - 1, 2, 2, scaleAlpha(CULTIVATOR_DOT, alpha)));
             rendered++;
         }

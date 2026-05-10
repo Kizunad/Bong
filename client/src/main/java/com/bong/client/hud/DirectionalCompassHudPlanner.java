@@ -41,7 +41,7 @@ public final class DirectionalCompassHudPlanner {
         List<HudRenderCommand> out = new ArrayList<>();
         out.add(HudRenderCommand.rect(HudRenderLayer.COMPASS, x, y + 10, WIDTH, 2, TRACK));
         appendTicks(out, x, y, runtime.yawDegrees());
-        appendMarkers(out, x, y, runtime, markers(runtime, extractState));
+        appendMarkers(out, x, y, runtime, markers(runtime, extractState, nowMillis));
         String label = zoneLabel(zone);
         if (!label.isEmpty()) {
             String clipped = HudTextHelper.clipToWidth(label, WIDTH, widthMeasurer);
@@ -95,12 +95,12 @@ public final class DirectionalCompassHudPlanner {
         }
     }
 
-    static List<HudRuntimeContext.CompassMarker> markers(HudRuntimeContext runtimeContext, ExtractState extractState) {
+    static List<HudRuntimeContext.CompassMarker> markers(HudRuntimeContext runtimeContext, ExtractState extractState, long nowMillis) {
         List<HudRuntimeContext.CompassMarker> markers = new ArrayList<>(
             runtimeContext == null ? List.of() : runtimeContext.compassMarkers()
         );
         ExtractState extract = extractState == null ? ExtractState.empty() : extractState;
-        boolean collapseActive = extract.collapseActive(System.currentTimeMillis());
+        boolean collapseActive = extract.collapseActive(Math.max(0L, nowMillis));
         for (RiftPortalView portal : extract.portals()) {
             if (!"exit".equals(portal.direction())) {
                 continue;
