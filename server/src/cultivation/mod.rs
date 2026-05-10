@@ -165,6 +165,9 @@ use crate::player::state::{
     PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
+use crate::tribulation::scorch_record::{
+    record_tribulation_scorch_system, TribulationScorchRecords,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 
@@ -189,6 +192,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(self::tribulation::JueBiNullFields::default());
     app.insert_resource(JueBiTerrainOverlay::default());
     app.insert_resource(JueBiZoneAftershocks::default());
+    app.init_resource::<TribulationScorchRecords>();
     app.insert_resource(self::tribulation::VoidQuotaConfig::from_env());
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
@@ -343,6 +347,11 @@ pub fn register(app: &mut App) {
             tribulation_intercept_death_system
                 .after(crate::combat::lifecycle::death_arbiter_tick)
                 .before(crate::inventory::apply_death_drop_on_revive),
+            record_tribulation_scorch_system
+                .after(juebi_settlement_system)
+                .after(tribulation_failure_system)
+                .after(tribulation_escape_boundary_system)
+                .after(tribulation_intercept_death_system),
         ),
     );
     app.add_systems(
