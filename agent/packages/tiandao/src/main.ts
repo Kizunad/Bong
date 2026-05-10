@@ -17,6 +17,7 @@ import { WoliuNarrationRuntime } from "./woliu-narration.js";
 import { YidaoNarrationRuntime } from "./yidao-runtime.js";
 import { WoliuV2NarrationRuntime } from "./woliu_v2_runtime.js";
 import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
+import { ZhenfaV2NarrationRuntime } from "./zhenfa-v2-runtime.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
@@ -165,6 +166,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const zhenmaiCleanup = await startZhenmaiRuntime({
     redisUrl: config.redisUrl,
   });
+  const zhenfaV2Cleanup = await startZhenfaV2Runtime({
+    redisUrl: config.redisUrl,
+  });
   const yidaoCleanup = await startYidaoRuntime({
     redisUrl: config.redisUrl,
   });
@@ -201,6 +205,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     anqiCleanup,
     yidaoCleanup,
     zhenmaiCleanup,
+    zhenfaV2Cleanup,
     tuikeCleanup,
     duguV2Cleanup,
     duguCleanup,
@@ -308,6 +313,33 @@ async function startYidaoRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] yidao runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startZhenfaV2Runtime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ZhenfaV2NarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ZhenfaV2NarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new ZhenfaV2NarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] zhenfa v2 runtime online"))
+    .catch((error) => console.warn("[tiandao] zhenfa v2 runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] zhenfa v2 runtime disconnect error:", error);
     }
   };
 }

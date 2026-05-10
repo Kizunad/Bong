@@ -36,8 +36,8 @@ use crate::schema::channels::{
     CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
     CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
     CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT,
-    CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED,
+    CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE,
+    CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -87,6 +87,7 @@ use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCastV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::yidao::YidaoEventV1;
+use crate::schema::zhenfa_v2::ZhenfaV2EventV1;
 use crate::schema::zhenmai_v2::ZhenmaiSkillEventV1;
 use crate::schema::zone_environment::ZoneEnvironmentStateV1;
 use crate::schema::zone_pressure::ZonePressureCrossedV1;
@@ -182,6 +183,7 @@ pub enum RedisOutbound {
     WoliuV2Cast(WoliuSkillCastV1),
     WoliuV2Backfire(WoliuBackfireV1),
     WoliuV2Turbulence(TurbulenceFieldV1),
+    ZhenfaV2Event(ZhenfaV2EventV1),
     ZhenmaiSkillEvent(ZhenmaiSkillEventV1),
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
@@ -1097,6 +1099,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WOLIU_V2_TURBULENCE,
+                payload,
+            })
+        }
+        RedisOutbound::ZhenfaV2Event(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ZhenfaV2EventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ZHENFA_V2_EVENT,
                 payload,
             })
         }
@@ -2210,6 +2221,32 @@ mod redis_bridge_tests {
                 assert_eq!(payload["self_damage_multiplier"], 0.5);
             }
             other => panic!("expected zhenmai PUBLISH command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_zhenfa_v2_event_on_dedicated_channel() {
+        let event = crate::schema::zhenfa_v2::ZhenfaV2EventV1::deploy(
+            7,
+            crate::schema::zhenfa_v2::ZhenfaArrayKindV2::DeceiveHeaven,
+            "offline:Azure",
+            [1, 64, -2],
+            20,
+        );
+
+        let command = prepare_outbound_command(RedisOutbound::ZhenfaV2Event(event))
+            .expect("zhenfa v2 payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ZHENFA_V2_EVENT);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("zhenfa v2 payload should be valid JSON");
+                assert_eq!(payload["v"], 1);
+                assert_eq!(payload["event"], "deploy");
+                assert_eq!(payload["kind"], "deceive_heaven");
+            }
+            other => panic!("expected zhenfa v2 PUBLISH command, got {other:?}"),
         }
     }
 

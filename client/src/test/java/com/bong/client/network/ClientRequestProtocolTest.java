@@ -309,6 +309,16 @@ public class ClientRequestProtocolTest {
             ClientRequestProtocol.encodeZhenfaTrigger(42L)
         );
         assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"deceive_heaven\",\"carrier\":\"beast_core_inlaid\",\"qi_invest_ratio\":0.9}",
+            ClientRequestProtocol.encodeZhenfaPlace(
+                pos,
+                ClientRequestProtocol.ZhenfaKind.DECEIVE_HEAVEN,
+                ClientRequestProtocol.ZhenfaCarrierKind.BEAST_CORE_INLAID,
+                0.9,
+                null
+            )
+        );
+        assertEquals(
             "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
             ClientRequestProtocol.encodeZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK)
         );

@@ -50,6 +50,7 @@ export * from "./yidao.js";
 export * from "./zone-environment.js";
 export * from "./zone-pressure.js";
 export * from "./zhenmai-v2.js";
+export * from "./zhenfa-v2.js";
 export * from "./zong-formation.js";
 
 // Validation & registry

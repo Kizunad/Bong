@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, App, Client, Commands, Component, Entity, Event, EventReader, EventWriter, Events,
-    IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, Username, With, Without,
+    IntoSystemConfigs, Position, Query, Res, ResMut, Resource, SystemSet, Update, Username, With,
+    Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -11,9 +12,13 @@ use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent, St
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
-    ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
+    ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
 use crate::cultivation::insight_apply::InsightModifiers;
+use crate::cultivation::meridian::severed::{
+    check_meridian_dependencies, MeridianSeveredPermanent,
+};
+use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
@@ -23,6 +28,8 @@ use crate::player::state::canonical_player_id;
 use crate::qi_physics::{CarrierGrade, MediumKind, StyleAttack, StyleDefense};
 use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
+use crate::schema::social::RelationshipKindV1;
+use crate::social::components::{Relationships, Renown};
 
 const TICKS_PER_SECOND: u64 = 20;
 const MIN_QI_INVEST_RATIO: f64 = 0.05;
@@ -37,6 +44,15 @@ const DISARM_RANGE: f64 = 4.5;
 pub enum ZhenfaKind {
     Trap,
     Ward,
+    ShrineWard,
+    Lingju,
+    DeceiveHeaven,
+    Illusion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub enum ZhenfaSystemSet {
+    Runtime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -106,9 +122,152 @@ pub struct ZhenfaSensePulse {
     pub generation: u64,
 }
 
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct WardArrayDeployEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub pos: [i32; 3],
+    pub radius: u8,
+    pub reflect_ratio: f64,
+    pub placed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct LingArrayDeployEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub pos: [i32; 3],
+    pub radius: u8,
+    pub density_multiplier: f64,
+    pub tiandao_gaze_weight: f64,
+    pub placed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct DeceiveHeavenEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub pos: [i32; 3],
+    pub self_weight_multiplier: f64,
+    pub target_weight_multiplier: f64,
+    pub reveal_chance_per_tick: f64,
+    pub placed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct DeceiveHeavenExposedEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub pos: [i32; 3],
+    pub self_weight_multiplier: f64,
+    pub target_weight_multiplier: f64,
+    pub reveal_chance_per_tick: f64,
+    pub exposed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct IllusionArrayDeployEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub pos: [i32; 3],
+    pub reveal_threshold: f64,
+    pub placed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct ArrayDecayEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub kind: ZhenfaKind,
+    pub pos: [i32; 3],
+    pub decayed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct ArrayBreakthroughEvent {
+    pub breaker: Entity,
+    pub breaker_player_id: String,
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub kind: ZhenfaKind,
+    pub pos: [i32; 3],
+    pub force_break: bool,
+    pub broken_at_tick: u64,
+}
+
 #[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
 pub struct ZhenfaAnchor {
     pub id: u64,
+}
+
+#[derive(Debug, Clone, Component, PartialEq)]
+pub struct ArrayImprint {
+    pub kind: ZhenfaKind,
+    pub dimension_target: Option<String>,
+    pub tribulation_broadcast: bool,
+}
+
+#[derive(Debug, Clone, Component, PartialEq)]
+pub struct ArrayMastery {
+    pub trap: f64,
+    pub ward: f64,
+    pub shrine_ward: f64,
+    pub lingju: f64,
+    pub deceive_heaven: f64,
+    pub illusion: f64,
+}
+
+impl Default for ArrayMastery {
+    fn default() -> Self {
+        Self {
+            trap: 0.0,
+            ward: 0.0,
+            shrine_ward: 0.0,
+            lingju: 0.0,
+            deceive_heaven: 0.0,
+            illusion: 0.0,
+        }
+    }
+}
+
+impl ArrayMastery {
+    pub fn value(&self, kind: ZhenfaKind) -> f64 {
+        match kind {
+            ZhenfaKind::Trap => self.trap,
+            ZhenfaKind::Ward => self.ward,
+            ZhenfaKind::ShrineWard => self.shrine_ward,
+            ZhenfaKind::Lingju => self.lingju,
+            ZhenfaKind::DeceiveHeaven => self.deceive_heaven,
+            ZhenfaKind::Illusion => self.illusion,
+        }
+    }
+
+    pub fn add_cast(&mut self, kind: ZhenfaKind) {
+        self.add(kind, 0.3);
+    }
+
+    pub fn add_trigger(&mut self, kind: ZhenfaKind) {
+        self.add(kind, 1.0);
+    }
+
+    fn add(&mut self, kind: ZhenfaKind, amount: f64) {
+        let slot = match kind {
+            ZhenfaKind::Trap => &mut self.trap,
+            ZhenfaKind::Ward => &mut self.ward,
+            ZhenfaKind::ShrineWard => &mut self.shrine_ward,
+            ZhenfaKind::Lingju => &mut self.lingju,
+            ZhenfaKind::DeceiveHeaven => &mut self.deceive_heaven,
+            ZhenfaKind::Illusion => &mut self.illusion,
+        };
+        *slot = (*slot + amount).clamp(0.0, 100.0);
+    }
 }
 
 pub const ZHENFA_VISUAL_STATE_INACTIVE: u8 = 0;
@@ -125,6 +284,8 @@ pub struct ZhenfaInstance {
     pub carrier: ZhenfaCarrierKind,
     pub qi_invest_ratio: f64,
     pub qi_invest_amount: f64,
+    pub realm_at_cast: Realm,
+    pub mastery_at_cast: f64,
     pub effect_radius: u8,
     pub ward_radius: u8,
     pub placed_at_tick: u64,
@@ -168,6 +329,18 @@ impl StyleDefense for ZhenfaInstance {
 
     fn drain_affinity(&self) -> f64 {
         self.qi_invest_ratio.clamp(0.0, 1.0) * 0.25
+    }
+}
+
+impl ZhenfaInstance {
+    fn reflect_ratio(&self) -> f32 {
+        if self.kind == ZhenfaKind::ShrineWard && self.realm_at_cast == Realm::Void {
+            0.80
+        } else if self.kind == ZhenfaKind::ShrineWard {
+            0.50
+        } else {
+            0.0
+        }
     }
 }
 
@@ -221,6 +394,13 @@ pub fn register(app: &mut App) {
     app.add_event::<ZhenfaTriggerRequest>();
     app.add_event::<ZhenfaDisarmRequest>();
     app.add_event::<ZhenfaSensePulse>();
+    app.add_event::<WardArrayDeployEvent>();
+    app.add_event::<LingArrayDeployEvent>();
+    app.add_event::<DeceiveHeavenEvent>();
+    app.add_event::<DeceiveHeavenExposedEvent>();
+    app.add_event::<IllusionArrayDeployEvent>();
+    app.add_event::<ArrayDecayEvent>();
+    app.add_event::<ArrayBreakthroughEvent>();
     app.add_systems(
         Update,
         (
@@ -230,7 +410,8 @@ pub fn register(app: &mut App) {
             tick_zhenfa_registry,
             emit_zhenfa_sense_pulses,
         )
-            .chain(),
+            .chain()
+            .in_set(ZhenfaSystemSet::Runtime),
     );
 }
 
@@ -451,11 +632,167 @@ pub fn zhenfa_disarm_chance(modifiers: Option<&InsightModifiers>) -> f64 {
     (0.30 + bonus).clamp(0.30, 0.80)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZhenfaKindProfile {
+    pub min_invest_ratio: f64,
+    pub cap_invest_ratio: f64,
+    pub cast_time_ticks: u64,
+    pub duration_ticks: u64,
+    pub radius: u8,
+    pub density_multiplier: f64,
+    pub tiandao_gaze_weight: f64,
+    pub reveal_threshold: f64,
+    pub reveal_chance_per_tick: f64,
+    pub reflect_ratio: f64,
+}
+
+pub fn zhenfa_kind_profile(
+    kind: ZhenfaKind,
+    realm: Realm,
+    mastery: f64,
+    carrier: ZhenfaCarrierKind,
+) -> ZhenfaKindProfile {
+    let mastery_ratio = mastery_ratio(mastery);
+    let cap = carrier_spec(carrier).cap_ratio;
+    match kind {
+        ZhenfaKind::Trap => ZhenfaKindProfile {
+            min_invest_ratio: MIN_QI_INVEST_RATIO,
+            cap_invest_ratio: cap,
+            cast_time_ticks: cast_time_between(3, 1, mastery_ratio),
+            duration_ticks: carrier_spec(carrier).duration_ticks,
+            radius: 0,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: 30.0,
+            reveal_chance_per_tick: 0.0,
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::Ward => ZhenfaKindProfile {
+            min_invest_ratio: MIN_QI_INVEST_RATIO,
+            cap_invest_ratio: cap,
+            cast_time_ticks: cast_time_between(5, 2, mastery_ratio),
+            duration_ticks: carrier_spec(carrier).duration_ticks,
+            radius: 8,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: 30.0,
+            reveal_chance_per_tick: 0.0,
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::ShrineWard => {
+            let void_bonus = if realm == Realm::Void { 10 } else { 0 };
+            ZhenfaKindProfile {
+                min_invest_ratio: 0.05,
+                cap_invest_ratio: cap.max(0.50),
+                cast_time_ticks: cast_time_between(8, 3, mastery_ratio),
+                duration_ticks: duration_with_mastery(
+                    12 * 60 * 60 * TICKS_PER_SECOND,
+                    mastery_ratio,
+                ),
+                radius: 5 + void_bonus,
+                density_multiplier: 1.0,
+                tiandao_gaze_weight: 0.0,
+                reveal_threshold: 30.0,
+                reveal_chance_per_tick: 0.0,
+                reflect_ratio: if realm == Realm::Void { 0.80 } else { 0.50 },
+            }
+        }
+        ZhenfaKind::Lingju => {
+            let void_bonus = if realm == Realm::Void { 2.0 } else { 0.0 };
+            ZhenfaKindProfile {
+                min_invest_ratio: 0.30,
+                cap_invest_ratio: cap.max(0.50),
+                cast_time_ticks: cast_time_between(30, 12, mastery_ratio),
+                duration_ticks: duration_with_mastery(
+                    6 * 60 * 60 * TICKS_PER_SECOND,
+                    mastery_ratio,
+                ),
+                radius: if realm == Realm::Void { 60 } else { 20 },
+                density_multiplier: 1.5 + void_bonus,
+                tiandao_gaze_weight: if realm == Realm::Void { 5.0 } else { 1.0 },
+                reveal_threshold: 30.0,
+                reveal_chance_per_tick: 0.0,
+                reflect_ratio: 0.0,
+            }
+        }
+        ZhenfaKind::DeceiveHeaven => ZhenfaKindProfile {
+            min_invest_ratio: 0.80,
+            cap_invest_ratio: 1.0,
+            cast_time_ticks: cast_time_between(300, 120, mastery_ratio),
+            duration_ticks: 60 * TICKS_PER_SECOND,
+            radius: if realm == Realm::Void { 24 } else { 16 },
+            density_multiplier: 0.25,
+            tiandao_gaze_weight: 1.5,
+            reveal_threshold: 50.0,
+            reveal_chance_per_tick: deceive_heaven_reveal_chance(realm),
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::Illusion => ZhenfaKindProfile {
+            min_invest_ratio: 0.10,
+            cap_invest_ratio: cap.max(0.20),
+            cast_time_ticks: cast_time_between(5, 2, mastery_ratio),
+            duration_ticks: duration_with_mastery(
+                carrier_spec(carrier).duration_ticks,
+                mastery_ratio,
+            ),
+            radius: 8,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: if realm == Realm::Void { 50.0 } else { 30.0 },
+            reveal_chance_per_tick: 0.0,
+            reflect_ratio: 0.0,
+        },
+    }
+}
+
+pub fn zhenfa_meridian_dependencies(kind: ZhenfaKind) -> &'static [MeridianId] {
+    match kind {
+        ZhenfaKind::Trap | ZhenfaKind::Ward => &[MeridianId::Ren],
+        ZhenfaKind::ShrineWard => &[MeridianId::Ren, MeridianId::Du],
+        ZhenfaKind::Lingju => &[MeridianId::Ren, MeridianId::Du, MeridianId::Kidney],
+        ZhenfaKind::DeceiveHeaven => &[
+            MeridianId::Ren,
+            MeridianId::Du,
+            MeridianId::Kidney,
+            MeridianId::Heart,
+        ],
+        ZhenfaKind::Illusion => &[MeridianId::Kidney],
+    }
+}
+
+pub fn realm_allows_zhenfa_kind(kind: ZhenfaKind, realm: Realm) -> bool {
+    kind != ZhenfaKind::DeceiveHeaven
+        || matches!(realm, Realm::Solidify | Realm::Spirit | Realm::Void)
+}
+
+fn mastery_ratio(mastery: f64) -> f64 {
+    if mastery.is_finite() {
+        (mastery / 100.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn cast_time_between(max_seconds: u64, min_seconds: u64, mastery_ratio: f64) -> u64 {
+    let max_ticks = max_seconds * TICKS_PER_SECOND;
+    let min_ticks = min_seconds * TICKS_PER_SECOND;
+    ((max_ticks as f64) - ((max_ticks - min_ticks) as f64 * mastery_ratio)).round() as u64
+}
+
+fn duration_with_mastery(base_ticks: u64, mastery_ratio: f64) -> u64 {
+    ((base_ticks as f64) * (1.0 + 2.0 * mastery_ratio)).round() as u64
+}
+
+#[allow(clippy::too_many_arguments)]
 fn handle_zhenfa_place_requests(
     mut requests: EventReader<ZhenfaPlaceRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut players: Query<ZhenfaPlacePlayer<'_>>,
+    mut ward_events: EventWriter<WardArrayDeployEvent>,
+    mut ling_events: EventWriter<LingArrayDeployEvent>,
+    mut deceive_events: EventWriter<DeceiveHeavenEvent>,
+    mut illusion_events: EventWriter<IllusionArrayDeployEvent>,
 ) {
     for req in requests.read() {
         if registry.find_at(req.pos).is_some() {
@@ -466,7 +803,7 @@ fn handle_zhenfa_place_requests(
             continue;
         }
 
-        let Ok((username, mut cultivation, qi_color, modifiers, inventory)) =
+        let Ok((username, mut cultivation, qi_color, modifiers, inventory, severed, mastery)) =
             players.get_mut(req.player)
         else {
             tracing::warn!(
@@ -482,9 +819,36 @@ fn handle_zhenfa_place_requests(
             );
             continue;
         }
+        if !realm_allows_zhenfa_kind(req.kind, cultivation.realm) {
+            tracing::warn!(
+                "[bong][zhenfa] place rejected: {:?} requires Solidify+ realm, got {:?}",
+                req.kind,
+                cultivation.realm
+            );
+            continue;
+        }
+        if let Err(blocked) =
+            check_meridian_dependencies(zhenfa_meridian_dependencies(req.kind), severed)
+        {
+            tracing::warn!(
+                "[bong][zhenfa] place rejected: {:?} blocked by severed meridian {:?}",
+                req.kind,
+                blocked
+            );
+            continue;
+        }
 
-        let spec = carrier_spec(req.carrier);
-        let invest_ratio = sanitize_invest_ratio(req.qi_invest_ratio, spec.cap_ratio);
+        let mastery_at_cast = mastery
+            .as_deref()
+            .map(|m| m.value(req.kind))
+            .unwrap_or_default();
+        let profile =
+            zhenfa_kind_profile(req.kind, cultivation.realm, mastery_at_cast, req.carrier);
+        let invest_ratio = sanitize_invest_ratio(
+            req.qi_invest_ratio,
+            profile.min_invest_ratio,
+            profile.cap_invest_ratio,
+        );
         let qi_cost = cultivation.qi_max.max(1.0) * invest_ratio;
         if cultivation.qi_current + f64::EPSILON < qi_cost {
             tracing::warn!(
@@ -497,11 +861,18 @@ fn handle_zhenfa_place_requests(
         }
 
         cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
+        let realm_at_cast = cultivation.realm;
         let specialist = zhenfa_specialist_level(modifiers);
-        let duration_ticks = effective_duration_ticks(spec.duration_ticks, qi_color, specialist);
+        let duration_ticks = effective_duration_ticks(profile.duration_ticks, qi_color, specialist);
+        let owner_player_id = canonical_player_id(username.0.as_str());
         let anchor_entity = commands
             .spawn((
                 ZhenfaAnchor { id: 0 },
+                ArrayImprint {
+                    kind: req.kind,
+                    dimension_target: None,
+                    tribulation_broadcast: req.kind == ZhenfaKind::DeceiveHeaven,
+                },
                 Position::new([
                     req.pos[0] as f64 + 0.5,
                     req.pos[1] as f64,
@@ -514,13 +885,15 @@ fn handle_zhenfa_place_requests(
             id: 0,
             kind: req.kind,
             owner: req.player,
-            owner_player_id: canonical_player_id(username.0.as_str()),
+            owner_player_id: owner_player_id.clone(),
             pos: req.pos,
             carrier: req.carrier,
             qi_invest_ratio: invest_ratio,
             qi_invest_amount: qi_cost,
+            realm_at_cast,
+            mastery_at_cast,
             effect_radius: trap_effect_radius(invest_ratio),
-            ward_radius: ward_radius(invest_ratio, specialist),
+            ward_radius: ward_radius(req.kind, invest_ratio, profile.radius, specialist),
             placed_at_tick: req.requested_at_tick,
             expires_at_tick: req.requested_at_tick.saturating_add(duration_ticks),
             triggered_at: None,
@@ -533,6 +906,22 @@ fn handle_zhenfa_place_requests(
         match registry.insert(instance) {
             Ok(id) => {
                 commands.entity(anchor_entity).insert(ZhenfaAnchor { id });
+                if let Some(mut mastery) = mastery {
+                    mastery.add_cast(req.kind);
+                }
+                emit_deploy_event(
+                    req.kind,
+                    req.player,
+                    owner_player_id,
+                    id,
+                    req.pos,
+                    &profile,
+                    req.requested_at_tick,
+                    &mut ward_events,
+                    &mut ling_events,
+                    &mut deceive_events,
+                    &mut illusion_events,
+                );
                 tracing::info!(
                     "[bong][zhenfa] placed {:?} id={} owner={:?} pos={:?} ratio={:.3}",
                     req.kind,
@@ -554,7 +943,7 @@ fn handle_zhenfa_trigger_requests(
     mut requests: EventReader<ZhenfaTriggerRequest>,
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
-    players: Query<ZhenfaTriggerPlayer<'_>>,
+    mut players: Query<ZhenfaTriggerPlayer<'_>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut practice_logs: Query<&mut PracticeLog>,
     mut combat_events: EventWriter<CombatEvent>,
@@ -564,7 +953,8 @@ fn handle_zhenfa_trigger_requests(
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for req in requests.read() {
-        let Ok((position, cultivation, qi_color, inventory)) = players.get(req.player) else {
+        let Ok((position, cultivation, qi_color, inventory, mastery)) = players.get_mut(req.player)
+        else {
             tracing::warn!(
                 "[bong][zhenfa] active trigger rejected: player {:?} missing position/cultivation",
                 req.player
@@ -615,6 +1005,9 @@ fn handle_zhenfa_trigger_requests(
         };
 
         let snapshots = registry.trigger_now([id], req.requested_at_tick);
+        if let Some(mut mastery) = mastery {
+            mastery.add_trigger(ZhenfaKind::Trap);
+        }
         despawn_triggered_anchors(&mut commands, &snapshots);
         apply_trigger_snapshots(
             snapshots,
@@ -629,6 +1022,70 @@ fn handle_zhenfa_trigger_requests(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn emit_deploy_event(
+    kind: ZhenfaKind,
+    owner: Entity,
+    owner_player_id: String,
+    array_id: u64,
+    pos: [i32; 3],
+    profile: &ZhenfaKindProfile,
+    placed_at_tick: u64,
+    ward_events: &mut EventWriter<WardArrayDeployEvent>,
+    ling_events: &mut EventWriter<LingArrayDeployEvent>,
+    deceive_events: &mut EventWriter<DeceiveHeavenEvent>,
+    illusion_events: &mut EventWriter<IllusionArrayDeployEvent>,
+) {
+    match kind {
+        ZhenfaKind::ShrineWard => {
+            ward_events.send(WardArrayDeployEvent {
+                owner,
+                owner_player_id,
+                array_id,
+                pos,
+                radius: profile.radius,
+                reflect_ratio: profile.reflect_ratio,
+                placed_at_tick,
+            });
+        }
+        ZhenfaKind::Lingju => {
+            ling_events.send(LingArrayDeployEvent {
+                owner,
+                owner_player_id,
+                array_id,
+                pos,
+                radius: profile.radius,
+                density_multiplier: profile.density_multiplier,
+                tiandao_gaze_weight: profile.tiandao_gaze_weight,
+                placed_at_tick,
+            });
+        }
+        ZhenfaKind::DeceiveHeaven => {
+            deceive_events.send(DeceiveHeavenEvent {
+                owner,
+                owner_player_id,
+                array_id,
+                pos,
+                self_weight_multiplier: 0.5,
+                target_weight_multiplier: 1.5,
+                reveal_chance_per_tick: profile.reveal_chance_per_tick,
+                placed_at_tick,
+            });
+        }
+        ZhenfaKind::Illusion => {
+            illusion_events.send(IllusionArrayDeployEvent {
+                owner,
+                owner_player_id,
+                array_id,
+                pos,
+                reveal_threshold: profile.reveal_threshold,
+                placed_at_tick,
+            });
+        }
+        ZhenfaKind::Trap | ZhenfaKind::Ward => {}
+    }
+}
+
 type ZhenfaDamageTarget<'a> = (
     Entity,
     &'a Position,
@@ -637,6 +1094,8 @@ type ZhenfaDamageTarget<'a> = (
     Option<&'a Username>,
     Option<&'a mut Contamination>,
     Option<&'a mut MeridianSystem>,
+    Option<&'a Relationships>,
+    Option<&'a Renown>,
 );
 
 type ZhenfaPlacePlayer<'a> = (
@@ -645,6 +1104,8 @@ type ZhenfaPlacePlayer<'a> = (
     &'a QiColor,
     Option<&'a InsightModifiers>,
     Option<&'a PlayerInventory>,
+    Option<&'a MeridianSeveredPermanent>,
+    Option<&'a mut ArrayMastery>,
 );
 
 type ZhenfaTriggerPlayer<'a> = (
@@ -652,10 +1113,12 @@ type ZhenfaTriggerPlayer<'a> = (
     &'a Cultivation,
     &'a QiColor,
     Option<&'a PlayerInventory>,
+    Option<&'a mut ArrayMastery>,
 );
 
 type ZhenfaDisarmPlayer<'a> = (
     &'a Position,
+    Option<&'a Username>,
     &'a mut Wounds,
     Option<&'a mut Contamination>,
     Option<&'a mut MeridianSystem>,
@@ -675,6 +1138,9 @@ fn tick_zhenfa_registry(
     mut death_events: EventWriter<DeathEvent>,
     mut status_effects: EventWriter<ApplyStatusEffectIntent>,
     mut sense_pulses: EventWriter<ZhenfaSensePulse>,
+    mut decay_events: EventWriter<ArrayDecayEvent>,
+    mut deceive_exposed_events: EventWriter<DeceiveHeavenExposedEvent>,
+    mut juebi_events: EventWriter<JueBiTriggerEvent>,
     mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
@@ -684,6 +1150,14 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
+        decay_events.send(ArrayDecayEvent {
+            owner: instance.owner,
+            owner_player_id: instance.owner_player_id.clone(),
+            array_id: instance.id,
+            kind: instance.kind,
+            pos: instance.pos,
+            decayed_at_tick: now,
+        });
         commands.entity(instance.anchor_entity).despawn();
         emit_zhenfa_vfx(
             vfx_events.as_deref_mut(),
@@ -698,6 +1172,7 @@ fn tick_zhenfa_registry(
 
     let mut passive_triggers = Vec::new();
     let mut ward_alerts = Vec::new();
+    let mut deceived_exposed = Vec::new();
     let mut current_ward_inside = HashSet::new();
     for instance in registry
         .active_instances()
@@ -743,6 +1218,28 @@ fn tick_zhenfa_registry(
                     }
                 }
             }
+            ZhenfaKind::ShrineWard => {
+                apply_shrine_ward_pressure(
+                    instance,
+                    now,
+                    &mut targets,
+                    &mut combat_events,
+                    &mut death_events,
+                    &mut status_effects,
+                );
+            }
+            ZhenfaKind::Lingju => {}
+            ZhenfaKind::DeceiveHeaven => {
+                if deceive_heaven_detected(instance.id, now, instance.realm_at_cast) {
+                    deceived_exposed.push((
+                        instance.id,
+                        instance.owner,
+                        instance.pos,
+                        instance.anchor_entity,
+                    ));
+                }
+            }
+            ZhenfaKind::Illusion => {}
         }
     }
     registry
@@ -777,6 +1274,33 @@ fn tick_zhenfa_registry(
         );
     }
 
+    for (id, owner, pos, anchor_entity) in deceived_exposed {
+        if let Some(instance) = registry.remove(id) {
+            juebi_events.send(JueBiTriggerEvent {
+                entity: owner,
+                source: JueBiTriggerSource::ZhenfaDeceptionExposed,
+                delay_ticks: 0,
+                triggered_at_tick: now,
+                epicenter: Some([
+                    f64::from(pos[0]) + 0.5,
+                    f64::from(pos[1]),
+                    f64::from(pos[2]) + 0.5,
+                ]),
+            });
+            deceive_exposed_events.send(DeceiveHeavenExposedEvent {
+                owner: instance.owner,
+                owner_player_id: instance.owner_player_id.clone(),
+                array_id: instance.id,
+                pos: instance.pos,
+                self_weight_multiplier: 0.5,
+                target_weight_multiplier: 1.5,
+                reveal_chance_per_tick: deceive_heaven_reveal_chance(instance.realm_at_cast),
+                exposed_at_tick: now,
+            });
+        }
+        commands.entity(anchor_entity).despawn();
+    }
+
     let mut snapshots = registry.trigger_now(passive_triggers, now);
     snapshots.extend(registry.drain_due_chain_triggers(now));
     despawn_triggered_anchors(&mut commands, &snapshots);
@@ -800,9 +1324,10 @@ fn handle_zhenfa_disarm_requests(
     mut players: Query<ZhenfaDisarmPlayer<'_>>,
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut breakthrough_events: EventWriter<ArrayBreakthroughEvent>,
 ) {
     for req in requests.read() {
-        let Ok((position, mut wounds, contamination, meridians, modifiers, inventory)) =
+        let Ok((position, username, mut wounds, contamination, meridians, modifiers, inventory)) =
             players.get_mut(req.player)
         else {
             tracing::warn!(
@@ -831,6 +1356,19 @@ fn handle_zhenfa_disarm_requests(
             continue;
         };
         commands.entity(instance.anchor_entity).despawn();
+        breakthrough_events.send(ArrayBreakthroughEvent {
+            breaker: req.player,
+            breaker_player_id: username
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .unwrap_or_else(|| format!("entity_bits:{}", req.player.to_bits())),
+            owner: instance.owner,
+            owner_player_id: instance.owner_player_id.clone(),
+            array_id: instance.id,
+            kind: instance.kind,
+            pos: instance.pos,
+            force_break: req.mode == ZhenfaDisarmMode::ForceBreak,
+            broken_at_tick: req.requested_at_tick,
+        });
 
         match req.mode {
             ZhenfaDisarmMode::ForceBreak => {
@@ -894,6 +1432,126 @@ fn emit_zhenfa_sense_pulses(
     }
 }
 
+fn apply_shrine_ward_pressure(
+    instance: &ZhenfaInstance,
+    tick: u64,
+    targets: &mut Query<ZhenfaDamageTarget<'_>>,
+    combat_events: &mut EventWriter<CombatEvent>,
+    death_events: &mut EventWriter<DeathEvent>,
+    status_effects: &mut EventWriter<ApplyStatusEffectIntent>,
+) {
+    for (
+        target,
+        position,
+        mut wounds,
+        lifecycle,
+        username,
+        _contamination,
+        _meridians,
+        relationships,
+        renown,
+    ) in targets.iter_mut()
+    {
+        if !in_horizontal_radius(position.get(), instance.pos, instance.ward_radius)
+            || shrine_ward_allows_target(instance, target, lifecycle, relationships, renown)
+        {
+            continue;
+        }
+        let was_alive = wounds.health_current > 0.0;
+        let damage = shrine_ward_damage_per_tick(instance.realm_at_cast, instance.mastery_at_cast);
+        wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+        wounds.entries.push(Wound {
+            location: BodyPart::Chest,
+            kind: WoundKind::Concussion,
+            severity: 0.12,
+            bleeding_per_sec: 0.0,
+            created_at_tick: tick,
+            inflicted_by: Some(format!("zhenfa_shrine_ward:{}", instance.id)),
+        });
+        status_effects.send(ApplyStatusEffectIntent {
+            target,
+            kind: StatusEffectKind::Stunned,
+            magnitude: 0.10,
+            duration_ticks: 5,
+            issued_at_tick: tick,
+        });
+        combat_events.send(CombatEvent {
+            attacker: instance.owner,
+            target,
+            resolved_at_tick: tick,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Concussion,
+            source: crate::combat::events::AttackSource::Melee,
+            damage,
+            contam_delta: 0.0,
+            description: format!(
+                "zhenfa_shrine_ward {} -> {:?} radius {}",
+                instance.id, target, instance.ward_radius
+            ),
+            defense_kind: None,
+            defense_effectiveness: Some(instance.reflect_ratio()),
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+        if was_alive
+            && wounds.health_current <= 0.0
+            && !lifecycle.is_some_and(|lifecycle| {
+                matches!(
+                    lifecycle.state,
+                    LifecycleState::NearDeath | LifecycleState::Terminated
+                )
+            })
+        {
+            let cause_target = username
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .unwrap_or_else(|| format!("entity:{:?}", target));
+            death_events.send(DeathEvent {
+                target,
+                cause: format!("zhenfa_shrine_ward:{cause_target}"),
+                attacker: Some(instance.owner),
+                attacker_player_id: Some(instance.owner_player_id.clone()),
+                at_tick: tick,
+            });
+            tracing::warn!(
+                "[bong][zhenfa] shrine ward reduced {:?} ({:?}) to zero health",
+                target,
+                username.map(|u| u.0.as_str())
+            );
+        }
+    }
+}
+
+fn shrine_ward_allows_target(
+    instance: &ZhenfaInstance,
+    target: Entity,
+    lifecycle: Option<&Lifecycle>,
+    relationships: Option<&Relationships>,
+    renown: Option<&Renown>,
+) -> bool {
+    if target == instance.owner {
+        return true;
+    }
+
+    let Some(character_id) = lifecycle.map(|lifecycle| lifecycle.character_id.as_str()) else {
+        return false;
+    };
+    if character_id == instance.owner_player_id {
+        return true;
+    }
+
+    let is_ally = relationships.is_some_and(|relationships| {
+        relationships.edges.iter().any(|edge| {
+            edge.peer == instance.owner_player_id
+                && matches!(
+                    edge.kind,
+                    RelationshipKindV1::Companion | RelationshipKindV1::Pact
+                )
+        })
+    });
+    let has_trust = renown.is_some_and(|renown| renown.fame >= 80);
+    is_ally && has_trust
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_trigger_snapshots(
     snapshots: Vec<TriggerSnapshot>,
@@ -926,8 +1584,17 @@ fn apply_trigger_snapshots(
 
         let damage_profile = damage_profile(snapshot.qi_invest_ratio);
         let mut hit_any = false;
-        for (target, position, mut wounds, lifecycle, username, contamination, meridians) in
-            targets.iter_mut()
+        for (
+            target,
+            position,
+            mut wounds,
+            lifecycle,
+            username,
+            contamination,
+            meridians,
+            _relationships,
+            _renown,
+        ) in targets.iter_mut()
         {
             if target == snapshot.owner {
                 continue;
@@ -1107,11 +1774,13 @@ fn damage_profile(ratio: f64) -> DamageProfile {
     }
 }
 
-fn sanitize_invest_ratio(requested: f64, cap: f64) -> f64 {
+fn sanitize_invest_ratio(requested: f64, min: f64, cap: f64) -> f64 {
+    let min = min.clamp(0.0, 1.0);
+    let cap = cap.clamp(min, 1.0);
     if !requested.is_finite() {
-        return MIN_QI_INVEST_RATIO.min(cap);
+        return min;
     }
-    requested.clamp(MIN_QI_INVEST_RATIO, cap)
+    requested.clamp(min, cap)
 }
 
 fn trap_effect_radius(ratio: f64) -> u8 {
@@ -1124,7 +1793,21 @@ fn trap_effect_radius(ratio: f64) -> u8 {
     }
 }
 
-fn ward_radius(ratio: f64, specialist: ZhenfaSpecialistLevel) -> u8 {
+fn ward_radius(
+    kind: ZhenfaKind,
+    ratio: f64,
+    profile_radius: u8,
+    specialist: ZhenfaSpecialistLevel,
+) -> u8 {
+    if matches!(
+        kind,
+        ZhenfaKind::ShrineWard
+            | ZhenfaKind::Lingju
+            | ZhenfaKind::DeceiveHeaven
+            | ZhenfaKind::Illusion
+    ) {
+        return profile_radius.max(1);
+    }
     let base = if ratio > 0.30 {
         12.0
     } else if ratio >= 0.15 {
@@ -1184,6 +1867,29 @@ fn trap_contam_delta(main: ColorKind, secondary: Option<ColorKind>) -> f64 {
     }
 }
 
+fn shrine_ward_damage_per_tick(realm: Realm, mastery: f64) -> f32 {
+    let realm_factor = match realm {
+        Realm::Awaken | Realm::Induce => 1.0,
+        Realm::Condense => 1.25,
+        Realm::Solidify => 1.5,
+        Realm::Spirit => 2.0,
+        Realm::Void => 3.0,
+    };
+    (5.0 * realm_factor * (1.0 + mastery_ratio(mastery))) as f32
+}
+
+pub fn deceive_heaven_reveal_chance(realm: Realm) -> f64 {
+    if realm == Realm::Void {
+        0.002
+    } else {
+        0.005
+    }
+}
+
+fn deceive_heaven_detected(array_id: u64, tick: u64, realm: Realm) -> bool {
+    deterministic_tick_roll(array_id, tick) <= deceive_heaven_reveal_chance(realm)
+}
+
 fn has_zhenfa_flag(inventory: Option<&PlayerInventory>) -> bool {
     let Some(inventory) = inventory else {
         return false;
@@ -1199,6 +1905,10 @@ fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
     match kind {
         ZhenfaKind::Trap => 0.5,
         ZhenfaKind::Ward => 0.3,
+        ZhenfaKind::ShrineWard => 0.35,
+        ZhenfaKind::Lingju => 0.25,
+        ZhenfaKind::DeceiveHeaven => 1.5,
+        ZhenfaKind::Illusion => 0.2,
     }
 }
 
@@ -1240,6 +1950,16 @@ fn deterministic_roll(player: Entity, instance_id: u64, pos: [i32; 3]) -> f64 {
     x ^= (pos[0] as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     x ^= (pos[1] as i64 as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x ^= (pos[2] as i64 as u64).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    (x as f64) / (u64::MAX as f64)
+}
+
+fn deterministic_tick_roll(instance_id: u64, tick: u64) -> f64 {
+    let mut x = instance_id.rotate_left(17) ^ tick.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     x ^= x >> 30;
     x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x ^= x >> 27;
@@ -1299,6 +2019,14 @@ mod tests {
         app.add_event::<ZhenfaTriggerRequest>();
         app.add_event::<ZhenfaDisarmRequest>();
         app.add_event::<ZhenfaSensePulse>();
+        app.add_event::<WardArrayDeployEvent>();
+        app.add_event::<LingArrayDeployEvent>();
+        app.add_event::<DeceiveHeavenEvent>();
+        app.add_event::<DeceiveHeavenExposedEvent>();
+        app.add_event::<IllusionArrayDeployEvent>();
+        app.add_event::<ArrayDecayEvent>();
+        app.add_event::<ArrayBreakthroughEvent>();
+        app.add_event::<JueBiTriggerEvent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -1356,6 +2084,8 @@ mod tests {
                 carrier: ZhenfaCarrierKind::CommonStone,
                 qi_invest_ratio: 0.2,
                 qi_invest_amount: 20.0,
+                realm_at_cast: Realm::Induce,
+                mastery_at_cast: 0.0,
                 effect_radius: 1,
                 ward_radius: 1,
                 placed_at_tick: 1,
@@ -1862,13 +2592,275 @@ mod tests {
         assert_eq!(trap_effect_radius(0.10), 0);
         assert_eq!(trap_effect_radius(0.20), 1);
         assert_eq!(trap_effect_radius(0.50), 2);
-        assert_eq!(ward_radius(0.20, ZhenfaSpecialistLevel::None), 4);
-        assert_eq!(ward_radius(0.20, ZhenfaSpecialistLevel::Expert), 8);
+        assert_eq!(
+            ward_radius(ZhenfaKind::Ward, 0.20, 8, ZhenfaSpecialistLevel::None),
+            4
+        );
+        assert_eq!(
+            ward_radius(ZhenfaKind::Ward, 0.20, 8, ZhenfaSpecialistLevel::Expert),
+            8
+        );
         assert!(in_horizontal_radius(
             DVec3::new(1.5, 64.0, 1.5),
             [1, 64, 1],
             0
         ));
+    }
+
+    #[test]
+    fn shrine_ward_deploy_emits_event_and_burns_intruder() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::ShrineWard,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        assert!(!app
+            .world()
+            .resource::<Events<WardArrayDeployEvent>>()
+            .is_empty());
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(intruder).unwrap();
+        assert!(wounds.health_current < wounds.health_max);
+        assert!(wounds
+            .entries
+            .iter()
+            .any(|w| w.inflicted_by.as_deref() == Some("zhenfa_shrine_ward:1")));
+    }
+
+    #[test]
+    fn shrine_ward_lethal_pressure_emits_death_event() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
+        app.world_mut()
+            .get_mut::<Wounds>(intruder)
+            .unwrap()
+            .health_current = 4.0;
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::ShrineWard,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let deaths: Vec<_> = app
+            .world()
+            .resource::<Events<DeathEvent>>()
+            .get_reader()
+            .read(app.world().resource::<Events<DeathEvent>>())
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].target, intruder);
+        assert_eq!(deaths[0].attacker, Some(owner));
+        assert_eq!(
+            deaths[0].attacker_player_id.as_deref(),
+            Some("offline:Alice")
+        );
+        assert_eq!(deaths[0].cause, "zhenfa_shrine_ward:offline:Bob");
+    }
+
+    #[test]
+    fn shrine_ward_allows_trusted_allies() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let ally = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
+        app.world_mut().entity_mut(ally).insert((
+            Lifecycle {
+                character_id: "offline:Bob".to_string(),
+                ..Default::default()
+            },
+            Relationships {
+                edges: vec![crate::social::components::Relationship {
+                    kind: RelationshipKindV1::Pact,
+                    peer: canonical_player_id("Alice"),
+                    since_tick: 0,
+                    metadata: serde_json::Value::Null,
+                }],
+            },
+            Renown {
+                fame: 80,
+                ..Default::default()
+            },
+        ));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::ShrineWard,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(ally).unwrap();
+        assert_eq!(wounds.health_current, wounds.health_max);
+        assert!(wounds.entries.is_empty());
+    }
+
+    #[test]
+    fn deceive_heaven_requires_solidify_or_higher() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.90,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+    }
+
+    #[test]
+    fn deceive_heaven_exposure_emits_dedicated_event() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().entity_mut(owner).insert(Cultivation {
+            realm: Realm::Solidify,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        });
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.90,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let instance_id = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .unwrap()
+            .id;
+        let exposure_tick = (2..10_000)
+            .find(|tick| deceive_heaven_detected(instance_id, *tick, Realm::Solidify))
+            .expect("deterministic exposure tick should exist in test window");
+        app.world_mut().resource_mut::<CombatClock>().tick = exposure_tick;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .is_none());
+        assert!(!app
+            .world()
+            .resource::<Events<DeceiveHeavenExposedEvent>>()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<JueBiTriggerEvent>>()
+            .iter_current_update_events()
+            .any(|event| event.source == JueBiTriggerSource::ZhenfaDeceptionExposed));
+    }
+
+    #[test]
+    fn severed_kidney_blocks_lingju_array() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Kidney,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(owner).insert(severed);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Lingju,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.30,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+    }
+
+    #[test]
+    fn array_mastery_grows_on_cast_and_trigger() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ArrayMastery::default());
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.10,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+        assert_eq!(app.world().get::<ArrayMastery>(owner).unwrap().trap, 0.3);
+
+        app.world_mut().send_event(ZhenfaTriggerRequest {
+            player: owner,
+            instance_id: None,
+            requested_at_tick: 2,
+        });
+        app.update();
+        assert_eq!(app.world().get::<ArrayMastery>(owner).unwrap().trap, 1.3);
+    }
+
+    #[test]
+    fn zhenfa_v2_profiles_encode_plan_thresholds() {
+        let lingju = zhenfa_kind_profile(
+            ZhenfaKind::Lingju,
+            Realm::Void,
+            100.0,
+            ZhenfaCarrierKind::BeastCoreInlaid,
+        );
+        assert_eq!(lingju.radius, 60);
+        assert_eq!(lingju.density_multiplier, 3.5);
+        assert!(lingju.duration_ticks > 6 * 60 * 60 * TICKS_PER_SECOND);
+
+        let deceive = zhenfa_kind_profile(
+            ZhenfaKind::DeceiveHeaven,
+            Realm::Void,
+            0.0,
+            ZhenfaCarrierKind::BeastCoreInlaid,
+        );
+        assert_eq!(deceive.min_invest_ratio, 0.80);
+        assert_eq!(deceive.reveal_chance_per_tick, 0.002);
     }
 
     #[test]
@@ -1882,6 +2874,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.5,
             qi_invest_amount: 25.0,
+            realm_at_cast: Realm::Induce,
+            mastery_at_cast: 0.0,
             effect_radius: 2,
             ward_radius: 8,
             placed_at_tick: 1,
@@ -1918,6 +2912,8 @@ mod tests {
                 carrier: ZhenfaCarrierKind::LingqiBlock,
                 qi_invest_ratio: 0.5,
                 qi_invest_amount: 25.0,
+                realm_at_cast: Realm::Induce,
+                mastery_at_cast: 0.0,
                 effect_radius: 2,
                 ward_radius: 8,
                 placed_at_tick: 1,

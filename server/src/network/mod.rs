@@ -66,6 +66,7 @@ pub mod woliu_event_bridge;
 pub mod woliu_state_emit;
 pub mod wounds_snapshot_emit;
 pub mod yidao_state_emit;
+pub mod zhenfa_v2_event_bridge;
 pub mod zhenmai_v2_event_bridge;
 pub mod zone_environment_bridge;
 pub mod zone_pressure_bridge;
@@ -412,6 +413,11 @@ pub fn register(app: &mut App) {
             tuike_event_bridge::publish_tuike_shed_events
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
+    );
+    app.add_systems(
+        Update,
+        zhenfa_v2_event_bridge::publish_zhenfa_v2_events
+            .after(crate::zhenfa::ZhenfaSystemSet::Runtime),
     );
     app.add_systems(
         Update,
