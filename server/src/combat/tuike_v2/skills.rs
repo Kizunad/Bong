@@ -444,13 +444,20 @@ fn push_spent_qi_overflow(
     if amount <= QI_EPSILON {
         return;
     }
-    if let Ok(transfer) = QiTransfer::new(
+    match QiTransfer::new(
         from,
         QiAccountId::overflow(format!("{sink}:{}", caster.to_bits())),
         amount,
         QiTransferReason::ReleaseToZone,
     ) {
-        transfers.push(transfer);
+        Ok(transfer) => transfers.push(transfer),
+        Err(error) => tracing::warn!(
+            ?error,
+            sink,
+            ?caster,
+            amount,
+            "[bong][tuike_v2] failed to build spent qi overflow transfer"
+        ),
     }
 }
 

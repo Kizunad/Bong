@@ -49,6 +49,30 @@ pub struct TuikeSkillEventV1 {
     pub icon_texture: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuikeSkillVisualContractV1 {
+    pub animation_id: String,
+    pub particle_id: String,
+    pub sound_recipe_id: String,
+    pub icon_texture: String,
+}
+
+impl TuikeSkillVisualContractV1 {
+    pub fn new(
+        animation_id: impl Into<String>,
+        particle_id: impl Into<String>,
+        sound_recipe_id: impl Into<String>,
+        icon_texture: impl Into<String>,
+    ) -> Self {
+        Self {
+            animation_id: non_empty_visual_field("animation_id", animation_id.into()),
+            particle_id: non_empty_visual_field("particle_id", particle_id.into()),
+            sound_recipe_id: non_empty_visual_field("sound_recipe_id", sound_recipe_id.into()),
+            icon_texture: non_empty_visual_field("icon_texture", icon_texture.into()),
+        }
+    }
+}
+
 impl TuikeSkillEventV1 {
     pub fn new(
         caster_id: String,
@@ -56,7 +80,9 @@ impl TuikeSkillEventV1 {
         tier: FalseSkinTierV1,
         layers_after: u8,
         tick: u64,
+        visual: TuikeSkillVisualContractV1,
     ) -> Self {
+        let visual = visual.validated();
         Self {
             v: default_version(),
             event_type: default_event_type(),
@@ -72,12 +98,28 @@ impl TuikeSkillEventV1 {
             contam_load: None,
             active_shed: None,
             tick,
-            animation_id: String::new(),
-            particle_id: String::new(),
-            sound_recipe_id: String::new(),
-            icon_texture: String::new(),
+            animation_id: visual.animation_id,
+            particle_id: visual.particle_id,
+            sound_recipe_id: visual.sound_recipe_id,
+            icon_texture: visual.icon_texture,
         }
     }
+}
+
+impl TuikeSkillVisualContractV1 {
+    fn validated(self) -> Self {
+        Self::new(
+            self.animation_id,
+            self.particle_id,
+            self.sound_recipe_id,
+            self.icon_texture,
+        )
+    }
+}
+
+fn non_empty_visual_field(field: &str, value: String) -> String {
+    assert!(!value.is_empty(), "{field} must not be empty");
+    value
 }
 
 const fn default_version() -> u8 {
@@ -136,5 +178,23 @@ mod tests {
         let json = serde_json::to_string(&event).expect("serialize");
         let parsed: TuikeSkillEventV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    #[should_panic(expected = "animation_id must not be empty")]
+    fn tuike_skill_event_constructor_rejects_empty_visual_contract() {
+        let _ = TuikeSkillEventV1::new(
+            "offline:Azure".to_string(),
+            TuikeSkillIdV1::Don,
+            FalseSkinTierV1::Fan,
+            1,
+            9,
+            TuikeSkillVisualContractV1 {
+                animation_id: String::new(),
+                particle_id: "bong:false_skin_don_dust".to_string(),
+                sound_recipe_id: "don_skin_low_thud".to_string(),
+                icon_texture: "bong-client:textures/gui/skill/tuike_don.png".to_string(),
+            },
+        );
     }
 }

@@ -23,8 +23,8 @@ public final class FalseSkinStateHandler implements ServerDataHandler {
         int layers = (int) Math.max(0L, Math.round(readDouble(payload, "layers_remaining", 0d)));
         String targetId = readString(payload, "target_id", "");
         String kind = readString(payload, "kind", "");
-        float contamCapacity = (float) readDouble(payload, "contam_capacity_per_layer", 0d);
-        float absorbedContam = (float) readDouble(payload, "absorbed_contam", 0d);
+        float contamCapacity = readNonNegativeFloat(payload, "contam_capacity_per_layer", 0d);
+        float absorbedContam = readNonNegativeFloat(payload, "absorbed_contam", 0d);
         long equippedAtTick = Math.max(0L, Math.round(readDouble(payload, "equipped_at_tick", 0d)));
 
         FalseSkinHudStateStore.replace(new FalseSkinHudStateStore.State(
@@ -66,10 +66,10 @@ public final class FalseSkinStateHandler implements ServerDataHandler {
             JsonObject layer = item.getAsJsonObject();
             layers.add(new FalseSkinHudStateStore.Layer(
                 readString(layer, "tier", "fan"),
-                (float) readDouble(layer, "spirit_quality", 1d),
-                (float) readDouble(layer, "damage_capacity", 0d),
-                (float) readDouble(layer, "contam_load", 0d),
-                (float) readDouble(layer, "permanent_taint_load", 0d)
+                readNonNegativeFloat(layer, "spirit_quality", 1d),
+                readNonNegativeFloat(layer, "damage_capacity", 0d),
+                readNonNegativeFloat(layer, "contam_load", 0d),
+                readNonNegativeFloat(layer, "permanent_taint_load", 0d)
             ));
             if (layers.size() >= 3) break;
         }
@@ -92,5 +92,9 @@ public final class FalseSkinStateHandler implements ServerDataHandler {
         if (!p.isNumber()) return fallback;
         double v = p.getAsDouble();
         return Double.isFinite(v) ? v : fallback;
+    }
+
+    private static float readNonNegativeFloat(JsonObject obj, String field, double fallback) {
+        return (float) Math.max(0d, readDouble(obj, field, fallback));
     }
 }

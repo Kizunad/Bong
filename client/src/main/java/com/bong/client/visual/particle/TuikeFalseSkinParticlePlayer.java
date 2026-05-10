@@ -10,6 +10,7 @@ public final class TuikeFalseSkinParticlePlayer implements VfxPlayer {
     public static final Identifier DON_DUST = new Identifier("bong", "false_skin_don_dust");
     public static final Identifier SHED_BURST = new Identifier("bong", "false_skin_shed_burst");
     public static final Identifier ANCIENT_GLOW = new Identifier("bong", "ancient_skin_glow");
+    private static final int MAX_AGE_TICKS = 200;
 
     private final Identifier eventId;
 
@@ -22,11 +23,14 @@ public final class TuikeFalseSkinParticlePlayer implements VfxPlayer {
         ClientWorld world = client.world;
         if (world == null) return;
 
-        double ox = payload.origin()[0];
-        double oy = payload.origin()[1];
-        double oz = payload.origin()[2];
+        double[] origin = payload.origin();
+        if (origin.length < 3) return;
+
+        double ox = origin[0];
+        double oy = origin[1];
+        double oz = origin[2];
         int count = clamp(payload.count().orElse(defaultCount()), 1, 48);
-        int maxAge = payload.durationTicks().orElse(defaultAge());
+        int maxAge = clamp(payload.durationTicks().orElse(defaultAge()), 1, MAX_AGE_TICKS);
         double strength = Math.max(0.2, Math.min(1.0, payload.strength().orElse(0.75)));
         int rgb = payload.colorRgb().orElse(defaultRgb());
         float r = ((rgb >> 16) & 0xFF) / 255f;

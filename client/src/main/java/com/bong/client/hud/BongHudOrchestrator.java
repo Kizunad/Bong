@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
+import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.state.PlayerStateStore;
@@ -217,13 +218,14 @@ public final class BongHudOrchestrator {
                 screenHeight,
                 nowMillis
             ));
+            FalseSkinHudStateStore.State falseSkinSnapshot = FalseSkinHudStateStore.snapshot();
             commands.addAll(FalseSkinStackHud.buildCommands(
-                com.bong.client.combat.store.FalseSkinHudStateStore.snapshot(),
+                falseSkinSnapshot,
                 screenWidth,
                 screenHeight
             ));
             commands.addAll(ContamLoadHud.buildCommands(
-                com.bong.client.combat.store.FalseSkinHudStateStore.snapshot(),
+                falseSkinSnapshot,
                 screenWidth,
                 screenHeight
             ));

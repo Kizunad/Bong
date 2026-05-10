@@ -2084,6 +2084,7 @@ mod redis_bridge_tests {
     use crate::schema::spirit_eye::{
         SpiritEyeMigrateReasonV1, SpiritEyeMigrateV1, SpiritEyePositionV1,
     };
+    use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeSkillIdV1, TuikeSkillVisualContractV1};
     use crate::schema::zhenmai_v2::{ZhenmaiAttackKindV1, ZhenmaiSkillIdV1};
     use serde_json::json;
     use tokio::task;
@@ -2640,6 +2641,40 @@ mod redis_bridge_tests {
                 assert_eq!(v["session_id"], 7);
                 assert_eq!(v["blueprint_id"], "qing_feng_v0");
                 assert_eq!(v["materials"][0]["material"], "fan_tie");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_tuike_v2_skill_event_on_correct_channel() {
+        let event = TuikeSkillEventV1::new(
+            "offline:Azure".to_string(),
+            TuikeSkillIdV1::TransferTaint,
+            FalseSkinTierV1::Ancient,
+            2,
+            84_000,
+            TuikeSkillVisualContractV1::new(
+                "bong:tuike_taint_transfer",
+                "bong:ancient_skin_glow",
+                "contam_transfer_hum",
+                "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+            ),
+        );
+
+        let command = prepare_outbound_command(RedisOutbound::TuikeV2SkillEvent(event.clone()))
+            .expect("tuike v2 skill event should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_TUIKE_V2_SKILL_EVENT);
+                let parsed: TuikeSkillEventV1 =
+                    serde_json::from_str(&payload).expect("tuike event payload should be valid");
+                assert_eq!(parsed.caster_id, event.caster_id);
+                assert_eq!(parsed.skill_id, event.skill_id);
+                assert_eq!(parsed.tier, event.tier);
+                assert_eq!(parsed.animation_id, event.animation_id);
+                assert_eq!(parsed.particle_id, event.particle_id);
             }
             other => panic!("expected publish, got {other:?}"),
         }

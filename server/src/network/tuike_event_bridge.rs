@@ -6,7 +6,9 @@ use crate::combat::tuike::ShedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
-use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeSkillEventV1, TuikeSkillIdV1};
+use crate::schema::tuike_v2::{
+    FalseSkinTierV1, TuikeSkillEventV1, TuikeSkillIdV1, TuikeSkillVisualContractV1,
+};
 
 pub fn publish_tuike_shed_events(
     redis: Res<RedisBridgeResource>,
@@ -27,15 +29,15 @@ pub fn publish_tuike_v2_skill_events(
     usernames: Query<&Username>,
 ) {
     for event in don_events.read() {
-        let mut payload = base_payload(
+        let payload = base_payload(
             TuikeSkillIdV1::Don,
             event.caster,
             event.tier,
             event.layers_after,
             event.tick,
+            &event.visual,
             &usernames,
         );
-        apply_visual(&mut payload, &event.visual);
         send_tuike_v2_payload(&redis, payload);
     }
 
@@ -46,6 +48,7 @@ pub fn publish_tuike_v2_skill_events(
             event.tier,
             event.layers_after,
             event.tick,
+            &event.visual,
             &usernames,
         );
         payload.damage_absorbed = Some(event.damage_absorbed);
@@ -53,7 +56,6 @@ pub fn publish_tuike_v2_skill_events(
         payload.contam_load = Some(event.contam_load);
         payload.permanent_absorbed = event.permanent_taint_load;
         payload.active_shed = Some(event.active);
-        apply_visual(&mut payload, &event.visual);
         send_tuike_v2_payload(&redis, payload);
     }
 
@@ -64,13 +66,15 @@ pub fn publish_tuike_v2_skill_events(
             event.tier,
             0,
             event.tick,
+            &event.visual,
             &usernames,
         );
         payload.contam_moved_percent = event.contam_moved_percent;
         payload.permanent_absorbed = event.permanent_absorbed;
         payload.qi_cost = event.qi_cost;
+        // Transfer events do not carry a post-transfer skin load snapshot. For this
+        // narration/HUD event, reuse the moved percent as the compatibility load signal.
         payload.contam_load = Some(event.contam_moved_percent);
-        apply_visual(&mut payload, &event.visual);
         send_tuike_v2_payload(&redis, payload);
     }
 }
@@ -90,6 +94,7 @@ fn base_payload(
     tier: crate::combat::tuike_v2::FalseSkinTier,
     layers_after: u8,
     tick: u64,
+    visual: &crate::combat::tuike_v2::events::TuikeSkillVisualPayload,
     usernames: &Query<&Username>,
 ) -> TuikeSkillEventV1 {
     TuikeSkillEventV1::new(
@@ -98,17 +103,13 @@ fn base_payload(
         tier_payload(tier),
         layers_after,
         tick,
+        TuikeSkillVisualContractV1::new(
+            visual.animation_id.clone(),
+            visual.particle_id.clone(),
+            visual.sound_recipe_id.clone(),
+            visual.icon_texture.clone(),
+        ),
     )
-}
-
-fn apply_visual(
-    payload: &mut TuikeSkillEventV1,
-    visual: &crate::combat::tuike_v2::events::TuikeSkillVisualPayload,
-) {
-    payload.animation_id.clone_from(&visual.animation_id);
-    payload.particle_id.clone_from(&visual.particle_id);
-    payload.sound_recipe_id.clone_from(&visual.sound_recipe_id);
-    payload.icon_texture.clone_from(&visual.icon_texture);
 }
 
 fn entity_wire_id(username: Option<&Username>, entity: Entity) -> String {
