@@ -1,6 +1,8 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.botany.BotanySpiritQualityVisuals;
+import com.bong.client.inventory.ItemIconRegistry;
+import com.bong.client.inventory.RarityBorderRenderer;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.AncientRelicGlowRenderer;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -11,19 +13,9 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 public class GridSlotComponent extends BaseComponent {
     public static final int CELL_SIZE = 28;
     private static final int ICON_SIZE = 128;
-    private static final Identifier FALLBACK_ITEM_TEXTURE = new Identifier(
-        "bong-client", "textures/gui/items/broken_artifact.png"
-    );
-    private static final Identifier FALLBACK_SCROLL_TEXTURE = new Identifier(
-        "bong-client", "textures/gui/items/broken_artifact_scroll.png"
-    );
-    private static final Map<String, Identifier> TEXTURE_CACHE = new ConcurrentHashMap<>();
 
     // Gray palette
     private static final int BG_COLOR = 0xFF1E1E1E;
@@ -117,6 +109,19 @@ public class GridSlotComponent extends BaseComponent {
             drawSlotBorder(context, dx + 1, dy + 1, dw - 2, dh - 2, botanyBorder & 0x88FFFFFF);
         }
 
+        float ageTicks = 0.0f;
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.world != null) {
+            ageTicks = client.world.getTime();
+        }
+        RarityBorderRenderer.drawBorder(context, dx, dy, dw, dh, item, ageTicks);
+        if (item.isAncientRelic()) {
+            int alpha = RarityBorderRenderer.ancientInvertFlashAlpha(ageTicks);
+            if (alpha > 0) {
+                context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, (alpha << 24) | 0xFFFFFF);
+            }
+        }
+
         // 堆叠数字 —— 右下角（与原版 MC 物品栏一致，保证在贴图上层可见）。
         if (item.stackCount() > 1) {
             var tr = MinecraftClient.getInstance().textRenderer;
@@ -158,36 +163,15 @@ public class GridSlotComponent extends BaseComponent {
     }
 
     public static Identifier textureIdForItemId(String itemId) {
-        String normalized = itemId == null ? "" : itemId.trim();
-        return TEXTURE_CACHE.computeIfAbsent(normalized, GridSlotComponent::resolveTextureIdForItemId);
-    }
-
-    private static Identifier resolveTextureIdForItemId(String itemId) {
-        if (itemId.isEmpty()) {
-            return FALLBACK_ITEM_TEXTURE;
-        }
-
-        Identifier candidate = new Identifier("bong-client", "textures/gui/items/" + itemId + ".png");
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null && client.getResourceManager().getResource(candidate).isPresent()) {
-            return candidate;
-        }
-        return fallbackTextureIdForItemId(itemId);
+        return ItemIconRegistry.textureIdForItemId(itemId);
     }
 
     static Identifier fallbackTextureIdForItemId(String itemId) {
-        return isScrollTextureCandidate(itemId) ? FALLBACK_SCROLL_TEXTURE : FALLBACK_ITEM_TEXTURE;
+        return ItemIconRegistry.fallbackTextureIdForItemId(itemId);
     }
 
     static boolean isScrollTextureCandidate(String itemId) {
-        if (itemId == null || itemId.isBlank()) {
-            return false;
-        }
-        return itemId.startsWith("skill_scroll_")
-            || itemId.startsWith("recipe_scroll_")
-            || itemId.startsWith("blueprint_scroll_")
-            || itemId.startsWith("inscription_scroll_")
-            || itemId.endsWith("_scroll");
+        return ItemIconRegistry.isScrollTextureCandidate(itemId);
     }
 
     static void drawSlotBorder(net.minecraft.client.gui.DrawContext context, int x, int y, int w, int h, int color) {

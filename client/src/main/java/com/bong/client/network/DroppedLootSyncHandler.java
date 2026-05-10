@@ -40,7 +40,8 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
         Integer sourceCol = readRequiredInt(object, "source_col");
         JsonArray pos = readRequiredArray(object, "world_pos");
         InventoryItem item = parseInventoryItem(readRequiredObject(object, "item"));
-        if (instanceId == null || sourceContainerId == null || sourceRow == null || sourceCol == null || pos == null || item == null) {
+        if (instanceId == null || sourceContainerId == null || sourceRow == null || sourceCol == null
+            || pos == null || pos.size() != 3 || item == null) {
             return null;
         }
         Double x = readRequiredDouble(pos.get(0));
@@ -65,13 +66,17 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        JsonElement chargesElement = itemObject.get("charges");
+        boolean hasChargesField = chargesElement != null && !chargesElement.isJsonNull();
         Integer charges = readOptionalInt(itemObject, "charges");
         if (instanceId == null || itemId == null || displayName == null || gridWidth == null || gridHeight == null
             || weight == null || rarity == null || description == null || stackCount == null
-            || spiritQuality == null || durability == null) {
+            || spiritQuality == null || durability == null
+            || (hasChargesField && charges == null)
+            || (charges != null && (charges < 0 || charges > 5))) {
             return null;
         }
-        return InventoryItem.createFullWithAncientMeta(
+        return InventoryItem.createFullWithVisualMeta(
             instanceId, itemId, displayName, gridWidth, gridHeight,
             weight, rarity, description, stackCount, spiritQuality, durability,
             charges, "", "", 0, null, "", List.of(), null, List.of()
@@ -116,8 +121,7 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
     private static Integer readOptionalInt(JsonObject object, String fieldName) {
         JsonElement element = object.get(fieldName);
         if (element == null || element.isJsonNull()) return null;
-        Long value = readRequiredLong(object, fieldName);
-        return value == null || value > Integer.MAX_VALUE ? null : value.intValue();
+        return readRequiredInt(object, fieldName);
     }
 
     private static Double readRequiredDouble(JsonObject object, String fieldName) {

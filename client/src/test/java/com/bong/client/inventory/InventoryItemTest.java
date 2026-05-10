@@ -91,7 +91,7 @@ public class InventoryItemTest {
 
     @Test
     void ancientRelicGlowRendersChargesInStatusLine() {
-        InventoryItem item = InventoryItem.createFullWithAncientMeta(
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
             77L,
             "ancient_relic_eye",
             "古眼",
@@ -115,8 +115,68 @@ public class InventoryItemTest {
         );
 
         assertTrue(item.isAncientRelic());
-        assertEquals(0xFFD700, item.rarityColor());
-        assertEquals("耐久 90%  ⚡ ×3", ItemTooltipPanel.formatStatusLine(item));
+        assertEquals(0xFF4444, item.rarityColor());
+        assertEquals("耐久 90%  ⚡ ×3 上古遗物·一次性", ItemTooltipPanel.formatStatusLine(item));
         assertTrue(AncientRelicGlowRenderer.shouldGlow(item));
+    }
+
+    @Test
+    void ancientRelicChargesClampAndMarkRelic() {
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
+            45L,
+            "ancient_relic",
+            "上古遗物",
+            1,
+            1,
+            0.2,
+            "ancient",
+            "",
+            1,
+            0.0,
+            1.0,
+            8,
+            "",
+            "",
+            0,
+            null,
+            "",
+            java.util.List.of(),
+            null,
+            java.util.List.of()
+        );
+
+        assertTrue(item.isAncientRelic());
+        assertEquals(5, item.charges());
+        assertEquals(0xFF4444, item.rarityColor());
+    }
+
+    @Test
+    void rarityMetadataIsNormalizedForVisualSemantics() {
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
+            46L,
+            "ancient_relic",
+            "上古遗物",
+            1,
+            1,
+            0.2,
+            " Ancient ",
+            "",
+            1,
+            1.0,
+            1.0,
+            1,
+            "",
+            "",
+            0,
+            null,
+            "",
+            java.util.List.of(),
+            null,
+            java.util.List.of()
+        );
+
+        assertEquals("ancient", item.rarity());
+        assertTrue(item.isAncientRelic());
+        assertEquals(0xFF4444, item.rarityColor());
     }
 }

@@ -19,7 +19,8 @@ public final class AncientRelicGlowRenderer {
         if (item == null || item.charges() == null) {
             return "";
         }
-        return "⚡ ×" + item.charges();
+        String line = "⚡ ×" + item.charges();
+        return item.isAncientRelic() ? line + " 上古遗物·一次性" : line;
     }
 
     public static int pulseColor(long nowMillis) {

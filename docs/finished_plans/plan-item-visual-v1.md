@@ -121,3 +121,45 @@
 | plan-vfx-v1 | ✅ finished | VfxRegistry（掉落物粒子） |
 
 **全部依赖已 finished，无阻塞。**
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 图标批次：新增 `scripts/images/gen_item_batch.py` / `scripts/images/test_gen_item_batch.py`，从 `server/assets/items/**/*.toml` 读取物品定义；默认接 `scripts/images/gen.py --style item --transparent`，并提供 `--placeholder` 作为无外部图像服务时的确定性离线生成模式。首批 42 张物品图标已落到 `client/src/main/resources/assets/bong-client/textures/gui/items/*.png`。
+- P0 注册表：新增 `ItemIconRegistry.java`，统一 item texture path、fallback、scroll fallback，并把 `BotanyHudPlanner` 的植物 icon 表迁入统一注册入口。
+- P1 物品栏视觉：新增 `RarityBorderRenderer.java`，`GridSlotComponent` 绘制 6 档 rarity 边框、Ancient 呼吸与反色闪烁 overlay；`ItemTooltipPanel` 增加稀有度颜色、灵质百分比与 3px 渐变条。
+- P1/P2 metadata：`InventoryItem` 新增 `charges` / `isAncientRelic()` / `createFullWithVisualMeta(...)`；`InventorySnapshotHandler`、`InventoryEventHandler`、`DroppedLootSyncHandler` 保留 scroll / forge / alchemy / charges metadata。
+- P2 掉落物视觉：新增 `DroppedLootRarityVisuals.java`；`DroppedItemWorldRenderer` 对 Rare+ 生成 qi aura，Legendary/Ancient 生成光柱，Ancient 周期播放 beacon hum。
+- Review 修复：新增 `RarityVisuals.java` 收敛 6 档 rarity label/color/normalize；三个 inventory/dropped 入口严格拒绝非法 `charges`；图标 prompt 与资源契约统一到 128×128。
+- Review 收敛：`ItemIconRegistry` 对 item id 做 lowercase normalize；`gen_item_batch.py` 对重复 item id fail-fast、对 `--ids` 去重；Ancient 掉落音效改为在物品世界坐标播放。
+
+### 关键 commit
+
+- `550f90132`（2026-05-10）`plan-item-visual-v1: 生成物品图标与注册表`
+- `9193884a9`（2026-05-10）`plan-item-visual-v1: 增强物品栏稀有度视觉`
+- `c385e9a95`（2026-05-10）`plan-item-visual-v1: 区分掉落物稀有度特效`
+- `78fdaf7df`（2026-05-10）`fix(plan-item-visual-v1): 收敛稀有度和 charges 校验`
+- `e888bb6d3`（2026-05-10）`fix(plan-item-visual-v1): 收敛图标脚本和掉落音效`
+
+### 测试结果
+
+- `python3 scripts/images/test_gen_item_batch.py` → 5 tests passed
+- `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.inventory.render.DroppedLootRarityVisualsTest" --tests "com.bong.client.network.DroppedLootSyncHandlerTest"` → passed
+- Review fix 定向测试：`./gradlew test --tests "com.bong.client.inventory.component.ItemTooltipPanelTest" --tests "com.bong.client.inventory.InventoryItemTest" --tests "com.bong.client.inventory.ItemIconRegistryTest" --tests "com.bong.client.inventory.GeneratedItemIconAssetsTest" --tests "com.bong.client.inventory.RarityBorderRendererTest" --tests "com.bong.client.network.DroppedLootSyncHandlerTest" --tests "com.bong.client.network.InventorySnapshotHandlerTest" --tests "com.bong.client.network.InventoryEventHandlerTest"` → passed
+- Review follow-up 定向测试：`./gradlew test --tests "com.bong.client.inventory.ItemIconRegistryTest" --tests "com.bong.client.inventory.render.DroppedLootRarityVisualsTest"` → passed
+- `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL；JUnit XML 汇总 `tests=1033 failures=0 errors=0`
+- `git diff --check` → passed
+
+### 跨仓库核验
+
+- server：`server/assets/items/**/*.toml` 是批量图标脚本的 source of truth；未改 server runtime。
+- agent/schema：沿用既有 `dropped_loot_sync` sample 与 server-data route；未新增事件类型。
+- client：命中 `ItemIconRegistry`、`RarityBorderRenderer`、`InventoryItem.charges`、`InventorySnapshotHandler`、`InventoryEventHandler`、`DroppedLootSyncHandler`、`DroppedLootRarityVisuals`、`DroppedItemWorldRenderer`。
+
+### 遗留 / 后续
+
+- 本 plan 没有新增 server/agent contract，也没有改动生产配置。
+- 首批资源可复现；如后续需要生产级 AI 图标，可直接用同一脚本默认模式重跑指定 id，把 `--placeholder` 资源替换为 `gen.py` 后端输出。

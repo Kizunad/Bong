@@ -1,5 +1,7 @@
 package com.bong.client.inventory.model;
 
+import com.bong.client.inventory.RarityVisuals;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -15,7 +17,7 @@ public final class InventoryItem {
     private final int stackCount;
     private final double spiritQuality;   // 0..1，< 1.0 暗示已流失灵气
     private final double durability;      // 0..1，< 1.0 暗示损耗
-    private final Integer charges;
+    private final Integer charges;        // ancient rarity relic uses remaining charges
     private final String scrollKind;
     private final String scrollSkillId;
     private final int scrollXpGrant;
@@ -53,12 +55,12 @@ public final class InventoryItem {
         this.gridWidth = Math.max(1, Math.min(4, gridWidth));
         this.gridHeight = Math.max(1, Math.min(4, gridHeight));
         this.weight = Math.max(0.0, weight);
-        this.rarity = Objects.requireNonNull(rarity, "rarity");
+        this.rarity = RarityVisuals.normalize(Objects.requireNonNull(rarity, "rarity"));
         this.description = Objects.requireNonNull(description, "description");
         this.stackCount = Math.max(1, stackCount);
         this.spiritQuality = clamp01(spiritQuality);
         this.durability = clamp01(durability);
-        this.charges = charges == null ? null : Math.max(0, charges);
+        this.charges = charges == null ? null : Math.max(0, Math.min(5, charges));
         this.scrollKind = scrollKind == null ? "" : scrollKind;
         this.scrollSkillId = scrollSkillId == null ? "" : scrollSkillId;
         this.scrollXpGrant = Math.max(0, scrollXpGrant);
@@ -260,7 +262,7 @@ public final class InventoryItem {
         Integer forgeAchievedTier,
         List<String> alchemyLines
     ) {
-        return createFullWithAncientMeta(
+        return createFullWithVisualMeta(
             instanceId,
             itemId,
             displayName,
@@ -284,7 +286,7 @@ public final class InventoryItem {
         );
     }
 
-    public static InventoryItem createFullWithAncientMeta(
+    public static InventoryItem createFullWithVisualMeta(
         long instanceId,
         String itemId,
         String displayName,
@@ -433,7 +435,7 @@ public final class InventoryItem {
     }
 
     public boolean isAncientRelic() {
-        return "ancient".equals(rarity) || charges != null;
+        return RarityVisuals.isAncient(rarity);
     }
 
     public String inscriptionId() {
@@ -455,13 +457,7 @@ public final class InventoryItem {
     }
 
     public int rarityColor() {
-        return switch (rarity) {
-            case "ancient" -> 0xFFD700;
-            case "legendary" -> 0xFFAA00;
-            case "rare" -> 0x5555FF;
-            case "uncommon" -> 0x55FF55;
-            default -> 0xAAAAAA;
-        };
+        return RarityVisuals.colorRgb(rarity);
     }
 
     @Override
@@ -503,6 +499,6 @@ public final class InventoryItem {
     @Override
     public String toString() {
         return "InventoryItem[" + itemId + " " + gridWidth + "x" + gridHeight
-            + " x" + stackCount + " q=" + spiritQuality + "]";
+            + " x" + stackCount + " q=" + spiritQuality + " charges=" + charges + "]";
     }
 }
