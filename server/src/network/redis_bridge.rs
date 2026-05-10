@@ -1,10 +1,11 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use serde_json::{Map, Value};
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
+use crate::npc::dormant::NPC_DORMANT_REDIS_KEY;
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::alchemy::{
@@ -92,6 +93,7 @@ use crate::schema::zong_formation::ZongCoreActivationV1;
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(1);
+const REDIS_HASH_REPLACE_TIMEOUT: Duration = Duration::from_secs(1);
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
@@ -109,6 +111,7 @@ pub enum RedisInbound {
 #[derive(Debug, Clone)]
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
+    NpcDormantHash(Vec<(String, String)>),
     SeasonChanged(SeasonChangedV1),
     BoneCoinTick(BoneCoinTickV1),
     PriceIndex(PriceIndexV1),
@@ -212,6 +215,10 @@ enum RedisIoCommand {
     ListPush {
         key: &'static str,
         payload: String,
+    },
+    HashReplace {
+        key: &'static str,
+        entries: Vec<(String, String)>,
     },
 }
 
@@ -410,6 +417,10 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::NpcDormantHash(entries) => Ok(RedisIoCommand::HashReplace {
+            key: NPC_DORMANT_REDIS_KEY,
+            entries,
+        }),
         RedisOutbound::SeasonChanged(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize SeasonChangedV1: {error}"))
@@ -1278,7 +1289,90 @@ async fn execute_outbound_command(
                 )),
             }
         }
+        RedisIoCommand::HashReplace { key, entries } => {
+            execute_hash_replace(pub_conn, key, entries).await
+        }
     }
+}
+
+async fn execute_hash_replace(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    key: &'static str,
+    entries: &[(String, String)],
+) -> Result<(), String> {
+    match tokio::time::timeout(
+        REDIS_HASH_REPLACE_TIMEOUT,
+        execute_hash_replace_atomic(pub_conn, key, entries),
+    )
+    .await
+    {
+        Ok(Ok(())) => {
+            tracing::debug!(
+                "[bong][redis] replaced hash {key}; entries={}",
+                entries.len()
+            );
+            Ok(())
+        }
+        Ok(Err(error)) => Err(format!("failed to replace hash {key}: {error}")),
+        Err(_) => Err(format!(
+            "timed out replacing hash {key} after {:?}",
+            REDIS_HASH_REPLACE_TIMEOUT
+        )),
+    }
+}
+
+async fn execute_hash_replace_atomic(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    key: &'static str,
+    entries: &[(String, String)],
+) -> Result<(), redis::RedisError> {
+    if entries.is_empty() {
+        let _: i64 = redis::cmd("DEL").arg(key).query_async(pub_conn).await?;
+        return Ok(());
+    }
+
+    let temp_key = format!("{key}:tmp:{}", redis_temp_key_nonce());
+    let _: i64 = redis::cmd("DEL")
+        .arg(temp_key.as_str())
+        .query_async(pub_conn)
+        .await?;
+    let field_pairs = entries
+        .iter()
+        .map(|(field, value)| (field.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    let write_result = redis::cmd("HSET")
+        .arg(temp_key.as_str())
+        .arg(field_pairs)
+        .query_async::<i64>(pub_conn)
+        .await;
+    if let Err(error) = write_result {
+        let _: Result<i64, _> = redis::cmd("DEL")
+            .arg(temp_key.as_str())
+            .query_async(pub_conn)
+            .await;
+        return Err(error);
+    }
+
+    let rename_result = redis::cmd("RENAME")
+        .arg(temp_key.as_str())
+        .arg(key)
+        .query_async::<String>(pub_conn)
+        .await;
+    if let Err(error) = rename_result {
+        let _: Result<i64, _> = redis::cmd("DEL")
+            .arg(temp_key.as_str())
+            .query_async(pub_conn)
+            .await;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn redis_temp_key_nonce() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }
 
 async fn execute_publish(
@@ -2034,6 +2128,24 @@ mod redis_bridge_tests {
                 assert_eq!(payload["player"], "offline:Steve");
             }
             other => panic!("expected RPUSH command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replaces_dormant_npc_hash() {
+        let entries = vec![(
+            "npc_a".to_string(),
+            serde_json::json!({"char_id": "npc_a"}).to_string(),
+        )];
+        let command = prepare_outbound_command(RedisOutbound::NpcDormantHash(entries.clone()))
+            .expect("dormant hash payload should produce a hash replace command");
+
+        match command {
+            RedisIoCommand::HashReplace { key, entries: got } => {
+                assert_eq!(key, NPC_DORMANT_REDIS_KEY);
+                assert_eq!(got, entries);
+            }
+            other => panic!("expected hash replace command, got {other:?}"),
         }
     }
 
@@ -3294,6 +3406,14 @@ mod redis_bridge_tests {
         assert_eq!(
             publish_timeout_for_channel(CH_AGENT_COMMAND),
             REDIS_IO_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn hash_replace_uses_batch_timeout_budget() {
+        assert!(
+            REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
+            "dormant HASH replace writes batches and should not share the tiny per-command timeout"
         );
     }
 

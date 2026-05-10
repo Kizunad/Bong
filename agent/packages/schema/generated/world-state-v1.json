@@ -655,6 +655,42 @@
                 "maximum": 1,
                 "type": "number"
               },
+              "realm": {
+                "type": "string"
+              },
+              "faction_id": {
+                "anyOf": [
+                  {
+                    "const": "attack",
+                    "type": "string"
+                  },
+                  {
+                    "const": "defend",
+                    "type": "string"
+                  },
+                  {
+                    "const": "neutral",
+                    "type": "string"
+                  }
+                ]
+              },
+              "position": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
+              },
               "disciple": {
                 "additionalProperties": false,
                 "type": "object",

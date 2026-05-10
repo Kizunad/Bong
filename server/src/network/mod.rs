@@ -82,9 +82,9 @@ use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
-    ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventReader, EventWriter,
-    Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update,
-    Username, With,
+    ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
+    EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup,
+    Update, Username, With,
 };
 
 use crate::combat::components::Lifecycle;
@@ -95,6 +95,7 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::fauna::rat_phase::{collect_rat_density_heatmap, RatDensityHeatmapV1, RatPhase};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
+use crate::npc::dormant::NpcDormantStore;
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::patrol::NpcPatrol;
@@ -756,11 +757,13 @@ fn publish_world_state_to_redis(
             &EntityKind,
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
+            Option<&Cultivation>,
             Option<&FactionMembership>,
             Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
+    dormant_store: Option<Res<NpcDormantStore>>,
     rat_density_q: Query<(&RatBlackboard, &RatPhase), With<NpcMarker>>,
     flee_actions: Query<(&Actor, &ActionState), With<FleeAction>>,
     chase_actions: Query<(&Actor, &ActionState), With<ChaseAction>>,
@@ -796,10 +799,29 @@ fn publish_world_state_to_redis(
         &npcs,
         &npc_action_states,
         &cultivation_by_entity,
+        dormant_store.as_deref(),
         rat_density_heatmap,
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
+    if let Some(dormant_store) = dormant_store.as_deref() {
+        match dormant_store.to_redis_hash_payloads() {
+            Ok(entries) => {
+                tracing::debug!(
+                    "[bong][network] syncing {} dormant NPC snapshots to Redis HASH",
+                    dormant_store.len()
+                );
+                let _ = redis
+                    .tx_outbound
+                    .send(RedisOutbound::NpcDormantHash(entries));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][network] failed to serialize dormant NPC Redis HASH payloads: {error}"
+                );
+            }
+        }
+    }
 }
 
 fn collect_cultivation_snapshots(
@@ -879,6 +901,7 @@ fn build_world_state_snapshot(
             &EntityKind,
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
+            Option<&Cultivation>,
             Option<&FactionMembership>,
             Option<&NpcPatrol>,
         ),
@@ -886,6 +909,7 @@ fn build_world_state_snapshot(
     >,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
+    dormant_store: Option<&NpcDormantStore>,
     rat_density_heatmap: RatDensityHeatmapV1,
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
@@ -903,6 +927,7 @@ fn build_world_state_snapshot(
             npc_action_states,
             &player_ids_by_entity,
             &zone_registry,
+            dormant_store,
         ),
         factions: faction_store.map(collect_faction_summaries),
         rat_density_heatmap,
@@ -1238,6 +1263,7 @@ fn collect_npc_snapshots(
             &EntityKind,
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
+            Option<&Cultivation>,
             Option<&FactionMembership>,
             Option<&NpcPatrol>,
         ),
@@ -1246,6 +1272,7 @@ fn collect_npc_snapshots(
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     player_ids_by_entity: &HashMap<Entity, String>,
     zone_registry: &ZoneRegistry,
+    dormant_store: Option<&NpcDormantStore>,
 ) -> Vec<NpcSnapshot> {
     let mut npc_snapshots = npcs
         .iter()
@@ -1257,6 +1284,7 @@ fn collect_npc_snapshots(
                 kind,
                 archetype,
                 lifespan,
+                cultivation,
                 faction_membership,
                 patrol,
             )| {
@@ -1276,11 +1304,46 @@ fn collect_npc_snapshots(
                         archetype.copied(),
                         lifespan.copied(),
                         faction_membership.cloned(),
+                        cultivation,
+                        Some(position.get()),
                     ),
                 }
             },
         )
         .collect::<Vec<_>>();
+
+    if let Some(dormant_store) = dormant_store {
+        npc_snapshots.extend(
+            dormant_store
+                .sorted_snapshots()
+                .into_iter()
+                .map(|snapshot| {
+                    let mut blackboard = HashMap::new();
+                    blackboard.insert("dormant".to_string(), serde_json::json!(true));
+                    blackboard.insert(
+                        "qi_ledger_net".to_string(),
+                        serde_json::json!(snapshot.qi_ledger_net),
+                    );
+                    NpcSnapshot {
+                        id: snapshot.char_id.clone(),
+                        kind: format!("dormant:{}", snapshot.archetype.as_str()),
+                        zone: snapshot.zone_name.clone(),
+                        pos: snapshot.position,
+                        state: NpcStateKind::Idle,
+                        blackboard,
+                        digest: Some(NpcDigestV1 {
+                            archetype: snapshot.archetype.as_str().to_string(),
+                            age_band: age_band_for_ratio(snapshot.lifespan.age_ratio()).to_string(),
+                            age_ratio: snapshot.lifespan.age_ratio().clamp(0.0, 1.0),
+                            realm: Some(snapshot.realm_label()),
+                            faction_id: snapshot.faction_id_label(),
+                            position: Some(snapshot.position),
+                            disciple: snapshot.faction.clone().map(build_disciple_summary),
+                        }),
+                    }
+                }),
+        );
+    }
 
     npc_snapshots.sort_by(|left, right| left.id.cmp(&right.id));
 
@@ -1291,11 +1354,29 @@ fn build_npc_digest(
     archetype: Option<NpcArchetype>,
     lifespan: Option<NpcLifespan>,
     faction_membership: Option<FactionMembership>,
+    cultivation: Option<&Cultivation>,
+    position: Option<DVec3>,
 ) -> Option<NpcDigestV1> {
     let archetype = archetype?;
     let lifespan = lifespan?;
     let age_ratio = lifespan.age_ratio().clamp(0.0, 1.0);
-    let age_band = if age_ratio >= 1.0 {
+    let age_band = age_band_for_ratio(age_ratio);
+
+    Some(NpcDigestV1 {
+        archetype: archetype.as_str().to_string(),
+        age_band: age_band.to_string(),
+        age_ratio,
+        realm: cultivation.map(|cultivation| realm_to_string(cultivation.realm).to_string()),
+        faction_id: faction_membership
+            .as_ref()
+            .map(|membership| membership.faction_id),
+        position: position.map(vec3_to_array),
+        disciple: faction_membership.map(build_disciple_summary),
+    })
+}
+
+fn age_band_for_ratio(age_ratio: f64) -> &'static str {
+    if age_ratio >= 1.0 {
         "expired"
     } else if age_ratio >= 0.8 {
         "elder"
@@ -1303,14 +1384,7 @@ fn build_npc_digest(
         "adult"
     } else {
         "young"
-    };
-
-    Some(NpcDigestV1 {
-        archetype: archetype.as_str().to_string(),
-        age_band: age_band.to_string(),
-        age_ratio,
-        disciple: faction_membership.map(build_disciple_summary),
-    })
+    }
 }
 
 fn collect_faction_summaries(faction_store: &FactionStore) -> Vec<FactionSummaryV1> {
@@ -2756,7 +2830,7 @@ mod tests {
             FactionId, FactionMembership, FactionRank, FactionStore, Lineage, MissionId,
             MissionQueue, Reputation,
         };
-        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcLifespan};
         use crate::player::state::PlayerState;
         use crate::schema::social::{RelationshipKindV1, RenownTagV1};
         use crate::social::components::{Anonymity, Relationship, Relationships, Renown};
@@ -2801,6 +2875,43 @@ mod tests {
             {
                 RedisOutbound::WorldState(state) => state,
                 other => panic!("expected a world-state publish, got {other:?}"),
+            }
+        }
+
+        fn dormant_snapshot(
+            char_id: &str,
+            pos: [f64; 3],
+        ) -> crate::npc::dormant::NpcDormantSnapshot {
+            let cultivation = Cultivation::default();
+            crate::npc::dormant::NpcDormantSnapshot {
+                char_id: char_id.to_string(),
+                archetype: NpcArchetype::Rogue,
+                dimension: DimensionKind::Overworld,
+                zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                position: pos,
+                cultivation: cultivation.clone(),
+                meridian_system: MeridianSystem::default(),
+                meridian_severed:
+                    crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+                contamination: crate::cultivation::components::Contamination::default(),
+                lifespan: NpcLifespan::new(10.0, 100.0),
+                shared_lifespan: crate::cultivation::lifespan::LifespanComponent::for_realm(
+                    cultivation.realm,
+                ),
+                lifespan_extension_ledger:
+                    crate::cultivation::lifespan::LifespanExtensionLedger::default(),
+                death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
+                life_record: LifeRecord::new(char_id),
+                faction: None,
+                patrol: None,
+                loot_table: None,
+                guardian_relic: None,
+                tsy_hostile: None,
+                intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },
+                dormant_since_tick: 0,
+                last_dormant_tick_processed: 0,
+                initial_qi: cultivation.qi_current,
+                qi_ledger_net: 0.0,
             }
         }
 
@@ -2851,6 +2962,43 @@ mod tests {
                 state.recent_events.is_empty(),
                 "recent_events should be an explicit empty array when no event buffer exists"
             );
+        }
+
+        #[test]
+        fn publishes_dormant_npcs_in_world_state_and_redis_hash() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            let mut dormant_store = NpcDormantStore::default();
+            dormant_store.insert(dormant_snapshot("npc_dormant_a", [32.0, 66.0, 32.0]));
+            app.insert_resource(dormant_store);
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let dormant = state
+                .npcs
+                .iter()
+                .find(|npc| npc.id == "npc_dormant_a")
+                .expect("dormant NPC should be included in world-state NPC list");
+            assert_eq!(dormant.kind, "dormant:rogue");
+            assert_eq!(dormant.pos, [32.0, 66.0, 32.0]);
+            assert_eq!(
+                dormant.blackboard.get("dormant"),
+                Some(&serde_json::json!(true))
+            );
+            assert_eq!(
+                dormant.digest.as_ref().and_then(|digest| digest.position),
+                Some([32.0, 66.0, 32.0])
+            );
+
+            let outbound = rx_outbound
+                .try_recv()
+                .expect("dormant Redis HASH sync should follow world-state publish");
+            let RedisOutbound::NpcDormantHash(entries) = outbound else {
+                panic!("expected dormant Redis HASH outbound, got {outbound:?}");
+            };
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].0, "npc_dormant_a");
+            let payload: serde_json::Value =
+                serde_json::from_str(&entries[0].1).expect("dormant payload should be JSON");
+            assert_eq!(payload["char_id"], "npc_dormant_a");
         }
 
         #[test]

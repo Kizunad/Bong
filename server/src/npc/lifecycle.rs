@@ -194,8 +194,8 @@ impl Default for NpcRegistry {
     fn default() -> Self {
         Self {
             live_npc_count: 0,
-            max_npc_count: 512,
-            resume_npc_count: 460,
+            max_npc_count: 200,
+            resume_npc_count: 180,
             spawn_paused: false,
             counts_by_archetype: HashMap::new(),
             per_zone_caps: HashMap::new(),
@@ -665,27 +665,27 @@ mod tests {
     fn registry_hysteresis_pauses_at_cap_and_resumes_below_low_watermark() {
         let mut registry = NpcRegistry::default();
 
-        registry.refresh_from_counts(512, HashMap::new(), HashMap::new());
+        registry.refresh_from_counts(200, HashMap::new(), HashMap::new());
         assert!(registry.spawn_paused);
 
-        registry.refresh_from_counts(500, HashMap::new(), HashMap::new());
+        registry.refresh_from_counts(190, HashMap::new(), HashMap::new());
         assert!(
             registry.spawn_paused,
             "should remain paused until low watermark"
         );
 
-        registry.refresh_from_counts(459, HashMap::new(), HashMap::new());
+        registry.refresh_from_counts(179, HashMap::new(), HashMap::new());
         assert!(!registry.spawn_paused, "should resume below low watermark");
     }
 
     #[test]
     fn reserve_spawn_batch_clamps_to_remaining_capacity() {
         let mut registry = NpcRegistry::default();
-        registry.refresh_from_counts(510, HashMap::new(), HashMap::new());
+        registry.refresh_from_counts(198, HashMap::new(), HashMap::new());
 
         let granted = registry.reserve_spawn_batch(8);
         assert_eq!(granted, 2);
-        assert_eq!(registry.live_npc_count, 512);
+        assert_eq!(registry.live_npc_count, 200);
         assert!(registry.spawn_paused);
     }
 
