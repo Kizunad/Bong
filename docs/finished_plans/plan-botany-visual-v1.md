@@ -18,13 +18,13 @@
 
 | 阶段 | 目标 | 状态 |
 |------|------|------|
-| P0 | 灵草灵光 aura + 采收粒子 + 灵田动作音效接线 | ⬜ |
-| P1 | 植物生长阶段渲染 + 灵田地块自定义外观 | ⬜ |
-| P2 | 灵材品质视觉区分 + 灵田状态 overlay + 灵材放置展示 | ⬜ |
+| P0 | 灵草灵光 aura + 采收粒子 + 灵田动作音效接线 | ✅ |
+| P1 | 植物生长阶段渲染 + 灵田地块自定义外观 | ✅ |
+| P2 | 灵材品质视觉区分 + 灵田状态 overlay + 灵材放置展示 | ✅ |
 
 ---
 
-## P0 — 灵草灵光 + 采收粒子 + 音效接线 ⬜
+## P0 — 灵草灵光 + 采收粒子 + 音效接线 ✅
 
 ### 交付物
 
@@ -50,7 +50,7 @@
 
 ---
 
-## P1 — 植物生长阶段渲染 + 灵田自定义外观 ⬜
+## P1 — 植物生长阶段渲染 + 灵田自定义外观 ✅
 
 ### 交付物
 
@@ -75,7 +75,7 @@
 
 ---
 
-## P2 — 品质视觉 + 灵田状态 overlay + 灵材放置 ⬜
+## P2 — 品质视觉 + 灵田状态 overlay + 灵材放置 ✅
 
 ### 交付物
 
@@ -111,3 +111,32 @@
 | plan-HUD-v1 | ✅ finished | BongHudOrchestrator / BotanyHudPlanner |
 
 **全部依赖已 finished，无阻塞。**
+
+## Finish Evidence
+
+- 实现提交：
+  - `38868d5c8` `botany-visual: 接通灵草与灵田音画事件`
+  - `a89e1b3cd` `botany-visual: 增强植物阶段渲染与粒子资产`
+  - `2ea9d957f` `botany-visual: 补齐灵材品质与灵田状态 HUD`
+- P0：
+  - server 在 `botany::lifecycle` 每 200 tick 为高灵气成熟植物 emit `bong:botany_aura`。
+  - server 在 `network::vfx_animation_trigger` 从 `HarvestTerminalEvent` emit `bong:botany_harvest`。
+  - 灵田完成事件接入 `till_soil` / `lingtian_plant_seed` / `harvest_pluck` / `plot_replenish` / `lingtian_drain`，并新增对应 recipe JSON。
+  - client `VfxBootstrap` 注册 `BotanyAuraPlayer`、`BotanyHarvestBurstPlayer`、`LingtianPlotRunePlayer`。
+- P1：
+  - `BotanyPlantV2Entity` 下发/持久化 `GrowthStage`，`BotanyPlantEntityRenderer` 按 seedling/growing/mature/wilted 调整 scale、alpha、sway、tint 和 emissive overlay。
+  - `scripts/images/gen_plant_growth_stages.py` 基于 39 张植物图标生成 78 张 seedling/growing 阶段资产到 `client/src/main/resources/assets/bong-client/textures/gui/botany/stages/`。
+  - 灵田动作地块灵纹通过 `BongGroundDecalParticle` 渲染，开垦/种植/补灵/收获/吸灵使用不同颜色与强度。
+- P2：
+  - `GridSlotComponent` 为灵材按 `spirit_quality` 绘制 uncommon/rare/epic 边框光晕。
+  - `ItemTooltipPanel` 为灵材追加品质百分比与品质条。
+  - `LingtianSessionHud` 在 active session 时于准星侧显示地块 mini panel，包含动作 icon、植物 id、进度与染污度；植物展示渲染复用 `BotanyPlantV2Entity` 的 quad/stage/aura 路径。
+- 验证：
+  - `python3 scripts/images/gen_plant_growth_stages.py --check`
+  - `cd server && cargo test mature_plant_emits_aura_vfx_on_cadence`
+  - `cd server && cargo test lingtian_actions_emit_dedicated_recipes`
+  - `cd server && cargo test completed_botany_harvest_emits_leaf_burst_particle`
+  - `cd server && cargo test lingtian_completion_events_emit_plot_rune_particles`
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
+  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test --tests '*BotanyPlantVisualStateTest' --tests '*BotanySpiritQualityVisualsTest' --tests '*LingtianPlotVisualStateTest' --tests '*VfxRegistryTest'`
+  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build`
