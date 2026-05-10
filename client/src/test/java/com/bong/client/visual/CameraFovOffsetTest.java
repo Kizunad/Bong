@@ -23,6 +23,17 @@ public class CameraFovOffsetTest {
     }
 
     @Test
+    void pressureOverlayScalesWithQi() {
+        assertEquals(0.0, CameraFovOffset.compute(VisualEffectState.none(), 0L, -0.39), 1e-6);
+        double mid = CameraFovOffset.compute(VisualEffectState.none(), 0L, -0.75);
+        double deep = CameraFovOffset.compute(VisualEffectState.none(), 0L, -1.1);
+
+        assertTrue(mid < 0.0, "TSY negative pressure should shrink FOV");
+        assertTrue(deep < mid, "deeper negative pressure should shrink FOV more");
+        assertEquals(-4.0, deep, 1e-6);
+    }
+
+    @Test
     void nonFovStatesReturnZero() {
         assertEquals(0.0, CameraFovOffset.compute(
             VisualEffectState.create("screen_shake", 1.0, 5_000L, 0L), 100L));

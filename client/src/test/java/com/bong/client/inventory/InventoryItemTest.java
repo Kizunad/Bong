@@ -88,4 +88,35 @@ public class InventoryItemTest {
         assertTrue(item.isBoneCoin());
         assertEquals("封灵真元 42%", ItemTooltipPanel.formatStatusLine(item));
     }
+
+    @Test
+    void ancientRelicGlowRendersChargesInStatusLine() {
+        InventoryItem item = InventoryItem.createFullWithAncientMeta(
+            77L,
+            "ancient_relic_eye",
+            "古眼",
+            1,
+            1,
+            0.8,
+            "ancient",
+            "",
+            1,
+            1.0,
+            0.9,
+            3,
+            "",
+            "",
+            0,
+            null,
+            "",
+            java.util.List.of(),
+            null,
+            java.util.List.of()
+        );
+
+        assertTrue(item.isAncientRelic());
+        assertEquals(0xFFD700, item.rarityColor());
+        assertEquals("耐久 90%  ⚡ ×3", ItemTooltipPanel.formatStatusLine(item));
+        assertTrue(AncientRelicGlowRenderer.shouldGlow(item));
+    }
 }

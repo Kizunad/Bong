@@ -20,11 +20,13 @@ use valence::prelude::{
 
 use crate::combat::components::Wounds;
 use crate::combat::events::{AttackIntent, AttackSource};
+use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
     DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
 };
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, MeleeAttackAction, MeleeRangeScorer,
     RetireAction, WanderAction, WanderScorer,
@@ -36,6 +38,7 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{
     NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype, NpcMeleeProfile,
 };
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionKind;
 use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::world::tsy_origin::TsyOrigin;
@@ -50,6 +53,8 @@ const FUYA_CHARGE_MIN_RANGE: f32 = 5.0;
 const FUYA_CHARGE_MAX_RANGE: f32 = 12.0;
 const FUYA_DEFAULT_AURA_RADIUS: f32 = 8.0;
 const FUYA_DEFAULT_DRAIN_MULTIPLIER: f64 = 1.5;
+const TSY_FUYA_AURA_VFX: &str = "bong:tsy_fuya_aura";
+const FUYA_AURA_VFX_INTERVAL_TICKS: u64 = 20;
 
 pub const DEFAULT_TSY_SPAWN_POOLS_PATH: &str = "tsy_spawn_pools.json";
 pub const DEFAULT_TSY_DROPS_PATH: &str = "tsy_drops.json";
@@ -365,6 +370,7 @@ pub fn register(app: &mut App) {
     app.add_event::<TsyNpcSpawned>()
         .add_event::<TsySentinelPhaseChanged>()
         .add_event::<TsyHostileSpawnedSummary>()
+        .add_event::<VfxEventRequest>()
         .insert_resource(spawn_pools)
         .insert_resource(drop_tables)
         .add_systems(
@@ -395,9 +401,44 @@ pub fn register(app: &mut App) {
             (
                 emit_tsy_hostile_spawn_summary
                     .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
+                emit_fuya_aura_vfx,
                 handle_npc_death_drop,
             ),
         );
+}
+
+pub fn emit_fuya_aura_vfx(
+    clock: Option<Res<CombatClock>>,
+    fuya: Query<(&Position, &FuyaAura, Option<&FuyaEnragedMarker>), With<TsyHostileMarker>>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    let Some(clock) = clock else {
+        return;
+    };
+    if !clock.tick.is_multiple_of(FUYA_AURA_VFX_INTERVAL_TICKS) {
+        return;
+    }
+    for (pos, aura, enraged) in &fuya {
+        let origin = pos.get();
+        let color = if enraged.is_some() {
+            "#FF0044"
+        } else {
+            "#220044"
+        };
+        let strength = (aura.radius_blocks / FUYA_DEFAULT_AURA_RADIUS).clamp(0.2, 1.0);
+        vfx_events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: TSY_FUYA_AURA_VFX.to_string(),
+                origin: [origin.x, origin.y, origin.z],
+                direction: None,
+                color: Some(color.to_string()),
+                strength: Some(strength),
+                count: Some(if enraged.is_some() { 24 } else { 16 }),
+                duration_ticks: Some(40),
+            },
+        ));
+    }
 }
 
 pub fn load_tsy_spawn_pool_registry() -> Result<TsySpawnPoolRegistry, String> {

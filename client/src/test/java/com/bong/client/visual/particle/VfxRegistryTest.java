@@ -143,6 +143,20 @@ public class VfxRegistryTest {
             "bootstrap should register zhenmai sever flash");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.EVENT_ID),
             "bootstrap should register vortex_spiral");
+        assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.MAIN_RIFT),
+            "bootstrap should register TSY main rift portal VFX");
+        assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.DEEP_RIFT),
+            "bootstrap should register TSY deep rift portal VFX");
+        assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.COLLAPSE_TEAR),
+            "bootstrap should register TSY collapse tear portal VFX");
+        assertTrue(VfxRegistry.instance().contains(TsyCollapseBurstPlayer.EVENT_ID),
+            "bootstrap should register TSY collapse burst VFX");
+        assertTrue(VfxRegistry.instance().contains(TsyFuyaAuraPlayer.EVENT_ID),
+            "bootstrap should register TSY Fuya aura VFX");
+        assertTrue(VfxRegistry.instance().contains(TsySearchFeedbackPlayer.DUST),
+            "bootstrap should register TSY search dust VFX");
+        assertTrue(VfxRegistry.instance().contains(TsySearchFeedbackPlayer.LOOT_POP),
+            "bootstrap should register TSY search loot pop VFX");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 

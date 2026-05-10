@@ -79,6 +79,7 @@ export type PlayerPowerBreakdown = Static<typeof PlayerPowerBreakdown>;
 
 export const ZoneStatusV1 = Type.Union([
   Type.Literal("normal"),
+  Type.Literal("race_out"),
   Type.Literal("collapsed"),
 ]);
 export type ZoneStatusV1 = Static<typeof ZoneStatusV1>;

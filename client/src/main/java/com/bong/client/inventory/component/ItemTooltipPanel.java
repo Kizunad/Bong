@@ -1,6 +1,7 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.AncientRelicGlowRenderer;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
@@ -95,6 +96,9 @@ public class ItemTooltipPanel extends BaseComponent {
         int h = this.height;
         context.fill(x, y, x + PANEL_WIDTH, y + h, BG_COLOR);
         GridSlotComponent.drawSlotBorder(context, x, y, PANEL_WIDTH, h, BORDER_COLOR);
+        if (AncientRelicGlowRenderer.shouldGlow(hoveredItem)) {
+            AncientRelicGlowRenderer.drawGlowBorder(context, x, y, PANEL_WIDTH, h, System.currentTimeMillis());
+        }
 
         TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
 
@@ -207,6 +211,7 @@ public class ItemTooltipPanel extends BaseComponent {
 
     private static String rarityLabel(String rarity) {
         return switch (rarity) {
+            case "ancient" -> "上古";
             case "legendary" -> "传说";
             case "rare" -> "稀有";
             case "uncommon" -> "精良";
@@ -241,6 +246,11 @@ public class ItemTooltipPanel extends BaseComponent {
         if (item.durability() < 1.0) {
             if (status.length() > 0) status.append("  ");
             status.append(String.format(Locale.ROOT, "耐久 %.0f%%", item.durability() * 100));
+        }
+        String charges = AncientRelicGlowRenderer.chargesLine(item);
+        if (!charges.isEmpty()) {
+            if (status.length() > 0) status.append("  ");
+            status.append(charges);
         }
         return status.toString();
     }

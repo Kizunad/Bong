@@ -15,6 +15,7 @@ public final class InventoryItem {
     private final int stackCount;
     private final double spiritQuality;   // 0..1，< 1.0 暗示已流失灵气
     private final double durability;      // 0..1，< 1.0 暗示损耗
+    private final Integer charges;
     private final String scrollKind;
     private final String scrollSkillId;
     private final int scrollXpGrant;
@@ -36,6 +37,7 @@ public final class InventoryItem {
         int stackCount,
         double spiritQuality,
         double durability,
+        Integer charges,
         String scrollKind,
         String scrollSkillId,
         int scrollXpGrant,
@@ -56,6 +58,7 @@ public final class InventoryItem {
         this.stackCount = Math.max(1, stackCount);
         this.spiritQuality = clamp01(spiritQuality);
         this.durability = clamp01(durability);
+        this.charges = charges == null ? null : Math.max(0, charges);
         this.scrollKind = scrollKind == null ? "" : scrollKind;
         this.scrollSkillId = scrollSkillId == null ? "" : scrollSkillId;
         this.scrollXpGrant = Math.max(0, scrollXpGrant);
@@ -142,6 +145,7 @@ public final class InventoryItem {
             stackCount,
             spiritQuality,
             durability,
+            null,
             "",
             "",
             0,
@@ -256,6 +260,52 @@ public final class InventoryItem {
         Integer forgeAchievedTier,
         List<String> alchemyLines
     ) {
+        return createFullWithAncientMeta(
+            instanceId,
+            itemId,
+            displayName,
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity,
+            description,
+            stackCount,
+            spiritQuality,
+            durability,
+            null,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier,
+            alchemyLines
+        );
+    }
+
+    public static InventoryItem createFullWithAncientMeta(
+        long instanceId,
+        String itemId,
+        String displayName,
+        int gridWidth,
+        int gridHeight,
+        double weight,
+        String rarity,
+        String description,
+        int stackCount,
+        double spiritQuality,
+        double durability,
+        Integer charges,
+        String scrollKind,
+        String scrollSkillId,
+        int scrollXpGrant,
+        Double forgeQuality,
+        String forgeColor,
+        List<String> forgeSideEffects,
+        Integer forgeAchievedTier,
+        List<String> alchemyLines
+    ) {
         return new InventoryItem(
             instanceId,
             itemId == null ? "" : itemId.trim(),
@@ -268,6 +318,7 @@ public final class InventoryItem {
             stackCount,
             spiritQuality,
             durability,
+            charges,
             scrollKind == null ? "" : scrollKind.trim(),
             scrollSkillId == null ? "" : scrollSkillId.trim(),
             scrollXpGrant,
@@ -327,6 +378,10 @@ public final class InventoryItem {
         return durability;
     }
 
+    public Integer charges() {
+        return charges;
+    }
+
     public String scrollKind() {
         return scrollKind;
     }
@@ -373,6 +428,10 @@ public final class InventoryItem {
             || "rotten_bone_coin".equals(itemId);
     }
 
+    public boolean isAncientRelic() {
+        return "ancient".equals(rarity) || charges != null;
+    }
+
     public String inscriptionId() {
         if (!isInscriptionScroll()) return "";
         String prefix = "inscription_scroll_";
@@ -388,6 +447,7 @@ public final class InventoryItem {
 
     public int rarityColor() {
         return switch (rarity) {
+            case "ancient" -> 0xFFD700;
             case "legendary" -> 0xFFAA00;
             case "rare" -> 0x5555FF;
             case "uncommon" -> 0x55FF55;
@@ -407,6 +467,7 @@ public final class InventoryItem {
             && Double.compare(weight, other.weight) == 0
             && Double.compare(spiritQuality, other.spiritQuality) == 0
             && Double.compare(durability, other.durability) == 0
+            && Objects.equals(charges, other.charges)
             && itemId.equals(other.itemId)
             && displayName.equals(other.displayName)
             && rarity.equals(other.rarity)
@@ -425,7 +486,7 @@ public final class InventoryItem {
         return Objects.hash(
             instanceId, itemId, displayName, gridWidth, gridHeight, weight,
             rarity, description, stackCount, spiritQuality, durability,
-            scrollKind, scrollSkillId, scrollXpGrant, forgeQuality, forgeColor,
+            charges, scrollKind, scrollSkillId, scrollXpGrant, forgeQuality, forgeColor,
             forgeSideEffects, forgeAchievedTier, alchemyLines
         );
     }

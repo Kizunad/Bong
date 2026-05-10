@@ -103,6 +103,35 @@ public class BongHudOrchestratorTest {
     }
 
     @Test
+    void localNegativePressureAddsVisualVignette() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "Solidify",
+            "offline:Azure",
+            80.0,
+            100.0,
+            0.0,
+            0.5,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "tsy_lingxu_01_deep",
+            "灵墟深层",
+            -0.9,
+            -0.9
+        ));
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            250L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180
+        );
+
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isEdgeVignette));
+    }
+
+    @Test
     void oversizedZoneAndToastTextAreClippedSafely() {
         NarrationState warningToast = NarrationState.create(
             "zone",

@@ -135,6 +135,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
 use crate::world::season::{query_season, SeasonChangedEvent, WorldSeasonState};
 use crate::world::terrain::TerrainProviders;
+use crate::world::tsy_lifecycle::EVENT_TSY_RACE_OUT;
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 #[cfg(test)]
@@ -1460,6 +1461,12 @@ fn zone_status(zone: &Zone) -> ZoneStatusV1 {
         .any(|event| event == EVENT_REALM_COLLAPSE)
     {
         ZoneStatusV1::Collapsed
+    } else if zone
+        .active_events
+        .iter()
+        .any(|event| event == EVENT_TSY_RACE_OUT)
+    {
+        ZoneStatusV1::RaceOut
     } else {
         ZoneStatusV1::Normal
     }

@@ -1,14 +1,18 @@
 //! plan-tsy-extract-v1 — TSY 定点撤离倒计时、中断与 race-out portal 切换。
 
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, Entity, EntityLayerId, Event, EventReader, EventWriter,
-    IntoSystemConfigs, Position, Query, Res, SystemSet, Update,
+    bevy_ecs, Added, App, Commands, Component, Entity, EntityLayerId, Event, EventReader,
+    EventWriter, IntoSystemConfigs, Position, Query, Res, SystemSet, Update,
 };
 
 use crate::combat::components::{CombatState, Wounds};
 use crate::combat::events::DeathEvent;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::Cultivation;
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{DimensionKind, DimensionLayers};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::rift_portal::PORTAL_INTERACT_RADIUS;
@@ -21,6 +25,27 @@ use crate::world::zone::ZoneRegistry;
 
 pub const EXTRACT_MOVE_ABORT_RADIUS: f64 = 0.5;
 pub const EXTRACT_PROGRESS_BROADCAST_INTERVAL_TICKS: u64 = 5;
+const TSY_PORTAL_IDLE_VFX: &str = "bong:tsy_portal_idle";
+const TSY_PORTAL_DEEP_VFX: &str = "bong:tsy_portal_deep";
+const TSY_PORTAL_TEAR_VFX: &str = "bong:tsy_portal_tear";
+const TSY_COLLAPSE_BURST_VFX: &str = "bong:tsy_collapse_burst";
+const TSY_RACE_OUT_ALARM_AUDIO: &str = "tsy_race_out_alarm";
+const TSY_COLLAPSE_RUMBLE_AUDIO: &str = "tsy_collapse_rumble";
+const TSY_EXTRACT_SUCCESS_AUDIO: &str = "tsy_extract_success";
+const TSY_COLLAPSE_AUDIO_RADIUS: f64 = 128.0;
+
+#[derive(SystemParam)]
+pub struct TsyExperienceEventWriters<'w> {
+    vfx_events: EventWriter<'w, VfxEventRequest>,
+    audio_events: EventWriter<'w, PlaySoundRecipeRequest>,
+}
+
+#[derive(SystemParam)]
+pub struct TsyCollapseContext<'w> {
+    zones: Res<'w, ZoneRegistry>,
+    layers: Option<Res<'w, DimensionLayers>>,
+    clock: Res<'w, CombatClock>,
+}
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TsyExtractSet;
@@ -122,6 +147,15 @@ pub struct ExtractProgressPulse {
     pub portal: Entity,
     pub elapsed_ticks: u32,
     pub required_ticks: u32,
+}
+
+pub fn emit_portal_spawn_vfx(
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    portals: Query<(&RiftPortal, &Position), Added<RiftPortal>>,
+) {
+    for (portal, pos) in &portals {
+        vfx_events.send(portal_vfx_request(portal.kind, pos.0));
+    }
 }
 
 fn is_in_combat(state: &CombatState, now_tick: u64) -> bool {
@@ -424,6 +458,7 @@ pub fn handle_extract_completed(
     mut commands: Commands,
     presences: Query<&TsyPresence>,
     mut dim_transfer: EventWriter<DimensionTransferRequest>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in events.read() {
         let Ok(presence) = presences.get(event.player) else {
@@ -440,6 +475,15 @@ pub fn handle_extract_completed(
             ),
             _ => (presence.return_to.dimension, presence.return_to.pos),
         };
+        audio_events.send(PlaySoundRecipeRequest {
+            recipe_id: TSY_EXTRACT_SUCCESS_AUDIO.to_string(),
+            instance_id: 0,
+            pos: Some(dvec3_to_block_pos(target_pos)),
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Single(event.player),
+        });
         dim_transfer.send(DimensionTransferRequest {
             entity: event.player,
             target,
@@ -473,16 +517,37 @@ pub fn on_tsy_collapse_started(
     mut portals: Query<(Entity, &mut RiftPortal)>,
     mut extracting: Query<&mut ExtractProgress>,
     mut commands: Commands,
-    zones: Res<ZoneRegistry>,
-    layers: Option<Res<DimensionLayers>>,
-    clock: Res<CombatClock>,
+    context: TsyCollapseContext,
+    mut experience_events: TsyExperienceEventWriters,
 ) {
-    let Some(layers) = layers else {
+    let Some(layers) = context.layers.as_deref() else {
         for _ in events.read() {}
         return;
     };
 
     for event in events.read() {
+        let collapse_origin = family_zone_center(&context.zones, &event.family_id)
+            .unwrap_or(valence::prelude::DVec3::ZERO);
+        experience_events.vfx_events.send(spawn_particle_vfx(
+            TSY_COLLAPSE_BURST_VFX,
+            collapse_origin,
+            Some("#FF3030"),
+            Some(0.95),
+            Some(32),
+            Some(60),
+            None,
+        ));
+        emit_zone_audio(
+            &mut experience_events.audio_events,
+            TSY_RACE_OUT_ALARM_AUDIO,
+            collapse_origin,
+        );
+        emit_zone_audio(
+            &mut experience_events.audio_events,
+            TSY_COLLAPSE_RUMBLE_AUDIO,
+            collapse_origin,
+        );
+
         for (_entity, mut portal) in &mut portals {
             if portal.family_id == event.family_id {
                 portal.current_extract_ticks = RiftKind::CollapseTear.base_extract_ticks();
@@ -494,17 +559,18 @@ pub fn on_tsy_collapse_started(
                 if portal.family_id == event.family_id {
                     progress.required_ticks = RiftKind::CollapseTear.base_extract_ticks();
                     progress.elapsed_ticks = 0;
-                    progress.started_at_tick = clock.tick;
+                    progress.started_at_tick = context.clock.tick;
                 }
             }
         }
 
         spawn_collapse_tears(
             &mut commands,
-            &zones,
+            &context.zones,
             layers.tsy,
             &event.family_id,
             event.at_tick,
+            &mut experience_events.vfx_events,
         );
     }
 }
@@ -515,6 +581,7 @@ fn spawn_collapse_tears(
     tsy_layer: Entity,
     family_id: &str,
     now_tick: u64,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
 ) {
     let family_zones: Vec<_> = zones
         .zones
@@ -529,6 +596,15 @@ fn spawn_collapse_tears(
     for idx in 0..count {
         let zone = family_zones[idx % family_zones.len()];
         let pos = deterministic_point_in_zone(zone, family_id, now_tick, idx as u64);
+        vfx_events.send(spawn_particle_vfx(
+            TSY_PORTAL_TEAR_VFX,
+            pos,
+            Some("#F8F6FF"),
+            Some(1.0),
+            Some(24),
+            Some(30),
+            None,
+        ));
         commands.spawn((
             Position(pos),
             EntityLayerId(tsy_layer),
@@ -579,6 +655,90 @@ fn deterministic_point_in_zone(
         min.y + (max.y - min.y) * unit_from_seed(s2),
         min.z + (max.z - min.z) * unit_from_seed(s3),
     )
+}
+
+fn portal_vfx_request(kind: RiftKind, origin: valence::prelude::DVec3) -> VfxEventRequest {
+    let (event_id, color, strength, count, duration) = match kind {
+        RiftKind::MainRift => (TSY_PORTAL_IDLE_VFX, "#6644AA", 0.65, 16, 80),
+        RiftKind::DeepRift => (TSY_PORTAL_DEEP_VFX, "#AA2222", 0.78, 18, 80),
+        RiftKind::CollapseTear => (TSY_PORTAL_TEAR_VFX, "#F8F6FF", 1.0, 24, 30),
+    };
+    spawn_particle_vfx(
+        event_id,
+        origin,
+        Some(color),
+        Some(strength),
+        Some(count),
+        Some(duration),
+        None,
+    )
+}
+
+fn spawn_particle_vfx(
+    event_id: &str,
+    origin: valence::prelude::DVec3,
+    color: Option<&str>,
+    strength: Option<f32>,
+    count: Option<u16>,
+    duration_ticks: Option<u16>,
+    direction: Option<[f64; 3]>,
+) -> VfxEventRequest {
+    let origin_array = dvec3_to_array(origin);
+    VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: event_id.to_string(),
+            origin: origin_array,
+            direction,
+            color: color.map(str::to_string),
+            strength,
+            count,
+            duration_ticks,
+        },
+    )
+}
+
+fn emit_zone_audio(
+    audio_events: &mut EventWriter<PlaySoundRecipeRequest>,
+    recipe_id: &str,
+    origin: valence::prelude::DVec3,
+) {
+    audio_events.send(PlaySoundRecipeRequest {
+        recipe_id: recipe_id.to_string(),
+        instance_id: 0,
+        pos: Some(dvec3_to_block_pos(origin)),
+        flag: Some("tsy_race_out".to_string()),
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: TSY_COLLAPSE_AUDIO_RADIUS,
+        },
+    });
+}
+
+fn family_zone_center(zones: &ZoneRegistry, family_id: &str) -> Option<valence::prelude::DVec3> {
+    let mut min = valence::prelude::DVec3::splat(f64::INFINITY);
+    let mut max = valence::prelude::DVec3::splat(f64::NEG_INFINITY);
+    let mut found = false;
+    for zone in zones
+        .zones
+        .iter()
+        .filter(|zone| zone.tsy_family_id().as_deref() == Some(family_id))
+    {
+        min = min.min(zone.bounds.0);
+        max = max.max(zone.bounds.1);
+        found = true;
+    }
+    found.then_some((min + max) * 0.5)
+}
+
+fn dvec3_to_block_pos(pos: valence::prelude::DVec3) -> [i32; 3] {
+    [
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    ]
 }
 
 pub fn on_tsy_collapse_completed(
@@ -633,9 +793,12 @@ pub fn register(app: &mut App) {
         .add_event::<ExtractAborted>()
         .add_event::<ExtractFailed>()
         .add_event::<ExtractProgressPulse>()
+        .add_event::<VfxEventRequest>()
+        .add_event::<PlaySoundRecipeRequest>()
         .add_systems(
             Update,
             (
+                emit_portal_spawn_vfx,
                 start_extract_request,
                 cancel_extract_request,
                 on_tsy_collapse_started,
@@ -671,6 +834,8 @@ mod tests {
         app.add_event::<ExtractProgressPulse>();
         app.add_event::<DimensionTransferRequest>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, system);
         app
     }
@@ -876,6 +1041,14 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].target, DimensionKind::Overworld);
         assert_eq!(collected[0].target_pos, DVec3::new(8.0, 65.0, 9.0));
+        let audio = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let audio_events: Vec<_> = audio.get_reader().read(audio).cloned().collect();
+        assert_eq!(audio_events.len(), 1);
+        assert_eq!(audio_events[0].recipe_id, TSY_EXTRACT_SUCCESS_AUDIO);
+        assert!(matches!(
+            audio_events[0].recipient,
+            AudioRecipient::Single(target) if target == player
+        ));
     }
 
     #[test]
@@ -902,6 +1075,24 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].target, DimensionKind::Overworld);
         assert_eq!(collected[0].target_pos, DVec3::new(111.0, 74.0, -222.0));
+    }
+
+    #[test]
+    fn portal_spawn_emits_kind_specific_vfx() {
+        let mut app = app_with_extract_system(emit_portal_spawn_vfx);
+        app.world_mut()
+            .spawn(portal("tsy_lingxu_01", RiftKind::DeepRift, DVec3::ZERO));
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let collected: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(collected.len(), 1);
+        assert!(matches!(
+            &collected[0].payload,
+            VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                if event_id == TSY_PORTAL_DEEP_VFX
+        ));
     }
 
     #[test]
@@ -992,6 +1183,26 @@ mod tests {
             .filter(|portal| portal.kind == RiftKind::CollapseTear)
             .count();
         assert!((3..=5).contains(&tears));
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let vfx_collected: Vec<_> = vfx_events.get_reader().read(vfx_events).cloned().collect();
+        assert!(vfx_collected.iter().any(|event| matches!(
+            &event.payload,
+            VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                if event_id == TSY_COLLAPSE_BURST_VFX
+        )));
+        assert!(vfx_collected.iter().any(|event| matches!(
+            &event.payload,
+            VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                if event_id == TSY_PORTAL_TEAR_VFX
+        )));
+        let audio = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let audio_collected: Vec<_> = audio.get_reader().read(audio).cloned().collect();
+        assert!(audio_collected
+            .iter()
+            .any(|event| event.recipe_id == TSY_RACE_OUT_ALARM_AUDIO));
+        assert!(audio_collected
+            .iter()
+            .any(|event| event.recipe_id == TSY_COLLAPSE_RUMBLE_AUDIO));
     }
 
     #[test]

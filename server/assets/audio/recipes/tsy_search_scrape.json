@@ -1,0 +1,10 @@
+{
+  "id": "tsy_search_scrape",
+  "layers": [
+    { "sound": "minecraft:block.gravel.break", "volume": 0.35, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:item.armor.equip_chain", "volume": 0.22, "pitch": 1.25, "delay_ticks": 4 }
+  ],
+  "priority": 45,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

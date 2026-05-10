@@ -34,6 +34,15 @@ public final class VfxBootstrap {
         registry.register(ReleaseLightningVfx.EVENT_ID,          new ReleaseLightningVfx());
         registry.register(ExhaustedGreyMistVfx.EVENT_ID,         new ExhaustedGreyMistVfx());
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
+        TsyPortalVortexPlayer tsyPortal = new TsyPortalVortexPlayer();
+        registry.register(TsyPortalVortexPlayer.MAIN_RIFT,        tsyPortal);
+        registry.register(TsyPortalVortexPlayer.DEEP_RIFT,        tsyPortal);
+        registry.register(TsyPortalVortexPlayer.COLLAPSE_TEAR,    tsyPortal);
+        registry.register(TsyCollapseBurstPlayer.EVENT_ID,        new TsyCollapseBurstPlayer());
+        registry.register(TsyFuyaAuraPlayer.EVENT_ID,             new TsyFuyaAuraPlayer());
+        TsySearchFeedbackPlayer tsySearch = new TsySearchFeedbackPlayer();
+        registry.register(TsySearchFeedbackPlayer.DUST,           tsySearch);
+        registry.register(TsySearchFeedbackPlayer.LOOT_POP,       tsySearch);
         YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
         registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
         registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);

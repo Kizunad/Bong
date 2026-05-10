@@ -65,14 +65,16 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        Integer charges = readOptionalInt(itemObject, "charges");
         if (instanceId == null || itemId == null || displayName == null || gridWidth == null || gridHeight == null
             || weight == null || rarity == null || description == null || stackCount == null
             || spiritQuality == null || durability == null) {
             return null;
         }
-        return InventoryItem.createFull(
+        return InventoryItem.createFullWithAncientMeta(
             instanceId, itemId, displayName, gridWidth, gridHeight,
-            weight, rarity, description, stackCount, spiritQuality, durability
+            weight, rarity, description, stackCount, spiritQuality, durability,
+            charges, "", "", 0, null, "", List.of(), null, List.of()
         );
     }
 
@@ -107,6 +109,13 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
     }
 
     private static Integer readRequiredInt(JsonObject object, String fieldName) {
+        Long value = readRequiredLong(object, fieldName);
+        return value == null || value > Integer.MAX_VALUE ? null : value.intValue();
+    }
+
+    private static Integer readOptionalInt(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull()) return null;
         Long value = readRequiredLong(object, fieldName);
         return value == null || value > Integer.MAX_VALUE ? null : value.intValue();
     }

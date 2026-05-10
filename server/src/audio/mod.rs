@@ -171,8 +171,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            39,
-            "plan §3 MVP recipes plus narration, locust, yidao, zhenmai-v2, woliu-v2, and JueBi cues should contain 39 recipes"
+            43,
+            "plan §3 MVP recipes plus narration, locust, yidao, zhenmai-v2, woliu-v2, JueBi, and TSY experience cues should contain 43 recipes"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -189,6 +189,10 @@ mod tests {
         assert!(registry.get("pillar_eruption_boom").is_some());
         assert!(registry.get("pressure_collapse_whoosh").is_some());
         assert!(registry.get("aftershock_wind").is_some());
+        assert!(registry.get("tsy_race_out_alarm").is_some());
+        assert!(registry.get("tsy_collapse_rumble").is_some());
+        assert!(registry.get("tsy_extract_success").is_some());
+        assert!(registry.get("tsy_search_scrape").is_some());
     }
 
     #[test]
