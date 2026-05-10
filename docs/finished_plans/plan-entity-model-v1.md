@@ -188,13 +188,14 @@
 - `9a8be311d`（2026-05-10）`fix(assets): 替换实体模型占位资源`
 - `0f160ae4e`（2026-05-10）`docs(client): 说明灵田方块注册边界`
 - `068d5fc47`（2026-05-10）`fix(server): 同步实体视觉 metadata 时序`
+- `185a43121`（2026-05-10）`fix(entity): 避让 fauna 实体 raw id 区间`
 
 ### 测试结果
 
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test`
   - `BUILD SUCCESSFUL`
-  - `client/build/test-results/test`: `tests=1031 failures=0 errors=0 skipped=0`
-  - 新增 `BongEntityModelRegistryTest`: `tests=11 failures=0 errors=0 skipped=0`
+  - `client/build/test-results/test`: `tests=1032 failures=0 errors=0 skipped=0`
+  - 新增 `BongEntityModelRegistryTest`: `tests=12 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build`
   - `BUILD SUCCESSFUL`
