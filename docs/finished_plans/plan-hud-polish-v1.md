@@ -50,7 +50,7 @@
 
 ### 验收抓手
 
-- 测试：`./gradlew test --tests "com.bong.client.hud.TargetInfoHudPlannerTest" --tests "com.bong.client.hud.BongZoneHudTest" --tests "com.bong.client.hud.BongHudOrchestratorTest" --tests "com.bong.client.hud.HudImmersionModeTest"`
+- 测试：`JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn ./gradlew test --tests "com.bong.client.hud.TargetInfoHudPlannerTest" --tests "com.bong.client.hud.BongZoneHudTest" --tests "com.bong.client.hud.BongHudOrchestratorTest" --tests "com.bong.client.hud.HudImmersionModeTest"`
 - 手动：攻击 NPC → 顶部出现 HP 条 → 5s 后消失 → 走到新区域 → 中央出现区域名 → 进入和平 10s → HUD 简化 → 遇敌 → HUD 展开
 
 ---
