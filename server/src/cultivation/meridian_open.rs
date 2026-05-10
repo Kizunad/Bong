@@ -17,6 +17,7 @@ use super::components::{Cultivation, MeridianId, MeridianSystem};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
@@ -129,6 +130,7 @@ pub fn meridian_open_tick(
     zones: Option<Res<ZoneRegistry>>,
     mut entities: Query<MeridianOpenItem<'_>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     let Some(zones) = zones else {
         return;
@@ -180,8 +182,42 @@ pub fn meridian_open_tick(
                         },
                     });
                 }
+                if let Some(events) = vfx_events.as_deref_mut() {
+                    let p = pos.get() + valence::prelude::DVec3::new(0.0, 1.0, 0.0);
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::MERIDIAN_OPEN,
+                            p,
+                            Some(meridian_flash_direction(target.0)),
+                            "#22FFAA",
+                            1.0,
+                            4,
+                            20,
+                        ),
+                    );
+                }
             }
         }
+    }
+}
+
+fn meridian_flash_direction(target: MeridianId) -> [f64; 3] {
+    match target {
+        MeridianId::Lung | MeridianId::LargeIntestine | MeridianId::Heart => [0.5, -0.2, 0.0],
+        MeridianId::Stomach | MeridianId::Spleen | MeridianId::SmallIntestine => [-0.5, -0.2, 0.0],
+        MeridianId::Bladder | MeridianId::Kidney | MeridianId::Gallbladder => [0.0, -0.3, 0.5],
+        MeridianId::Liver | MeridianId::Pericardium | MeridianId::TripleEnergizer => {
+            [0.0, -0.3, -0.5]
+        }
+        MeridianId::Du
+        | MeridianId::Ren
+        | MeridianId::Chong
+        | MeridianId::Dai
+        | MeridianId::YinQiao
+        | MeridianId::YangQiao
+        | MeridianId::YinWei
+        | MeridianId::YangWei => [0.0, 0.8, 0.0],
     }
 }
 
@@ -320,5 +356,42 @@ mod tests {
         let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
         assert_eq!(cultivation.qi_current, 10.0);
         assert_eq!(meridians.get(MeridianId::Lung).open_progress, 0.0);
+    }
+
+    #[test]
+    fn meridian_open_emits_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.insert_resource(zones);
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, meridian_open_tick);
+
+        let mut cultivation = player_with_qi(1000.0);
+        cultivation.qi_max = 1000.0;
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).open_progress = 0.999;
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            MeridianTarget(MeridianId::Lung),
+            cultivation,
+            meridians,
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("meridian open should emit vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::MERIDIAN_OPEN);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 }
