@@ -1,0 +1,102 @@
+package com.bong.client.entity;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class BongEntityModelRegistryTest {
+    @Test
+    void allPlanEntitiesHaveRendererBindings() {
+        Map<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> bindings =
+            BongEntityRenderBootstrap.rendererBindingsForTests();
+
+        assertEquals(
+            Set.of(BongEntityModelKind.values()),
+            bindings.keySet(),
+            "Every plan-entity-model-v1 visual entity must bind a Fabric renderer"
+        );
+    }
+
+    @Test
+    void rawIdsStayAfterWhaleWithoutShiftingExistingContract() {
+        int expectedRawId = 126;
+        for (BongEntityModelKind kind : BongEntityRegistry.orderedKindsForTests()) {
+            assertEquals(
+                expectedRawId++,
+                kind.expectedRawId(),
+                "New entity raw ids must start after whale raw_id=125 and stay sequential"
+            );
+        }
+    }
+
+    @Test
+    void rendererResourcesAreUniquePerEntityKind() {
+        Set<String> modelResources = new HashSet<>();
+        Set<String> animationResources = new HashSet<>();
+        Set<String> textureResources = new HashSet<>();
+
+        for (BongEntityModelKind kind : BongEntityModelKind.values()) {
+            assertTrue(modelResources.add(kind.modelResource().toString()), "Duplicate model: " + kind);
+            assertTrue(animationResources.add(kind.animationResource().toString()), "Duplicate animation: " + kind);
+            for (int state = 0; state < kind.stateCount(); state++) {
+                assertTrue(textureResources.add(kind.textureForState(state).toString()), "Duplicate texture: " + kind);
+            }
+        }
+    }
+
+    @Test
+    void spiritNicheRenders() {
+        assertRenderer(BongEntityModelKind.SPIRIT_NICHE, SpiritNicheRenderer.class, 3);
+    }
+
+    @Test
+    void spiritEyeRenders() {
+        assertRenderer(BongEntityModelKind.SPIRIT_EYE, SpiritEyeRenderer.class, 3);
+    }
+
+    @Test
+    void riftPortalRenders() {
+        assertRenderer(BongEntityModelKind.RIFT_PORTAL, RiftPortalRenderer.class, 3);
+    }
+
+    @Test
+    void workbenchRenderersRegister() {
+        assertRenderer(BongEntityModelKind.FORGE_STATION, ForgeStationRenderer.class, 2);
+        assertRenderer(BongEntityModelKind.ALCHEMY_FURNACE, AlchemyFurnaceRenderer.class, 2);
+        assertRenderer(BongEntityModelKind.FORMATION_CORE, FormationCoreRenderer.class, 3);
+    }
+
+    @Test
+    void lingtianAndTsyContainerRenderersRegister() {
+        assertRenderer(BongEntityModelKind.LINGTIAN_PLOT, LingtianPlotRenderer.class, 4);
+        assertRenderer(BongEntityModelKind.DRY_CORPSE, DryCorpseRenderer.class, 3);
+        assertRenderer(BongEntityModelKind.BONE_SKELETON, BoneSkeletonRenderer.class, 3);
+        assertRenderer(BongEntityModelKind.STORAGE_POUCH, StoragePouchRenderer.class, 3);
+        assertRenderer(BongEntityModelKind.STONE_CASKET, StoneCasketRenderer.class, 3);
+    }
+
+    @Test
+    void expectedRawIdMapCoversAllKinds() {
+        EnumMap<BongEntityModelKind, Integer> expected = new EnumMap<>(BongEntityModelKind.class);
+        for (BongEntityModelKind kind : BongEntityModelKind.values()) {
+            expected.put(kind, kind.expectedRawId());
+        }
+        assertEquals(expected, BongEntityRegistry.expectedRawIdsForTests());
+    }
+
+    private static void assertRenderer(
+        BongEntityModelKind kind,
+        Class<? extends BongModeledEntityRenderer> rendererClass,
+        int stateCount
+    ) {
+        assertSame(rendererClass, BongEntityRenderBootstrap.rendererBindingsForTests().get(kind));
+        assertEquals(stateCount, kind.stateCount(), "Unexpected visual state count for " + kind);
+    }
+}
