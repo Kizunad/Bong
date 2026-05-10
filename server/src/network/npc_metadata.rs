@@ -225,12 +225,12 @@ pub fn archetype_label(archetype: NpcArchetype) -> &'static str {
 
 pub fn realm_label(realm: Realm) -> &'static str {
     match realm {
-        Realm::Awaken => "引气",
-        Realm::Induce => "引灵",
+        Realm::Awaken => "醒灵",
+        Realm::Induce => "引气",
         Realm::Condense => "凝脉",
         Realm::Solidify => "固元",
-        Realm::Spirit => "化神",
-        Realm::Void => "渡虚",
+        Realm::Spirit => "通灵",
+        Realm::Void => "化虚",
     }
 }
 
@@ -381,6 +381,16 @@ mod tests {
         assert!(json.contains(r#""greeting_text":"道友，可有灵草出让？""#));
         assert!(json.contains(r#""reputation_to_player":50"#));
         assert!(json.contains(r#""qi_hint":"你看不清此人深浅""#));
+    }
+
+    #[test]
+    fn realm_label_matches_worldview_canon() {
+        assert_eq!(realm_label(Realm::Awaken), "醒灵");
+        assert_eq!(realm_label(Realm::Induce), "引气");
+        assert_eq!(realm_label(Realm::Condense), "凝脉");
+        assert_eq!(realm_label(Realm::Solidify), "固元");
+        assert_eq!(realm_label(Realm::Spirit), "通灵");
+        assert_eq!(realm_label(Realm::Void), "化虚");
     }
 
     #[test]
