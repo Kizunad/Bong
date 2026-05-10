@@ -1,0 +1,24 @@
+{
+  "zone_id": "spring_marsh",
+  "fog_color": "#A0C8A0",
+  "fog_density": 0.25,
+  "ambient_particles": [
+    {
+      "type": "lingqi_ripple",
+      "tint": "#88CC88",
+      "density": 1.0,
+      "drift": [0.0, 0.005, 0.0],
+      "interval_ticks": 18
+    },
+    {
+      "type": "enlightenment_dust",
+      "tint": "#CCFFCC",
+      "density": 0.5,
+      "drift": [0.0, 0.015, 0.0],
+      "interval_ticks": 24
+    }
+  ],
+  "sky_tint": "#D0E8D0",
+  "entry_transition_fx": "MIST_BURST",
+  "ambient_recipe_id": "ambient_spring_marsh"
+}

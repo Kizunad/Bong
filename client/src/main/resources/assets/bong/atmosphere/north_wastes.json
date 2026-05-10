@@ -1,0 +1,15 @@
+{
+  "zone_id": "north_wastes",
+  "fog_color": "#909090",
+  "fog_density": 0.5,
+  "ambient_particle": {
+    "type": "cloud256_dust",
+    "tint": "#A0A0A0",
+    "density": 3.0,
+    "drift": [0.05, 0.0, 0.0],
+    "interval_ticks": 10
+  },
+  "sky_tint": "#B0B0B0",
+  "entry_transition_fx": "WIND_GUST",
+  "ambient_recipe_id": "ambient_north_wastes"
+}
