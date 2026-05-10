@@ -127,7 +127,7 @@
 
 ### 落地清单
 
-- P0 境界分层皮肤 + 派系颜色：`server/src/skin/npc_skin_selector.rs` 新增 `NpcSkinTier` / `NpcAgeBand` / `NpcVisualProfile` / `NpcSkinPoolKey`；`server/src/skin/pool.rs` 改为按 `NpcSkinPoolKey` 分桶预热与抽取；`server/src/npc/spawn.rs` / `server/src/npc/hydrate/mod.rs` 在 spawn / hydrate 时传入真实 `Realm`，避免高境界 NPC 抽低阶皮肤池；`server/src/skin/faction_tint.rs` 通过 `Equipment` 叠加攻击/防御派系颜色。
+- P0 境界分层皮肤 + 派系颜色：`server/src/skin/npc_skin_selector.rs` 新增 `NpcSkinTier` / `NpcAgeBand` / `NpcVisualProfile.high_realm` / `NpcSkinPoolKey`；`server/src/skin/pool.rs` 改为按 `NpcSkinPoolKey` 分桶预热与抽取；`server/src/npc/spawn.rs` / `server/src/npc/hydrate/mod.rs` 在 spawn / hydrate 时传入真实 `Realm`，避免高境界 NPC 抽低阶皮肤池；`server/src/skin/faction_tint.rs` 通过 `Equipment` 叠加攻击/防御派系颜色。
 - P1 年龄外观 + 阶级标记：`server/src/skin/faction_tint.rs` 为老年 NPC 叠加白发头部标记，为弟子/领袖叠加手持物、冠饰和 rank aura；`server/src/npc/spawn.rs` 在散修、凡人、弟子 spawn 时挂载 `NpcVisualProfile` 与视觉装备。
 - P2 NPC 突破/死亡 VFX + 气质光环：`server/src/combat/lifecycle.rs` 在 NPC 死亡路径发 `bong:npc_death_smoke`，高境界 NPC 额外发 `bong:npc_death_qi_burst`，near-death wrapper 显式透传 `NpcMarker` / `NpcVisualProfile`；`server/src/skin/faction_tint.rs` 定期发 `bong:npc_rank_aura_elder` / `bong:npc_rank_aura_master` / `bong:npc_qi_aura_ripple`；client 新增 `NpcDeathSmokePlayer`、`NpcDeathQiBurstPlayer`、`NpcRankAuraPlayer`、`NpcQiAuraRipplePlayer` 并在 `VfxBootstrap` 注册。
 
@@ -137,10 +137,11 @@
 - `7a7ba594f`（2026-05-10）`plan-npc-visual-v1：补齐高境界死亡真元爆散`
 - `c8219b6e0`（2026-05-10）`plan-npc-visual-v1：修复 review 发现的视觉边界`
 - `5404e6590`（2026-05-10）`plan-npc-visual-v1：规范化初始年龄比例`
+- `49a19a355`（2026-05-10）`plan-npc-visual-v1：解耦高境界光环判定`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test` → 3644 passed；`CARGO_PROFILE_TEST_DEBUG=0` 仅用于降低本机并发链接内存占用。
+- `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test` → 3645 passed；`CARGO_PROFILE_TEST_DEBUG=0` 仅用于降低本机并发链接内存占用。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test near_death_npc_termination_keeps_high_realm_qi_burst_profile -- --nocapture` → 1 passed。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test tribulation_ready_dormant_hydrates_without_player_distance_gate -- --nocapture` → 1 passed。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test default_priority_covers_all_known_events -- --nocapture` → 1 passed。
@@ -148,7 +149,7 @@
 
 ### 跨仓库核验
 
-- server：`select_npc_visual_profile`、`NpcVisualProfile`、`spawn_from_snapshot`、`visual_equipment`、`npc_death_smoke_request`、`npc_death_qi_burst_request`、`vfx_default_priority`、`bong:npc_rank_aura_master`、`bong:npc_qi_aura_ripple`。
+- server：`select_npc_visual_profile`、`NpcVisualProfile.high_realm`、`spawn_from_snapshot`、`visual_equipment`、`npc_death_smoke_request`、`npc_death_qi_burst_request`、`vfx_default_priority`、`bong:npc_rank_aura_master`、`bong:npc_qi_aura_ripple`。
 - client：`NpcDeathSmokePlayer.EVENT_ID`、`NpcDeathQiBurstPlayer.EVENT_ID`、`NpcRankAuraPlayer.ELDER`、`NpcRankAuraPlayer.MASTER`、`NpcQiAuraRipplePlayer.EVENT_ID`。
 - 共享 event：复用 `VfxEventRequest` / `VfxEventPayloadV1::SpawnParticle`，新增 event id 通过 `VfxRegistryTest` 锁定 bootstrap 注册。
 
