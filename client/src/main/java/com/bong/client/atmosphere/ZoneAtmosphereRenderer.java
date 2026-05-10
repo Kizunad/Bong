@@ -138,7 +138,12 @@ public final class ZoneAtmosphereRenderer {
     }
 
     private static void spawnFootprintParticles(ClientWorld world, ClientPlayerEntity player, ZoneAtmosphereCommand command) {
-        if (world == null || player == null || command == null || !command.deadZoneVisual()) {
+        if (world == null || player == null || command == null) {
+            FOOTPRINTS.clear();
+            return;
+        }
+        if (!command.deadZoneVisual()) {
+            FOOTPRINTS.clear();
             return;
         }
         for (AshFootprintTracker.FootprintCommand footprint : FOOTPRINTS.onEntityStep(

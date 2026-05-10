@@ -40,7 +40,10 @@ public final class ZoneAtmosphereProfileParser {
 
     private static List<ZoneAtmosphereProfile.ParticleConfig> readParticles(JsonObject root) {
         JsonElement plural = root.get("ambient_particles");
-        if (plural != null && plural.isJsonArray()) {
+        if (plural != null && !plural.isJsonNull()) {
+            if (!plural.isJsonArray()) {
+                throw new IllegalArgumentException("ambient_particles must be an array");
+            }
             JsonArray array = plural.getAsJsonArray();
             List<ZoneAtmosphereProfile.ParticleConfig> result = new ArrayList<>(array.size());
             for (JsonElement element : array) {
