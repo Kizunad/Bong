@@ -96,6 +96,10 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public void removed() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.player != null && CraftStore.sessionState().active()) {
+            ClientRequestSender.sendCraftCancel();
+        }
         CraftStore.removeRecipeListener(recipeListener);
         CraftStore.removeSessionListener(sessionListener);
         CraftStore.removeOutcomeListener(outcomeListener);
