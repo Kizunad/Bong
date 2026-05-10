@@ -1,0 +1,36 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "tuike_taint_transfer",
+  "description": "tuike-v2 transfer taint: two-finger meridian press that pushes contamination into the false skin.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 14,
+    "stopTick": 18,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "yaw": 0.0, "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.40, "yaw": -0.18, "roll": -0.08, "bend": 0.35, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.22, "yaw": 0.20, "roll": 0.12, "bend": 0.20, "axis": 3.1415927 } },
+      { "tick": 5, "easing": "INOUTSINE", "body": { "y": -0.02 } },
+      { "tick": 5, "easing": "INOUTSINE", "head": { "pitch": 0.12 } },
+      { "tick": 5, "easing": "INOUTSINE", "torso": { "yaw": -0.12, "pitch": 0.05 } },
+      { "tick": 5, "easing": "INOUTSINE", "rightArm": { "pitch": -1.06, "yaw": -0.42, "roll": -0.18, "bend": 0.55, "axis": 3.1415927 } },
+      { "tick": 5, "easing": "INOUTSINE", "leftArm": { "pitch": -0.68, "yaw": 0.44, "roll": 0.28, "bend": 0.86, "axis": 3.1415927 } },
+      { "tick": 10, "easing": "OUTSINE", "head": { "pitch": 0.04 } },
+      { "tick": 10, "easing": "OUTSINE", "torso": { "yaw": 0.06, "pitch": -0.02 } },
+      { "tick": 10, "easing": "OUTSINE", "rightArm": { "pitch": -0.82, "yaw": -0.24, "roll": -0.06, "bend": 0.38, "axis": 3.1415927 } },
+      { "tick": 10, "easing": "OUTSINE", "leftArm": { "pitch": -0.52, "yaw": 0.28, "roll": 0.20, "bend": 0.50, "axis": 3.1415927 } },
+      { "tick": 14, "easing": "OUTSINE", "body": { "y": 0.0 } },
+      { "tick": 14, "easing": "OUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 14, "easing": "OUTSINE", "torso": { "yaw": 0.0, "pitch": 0.0 } },
+      { "tick": 14, "easing": "OUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0, "axis": 3.1415927 } },
+      { "tick": 14, "easing": "OUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0, "axis": 3.1415927 } }
+    ]
+  }
+}

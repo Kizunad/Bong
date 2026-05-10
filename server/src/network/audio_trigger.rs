@@ -10,6 +10,7 @@ use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
 use crate::botany::components::HarvestTerminalEvent;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
+use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
@@ -453,6 +454,68 @@ pub fn emit_woliu_v2_audio_triggers(
             Some(event.skill.as_str().to_string()),
             1.0,
             0.0,
+        );
+    }
+}
+
+pub fn emit_tuike_v2_audio_triggers(
+    mut don_events: EventReader<DonFalseSkinEvent>,
+    mut shed_events: EventReader<FalseSkinSheddedEvent>,
+    mut transfer_events: EventReader<ContamTransferredEvent>,
+    positions: Query<&Position>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for event in don_events.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|position| position.get())
+            .unwrap_or(DVec3::ZERO);
+        emit_play(
+            &mut audio,
+            event.visual.sound_recipe_id.as_str(),
+            event.caster,
+            origin,
+            Some("tuike_don".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+    for event in shed_events.read() {
+        let origin = positions
+            .get(event.owner)
+            .map(|position| position.get())
+            .unwrap_or(DVec3::ZERO);
+        emit_play(
+            &mut audio,
+            event.visual.sound_recipe_id.as_str(),
+            event.owner,
+            origin,
+            Some("tuike_shed".to_string()),
+            1.0,
+            if event.permanent_taint_load > 0.0 {
+                0.08
+            } else {
+                0.0
+            },
+        );
+    }
+    for event in transfer_events.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|position| position.get())
+            .unwrap_or(DVec3::ZERO);
+        emit_play(
+            &mut audio,
+            event.visual.sound_recipe_id.as_str(),
+            event.caster,
+            origin,
+            Some("tuike_transfer_taint".to_string()),
+            1.0,
+            if event.permanent_absorbed > 0.0 {
+                0.12
+            } else {
+                0.0
+            },
         );
     }
 }

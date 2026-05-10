@@ -2705,6 +2705,7 @@ mod tests {
                 contam_capacity_per_layer: 10.0,
                 absorbed_contam: 3.0,
                 equipped_at_tick: 7,
+                layers: Vec::new(),
             }),
             ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
                 entity_id: 1,

@@ -48,6 +48,9 @@ public final class BongAnimations {
     public static final Identifier LOOT_BEND = new Identifier(MOD_ID, "loot_bend");
     public static final Identifier STEALTH_CROUCH = new Identifier(MOD_ID, "stealth_crouch");
     public static final Identifier IDLE_BREATHE = new Identifier(MOD_ID, "idle_breathe");
+    public static final Identifier TUIKE_DON_SKIN = new Identifier(MOD_ID, "tuike_don_skin");
+    public static final Identifier TUIKE_SHED_BURST = new Identifier(MOD_ID, "tuike_shed_burst");
+    public static final Identifier TUIKE_TAINT_TRANSFER = new Identifier(MOD_ID, "tuike_taint_transfer");
 
     // §5.3 剧情演绎
     public static final Identifier BREAKTHROUGH_BURST = new Identifier(MOD_ID, "breakthrough_burst");

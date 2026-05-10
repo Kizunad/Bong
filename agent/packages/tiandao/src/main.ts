@@ -12,6 +12,7 @@ import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narr
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
+import { TuikeV2NarrationRuntime } from "./tuike_v2_runtime.js";
 import { VoidActionNarrationRuntime } from "./void-actions-runtime.js";
 import { WoliuNarrationRuntime } from "./woliu-narration.js";
 import { YidaoNarrationRuntime } from "./yidao-runtime.js";
@@ -178,6 +179,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const tuikeCleanup = await startTuikeRuntime({
     ...runtimeOpts,
   });
+  const tuikeV2Cleanup = await startTuikeV2Runtime({
+    ...runtimeOpts,
+  });
   const duguCleanup = await startDuguRuntime({
     ...runtimeOpts,
   });
@@ -206,6 +210,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     yidaoCleanup,
     zhenmaiCleanup,
     zhenfaV2Cleanup,
+    tuikeV2Cleanup,
     tuikeCleanup,
     duguV2Cleanup,
     duguCleanup,
@@ -248,6 +253,38 @@ async function startWoliuV2Runtime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] woliu v2 runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startTuikeV2Runtime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TuikeV2NarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TuikeV2NarrationRuntime
+  >[0]["pub"];
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({ baseURL: opts.baseUrl, apiKey: opts.apiKey, model: opts.model })
+    : createMockClient();
+  const runtime = new TuikeV2NarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] tuike v2 runtime online"))
+    .catch((error) => console.warn("[tiandao] tuike v2 runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] tuike v2 runtime disconnect error:", error);
     }
   };
 }

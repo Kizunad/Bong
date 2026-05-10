@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::tuike_v2::FalseSkinLayerStateV1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FalseSkinKindV1 {
@@ -16,6 +18,8 @@ pub struct FalseSkinStateV1 {
     pub contam_capacity_per_layer: f64,
     pub absorbed_contam: f64,
     pub equipped_at_tick: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<FalseSkinLayerStateV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,6 +48,7 @@ mod tests {
             contam_capacity_per_layer: 0.0,
             absorbed_contam: 0.0,
             equipped_at_tick: 0,
+            layers: Vec::new(),
         };
 
         let json = serde_json::to_string(&original).expect("serialize");

@@ -32,12 +32,12 @@ use crate::schema::channels::{
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
-    CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
-    CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
-    CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT,
-    CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE,
-    CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
+    CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
+    CH_VOID_ACTION_SUPPRESS_TSY, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
+    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
+    CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -82,6 +82,7 @@ use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, Tribulat
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
+use crate::schema::tuike_v2::TuikeSkillEventV1;
 use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCastV1};
@@ -194,6 +195,7 @@ pub enum RedisOutbound {
     AnqiCarrierAbrasion(CarrierAbrasionEventV1),
     AnqiContainerSwap(ContainerSwapEventV1),
     TuikeShed(ShedEventV1),
+    TuikeV2SkillEvent(TuikeSkillEventV1),
     YidaoEvent(YidaoEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
     WantedPlayer(WantedPlayerEventV1),
@@ -1240,6 +1242,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::TuikeV2SkillEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TuikeSkillEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TUIKE_V2_SKILL_EVENT,
+                payload,
+            })
+        }
     }
 }
 
@@ -2072,6 +2083,7 @@ mod redis_bridge_tests {
     use crate::schema::spirit_eye::{
         SpiritEyeMigrateReasonV1, SpiritEyeMigrateV1, SpiritEyePositionV1,
     };
+    use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeSkillIdV1, TuikeSkillVisualContractV1};
     use crate::schema::zhenmai_v2::{ZhenmaiAttackKindV1, ZhenmaiSkillIdV1};
     use serde_json::json;
     use tokio::task;
@@ -2628,6 +2640,40 @@ mod redis_bridge_tests {
                 assert_eq!(v["session_id"], 7);
                 assert_eq!(v["blueprint_id"], "qing_feng_v0");
                 assert_eq!(v["materials"][0]["material"], "fan_tie");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_tuike_v2_skill_event_on_correct_channel() {
+        let event = TuikeSkillEventV1::new(
+            "offline:Azure".to_string(),
+            TuikeSkillIdV1::TransferTaint,
+            FalseSkinTierV1::Ancient,
+            2,
+            84_000,
+            TuikeSkillVisualContractV1::new(
+                "bong:tuike_taint_transfer",
+                "bong:ancient_skin_glow",
+                "contam_transfer_hum",
+                "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+            ),
+        );
+
+        let command = prepare_outbound_command(RedisOutbound::TuikeV2SkillEvent(event.clone()))
+            .expect("tuike v2 skill event should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_TUIKE_V2_SKILL_EVENT);
+                let parsed: TuikeSkillEventV1 =
+                    serde_json::from_str(&payload).expect("tuike event payload should be valid");
+                assert_eq!(parsed.caster_id, event.caster_id);
+                assert_eq!(parsed.skill_id, event.skill_id);
+                assert_eq!(parsed.tier, event.tier);
+                assert_eq!(parsed.animation_id, event.animation_id);
+                assert_eq!(parsed.particle_id, event.particle_id);
             }
             other => panic!("expected publish, got {other:?}"),
         }

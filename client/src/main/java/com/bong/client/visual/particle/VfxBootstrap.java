@@ -59,6 +59,12 @@ public final class VfxBootstrap {
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
+        registry.register(TuikeFalseSkinParticlePlayer.DON_DUST,
+            new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.DON_DUST));
+        registry.register(TuikeFalseSkinParticlePlayer.SHED_BURST,
+            new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.SHED_BURST));
+        registry.register(TuikeFalseSkinParticlePlayer.ANCIENT_GLOW,
+            new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.ANCIENT_GLOW));
         YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
         registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
         registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);

@@ -203,6 +203,9 @@ export const CHANNELS = {
   /** Server → Client/Agent: 伪皮 HUD 状态（plan-tuike-v1 §P0） */
   TUIKE_FALSE_SKIN_STATE: "bong:tuike/false_skin_state",
 
+  /** Server → Agent: 替尸 v2 三招叙事事件 */
+  TUIKE_V2_SKILL_EVENT: "bong:tuike_v2/skill_event",
+
   /** Server → Agent: 医道治疗 / 业力 / 医患结契事件（plan-yidao-v1） */
   YIDAO_EVENT: "bong:yidao/event",
 
@@ -341,6 +344,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.WOLIU_V2_BACKFIRE,
   CHANNELS.WOLIU_V2_TURBULENCE,
   CHANNELS.ZHENFA_V2_EVENT,
+  CHANNELS.TUIKE_V2_SKILL_EVENT,
   CHANNELS.YIDAO_EVENT,
   CHANNELS.PSEUDO_VEIN_ACTIVE,
   CHANNELS.PSEUDO_VEIN_DISSIPATE,

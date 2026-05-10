@@ -46,6 +46,7 @@ pub mod tribulation;
 pub mod tsy;
 pub mod tsy_hostile;
 pub mod tuike;
+pub mod tuike_v2;
 pub mod vfx_event;
 pub mod void_actions;
 pub mod woliu;

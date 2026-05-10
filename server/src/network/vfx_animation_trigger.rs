@@ -10,6 +10,7 @@ use crate::botany::components::HarvestTerminalEvent;
 use crate::botany::lifecycle::botany_quality_color;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
+use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed};
@@ -39,6 +40,7 @@ const LINGTIAN_REPLENISH_VFX: &str = "bong:lingtian_replenish";
 const LINGTIAN_HARVEST_VFX: &str = "bong:lingtian_harvest";
 const LINGTIAN_DRAIN_VFX: &str = "bong:lingtian_drain";
 const WOLIU_PRIORITY: u16 = 1300;
+const TUIKE_PRIORITY: u16 = 1350;
 
 const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
@@ -287,6 +289,55 @@ pub fn emit_lingtian_visual_triggers(
     }
 }
 
+pub fn emit_tuike_v2_visual_triggers(
+    mut don_events: EventReader<DonFalseSkinEvent>,
+    mut shed_events: EventReader<FalseSkinSheddedEvent>,
+    mut transfer_events: EventReader<ContamTransferredEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in don_events.read() {
+        emit_tuike_visual_for_entity(
+            event.caster,
+            &event.visual,
+            "#D8C08A",
+            10,
+            &players,
+            &mut vfx_events,
+        );
+    }
+    for event in shed_events.read() {
+        let color = if event.permanent_taint_load > 0.0 {
+            "#BFD8FF"
+        } else {
+            "#B58B5A"
+        };
+        emit_tuike_visual_for_entity(
+            event.owner,
+            &event.visual,
+            color,
+            18,
+            &players,
+            &mut vfx_events,
+        );
+    }
+    for event in transfer_events.read() {
+        let color = if event.permanent_absorbed > 0.0 {
+            "#9EC7FF"
+        } else {
+            "#7B5B8C"
+        };
+        emit_tuike_visual_for_entity(
+            event.caster,
+            &event.visual,
+            color,
+            12,
+            &players,
+            &mut vfx_events,
+        );
+    }
+}
+
 fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
     match skill {
         WoliuSkillId::Hold => "#244872",
@@ -370,6 +421,41 @@ fn breakthrough_anim_for_outcome(outcome: &BreakthroughOutcome) -> &'static str 
         ) => ANIM_BREAKTHROUGH_GUYUAN,
         _ => ANIM_BREAKTHROUGH_TONGLING,
     }
+}
+
+fn emit_tuike_visual_for_entity(
+    entity: valence::prelude::Entity,
+    visual: &crate::combat::tuike_v2::events::TuikeSkillVisualPayload,
+    color: &str,
+    count: u16,
+    players: &Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok((position, unique_id)) = players.get(entity) else {
+        return;
+    };
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::PlayAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: visual.animation_id.clone(),
+            priority: TUIKE_PRIORITY,
+            fade_in_ticks: Some(2),
+        },
+    ));
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: visual.particle_id.clone(),
+            origin: [origin.x, origin.y + 1.0, origin.z],
+            direction: None,
+            color: Some(color.to_string()),
+            strength: Some(0.8),
+            count: Some(count),
+            duration_ticks: Some(36),
+        },
+    ));
 }
 
 fn emit_play_for_entity(
@@ -689,6 +775,124 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tuike_v2_skill_events_emit_animation_and_particle_pairs() {
+        let mut app = App::new();
+        add_tuike_v2_visual_test_system(&mut app);
+        let player = spawn_player(&mut app, "Azure", [1.0, 64.0, 2.0]);
+
+        app.world_mut().send_event(DonFalseSkinEvent {
+            caster: player,
+            tier: crate::combat::tuike_v2::FalseSkinTier::Light,
+            layers_after: 1,
+            tick: 10,
+            visual: tuike_visual(crate::combat::tuike_v2::TuikeSkillId::Don, false),
+        });
+        app.world_mut().send_event(FalseSkinSheddedEvent {
+            owner: player,
+            attacker: None,
+            tier: crate::combat::tuike_v2::FalseSkinTier::Mid,
+            damage_absorbed: 20.0,
+            damage_overflow: 0.0,
+            contam_load: 0.0,
+            permanent_taint_load: 0.0,
+            layers_after: 0,
+            active: true,
+            tick: 11,
+            visual: tuike_visual(crate::combat::tuike_v2::TuikeSkillId::Shed, false),
+        });
+        app.world_mut().send_event(ContamTransferredEvent {
+            caster: player,
+            tier: crate::combat::tuike_v2::FalseSkinTier::Ancient,
+            contam_moved_percent: 15.0,
+            backflow_percent: 0.0,
+            permanent_absorbed: 0.0,
+            qi_cost: 105.0,
+            tick: 12,
+            visual: tuike_visual(crate::combat::tuike_v2::TuikeSkillId::TransferTaint, false),
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 6);
+        assert_tuike_pair(
+            &emitted[0..2],
+            "bong:tuike_don_skin",
+            "bong:false_skin_don_dust",
+            Some(10),
+        );
+        assert_tuike_pair(
+            &emitted[2..4],
+            "bong:tuike_shed_burst",
+            "bong:false_skin_shed_burst",
+            Some(18),
+        );
+        assert_tuike_pair(
+            &emitted[4..6],
+            "bong:tuike_taint_transfer",
+            "bong:false_skin_don_dust",
+            Some(12),
+        );
+    }
+
+    #[test]
+    fn tuike_v2_visual_trigger_ignores_non_player_entities() {
+        let mut app = App::new();
+        add_tuike_v2_visual_test_system(&mut app);
+        let non_player = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(DonFalseSkinEvent {
+            caster: non_player,
+            tier: crate::combat::tuike_v2::FalseSkinTier::Light,
+            layers_after: 1,
+            tick: 10,
+            visual: tuike_visual(crate::combat::tuike_v2::TuikeSkillId::Don, false),
+        });
+
+        app.update();
+
+        assert!(drain_vfx(&mut app).is_empty());
+    }
+
+    #[test]
+    fn tuike_v2_visual_trigger_colors_permanent_shed_and_transfer_branches() {
+        let mut app = App::new();
+        add_tuike_v2_visual_test_system(&mut app);
+        let player = spawn_player(&mut app, "Azure", [1.0, 64.0, 2.0]);
+
+        app.world_mut().send_event(FalseSkinSheddedEvent {
+            owner: player,
+            attacker: None,
+            tier: crate::combat::tuike_v2::FalseSkinTier::Ancient,
+            damage_absorbed: 20.0,
+            damage_overflow: 0.0,
+            contam_load: 0.0,
+            permanent_taint_load: 0.5,
+            layers_after: 0,
+            active: true,
+            tick: 11,
+            visual: tuike_visual(crate::combat::tuike_v2::TuikeSkillId::Shed, true),
+        });
+        app.world_mut().send_event(ContamTransferredEvent {
+            caster: player,
+            tier: crate::combat::tuike_v2::FalseSkinTier::Ancient,
+            contam_moved_percent: 15.0,
+            backflow_percent: 0.0,
+            permanent_absorbed: 0.5,
+            qi_cost: 105.0,
+            tick: 12,
+            visual: tuike_visual(crate::combat::tuike_v2::TuikeSkillId::TransferTaint, true),
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 4);
+        assert_spawn_particle_color(&emitted[1], "#BFD8FF");
+        assert_spawn_particle_color(&emitted[3], "#9EC7FF");
+    }
+
     fn assert_play_anim(request: &VfxEventRequest, expected_anim: &str, expected_priority: u16) {
         match &request.payload {
             VfxEventPayloadV1::PlayAnim {
@@ -712,6 +916,41 @@ mod tests {
             } => {
                 assert_eq!(event_id, expected_event_id);
                 assert_eq!(*count, expected_count);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    fn add_tuike_v2_visual_test_system(app: &mut App) {
+        app.add_event::<DonFalseSkinEvent>();
+        app.add_event::<FalseSkinSheddedEvent>();
+        app.add_event::<ContamTransferredEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tuike_v2_visual_triggers);
+    }
+
+    fn tuike_visual(
+        skill: crate::combat::tuike_v2::TuikeSkillId,
+        ancient: bool,
+    ) -> crate::combat::tuike_v2::events::TuikeSkillVisualPayload {
+        crate::combat::tuike_v2::TuikeSkillVisual::for_skill(skill, ancient).into()
+    }
+
+    fn assert_tuike_pair(
+        requests: &[VfxEventRequest],
+        expected_anim: &str,
+        expected_particle: &str,
+        expected_count: Option<u16>,
+    ) {
+        assert_eq!(requests.len(), 2);
+        assert_play_anim(&requests[0], expected_anim, TUIKE_PRIORITY);
+        assert_spawn_particle(&requests[1], expected_particle, expected_count);
+    }
+
+    fn assert_spawn_particle_color(request: &VfxEventRequest, expected_color: &str) {
+        match &request.payload {
+            VfxEventPayloadV1::SpawnParticle { color, .. } => {
+                assert_eq!(color.as_deref(), Some(expected_color));
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }

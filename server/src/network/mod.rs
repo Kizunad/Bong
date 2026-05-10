@@ -415,6 +415,7 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
+    app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
     app.add_systems(
         Update,
         zhenfa_v2_event_bridge::publish_zhenfa_v2_events
@@ -517,6 +518,7 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_botany_harvest_visual_triggers,
             vfx_animation_trigger::emit_lingtian_visual_triggers,
             animation_trigger::emit_animation_trigger_components,
+            vfx_animation_trigger::emit_tuike_v2_visual_triggers,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
@@ -534,6 +536,7 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_botany_audio_triggers,
             audio_trigger::emit_lingtian_audio_triggers,
             audio_trigger::emit_woliu_v2_audio_triggers,
+            audio_trigger::emit_tuike_v2_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),
@@ -596,6 +599,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         false_skin_state_emit::emit_false_skin_state_payloads,
+    );
+    app.add_systems(
+        Update,
+        false_skin_state_emit::emit_tuike_v2_false_skin_state_payloads
+            .after(crate::combat::tuike_v2::tick::sync_false_skin_stack_from_inventory),
     );
     app.add_systems(
         Update,

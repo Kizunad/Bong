@@ -23,6 +23,7 @@ pub mod resolve;
 pub mod status;
 pub mod style_telemetry;
 pub mod tuike;
+pub mod tuike_v2;
 pub mod weapon;
 pub mod woliu;
 pub mod woliu_v2;
@@ -197,6 +198,7 @@ pub fn register(app: &mut App) {
     woliu_v2::register(app);
     zhenmai_v2::register(app);
     dugu_v2::register(app);
+    tuike_v2::register(app);
 
     app.add_systems(
         Update,

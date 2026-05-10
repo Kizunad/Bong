@@ -81,6 +81,9 @@ pub fn register(app: &mut App) {
     register_zhenfa_v2_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register zhenfa-v2 recipes: {err}");
     });
+    register_tuike_v2_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register tuike-v2 recipes: {err}");
+    });
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
@@ -535,6 +538,101 @@ pub fn register_zhenfa_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Re
     Ok(())
 }
 
+/// plan-tuike-v2：4 档伪皮制作走通用手搓 TuikeSkin 类目。
+pub fn register_tuike_v2_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    use crate::combat::tuike_v2::state::{
+        FALSE_SKIN_ANCIENT_ITEM_ID, FALSE_SKIN_HEAVY_ITEM_ID, FALSE_SKIN_LIGHT_ITEM_ID,
+        FALSE_SKIN_MID_ITEM_ID,
+    };
+
+    fn scroll(id: &str) -> Vec<UnlockSource> {
+        vec![UnlockSource::Scroll {
+            item_template: format!("scroll_{id}"),
+        }]
+    }
+
+    let specs = [
+        (
+            "tuike.false_skin.light",
+            "伪灵皮（轻档）",
+            vec![
+                ("ash_spider_silk".to_string(), 5),
+                ("spirit_wood_scrap".to_string(), 2),
+            ],
+            15.0,
+            10 * 60 * 20,
+            FALSE_SKIN_LIGHT_ITEM_ID,
+            CraftRequirements::default(),
+        ),
+        (
+            "tuike.false_skin.mid",
+            "伪灵皮（中档）",
+            vec![
+                ("deadwood_core".to_string(), 3),
+                ("ash_spider_silk".to_string(), 8),
+            ],
+            35.0,
+            20 * 60 * 20,
+            FALSE_SKIN_MID_ITEM_ID,
+            CraftRequirements {
+                realm_min: Some(Realm::Solidify),
+                qi_color_min: None,
+                skill_lv_min: None,
+            },
+        ),
+        (
+            "tuike.false_skin.heavy",
+            "伪灵皮（重档）",
+            vec![
+                ("mutant_beast_hide".to_string(), 2),
+                ("deadwood_core".to_string(), 5),
+                ("solid_qi_dye".to_string(), 2),
+            ],
+            70.0,
+            40 * 60 * 20,
+            FALSE_SKIN_HEAVY_ITEM_ID,
+            CraftRequirements {
+                realm_min: Some(Realm::Spirit),
+                qi_color_min: Some((ColorKind::Solid, 0.20)),
+                skill_lv_min: None,
+            },
+        ),
+        (
+            "tuike.false_skin.ancient",
+            "伪灵皮（上古级）",
+            vec![
+                ("ancient_relic_hide".to_string(), 1),
+                ("ancient_bone_shard".to_string(), 2),
+                ("solid_qi_dye".to_string(), 5),
+            ],
+            180.0,
+            120 * 60 * 20,
+            FALSE_SKIN_ANCIENT_ITEM_ID,
+            CraftRequirements {
+                realm_min: Some(Realm::Void),
+                qi_color_min: Some((ColorKind::Solid, 0.30)),
+                skill_lv_min: None,
+            },
+        ),
+    ];
+
+    for (id, display_name, materials, qi_cost, time_ticks, output, requirements) in specs {
+        registry.register(CraftRecipe {
+            id: RecipeId::new(id),
+            category: CraftCategory::TuikeSkin,
+            display_name: display_name.into(),
+            materials,
+            qi_cost,
+            time_ticks,
+            output: (output.to_string(), 1),
+            requirements,
+            unlock_sources: scroll(id),
+        })?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -656,6 +754,17 @@ mod tests {
                 recipe.id
             );
         }
+    }
+
+    #[test]
+    fn register_tuike_v2_recipes_adds_four_false_skin_tiers() {
+        let mut registry = CraftRegistry::new();
+        register_tuike_v2_recipes(&mut registry).unwrap();
+        assert_eq!(registry.by_category(CraftCategory::TuikeSkin).count(), 4);
+        assert!(registry
+            .get(&RecipeId::new("tuike.false_skin.ancient"))
+            .is_some_and(|recipe| recipe.requirements.realm_min == Some(Realm::Void)
+                && recipe.output.0 == crate::combat::tuike_v2::state::FALSE_SKIN_ANCIENT_ITEM_ID));
     }
 
     #[test]
