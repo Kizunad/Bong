@@ -13,7 +13,7 @@ import json
 import math
 import sys
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
@@ -87,7 +87,7 @@ def fail(message: str) -> NoReturn:
 
 
 def finite_number(value: object) -> float | None:
-    if not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     number = float(value)
     return number if math.isfinite(number) else None
@@ -125,13 +125,15 @@ def observed_efficiency_pct(event: dict) -> float | None:
     return max(0.0, defender_lost) / attacker_qi * 100.0
 
 
-def load_events(path: Path | None, *, sample: bool) -> list[dict]:
+def load_events(path: Path | None, *, sample: bool) -> Iterator[dict]:
     if sample:
-        return [dict(event) for event in SAMPLE_EVENTS]
+        for event in SAMPLE_EVENTS:
+            yield dict(event)
+        return
 
     source = sys.stdin if path is None else path.open("r", encoding="utf-8")
-    events: list[dict] = []
-    with source:
+    close_source = path is not None
+    try:
         for line_no, line in enumerate(source, start=1):
             stripped = line.strip()
             if not stripped:
@@ -142,8 +144,10 @@ def load_events(path: Path | None, *, sample: bool) -> list[dict]:
                 fail(f"invalid JSONL at line {line_no}: {exc}")
             if not isinstance(event, dict):
                 fail(f"line {line_no} is not a JSON object")
-            events.append(event)
-    return events
+            yield event
+    finally:
+        if close_source:
+            source.close()
 
 
 def aggregate(events: Iterable[dict]) -> dict[GroupKey, Aggregate]:
