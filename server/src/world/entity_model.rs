@@ -12,8 +12,8 @@ use valence::entity::entity::NoGravity;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::entity::tracked_data::TrackedData;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, DetectChanges, Entity, EntityKind, EntityLayerId,
-    Look, Position, Query, Ref, Res, ResMut, Resource, Update,
+    apply_deferred, bevy_ecs, App, Commands, Component, DVec3, DetectChanges, Entity, EntityKind,
+    EntityLayerId, IntoSystemConfigs, Look, Position, Query, Ref, Res, ResMut, Resource, Update,
 };
 use valence::protocol::VarInt;
 
@@ -100,17 +100,21 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            sync_spirit_eye_visuals,
-            sync_spirit_niche_visuals,
-            sync_rift_portal_visuals,
-            sync_forge_station_visuals,
-            sync_alchemy_furnace_visuals,
-            sync_zhenfa_anchor_visuals,
-            sync_lingtian_plot_visuals,
-            sync_tsy_container_visuals,
-            cleanup_orphan_visual_entities,
+            (
+                sync_spirit_eye_visuals,
+                sync_spirit_niche_visuals,
+                sync_rift_portal_visuals,
+                sync_forge_station_visuals,
+                sync_alchemy_furnace_visuals,
+                sync_zhenfa_anchor_visuals,
+                sync_lingtian_plot_visuals,
+                sync_tsy_container_visuals,
+                cleanup_orphan_visual_entities,
+            ),
+            apply_deferred,
             sync_bong_visual_state_metadata,
-        ),
+        )
+            .chain(),
     );
 }
 
@@ -534,7 +538,12 @@ mod tests {
         let mut app = App::new();
         app.add_systems(
             Update,
-            (sync_rift_portal_visuals, sync_bong_visual_state_metadata),
+            (
+                sync_rift_portal_visuals,
+                apply_deferred,
+                sync_bong_visual_state_metadata,
+            )
+                .chain(),
         );
         let layer = app.world_mut().spawn_empty().id();
         let source = app
@@ -555,7 +564,6 @@ mod tests {
             ))
             .id();
 
-        app.update();
         app.update();
 
         let attachment = *app
