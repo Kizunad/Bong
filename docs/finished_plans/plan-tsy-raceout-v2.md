@@ -158,8 +158,8 @@ v2 polish 增量：
 
 ### 关键 commit
 
-- `c46c1a66d` · 2026-05-11 · `plan-tsy-raceout-v2: 强化撤离 race-out HUD`
-- `5d45ada80` · 2026-05-11 · `plan-tsy-raceout-v2: 区分裂口占用撤离拒绝`
+- `8e2bf6a17` · 2026-05-11 · `plan-tsy-raceout-v2: 强化撤离 race-out HUD`
+- `57e42bf48` · 2026-05-11 · `plan-tsy-raceout-v2: 区分裂口占用撤离拒绝`
 
 ### 测试结果
 
