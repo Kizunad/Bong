@@ -1,0 +1,14 @@
+{
+  "id": "fauna_ash_spider_attack",
+  "layers": [
+    {
+      "sound": "minecraft:entity.spider.hurt",
+      "volume": 0.34,
+      "pitch": 1.35,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

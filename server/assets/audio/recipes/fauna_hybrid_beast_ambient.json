@@ -1,0 +1,14 @@
+{
+  "id": "fauna_hybrid_beast_ambient",
+  "layers": [
+    {
+      "sound": "minecraft:entity.hoglin.ambient",
+      "volume": 0.32,
+      "pitch": 0.65,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

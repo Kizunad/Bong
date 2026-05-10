@@ -125,6 +125,14 @@ public class VfxRegistryTest {
             "bootstrap should register realm_collapse_boundary");
         assertTrue(VfxRegistry.instance().contains(FrostBreathPlayer.EVENT_ID),
             "bootstrap should register frost_breath");
+        assertTrue(VfxRegistry.instance().contains(RatSwarmAuraPlayer.EVENT_ID),
+            "bootstrap should register rat_swarm_aura");
+        assertTrue(VfxRegistry.instance().contains(FaunaSpawnDustPlayer.EVENT_ID),
+            "bootstrap should register fauna_spawn_dust");
+        assertTrue(VfxRegistry.instance().contains(FaunaBoneShatterPlayer.EVENT_ID),
+            "bootstrap should register fauna_bone_shatter");
+        assertTrue(VfxRegistry.instance().contains(SpiderShimmerPlayer.EVENT_ID),
+            "bootstrap should register spider_shimmer");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MERIDIAN_REPAIR),
             "bootstrap should register yidao_meridian_repair");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.CONTAM_PURGE),

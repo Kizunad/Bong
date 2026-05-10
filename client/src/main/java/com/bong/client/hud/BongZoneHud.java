@@ -7,9 +7,12 @@ import java.util.List;
 
 public final class BongZoneHud {
     static final int TITLE_COLOR = 0xFFD700;
+    static final int NEGATIVE_TITLE_COLOR = 0xFFEE6677;
     static final int OVERLAY_COLOR = 0x9FD3FF;
-    static final long TITLE_SHOW_MILLIS = 2_000L;
-    static final long TITLE_FULL_ALPHA_MILLIS = 1_500L;
+    static final int NEGATIVE_OVERLAY_COLOR = 0xFFEE6677;
+    static final long TITLE_SHOW_MILLIS = 3_000L;
+    static final long TITLE_FULL_ALPHA_MILLIS = 2_000L;
+    static final long DIMENSION_BLACKOUT_MILLIS = 500L;
     static final int QI_BAR_SEGMENTS = 10;
     static final int MAX_DANGER_SYMBOLS = 5;
 
@@ -32,6 +35,11 @@ public final class BongZoneHud {
         }
 
         List<HudRenderCommand> commands = new ArrayList<>();
+        int blackoutAlpha = dimensionBlackoutAlpha(safeZoneState, nowMillis);
+        if (blackoutAlpha > 0) {
+            commands.add(HudRenderCommand.screenTint(HudRenderLayer.ZONE, HudTextHelper.withAlpha(0x000000, blackoutAlpha)));
+        }
+
         int titleAlpha = centeredTitleAlpha(safeZoneState.changedAtMillis(), nowMillis);
         if (titleAlpha > 0 && screenWidth > 0 && screenHeight > 0) {
             String clippedTitle = HudTextHelper.clipToWidth(
@@ -47,16 +55,29 @@ public final class BongZoneHud {
                     clippedTitle,
                     titleX,
                     titleY,
-                    HudTextHelper.withAlpha(TITLE_COLOR, titleAlpha)
+                    HudTextHelper.withAlpha(titleColor(safeZoneState), titleAlpha)
                 ));
             }
         }
 
         String clippedOverlay = HudTextHelper.clipToWidth(persistentOverlayText(safeZoneState), maxWidth, widthMeasurer);
         if (!clippedOverlay.isEmpty()) {
-            commands.add(HudRenderCommand.text(HudRenderLayer.ZONE, clippedOverlay, x, y, OVERLAY_COLOR));
+            commands.add(HudRenderCommand.text(HudRenderLayer.ZONE, clippedOverlay, x, y, overlayColor(safeZoneState)));
         }
         return List.copyOf(commands);
+    }
+
+    static int dimensionBlackoutAlpha(ZoneState zoneState, long nowMillis) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        if (!safeZoneState.dimensionTransition()) {
+            return 0;
+        }
+        long elapsed = Math.max(0L, Math.max(0L, nowMillis) - Math.max(0L, safeZoneState.changedAtMillis()));
+        if (elapsed >= DIMENSION_BLACKOUT_MILLIS) {
+            return 0;
+        }
+        long remaining = DIMENSION_BLACKOUT_MILLIS - elapsed;
+        return HudTextHelper.clampAlpha((int) Math.round(220.0 * remaining / DIMENSION_BLACKOUT_MILLIS));
     }
 
     static int centeredTitleAlpha(long changedAtMillis, long nowMillis) {
@@ -77,7 +98,7 @@ public final class BongZoneHud {
 
     static String centeredTitleText(ZoneState zoneState) {
         ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
-        return "— " + safeZoneState.zoneLabel() + " —";
+        return "— " + safeZoneState.zoneLabel() + negativeZoneText(safeZoneState) + " —";
     }
 
     static String persistentOverlayText(ZoneState zoneState) {
@@ -85,6 +106,7 @@ public final class BongZoneHud {
         return "区域"
             + safeZoneState.zoneLabel()
             + statusText(safeZoneState)
+            + negativeZoneText(safeZoneState)
             + " 灵气"
             + qiBar(safeZoneState.spiritQiNormalized())
             + " 危"
@@ -101,6 +123,21 @@ public final class BongZoneHud {
     static String statusText(ZoneState zoneState) {
         ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
         return safeZoneState.collapsed() ? " 死域" : "";
+    }
+
+    static String negativeZoneText(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        return safeZoneState.negativeSpiritQi() ? " ⚠ 负灵域" : "";
+    }
+
+    static int titleColor(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        return safeZoneState.negativeSpiritQi() ? NEGATIVE_TITLE_COLOR : TITLE_COLOR;
+    }
+
+    static int overlayColor(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        return safeZoneState.negativeSpiritQi() ? NEGATIVE_OVERLAY_COLOR : OVERLAY_COLOR;
     }
 
     static String perceptionText(ZoneState zoneState) {

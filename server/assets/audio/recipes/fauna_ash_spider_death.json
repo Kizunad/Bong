@@ -1,0 +1,14 @@
+{
+  "id": "fauna_ash_spider_death",
+  "layers": [
+    {
+      "sound": "minecraft:entity.spider.death",
+      "volume": 0.34,
+      "pitch": 1.15,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

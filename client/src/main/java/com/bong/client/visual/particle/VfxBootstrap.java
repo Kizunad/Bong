@@ -49,6 +49,10 @@ public final class VfxBootstrap {
         registry.register(LingtianPlotRunePlayer.REPLENISH,      lingtianPlotRunes);
         registry.register(LingtianPlotRunePlayer.HARVEST,        lingtianPlotRunes);
         registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
+        registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
+        registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
+        registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
+        registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
         registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
         registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);

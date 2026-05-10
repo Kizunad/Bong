@@ -171,8 +171,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            45,
-            "plan §3 MVP recipes plus narration, locust, yidao, zhenmai-v2, woliu-v2, JueBi, botany, and TSY experience cues should contain 45 recipes"
+            58,
+            "audio registry should include MVP cues plus JueBi, botany, TSY experience, and fauna-experience-v1 creature recipes"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -195,6 +195,13 @@ mod tests {
         assert!(registry.get("tsy_collapse_rumble").is_some());
         assert!(registry.get("tsy_extract_success").is_some());
         assert!(registry.get("tsy_search_scrape").is_some());
+        assert!(registry.get("fauna_rat_squeal").is_some());
+        assert!(registry.get("fauna_rat_death").is_some());
+        assert!(registry.get("fauna_fuya_pressure_hum").is_some());
+        assert!(registry.get("fauna_fuya_charge").is_some());
+        assert!(registry.get("fauna_ash_spider_attack").is_some());
+        assert!(registry.get("fauna_hybrid_beast_death").is_some());
+        assert!(registry.get("fauna_void_distorted_ambient").is_some());
     }
 
     #[test]

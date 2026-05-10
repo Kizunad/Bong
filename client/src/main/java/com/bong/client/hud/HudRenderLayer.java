@@ -3,6 +3,7 @@ package com.bong.client.hud;
 public enum HudRenderLayer {
     BASELINE,
     ZONE,
+    TARGET_INFO,
     MINI_BODY,
     QUICK_BAR,
     CAST_BAR,
@@ -18,6 +19,8 @@ public enum HudRenderLayer {
     SPIRITUAL_SENSE,
     EDGE_FEEDBACK,
     STATUS_EFFECTS,
+    PROCESSING_HUD,
+    LINGTIAN_OVERLAY,
     STAMINA_BAR,
     SEARCH_PROGRESS,
     DAMAGE_FLOATER,

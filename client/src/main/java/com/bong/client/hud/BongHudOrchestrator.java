@@ -233,6 +233,13 @@ public final class BongHudOrchestrator {
             commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(TargetInfoHudPlanner.buildCommands(
+                TargetInfoStateStore.snapshot(),
+                nowMillis,
+                widthMeasurer,
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
@@ -249,6 +256,13 @@ public final class BongHudOrchestrator {
                 botanyAnchor
             ));
         }
+        commands.addAll(ForgeProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+        commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight));
+        commands.addAll(LingtianOverlayHudPlanner.buildCommands(
+            com.bong.client.lingtian.state.LingtianSessionStore.snapshot(),
+            screenWidth,
+            screenHeight
+        ));
         commands.addAll(ExtractProgressHudPlanner.buildCommands(
             com.bong.client.tsy.ExtractStateStore.snapshot(),
             widthMeasurer,
@@ -271,7 +285,12 @@ public final class BongHudOrchestrator {
         commands.addAll(MeridianOpenHudPlanner.buildCommands(widthMeasurer, screenWidth, screenHeight));
         commands.addAll(IdentityHudCornerLabel.buildCommands(widthMeasurer, screenWidth));
 
-        return List.copyOf(commands);
+        HudImmersionMode.Mode mode = HudImmersionMode.resolve(
+            combatSnapshot.combatHudState(),
+            safeSnapshot.visualEffectState(),
+            nowMillis
+        );
+        return List.copyOf(HudImmersionMode.filter(commands, mode));
     }
 
     private static int normalizeWidth(int requestedWidth) {

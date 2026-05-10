@@ -1,0 +1,24 @@
+{
+  "id": "fauna_fuya_pressure_hum",
+  "layers": [
+    {
+      "sound": "minecraft:entity.warden.heartbeat",
+      "volume": 0.5,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.respawn_anchor.deplete",
+      "volume": 0.32,
+      "pitch": 0.5,
+      "delay_ticks": 6
+    }
+  ],
+  "priority": 82,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "loop": {
+    "interval_ticks": 30,
+    "while_flag": "fauna_fuya_pressure"
+  }
+}

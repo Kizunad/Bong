@@ -3,6 +3,7 @@ package com.bong.client.audio;
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DerivedAttrFlags;
+import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.network.AudioEventPayload;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
@@ -14,11 +15,13 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 public class SoundRecipePlayerTest {
     @AfterEach
     void resetStores() {
         CombatHudStateStore.resetForTests();
+        EnvironmentAudioLoopState.clear();
     }
 
     @Test
@@ -70,6 +73,25 @@ public class SoundRecipePlayerTest {
         assertEquals(0, player.activeLoopCountForTests());
         assertEquals(42L, sink.stoppedInstanceId);
         assertEquals(10, sink.stoppedFadeOutTicks);
+    }
+
+    @Test
+    void payloadFlagCanOwnLoopLifetimeUntilStop() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+
+        player.play(playPayloadWithFlag(recipeWithLoop(), "fauna_fuya_pressure:42"));
+        assertEquals(1, player.activeLoopCountForTests());
+
+        player.tick();
+        assertEquals(2, sink.played.size(), "owned flag should keep initial loop play alive");
+        player.tick();
+        assertEquals(4, sink.played.size(), "owned flag should keep replaying loop");
+
+        player.stop(new AudioEventPayload.StopSoundRecipe(42, 10));
+
+        assertEquals(0, player.activeLoopCountForTests());
+        assertFalse(EnvironmentAudioLoopState.isActive("fauna_fuya_pressure:42"));
     }
 
     @Test
@@ -140,6 +162,18 @@ public class SoundRecipePlayerTest {
             Optional.empty(),
             volumeMul,
             pitchShift,
+            recipe
+        );
+    }
+
+    private static AudioEventPayload.PlaySoundRecipe playPayloadWithFlag(AudioRecipe recipe, String flag) {
+        return new AudioEventPayload.PlaySoundRecipe(
+            recipe.id(),
+            42,
+            Optional.of(new AudioPosition(1, 64, -2)),
+            Optional.of(flag),
+            1.0f,
+            0.0f,
             recipe
         );
     }

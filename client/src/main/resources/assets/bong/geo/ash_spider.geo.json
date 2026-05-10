@@ -1,0 +1,215 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.ash_spider",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 3,
+        "visible_bounds_height": 1.5,
+        "visible_bounds_offset": [
+          0,
+          0.4,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "Body",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -5,
+                1,
+                -5
+              ],
+              "size": [
+                10,
+                4,
+                10
+              ],
+              "uv": [
+                0,
+                0
+              ],
+              "inflate": 0.01
+            }
+          ]
+        },
+        {
+          "name": "Head",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -3,
+                2,
+                -9
+              ],
+              "size": [
+                6,
+                3,
+                4
+              ],
+              "uv": [
+                0,
+                18
+              ],
+              "inflate": 0.01
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Legs",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -12,
+                2,
+                -5
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -12,
+                2,
+                -2
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -12,
+                2,
+                1
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -12,
+                2,
+                4
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                5,
+                2,
+                -5
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                5,
+                2,
+                -2
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                5,
+                2,
+                1
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            },
+            {
+              "origin": [
+                5,
+                2,
+                4
+              ],
+              "size": [
+                7,
+                1,
+                1
+              ],
+              "uv": [
+                24,
+                0
+              ]
+            }
+          ],
+          "parent": "Body"
+        }
+      ]
+    }
+  ]
+}
