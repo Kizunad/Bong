@@ -394,7 +394,7 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 
 ### 关键 commit
 
-- `e580f7df7` / 2026-05-10 / `feat(tuike): 实现蜕壳三招完整链路`：server + agent + client 跨栈实现、100 个 server 单测、schema/generated、HUD/VFX/动画/音频/叙事事件接入。
+- `a93f9be2c` / 2026-05-10 / `feat(tuike): 实现蜕壳三招完整链路`：server + agent + client 跨栈实现、100 个 server 单测、schema/generated、HUD/VFX/动画/音频/叙事事件接入；rebase 到 `origin/main` 后保留 botany/fauna/lingtian 上游 VFX/音频注册并合入替尸 v2 注册。
 
 ### 测试结果
 
