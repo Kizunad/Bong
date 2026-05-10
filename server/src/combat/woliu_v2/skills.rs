@@ -1,6 +1,9 @@
 use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut};
 
-use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
+use crate::combat::components::{
+    BodyPart, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
+};
+use crate::combat::events::{ApplyStatusEffectIntent, AttackSource, CombatEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -341,10 +344,243 @@ pub fn resolve_woliu_v2_skill(
         center,
         now_tick,
     );
+    apply_v3_runtime_effects(
+        world,
+        V3RuntimeEffectContext {
+            caster,
+            target,
+            skill,
+            spec,
+            center,
+            dimension,
+            now_tick,
+        },
+    );
 
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
         anim_duration_ticks: spec.cast_ticks,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct V3RuntimeEffectContext {
+    caster: Entity,
+    target: Option<Entity>,
+    skill: WoliuSkillId,
+    spec: WoliuSkillSpec,
+    center: DVec3,
+    dimension: DimensionKind,
+    now_tick: u64,
+}
+
+fn apply_v3_runtime_effects(world: &mut bevy_ecs::world::World, ctx: V3RuntimeEffectContext) {
+    match ctx.skill {
+        WoliuSkillId::VortexShield => {
+            send_event_if_present(
+                world,
+                ApplyStatusEffectIntent {
+                    target: ctx.caster,
+                    kind: StatusEffectKind::DamageReduction,
+                    magnitude: 0.6,
+                    duration_ticks: ctx.spec.duration_ticks,
+                    issued_at_tick: ctx.now_tick,
+                },
+            );
+        }
+        WoliuSkillId::VacuumLock => {
+            if let Some(target) = ctx.target {
+                send_event_if_present(
+                    world,
+                    ApplyStatusEffectIntent {
+                        target,
+                        kind: StatusEffectKind::Slowed,
+                        magnitude: 0.8,
+                        duration_ticks: ctx.spec.duration_ticks,
+                        issued_at_tick: ctx.now_tick,
+                    },
+                );
+            }
+        }
+        WoliuSkillId::VortexResonance => {
+            let targets = collect_targets_in_radius(
+                world,
+                ctx.caster,
+                ctx.center,
+                ctx.dimension,
+                ctx.spec.influence_radius,
+            );
+            let displacement = vortex_resonance_displacement(targets.len());
+            for target in targets {
+                if let Some(actual_displacement) = apply_pull_displacement(
+                    world,
+                    ctx.caster,
+                    target,
+                    displacement,
+                    ctx.spec.influence_radius,
+                ) {
+                    send_event_if_present(
+                        world,
+                        EntityDisplacedByVortexPull {
+                            caster: ctx.caster,
+                            target,
+                            displacement_blocks: actual_displacement,
+                            tick: ctx.now_tick,
+                        },
+                    );
+                }
+            }
+        }
+        WoliuSkillId::TurbulenceBurst => {
+            let targets = collect_targets_in_radius(
+                world,
+                ctx.caster,
+                ctx.center,
+                ctx.dimension,
+                ctx.spec.influence_radius,
+            );
+            for target in targets {
+                apply_turbulence_burst_target_effects(
+                    world,
+                    ctx.caster,
+                    target,
+                    ctx.center,
+                    ctx.spec,
+                    ctx.now_tick,
+                );
+            }
+            let recoil_origin = world
+                .get::<Position>(ctx.caster)
+                .map(|position| position.get())
+                .unwrap_or(ctx.center);
+            if let Some(actual_displacement) =
+                apply_radial_displacement(world, ctx.caster, recoil_origin + DVec3::X, 2.0, true)
+            {
+                send_event_if_present(
+                    world,
+                    EntityDisplacedByVortexPull {
+                        caster: ctx.caster,
+                        target: ctx.caster,
+                        displacement_blocks: actual_displacement,
+                        tick: ctx.now_tick,
+                    },
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_targets_in_radius(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    center: DVec3,
+    dimension: DimensionKind,
+    radius: f32,
+) -> Vec<Entity> {
+    let radius_sq = f64::from(radius.max(0.0)).powi(2);
+    let mut query = world.query::<(
+        Entity,
+        &Position,
+        Option<&CurrentDimension>,
+        Option<&Cultivation>,
+    )>();
+    query
+        .iter(world)
+        .filter_map(|(entity, position, current_dimension, cultivation)| {
+            if entity == caster {
+                return None;
+            }
+            if current_dimension.map(|d| d.0).unwrap_or_default() != dimension {
+                return None;
+            }
+            if !cultivation.is_some_and(|c| c.qi_current > f64::EPSILON) {
+                return None;
+            }
+            if position.get().distance_squared(center) > radius_sq + f64::EPSILON {
+                return None;
+            }
+            Some(entity)
+        })
+        .collect()
+}
+
+fn vortex_resonance_displacement(target_count: usize) -> f32 {
+    if target_count == 0 {
+        return 0.0;
+    }
+    (1.0 + 0.2 * target_count as f32).max(1.0)
+}
+
+fn apply_turbulence_burst_target_effects(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    target: Entity,
+    center: DVec3,
+    spec: WoliuSkillSpec,
+    now_tick: u64,
+) {
+    let damage = 60.0_f32;
+    let damaged = if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
+        wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+        wounds.entries.push(Wound {
+            location: BodyPart::Chest,
+            kind: WoundKind::Concussion,
+            severity: damage,
+            bleeding_per_sec: 0.0,
+            created_at_tick: now_tick,
+            inflicted_by: Some(format!("entity:{}", caster.to_bits())),
+        });
+        true
+    } else {
+        false
+    };
+    if damaged {
+        send_event_if_present(
+            world,
+            CombatEvent {
+                attacker: caster,
+                target,
+                resolved_at_tick: now_tick,
+                body_part: BodyPart::Chest,
+                wound_kind: WoundKind::Concussion,
+                source: AttackSource::BurstMeridian,
+                damage,
+                contam_delta: 0.0,
+                description: format!(
+                    "woliu.turbulence_burst entity:{} -> entity:{} dealt {damage:.1} concussion damage",
+                    caster.to_bits(),
+                    target.to_bits()
+                ),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            },
+        );
+    }
+    send_event_if_present(
+        world,
+        ApplyStatusEffectIntent {
+            target,
+            kind: StatusEffectKind::Stunned,
+            magnitude: 1.0,
+            duration_ticks: TICKS_PER_SECOND,
+            issued_at_tick: now_tick,
+        },
+    );
+    if let Some(actual_displacement) =
+        apply_radial_displacement(world, target, center, spec.pull_force as f32, true)
+    {
+        send_event_if_present(
+            world,
+            EntityDisplacedByVortexPull {
+                caster,
+                target,
+                displacement_blocks: actual_displacement,
+                tick: now_tick,
+            },
+        );
     }
 }
 
@@ -542,6 +778,39 @@ fn apply_pull_displacement(
         return None;
     }
     let step = f64::from(displacement_blocks).min(distance);
+    if step <= f64::EPSILON {
+        return None;
+    }
+    target_pos.set(current + offset / distance * step);
+    Some(step as f32)
+}
+
+fn apply_radial_displacement(
+    world: &mut bevy_ecs::world::World,
+    target: Entity,
+    origin: DVec3,
+    displacement_blocks: f32,
+    outward: bool,
+) -> Option<f32> {
+    if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
+        return None;
+    }
+    let mut target_pos = world.get_mut::<Position>(target)?;
+    let current = target_pos.get();
+    let offset = if outward {
+        current - origin
+    } else {
+        origin - current
+    };
+    let distance = offset.length();
+    if !distance.is_finite() || distance <= f64::EPSILON {
+        return None;
+    }
+    let step = if outward {
+        f64::from(displacement_blocks)
+    } else {
+        f64::from(displacement_blocks).min(distance)
+    };
     if step <= f64::EPSILON {
         return None;
     }

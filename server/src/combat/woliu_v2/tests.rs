@@ -1,6 +1,7 @@
 use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
-use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
+use crate::combat::components::{SkillBarBindings, Wounds, TICKS_PER_SECOND};
+use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -77,6 +78,8 @@ fn app(tick: u64) -> App {
     app.add_event::<JueBiTriggerEvent>();
     app.add_event::<QiTransfer>();
     app.add_event::<SkillXpGain>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
     app
 }
 
@@ -779,6 +782,162 @@ fn resolve_vacuum_palm_pulls_target_and_siphons_qi() {
                 && event.to == QiAccountId::player(format!("entity:{}", actor.to_bits()))
                 && (event.amount - 15.0).abs() < f64::EPSILON
         ));
+}
+
+#[test]
+fn resolve_vortex_shield_emits_damage_reduction_status() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::VortexShield);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let status = app
+        .world()
+        .resource::<Events<ApplyStatusEffectIntent>>()
+        .iter_current_update_events()
+        .next()
+        .expect("vortex shield should emit defensive status intent");
+    assert_eq!(status.target, actor);
+    assert_eq!(status.kind, StatusEffectKind::DamageReduction);
+    assert_eq!(status.magnitude, 0.6);
+    assert_eq!(status.duration_ticks, 5 * TICKS_PER_SECOND);
+}
+
+#[test]
+fn resolve_vacuum_lock_slows_target_and_siphons_qi() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        Some(target),
+        WoliuSkillId::VacuumLock,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Cultivation>(target).unwrap().qi_current,
+        50.0
+    );
+    let status = app
+        .world()
+        .resource::<Events<ApplyStatusEffectIntent>>()
+        .iter_current_update_events()
+        .next()
+        .expect("vacuum lock should slow locked target");
+    assert_eq!(status.target, target);
+    assert_eq!(status.kind, StatusEffectKind::Slowed);
+    assert_eq!(status.magnitude, 0.8);
+    assert_eq!(status.duration_ticks, 3 * TICKS_PER_SECOND);
+}
+
+#[test]
+fn resolve_vortex_resonance_pulls_multiple_targets_with_resonance_bonus() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    let near = spawn_actor(&mut app, Realm::Induce, 80.0);
+    let far = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut()
+        .get_mut::<Position>(near)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+    app.world_mut()
+        .get_mut::<Position>(far)
+        .unwrap()
+        .set([12.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::VortexResonance,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let caster_pos = app.world().get::<Position>(actor).unwrap().get();
+    assert!(
+        app.world()
+            .get::<Position>(near)
+            .unwrap()
+            .get()
+            .distance(caster_pos)
+            < 2.0
+    );
+    assert!(
+        app.world()
+            .get::<Position>(far)
+            .unwrap()
+            .get()
+            .distance(caster_pos)
+            < 4.0
+    );
+    let displacements = app
+        .world()
+        .resource::<Events<EntityDisplacedByVortexPull>>()
+        .iter_current_update_events()
+        .filter(|event| event.target == near || event.target == far)
+        .map(|event| event.displacement_blocks)
+        .collect::<Vec<_>>();
+    assert_eq!(displacements.len(), 2);
+    assert!(displacements
+        .iter()
+        .all(|value| (*value - 1.4).abs() < 1e-5));
+}
+
+#[test]
+fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut().entity_mut(target).insert(Wounds::default());
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::TurbulenceBurst,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let wounds = app.world().get::<Wounds>(target).unwrap();
+    assert_eq!(wounds.health_current, 40.0);
+    assert_eq!(wounds.entries.len(), 1);
+    assert_eq!(
+        app.world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .filter(|event| event.target == target && event.damage == 60.0)
+            .count(),
+        1
+    );
+    assert!(app
+        .world()
+        .resource::<Events<ApplyStatusEffectIntent>>()
+        .iter_current_update_events()
+        .any(|event| event.target == target && event.kind == StatusEffectKind::Stunned));
+    assert!(
+        app.world()
+            .get::<Position>(target)
+            .unwrap()
+            .get()
+            .distance(DVec3::new(8.0, 66.0, 8.0))
+            > 2.0
+    );
 }
 
 #[test]
