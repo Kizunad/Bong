@@ -9,8 +9,10 @@ use valence::prelude::{
 
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{QiDensityHeatmap, QI_DENSITY_CELL_SIZE};
 use crate::world::zone::ZoneRegistry;
@@ -281,6 +283,43 @@ pub fn apply_rat_phase_change_system(
                 *phase = event.to;
             }
         }
+    }
+}
+
+pub fn emit_rat_swarm_aura_vfx_system(
+    mut events: EventReader<RatPhaseChangeEvent>,
+    rats: Query<(&Position, &RatGroupId), With<NpcMarker>>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in events.read() {
+        if !matches!(event.to, RatPhase::Gregarious) {
+            continue;
+        }
+        let chunk = ChunkPos::new(event.chunk[0], event.chunk[1]);
+        let mut total = DVec3::ZERO;
+        let mut count = 0u32;
+        for (position, group_id) in &rats {
+            if group_id.0 == event.group_id && chunk_pos_from_world(position.get()) == chunk {
+                total += position.get();
+                count = count.saturating_add(1);
+            }
+        }
+        if count == 0 {
+            continue;
+        }
+        let center = total / f64::from(count);
+        vfx_events.send(VfxEventRequest::new(
+            center,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: "bong:rat_swarm_aura".to_string(),
+                origin: [center.x, center.y, center.z],
+                direction: None,
+                color: Some("#FF4444".to_string()),
+                strength: Some(0.9),
+                count: Some(24),
+                duration_ticks: Some(36),
+            },
+        ));
     }
 }
 
@@ -622,6 +661,44 @@ mod tests {
             app.world().get::<RatPhase>(other_group),
             Some(&RatPhase::Solitary)
         );
+    }
+
+    #[test]
+    fn gregarious_phase_change_emits_rat_swarm_aura_vfx() {
+        let mut app = App::new();
+        app.add_event::<RatPhaseChangeEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_rat_swarm_aura_vfx_system);
+        app.world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 64.0, 1.0]), RatGroupId(7)));
+        app.world_mut()
+            .spawn((NpcMarker, Position::new([3.0, 64.0, 1.0]), RatGroupId(7)));
+        app.world_mut().send_event(RatPhaseChangeEvent {
+            chunk: [0, 0],
+            zone: "spawn".to_string(),
+            group_id: 7,
+            from: RatPhase::Transitioning {
+                progress: TRANSITION_DURATION_TICKS - 1,
+            },
+            to: RatPhase::Gregarious,
+            rat_count: 2,
+            local_qi: 0.8,
+            qi_gradient: 0.5,
+            tick: 11,
+        });
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let event = events
+            .iter_current_update_events()
+            .next()
+            .expect("gregarious rat group should emit swarm aura VFX");
+        assert!(matches!(
+            &event.payload,
+            VfxEventPayloadV1::SpawnParticle { event_id, origin, .. }
+                if event_id == "bong:rat_swarm_aura" && origin[0] == 2.0
+        ));
     }
 
     #[test]

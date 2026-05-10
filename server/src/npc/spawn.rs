@@ -1,5 +1,6 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{BigBrainSet, FirstToScore, Thinker, ThinkerBuilder};
+use valence::entity::marker::MarkerEntityBundle;
 use valence::entity::player::PlayerEntityBundle;
 use valence::entity::villager::VillagerEntityBundle;
 use valence::entity::witch::WitchEntityBundle;
@@ -13,6 +14,7 @@ use valence::prelude::{
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
+use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction, CultivateState,
     CultivationDriveHistory, CultivationDriveScorer, CuriosityScorer, DashAction, DashScorer,
@@ -998,7 +1000,7 @@ fn npc_skin_name(entity: Entity, archetype: NpcArchetype) -> String {
     name
 }
 
-/// Spawn a Beast (妖兽) NPC. 用 `ZombieEntityBundle` 视觉占位（未来换真实 entity model）。
+/// Spawn a Beast (妖兽) NPC. 视觉 shell 走 fauna custom EntityKind，由 client GeckoLib renderer 区分种类。
 /// `territory` 决定领地中心 + 半径；容量由 `Territory::capacity()` 派生。
 /// `initial_age_ticks` 控制年龄（繁衍出来的幼崽传 0.0）。
 pub fn spawn_beast_npc_at(
@@ -1011,14 +1013,15 @@ pub fn spawn_beast_npc_at(
 ) -> Entity {
     let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler);
     let fauna_seed = fauna_spawn_seed(home_zone, spawn_position.x, spawn_position.z);
+    let fauna_tag = fauna_tag_for_beast_spawn(home_zone, fauna_seed);
     let entity = commands
-        .spawn((
-            ZombieEntityBundle {
-                kind: EntityKind::ZOMBIE,
-                layer: EntityLayerId(layer),
-                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                ..Default::default()
-            },
+        .spawn(MarkerEntityBundle {
+            kind: entity_kind_for_beast(fauna_tag.beast_kind),
+            layer: EntityLayerId(layer),
+            position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+            ..Default::default()
+        })
+        .insert((
             Transform::from_xyz(
                 spawn_position.x as f32,
                 spawn_position.y as f32,
@@ -1031,7 +1034,10 @@ pub fn spawn_beast_npc_at(
             loadout.melee_archetype,
             loadout.melee_profile(),
             NpcArchetype::Beast,
-            fauna_tag_for_beast_spawn(home_zone, fauna_seed),
+            fauna_tag,
+            visual_kind_for_beast(fauna_tag.beast_kind),
+        ))
+        .insert((
             Navigator::new(),
             MovementController::new(),
             loadout.movement_capabilities,
@@ -1755,6 +1761,19 @@ mod tests {
         assert!(app
             .world()
             .get::<crate::fauna::components::FaunaTag>(beast)
+            .is_some());
+        let tag = app
+            .world()
+            .get::<crate::fauna::components::FaunaTag>(beast)
+            .expect("beast should carry fauna tag");
+        assert_eq!(
+            app.world().get::<EntityKind>(beast),
+            Some(&crate::fauna::visual::entity_kind_for_beast(tag.beast_kind)),
+            "beast should spawn with a fauna custom visual entity kind"
+        );
+        assert!(app
+            .world()
+            .get::<crate::fauna::visual::FaunaVisualKind>(beast)
             .is_some());
         let _thinker = app
             .world()

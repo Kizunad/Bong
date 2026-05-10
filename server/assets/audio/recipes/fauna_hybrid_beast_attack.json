@@ -1,0 +1,14 @@
+{
+  "id": "fauna_hybrid_beast_attack",
+  "layers": [
+    {
+      "sound": "minecraft:entity.ravager.attack",
+      "volume": 0.42,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "fauna_void_distorted_death",
+  "layers": [
+    {
+      "sound": "minecraft:entity.enderman.death",
+      "volume": 0.4,
+      "pitch": 0.55,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

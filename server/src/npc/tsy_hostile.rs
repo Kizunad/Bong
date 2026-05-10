@@ -10,21 +10,26 @@ use big_brain::prelude::{
     ThinkerBuilder,
 };
 use serde::Deserialize;
-use valence::entity::villager::VillagerEntityBundle;
-use valence::entity::zombie::ZombieEntityBundle;
+use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, Event,
-    EventReader, EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource,
-    Update, With,
+    bevy_ecs, Added, App, Commands, Component, DVec3, Entity, EntityLayerId, Event, EventReader,
+    EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update,
+    With,
 };
 
 use crate::combat::components::Wounds;
 use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::components::Cultivation;
+use crate::fauna::experience::play_audio;
+use crate::fauna::visual::{
+    FaunaVisualKind, DAOXIANG_ENTITY_KIND, FUYA_ENTITY_KIND, TSY_SENTINEL_ENTITY_KIND,
+    ZHINIAN_ENTITY_KIND,
+};
 use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
     DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
 };
+use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, MeleeAttackAction, MeleeRangeScorer,
     RetireAction, WanderAction, WanderScorer,
@@ -395,6 +400,7 @@ pub fn register(app: &mut App) {
             (
                 emit_tsy_hostile_spawn_summary
                     .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
+                emit_fuya_pressure_hum_audio_system,
                 handle_npc_death_drop,
             ),
         );
@@ -834,8 +840,8 @@ pub fn spawn_tsy_sentinel_at(
     );
     let entity = commands
         .spawn((
-            VillagerEntityBundle {
-                kind: EntityKind::VILLAGER,
+            MarkerEntityBundle {
+                kind: TSY_SENTINEL_ENTITY_KIND,
                 layer: EntityLayerId(layer),
                 position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
                 ..Default::default()
@@ -848,6 +854,7 @@ pub fn spawn_tsy_sentinel_at(
             GlobalTransform::default(),
             NpcMarker,
             NpcArchetype::GuardianRelic,
+            FaunaVisualKind::TsySentinel,
         ))
         .id();
     commands.entity(entity).insert((
@@ -876,6 +883,20 @@ pub fn spawn_tsy_sentinel_at(
     entity
 }
 
+pub fn emit_fuya_pressure_hum_audio_system(
+    fuyas: Query<&Position, (With<FuyaAura>, Added<FuyaAura>)>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for position in &fuyas {
+        audio_events.send(play_audio(
+            "fauna_fuya_pressure_hum",
+            position.get(),
+            1.0,
+            0.0,
+        ));
+    }
+}
+
 fn spawn_zombie_shell(
     commands: &mut Commands,
     layer: Entity,
@@ -887,8 +908,8 @@ fn spawn_zombie_shell(
 ) -> Entity {
     commands
         .spawn((
-            ZombieEntityBundle {
-                kind: EntityKind::ZOMBIE,
+            MarkerEntityBundle {
+                kind: entity_kind_for_tsy_archetype(archetype),
                 layer: EntityLayerId(layer),
                 position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
                 ..Default::default()
@@ -910,8 +931,27 @@ fn spawn_zombie_shell(
             loadout.movement_capabilities,
             MovementCooldowns::default(),
             NpcPatrol::new(home_zone, patrol_target),
+            visual_kind_for_tsy_archetype(archetype),
         ))
         .id()
+}
+
+const fn entity_kind_for_tsy_archetype(archetype: NpcArchetype) -> valence::prelude::EntityKind {
+    match archetype {
+        NpcArchetype::Daoxiang => DAOXIANG_ENTITY_KIND,
+        NpcArchetype::Zhinian => ZHINIAN_ENTITY_KIND,
+        NpcArchetype::Fuya => FUYA_ENTITY_KIND,
+        _ => DAOXIANG_ENTITY_KIND,
+    }
+}
+
+const fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
+    match archetype {
+        NpcArchetype::Daoxiang => FaunaVisualKind::Daoxiang,
+        NpcArchetype::Zhinian => FaunaVisualKind::Zhinian,
+        NpcArchetype::Fuya => FaunaVisualKind::Fuya,
+        _ => FaunaVisualKind::Daoxiang,
+    }
 }
 
 fn daoxiang_thinker() -> ThinkerBuilder {
@@ -1380,12 +1420,17 @@ fn fuya_charge_scorer_system(
 
 fn fuya_enrage_action_system(
     mut commands: Commands,
+    npcs: Query<&Position, With<NpcMarker>>,
     mut actions: Query<(&Actor, &mut ActionState), With<FuyaEnrageAction>>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
                 commands.entity(*actor).insert(FuyaEnragedMarker);
+                if let Ok(position) = npcs.get(*actor) {
+                    audio_events.send(play_audio("fauna_fuya_charge", position.get(), 1.0, 0.0));
+                }
                 *state = ActionState::Success;
             }
             ActionState::Cancelled => *state = ActionState::Failure,
@@ -1840,6 +1885,92 @@ mod tests {
         assert_eq!(zongmen.deep.daoxiang, 8);
         assert_eq!(registry.sentinel_count_for_family("tsy_zongmen_01"), 3);
         assert_eq!(registry.sentinel_count_for_family("tsy_zhanchang_01"), 0);
+    }
+
+    #[test]
+    fn tsy_hostile_spawns_use_custom_visual_entity_kinds() {
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let layer = scenario.layer;
+        let mut app = scenario.app;
+
+        let daoxiang = spawn_tsy_daoxiang_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_shallow",
+            DVec3::new(1.0, 64.0, 1.0),
+            DVec3::new(2.0, 64.0, 2.0),
+        );
+        let zhinian = spawn_tsy_zhinian_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_mid",
+            DVec3::new(3.0, 64.0, 3.0),
+            DVec3::new(4.0, 64.0, 4.0),
+        );
+        let fuya = spawn_tsy_fuya_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_deep",
+            DVec3::new(5.0, 64.0, 5.0),
+            DVec3::new(6.0, 64.0, 6.0),
+        );
+        let container = app.world_mut().spawn_empty().id();
+        let sentinel = spawn_tsy_sentinel_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_deep",
+            DVec3::new(7.0, 64.0, 7.0),
+            container,
+        );
+        app.world_mut().flush();
+
+        assert_eq!(
+            app.world().get::<valence::prelude::EntityKind>(daoxiang),
+            Some(&DAOXIANG_ENTITY_KIND)
+        );
+        assert_eq!(
+            app.world().get::<valence::prelude::EntityKind>(zhinian),
+            Some(&ZHINIAN_ENTITY_KIND)
+        );
+        assert_eq!(
+            app.world().get::<valence::prelude::EntityKind>(fuya),
+            Some(&FUYA_ENTITY_KIND)
+        );
+        assert_eq!(
+            app.world().get::<valence::prelude::EntityKind>(sentinel),
+            Some(&TSY_SENTINEL_ENTITY_KIND)
+        );
+        assert_eq!(
+            app.world().get::<FaunaVisualKind>(fuya),
+            Some(&FaunaVisualKind::Fuya)
+        );
+    }
+
+    #[test]
+    fn fuya_pressure_hum_audio_emits_on_aura_spawn() {
+        let mut app = valence::prelude::App::new();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(
+            valence::prelude::Update,
+            emit_fuya_pressure_hum_audio_system,
+        );
+        app.world_mut()
+            .spawn((Position::new([0.0, 64.0, 0.0]), FuyaAura::default()));
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<PlaySoundRecipeRequest>>();
+        let event = events
+            .iter_current_update_events()
+            .next()
+            .expect("new Fuya aura should emit pressure hum");
+        assert_eq!(event.recipe_id, "fauna_fuya_pressure_hum");
     }
 
     #[test]

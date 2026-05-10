@@ -1,0 +1,26 @@
+{
+  "id": "fauna_rat_squeal",
+  "layers": [
+    {
+      "sound": "minecraft:entity.silverfish.hurt",
+      "volume": 0.3,
+      "pitch": 1.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.silverfish.hurt",
+      "volume": 0.22,
+      "pitch": 1.65,
+      "delay_ticks": 2
+    },
+    {
+      "sound": "minecraft:entity.silverfish.hurt",
+      "volume": 0.18,
+      "pitch": 1.95,
+      "delay_ticks": 5
+    }
+  ],
+  "priority": 74,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "fauna_fuya_charge",
+  "layers": [
+    {
+      "sound": "minecraft:entity.warden.sonic_charge",
+      "volume": 0.55,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 90,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

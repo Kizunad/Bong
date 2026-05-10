@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn summon_rat_command_spawns_silverfish_rat_near_player() {
+    fn summon_rat_command_spawns_devour_rat_near_player() {
         let mut app = setup_app();
         let layer = spawn_layer(&mut app);
         let player = spawn_test_client(&mut app, "Alice", [4.0, 65.0, 4.0]);
@@ -331,7 +331,7 @@ mod tests {
             .iter(app.world())
             .collect::<Vec<(&EntityKind, &RatBlackboard, &RatPhase)>>();
         assert_eq!(spawned.len(), 1);
-        assert_eq!(spawned[0].0, &EntityKind::SILVERFISH);
+        assert_eq!(spawned[0].0, &crate::fauna::visual::DEVOUR_RAT_ENTITY_KIND);
         assert_eq!(spawned[0].1.home_zone, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(spawned[0].2, &RatPhase::Solitary);
     }

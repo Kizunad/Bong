@@ -1,0 +1,14 @@
+{
+  "id": "fauna_hybrid_beast_death",
+  "layers": [
+    {
+      "sound": "minecraft:entity.ravager.death",
+      "volume": 0.45,
+      "pitch": 0.75,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

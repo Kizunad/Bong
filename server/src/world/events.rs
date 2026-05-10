@@ -2800,7 +2800,7 @@ mod events_tests {
         for entity in spawned_beasts {
             assert_eq!(
                 world.get::<EntityKind>(entity),
-                Some(&EntityKind::SILVERFISH)
+                Some(&crate::fauna::visual::DEVOUR_RAT_ENTITY_KIND)
             );
             assert_eq!(
                 world.get::<FaunaTag>(entity).map(|tag| tag.beast_kind),
@@ -2863,7 +2863,7 @@ mod events_tests {
         for entity in spawned_beasts {
             assert_eq!(
                 world.get::<EntityKind>(entity),
-                Some(&EntityKind::SILVERFISH)
+                Some(&crate::fauna::visual::DEVOUR_RAT_ENTITY_KIND)
             );
             assert_eq!(world.get::<RatPhase>(entity), Some(&RatPhase::Gregarious));
         }
