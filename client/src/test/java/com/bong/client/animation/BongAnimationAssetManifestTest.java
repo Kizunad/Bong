@@ -8,7 +8,9 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -74,6 +76,20 @@ public class BongAnimationAssetManifestTest {
         }
     }
 
+    @Test
+    void centralRollAnimationsResetAtBoundaries() throws IOException {
+        for (String id : REQUIRED_IMPLEMENTATION_V1_ASSETS) {
+            Path path = RESOURCE_ROOT.resolve(id + ".json");
+            JsonObject root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+            JsonObject emote = root.getAsJsonObject("emote");
+            JsonArray moves = emote.getAsJsonArray("moves");
+            int endTick = emote.get("endTick").getAsInt();
+
+            assertBoundaryRollResetIfUsed(id, moves, endTick, "head");
+            assertBoundaryRollResetIfUsed(id, moves, endTick, "torso");
+        }
+    }
+
     private static void assertValidPlayerAnimationJson(String id, Path path) throws IOException {
         JsonObject root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
         assertEquals(3, root.get("version").getAsInt(), id + " 必须是 Emotecraft v3 JSON");
@@ -83,5 +99,28 @@ public class BongAnimationAssetManifestTest {
         assertFalse(emote.get("degrees").getAsBoolean(), id + " 运行时 JSON 应使用弧度");
         JsonArray moves = emote.getAsJsonArray("moves");
         assertTrue(moves.size() > 0, id + " 必须含关键帧");
+    }
+
+    private static void assertBoundaryRollResetIfUsed(
+        String id,
+        JsonArray moves,
+        int endTick,
+        String part
+    ) {
+        Map<Integer, Double> rollByTick = new HashMap<>();
+        for (int i = 0; i < moves.size(); i++) {
+            JsonObject move = moves.get(i).getAsJsonObject();
+            JsonObject axes = move.getAsJsonObject(part);
+            if (axes != null && axes.has("roll")) {
+                rollByTick.put(move.get("tick").getAsInt(), axes.get("roll").getAsDouble());
+            }
+        }
+        if (rollByTick.isEmpty()) {
+            return;
+        }
+        assertEquals(0.0, rollByTick.getOrDefault(0, Double.NaN), 1e-7,
+            id + " 使用 " + part + ".roll 时必须在 tick 0 复位");
+        assertEquals(0.0, rollByTick.getOrDefault(endTick, Double.NaN), 1e-7,
+            id + " 使用 " + part + ".roll 时必须在 endTick 复位");
     }
 }

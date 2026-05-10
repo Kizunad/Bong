@@ -73,7 +73,12 @@ public final class AnimationLayerManager {
             ACTIVE_BY_CHANNEL.computeIfAbsent(playerId, unused -> new EnumMap<>(Channel.class));
         Identifier previous = byChannel.get(channel);
         if (previous != null && !previous.equals(animId)) {
-            BongAnimationPlayer.stopOnStack(stack, playerId, previous, Math.max(0, fadeOutTicks));
+            boolean stopped = BongAnimationPlayer.stopOnStack(
+                stack, playerId, previous, Math.max(0, fadeOutTicks)
+            );
+            if (!stopped) {
+                return false;
+            }
             byChannel.remove(channel);
         }
         boolean played = BongAnimationPlayer.playOnStack(
@@ -85,6 +90,8 @@ public final class AnimationLayerManager {
         );
         if (played) {
             byChannel.put(channel, animId);
+        } else if (byChannel.isEmpty()) {
+            ACTIVE_BY_CHANNEL.remove(playerId);
         }
         return played;
     }
@@ -102,11 +109,20 @@ public final class AnimationLayerManager {
         if (byChannel == null) {
             return false;
         }
-        Identifier active = byChannel.remove(channel);
+        Identifier active = byChannel.get(channel);
         if (active == null) {
             return false;
         }
-        return BongAnimationPlayer.stopOnStack(stack, playerId, active, Math.max(0, fadeOutTicks));
+        boolean stopped = BongAnimationPlayer.stopOnStack(
+            stack, playerId, active, Math.max(0, fadeOutTicks)
+        );
+        if (stopped) {
+            byChannel.remove(channel);
+            if (byChannel.isEmpty()) {
+                ACTIVE_BY_CHANNEL.remove(playerId);
+            }
+        }
+        return stopped;
     }
 
     static Identifier activeInChannel(UUID playerId, Channel channel) {

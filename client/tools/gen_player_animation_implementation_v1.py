@@ -15,8 +15,8 @@ from anim_common import emit_json, inherit
 BASE = dict(
     easing="INOUTSINE",
     body=dict(x=0.0, y=0.0, z=0.0),
-    head=dict(pitch=0, yaw=0),
-    torso=dict(pitch=0, yaw=0),
+    head=dict(pitch=0, yaw=0, roll=0),
+    torso=dict(pitch=0, yaw=0, roll=0),
     rightArm=dict(pitch=0, yaw=0, roll=0, bend=0, axis=180),
     leftArm=dict(pitch=0, yaw=0, roll=0, bend=0, axis=180),
     rightLeg=dict(pitch=0, yaw=0, bend=0, z=0.0),

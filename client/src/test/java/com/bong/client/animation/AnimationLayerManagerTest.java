@@ -84,6 +84,25 @@ public class AnimationLayerManagerTest {
     }
 
     @Test
+    void failedPreviousStopKeepsChannelState() {
+        AnimationStack stack = new AnimationStack();
+
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack, playerId, AnimationLayerManager.Channel.UPPER_BODY, FIST, 0, 0
+        ));
+        BongAnimationPlayer.resetForTest();
+
+        assertFalse(AnimationLayerManager.playOnStack(
+            stack, playerId, AnimationLayerManager.Channel.UPPER_BODY, PALM, 0, 0
+        ));
+
+        assertEquals(FIST, AnimationLayerManager.activeInChannel(
+            playerId, AnimationLayerManager.Channel.UPPER_BODY
+        ));
+        assertEquals(1, layersIn(stack).size(), "旧动画未成功停止时不能覆盖通道追踪");
+    }
+
+    @Test
     void differentChannelsCoexistAndKeepPriorityOrder() {
         AnimationStack stack = new AnimationStack();
 
