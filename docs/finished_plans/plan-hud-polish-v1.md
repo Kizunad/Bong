@@ -153,8 +153,8 @@
 
 ### 关键 commit
 
-- `f78a4b2a8` (2026-05-10) `feat(hud): 打磨沉浸式 HUD 交互`
-- `11af021ee` (2026-05-10) `test(hud): 覆盖 HUD polish 行为`
+- `1c9d138cb` (2026-05-10) `feat(hud): 打磨沉浸式 HUD 交互`
+- `1ec82d74b` (2026-05-10) `test(hud): 覆盖 HUD polish 行为`
 
 ### 测试结果
 
