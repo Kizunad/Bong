@@ -149,10 +149,10 @@
 
 ### 关键 commits
 
-- `2a86cd467` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
-- `d8df7ef0d` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
-- `aa6fc4f0e` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
-- `a0e87d64e` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
+- `94f35dfc1` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
+- `c6e5b36b7` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
+- `abb58bfd5` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
+- `3eb793d4c` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
 
 ### 测试结果
 
