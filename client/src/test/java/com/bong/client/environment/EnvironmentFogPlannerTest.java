@@ -98,6 +98,14 @@ class EnvironmentFogPlannerTest {
         );
     }
 
+    @Test
+    void defaultEmitterBehaviorHandlesNullAmbientEffect() {
+        EmitterBehavior noop = (Vec3d playerPos, EnvironmentEffect ignored, float deltaTick) -> {
+        };
+
+        assertNull(noop.ambientLoopRecipe(null));
+    }
+
     private static ActiveEmitter active(String key, long generation, EnvironmentEffect effect) {
         EmitterBehavior noop = (Vec3d playerPos, EnvironmentEffect ignored, float deltaTick) -> {
         };

@@ -15,7 +15,7 @@ public interface EmitterBehavior {
     }
 
     default String ambientLoopRecipe(EnvironmentEffect effect) {
-        return effect.ambientLoopRecipe();
+        return effect == null ? null : effect.ambientLoopRecipe();
     }
 
     default int fadeInTicks(EnvironmentEffect effect) {
