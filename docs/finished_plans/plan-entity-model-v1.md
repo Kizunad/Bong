@@ -186,6 +186,7 @@
 - `727b9a448`（2026-05-10）`feat(server): 接入实体模型视觉桥接`
 - `ce2580c13`（2026-05-10）`fix(client): 收敛实体模型注册合约`
 - `b2b33be88`（2026-05-10）`fix(assets): 替换实体模型占位资源`
+- `fb97d8744`（2026-05-10）`docs(client): 说明灵田方块注册边界`
 
 ### 测试结果
 
@@ -195,6 +196,8 @@
   - 新增 `BongEntityModelRegistryTest`: `tests=11 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build`
+  - `BUILD SUCCESSFUL`
+- `cd client && export JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test --tests com.bong.client.entity.BongEntityModelRegistryTest`
   - `BUILD SUCCESSFUL`
 - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo check --bin bong-server`
   - `Finished dev profile`
