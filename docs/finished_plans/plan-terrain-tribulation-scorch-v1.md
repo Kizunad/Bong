@@ -309,6 +309,7 @@ extra_layers = (
 - **2026-05-08**：天气 / 视觉路径重设计。`plan-zone-environment-v1`（zone-scoped 持续视觉协议 + 客户端 emitter 注册表 + mixin 扩展）+ `plan-zone-weather-v1`（zone profile 概率覆写 + WeatherEvent → EnvironmentEffect 映射 + 物理 hook）接管原占位 "plan-weather-zone-override"。
 - **2026-05-11**：实地核验发现 `plan-zone-environment-v1` / `plan-zone-weather-v1` 已 finished，且 server 已有三处焦土 weather profile、雷击物理 hook、雷法染色 multiplier；移除旧前置阻塞，升 active。剩余主体是 worldgen profile / generator / structure spawner，P3 的虚劫残屑用途改为阶段内决策。
 - **2026-05-11**：完成 consume-plan 实装与核验。焦土 profile、三处 zone、化虚遗迹 manifest、虚劫残屑 item、雷雨公式契约、`TribulationSettled` → `glass_fulgurite` runtime record 均已落地；虚劫残屑用途保留为后续雷法/器修/cultivation plan 决策。
+- **2026-05-11**：处理 CodeRabbit review 反馈。`TribulationScorchRecords` 改为 `#[derive(Resource)]` 风格；`ASCENSION_PIT_DEFAULT_RADIUS` 抽为共享常量，确保 structure manifest 与 terrain raster 默认半径一致。
 
 ---
 
@@ -323,6 +324,7 @@ extra_layers = (
   - `37607578b`（2026-05-11）`plan-terrain-tribulation-scorch-v1: 升 active`
   - `06a3d54b0`（2026-05-11）`plan-terrain-tribulation-scorch-v1: 实装烬焰焦土地形与机制契约`
   - `0ca4faae0`（2026-05-11）`plan-terrain-tribulation-scorch-v1: 接入天劫焦土运行时记录`
+  - `6d7673a19`（2026-05-11）`fix(terrain-scorch): 统一 review 反馈的资源与遗迹半径`
 - 测试结果：
   - `PYTHONPATH="worldgen" python3 -m unittest "worldgen.tests.test_tribulation_scorch"`：4 passed
   - `PYTHONPATH="worldgen" python3 -m unittest discover -s "worldgen/tests"`：26 passed
@@ -333,6 +335,8 @@ extra_layers = (
   - `CARGO_BUILD_JOBS=1 cargo test scorch_record`（`server/`）：5 passed
   - `CARGO_BUILD_JOBS=1 cargo test tribulation_scorch`（`server/`）：5 passed
   - `CARGO_BUILD_JOBS=1 cargo test`（`server/`）：3984 passed
+  - review 修复复验：`python3 -m pytest "tests/test_tribulation_scorch.py"`（`worldgen/`）：4 passed
+  - review 修复复验：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（`server/`）：通过；`cargo test` 3984 passed
 - 跨仓库核验：
   - worldgen：`tribulation_scorch` profile / generator / `tianjie_ascension_pit` structure / `ascension_pits` manifest
   - server：`ZoneWeatherProfile::lightning_strike_per_min` / `style_modifier::for_zone_weather` / `lightning_strike_at` / `TribulationScorchRecords`
