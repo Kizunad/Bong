@@ -31,7 +31,7 @@ import java.util.List;
  *
  * <p><b>时序</b>（tick / 1 tick = 50ms，动画总长 8 tick = 0.4s）：
  * <ul>
- *   <li>tick 0：{@link BongAnimationPlayer#play} 启动动画，同时把 shake/sound/
+ *   <li>tick 0：{@link AnimationLayerManager#play} 启动动画，同时把 shake/sound/
  *       particles 推迟到 impact 帧</li>
  *   <li>tick 1→3：anticipation + 蓄力（躯干扭、右腿蹲），视觉静默</li>
  *   <li>tick 5（impact）：同步触发 SCREEN_SHAKE(0.4, 250ms) + attack.sweep
@@ -82,7 +82,7 @@ public final class BongPunchCombo {
         // 3 tick fade-in：vanilla 下垂 → guard pose 差距较大（左臂 pitch 0→-45°、
         // bend 0→90°），1 tick 会让观众看到"左臂嗖一下抬起就定住"的僵硬感；3 tick
         // 过渡让抬起过程平滑，配合 v3.4 左臂 load-snap 弹性动态，整体节奏像呼吸而非木偶
-        boolean ok = BongAnimationPlayer.play(player, BongAnimations.FIST_PUNCH_RIGHT, 1000, 3);
+        boolean ok = AnimationLayerManager.play(player, BongAnimations.FIST_PUNCH_RIGHT, 1000, 3);
         if (!ok) {
             return false;
         }

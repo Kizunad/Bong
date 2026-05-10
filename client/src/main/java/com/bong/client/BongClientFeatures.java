@@ -8,6 +8,7 @@ public final class BongClientFeatures {
     public static final boolean ENABLE_DEBUG_HEARTBEAT_CHAT = false;
     public static final boolean ENABLE_COMBAT_HUD = true;
     public static final boolean ENABLE_BOTANY_HUD = true;
+    public static final boolean ENABLE_UI_TRANSITIONS = true;
 
     private BongClientFeatures() {
     }
