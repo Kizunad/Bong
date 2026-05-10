@@ -48,6 +48,7 @@ pub fn zone_environment_broadcast_system(
             tracing::warn!(
                 "[bong][zone_environment] dropped Redis ZoneEnvironmentStateV1: {error}"
             );
+            registry.mark_dirty_for_retry(zone.clone());
         }
 
         let mut sent = 0usize;
@@ -121,5 +122,28 @@ mod tests {
         let (mut app, rx) = setup_app();
         app.update();
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn redis_send_failure_marks_zone_dirty_for_retry() {
+        let (mut app, rx) = setup_app();
+        drop(rx);
+        {
+            let mut registry = app.world_mut().resource_mut::<ZoneEnvironmentRegistry>();
+            registry.add(
+                "spawn",
+                crate::world::environment::EnvironmentEffect::FogVeil {
+                    aabb_min: [0.0, 60.0, 0.0],
+                    aabb_max: [16.0, 90.0, 16.0],
+                    tint_rgb: [80, 90, 100],
+                    density: 0.25,
+                },
+            );
+        }
+
+        app.update();
+
+        let mut registry = app.world_mut().resource_mut::<ZoneEnvironmentRegistry>();
+        assert_eq!(registry.drain_dirty(), vec!["spawn".to_string()]);
     }
 }

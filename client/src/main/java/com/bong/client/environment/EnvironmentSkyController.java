@@ -13,7 +13,9 @@ public final class EnvironmentSkyController {
         if (command == null) {
             return;
         }
-        previousShaderColor = RenderSystem.getShaderColor().clone();
+        if (previousShaderColor == null) {
+            previousShaderColor = RenderSystem.getShaderColor().clone();
+        }
         int rgb = command.skyColorRgb();
         RenderSystem.setShaderColor(red(rgb), green(rgb), blue(rgb), 1.0f);
     }
