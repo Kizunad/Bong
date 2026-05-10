@@ -1,0 +1,147 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.tsy_sentinel",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 2.6,
+        "visible_bounds_height": 3.7,
+        "visible_bounds_offset": [
+          0,
+          1.1,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "Body",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -5,
+                7,
+                -3
+              ],
+              "size": [
+                10,
+                12,
+                6
+              ],
+              "uv": [
+                0,
+                0
+              ],
+              "inflate": 0.02
+            }
+          ]
+        },
+        {
+          "name": "Head",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -3,
+                19,
+                -3
+              ],
+              "size": [
+                6,
+                6,
+                6
+              ],
+              "uv": [
+                0,
+                26
+              ],
+              "inflate": 0.02
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Pauldrons",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -8,
+                16,
+                -3
+              ],
+              "size": [
+                3,
+                4,
+                6
+              ],
+              "uv": [
+                32,
+                0
+              ]
+            },
+            {
+              "origin": [
+                5,
+                16,
+                -3
+              ],
+              "size": [
+                3,
+                4,
+                6
+              ],
+              "uv": [
+                32,
+                0
+              ]
+            }
+          ],
+          "parent": "Body"
+        },
+        {
+          "name": "Cracks",
+          "pivot": [
+            0,
+            0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -1,
+                8,
+                -4
+              ],
+              "size": [
+                2,
+                9,
+                1
+              ],
+              "uv": [
+                44,
+                0
+              ],
+              "inflate": 0.01
+            }
+          ],
+          "parent": "Body"
+        }
+      ]
+    }
+  ]
+}
