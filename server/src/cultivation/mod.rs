@@ -115,7 +115,7 @@ use self::meridian::severed::{
     apply_severed_event_system, meridian_severed_detection_tick, MeridianSeveredEvent,
     MeridianSeveredPermanent, SkillMeridianDependencies,
 };
-use self::meridian_open::meridian_open_tick;
+use self::meridian_open::{meridian_open_tick, MeridianOpenedEvent};
 use self::neg_pressure::tick_neg_pressure;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::{
@@ -231,6 +231,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianCrackEvent>();
     app.add_event::<burst_meridian::BurstMeridianEvent>();
     app.add_event::<MeridianSeveredEvent>();
+    app.add_event::<MeridianOpenedEvent>();
     app.add_event::<CultivationSessionPracticeEvent>();
     app.add_event::<InfuseDuguPoisonIntent>();
     app.add_event::<DuguObfuscationDisruptedEvent>();

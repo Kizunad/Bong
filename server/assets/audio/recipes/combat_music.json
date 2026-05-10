@@ -1,0 +1,11 @@
+{
+  "id": "combat_music",
+  "layers": [
+    { "sound": "minecraft:music.dragon", "volume": 0.15, "pitch": 0.6, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.1, "pitch": 0.8, "delay_ticks": 10 }
+  ],
+  "loop": { "interval_ticks": 100, "while_flag": "audio_world" },
+  "priority": 84,
+  "attenuation": "player_local",
+  "category": "HOSTILE"
+}

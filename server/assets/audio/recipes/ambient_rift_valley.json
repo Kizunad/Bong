@@ -1,0 +1,10 @@
+{
+  "id": "ambient_rift_valley",
+  "layers": [
+    { "sound": "minecraft:ambient.warped_forest.mood", "volume": 0.15, "pitch": 0.5, "delay_ticks": 0 }
+  ],
+  "loop": { "interval_ticks": 140, "while_flag": "audio_world" },
+  "priority": 24,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

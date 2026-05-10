@@ -7,7 +7,7 @@
 //!   * zone.spirit_qi >= 0.3 才推进（阈值内不能打通）
 //!   * 打通本身消耗 qi（cost = progress_delta × COST_FACTOR）
 
-use valence::prelude::{bevy_ecs, Component, Entity, Events, Position, Query, Res, ResMut};
+use valence::prelude::{bevy_ecs, Component, Entity, Event, Events, Position, Query, Res, ResMut};
 
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -24,6 +24,12 @@ use crate::skill::events::{SkillXpGain, XpGainSource};
 /// 玩家客户端发起的"选择下一条经脉"目标。未选目标时此 component 不存在。
 #[derive(Debug, Clone, Copy, Component)]
 pub struct MeridianTarget(pub MeridianId);
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct MeridianOpenedEvent {
+    pub entity: Entity,
+    pub origin: valence::prelude::DVec3,
+}
 
 pub const MIN_ZONE_QI_TO_OPEN: f64 = 0.3;
 pub const BASE_OPEN_RATE: f64 = 0.01;
@@ -131,6 +137,7 @@ pub fn meridian_open_tick(
     mut entities: Query<MeridianOpenItem<'_>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut meridian_opened_events: Option<ResMut<Events<MeridianOpenedEvent>>>,
 ) {
     let Some(zones) = zones else {
         return;
@@ -162,6 +169,12 @@ pub fn meridian_open_tick(
             now,
         ) {
             if just_opened {
+                if let Some(meridian_opened_events) = meridian_opened_events.as_deref_mut() {
+                    meridian_opened_events.send(MeridianOpenedEvent {
+                        entity,
+                        origin: pos.0,
+                    });
+                }
                 if let Some(mut life) = life {
                     life.push(BiographyEntry::MeridianOpened {
                         id: target.0,

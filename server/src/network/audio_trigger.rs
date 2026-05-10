@@ -15,6 +15,7 @@ use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::meridian_open::MeridianOpenedEvent;
 use crate::cultivation::overload::MeridianOverloadEvent;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::cultivation::qi_zero_decay::RealmRegressed;
@@ -44,6 +45,9 @@ pub struct AudioTriggerState {
 
 impl Resource for AudioTriggerState {}
 
+const LOW_HP_HEARTBEAT_RATIO: f32 = 0.2;
+const LOW_HP_HEARTBEAT_FLAG: &str = "hp_below_20";
+
 type PlayerAudioStateItem<'a> = (
     Entity,
     &'a Position,
@@ -60,14 +64,14 @@ pub fn emit_player_state_audio_triggers(
     for (entity, position, wounds, cultivation) in &players {
         if let Some(wounds) = wounds {
             let hp_ratio = wounds.health_current / wounds.health_max.max(1.0);
-            let low_hp = hp_ratio < 0.3;
+            let low_hp = hp_ratio < LOW_HP_HEARTBEAT_RATIO;
             if low_hp && !state.low_hp.get(&entity).copied().unwrap_or(false) {
                 emit_play(
                     &mut audio,
                     "heartbeat_low_hp",
                     entity,
                     position.get(),
-                    Some("hp_below_30".to_string()),
+                    Some(LOW_HP_HEARTBEAT_FLAG.to_string()),
                     1.0,
                     0.0,
                 );
@@ -147,11 +151,24 @@ pub fn emit_npc_death_audio_triggers(
 
 pub fn emit_cultivation_audio_triggers(
     mut breakthroughs: EventReader<BreakthroughOutcome>,
+    mut meridian_opened: EventReader<MeridianOpenedEvent>,
     mut regressions: EventReader<RealmRegressed>,
     mut overloads: EventReader<MeridianOverloadEvent>,
     positions: Query<&Position>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
+    for event in meridian_opened.read() {
+        emit_play(
+            &mut audio,
+            "meridian_open_chime",
+            event.entity,
+            event.origin,
+            None,
+            1.0,
+            0.0,
+        );
+    }
+
     for event in breakthroughs.read() {
         let Ok(position) = positions.get(event.entity) else {
             continue;
@@ -685,6 +702,7 @@ fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
         | "qi_depleted_warning"
         | "realm_regression"
         | "meridian_crack"
+        | "meridian_open_chime"
         | "pill_consume"
         | "niche_breach"
         | "exposure_name"
@@ -742,9 +760,10 @@ fn nearby_recipient(origin: DVec3) -> AudioRecipient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::{BodyPart, WoundKind};
+    use crate::combat::components::{BodyPart, WoundKind, Wounds};
     use crate::combat::events::{CombatEvent, DeathEvent};
     use valence::prelude::{App, Events, Update};
+    use valence::testing::create_mock_client;
 
     #[test]
     fn jiemai_combat_event_emits_parry_recipe() {
@@ -900,6 +919,76 @@ mod tests {
                 "lingtian_drain"
             ]
         );
+    }
+
+    #[test]
+    fn player_state_audio_uses_twenty_percent_low_hp_threshold() {
+        let mut app = App::new();
+        app.init_resource::<AudioTriggerState>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_player_state_audio_triggers);
+        let (mut bundle, _helper) = create_mock_client("low_hp");
+        bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Wounds {
+            health_current: 25.0,
+            health_max: 100.0,
+            ..Default::default()
+        });
+
+        app.update();
+        let first: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            first.is_empty(),
+            "25% HP should not trigger the audio-world heartbeat"
+        );
+
+        app.world_mut().entity_mut(player).insert(Wounds {
+            health_current: 19.0,
+            health_max: 100.0,
+            ..Default::default()
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].recipe_id, "heartbeat_low_hp");
+        assert_eq!(emitted[0].flag.as_deref(), Some("hp_below_20"));
+    }
+
+    #[test]
+    fn meridian_open_event_emits_chime_recipe() {
+        let mut app = App::new();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<MeridianOpenedEvent>();
+        app.add_event::<RealmRegressed>();
+        app.add_event::<MeridianOverloadEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_cultivation_audio_triggers);
+        let player = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(MeridianOpenedEvent {
+            entity: player,
+            origin: DVec3::new(3.0, 64.0, -2.0),
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].recipe_id, "meridian_open_chime");
+        assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == player));
     }
 
     #[test]
