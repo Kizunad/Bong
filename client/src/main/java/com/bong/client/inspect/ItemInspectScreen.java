@@ -51,7 +51,7 @@ public final class ItemInspectScreen extends Screen {
         }
         if (item.forgeQuality() != null || item.forgeAchievedTier() != null) {
             lines.add("法器: 灵核 T" + (item.forgeAchievedTier() == null ? "?" : item.forgeAchievedTier()));
-            lines.add("铭文槽: " + (item.isInscriptionScroll() ? item.inscriptionId() : "空"));
+            lines.add("铭文槽: " + (item.hasInscription() ? item.inscriptionId() : "空"));
             lines.add("当前附着: " + (item.forgeSideEffects().isEmpty() ? "无" : String.join(", ", item.forgeSideEffects())));
         }
         if (!item.alchemyLines().isEmpty()) {

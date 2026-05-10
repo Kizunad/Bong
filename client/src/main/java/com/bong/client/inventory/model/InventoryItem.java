@@ -367,6 +367,10 @@ public final class InventoryItem {
         return "inscription_scroll".equals(scrollKind) || itemId.startsWith("inscription_scroll_");
     }
 
+    public boolean hasInscription() {
+        return hasForgeMetadata() && !isInscriptionScroll() && !scrollSkillId.trim().isEmpty();
+    }
+
     public boolean isBoneCoin() {
         return itemId.startsWith("bone_coin_")
             || "fengling_bone_coin".equals(itemId)
@@ -374,12 +378,17 @@ public final class InventoryItem {
     }
 
     public String inscriptionId() {
+        if (hasInscription()) return scrollSkillId.trim();
         if (!isInscriptionScroll()) return "";
         String prefix = "inscription_scroll_";
         if (itemId.startsWith(prefix) && itemId.length() > prefix.length()) {
             return itemId.substring(prefix.length()).trim();
         }
         return scrollSkillId.trim();
+    }
+
+    private boolean hasForgeMetadata() {
+        return forgeQuality != null || forgeAchievedTier != null;
     }
 
     public boolean isEmpty() {

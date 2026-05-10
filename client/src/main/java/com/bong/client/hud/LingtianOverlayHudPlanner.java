@@ -23,8 +23,8 @@ public final class LingtianOverlayHudPlanner {
         if (!safeSnapshot.active() || screenWidth <= 0 || screenHeight <= 0) {
             return List.of();
         }
-        int x = Math.min(screenWidth - PANEL_WIDTH - 8, screenWidth / 2 + 18);
-        int y = Math.min(screenHeight - PANEL_HEIGHT - 8, screenHeight / 2 + 18);
+        int x = clampPosition(screenWidth / 2 + 18, screenWidth, PANEL_WIDTH);
+        int y = clampPosition(screenHeight / 2 + 18, screenHeight, PANEL_HEIGHT);
         List<HudRenderCommand> out = new ArrayList<>();
         out.add(HudRenderCommand.rect(HudRenderLayer.LINGTIAN_OVERLAY, x, y, PANEL_WIDTH, PANEL_HEIGHT, BG));
         appendBorder(out, x, y, PANEL_WIDTH, PANEL_HEIGHT, BORDER);
@@ -37,11 +37,13 @@ public final class LingtianOverlayHudPlanner {
             safeSnapshot.dyeContaminationWarning() ? WARNING : TEXT
         ));
         out.add(HudRenderCommand.rect(HudRenderLayer.LINGTIAN_OVERLAY, x + 6, y + 20, PANEL_WIDTH - 12, 4, TRACK));
+        int trackWidth = PANEL_WIDTH - 12;
+        int progressWidth = Math.max(0, Math.min(trackWidth, Math.round(trackWidth * safeSnapshot.progress())));
         out.add(HudRenderCommand.rect(
             HudRenderLayer.LINGTIAN_OVERLAY,
             x + 6,
             y + 20,
-            Math.max(0, Math.round((PANEL_WIDTH - 12) * safeSnapshot.progress())),
+            progressWidth,
             4,
             FILL
         ));
@@ -64,6 +66,11 @@ public final class LingtianOverlayHudPlanner {
             case REPLENISH -> "◇";
             case DRAIN_QI -> "!";
         };
+    }
+
+    private static int clampPosition(int preferred, int screenSize, int panelSize) {
+        int max = Math.max(0, screenSize - panelSize - 8);
+        return Math.max(0, Math.min(preferred, max));
     }
 
     private static void appendBorder(List<HudRenderCommand> out, int x, int y, int width, int height, int color) {

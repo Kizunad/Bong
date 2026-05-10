@@ -1434,9 +1434,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 1) {
-            itemInspectLongPress.start(itemAtScreen(mouseX, mouseY), mouseX, mouseY, System.currentTimeMillis());
-        } else {
+        if (button != 1) {
             itemInspectLongPress.cancel();
         }
 
@@ -1453,6 +1451,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     pillContextMenu = null;
                     pendingMeridianUse = null;
                 }
+                itemInspectLongPress.cancel();
                 return true;
             }
 
@@ -1463,12 +1462,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 } else {
                     weaponContextMenu = null;
                 }
+                itemInspectLongPress.cancel();
                 return true;
             }
 
             if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
+                    itemInspectLongPress.cancel();
                     return true;
                 }
             }
@@ -1479,6 +1480,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
                     if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
+                        itemInspectLongPress.cancel();
                         return true;
                     }
                 }
@@ -1487,13 +1489,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             if (hIdx >= 0 && hotbarItems[hIdx] != null
                     && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
+                itemInspectLongPress.cancel();
                 return true;
             }
 
             if (pendingMeridianUse != null) {
                 pendingMeridianUse = null;
+                itemInspectLongPress.cancel();
                 return true;
             }
+            itemInspectLongPress.start(itemAtScreen(mouseX, mouseY), mouseX, mouseY, System.currentTimeMillis());
         }
 
         if (button == 0) {

@@ -42,6 +42,22 @@ class ProcessingHudPlannerTest {
     }
 
     @Test
+    void forgeStepProgressIgnoresNonNumericJsonValues() {
+        ForgeSessionStore.replace(new ForgeSessionStore.Snapshot(
+            7L,
+            "iron_sword",
+            "铁剑",
+            true,
+            "inscription",
+            1,
+            2,
+            "{\"progress\":\"oops\",\"elapsed_ticks\":8,\"target_ticks\":\"later\"}"
+        ));
+
+        assertEquals(0.0, ForgeProgressHudPlanner.progressOf(ForgeSessionStore.snapshot()), 1e-6);
+    }
+
+    @Test
     void alchemyTemperatureBarUsesHeatColor() {
         AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
         AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(

@@ -39,6 +39,35 @@ class ItemInspectScreenTest {
         assertTrue(lines.stream().anyMatch(line -> line.contains("品质: 82%")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("保质期: 76%")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("法器: 灵核 T2")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("铭文槽: 空")));
+    }
+
+    @Test
+    void itemInspectDetailLinesShowAppliedForgeInscription() {
+        InventoryItem item = InventoryItem.createFullWithForgeMeta(
+            42L,
+            "iron_sword",
+            "寒铁剑",
+            1,
+            3,
+            2.5,
+            "rare",
+            "剑身有冷纹。",
+            1,
+            0.82,
+            0.76,
+            "",
+            "sharp_v0",
+            0,
+            0.7,
+            "cold",
+            List.of("寒气"),
+            2
+        );
+
+        List<String> lines = ItemInspectScreen.detailLines(item);
+
+        assertTrue(lines.stream().anyMatch(line -> line.contains("铭文槽: sharp_v0")));
     }
 
     @Test

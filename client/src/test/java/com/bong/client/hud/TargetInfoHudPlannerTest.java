@@ -80,6 +80,8 @@ class TargetInfoHudPlannerTest {
         List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
 
         assertTrue(commands.stream().anyMatch(cmd -> "???".equals(cmd.text())));
-        assertTrue(commands.stream().noneMatch(cmd -> cmd.color() == TargetInfoHudPlanner.QI_COLOR));
+        assertTrue(commands.stream().noneMatch(
+            cmd -> (cmd.color() & 0x00FFFFFF) == (TargetInfoHudPlanner.QI_COLOR & 0x00FFFFFF)
+        ));
     }
 }

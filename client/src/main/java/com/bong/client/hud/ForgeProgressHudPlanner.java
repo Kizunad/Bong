@@ -2,7 +2,9 @@ package com.bong.client.hud;
 
 import com.bong.client.forge.state.ForgeOutcomeStore;
 import com.bong.client.forge.state.ForgeSessionStore;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
@@ -48,15 +50,19 @@ public final class ForgeProgressHudPlanner {
         if (json == null) {
             return 0.0;
         }
-        if (json.has("progress")) {
-            return clamp01(json.get("progress").getAsDouble());
+        Double progress = readDouble(json, "progress");
+        if (progress != null) {
+            return clamp01(progress);
         }
-        if (json.has("progress_ratio")) {
-            return clamp01(json.get("progress_ratio").getAsDouble());
+        Double progressRatio = readDouble(json, "progress_ratio");
+        if (progressRatio != null) {
+            return clamp01(progressRatio);
         }
-        if (json.has("elapsed_ticks") && json.has("target_ticks")) {
-            double target = Math.max(1.0, json.get("target_ticks").getAsDouble());
-            return clamp01(json.get("elapsed_ticks").getAsDouble() / target);
+        Double elapsedTicks = readDouble(json, "elapsed_ticks");
+        Double targetTicks = readDouble(json, "target_ticks");
+        if (elapsedTicks != null && targetTicks != null) {
+            double target = Math.max(1.0, targetTicks);
+            return clamp01(elapsedTicks / target);
         }
         return 0.0;
     }
@@ -146,6 +152,25 @@ public final class ForgeProgressHudPlanner {
             }
             return JsonParser.parseString(json).getAsJsonObject();
         } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Double readDouble(JsonObject json, String field) {
+        if (json == null || field == null || !json.has(field)) {
+            return null;
+        }
+        JsonElement element = json.get(field);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isNumber()) {
+            return null;
+        }
+        try {
+            return primitive.getAsDouble();
+        } catch (NumberFormatException e) {
             return null;
         }
     }

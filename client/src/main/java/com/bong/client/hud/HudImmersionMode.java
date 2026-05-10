@@ -3,6 +3,7 @@ package com.bong.client.hud;
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.state.VisualEffectState;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 
@@ -19,6 +20,31 @@ public final class HudImmersionMode {
     private static volatile long lastCombatAtMs = -1L;
     private static volatile Mode currentMode = Mode.PEACE;
     private static volatile long changedAtMs = 0L;
+    private static final EnumSet<HudRenderLayer> VISIBLE_CULTIVATION = EnumSet.of(
+        HudRenderLayer.BASELINE,
+        HudRenderLayer.ZONE,
+        HudRenderLayer.MINI_BODY,
+        HudRenderLayer.PROCESSING_HUD,
+        HudRenderLayer.EVENT_STREAM,
+        HudRenderLayer.MERIDIAN_OPEN,
+        HudRenderLayer.TOAST,
+        HudRenderLayer.VISUAL,
+        HudRenderLayer.LINGTIAN_OVERLAY,
+        HudRenderLayer.REALM_COLLAPSE
+    );
+    private static final EnumSet<HudRenderLayer> VISIBLE_OTHER = EnumSet.of(
+        HudRenderLayer.BASELINE,
+        HudRenderLayer.ZONE,
+        HudRenderLayer.TARGET_INFO,
+        HudRenderLayer.MINI_BODY,
+        HudRenderLayer.QUICK_BAR,
+        HudRenderLayer.BOTANY,
+        HudRenderLayer.PROCESSING_HUD,
+        HudRenderLayer.EVENT_STREAM,
+        HudRenderLayer.TOAST,
+        HudRenderLayer.VISUAL,
+        HudRenderLayer.LINGTIAN_OVERLAY
+    );
 
     private HudImmersionMode() {
     }
@@ -56,34 +82,15 @@ public final class HudImmersionMode {
             return List.copyOf(commands);
         }
         EnumSet<HudRenderLayer> visible = mode == Mode.CULTIVATION
-            ? EnumSet.of(
-                HudRenderLayer.BASELINE,
-                HudRenderLayer.ZONE,
-                HudRenderLayer.MINI_BODY,
-                HudRenderLayer.PROCESSING_HUD,
-                HudRenderLayer.EVENT_STREAM,
-                HudRenderLayer.MERIDIAN_OPEN,
-                HudRenderLayer.TOAST,
-                HudRenderLayer.VISUAL,
-                HudRenderLayer.LINGTIAN_OVERLAY,
-                HudRenderLayer.REALM_COLLAPSE
-            )
-            : EnumSet.of(
-                HudRenderLayer.BASELINE,
-                HudRenderLayer.ZONE,
-                HudRenderLayer.TARGET_INFO,
-                HudRenderLayer.MINI_BODY,
-                HudRenderLayer.QUICK_BAR,
-                HudRenderLayer.BOTANY,
-                HudRenderLayer.PROCESSING_HUD,
-                HudRenderLayer.EVENT_STREAM,
-                HudRenderLayer.TOAST,
-                HudRenderLayer.VISUAL,
-                HudRenderLayer.LINGTIAN_OVERLAY
-            );
-        return commands.stream()
-            .filter(command -> visible.contains(command.layer()))
-            .toList();
+            ? VISIBLE_CULTIVATION
+            : VISIBLE_OTHER;
+        List<HudRenderCommand> filtered = new ArrayList<>(commands.size());
+        for (HudRenderCommand command : commands) {
+            if (command != null && visible.contains(command.layer())) {
+                filtered.add(command);
+            }
+        }
+        return List.copyOf(filtered);
     }
 
     public static void resetForTests() {

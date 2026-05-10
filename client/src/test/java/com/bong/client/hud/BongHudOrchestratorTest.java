@@ -270,6 +270,7 @@ public class BongHudOrchestratorTest {
             BongHudStateSnapshot.empty(), combat, 1_000L, FIXED_WIDTH, 220, 320, 180
         );
         assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
+        assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.QUICK_BAR));
 
         HudImmersionMode.resetForTests();
         List<HudRenderCommand> peaceCommands = BongHudOrchestrator.buildCommands(

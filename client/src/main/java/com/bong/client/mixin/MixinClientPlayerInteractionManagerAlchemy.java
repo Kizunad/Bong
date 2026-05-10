@@ -28,11 +28,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ClientPlayerInteractionManager.class)
 public abstract class MixinClientPlayerInteractionManagerAlchemy {
     @Inject(method = "attackEntity", at = @At("TAIL"))
+    @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
     private void bong$targetInfoAttack(PlayerEntity player, Entity target, CallbackInfo ci) {
         TargetInfoStateStore.observeEntity(target, System.currentTimeMillis());
     }
 
     @Inject(method = "interactEntity", at = @At("TAIL"))
+    @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
     private void bong$targetInfoInteract(
         PlayerEntity player,
         Entity entity,
