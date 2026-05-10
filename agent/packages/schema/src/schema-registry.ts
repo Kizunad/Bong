@@ -4,6 +4,7 @@ import { AgentCommandV1 } from "./agent-command.js";
 import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
 import { AntiCheatReportV1, ViolationKindV1 } from "./anticheat.js";
 import { ArmorDurabilityChangedV1 } from "./armor-event.js";
+import { BaomaiSkillEventV1, BaomaiSkillIdV1 } from "./baomai-v3.js";
 import {
   AudioEventV1,
   PlaySoundRecipeEventV1,
@@ -491,6 +492,8 @@ export const SCHEMA_REGISTRY = {
   violationKindV1: ViolationKindV1,
   antiCheatReportV1: AntiCheatReportV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
+  baomaiSkillIdV1: BaomaiSkillIdV1,
+  baomaiSkillEventV1: BaomaiSkillEventV1,
   tribulationKindV1: TribulationKindV1,
   tribulationPhaseV1: TribulationPhaseV1,
   duXuOutcomeV1: DuXuOutcomeV1,
@@ -861,6 +864,8 @@ export const GENERATED_SCHEMA_FILES = {
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "zhenmai-skill-event-v1.json": SCHEMA_REGISTRY.zhenmaiSkillEventV1,
+  "baomai-skill-id-v1.json": SCHEMA_REGISTRY.baomaiSkillIdV1,
+  "baomai-skill-event-v1.json": SCHEMA_REGISTRY.baomaiSkillEventV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
   "style-balance-telemetry-event-v1.json":

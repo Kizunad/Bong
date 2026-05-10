@@ -1,0 +1,28 @@
+{
+  "anyOf": [
+    {
+      "const": "beng_quan",
+      "type": "string"
+    },
+    {
+      "const": "full_power_charge",
+      "type": "string"
+    },
+    {
+      "const": "full_power_release",
+      "type": "string"
+    },
+    {
+      "const": "mountain_shake",
+      "type": "string"
+    },
+    {
+      "const": "blood_burn",
+      "type": "string"
+    },
+    {
+      "const": "disperse",
+      "type": "string"
+    }
+  ]
+}

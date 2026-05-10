@@ -1,0 +1,174 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "skill_id",
+    "caster_id",
+    "tick",
+    "qi_invested",
+    "damage",
+    "blood_multiplier",
+    "flow_rate_multiplier",
+    "meridian_ids"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "baomai_skill_event",
+      "type": "string"
+    },
+    "skill_id": {
+      "anyOf": [
+        {
+          "const": "beng_quan",
+          "type": "string"
+        },
+        {
+          "const": "full_power_charge",
+          "type": "string"
+        },
+        {
+          "const": "full_power_release",
+          "type": "string"
+        },
+        {
+          "const": "mountain_shake",
+          "type": "string"
+        },
+        {
+          "const": "blood_burn",
+          "type": "string"
+        },
+        {
+          "const": "disperse",
+          "type": "string"
+        }
+      ]
+    },
+    "caster_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "qi_invested": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "damage": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "radius_blocks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "blood_multiplier": {
+      "minimum": 1,
+      "type": "number"
+    },
+    "flow_rate_multiplier": {
+      "minimum": 1,
+      "type": "number"
+    },
+    "meridian_ids": {
+      "type": "array",
+      "items": {
+        "description": "20 条经脉（12 正经 + 8 奇经）",
+        "anyOf": [
+          {
+            "const": "Lung",
+            "type": "string"
+          },
+          {
+            "const": "LargeIntestine",
+            "type": "string"
+          },
+          {
+            "const": "Stomach",
+            "type": "string"
+          },
+          {
+            "const": "Spleen",
+            "type": "string"
+          },
+          {
+            "const": "Heart",
+            "type": "string"
+          },
+          {
+            "const": "SmallIntestine",
+            "type": "string"
+          },
+          {
+            "const": "Bladder",
+            "type": "string"
+          },
+          {
+            "const": "Kidney",
+            "type": "string"
+          },
+          {
+            "const": "Pericardium",
+            "type": "string"
+          },
+          {
+            "const": "TripleEnergizer",
+            "type": "string"
+          },
+          {
+            "const": "Gallbladder",
+            "type": "string"
+          },
+          {
+            "const": "Liver",
+            "type": "string"
+          },
+          {
+            "const": "Ren",
+            "type": "string"
+          },
+          {
+            "const": "Du",
+            "type": "string"
+          },
+          {
+            "const": "Chong",
+            "type": "string"
+          },
+          {
+            "const": "Dai",
+            "type": "string"
+          },
+          {
+            "const": "YinQiao",
+            "type": "string"
+          },
+          {
+            "const": "YangQiao",
+            "type": "string"
+          },
+          {
+            "const": "YinWei",
+            "type": "string"
+          },
+          {
+            "const": "YangWei",
+            "type": "string"
+          }
+        ]
+      }
+    }
+  }
+}
