@@ -176,6 +176,25 @@ pub enum ClientRequestV1 {
         accepted: bool,
         requested_instance_id: Option<u64>,
     },
+    /// plan-npc-engagement-v1 P0 — 玩家右键 NPC 后请求服务端校验 inspect 目标。
+    NpcInspectRequest {
+        v: u8,
+        npc_entity_id: i32,
+    },
+    /// plan-npc-engagement-v1 P2 — NPC 对话选项回执。
+    NpcDialogueChoice {
+        v: u8,
+        npc_entity_id: i32,
+        option_id: String,
+    },
+    /// plan-npc-engagement-v1 P1 — NPC 商人交易请求。
+    NpcTradeRequest {
+        v: u8,
+        npc_entity_id: i32,
+        #[serde(default)]
+        offered_items: Vec<u64>,
+        requested_item_id: String,
+    },
     /// plan-zhenfa-v1 §3.1 / §3.2 — 持阵旗右键方块布置诡雷或警戒场。
     ZhenfaPlace {
         v: u8,
@@ -1234,6 +1253,69 @@ mod tests {
                 ..
             } => assert_eq!(requested_instance_id, None),
             other => panic!("expected TradeOfferResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn npc_engagement_requests_roundtrip() {
+        let inspect = r#"{"type":"npc_inspect_request","v":1,"npc_entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(inspect).unwrap();
+        match req {
+            ClientRequestV1::NpcInspectRequest { v, npc_entity_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(npc_entity_id, 42);
+            }
+            other => panic!("expected NpcInspectRequest, got {other:?}"),
+        }
+
+        let choice =
+            r#"{"type":"npc_dialogue_choice","v":1,"npc_entity_id":42,"option_id":"trade"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(choice).unwrap();
+        match req {
+            ClientRequestV1::NpcDialogueChoice {
+                v,
+                npc_entity_id,
+                option_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(npc_entity_id, 42);
+                assert_eq!(option_id, "trade");
+            }
+            other => panic!("expected NpcDialogueChoice, got {other:?}"),
+        }
+
+        let trade = r#"{"type":"npc_trade_request","v":1,"npc_entity_id":42,"offered_items":[1001,1002],"requested_item_id":"spirit_grass"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(trade).unwrap();
+        match req {
+            ClientRequestV1::NpcTradeRequest {
+                v,
+                npc_entity_id,
+                offered_items,
+                requested_item_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(npc_entity_id, 42);
+                assert_eq!(offered_items, vec![1001, 1002]);
+                assert_eq!(requested_item_id, "spirit_grass");
+            }
+            other => panic!("expected NpcTradeRequest, got {other:?}"),
+        }
+
+        let trade_without_offers = r#"{"type":"npc_trade_request","v":1,"npc_entity_id":42,"requested_item_id":"spirit_grass"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(trade_without_offers).unwrap();
+        match req {
+            ClientRequestV1::NpcTradeRequest {
+                v,
+                npc_entity_id,
+                offered_items,
+                requested_item_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(npc_entity_id, 42);
+                assert!(offered_items.is_empty());
+                assert_eq!(requested_item_id, "spirit_grass");
+            }
+            other => panic!("expected NpcTradeRequest, got {other:?}"),
         }
     }
 

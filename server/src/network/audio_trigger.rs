@@ -10,7 +10,7 @@ use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
 use crate::botany::components::HarvestTerminalEvent;
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::{Lifecycle, Wounds};
-use crate::combat::events::CombatEvent;
+use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
@@ -32,6 +32,7 @@ use crate::network::audio_event_emit::{
     recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
 use crate::npc::brain::canonical_npc_id;
+use crate::npc::spawn::NpcMarker;
 use crate::schema::audio::AudioAttenuation;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 
@@ -96,6 +97,7 @@ pub fn emit_player_state_audio_triggers(
 pub fn emit_combat_audio_triggers(
     mut combat_events: EventReader<CombatEvent>,
     positions: Query<&Position>,
+    npc_markers: Query<(), With<NpcMarker>>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in combat_events.read() {
@@ -107,10 +109,39 @@ pub fn emit_combat_audio_triggers(
             "parry_clang"
         } else if event.damage >= 0.5 {
             "meridian_crack"
+        } else if npc_markers.get(event.target).is_ok() && event.damage > 0.0 {
+            "npc_hurt"
+        } else if npc_markers.get(event.attacker).is_ok() && event.damage > 0.0 {
+            "npc_aggro"
         } else {
             continue;
         };
         emit_play(&mut audio, recipe_id, event.target, origin, None, 1.0, 0.0);
+    }
+}
+
+pub fn emit_npc_death_audio_triggers(
+    mut death_events: EventReader<DeathEvent>,
+    positions: Query<&Position>,
+    npc_markers: Query<(), With<NpcMarker>>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for event in death_events.read() {
+        if npc_markers.get(event.target).is_err() {
+            continue;
+        }
+        let Ok(position) = positions.get(event.target) else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            "npc_death",
+            event.target,
+            position.get(),
+            None,
+            1.0,
+            0.0,
+        );
     }
 }
 
@@ -629,6 +660,9 @@ fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
         | "narration_cue"
         | "skill_lv_up"
         | "stance_switch"
+        | "npc_refuse"
+        | "npc_greeting_cultivator"
+        | "npc_greeting_commoner"
         | "blood_burn_sizzle" => AudioAttenuation::PlayerLocal,
         "tribulation_thunder_distant" => AudioAttenuation::GlobalHint,
         "realm_breakthrough" => AudioAttenuation::ZoneBroadcast,
@@ -679,7 +713,7 @@ fn nearby_recipient(origin: DVec3) -> AudioRecipient {
 mod tests {
     use super::*;
     use crate::combat::components::{BodyPart, WoundKind};
-    use crate::combat::events::CombatEvent;
+    use crate::combat::events::{CombatEvent, DeathEvent};
     use valence::prelude::{App, Events, Update};
 
     #[test]
@@ -715,6 +749,35 @@ mod tests {
             .collect();
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "parry_clang");
+    }
+
+    #[test]
+    fn npc_death_emits_audio() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_npc_death_audio_triggers);
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
+            .id();
+        app.world_mut().send_event(DeathEvent {
+            target: npc,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].recipe_id, "npc_death");
     }
 
     #[test]

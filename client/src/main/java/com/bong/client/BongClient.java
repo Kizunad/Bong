@@ -3,6 +3,7 @@ package com.bong.client;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
@@ -11,6 +12,7 @@ import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongHudCommand;
 import com.bong.client.debug.BongSpawnParticleCommand;
 import com.bong.client.debug.BongVfxCommand;
+import com.bong.client.entity.BongEntityRenderBootstrap;
 import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.fauna.FaunaRenderBootstrap;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
@@ -25,6 +27,7 @@ import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.npc.NpcNametagRenderer;
 import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
 import com.bong.client.social.SparringInviteScreenBootstrap;
@@ -52,6 +55,7 @@ public class BongClient implements ClientModInitializer {
         LOGGER.info("Initializing Bong Client...");
 
         BongNetworkHandler.register();
+        NpcNametagRenderer.register();
         HudRenderCallback.EVENT.register(BongHud::render);
         InteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
@@ -78,6 +82,7 @@ public class BongClient implements ClientModInitializer {
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
         SoundRecipePlayer.bootstrap();
+        ZoneAtmosphereRenderer.bootstrap();
         EnvironmentEffectController.bootstrap();
         BongAnimCommand.register();
         BongHudCommand.register();
@@ -87,6 +92,7 @@ public class BongClient implements ClientModInitializer {
         BotanyHudBootstrap.register();
         WhaleRenderBootstrap.register();
         FaunaRenderBootstrap.register();
+        BongEntityRenderBootstrap.register();
         WhaleDebugCommand.register();
         SpiritNicheRevealBootstrap.register();
         SparringInviteScreenBootstrap.register();

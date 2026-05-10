@@ -1,0 +1,15 @@
+{
+  "zone_id": "wilderness",
+  "fog_color": "#C0C0B0",
+  "fog_density": 0.1,
+  "ambient_particle": {
+    "type": "cloud256_dust",
+    "tint": "#B0B0A0",
+    "density": 0.3,
+    "drift": [0.006, 0.0, 0.0],
+    "interval_ticks": 24
+  },
+  "sky_tint": "#D8D8D0",
+  "entry_transition_fx": "FADE",
+  "ambient_recipe_id": "ambient_wilderness"
+}

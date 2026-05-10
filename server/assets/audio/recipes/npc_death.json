@@ -1,0 +1,10 @@
+{
+  "id": "npc_death",
+  "layers": [
+    { "sound": "minecraft:entity.player.death", "volume": 0.45, "pitch": 0.6, "delay_ticks": 0 },
+    { "sound": "minecraft:block.soul_sand.break", "volume": 0.3, "pitch": 0.8, "delay_ticks": 2 }
+  ],
+  "priority": 65,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

@@ -70,6 +70,9 @@ import {
   ForgeStationPlaceRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
+  NpcDialogueChoiceRequestV1,
+  NpcInspectRequestV1,
+  NpcTradeRequestV1,
   QuickSlotBindRequestV1,
   SetMeridianTargetRequestV1,
   SkillBarBindRequestV1,
@@ -546,6 +549,9 @@ export const SCHEMA_REGISTRY = {
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
+  clientRequestNpcInspectV1: NpcInspectRequestV1,
+  clientRequestNpcDialogueChoiceV1: NpcDialogueChoiceRequestV1,
+  clientRequestNpcTradeV1: NpcTradeRequestV1,
   clientRequestSelfAntidoteV1: SelfAntidoteRequestV1,
   clientRequestZhenfaPlaceV1: ZhenfaPlaceRequestV1,
   clientRequestZhenfaTriggerV1: ZhenfaTriggerRequestV1,
@@ -944,6 +950,10 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
+  "client-request-npc-inspect-v1.json": SCHEMA_REGISTRY.clientRequestNpcInspectV1,
+  "client-request-npc-dialogue-choice-v1.json":
+    SCHEMA_REGISTRY.clientRequestNpcDialogueChoiceV1,
+  "client-request-npc-trade-v1.json": SCHEMA_REGISTRY.clientRequestNpcTradeV1,
   "client-request-self-antidote-v1.json":
     SCHEMA_REGISTRY.clientRequestSelfAntidoteV1,
   "client-request-zhenfa-place-v1.json":
