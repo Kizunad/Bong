@@ -213,6 +213,28 @@ public class AnimationLayerManagerTest {
         assertEquals(0, layersIn(stack).size());
     }
 
+    @Test
+    void stopByAnimationIdClearsAllMatchingChannels() {
+        AnimationStack stack = new AnimationStack();
+
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack, playerId, AnimationLayerManager.Channel.LOWER_BODY, WALK, 0, 0
+        ));
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack, playerId, AnimationLayerManager.Channel.UPPER_BODY, WALK, 0, 0
+        ));
+
+        assertTrue(AnimationLayerManager.stopAnimationOnStack(stack, playerId, WALK, 0));
+
+        assertNull(AnimationLayerManager.activeInChannel(
+            playerId, AnimationLayerManager.Channel.LOWER_BODY
+        ));
+        assertNull(AnimationLayerManager.activeInChannel(
+            playerId, AnimationLayerManager.Channel.UPPER_BODY
+        ));
+        assertFalse(BongAnimationPlayer.activeAnimations(playerId).contains(WALK));
+    }
+
     private static KeyframeAnimation buildMinimalAnim() {
         KeyframeAnimation.AnimationBuilder builder =
             new KeyframeAnimation.AnimationBuilder(AnimationFormat.UNKNOWN);

@@ -44,7 +44,7 @@ public final class AnimationLayerManager {
         }
     }
 
-    public static boolean playOnStack(
+    public static synchronized boolean playOnStack(
         AnimationStack stack,
         UUID playerId,
         Channel channel,
@@ -106,7 +106,7 @@ public final class AnimationLayerManager {
         return Channel.EXPRESSION;
     }
 
-    static boolean playOnStack(
+    static synchronized boolean playOnStack(
         AnimationStack stack,
         UUID playerId,
         Channel channel,
@@ -125,7 +125,7 @@ public final class AnimationLayerManager {
         );
     }
 
-    static boolean playOnStack(
+    static synchronized boolean playOnStack(
         AnimationStack stack,
         UUID playerId,
         Channel channel,
@@ -164,7 +164,7 @@ public final class AnimationLayerManager {
         return played;
     }
 
-    static boolean stopAnimationOnStack(
+    static synchronized boolean stopAnimationOnStack(
         AnimationStack stack,
         UUID playerId,
         Identifier animId,
@@ -174,20 +174,11 @@ public final class AnimationLayerManager {
             return false;
         }
         EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
-        Channel trackedChannel = null;
-        if (byChannel != null) {
-            for (Map.Entry<Channel, Identifier> entry : byChannel.entrySet()) {
-                if (animId.equals(entry.getValue())) {
-                    trackedChannel = entry.getKey();
-                    break;
-                }
-            }
-        }
         boolean stopped = BongAnimationPlayer.stopOnStack(
             stack, playerId, animId, Math.max(0, fadeOutTicks)
         );
-        if (stopped && trackedChannel != null) {
-            byChannel.remove(trackedChannel);
+        if (stopped && byChannel != null) {
+            byChannel.entrySet().removeIf(entry -> animId.equals(entry.getValue()));
             if (byChannel.isEmpty()) {
                 ACTIVE_BY_CHANNEL.remove(playerId);
             }
@@ -195,7 +186,7 @@ public final class AnimationLayerManager {
         return stopped;
     }
 
-    static boolean stopOnStack(
+    static synchronized boolean stopOnStack(
         AnimationStack stack,
         UUID playerId,
         Channel channel,
@@ -224,12 +215,12 @@ public final class AnimationLayerManager {
         return stopped;
     }
 
-    static Identifier activeInChannel(UUID playerId, Channel channel) {
+    static synchronized Identifier activeInChannel(UUID playerId, Channel channel) {
         EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
         return byChannel == null ? null : byChannel.get(channel);
     }
 
-    static void resetForTest() {
+    static synchronized void resetForTest() {
         ACTIVE_BY_CHANNEL.clear();
     }
 }
