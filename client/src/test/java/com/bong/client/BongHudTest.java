@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore;
+import com.bong.client.hud.ScreenHudVisibility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ public class BongHudTest {
         NarrationState.clear();
         ZoneState.clear();
         EventAlertState.clear();
+        BaomaiV3HudStateStore.clear();
     }
 
     @AfterEach
@@ -25,6 +28,7 @@ public class BongHudTest {
         NarrationState.clear();
         ZoneState.clear();
         EventAlertState.clear();
+        BaomaiV3HudStateStore.clear();
     }
 
     @Test
@@ -68,6 +72,23 @@ public class BongHudTest {
         int expectedWidth = surface.measureText(snapshot.toast().text());
         assertEquals((200 - expectedWidth) / 2, surface.drawTexts.get(0).x());
         assertEquals(25, surface.drawTexts.get(0).y());
+    }
+
+    @Test
+    public void productionPathRendersBaomaiV3HudOnlyInFullHudMode() {
+        BaomaiV3HudStateStore.recordBodyTranscendence(500, 10.0);
+        long nowMs = System.currentTimeMillis();
+        RecordingHudSurface surface = new RecordingHudSurface(320, 180);
+
+        BongHud.renderBaomaiV3HudForProduction(surface, nowMs, ScreenHudVisibility.FULL);
+
+        assertTrue(surface.drawTexts.stream().anyMatch(call -> call.text().contains("凡躯重铸 x10")));
+
+        RecordingHudSurface castOnlySurface = new RecordingHudSurface(320, 180);
+        BongHud.renderBaomaiV3HudForProduction(castOnlySurface, nowMs, ScreenHudVisibility.CAST_BAR_ONLY);
+
+        assertTrue(castOnlySurface.shadowTexts.isEmpty());
+        assertTrue(castOnlySurface.drawTexts.isEmpty());
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {

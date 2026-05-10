@@ -16,7 +16,9 @@ use crate::combat::components::{Lifecycle, SkillBarBindings, Wounds};
 use crate::combat::events::{ApplyStatusEffectIntent, AttackIntent, FIST_REACH};
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+};
 use crate::cultivation::meridian::severed::{
     MeridianSeveredEvent, MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
@@ -289,6 +291,9 @@ fn blood_burn_near_death_does_not_keep_active_multiplier() {
     let mut app = app();
     let caster = spawn_actor(&mut app, Realm::Induce, 100.0, 100.0, DVec3::ZERO);
     app.world_mut()
+        .entity_mut(caster)
+        .insert(Contamination::default());
+    app.world_mut()
         .get_mut::<Wounds>(caster)
         .unwrap()
         .health_current = 21.0;
@@ -302,6 +307,9 @@ fn blood_burn_near_death_does_not_keep_active_multiplier() {
             .unwrap()
             .ended_in_near_death
     );
+    let contamination = app.world().get::<Contamination>(caster).unwrap();
+    assert_eq!(contamination.entries.len(), 1);
+    assert_eq!(contamination.entries[0].color, ColorKind::Violent);
 }
 
 #[test]
@@ -344,10 +352,11 @@ fn disperse_void_burns_qi_max_and_inserts_transcendence() {
 }
 
 #[test]
-fn disperse_spirit_uses_half_void_profile() {
+fn disperse_spirit_uses_mortal_rejection_profile() {
     let profile = disperse_profile(Realm::Spirit, 0);
-    assert_eq!(profile.qi_max_loss_ratio, 0.40);
-    assert_eq!(profile.flow_rate_multiplier, 6.0);
+    assert_eq!(profile.qi_max_loss_ratio, 0.05);
+    assert_eq!(profile.flow_rate_multiplier, 1.0);
+    assert!(!profile.has_transcendence);
 }
 
 #[test]
@@ -360,7 +369,17 @@ fn disperse_lower_realm_only_punishes_pool() {
 }
 
 #[test]
-fn disperse_fails_on_any_severed_meridian_and_still_burns_five_percent() {
+fn disperse_lower_realm_does_not_emit_transcendence_particle() {
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Condense, 100.0, 100.0, DVec3::ZERO);
+
+    cast_disperse(app.world_mut(), caster, 0, None);
+
+    assert_eq!(app.world().resource::<Events<VfxEventRequest>>().len(), 0);
+}
+
+#[test]
+fn disperse_fails_on_any_severed_meridian_without_burning_pool() {
     let mut app = app();
     let caster = spawn_actor(&mut app, Realm::Void, 100.0, 100.0, DVec3::ZERO);
     sever(&mut app, caster, MeridianId::Lung);
@@ -370,7 +389,11 @@ fn disperse_fails_on_any_severed_meridian_and_still_burns_five_percent() {
             reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
         }
     );
-    assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_max, 95.0);
+    assert_eq!(
+        app.world().get::<Cultivation>(caster).unwrap().qi_max,
+        100.0
+    );
+    assert_eq!(app.world().resource::<Events<DispersedQiEvent>>().len(), 0);
 }
 
 #[test]
