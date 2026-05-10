@@ -95,6 +95,7 @@ pub const CH_WOLIU_V2_CAST: &str = "bong:woliu_v2/cast";
 pub const CH_WOLIU_V2_BACKFIRE: &str = "bong:woliu_v2/backfire";
 pub const CH_WOLIU_V2_TURBULENCE: &str = "bong:woliu_v2/turbulence";
 pub const CH_ZHENMAI_SKILL_EVENT: &str = "bong:zhenmai/skill_event";
+pub const CH_ZHENFA_V2_EVENT: &str = "bong:zhenfa/v2_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 pub const CH_ANQI_CARRIER_CHARGED: &str = "bong:combat/carrier_charged";
 pub const CH_ANQI_CARRIER_IMPACT: &str = "bong:combat/carrier_impact";
