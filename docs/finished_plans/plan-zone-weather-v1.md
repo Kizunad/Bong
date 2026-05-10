@@ -265,11 +265,12 @@ pub fn weather_environment_sync_system(/* WeatherLifecycleEvent → ZoneEnvironm
   - `fe70c2c81`（2026-05-10）`plan-zone-weather-v1: 接入天气事件 narration`
   - `5bb6969ae`（2026-05-10）`plan-zone-weather-v1: 收敛 review 反馈`
   - `d30b3d23e`（2026-05-10）`plan-zone-weather-v1: 修复 zone roll 与视野 profile`
+  - `df24209c9`（2026-05-10）`plan-zone-weather-v1: 收敛第二轮 review 反馈`
 - 测试结果：
   - `cd server && cargo fmt --check` ✅
   - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-  - `cd server && cargo test` ✅ 3607 passed
-  - `cd server && cargo test weather -- --nocapture` ✅ 84 passed
+  - `cd server && cargo test` ✅ 3609 passed
+  - `cd server && cargo test weather -- --nocapture` ✅ 86 passed
   - `cd agent && npm run build` ✅
   - `cd agent && npm test -w @bong/tiandao` ✅ 46 files / 324 tests
   - `cd agent && npm test -w @bong/tiandao -- weather-narration` ✅ 1 file / 3 tests
@@ -280,6 +281,8 @@ pub fn weather_environment_sync_system(/* WeatherLifecycleEvent → ZoneEnvironm
   - client：本 plan 未新增 wire schema；client 继续消费 `plan-zone-environment-v1` 已归档的 `EnvironmentEffect` 渲染协议。
 - 遗留 / 后续：
   - `plan-terrain-tribulation-scorch-v1` 仍是 skeleton；本 PR 只预置 scorch zone profile id 和系统 hook，真实 terrain geometry、zone 写入 `server/zones.json` / worldgen blueprint、入场 smoke test 留给该 plan 升 active 后完成。
+  - §0 "profile 不破坏全局期望" 的全 zone 归一化 / cap 未在 v1 里落成：当前实现只做 per-zone probability clamp 与显式 profile 覆写，跨 zone 重分配策略留 v2，避免在本 PR 里改写天气生成语义。
+  - `style_modifier::for_zone_weather` 目前作为唯一暴烈色/金属甲倍数 helper 暴露并有单测，真实 lightning 命中伤害 / qi_physics caller 留给 `plan-tribulation-v1` 或后续 qi_physics 接线。
   - profile 运行时可改（§7 第 1 项，v2）
   - vanilla rain renderer mixin（§7 第 4 项，v2）
   - zone-physics 拆 plan（§7 第 3 项，长期）
