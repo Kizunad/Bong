@@ -66,7 +66,7 @@ public final class LoadingOverlay {
             int x = cx + p.x();
             int y = cy + p.y();
             int r = p.radius();
-            context.fill(x - r, y - r, x + r, y + r, ScreenTransitionOverlay.withAlpha(INK_COLOR, p.alpha()));
+            context.fill(x - r, y - r, x + r, y + r, withAlpha(INK_COLOR, p.alpha()));
         }
         context.drawCenteredTextWithShadow(client.textRenderer, Text.literal(snapshot.message()), cx, cy + 28, TEXT_COLOR);
         int buttonY = cy + 46;
@@ -90,6 +90,11 @@ public final class LoadingOverlay {
             out.add(new Particle(x, y, 2 + (i % 2), alpha));
         }
         return List.copyOf(out);
+    }
+
+    private static int withAlpha(int rgbOrArgb, int alpha) {
+        int clamped = Math.max(0, Math.min(255, alpha));
+        return (clamped << 24) | (rgbOrArgb & 0x00FFFFFF);
     }
 
     private static List<String> buttonLabels(Phase phase) {

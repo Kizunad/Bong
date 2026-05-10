@@ -21,11 +21,25 @@ class ConnectionStatusIndicatorTest {
 
     @Test
     void connection_indicator_green_on_connect() {
-        ConnectionStatusIndicator.Snapshot snapshot = ConnectionStatusIndicator.evaluate(true, 42L, 0L, 100L);
+        ConnectionStatusIndicator.Snapshot snapshot = ConnectionStatusIndicator.evaluate(true, 37L, 0L, 100L);
 
         assertEquals(ConnectionStatusIndicator.Status.GREEN, snapshot.status());
         assertEquals(ConnectionStatusIndicator.GREEN, snapshot.color());
-        assertTrue(snapshot.tooltip().contains("42ms"));
+        assertTrue(snapshot.tooltip().contains("37ms"));
+    }
+
+    @Test
+    void connection_indicator_does_not_fake_unknown_latency() {
+        ConnectionStatusIndicator.Snapshot snapshot = ConnectionStatusIndicator.evaluate(
+            true,
+            ConnectionStatusIndicator.UNKNOWN_LATENCY_MS,
+            0L,
+            100L
+        );
+
+        assertEquals(ConnectionStatusIndicator.Status.GREEN, snapshot.status());
+        assertTrue(snapshot.tooltip().contains("延迟 --"));
+        assertEquals(ConnectionStatusIndicator.UNKNOWN_LATENCY_MS, snapshot.latencyMs());
     }
 
     @Test

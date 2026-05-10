@@ -12,7 +12,6 @@
     "MixinFogPerZone",
     "MixinGameRenderer",
     "MixinHeldItemRenderer",
-    "MixinElementInputLock",
     "MixinInGameHudRealmVignette",
     "MixinKeyboardSkillKeys",
     "MixinInGameHud",

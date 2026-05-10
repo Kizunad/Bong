@@ -1,8 +1,8 @@
 package com.bong.client.mixin;
 
 import com.bong.client.ui.ScreenTransitionController;
+import com.bong.client.ui.TransitionInputPolicy;
 import net.minecraft.client.gui.screen.Screen;
-import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -12,12 +12,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public class MixinScreenInputLock {
     @Inject(method = "keyPressed(III)Z", at = @At("HEAD"), cancellable = true)
     private void bong$lockKeysDuringTransition(int keyCode, int scanCode, int modifiers, CallbackInfoReturnable<Boolean> cir) {
-        if (!ScreenTransitionController.inputLocked()) {
+        TransitionInputPolicy.KeyDecision decision =
+            TransitionInputPolicy.keyDecision(ScreenTransitionController.inputLocked(), keyCode, org.lwjgl.glfw.GLFW.GLFW_PRESS);
+        if (decision == TransitionInputPolicy.KeyDecision.CANCEL_AND_CLOSE) {
+            ScreenTransitionController.cancelAndClose(net.minecraft.client.MinecraftClient.getInstance());
+            cir.setReturnValue(true);
             return;
         }
-        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
-            ScreenTransitionController.cancelAndClose(net.minecraft.client.MinecraftClient.getInstance());
+        if (decision == TransitionInputPolicy.KeyDecision.CONSUME) {
+            cir.setReturnValue(true);
         }
-        cir.setReturnValue(true);
     }
 }

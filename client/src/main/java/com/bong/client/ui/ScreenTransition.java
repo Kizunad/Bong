@@ -19,11 +19,12 @@ public final class ScreenTransition {
         Easing easing,
         Runnable callback
     ) {
+        Type normalizedType = type == null ? Type.NONE : type;
         TransitionHandle handle = new TransitionHandle(
             oldScreen,
             newScreen,
-            type == null ? Type.NONE : type,
-            clampDuration(type, durationMs),
+            normalizedType,
+            clampDuration(normalizedType, durationMs),
             easing == null ? Easing.EASE_OUT_CUBIC : easing,
             System.currentTimeMillis(),
             callback

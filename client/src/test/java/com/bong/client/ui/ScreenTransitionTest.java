@@ -4,9 +4,12 @@ import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.forge.ForgeScreen;
 import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.InspectScreen;
+import com.bong.client.inventory.model.InventoryModel;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.text.Text;
+import org.lwjgl.glfw.GLFW;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -111,6 +114,20 @@ class ScreenTransitionTest {
     }
 
     @Test
+    void vanilla_inventory_is_rerouted_to_inspect_transition_surface() {
+        ScreenTransitionRegistry.bootstrapDefaults();
+
+        assertTrue(ScreenTransitionRegistry.get(InventoryScreen.class).isEmpty());
+        TransitionConfig.TransitionSpec spec = ScreenTransitionRegistry.preview(
+            null,
+            new InspectScreen(InventoryModel.empty())
+        );
+
+        assertEquals(ScreenTransition.Type.SLIDE_UP, spec.type());
+        assertEquals(300, spec.durationMs());
+    }
+
+    @Test
     void esc_menu_fastest() {
         ScreenTransitionRegistry.bootstrapDefaults();
 
@@ -210,7 +227,7 @@ class ScreenTransitionTest {
     }
 
     @Test
-    void esc_cancels_transition_contract_is_controller_owned() {
+    void input_policy_consumes_mouse_and_keeps_esc_escape_hatch() {
         ScreenTransition.Frame active = ScreenTransition.sample(
             ScreenTransition.Type.FADE,
             200,
@@ -222,6 +239,15 @@ class ScreenTransitionTest {
         );
 
         assertTrue(active.inputLocked());
+        assertTrue(TransitionInputPolicy.shouldBlockMouse(active.inputLocked()));
+        assertEquals(
+            TransitionInputPolicy.KeyDecision.CANCEL_AND_CLOSE,
+            TransitionInputPolicy.keyDecision(active.inputLocked(), GLFW.GLFW_KEY_ESCAPE, GLFW.GLFW_PRESS)
+        );
+        assertEquals(
+            TransitionInputPolicy.KeyDecision.CONSUME,
+            TransitionInputPolicy.keyDecision(active.inputLocked(), GLFW.GLFW_KEY_A, GLFW.GLFW_PRESS)
+        );
     }
 
     private static class DummyScreen extends Screen {

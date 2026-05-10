@@ -18,7 +18,6 @@ import com.bong.client.social.SparringInviteScreen;
 import com.bong.client.social.TradeOfferScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 
 import java.util.Map;
 import java.util.Optional;
@@ -38,9 +37,6 @@ public final class ScreenTransitionRegistry {
         }
         defaultsBootstrapped = true;
 
-        register(InventoryScreen.class, TransitionConfig.of(
-            InventoryScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
-        ));
         register(InspectScreen.class, TransitionConfig.of(
             InspectScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
         ));
@@ -176,6 +172,10 @@ public final class ScreenTransitionRegistry {
         return getOrDefault(newScreen.getClass()).openSpec();
     }
 
+    public static TransitionConfig.TransitionSpec preview(Screen oldScreen, Screen newScreen) {
+        return resolve(oldScreen, newScreen);
+    }
+
     static void resetForTests() {
         CONFIGS.clear();
         CHAINS.clear();
@@ -196,6 +196,7 @@ public final class ScreenTransitionRegistry {
     }
 
     private static TransitionConfig.TransitionSpec findChain(Class<?> from, Class<?> to) {
+        // Chain overrides intentionally match by class hierarchy, not by screen instance identity.
         Class<?> fromCursor = from;
         while (fromCursor != null && Screen.class.isAssignableFrom(fromCursor)) {
             Class<?> toCursor = to;

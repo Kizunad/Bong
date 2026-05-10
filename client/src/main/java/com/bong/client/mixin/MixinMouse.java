@@ -3,6 +3,8 @@ package com.bong.client.mixin;
 import com.bong.client.botany.BotanyDragState;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
+import com.bong.client.ui.ScreenTransitionController;
+import com.bong.client.ui.TransitionInputPolicy;
 import net.minecraft.client.Mouse;
 import net.minecraft.client.MinecraftClient;
 import org.lwjgl.glfw.GLFW;
@@ -26,6 +28,10 @@ public class MixinMouse {
         cancellable = true
     )
     private void bong$captureHarvestPanelDrag(long window, int button, int action, int mods, CallbackInfo ci) {
+        if (TransitionInputPolicy.shouldBlockMouse(ScreenTransitionController.inputLocked())) {
+            ci.cancel();
+            return;
+        }
         if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             return;
         }

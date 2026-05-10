@@ -14,6 +14,8 @@ public class ScreenSetMixin {
     @Inject(method = "setScreen", at = @At("HEAD"), cancellable = true)
     private void bong$playScreenTransition(Screen screen, CallbackInfo ci) {
         if (screen instanceof InventoryScreen) {
+            // Vanilla inventory is rerouted by MixinMinecraftClient to Bong InspectScreen.
+            // The actual backpack transition is therefore attached to InspectScreen.
             return;
         }
         if (ScreenTransitionController.interceptSetScreen((MinecraftClient) (Object) this, screen)) {

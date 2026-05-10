@@ -1,8 +1,11 @@
 package com.bong.client.ui;
 
 import com.bong.client.hud.BongToast;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.PlayerListEntry;
 
 public final class ClientConnectionStatusStore {
+    private static final Object LOCK = new Object();
     private static volatile boolean observed;
     private static volatile boolean connected;
     private static volatile long connectedAtMs;
@@ -14,39 +17,47 @@ public final class ClientConnectionStatusStore {
     }
 
     public static void markConnected(long nowMs) {
-        long now = Math.max(0L, nowMs);
-        observed = true;
-        connected = true;
-        connectedAtMs = now;
-        lastPayloadAtMs = now;
-        disconnectedAtMs = 0L;
+        synchronized (LOCK) {
+            long now = Math.max(0L, nowMs);
+            observed = true;
+            connected = true;
+            connectedAtMs = now;
+            lastPayloadAtMs = now;
+            disconnectedAtMs = 0L;
+        }
     }
 
     public static void markPayloadReceived(long nowMs) {
-        long now = Math.max(0L, nowMs);
-        observed = true;
-        connected = true;
-        if (connectedAtMs == 0L) {
-            connectedAtMs = now;
+        synchronized (LOCK) {
+            long now = Math.max(0L, nowMs);
+            observed = true;
+            connected = true;
+            if (connectedAtMs == 0L) {
+                connectedAtMs = now;
+            }
+            lastPayloadAtMs = now;
+            disconnectedAtMs = 0L;
         }
-        lastPayloadAtMs = now;
-        disconnectedAtMs = 0L;
     }
 
     public static void markDisconnected(long nowMs) {
-        observed = true;
-        connected = false;
-        disconnectedAtMs = Math.max(0L, nowMs);
+        synchronized (LOCK) {
+            observed = true;
+            connected = false;
+            disconnectedAtMs = Math.max(0L, nowMs);
+        }
     }
 
     public static ConnectionStatusIndicator.Snapshot snapshot(long nowMs) {
-        if (!observed) {
-            return ConnectionStatusIndicator.Snapshot.hidden();
+        synchronized (LOCK) {
+            if (!observed) {
+                return ConnectionStatusIndicator.Snapshot.hidden();
+            }
+            long now = Math.max(0L, nowMs);
+            long lastAge = lastPayloadAtMs == 0L ? Long.MAX_VALUE : Math.max(0L, now - lastPayloadAtMs);
+            long disconnectedDuration = connected ? 0L : Math.max(0L, now - disconnectedAtMs);
+            return ConnectionStatusIndicator.evaluate(connected, currentNetworkLatencyMs(), disconnectedDuration, lastAge);
         }
-        long now = Math.max(0L, nowMs);
-        long lastAge = lastPayloadAtMs == 0L ? Long.MAX_VALUE : Math.max(0L, now - lastPayloadAtMs);
-        long disconnectedDuration = connected ? 0L : Math.max(0L, now - disconnectedAtMs);
-        return ConnectionStatusIndicator.evaluate(connected, 42L, disconnectedDuration, lastAge);
     }
 
     public static void tick(long nowMs) {
@@ -64,11 +75,22 @@ public final class ClientConnectionStatusStore {
     }
 
     public static void resetForTests() {
-        observed = false;
-        connected = false;
-        connectedAtMs = 0L;
-        lastPayloadAtMs = 0L;
-        disconnectedAtMs = 0L;
-        lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
+        synchronized (LOCK) {
+            observed = false;
+            connected = false;
+            connectedAtMs = 0L;
+            lastPayloadAtMs = 0L;
+            disconnectedAtMs = 0L;
+            lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
+        }
+    }
+
+    private static long currentNetworkLatencyMs() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null || client.getNetworkHandler() == null) {
+            return ConnectionStatusIndicator.UNKNOWN_LATENCY_MS;
+        }
+        PlayerListEntry entry = client.getNetworkHandler().getPlayerListEntry(client.player.getUuid());
+        return entry == null ? ConnectionStatusIndicator.UNKNOWN_LATENCY_MS : Math.max(0, entry.getLatency());
     }
 }
