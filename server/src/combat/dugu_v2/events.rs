@@ -63,6 +63,7 @@ pub struct EclipseNeedleEvent {
     pub qi_max_loss: f32,
     pub permanent_decay_rate_per_min: f32,
     pub returned_zone_qi: f32,
+    pub reveal_probability: f32,
     pub tick: u64,
     pub visual: DuguSkillVisual,
 }
@@ -83,9 +84,11 @@ pub struct SelfCureProgressEvent {
 pub struct PenetrateChainEvent {
     pub caster: Entity,
     pub target: Entity,
+    pub taint_tier: TaintTier,
     pub multiplier: f32,
     pub affected_targets: u32,
     pub permanent_decay_rate_per_min: f32,
+    pub reveal_probability: f32,
     pub tick: u64,
     pub visual: DuguSkillVisual,
 }

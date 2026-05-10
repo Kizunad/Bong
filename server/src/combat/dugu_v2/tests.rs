@@ -7,8 +7,8 @@ use crate::combat::dugu_v2::physics::{
     shroud_spec,
 };
 use crate::combat::dugu_v2::skills::{
-    resolve_dugu_v2_skill, DUGU_ECLIPSE_SKILL_ID, DUGU_PENETRATE_SKILL_ID, DUGU_REVERSE_SKILL_ID,
-    DUGU_SELF_CURE_SKILL_ID, DUGU_SHROUD_SKILL_ID,
+    declare_meridian_dependencies, resolve_dugu_v2_skill, DUGU_ECLIPSE_SKILL_ID,
+    DUGU_PENETRATE_SKILL_ID, DUGU_REVERSE_SKILL_ID, DUGU_SELF_CURE_SKILL_ID, DUGU_SHROUD_SKILL_ID,
 };
 use crate::combat::dugu_v2::state::{DuguState, ShroudActive, TaintMark};
 use crate::combat::dugu_v2::{
@@ -16,8 +16,11 @@ use crate::combat::dugu_v2::{
     SelfCureProgressEvent, ShroudActivatedEvent,
 };
 use crate::combat::CombatClock;
-use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
+use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::meridian::severed::{
+    MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
+};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 
@@ -73,6 +76,36 @@ fn registers_five_dugu_v2_skills() {
         assert!(registry.lookup(id).is_some(), "{id} should be registered");
     }
     assert_eq!(DuguSkillId::Eclipse.as_str(), "dugu.eclipse");
+}
+
+#[test]
+fn declared_liver_dependency_blocks_all_dugu_v2_skills_when_severed() {
+    let mut app = setup_app();
+    let mut dependencies = SkillMeridianDependencies::default();
+    declare_meridian_dependencies(&mut dependencies);
+    app.insert_resource(dependencies);
+
+    let caster = actor(&mut app, Realm::Spirit, 500.0, 500.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    let mut severed = MeridianSeveredPermanent::default();
+    severed.insert(MeridianId::Liver, SeveredSource::DuguDistortion, 1);
+    app.world_mut().entity_mut(caster).insert(severed);
+
+    for (skill, target) in [
+        (DuguSkillId::Eclipse, Some(target)),
+        (DuguSkillId::SelfCure, None),
+        (DuguSkillId::Penetrate, Some(target)),
+        (DuguSkillId::Shroud, None),
+        (DuguSkillId::Reverse, Some(target)),
+    ] {
+        assert_eq!(
+            resolve_dugu_v2_skill(app.world_mut(), caster, 0, target, skill),
+            CastResult::Rejected {
+                reason: CastRejectReason::MeridianSevered(Some(MeridianId::Liver))
+            },
+            "{skill:?} should respect DuguDistortion liver severing"
+        );
+    }
 }
 
 #[test]

@@ -4,8 +4,11 @@ use crate::combat::components::{
     BodyPart, CastSource, Casting, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
 use crate::combat::CombatClock;
-use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
+use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::meridian::severed::{
+    check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
+};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 use crate::network::cast_emit::current_unix_millis;
@@ -27,6 +30,7 @@ pub const DUGU_SELF_CURE_SKILL_ID: &str = "dugu.self_cure";
 pub const DUGU_PENETRATE_SKILL_ID: &str = "dugu.penetrate";
 pub const DUGU_SHROUD_SKILL_ID: &str = "dugu.shroud";
 pub const DUGU_REVERSE_SKILL_ID: &str = "dugu.reverse";
+pub const DUGU_REQUIRED_MERIDIANS: [MeridianId; 1] = [MeridianId::Liver];
 
 const TEMP_TAINT_DURATION_TICKS: u64 = 24 * 60 * 60 * TICKS_PER_SECOND;
 const SELF_CURE_HOURS_PER_CAST: f32 = 1.0;
@@ -39,6 +43,18 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(DUGU_PENETRATE_SKILL_ID, cast_penetrate);
     registry.register(DUGU_SHROUD_SKILL_ID, cast_shroud);
     registry.register(DUGU_REVERSE_SKILL_ID, cast_reverse);
+}
+
+pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencies) {
+    for skill_id in [
+        DUGU_ECLIPSE_SKILL_ID,
+        DUGU_SELF_CURE_SKILL_ID,
+        DUGU_PENETRATE_SKILL_ID,
+        DUGU_SHROUD_SKILL_ID,
+        DUGU_REVERSE_SKILL_ID,
+    ] {
+        dependencies.declare(skill_id, DUGU_REQUIRED_MERIDIANS.to_vec());
+    }
 }
 
 pub fn cast_eclipse(
@@ -103,6 +119,9 @@ pub fn resolve_dugu_v2_skill(
     let spec = skill_spec(skill);
     if cultivation.qi_current + f64::EPSILON < spec.qi_cost {
         return rejected(CastRejectReason::QiInsufficient);
+    }
+    if let Err(reason) = check_static_meridian_dependencies(world, caster, skill.as_str()) {
+        return rejected(reason);
     }
 
     let result = match skill {
@@ -204,7 +223,7 @@ fn apply_eclipse(
         );
     }
 
-    emit_reveal_if_needed(world, caster, target, now_tick);
+    let reveal_probability = emit_reveal_if_needed(world, caster, target, now_tick);
     send_event_if_present(
         world,
         EclipseNeedleEvent {
@@ -222,6 +241,7 @@ fn apply_eclipse(
             },
             permanent_decay_rate_per_min: effect.permanent_decay_rate_per_min,
             returned_zone_qi: collision.returned_zone_qi,
+            reveal_probability,
             tick: now_tick,
             visual: visual_for(DuguSkillId::Eclipse),
         },
@@ -316,20 +336,26 @@ fn apply_penetrate(
             }
         }
     }
+    let target_tier = world
+        .get::<TaintMark>(target)
+        .map(|mark| mark.tier)
+        .unwrap_or(mark.tier);
+    let reveal_probability = emit_reveal_if_needed(world, caster, target, now_tick);
     send_event_if_present(
         world,
         PenetrateChainEvent {
             caster,
             target,
+            taint_tier: target_tier,
             multiplier: spec.multiplier,
             affected_targets: affected_count,
             permanent_decay_rate_per_min: mark.permanent_decay_rate_per_min
                 + spec.extra_permanent_decay_rate_per_min,
+            reveal_probability,
             tick: now_tick,
             visual: visual_for(DuguSkillId::Penetrate),
         },
     );
-    emit_reveal_if_needed(world, caster, target, now_tick);
     Ok(())
 }
 
@@ -504,12 +530,12 @@ fn emit_reveal_if_needed(
     caster: Entity,
     target: Entity,
     now_tick: u64,
-) {
+) -> f32 {
     let Some(caster_cultivation) = world.get::<Cultivation>(caster) else {
-        return;
+        return 0.0;
     };
     let Some(target_cultivation) = world.get::<Cultivation>(target) else {
-        return;
+        return 0.0;
     };
     let shroud = world
         .get::<ShroudActive>(caster)
@@ -523,11 +549,11 @@ fn emit_reveal_if_needed(
         target_cultivation.realm,
     );
     if probability <= 0.0 {
-        return;
+        return probability;
     }
     let roll = deterministic_roll(caster, target, now_tick);
     if roll > probability {
-        return;
+        return probability;
     }
     let at_position = world
         .get::<Position>(target)
@@ -546,6 +572,7 @@ fn emit_reveal_if_needed(
             at_tick: now_tick,
         },
     );
+    probability
 }
 
 fn affected_taint_targets(
@@ -638,6 +665,21 @@ fn distance_between(world: &bevy_ecs::world::World, a: Entity, b: Entity) -> f64
         (Some(a), Some(b)) => a.get().distance(b.get()),
         _ => 1.0,
     }
+}
+
+fn check_static_meridian_dependencies(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+) -> Result<(), CastRejectReason> {
+    let Some(table) = world.get_resource::<SkillMeridianDependencies>() else {
+        return Ok(());
+    };
+    check_meridian_dependencies(
+        table.lookup(skill_id),
+        world.get::<MeridianSeveredPermanent>(caster),
+    )
+    .map_err(|id| CastRejectReason::MeridianSevered(Some(id)))
 }
 
 fn now_tick(world: &bevy_ecs::world::World) -> u64 {

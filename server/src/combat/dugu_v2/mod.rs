@@ -8,7 +8,7 @@ pub use events::{
     DuguSelfRevealedEvent, EclipseNeedleEvent, PenetrateChainEvent, PermanentQiMaxDecayApplied,
     ReverseTriggeredEvent, SelfCureProgressEvent, ShroudActivatedEvent,
 };
-pub use skills::register_skills;
+pub use skills::{declare_meridian_dependencies, register_skills};
 
 use valence::prelude::{App, IntoSystemConfigs, Update};
 

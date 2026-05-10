@@ -2,12 +2,10 @@ use valence::prelude::{EventReader, Query, Res, UniqueId};
 
 use crate::combat::dugu_v2::{
     events::{DuguSkillVisual, TaintTier},
-    physics::reveal_probability,
     EclipseNeedleEvent, PenetrateChainEvent, ReverseTriggeredEvent, SelfCureProgressEvent,
     ShroudActivatedEvent,
 };
 use crate::combat::woliu::entity_wire_id;
-use crate::cultivation::components::{Cultivation, Realm};
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
 use crate::schema::dugu_v2::{
@@ -19,15 +17,8 @@ pub fn publish_dugu_v2_eclipse_events(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<EclipseNeedleEvent>,
     unique_ids: Query<&UniqueId>,
-    cultivations: Query<&Cultivation>,
 ) {
     for event in events.read() {
-        let reveal = reveal_for(
-            &cultivations,
-            event.caster,
-            Some(event.target),
-            event.target_realm,
-        );
         let payload = cast_payload(
             entity_wire_id(unique_ids.get(event.caster).ok(), event.caster),
             Some(entity_wire_id(
@@ -42,7 +33,7 @@ pub fn publish_dugu_v2_eclipse_events(
             event.qi_max_loss,
             event.permanent_decay_rate_per_min,
             event.returned_zone_qi,
-            reveal,
+            event.reveal_probability,
             event.visual,
         );
         let _ = redis.tx_outbound.send(RedisOutbound::DuguV2Cast(payload));
@@ -53,13 +44,8 @@ pub fn publish_dugu_v2_penetrate_events(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<PenetrateChainEvent>,
     unique_ids: Query<&UniqueId>,
-    cultivations: Query<&Cultivation>,
 ) {
     for event in events.read() {
-        let target_realm = cultivations
-            .get(event.target)
-            .map(|cultivation| cultivation.realm)
-            .unwrap_or(Realm::Awaken);
         let payload = cast_payload(
             entity_wire_id(unique_ids.get(event.caster).ok(), event.caster),
             Some(entity_wire_id(
@@ -68,18 +54,13 @@ pub fn publish_dugu_v2_penetrate_events(
             )),
             DuguV2SkillIdV1::Penetrate,
             event.tick,
-            Some(DuguTaintTierV1::Permanent),
+            Some(taint_tier_payload(event.taint_tier)),
             0.0,
             0.0,
             0.0,
             event.permanent_decay_rate_per_min,
             0.0,
-            reveal_for(
-                &cultivations,
-                event.caster,
-                Some(event.target),
-                target_realm,
-            ),
+            event.reveal_probability,
             event.visual,
         );
         let _ = redis.tx_outbound.send(RedisOutbound::DuguV2Cast(payload));
@@ -153,20 +134,6 @@ pub fn publish_dugu_v2_reverse_events(
     }
 }
 
-fn reveal_for(
-    cultivations: &Query<&Cultivation>,
-    caster: valence::prelude::Entity,
-    target: Option<valence::prelude::Entity>,
-    target_realm: Realm,
-) -> f32 {
-    let caster_realm = cultivations
-        .get(caster)
-        .map(|cultivation| cultivation.realm)
-        .unwrap_or(Realm::Awaken);
-    let distance = target.map(|_| 1.0).unwrap_or(20.0);
-    reveal_probability(caster_realm, 0.0, distance, target_realm)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn cast_payload(
     caster: String,
@@ -206,5 +173,114 @@ fn taint_tier_payload(tier: TaintTier) -> DuguTaintTierV1 {
         TaintTier::Immediate => DuguTaintTierV1::Immediate,
         TaintTier::Temporary => DuguTaintTierV1::Temporary,
         TaintTier::Permanent => DuguTaintTierV1::Permanent,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use valence::prelude::{App, Update};
+
+    use crate::combat::dugu_v2::events::{DuguSkillVisual, TaintTier};
+    use crate::cultivation::components::Realm;
+    use crate::network::redis_bridge::RedisOutbound;
+
+    fn app_with_bridge() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<EclipseNeedleEvent>();
+        app.add_event::<PenetrateChainEvent>();
+        app.add_systems(
+            Update,
+            (
+                publish_dugu_v2_eclipse_events,
+                publish_dugu_v2_penetrate_events,
+            ),
+        );
+        (app, rx_outbound)
+    }
+
+    fn visual() -> DuguSkillVisual {
+        DuguSkillVisual {
+            animation_id: "bong:dugu_needle_throw",
+            particle_id: "bong:dugu_taint_pulse",
+            sound_recipe_id: "dugu_needle_hiss",
+            hud_hint: "蚀针",
+            icon_texture: "bong:textures/gui/skill/dugu_eclipse.png",
+        }
+    }
+
+    #[test]
+    fn eclipse_payload_uses_resolved_reveal_probability() {
+        let (mut app, rx_outbound) = app_with_bridge();
+        let caster = app.world_mut().spawn_empty().id();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(EclipseNeedleEvent {
+            caster,
+            target,
+            target_realm: Realm::Solidify,
+            tier: TaintTier::Temporary,
+            injected_qi: 25.0,
+            hp_loss: 15.0,
+            qi_loss: 25.0,
+            qi_max_loss: 3.0,
+            permanent_decay_rate_per_min: 0.0,
+            returned_zone_qi: 24.75,
+            reveal_probability: 0.0042,
+            tick: 42,
+            visual: visual(),
+        });
+
+        app.update();
+
+        match rx_outbound
+            .try_recv()
+            .expect("dugu eclipse payload should publish")
+        {
+            RedisOutbound::DuguV2Cast(payload) => {
+                assert_eq!(payload.skill, DuguV2SkillIdV1::Eclipse);
+                assert_eq!(payload.taint_tier, Some(DuguTaintTierV1::Temporary));
+                assert!((payload.reveal_probability - 0.0042).abs() < f32::EPSILON);
+            }
+            other => panic!("expected dugu v2 cast outbound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn penetrate_payload_preserves_event_taint_tier() {
+        let (mut app, rx_outbound) = app_with_bridge();
+        let caster = app.world_mut().spawn_empty().id();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(PenetrateChainEvent {
+            caster,
+            target,
+            taint_tier: TaintTier::Temporary,
+            multiplier: 2.5,
+            affected_targets: 1,
+            permanent_decay_rate_per_min: 0.0,
+            reveal_probability: 0.007,
+            tick: 99,
+            visual: visual(),
+        });
+
+        app.update();
+
+        match rx_outbound
+            .try_recv()
+            .expect("dugu penetrate payload should publish")
+        {
+            RedisOutbound::DuguV2Cast(payload) => {
+                assert_eq!(payload.skill, DuguV2SkillIdV1::Penetrate);
+                assert_eq!(payload.taint_tier, Some(DuguTaintTierV1::Temporary));
+                assert!((payload.reveal_probability - 0.007).abs() < f32::EPSILON);
+            }
+            other => panic!("expected dugu v2 cast outbound, got {other:?}"),
+        }
     }
 }
