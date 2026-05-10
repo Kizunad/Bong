@@ -14,6 +14,10 @@ public final class BotanyPlantV2Entity extends Entity {
         BotanyPlantV2Entity.class,
         TrackedDataHandlerRegistry.STRING
     );
+    private static final TrackedData<String> GROWTH_STAGE = DataTracker.registerData(
+        BotanyPlantV2Entity.class,
+        TrackedDataHandlerRegistry.STRING
+    );
 
     public BotanyPlantV2Entity(EntityType<? extends BotanyPlantV2Entity> type, World world) {
         super(type, world);
@@ -28,18 +32,30 @@ public final class BotanyPlantV2Entity extends Entity {
         dataTracker.set(PLANT_ID, plantId == null ? "" : plantId.trim());
     }
 
+    public PlantGrowthStage growthStage() {
+        return PlantGrowthStage.fromWireName(dataTracker.get(GROWTH_STAGE));
+    }
+
+    public void setGrowthStage(PlantGrowthStage stage) {
+        PlantGrowthStage safeStage = stage == null ? PlantGrowthStage.MATURE : stage;
+        dataTracker.set(GROWTH_STAGE, safeStage.wireName());
+    }
+
     @Override
     protected void initDataTracker() {
         dataTracker.startTracking(PLANT_ID, "");
+        dataTracker.startTracking(GROWTH_STAGE, PlantGrowthStage.MATURE.wireName());
     }
 
     @Override
     protected void readCustomDataFromNbt(NbtCompound nbt) {
         setPlantId(nbt.getString("PlantId"));
+        setGrowthStage(PlantGrowthStage.fromWireName(nbt.getString("GrowthStage")));
     }
 
     @Override
     protected void writeCustomDataToNbt(NbtCompound nbt) {
         nbt.putString("PlantId", plantId());
+        nbt.putString("GrowthStage", growthStage().wireName());
     }
 }

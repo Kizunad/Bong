@@ -30,6 +30,14 @@ public final class VfxBootstrap {
         registry.register(ReleaseLightningVfx.EVENT_ID,          new ReleaseLightningVfx());
         registry.register(ExhaustedGreyMistVfx.EVENT_ID,         new ExhaustedGreyMistVfx());
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
+        registry.register(BotanyAuraPlayer.EVENT_ID,             new BotanyAuraPlayer());
+        registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     new BotanyHarvestBurstPlayer());
+        LingtianPlotRunePlayer lingtianPlotRunes = new LingtianPlotRunePlayer();
+        registry.register(LingtianPlotRunePlayer.TILL,           lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.PLANT,          lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.REPLENISH,      lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.HARVEST,        lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
         registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
         registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);
