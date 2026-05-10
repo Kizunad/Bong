@@ -125,6 +125,6 @@
   - server targeted：`CARGO_BUILD_JOBS=1 cargo test -j 1 combat::woliu_v2` ✅ 144 passed；`cargo test loads_default_audio_recipes` ✅ 1 passed；`cargo test woliu_v3_techniques_require_breath_and_heart_meridians` ✅ 1 passed。
   - agent：`npm run build` ✅；`npm run generate:check -w @bong/schema` ✅ 338 generated schema files fresh；`npm test -w @bong/schema` ✅ 358 passed；`npm test -w @bong/tiandao -- woliu_v2_runtime` ✅ 3 passed。
   - client：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` ✅ BUILD SUCCESSFUL。
-  - animation render：`/tmp/woliu_v3_anim_vacuum_palm/woliu_vacuum_palm_grid.png`、`/tmp/woliu_v3_anim_vortex_shield/woliu_vortex_shield_grid.png`、`/tmp/woliu_v3_anim_vacuum_lock/woliu_vacuum_lock_grid.png`、`/tmp/woliu_v3_anim_vortex_resonance/woliu_vortex_resonance_grid.png`、`/tmp/woliu_v3_anim_turbulence_burst/woliu_turbulence_burst_grid.png`。
+  - animation render：已对 `woliu_vacuum_palm.json`、`woliu_vortex_shield.json`、`woliu_vacuum_lock.json`、`woliu_vortex_resonance.json`、`woliu_turbulence_burst.json` 运行本地渲染 harness；grid 预览为本地临时校验产物，不写入仓库归档。
 - **跨仓库核验**：server `WoliuSkillId::{VacuumPalm,VortexShield,VacuumLock,VortexResonance,TurbulenceBurst}` ↔ agent `WoliuSkillCastV1["skill"]` literal set ↔ client `VortexSpiralPlayer.{VACUUM_PALM,VORTEX_SHIELD,VACUUM_LOCK,VORTEX_RESONANCE,TURBULENCE_BURST}`。
 - **遗留 / 后续**：涡流与其他流派组合（吸+毒、吸+爆等）进入 `style-balance-v1`；本 plan 复用现有涡流 icon texture，后续视觉 polish 可替换为五招专属图标。

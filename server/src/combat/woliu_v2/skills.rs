@@ -43,6 +43,7 @@ pub const WOLIU_VORTEX_RESONANCE_SKILL_ID: &str = "woliu.vortex_resonance";
 pub const WOLIU_TURBULENCE_BURST_SKILL_ID: &str = "woliu.turbulence_burst";
 pub const WOLIU_V2_REQUIRED_MERIDIANS: [MeridianId; 1] = [MeridianId::Lung];
 pub const WOLIU_V3_REQUIRED_MERIDIANS: [MeridianId; 2] = [MeridianId::Lung, MeridianId::Heart];
+pub const WOLIU_TURBULENCE_BURST_DAMAGE: f32 = 60.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WoliuSkillSpec {
@@ -526,7 +527,7 @@ fn apply_turbulence_burst_target_effects(
     spec: WoliuSkillSpec,
     now_tick: u64,
 ) {
-    let damage = 60.0_f32;
+    let damage = WOLIU_TURBULENCE_BURST_DAMAGE;
     let damaged = if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
         wounds.entries.push(Wound {
