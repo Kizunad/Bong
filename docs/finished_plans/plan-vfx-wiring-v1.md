@@ -153,6 +153,7 @@
 - `5f0fdc5a8`（2026-05-10）`vfx-wiring-v1：补齐社交关系 VFX 接线`
 - `6dfaeac95`（2026-05-10）`归档 plan-vfx-wiring-v1：游戏事件 VFX 接线`
 - `b420233df`（2026-05-10）`vfx-wiring-v1：处理 review VFX 细节`
+- `c891d996a`（2026-05-10）`vfx-wiring-v1：收敛 review 成功路径`
 
 ### 测试结果
 
@@ -160,10 +161,13 @@
 - `cd server && cargo check` ✅
 - `cd server && cargo check --tests` ✅
 - `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅
+- `cd server && CARGO_BUILD_JOBS=1 cargo test vfx -- --nocapture` ✅（92 passed）
 - `cd server && CARGO_BUILD_JOBS=1 cargo test poison_ambient_emits_mist_vfx_every_sixty_ticks -- --nocapture` ✅（1 passed）
+- `cd server && CARGO_BUILD_JOBS=1 cargo test alchemy_flawed_take_back_grants_flawed_pill_residue -- --nocapture` ✅（1 passed）
+- `cd server && CARGO_BUILD_JOBS=1 cargo test alchemy_explode_take_back_applies_damage_and_meridian_crack -- --nocapture` ✅（1 passed）
 - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests com.bong.client.visual.particle.VfxRegistryTest` ✅
 - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅
-- `cd server && cargo test emits -- --nocapture` ⚠️ 前序本地两次在 test binary 链接阶段被 `rustc` `signal: 9, SIGKILL` 杀掉，无测试断言失败输出；已用 `cargo check --tests` + clippy 覆盖测试编译/lint，PR CI 继续覆盖完整 `cargo test`。
+- `cd server && cargo test emits -- --nocapture` ⚠️ 前序本地两次在 test binary 链接阶段被 `rustc` `signal: 9, SIGKILL` 杀掉，无测试断言失败输出；已用 `cargo check --tests` + clippy 覆盖测试编译/lint。当前 PR 可见远端 check 为 E2E Redis Smoke，未单独暴露完整 `cargo test` job。
 
 ### 跨仓库核验
 
@@ -174,4 +178,4 @@
 ### 遗留 / 后续
 
 - 未新增贴图资产；全部复用既有 particle sprites/providers。
-- 本地云环境对较大 server test binary 链接不稳定；本轮新增毒雾环境 VFX 单测已单独通过，完整 `cargo test` 以 PR CI 为准。
+- 本地云环境对较大 server test binary 链接不稳定；本轮新增毒雾环境 VFX 单测已单独通过。建议后续 CI 明确拆出 server `cargo test` 可见 job。
