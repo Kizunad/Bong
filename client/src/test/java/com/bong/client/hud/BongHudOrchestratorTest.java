@@ -284,7 +284,7 @@ public class BongHudOrchestratorTest {
             VisualEffectState.create("meditation_calm", 1.0, 20_000L, 12_000L)
         );
         List<HudRenderCommand> cultivationCommands = BongHudOrchestrator.buildCommands(
-            meditation, combat, 12_200L, FIXED_WIDTH, 220, 320, 180
+            meditation, CombatHudSnapshot.empty(), 12_200L, FIXED_WIDTH, 220, 320, 180
         );
         assertTrue(cultivationCommands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.QUICK_BAR));
     }

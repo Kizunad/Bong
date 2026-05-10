@@ -52,11 +52,11 @@ public final class HudImmersionMode {
     public static Mode resolve(CombatHudState combatState, VisualEffectState visualEffectState, long nowMs) {
         long safeNow = Math.max(0L, nowMs);
         Mode next;
-        if (isMeditating(visualEffectState, safeNow)) {
-            next = Mode.CULTIVATION;
-        } else if (combatState != null && combatState.active()) {
+        if (combatState != null && combatState.active()) {
             lastCombatAtMs = safeNow;
             next = Mode.COMBAT;
+        } else if (isMeditating(visualEffectState, safeNow)) {
+            next = Mode.CULTIVATION;
         } else if (lastCombatAtMs >= 0L
             && safeNow >= lastCombatAtMs
             && safeNow - lastCombatAtMs < PEACE_AFTER_COMBAT_MS) {

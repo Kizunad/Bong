@@ -50,7 +50,7 @@
 
 ### 验收抓手
 
-- 测试：`client::hud::tests::target_info_shows_on_attack` / `client::hud::tests::zone_transition_text_fades` / `client::hud::tests::hud_mode_switches`
+- 测试：`./gradlew test --tests "com.bong.client.hud.TargetInfoHudPlannerTest" --tests "com.bong.client.hud.BongZoneHudTest" --tests "com.bong.client.hud.BongHudOrchestratorTest" --tests "com.bong.client.hud.HudImmersionModeTest"`
 - 手动：攻击 NPC → 顶部出现 HP 条 → 5s 后消失 → 走到新区域 → 中央出现区域名 → 进入和平 10s → HUD 简化 → 遇敌 → HUD 展开
 
 ---
