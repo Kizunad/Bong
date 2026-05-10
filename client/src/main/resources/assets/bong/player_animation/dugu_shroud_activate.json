@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "dugu_shroud_activate",
+  "description": "dugu-v2 shroud: crossed hands close over the chest, then sink into a quiet false-color stance.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 16,
+    "stopTick": 20,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.35, "yaw": -0.15, "roll": -0.10, "bend": 0.45, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.35, "yaw": 0.15, "roll": 0.10, "bend": 0.45, "axis": 3.1415927 } },
+      { "tick": 7, "easing": "INOUTSINE", "body": { "y": -0.035 } },
+      { "tick": 7, "easing": "INOUTSINE", "torso": { "pitch": 0.08 } },
+      { "tick": 7, "easing": "INOUTSINE", "rightArm": { "pitch": -1.05, "yaw": 0.38, "roll": -0.70, "bend": 1.05, "axis": 3.1415927 } },
+      { "tick": 7, "easing": "INOUTSINE", "leftArm": { "pitch": -1.05, "yaw": -0.38, "roll": 0.70, "bend": 1.05, "axis": 3.1415927 } },
+      { "tick": 16, "easing": "OUTSINE", "body": { "y": -0.015 } },
+      { "tick": 16, "easing": "OUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 16, "easing": "OUTSINE", "rightArm": { "pitch": -0.55, "yaw": -0.10, "roll": -0.18, "bend": 0.50, "axis": 3.1415927 } },
+      { "tick": 16, "easing": "OUTSINE", "leftArm": { "pitch": -0.55, "yaw": 0.10, "roll": 0.18, "bend": 0.50, "axis": 3.1415927 } }
+    ]
+  }
+}

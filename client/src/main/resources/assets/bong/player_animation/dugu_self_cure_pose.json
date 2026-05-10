@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "dugu_self_cure_pose",
+  "description": "dugu-v2 self-cure: drink, swallow, then fold inward while dirty qi settles.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 20,
+    "stopTick": 24,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.45, "yaw": -0.18, "roll": -0.10, "bend": 0.70, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.50, "yaw": 0.22, "roll": 0.12, "bend": 0.75, "axis": 3.1415927 } },
+      { "tick": 6, "easing": "INOUTSINE", "head": { "pitch": -0.24 } },
+      { "tick": 6, "easing": "INOUTSINE", "rightArm": { "pitch": -1.25, "yaw": -0.18, "roll": -0.28, "bend": 1.18, "axis": 3.1415927 } },
+      { "tick": 6, "easing": "INOUTSINE", "leftArm": { "pitch": -1.18, "yaw": 0.20, "roll": 0.30, "bend": 1.15, "axis": 3.1415927 } },
+      { "tick": 12, "easing": "INOUTSINE", "body": { "y": -0.055 } },
+      { "tick": 12, "easing": "INOUTSINE", "head": { "pitch": 0.18 } },
+      { "tick": 12, "easing": "INOUTSINE", "torso": { "pitch": 0.20 } },
+      { "tick": 12, "easing": "INOUTSINE", "rightArm": { "pitch": -0.70, "yaw": -0.34, "roll": -0.18, "bend": 0.95, "axis": 3.1415927 } },
+      { "tick": 12, "easing": "INOUTSINE", "leftArm": { "pitch": -0.74, "yaw": 0.34, "roll": 0.18, "bend": 0.95, "axis": 3.1415927 } },
+      { "tick": 20, "easing": "OUTSINE", "body": { "y": 0.0 } },
+      { "tick": 20, "easing": "OUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 20, "easing": "OUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 20, "easing": "OUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } },
+      { "tick": 20, "easing": "OUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } }
+    ]
+  }
+}

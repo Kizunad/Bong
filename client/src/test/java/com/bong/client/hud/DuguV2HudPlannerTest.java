@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DuguV2HudPlannerTest {
@@ -32,5 +33,15 @@ class DuguV2HudPlannerTest {
     @Test
     void emptyStateDoesNotEmitDuguHud() {
         assertTrue(DuguV2HudPlanner.buildCommands(DuguV2HudStateStore.State.NONE, 960, 540, 1_000L).isEmpty());
+    }
+
+    @Test
+    void duguV2AnimationResourcesArePackaged() {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+
+        assertNotNull(loader.getResource("assets/bong/player_animation/dugu_needle_throw.json"));
+        assertNotNull(loader.getResource("assets/bong/player_animation/dugu_self_cure_pose.json"));
+        assertNotNull(loader.getResource("assets/bong/player_animation/dugu_shroud_activate.json"));
+        assertNotNull(loader.getResource("assets/bong/player_animation/dugu_pointing_curse.json"));
     }
 }
