@@ -27,7 +27,8 @@ public final class WhaleEntities {
      * BongClient 再注册 botany_plant_v2 (raw_id=132) → whale (133) → fauna (134..=141)。
      * 后续 plan-entity-model-v1 的 raw id 由 BongEntityRegistry 的 EntityType 注册顺序决定
      * (142..=152)，BongEntityRenderBootstrap 只绑定 renderer。任何新 Bong EntityType 插队都会让
-     * server 端 {@code WHALE_ENTITY_KIND} / {@code BONG_*_ENTITY_KIND} 偏移。
+     * server 端 {@code WHALE_ENTITY_KIND} / {@code BONG_*_ENTITY_KIND} 偏移；{@link #register()}
+     * 会记录 ERROR 并提前返回，避免按错误 raw id 继续渲染。
      */
     public static final int EXPECTED_RAW_ID = 133;
 
