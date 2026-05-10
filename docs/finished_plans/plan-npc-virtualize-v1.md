@@ -631,12 +631,13 @@ fn dehydrate_far_npcs(
 - `711176b38` · 2026-05-10 · `feat(npc): 启动恢复 dormant Redis 快照`
 - `11136276e` · 2026-05-10 · `feat(npc): dormant tick 推进普通境界突破`
 - `90877e201` · 2026-05-10 · `fix(npc): 修复 dormant review 边界回归`
+- `662892d94` · 2026-05-10 · `fix(npc): 收敛 dormant review 数据一致性`
 
 ### 测试结果
 
 - `cargo fmt --check` ✅
 - `cargo clippy --all-targets -- -D warnings` ✅
-- `cargo test` ✅ `3534 passed; 0 failed`
+- `cargo test` ✅ `3541 passed; 0 failed`
 - `cargo test npc::dormant` ✅ `9 passed; 0 failed`
 - `cargo test npc::hydrate` ✅ `4 passed; 0 failed`
 - `cargo test publishes_dormant_npcs_in_world_state_and_redis_hash` ✅
