@@ -18,13 +18,13 @@
 
 | 阶段 | 目标 | 状态 |
 |------|------|------|
-| P0 | 修炼 VFX（吸灵/经脉/突破）+ 战斗 VFX（命中/格挡） | ⬜ |
-| P1 | 产出 VFX（forge/alchemy/lingtian）+ 阵法 VFX | ⬜ |
-| P2 | 社交 VFX + 死亡 VFX + 状态效果 VFX | ⬜ |
+| P0 | 修炼 VFX（吸灵/经脉/突破）+ 战斗 VFX（命中/格挡） | ✅ 2026-05-10 |
+| P1 | 产出 VFX（forge/alchemy/lingtian）+ 阵法 VFX | ✅ 2026-05-10 |
+| P2 | 社交 VFX + 死亡 VFX + 状态效果 VFX | ✅ 2026-05-10 |
 
 ---
 
-## P0 — 修炼 VFX + 战斗 VFX ⬜
+## P0 — 修炼 VFX + 战斗 VFX ✅ 2026-05-10
 
 ### 交付物
 
@@ -60,7 +60,7 @@
 
 ---
 
-## P1 — 产出 VFX + 阵法 VFX ⬜
+## P1 — 产出 VFX + 阵法 VFX ✅ 2026-05-10
 
 ### 交付物
 
@@ -95,7 +95,7 @@
 
 ---
 
-## P2 — 社交 VFX + 死亡 VFX + 状态效果 VFX ⬜
+## P2 — 社交 VFX + 死亡 VFX + 状态效果 VFX ✅ 2026-05-10
 
 ### 交付物
 
@@ -136,3 +136,39 @@
 | plan-death-lifecycle-v1 | ✅ finished | DeathEvent / DeathInsight |
 
 **全部依赖已 finished，无阻塞。**
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 修炼/战斗：`server/src/cultivation/tick.rs`、`server/src/cultivation/meridian_open.rs`、`server/src/cultivation/breakthrough.rs`、`server/src/combat/resolve.rs` 发出 `bong:cultivation_absorb` / `bong:meridian_open` / `bong:breakthrough_fail` / `bong:combat_hit` / `bong:combat_parry`；客户端新增 `CultivationAbsorbPlayer`、`MeridianOpenFlashPlayer`、`BreakthroughFailPlayer`、`CombatHitDirectionPlayer`。
+- P1 产出/阵法：`server/src/forge/mod.rs`、`server/src/network/client_request_handler.rs`、`server/src/lingtian/systems.rs`、`server/src/zhenfa/mod.rs` 接线 forge / alchemy / lingtian / zhenfa VFX；客户端新增 `ForgeHammerStrikePlayer`、`AlchemyBrewVaporPlayer`、`LingtianActionVfxPlayer`、`ZhenfaActionVfxPlayer`。
+- P2 社交/死亡/状态：`server/src/social/mod.rs` 接线灵龛、结契、仇怨 VFX；`server/src/cultivation/dugu.rs` 接线 `bong:poison_mist`；死亡 `bong:death_soul_dissipate` 与虚弱 `bong:exhausted_grey_mist` 已在既有 lifecycle/full_power emit 路径接线，本 plan 确认并保持客户端注册。
+- 共享 helper/注册：`server/src/network/gameplay_vfx.rs` 统一封装 `SpawnParticle` request；`client/src/main/java/com/bong/client/visual/particle/VfxBootstrap.java` 与 `VfxRegistryTest.java` 覆盖所有新增 route。
+
+### 关键 commit
+
+- `05fb45e8b`（2026-05-10）`vfx-wiring-v1：接入服务端游戏事件 VFX`
+- `4bd061a31`（2026-05-10）`vfx-wiring-v1：注册客户端游戏 VFX players`
+- `5f0fdc5a8`（2026-05-10）`vfx-wiring-v1：补齐社交关系 VFX 接线`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo check` ✅
+- `cd server && cargo check --tests` ✅
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests com.bong.client.visual.particle.VfxRegistryTest` ✅
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅
+- `cd server && cargo test emits -- --nocapture` ⚠️ 本地两次在 test binary 链接阶段被 `rustc` `signal: 9, SIGKILL` 杀掉，无测试断言失败输出；已用 `cargo check --tests` + clippy 覆盖测试编译/lint，PR CI 继续覆盖完整 `cargo test`。
+
+### 跨仓库核验
+
+- server：`VfxEventRequest` / `gameplay_vfx::spawn_request` / `bong:cultivation_absorb` / `bong:forge_hammer_strike` / `bong:alchemy_brew_vapor` / `bong:zhenfa_trap` / `bong:social_pact_link` / `bong:poison_mist`
+- client：`VfxRegistry` / `VfxBootstrap` / `CultivationAbsorbPlayer` / `AlchemyBrewVaporPlayer` / `SocialLinkVfxPlayer` / `PoisonMistPlayer`
+- agent/schema：未新增 schema variant；沿用既有 `SpawnParticle` payload 字段。
+
+### 遗留 / 后续
+
+- 未新增贴图资产；全部复用既有 particle sprites/providers。
+- 本地云环境无法链接 server test binary，完整 `cargo test` 以 PR CI 为准。
