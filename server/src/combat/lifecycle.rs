@@ -2263,6 +2263,31 @@ mod tests {
     }
 
     #[test]
+    fn tsy_collapsed_death_keeps_standard_fortune_revival_decision() {
+        let mut lifecycle = Lifecycle {
+            fortune_remaining: 1,
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(100);
+
+        let decision = determine_revival_decision(
+            &lifecycle,
+            None,
+            "tsy_collapsed",
+            None,
+            None,
+            None,
+            None,
+            701,
+        );
+
+        assert!(matches!(
+            decision,
+            Some(RevivalDecision::Fortune { chance }) if (chance - 1.0).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
     fn cultivation_death_without_fortune_enters_awaiting_revival_after_deadline() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("terminate-existing");

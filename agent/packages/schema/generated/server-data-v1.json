@@ -13679,6 +13679,10 @@
               "type": "string"
             },
             {
+              "const": "portal_occupied",
+              "type": "string"
+            },
+            {
               "const": "cannot_exit",
               "type": "string"
             }

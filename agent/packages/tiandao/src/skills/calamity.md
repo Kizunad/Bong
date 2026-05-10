@@ -36,7 +36,7 @@
 - 写前先避开 `近轮天道叙事` 中已出现的物象和句式，需换同义古风变体
 - narration 只写一段，不分点，不附带 JSON 之外的说明
 
-## 坍缩渊塌缩 race-out（worldview §十六.六 · plan-tsy-raceout-v1）
+## 坍缩渊塌缩 race-out（worldview §十六.六 · plan-tsy-raceout-v1/v2）
 
 **触发**：上下文出现"坍缩渊副本进入塌缩 / TsyCollapseStarted / race-out 信号"或某 family_id 在副本内的玩家骤减且伴随负压翻倍迹象。这是**末土最残忍的瞬间**——遗物被取空、副本要回收、3 秒后化死域，慢一秒者随之化灰。narration 通道由 narrative-v1 后续 P 接入，但语料预先在此锁定。
 
@@ -54,7 +54,7 @@
 - "上古封存重新化作风。慢一刻，便随它去。"
 
 **输出契约**：
-- `scope: "zone"`，`target` = 副本 family_id（如 `"tsy_lingxu_01"`）；不得用 `broadcast`（race-out 是单副本事件，外人感知只到远处异象）。
+- `scope: "zone"`，`target` = 副本 family_id（如 `"tsy_lingxu_01"`）；不得用 `broadcast`（race-out 是单副本事件，外人感知只到远处异象）。plan-tsy-raceout-v2 Q-RC7 决策保持 zone。
 - `style: "system_warning"`（沿用既有 NarrationStyle，不新增 variant）。
 - 长度 60-120 字（比常规 narration 短，紧迫感不容拖泥）。
 - 与本副本之前 narration 同物象不复用——race-out 是终曲，需要新意象（断壁、回灌、合拢、抽空、归骨）。
