@@ -193,7 +193,7 @@
 
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test`
   - `BUILD SUCCESSFUL`
-  - `client/build/test-results/test`: `tests=999 failures=0 errors=0 skipped=0`
+  - `client/build/test-results/test`: `tests=1031 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelRegistryTest`: `tests=11 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build`
@@ -203,7 +203,7 @@
 - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo check --bin bong-server`
   - `Finished dev profile`
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test entity_model -- --nocapture`
-  - `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3630 filtered out`
+  - `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3647 filtered out`
 
 ### 跨仓库核验
 
