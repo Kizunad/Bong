@@ -119,9 +119,9 @@
 
 ### 关键 commit
 
-- `ae48e63de`（2026-05-10）实现异变兽视觉音效服务端契约：server 侧 EntityKind、FaunaVisualKind、spawn/death/attack/ambient VFX/audio 发射、音效 recipe 与回归测试。
-- `f4049e67c`（2026-05-10）接入异变兽客户端渲染资源：client 侧 GeckoLib fauna entity/model/renderer/bootstrap、8 个非鲸视觉壳模型、贴图、动画、VFX player 与注册测试。
-- `a5b7bc4a7`（2026-05-10）fix(fauna-experience-v1): 避免鲸误挂异变兽视觉壳：保留已有鲸 `WHALE_ENTITY_KIND=125` / WhaleRenderer 语义，非本 plan 视觉壳不覆盖鲸。
+- `92085e5cd`（2026-05-10）实现异变兽视觉音效服务端契约：server 侧 EntityKind、FaunaVisualKind、spawn/death/attack/ambient VFX/audio 发射、音效 recipe 与回归测试。
+- `5455cb69e`（2026-05-10）接入异变兽客户端渲染资源：client 侧 GeckoLib fauna entity/model/renderer/bootstrap、8 个非鲸视觉壳模型、贴图、动画、VFX player 与注册测试。
+- `62337a18c`（2026-05-10）fix(fauna-experience-v1): 避免鲸误挂异变兽视觉壳：保留已有鲸 `WHALE_ENTITY_KIND=125` / WhaleRenderer 语义，非本 plan 视觉壳不覆盖鲸。
 
 ### 测试结果
 
