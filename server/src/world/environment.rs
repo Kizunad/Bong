@@ -6,6 +6,7 @@ use valence::prelude::{
 };
 
 use crate::lingtian::weather::{ActiveWeather, WeatherEvent};
+use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -194,6 +195,12 @@ impl ZoneEnvironmentRegistry {
             .unwrap_or(&[])
     }
 
+    pub fn iter_zone_effects(&self) -> impl Iterator<Item = (&str, &EnvironmentEffect)> {
+        self.by_zone
+            .iter()
+            .flat_map(|(zone, effects)| effects.iter().map(move |effect| (zone.as_str(), effect)))
+    }
+
     pub fn generation(&self, zone: &str) -> u64 {
         let key = normalize_zone(zone);
         self.generation_by_zone
@@ -243,12 +250,16 @@ pub trait EnvironmentPhysicsHook: Send + Sync {
 pub fn register(app: &mut App) {
     app.insert_resource(ZoneEnvironmentRegistry::new());
     app.add_event::<ZoneEnvironmentLifecycleEvent>();
-    app.add_systems(Startup, sync_zone_environment_effects);
+    app.add_systems(
+        Startup,
+        crate::world::weather_to_environment::weather_environment_sync_system,
+    );
     app.add_systems(
         Update,
         (
-            sync_zone_environment_effects,
-            publish_zone_environment_lifecycle_events.after(sync_zone_environment_effects),
+            crate::world::weather_to_environment::weather_environment_sync_system,
+            publish_zone_environment_lifecycle_events
+                .after(crate::world::weather_to_environment::weather_environment_sync_system),
         ),
     );
 }
@@ -265,6 +276,7 @@ pub fn publish_zone_environment_lifecycle_events(
 pub fn sync_zone_environment_effects(
     zones: Option<valence::prelude::Res<ZoneRegistry>>,
     weather: Option<valence::prelude::Res<ActiveWeather>>,
+    profiles: Option<valence::prelude::Res<ZoneWeatherProfileRegistry>>,
     mut registry: valence::prelude::ResMut<ZoneEnvironmentRegistry>,
 ) {
     let Some(zones) = zones else {
@@ -280,7 +292,12 @@ pub fn sync_zone_environment_effects(
         let active_weather = weather
             .as_ref()
             .and_then(|active| active.current(zone.name.as_str()));
-        let effects = default_effects_for_zone(zone, active_weather);
+        let effects = if let Some(profiles) = profiles.as_ref() {
+            let profile = profiles.profile_for(zone.name.as_str());
+            default_effects_for_zone_with_profile(zone, active_weather, &profile)
+        } else {
+            default_effects_for_zone(zone, active_weather)
+        };
         registry.replace_for_dimension(zone.name.clone(), zone.dimension.ident_str(), effects);
     }
 }
@@ -288,6 +305,18 @@ pub fn sync_zone_environment_effects(
 pub fn default_effects_for_zone(
     zone: &Zone,
     active_weather: Option<WeatherEvent>,
+) -> Vec<EnvironmentEffect> {
+    default_effects_for_zone_with_profile(
+        zone,
+        active_weather,
+        &crate::lingtian::ZoneWeatherProfile::default(),
+    )
+}
+
+pub fn default_effects_for_zone_with_profile(
+    zone: &Zone,
+    active_weather: Option<WeatherEvent>,
+    profile: &crate::lingtian::ZoneWeatherProfile,
 ) -> Vec<EnvironmentEffect> {
     let mut effects = Vec::new();
 
@@ -301,7 +330,11 @@ pub fn default_effects_for_zone(
         effects.extend(tsy_zone_effects(zone));
     }
     if let Some(weather) = active_weather {
-        effects.extend(weather_environment_effects(zone, weather));
+        effects.extend(
+            crate::world::weather_to_environment::weather_to_environment_bundle(
+                weather, zone, profile,
+            ),
+        );
     }
 
     effects
@@ -368,48 +401,6 @@ pub fn tsy_zone_effects(zone: &Zone) -> Vec<EnvironmentEffect> {
             density: 0.16,
         },
     ]
-}
-
-fn weather_environment_effects(zone: &Zone, weather: WeatherEvent) -> Vec<EnvironmentEffect> {
-    let (min, max) = aabb_arrays(zone);
-    let center = center_array(zone);
-    match weather {
-        WeatherEvent::Thunderstorm => vec![EnvironmentEffect::LightningPillar {
-            center,
-            radius: 10.0,
-            strike_rate_per_min: 1.8,
-        }],
-        WeatherEvent::DroughtWind => vec![
-            EnvironmentEffect::DustDevil {
-                center,
-                radius: 8.0,
-                height: 32.0,
-            },
-            EnvironmentEffect::HeatHaze {
-                aabb_min: min,
-                aabb_max: max,
-                distortion_strength: 0.35,
-            },
-        ],
-        WeatherEvent::Blizzard => vec![EnvironmentEffect::SnowDrift {
-            aabb_min: min,
-            aabb_max: max,
-            density: 0.5,
-            wind_dir: [0.7, 0.0, -0.25],
-        }],
-        WeatherEvent::HeavyHaze => vec![EnvironmentEffect::FogVeil {
-            aabb_min: min,
-            aabb_max: max,
-            tint_rgb: [74, 77, 82],
-            density: 0.5,
-        }],
-        WeatherEvent::LingMist => vec![EnvironmentEffect::FogVeil {
-            aabb_min: min,
-            aabb_max: max,
-            tint_rgb: [164, 207, 194],
-            density: 0.36,
-        }],
-    }
 }
 
 fn is_scorch_zone(zone: &Zone) -> bool {
@@ -609,6 +600,27 @@ mod tests {
     }
 
     #[test]
+    fn registry_iter_zone_effects_exposes_zone_pairs() {
+        let mut registry = ZoneEnvironmentRegistry::new();
+        registry.add("spawn", all_effects()[0].clone());
+        registry.add("blood_valley", all_effects()[1].clone());
+
+        let mut pairs: Vec<(&str, &str)> = registry
+            .iter_zone_effects()
+            .map(|(zone, effect)| (zone, effect.kind()))
+            .collect();
+        pairs.sort();
+
+        assert_eq!(
+            pairs,
+            vec![
+                ("blood_valley", "lightning_pillar"),
+                ("spawn", "tornado_column"),
+            ]
+        );
+    }
+
+    #[test]
     fn replace_same_effects_does_not_bump_generation() {
         let mut registry = ZoneEnvironmentRegistry::new();
         let effects = vec![all_effects()[0].clone()];
@@ -736,8 +748,10 @@ mod tests {
     #[test]
     fn weather_thunderstorm_adds_lightning_pillar() {
         let effects = default_effects_for_zone(&zone("spawn"), Some(WeatherEvent::Thunderstorm));
-        assert_eq!(effects.len(), 1);
-        assert_eq!(effects[0].kind(), "lightning_pillar");
+        let kinds: HashSet<&str> = effects.iter().map(EnvironmentEffect::kind).collect();
+        assert!(kinds.contains("lightning_pillar"));
+        assert!(kinds.contains("ember_drift"));
+        assert!(kinds.contains("fog_veil"));
     }
 
     #[test]
@@ -751,8 +765,9 @@ mod tests {
     #[test]
     fn weather_blizzard_adds_snow_drift() {
         let effects = default_effects_for_zone(&zone("spawn"), Some(WeatherEvent::Blizzard));
-        assert_eq!(effects.len(), 1);
-        assert_eq!(effects[0].kind(), "snow_drift");
+        let kinds: HashSet<&str> = effects.iter().map(EnvironmentEffect::kind).collect();
+        assert!(kinds.contains("snow_drift"));
+        assert!(kinds.contains("fog_veil"));
     }
 
     #[test]

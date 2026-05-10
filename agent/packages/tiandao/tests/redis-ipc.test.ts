@@ -30,6 +30,7 @@ const {
   POI_NOVICE_EVENT,
   PRICE_INDEX,
   TSY_EVENT,
+  WEATHER_EVENT_UPDATE,
   WORLD_STATE,
 } = CHANNELS;
 
@@ -596,6 +597,62 @@ describe("redis-ipc", () => {
     expect(warn).toHaveBeenCalledWith(
       "[redis-ipc] invalid price index event:",
       expect.stringContaining("season"),
+    );
+
+    warn.mockRestore();
+  });
+
+  it("observes weather event updates from the dedicated channel", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onWeatherEventUpdate(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      WEATHER_EVENT_UPDATE,
+      JSON.stringify({
+        v: 1,
+        kind: "started",
+        data: {
+          v: 1,
+          zone_id: "blood_valley_east_scorch",
+          kind: "thunderstorm",
+          started_at_lingtian_tick: 1440,
+          expires_at_lingtian_tick: 1620,
+          remaining_ticks: 180,
+        },
+      }),
+    );
+    await sub.publish(
+      WEATHER_EVENT_UPDATE,
+      JSON.stringify({ v: 1, kind: "cleared", data: { v: 1, zone_id: "" } }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.drainWeatherEventUpdates()).toEqual([
+      expect.objectContaining({
+        kind: "started",
+        data: expect.objectContaining({ zone_id: "blood_valley_east_scorch" }),
+      }),
+    ]);
+    expect(ipc.drainWeatherEventUpdates()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[redis-ipc] invalid weather event update:",
+      expect.stringContaining("kind"),
     );
 
     warn.mockRestore();

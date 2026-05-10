@@ -30,6 +30,8 @@ mod tsy_lifecycle_integration_test;
 pub mod tsy_origin;
 pub mod tsy_poi_consumer;
 pub mod tsy_portal;
+pub mod weather_physics;
+pub mod weather_to_environment;
 pub mod zone;
 
 use std::fs;
@@ -106,6 +108,7 @@ pub fn register(app: &mut App) {
     block_break::register(app);
     zone::register(app);
     environment::register(app);
+    weather_physics::register(app);
     season::register(app);
     spirit_eye::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());

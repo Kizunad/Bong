@@ -7,6 +7,7 @@ import type {
   Narration,
   PriceIndexV1,
   RatPhaseChangeEventV1,
+  WeatherEventUpdateV1,
   WorldStateV1,
   ZonePressureCrossedV1,
 } from "@bong/schema";
@@ -71,6 +72,11 @@ const SNAPSHOT_FILE_PREFIX = "tiandao-snapshot-";
 const SNAPSHOT_FILE_SUFFIX = ".json";
 const WORLD_MODEL_RECONCILE_INTERVAL_MS = 300_000;
 const WORLD_MODEL_RECONCILE_INTERVAL_LOOPS = Math.max(1, Math.floor(WORLD_MODEL_RECONCILE_INTERVAL_MS / TICK_INTERVAL_MS));
+const SCORCH_WEATHER_ZONE_IDS = new Set([
+  "blood_valley_east_scorch",
+  "north_waste_east_scorch",
+  "drift_scorch_001",
+]);
 export const ALLOWED_LLM_MODELS = Object.freeze([DEFAULT_MODEL, "gpt-5.4"] as const);
 export const MODEL_ROUTE_ROLES = Object.freeze([
   "default",
@@ -123,6 +129,7 @@ export interface RuntimeRedis {
   loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
   drainRatPhaseEvents?(): RatPhaseChangeEventV1[];
   drainPriceIndexEvents?(): PriceIndexV1[];
+  drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
   drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
@@ -770,6 +777,88 @@ async function processEconomyEvents(args: {
   }
 }
 
+export async function processWeatherEvents(args: {
+  redis: RuntimeRedis;
+  logger: Pick<typeof console, "warn">;
+}): Promise<void> {
+  const { redis, logger } = args;
+  const events = redis.drainWeatherEventUpdates?.() ?? [];
+  if (events.length === 0) {
+    return;
+  }
+
+  const narrations: Narration[] = [];
+  let sourceTick: number | null = null;
+  for (const event of events) {
+    const narration = renderWeatherNarration(event);
+    if (narration === null) {
+      continue;
+    }
+    narrations.push(narration);
+    sourceTick = Math.max(
+      sourceTick ?? event.data.started_at_lingtian_tick,
+      event.data.started_at_lingtian_tick,
+    );
+  }
+  if (narrations.length === 0 || sourceTick === null) {
+    return;
+  }
+
+  try {
+    await redis.publishNarrations({
+      narrations,
+      metadata: {
+        sourceTick,
+        correlationId: `zone-weather:${sourceTick}`,
+      },
+    });
+  } catch (error) {
+    logger.warn("[tiandao] failed to publish weather narration:", error);
+  }
+}
+
+export function renderWeatherNarration(event: WeatherEventUpdateV1): Narration | null {
+  if (event.kind !== "started") {
+    return null;
+  }
+  const zone = event.data.zone_id;
+  const target = `zone:${zone}`;
+  const text = weatherNarrationText(zone, event.data.kind);
+  if (text === null) {
+    return null;
+  }
+  return {
+    scope: "zone",
+    target,
+    style: "narration",
+    text,
+  };
+}
+
+function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["kind"]): string | null {
+  if (isScorchWeatherZone(zone) && kind === "thunderstorm") {
+    return "焦土上方雷云压低，地火灰里已经有白光在找落点。";
+  }
+  switch (kind) {
+    case "thunderstorm":
+      return "远处雷声压过山脊，云底有细碎电光游走。";
+    case "drought_wind":
+      return "干风贴着地面刮起，草叶边缘先一步卷黄。";
+    case "blizzard":
+      return "雪线忽然下沉，风里多了一层割脸的冷。";
+    case "heavy_haze":
+      return "灰雾合拢，近处的轮廓像被旧布一点点盖住。";
+    case "ling_mist":
+      return "青白雾气从低处漫开，灵气在雾里亮了一瞬。";
+    default:
+      return null;
+  }
+}
+
+function isScorchWeatherZone(zone: string): boolean {
+  return SCORCH_WEATHER_ZONE_IDS.has(zone);
+}
+
 export async function processLocustSwarmEvents(args: {
   redis: RuntimeRedis;
   state: WorldStateV1;
@@ -985,6 +1074,10 @@ export async function runRuntime(
         await processEconomyEvents({
           redis,
           economyAnalyzer,
+          logger,
+        });
+        await processWeatherEvents({
+          redis,
           logger,
         });
 
