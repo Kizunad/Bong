@@ -82,4 +82,33 @@ describe("ZhenfaV2NarrationRuntime", () => {
     expect(pub.published).toHaveLength(0);
     expect(runtime.stats.rejectedContract).toBe(1);
   });
+
+  it("routes non-broadcast events to the routeable spawn zone", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new ZhenfaV2NarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        event: "deploy",
+        array_id: 9,
+        kind: "lingju",
+        owner: "offline:Azure",
+        x: 1,
+        y: 64,
+        z: -2,
+        tick: 201,
+        density_multiplier: 1.5,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toMatchObject({
+      scope: "zone",
+      target: "spawn",
+      style: "narration",
+    });
+  });
 });

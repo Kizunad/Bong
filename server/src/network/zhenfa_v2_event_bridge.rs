@@ -32,9 +32,7 @@ pub fn publish_zhenfa_v2_events(
             event.placed_at_tick,
         );
         payload.radius = Some(f64::from(event.radius));
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
     }
     for event in ling.read() {
         let mut payload = deploy_payload(
@@ -47,9 +45,7 @@ pub fn publish_zhenfa_v2_events(
         payload.radius = Some(f64::from(event.radius));
         payload.density_multiplier = Some(event.density_multiplier);
         payload.tiandao_gaze_weight = Some(event.tiandao_gaze_weight);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
     }
     for event in deceive.read() {
         let mut payload = deploy_payload(
@@ -62,9 +58,7 @@ pub fn publish_zhenfa_v2_events(
         payload.reveal_chance_per_tick = Some(event.reveal_chance_per_tick);
         payload.self_weight_multiplier = Some(event.self_weight_multiplier);
         payload.target_weight_multiplier = Some(event.target_weight_multiplier);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
     }
     for event in deceive_exposed.read() {
         let mut payload = event_payload(
@@ -78,9 +72,7 @@ pub fn publish_zhenfa_v2_events(
         payload.reveal_chance_per_tick = Some(event.reveal_chance_per_tick);
         payload.self_weight_multiplier = Some(event.self_weight_multiplier);
         payload.target_weight_multiplier = Some(event.target_weight_multiplier);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
     }
     for event in illusion.read() {
         let mut payload = deploy_payload(
@@ -91,9 +83,7 @@ pub fn publish_zhenfa_v2_events(
             event.placed_at_tick,
         );
         payload.reveal_threshold = Some(event.reveal_threshold);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
     }
     for event in decay.read() {
         let payload = event_payload(
@@ -104,9 +94,7 @@ pub fn publish_zhenfa_v2_events(
             event.pos,
             event.decayed_at_tick,
         );
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
     }
     for event in breakthrough.read() {
         let mut payload = event_payload(
@@ -118,9 +106,25 @@ pub fn publish_zhenfa_v2_events(
             event.broken_at_tick,
         );
         payload.force_break = Some(event.force_break);
-        let _ = redis
-            .tx_outbound
-            .send(RedisOutbound::ZhenfaV2Event(payload));
+        send_zhenfa_v2_event(&redis, payload);
+    }
+}
+
+fn send_zhenfa_v2_event(redis: &RedisBridgeResource, payload: ZhenfaV2EventV1) {
+    let array_id = payload.array_id;
+    let event = payload.event;
+    let kind = payload.kind;
+    if let Err(error) = redis
+        .tx_outbound
+        .send(RedisOutbound::ZhenfaV2Event(payload))
+    {
+        tracing::warn!(
+            ?error,
+            array_id,
+            ?event,
+            ?kind,
+            "[bong][zhenfa] failed to queue zhenfa v2 redis event"
+        );
     }
 }
 

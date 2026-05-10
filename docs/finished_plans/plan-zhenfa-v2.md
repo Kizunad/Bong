@@ -359,13 +359,13 @@ HUD 组件（plan-HUD-v1 接入）：
 - `cd server && cargo fmt --check`：通过。
 - `cd server && cargo check`：通过。
 - `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test zhenfa`：通过，26 passed / 0 failed / 3617 filtered out。
-- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：通过，3643 passed / 0 failed。
+- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test zhenfa`：通过，27 passed / 0 failed / 3635 filtered out。
+- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：通过，3662 passed / 0 failed。
 - `cd agent && npm run generate -w @bong/schema`：通过，326 schemas exported。
 - `cd agent && npm run build`：通过。
 - `cd agent && npm test -w @bong/schema`：通过，15 files / 353 tests。
-- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 327 tests。
-- `cd client && JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" PATH="/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL。
+- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 328 tests。
+- `cd client && JAVA_HOME="<java-17-home>" PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL（本地使用 Corretto 17.0.18）。
 - `git diff --check`：通过。
 
 ### 备注 / 后续

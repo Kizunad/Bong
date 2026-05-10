@@ -410,7 +410,11 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
-    app.add_systems(Update, zhenfa_v2_event_bridge::publish_zhenfa_v2_events);
+    app.add_systems(
+        Update,
+        zhenfa_v2_event_bridge::publish_zhenfa_v2_events
+            .after(crate::zhenfa::ZhenfaSystemSet::Runtime),
+    );
     app.add_systems(
         Update,
         (

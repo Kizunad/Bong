@@ -2189,6 +2189,32 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn publishes_zhenfa_v2_event_on_dedicated_channel() {
+        let event = crate::schema::zhenfa_v2::ZhenfaV2EventV1::deploy(
+            7,
+            crate::schema::zhenfa_v2::ZhenfaArrayKindV2::DeceiveHeaven,
+            "offline:Azure",
+            [1, 64, -2],
+            20,
+        );
+
+        let command = prepare_outbound_command(RedisOutbound::ZhenfaV2Event(event))
+            .expect("zhenfa v2 payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ZHENFA_V2_EVENT);
+                let payload: Value =
+                    serde_json::from_str(&payload).expect("zhenfa v2 payload should be valid JSON");
+                assert_eq!(payload["v"], 1);
+                assert_eq!(payload["event"], "deploy");
+                assert_eq!(payload["kind"], "deceive_heaven");
+            }
+            other => panic!("expected zhenfa v2 PUBLISH command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn publishes_cultivation_events_on_correct_channels() {
         let bt = prepare_outbound_command(RedisOutbound::BreakthroughEvent(BreakthroughEventV1 {
             kind: "Succeeded".into(),

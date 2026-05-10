@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, App, Client, Commands, Component, Entity, Event, EventReader, EventWriter,
-    IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, Username, With, Without,
+    IntoSystemConfigs, Position, Query, Res, ResMut, Resource, SystemSet, Update, Username, With,
+    Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -46,6 +47,11 @@ pub enum ZhenfaKind {
     Lingju,
     DeceiveHeaven,
     Illusion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub enum ZhenfaSystemSet {
+    Runtime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -391,7 +397,8 @@ pub fn register(app: &mut App) {
             tick_zhenfa_registry,
             emit_zhenfa_sense_pulses,
         )
-            .chain(),
+            .chain()
+            .in_set(ZhenfaSystemSet::Runtime),
     );
 }
 

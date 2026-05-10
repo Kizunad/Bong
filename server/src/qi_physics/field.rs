@@ -114,6 +114,12 @@ pub fn tiandao_signal_distort(
     let target_weight = finite_non_negative(target_weight, "zhenfa.deceive.target_weight")?;
     let qi_current = finite_non_negative(qi_current, "zhenfa.deceive.qi_current")?;
     let qi_max = finite_non_negative(qi_max, "zhenfa.deceive.qi_max")?;
+    if qi_current > qi_max {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "zhenfa.deceive.qi_current",
+            value: qi_current,
+        });
+    }
     let self_multiplier = finite_non_negative(self_multiplier, "zhenfa.deceive.self_multiplier")?;
     let target_multiplier =
         finite_non_negative(target_multiplier, "zhenfa.deceive.target_multiplier")?;
@@ -203,5 +209,16 @@ mod tests {
         assert_eq!(out.visible_qi_current, 20.0);
         assert_eq!(out.visible_qi_max, 25.0);
         assert_eq!(out.conservation_delta, 135.0);
+    }
+
+    #[test]
+    fn tiandao_signal_distort_rejects_current_above_max() {
+        assert!(matches!(
+            tiandao_signal_distort(10.0, 10.0, 120.0, 100.0, 0.5, 1.5, 0.25),
+            Err(QiPhysicsError::InvalidAmount {
+                field: "zhenfa.deceive.qi_current",
+                value: 120.0,
+            })
+        ));
     }
 }
