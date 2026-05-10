@@ -15,6 +15,7 @@ import {
   validateTrespassEventV1Contract,
   validateTsyNpcSpawnedV1Contract,
   validateTsySentinelPhaseChangedV1Contract,
+  validateWeatherEventUpdateV1Contract,
   validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
 import type {
@@ -35,6 +36,7 @@ import type {
   TrespassEventV1,
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
+  WeatherEventUpdateV1,
   WorldStateV1,
   ZonePressureCrossedV1,
 } from "@bong/schema";
@@ -58,6 +60,7 @@ const {
   ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   RAT_PHASE_EVENT,
+  WEATHER_EVENT_UPDATE,
   AGING,
   LIFESPAN_EVENT,
   DUO_SHE_EVENT,
@@ -95,6 +98,7 @@ const ALCHEMY_EVENT_BUFFER_LIMIT = 128;
 const POI_NOVICE_EVENT_BUFFER_LIMIT = 128;
 const CROSS_SYSTEM_EVENT_BUFFER_LIMIT = 256;
 const ECONOMY_EVENT_BUFFER_LIMIT = 64;
+const WEATHER_EVENT_BUFFER_LIMIT = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
 export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
@@ -156,6 +160,7 @@ const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
   SEASON_CHANGED,
   PRICE_INDEX,
+  WEATHER_EVENT_UPDATE,
 ];
 const CROSS_SYSTEM_EVENT_CHANNEL_SET = new Set<string>(CROSS_SYSTEM_EVENT_CHANNELS);
 
@@ -213,6 +218,7 @@ export class RedisIpc {
   private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
   private latestRatPhaseEvents: RatPhaseChangeEventV1[] = [];
   private latestPriceIndexEvents: PriceIndexV1[] = [];
+  private latestWeatherEventUpdates: WeatherEventUpdateV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
@@ -223,6 +229,7 @@ export class RedisIpc {
   private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
   private ratPhaseEventCallbacks: Array<(event: RatPhaseChangeEventV1) => void> = [];
   private priceIndexCallbacks: Array<(event: PriceIndexV1) => void> = [];
+  private weatherEventCallbacks: Array<(event: WeatherEventUpdateV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
   private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
@@ -271,6 +278,11 @@ export class RedisIpc {
 
     if (channel === PRICE_INDEX) {
       this.handlePriceIndexMessage(message);
+      return;
+    }
+
+    if (channel === WEATHER_EVENT_UPDATE) {
+      this.handleWeatherEventUpdateMessage(message);
       return;
     }
 
@@ -530,6 +542,32 @@ export class RedisIpc {
     }
   }
 
+  private handleWeatherEventUpdateMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateWeatherEventUpdateV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid weather event update:", result.errors.join("; "));
+        return;
+      }
+      this.recordWeatherEventUpdate(data as WeatherEventUpdateV1);
+      this.recordCrossSystemEvent({ channel: WEATHER_EVENT_UPDATE, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse weather event update:", e);
+    }
+  }
+
+  private recordWeatherEventUpdate(event: WeatherEventUpdateV1): void {
+    this.latestWeatherEventUpdates.push(event);
+    if (this.latestWeatherEventUpdates.length > WEATHER_EVENT_BUFFER_LIMIT) {
+      this.latestWeatherEventUpdates =
+        this.latestWeatherEventUpdates.slice(-WEATHER_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.weatherEventCallbacks) {
+      cb(event);
+    }
+  }
+
   private handleCrossSystemEventMessage(channel: ChannelName, message: string): void {
     try {
       this.recordCrossSystemEvent({ channel, payload: JSON.parse(message) as unknown });
@@ -640,6 +678,16 @@ export class RedisIpc {
 
   onPriceIndex(cb: (event: PriceIndexV1) => void): void {
     this.priceIndexCallbacks.push(cb);
+  }
+
+  drainWeatherEventUpdates(): WeatherEventUpdateV1[] {
+    const events = [...this.latestWeatherEventUpdates];
+    this.latestWeatherEventUpdates = [];
+    return events;
+  }
+
+  onWeatherEventUpdate(cb: (event: WeatherEventUpdateV1) => void): void {
+    this.weatherEventCallbacks.push(cb);
   }
 
   getLatestCrossSystemEvents(): CrossSystemRuntimeEventV1[] {
