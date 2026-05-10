@@ -4,6 +4,7 @@ import type { Command, Narration } from "@bong/schema";
 import { CraftNarrationRuntime } from "./craft-runtime.js";
 import { DeathInsightRuntime } from "./death-insight-runtime.js";
 import { DuguNarrationRuntime } from "./dugu-narration.js";
+import { DuguV2NarrationRuntime } from "./dugu_v2_runtime.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
@@ -180,6 +181,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const duguCleanup = await startDuguRuntime({
     ...runtimeOpts,
   });
+  const duguV2Cleanup = await startDuguV2Runtime({
+    ...runtimeOpts,
+  });
   const scatteredCultivatorCleanup = await startScatteredCultivatorRuntime({
     redisUrl: config.redisUrl,
   });
@@ -203,6 +207,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     zhenmaiCleanup,
     zhenfaV2Cleanup,
     tuikeCleanup,
+    duguV2Cleanup,
     duguCleanup,
     scatteredCultivatorCleanup,
     woliuV2Cleanup,
@@ -478,6 +483,44 @@ async function startDuguRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] dugu runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startDuguV2Runtime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DuguV2NarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DuguV2NarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new DuguV2NarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] dugu v2 runtime online"))
+    .catch((error) => console.warn("[tiandao] dugu v2 runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] dugu v2 runtime disconnect error:", error);
     }
   };
 }

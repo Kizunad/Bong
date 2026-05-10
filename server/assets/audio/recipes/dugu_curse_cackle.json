@@ -1,0 +1,10 @@
+{
+  "id": "dugu_curse_cackle",
+  "layers": [
+    { "sound": "minecraft:entity.witch.celebrate", "volume": 0.6, "pitch": 0.7, "delay_ticks": 0 },
+    { "sound": "minecraft:ambient.cave", "volume": 0.3, "pitch": 1.2, "delay_ticks": 5 }
+  ],
+  "priority": 75,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "dugu_needle_throw",
+  "description": "dugu-v2 eclipse needle: short hidden wrist flick and sharp forward release.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 8,
+    "stopTick": 11,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.35, "yaw": -0.08, "roll": -0.15, "bend": 0.45, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.15, "yaw": 0.10, "roll": 0.08, "bend": 0.25, "axis": 3.1415927 } },
+      { "tick": 3, "easing": "OUTQUAD", "body": { "z": -0.025 } },
+      { "tick": 3, "easing": "OUTQUAD", "torso": { "yaw": -0.10 } },
+      { "tick": 3, "easing": "OUTQUAD", "rightArm": { "pitch": -1.15, "yaw": -0.34, "roll": -0.42, "bend": 0.95, "axis": 3.1415927 } },
+      { "tick": 6, "easing": "OUTSINE", "body": { "z": 0.025 } },
+      { "tick": 6, "easing": "OUTSINE", "rightArm": { "pitch": -0.72, "yaw": -0.62, "roll": -0.58, "bend": 0.18, "axis": 3.1415927 } },
+      { "tick": 8, "easing": "INOUTSINE", "body": { "z": 0.0 } },
+      { "tick": 8, "easing": "INOUTSINE", "torso": { "yaw": 0.0 } },
+      { "tick": 8, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } },
+      { "tick": 8, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } }
+    ]
+  }
+}

@@ -195,6 +195,75 @@ public class InventorySnapshotHandlerTest {
     }
 
     @Test
+    void rejectsPlacedItemWithInvalidChargesField() {
+        String invalidCharges = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 12,
+              "containers": [
+                {"id":"main_pack","name":"主背包","rows":5,"cols":7},
+                {"id":"small_pouch","name":"小口袋","rows":3,"cols":3},
+                {"id":"front_satchel","name":"前挂包","rows":3,"cols":4}
+              ],
+              "placed_items": [
+                {
+                  "container_id": "main_pack",
+                  "row": 0,
+                  "col": 0,
+                  "item": {
+                    "instance_id": 1001,
+                    "item_id": "ancient_relic",
+                    "display_name": "上古遗物",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.2,
+                    "rarity": "ancient",
+                    "description": "",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0,
+                    "charges": "bad"
+                  }
+                }
+              ],
+              "equipped": {
+                "head": null,
+                "chest": null,
+                "legs": null,
+                "feet": null,
+                "main_hand": null,
+                "off_hand": null,
+                "two_hand": null,
+                "treasure_belt_0": null,
+                "treasure_belt_1": null,
+                "treasure_belt_2": null,
+                "treasure_belt_3": null
+              },
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 57,
+              "weight": {"current": 0.2, "max": 50.0},
+              "realm": "Awaken",
+              "qi_current": 24,
+              "qi_max": 100,
+              "body_level": 0.18
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            invalidCharges,
+            invalidCharges.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.logMessage().contains("placed_items"));
+        assertFalse(InventoryStateStore.isAuthoritativeLoaded());
+        assertTrue(InventoryStateStore.snapshot().isEmpty());
+    }
+
+    @Test
     void parsesScrollMetadataAcrossSkillRecipeAndBlueprintKinds() {
         String snapshotJson = """
             {

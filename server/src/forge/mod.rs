@@ -29,7 +29,7 @@ pub mod steps;
 use std::collections::HashMap;
 
 use valence::prelude::{
-    App, DVec3, EventReader, EventWriter, IntoSystemConfigs, Query, Res, ResMut, Update,
+    App, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut, Update,
 };
 
 use self::blueprint::{BlueprintRegistry, StepKind, DEFAULT_BLUEPRINTS_DIR};
@@ -50,6 +50,7 @@ use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -282,6 +283,8 @@ fn handle_tempering_hits(
     registry: Res<BlueprintRegistry>,
     mut sessions: ResMut<ForgeSessions>,
     casters: Query<(&Cultivation, &SkillSet)>,
+    stations: Query<&WeaponForgeStation>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for hit in ev.read() {
         let Some(session) = sessions.get_mut(hit.session) else {
@@ -307,6 +310,24 @@ fn handle_tempering_hits(
         let window_bonus = skill_hook::tempering_window_bonus_ticks(forging_lv);
         if let StepState::Tempering(state) = &mut session.step_state {
             apply_tempering_hit(profile, state, hit.beat, hit.ticks_remaining, window_bonus);
+            if let (Some(events), Ok(station)) =
+                (vfx_events.as_deref_mut(), stations.get(session.station))
+            {
+                if let Some(origin) = forge_station_origin(station) {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::FORGE_HAMMER_STRIKE,
+                            origin,
+                            Some([0.0, 0.8, 0.0]),
+                            "#FF8800",
+                            0.8,
+                            8,
+                            20,
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -314,6 +335,8 @@ fn handle_tempering_hits(
 fn handle_scroll_submits(
     mut ev: EventReader<InscriptionScrollSubmit>,
     mut sessions: ResMut<ForgeSessions>,
+    stations: Query<&WeaponForgeStation>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for submit in ev.read() {
         let Some(session) = sessions.get_mut(submit.session) else {
@@ -324,6 +347,24 @@ fn handle_scroll_submits(
         }
         if let StepState::Inscription(state) = &mut session.step_state {
             apply_scroll(state, submit.inscription_id.clone());
+            if let (Some(events), Ok(station)) =
+                (vfx_events.as_deref_mut(), stations.get(session.station))
+            {
+                if let Some(origin) = forge_station_origin(station) {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::FORGE_INSCRIPTION,
+                            origin,
+                            None,
+                            "#4488FF",
+                            0.8,
+                            1,
+                            20,
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -333,6 +374,7 @@ fn handle_consecration_injects(
     mut sessions: ResMut<ForgeSessions>,
     stations: Query<&WeaponForgeStation>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for inject in ev.read() {
         let Some(session) = sessions.get_mut(inject.session) else {
@@ -354,8 +396,32 @@ fn handle_consecration_injects(
         }
         if let StepState::Consecration(state) = &mut session.step_state {
             inject_qi(state, inject.qi_amount);
+            if let (Some(events), Ok(station)) =
+                (vfx_events.as_deref_mut(), stations.get(session.station))
+            {
+                if let Some(origin) = forge_station_origin(station) {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::FORGE_CONSECRATION,
+                            origin,
+                            Some([0.0, 1.0, 0.0]),
+                            "#FFFFFF",
+                            0.9,
+                            10,
+                            18,
+                        ),
+                    );
+                }
+            }
         }
     }
+}
+
+fn forge_station_origin(station: &WeaponForgeStation) -> Option<DVec3> {
+    station
+        .pos
+        .map(|(x, y, z)| DVec3::new(f64::from(x) + 0.5, f64::from(y) + 0.8, f64::from(z) + 0.5))
 }
 
 fn station_zone_is_collapsed(
@@ -712,7 +778,9 @@ fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forge::blueprint::{BilletProfile, BilletTolerance, CarrierSpec, MaterialStack};
+    use crate::forge::blueprint::{
+        BilletProfile, BilletTolerance, CarrierSpec, MaterialStack, TemperBeat,
+    };
     use crate::forge::session::ForgeSessionId;
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::prelude::{App, BlockPos, Update};
@@ -822,6 +890,75 @@ mod tests {
             other => panic!("expected consecration state, got {other:?}"),
         }
         assert!(app.world().entity(station).contains::<WeaponForgeStation>());
+    }
+
+    #[test]
+    fn hammer_step_emits_vfx() {
+        let mut app = App::new();
+        let minerals = build_default_mineral_registry();
+        let registry =
+            BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
+                .expect("default forge blueprints should load");
+        let blueprint_id = registry
+            .ids()
+            .find(|id| {
+                registry
+                    .get(id.as_str())
+                    .is_some_and(|blueprint| blueprint.has_step(StepKind::Tempering))
+            })
+            .expect("default blueprints should include tempering")
+            .clone();
+        let step_index = registry
+            .get(blueprint_id.as_str())
+            .unwrap()
+            .steps
+            .iter()
+            .position(|step| step.kind() == StepKind::Tempering)
+            .expect("tempering step");
+        app.insert_resource(registry);
+        app.add_event::<TemperingHit>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_tempering_hits);
+
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                valence::prelude::Entity::PLACEHOLDER,
+            ))
+            .id();
+        let caster = app
+            .world_mut()
+            .spawn((Cultivation::default(), SkillSet::default()))
+            .id();
+        let session_id = ForgeSessionId(9);
+        let mut sessions = ForgeSessions::new();
+        let mut session = ForgeSession::new(session_id, blueprint_id, station, caster);
+        session.current_step = ForgeStep::Tempering;
+        session.step_index = step_index;
+        session.step_state = StepState::Tempering(Default::default());
+        sessions.insert(session);
+        app.insert_resource(sessions);
+
+        app.world_mut().send_event(TemperingHit {
+            session: session_id,
+            beat: TemperBeat::Light,
+            ticks_remaining: 4,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("tempering hit should emit vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::FORGE_HAMMER_STRIKE);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

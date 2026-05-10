@@ -89,10 +89,10 @@ use self::death_hooks::{
     PlayerTerminated,
 };
 use self::dugu::{
-    dugu_poison_tick, expire_dugu_state, on_attack_resolved_dugu_handler,
-    resolve_infuse_dugu_poison_intents, resolve_self_antidote_intent, AntidoteResultEvent,
-    DuguObfuscationDisruptedEvent, DuguPoisonProgressEvent, DuguPractice, InfuseDuguPoisonIntent,
-    SelfAntidoteIntent,
+    dugu_poison_ambient_vfx_tick, dugu_poison_tick, expire_dugu_state,
+    on_attack_resolved_dugu_handler, resolve_infuse_dugu_poison_intents,
+    resolve_self_antidote_intent, AntidoteResultEvent, DuguObfuscationDisruptedEvent,
+    DuguPoisonProgressEvent, DuguPractice, InfuseDuguPoisonIntent, SelfAntidoteIntent,
 };
 use self::forging::{forging_system, ForgeOutcome, ForgeRequest};
 use self::heal::meridian_heal_tick;
@@ -173,6 +173,7 @@ pub fn register(app: &mut App) {
     let mut skill_meridian_dependencies = SkillMeridianDependencies::default();
     crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::dugu_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
@@ -358,6 +359,7 @@ pub fn register(app: &mut App) {
             expire_dugu_state,
             on_attack_resolved_dugu_handler.after(crate::combat::resolve::resolve_attack_intents),
             dugu_poison_tick,
+            dugu_poison_ambient_vfx_tick,
             resolve_self_antidote_intent,
             // plan-perception-v1.1 §4.1 server authoritative realm vision.
             push_initial_realm_vision.after(attach_cultivation_to_joined_clients),

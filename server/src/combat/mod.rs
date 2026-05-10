@@ -8,6 +8,7 @@ pub mod components;
 mod death_event_attacker_chain_test;
 pub mod debug;
 pub mod decay;
+pub mod dugu_v2;
 pub mod events;
 pub mod foreign_qi_resistance;
 pub mod jiemai;
@@ -195,6 +196,7 @@ pub fn register(app: &mut App) {
     yidao::register(app);
     woliu_v2::register(app);
     zhenmai_v2::register(app);
+    dugu_v2::register(app);
 
     app.add_systems(
         Update,

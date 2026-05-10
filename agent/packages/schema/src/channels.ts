@@ -164,6 +164,15 @@ export const CHANNELS = {
   /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
   DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
 
+  /** Server → Agent: 毒蛊 v2 五招 cast 流水（plan-dugu-v2 P3） */
+  DUGU_V2_CAST: "bong:dugu_v2/cast",
+
+  /** Server → Agent: 毒蛊 v2 自蕴进度与形貌异化（plan-dugu-v2 P3） */
+  DUGU_V2_SELF_CURE: "bong:dugu_v2/self_cure",
+
+  /** Server → Agent: 毒蛊 v2 倒蚀清算与绝壁劫预兆（plan-dugu-v2 P3） */
+  DUGU_V2_REVERSE: "bong:dugu_v2/reverse",
+
   /** Server → Agent: 暗器载体封元完成（plan-anqi-v1 P2 narration） */
   ANQI_CARRIER_CHARGED: "bong:combat/carrier_charged",
 

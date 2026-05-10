@@ -35,6 +35,9 @@ public final class BongParticles {
     public static final DefaultParticleType TRIBULATION_SPARK   = FabricParticleTypes.simple();
     public static final DefaultParticleType FLYING_SWORD_TRAIL  = FabricParticleTypes.simple();
     public static final DefaultParticleType VORTEX_SPIRAL       = FabricParticleTypes.simple();
+    public static final DefaultParticleType DUGU_DARK_GREEN_MIST = FabricParticleTypes.simple();
+    public static final DefaultParticleType DUGU_TAINT_PULSE     = FabricParticleTypes.simple();
+    public static final DefaultParticleType DUGU_REVERSE_BURST   = FabricParticleTypes.simple();
 
     // SpriteProvider 缓存，由 Factory 注册回调注入，VfxPlayer 通过它取 sprite。
     public static volatile SpriteProvider swordQiTrailSprites;
@@ -47,6 +50,9 @@ public final class BongParticles {
     public static volatile SpriteProvider tribulationSparkSprites;
     public static volatile SpriteProvider flyingSwordTrailSprites;
     public static volatile SpriteProvider vortexSpiralSprites;
+    public static volatile SpriteProvider duguDarkGreenMistSprites;
+    public static volatile SpriteProvider duguTaintPulseSprites;
+    public static volatile SpriteProvider duguReverseBurstSprites;
 
     private BongParticles() {
     }
@@ -63,6 +69,9 @@ public final class BongParticles {
         reg("tribulation_spark",   TRIBULATION_SPARK);
         reg("flying_sword_trail",  FLYING_SWORD_TRAIL);
         reg("vortex_spiral",       VORTEX_SPIRAL);
+        reg("dugu_dark_green_mist", DUGU_DARK_GREEN_MIST);
+        reg("dugu_taint_pulse",     DUGU_TAINT_PULSE);
+        reg("dugu_reverse_burst",   DUGU_REVERSE_BURST);
     }
 
     /** Client 侧：注册 Factory，抓住 SpriteProvider 引用。 */
@@ -78,6 +87,9 @@ public final class BongParticles {
         pfr.register(RUNE_CHAR,           provider -> { runeCharSprites          = provider; return spriteFactory(provider); });
         pfr.register(ENLIGHTENMENT_DUST,  provider -> { enlightenmentDustSprites = provider; return spriteFactory(provider); });
         pfr.register(VORTEX_SPIRAL,       provider -> { vortexSpiralSprites      = provider; return vortexSpiralFactory(provider); });
+        pfr.register(DUGU_DARK_GREEN_MIST, provider -> { duguDarkGreenMistSprites = provider; return spriteFactory(provider); });
+        pfr.register(DUGU_TAINT_PULSE,     provider -> { duguTaintPulseSprites    = provider; return groundDecalFactory(provider); });
+        pfr.register(DUGU_REVERSE_BURST,   provider -> { duguReverseBurstSprites  = provider; return lineFactory(provider); });
     }
 
     private static void reg(String id, DefaultParticleType type) {

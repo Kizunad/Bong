@@ -332,6 +332,28 @@ public class InventoryEventHandlerTest {
         assertEquals(5L, InventoryStateStore.revision());
     }
 
+    @Test
+    void droppedWithInvalidChargesPayloadIsIgnoredSafely() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"dropped","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "world_pos":[8.5,66.0,8.5],
+             "item":{"instance_id":1001,"item_id":"ancient_relic","display_name":"上古遗物",
+                     "grid_width":1,"grid_height":1,"weight":0.2,"rarity":"ancient",
+                     "description":"","stack_count":1,"spirit_quality":1.0,"durability":1.0,
+                     "charges":"bad"}}
+            """));
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.logMessage().contains("invalid from/world_pos/item payload"));
+        assertEquals(baseline, InventoryStateStore.snapshot());
+        assertEquals(5L, InventoryStateStore.revision());
+        assertTrue(DroppedItemStore.snapshot().isEmpty());
+    }
+
     private static InventoryModel baselineWithStarterTalisman() {
         return InventoryModel.builder()
             .containers(InventoryModel.DEFAULT_CONTAINERS)
