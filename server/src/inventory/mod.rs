@@ -3120,6 +3120,8 @@ fn validate_move_semantics(
                         equip_slot_key(slot)
                     ));
                 }
+                // TODO(plan-forge-v1): route forged/non-mundane armor through a shared armor
+                // template directory before adding non-`armor_<material>_<slot>` ids.
                 let expected_slot = crate::armor::mundane::equip_slot_for_item_id(
                     &item.template_id,
                 )

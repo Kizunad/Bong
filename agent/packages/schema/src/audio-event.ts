@@ -28,6 +28,7 @@ export type AudioAttenuationV1 = Static<typeof AudioAttenuationV1>;
 
 export const AudioSoundCategoryV1 = Type.Union([
   Type.Literal("MASTER"),
+  Type.Literal("PLAYERS"),
   Type.Literal("HOSTILE"),
   Type.Literal("AMBIENT"),
   Type.Literal("VOICE"),

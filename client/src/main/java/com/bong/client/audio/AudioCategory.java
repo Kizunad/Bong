@@ -2,6 +2,7 @@ package com.bong.client.audio;
 
 public enum AudioCategory {
     MASTER,
+    PLAYERS,
     HOSTILE,
     AMBIENT,
     VOICE,

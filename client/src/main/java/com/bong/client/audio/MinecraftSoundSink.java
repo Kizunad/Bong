@@ -70,6 +70,7 @@ public final class MinecraftSoundSink implements SoundSink {
     private static SoundCategory toMinecraftCategory(AudioCategory category) {
         return switch (category) {
             case MASTER -> SoundCategory.MASTER;
+            case PLAYERS -> SoundCategory.PLAYERS;
             case HOSTILE -> SoundCategory.HOSTILE;
             case AMBIENT -> SoundCategory.AMBIENT;
             case VOICE -> SoundCategory.VOICE;
