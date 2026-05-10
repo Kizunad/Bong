@@ -5,11 +5,11 @@ import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.botany.BotanySkillViewModel;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
+import com.bong.client.inventory.ItemIconRegistry;
 import com.bong.client.skill.SkillSetStore;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * plan-botany-v1 §1.3 采集浮窗。照 {@code docs/svg/harvest-popup.svg} 草图比例实现：
@@ -21,52 +21,6 @@ import java.util.Map;
  * 坐标上行后补。
  */
 public final class BotanyHudPlanner {
-    /**
-     * canonical plant_kind → HUD thumbnail 资源。v1 22 种使用 botany 缩略图；
-     * v2 绝地草木复用 inventory item icon，位于 {@code textures/gui/items/}。
-     */
-    static final Map<String, String> PLANT_ICON_PATHS = java.util.Map.ofEntries(
-        java.util.Map.entry("ci_she_hao", "bong-client:textures/gui/botany/ci_she_hao.png"),
-        java.util.Map.entry("ning_mai_cao", "bong-client:textures/gui/botany/ning_mai_cao.png"),
-        java.util.Map.entry("hui_yuan_zhi", "bong-client:textures/gui/botany/hui_yuan_zhi.png"),
-        java.util.Map.entry("chi_sui_cao", "bong-client:textures/gui/botany/chi_sui_cao.png"),
-        java.util.Map.entry("gu_yuan_gen", "bong-client:textures/gui/botany/gu_yuan_gen.png"),
-        java.util.Map.entry("kong_shou_hen", "bong-client:textures/gui/botany/kong_shou_hen.png"),
-        java.util.Map.entry("jie_gu_rui", "bong-client:textures/gui/botany/jie_gu_rui.png"),
-        java.util.Map.entry("yang_jing_tai", "bong-client:textures/gui/botany/yang_jing_tai.png"),
-        java.util.Map.entry("qing_zhuo_cao", "bong-client:textures/gui/botany/qing_zhuo_cao.png"),
-        java.util.Map.entry("an_shen_guo", "bong-client:textures/gui/botany/an_shen_guo.png"),
-        java.util.Map.entry("shi_mai_gen", "bong-client:textures/gui/botany/shi_mai_gen.png"),
-        java.util.Map.entry("ling_yan_shi_zhi", "bong-client:textures/gui/botany/ling_yan_shi_zhi.png"),
-        java.util.Map.entry("ye_ku_teng", "bong-client:textures/gui/botany/ye_ku_teng.png"),
-        java.util.Map.entry("hui_jin_tai", "bong-client:textures/gui/botany/hui_jin_tai.png"),
-        java.util.Map.entry("zhen_jie_zi", "bong-client:textures/gui/botany/zhen_jie_zi.png"),
-        java.util.Map.entry("shao_hou_man", "bong-client:textures/gui/botany/shao_hou_man.png"),
-        java.util.Map.entry("tian_nu_jiao", "bong-client:textures/gui/botany/tian_nu_jiao.png"),
-        java.util.Map.entry("fu_you_hua", "bong-client:textures/gui/botany/fu_you_hua.png"),
-        java.util.Map.entry("wu_yan_guo", "bong-client:textures/gui/botany/wu_yan_guo.png"),
-        java.util.Map.entry("hei_gu_jun", "bong-client:textures/gui/botany/hei_gu_jun.png"),
-        java.util.Map.entry("fu_chen_cao", "bong-client:textures/gui/botany/fu_chen_cao.png"),
-        java.util.Map.entry("zhong_yan_teng", "bong-client:textures/gui/botany/zhong_yan_teng.png"),
-        java.util.Map.entry("fu_yuan_jue", "bong-client:textures/gui/items/fu_yuan_jue.png"),
-        java.util.Map.entry("bai_yan_peng", "bong-client:textures/gui/items/bai_yan_peng.png"),
-        java.util.Map.entry("duan_ji_ci", "bong-client:textures/gui/items/duan_ji_ci.png"),
-        java.util.Map.entry("xue_se_mai_cao", "bong-client:textures/gui/items/xue_se_mai_cao.png"),
-        java.util.Map.entry("yun_ding_lan", "bong-client:textures/gui/items/yun_ding_lan.png"),
-        java.util.Map.entry("xuan_gen_wei", "bong-client:textures/gui/items/xuan_gen_wei.png"),
-        java.util.Map.entry("ying_yuan_gu", "bong-client:textures/gui/items/ying_yuan_gu.png"),
-        java.util.Map.entry("xuan_rong_tai", "bong-client:textures/gui/items/xuan_rong_tai.png"),
-        java.util.Map.entry("yuan_ni_hong_yu", "bong-client:textures/gui/items/yuan_ni_hong_yu.png"),
-        java.util.Map.entry("jing_xin_zao", "bong-client:textures/gui/items/jing_xin_zao.png"),
-        java.util.Map.entry("xue_po_lian", "bong-client:textures/gui/items/xue_po_lian.png"),
-        java.util.Map.entry("jiao_mai_teng", "bong-client:textures/gui/items/jiao_mai_teng.png"),
-        java.util.Map.entry("lie_yuan_tai", "bong-client:textures/gui/items/lie_yuan_tai.png"),
-        java.util.Map.entry("ming_gu_gu", "bong-client:textures/gui/items/ming_gu_gu.png"),
-        java.util.Map.entry("bei_wen_zhi", "bong-client:textures/gui/items/bei_wen_zhi.png"),
-        java.util.Map.entry("ling_jing_xu", "bong-client:textures/gui/items/ling_jing_xu.png"),
-        java.util.Map.entry("mao_xin_wei", "bong-client:textures/gui/items/mao_xin_wei.png")
-    );
-
     static final int PANEL_WIDTH = 280;
     static final int PANEL_HEIGHT = 204;
     static final int HEADER_HEIGHT = 24;
@@ -241,7 +195,7 @@ public final class BotanyHudPlanner {
         int thumbW = 40;
         int thumbH = 44;
         out.add(HudRenderCommand.rect(HudRenderLayer.BOTANY, x, y, thumbW, thumbH, THUMB_BG));
-        String iconPath = PLANT_ICON_PATHS.get(session.plantKindId());
+        String iconPath = ItemIconRegistry.plantIconPath(session.plantKindId());
         if (iconPath != null) {
             out.add(HudRenderCommand.texture(HudRenderLayer.BOTANY, iconPath, x, y + 2, thumbW, thumbW, 0xFFFFFFFF));
         } else {
