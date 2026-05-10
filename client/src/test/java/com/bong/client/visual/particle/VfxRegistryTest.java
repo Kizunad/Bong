@@ -123,6 +123,14 @@ public class VfxRegistryTest {
             "bootstrap should register tribulation_omen_cloud");
         assertTrue(VfxRegistry.instance().contains(RealmCollapseBoundaryPlayer.EVENT_ID),
             "bootstrap should register realm_collapse_boundary");
+        assertTrue(VfxRegistry.instance().contains(NpcDeathSmokePlayer.EVENT_ID),
+            "bootstrap should register npc_death_smoke");
+        assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.ELDER),
+            "bootstrap should register npc_rank_aura_elder");
+        assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.MASTER),
+            "bootstrap should register npc_rank_aura_master");
+        assertTrue(VfxRegistry.instance().contains(NpcQiAuraRipplePlayer.EVENT_ID),
+            "bootstrap should register npc_qi_aura_ripple");
         assertTrue(VfxRegistry.instance().contains(FrostBreathPlayer.EVENT_ID),
             "bootstrap should register frost_breath");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MERIDIAN_REPAIR),

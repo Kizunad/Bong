@@ -157,8 +157,11 @@ pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
         | "bong:tribulation_boundary"
         | "bong:realm_collapse_boundary"
         | "bong:breakthrough_pillar"
-        | "bong:death_soul_dissipate" => VfxPriority::Critical,
-        "bong:enlightenment_aura" => VfxPriority::Important,
+        | "bong:death_soul_dissipate"
+        | "bong:npc_death_smoke" => VfxPriority::Critical,
+        "bong:enlightenment_aura" | "bong:npc_rank_aura_elder" | "bong:npc_rank_aura_master" => {
+            VfxPriority::Important
+        }
         _ => VfxPriority::Normal,
     }
 }

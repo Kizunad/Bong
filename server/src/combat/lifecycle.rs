@@ -1403,6 +1403,9 @@ fn terminate_lifecycle_with_death_context(
                 duration_ticks: Some(40),
             },
         ));
+        if lifecycle.character_id.starts_with("npc_") {
+            vfx_events.send(crate::skin::faction_tint::npc_death_smoke_request(p));
+        }
     }
     true
 }

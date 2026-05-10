@@ -24,6 +24,11 @@ public final class VfxBootstrap {
         registry.register(RealmCollapseBoundaryPlayer.EVENT_ID,  new RealmCollapseBoundaryPlayer());
         registry.register(FormationActivatePlayer.EVENT_ID,      new FormationActivatePlayer());
         registry.register(DeathSoulDissipatePlayer.EVENT_ID,     new DeathSoulDissipatePlayer());
+        registry.register(NpcDeathSmokePlayer.EVENT_ID,          new NpcDeathSmokePlayer());
+        NpcRankAuraPlayer npcRankAura = new NpcRankAuraPlayer();
+        registry.register(NpcRankAuraPlayer.ELDER,               npcRankAura);
+        registry.register(NpcRankAuraPlayer.MASTER,              npcRankAura);
+        registry.register(NpcQiAuraRipplePlayer.EVENT_ID,        new NpcQiAuraRipplePlayer());
         registry.register(FlyingSwordDemoPlayer.EVENT_ID,        new FlyingSwordDemoPlayer());
         registry.register(FormationCoreDemoPlayer.EVENT_ID,      new FormationCoreDemoPlayer());
         registry.register(BurstMeridianBengQuanPlayer.EVENT_ID,  new BurstMeridianBengQuanPlayer());
