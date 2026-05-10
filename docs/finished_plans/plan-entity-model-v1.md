@@ -137,7 +137,7 @@
 ### 落地清单
 
 - P0 灵龛 / 灵眼 / 裂缝传送门：
-  - `server/src/world/entity_model.rs`：下发 `EntityKind::new(142..144)` 视觉 marker，并用 DataTracker `VisualState` metadata 驱动状态贴图。
+  - `server/src/world/entity_model.rs`：下发 raw id `142..=144` 的 `EntityKind::new(...)` 视觉 marker，并用 DataTracker `VisualState` metadata 驱动状态贴图。
   - `client/src/main/java/com/bong/client/entity/BongEntityRegistry.java`
   - `client/src/main/java/com/bong/client/entity/BongEntityRenderBootstrap.java`
   - `client/src/main/java/com/bong/client/entity/SpiritNicheRenderer.java`
@@ -150,7 +150,7 @@
   - `client/src/main/resources/assets/bong/animations/{spirit_niche,spirit_eye,rift_portal}.animation.json`
   - `client/src/main/resources/assets/bong/textures/entity/{spirit_niche_*,spirit_eye_*,rift_portal_*}.png`
 - P1 炼器台 / 丹炉 / 阵法核心：
-  - `server/src/world/entity_model.rs`：下发 `EntityKind::new(145..147)`，按工作台 session / furnace busy / zhenfa anchor 状态同步视觉状态。
+  - `server/src/world/entity_model.rs`：下发 raw id `145..=147` 的 `EntityKind::new(...)`，按工作台 session / furnace busy / zhenfa anchor 状态同步视觉状态。
   - `client/src/main/java/com/bong/client/entity/ForgeStationRenderer.java`
   - `client/src/main/java/com/bong/client/entity/AlchemyFurnaceRenderer.java`
   - `client/src/main/java/com/bong/client/entity/FormationCoreRenderer.java`
@@ -159,7 +159,7 @@
   - `client/src/main/resources/assets/bong/animations/{forge_station,alchemy_furnace,formation_core}.animation.json`
   - `client/src/main/resources/assets/bong/textures/entity/{forge_station_*,alchemy_furnace_*,formation_core_*}.png`
 - P2 灵田地块 / TSY 容器：
-  - `server/src/world/entity_model.rs`：下发 `EntityKind::new(148..152)`，按灵田 crop 成熟度与 TSY 容器 kind / searched / depleted 状态同步视觉状态。
+  - `server/src/world/entity_model.rs`：下发 raw id `148..=152` 的 `EntityKind::new(...)`，按灵田 crop 成熟度与 TSY 容器 kind / searched / depleted 状态同步视觉状态。
   - `client/src/main/java/com/bong/client/entity/LingtianPlotRenderer.java`
   - `client/src/main/java/com/bong/client/entity/LingtianPlotBlock.java`
   - `client/src/main/java/com/bong/client/entity/LingtianPlotBlockEntity.java`
@@ -174,7 +174,7 @@
 - 通用注册与契约：
   - `server/src/world/mod.rs`：注册 `world::entity_model`，在现有 gameplay component 之外提供只负责视觉的同步层。
   - `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java`：统一维护 11 个实体的 `bong:*` id、raw id、尺寸、状态贴图、geo/animation 资源路径。
-  - `client/src/main/java/com/bong/client/BongClient.java`：在 `WhaleRenderBootstrap.register()` 与 `FaunaRenderBootstrap.register()` 之后注册新实体，避免破坏既有 `whale raw_id=133` / `fauna raw_id=134..141`。
+  - `client/src/main/java/com/bong/client/BongClient.java`：在 `WhaleRenderBootstrap.register()` 与 `FaunaRenderBootstrap.register()` 之后注册新实体，避免破坏既有 `whale raw_id=133` / `fauna raw_id=134..=141`。
   - `client/src/test/java/com/bong/client/entity/BongEntityModelRegistryTest.java`
   - `client/src/test/java/com/bong/client/entity/BongEntityModelAssetTest.java`
 
@@ -192,6 +192,7 @@
 - `dc1ad4f19`（2026-05-10）`fix(server): 同步阵法核心视觉状态`
 - `9e1be3ec1`（2026-05-10）`fix(entity): 收敛实体模型 review 边界`
 - `8d23cd000`（2026-05-10）`fix(client): 移除实体模型无效动画轨道`
+- `7acac4e85`（2026-05-10）`merge(main): 同步实体模型 raw id 合约`
 
 ### 测试结果
 
@@ -224,10 +225,10 @@
   - `server/src/zhenfa/mod.rs`：`ZhenfaAnchor`
   - `server/src/lingtian/plot.rs`：`LingtianPlot`
   - `server/src/world/tsy.rs` / `server/src/world/tsy_container.rs`：`LootContainer`
-- client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=142..152`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=133` 与 `fauna raw_id=134..141` 之后。
+- client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=142..=152`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=133` 与 `fauna raw_id=134..=141` 之后。
 - `BongEntityRenderBootstrap` 对 renderer binding 重复 / 缺失做 fail-fast；`LingtianPlotBlockEntity` 仅在视觉状态变化时标脏。
 - 11 个 GeckoLib animation asset 只保留实际存在于对应 geo 的骨骼轨道；`BongEntityModelAssetTest` 同步校验 animation bone ↔ geo bone 对齐。
-- server 新增 `world::entity_model` 将 gameplay component 映射到 `EntityKind::new(142..152)` 视觉 marker，`VisualState` 使用 DataTracker index `8`、type `INTEGER`、VarInt 编码，与 `BongModeledEntity.VISUAL_STATE` 对齐。
+- server 新增 `world::entity_model` 将 gameplay component 映射到 raw id `142..=152` 的 `EntityKind::new(...)` 视觉 marker，`VisualState` 使用 DataTracker index `8`、type `INTEGER`、VarInt 编码，与 `BongModeledEntity.VISUAL_STATE` 对齐。
 - `SpiritEyeRegistry` stale visual cleanup 先从 `by_eye_id` 收集移除，再批量提交 despawn，避免 retain 闭包内混合 map 修改与 Commands 操作。
 - 阵法核心视觉状态由 `ZhenfaRegistry::anchor_visual_state` 提供，覆盖 inactive / active / exhausted，避免 marker 层写死 active。
 - 未新增 server_data / Redis event；视觉状态走实体 metadata 的 `VisualState` tracker 映射到状态贴图。
@@ -235,4 +236,4 @@
 ### 遗留 / 后续
 
 - 已通过本地 client 测试覆盖 Fabric 注册表、GeckoLib 资源路径、BlockBench 源文件和状态贴图存在性；server 定向测试覆盖 raw id、DataTracker metadata 字节和同 tick metadata flush。实际 WSLg `runClient` 视觉走查仍属于人工验收，不在本次云端自动测试内。
-- 合并最新 `origin/main` 后，raw id 移到 whale `133`、fauna `134..141`；本 plan 视觉实体整体后移到 `142..152`。
+- 合并最新 `origin/main` 后，raw id 移到 whale `133`、fauna `134..=141`；本 plan 视觉实体整体后移到 `142..=152`。

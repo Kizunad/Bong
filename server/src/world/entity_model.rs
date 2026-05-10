@@ -1,10 +1,10 @@
 //! plan-entity-model-v1 — server ↔ Fabric custom entity model contract.
 //!
 //! The client registers `bong:*` entity types after whale (`raw_id=133`) and
-//! fauna (`raw_id=134..141`). This module is the server-side mirror: existing
+//! fauna (`raw_id=134..=141`). This module is the server-side mirror: existing
 //! gameplay components keep owning logic, while this layer spawns lightweight
-//! marker entities with the custom `EntityKind` ids that the Fabric renderer
-//! consumes.
+//! marker entities with the custom `EntityKind` ids (`142..=152`) that the
+//! Fabric renderer consumes.
 
 use std::collections::{HashMap, HashSet};
 
