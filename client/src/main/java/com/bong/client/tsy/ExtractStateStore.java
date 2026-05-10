@@ -190,7 +190,8 @@ public final class ExtractStateStore {
             case "portal_expired" -> "裂口闭合";
             case "out_of_range" -> "距离过远";
             case "not_in_tsy" -> "不在坍缩渊";
-            case "already_busy" -> "正在撤离";
+            case "already_busy" -> "你已在撤离中";
+            case "portal_occupied" -> "裂口被占，换下一个";
             case "cannot_exit" -> "不可从此裂口撤离";
             case "spirit_qi_drained" -> "真元耗尽";
             case "cancelled" -> "取消";
@@ -200,7 +201,7 @@ public final class ExtractStateStore {
 
     private static boolean isRejectionReason(String reason) {
         return switch (reason == null ? "" : reason) {
-            case "out_of_range", "not_in_tsy", "already_busy", "cannot_exit" -> true;
+            case "out_of_range", "not_in_tsy", "already_busy", "portal_occupied", "cannot_exit" -> true;
             default -> false;
         };
     }
