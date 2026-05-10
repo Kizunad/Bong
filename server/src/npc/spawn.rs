@@ -1014,6 +1014,7 @@ pub fn spawn_beast_npc_at(
     let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler);
     let fauna_seed = fauna_spawn_seed(home_zone, spawn_position.x, spawn_position.z);
     let fauna_tag = fauna_tag_for_beast_spawn(home_zone, fauna_seed);
+    let visual_kind = visual_kind_for_beast(fauna_tag.beast_kind);
     let entity = commands
         .spawn(MarkerEntityBundle {
             kind: entity_kind_for_beast(fauna_tag.beast_kind),
@@ -1035,7 +1036,6 @@ pub fn spawn_beast_npc_at(
             loadout.melee_profile(),
             NpcArchetype::Beast,
             fauna_tag,
-            visual_kind_for_beast(fauna_tag.beast_kind),
         ))
         .insert((
             Navigator::new(),
@@ -1059,6 +1059,9 @@ pub fn spawn_beast_npc_at(
 
     let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
     commands.entity(entity).insert(runtime);
+    if let Some(visual_kind) = visual_kind {
+        commands.entity(entity).insert(visual_kind);
+    }
 
     entity
 }

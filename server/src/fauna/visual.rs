@@ -50,12 +50,26 @@ pub const fn entity_kind_for_beast(kind: BeastKind) -> EntityKind {
     }
 }
 
-pub const fn visual_kind_for_beast(kind: BeastKind) -> FaunaVisualKind {
+pub const fn visual_kind_for_beast(kind: BeastKind) -> Option<FaunaVisualKind> {
     match kind {
-        BeastKind::Rat => FaunaVisualKind::DevourRat,
-        BeastKind::Spider => FaunaVisualKind::AshSpider,
-        BeastKind::HybridBeast => FaunaVisualKind::HybridBeast,
-        BeastKind::VoidDistorted => FaunaVisualKind::VoidDistorted,
-        BeastKind::Whale => FaunaVisualKind::HybridBeast,
+        BeastKind::Rat => Some(FaunaVisualKind::DevourRat),
+        BeastKind::Spider => Some(FaunaVisualKind::AshSpider),
+        BeastKind::HybridBeast => Some(FaunaVisualKind::HybridBeast),
+        BeastKind::VoidDistorted => Some(FaunaVisualKind::VoidDistorted),
+        BeastKind::Whale => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whale_keeps_existing_renderer_without_fauna_visual_shell() {
+        assert_eq!(
+            entity_kind_for_beast(BeastKind::Whale),
+            crate::npc::spawn_whale::WHALE_ENTITY_KIND
+        );
+        assert_eq!(visual_kind_for_beast(BeastKind::Whale), None);
     }
 }
