@@ -491,14 +491,19 @@ PoisonOverdoseEvent severity → MICRO_TEAR 抽取经脉概率？
   - `d9a8c9cb3` · 2026-05-11 · `plan-poison-trait-v1: 修复毒性服务端 review 阻断`
   - `a562ee9be` · 2026-05-11 · `plan-poison-trait-v1: 接入毒性 agent 叙事通道`
   - `b0f594436` · 2026-05-11 · `plan-poison-trait-v1: 接入客户端毒性 server-data`
+  - `42a8bb7b0` · 2026-05-11 · `plan-poison-trait-v1: 修复 review 反馈的毒丹效果路径`
 
 - **测试结果**
   - `cargo fmt --check`（server）→ passed。
   - `cargo check --all-targets -j 1`（server）→ passed。
   - `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`（server）→ passed。
-  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test poison_trait -j 1`（server）→ 118 passed / 3975 filtered。
+  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test poison_trait -j 1`（server）→ 119 passed / 3978 filtered。
+  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test cast_ -j 1`（server）→ 53 passed / 4044 filtered。
+  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test parse_item_effect -j 1`（server）→ 2 passed / 4095 filtered。
+  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test labels_inventory_payload_types -j 1`（server）→ 1 passed / 4096 filtered。
   - `npm run build`（agent workspace）→ passed。
   - `cd agent/packages/schema && npm test` → 17 files / 358 tests passed。
+  - `cd agent/packages/tiandao && npm test -- poison-trait-runtime` → 1 file / 5 tests passed。
   - `cd agent/packages/tiandao && npm test` → 50 files / 343 tests passed。
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew test build`（client）→ BUILD SUCCESSFUL。
   - 资源检查：10 个 poison icon 均为 RGBA，且同时存在透明像素与不透明像素；`eat_food` / particle / audio recipe JSON 均通过 `python3 -m json.tool`；`python3 tools/render_animation.py ...eat_food.json --ticks 0,6,12,18,24` 生成 headless preview 成功。
