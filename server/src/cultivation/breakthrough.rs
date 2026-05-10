@@ -800,6 +800,7 @@ fn block_pos_from_position(position: &Position) -> BlockPos {
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::npc::spawn::NpcMarker;
     use crate::world::karma::KarmaWeightStore;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update, Username};
@@ -1122,6 +1123,50 @@ mod tests {
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
         assert_eq!(cultivation.qi_current, 100.0);
         assert!((cultivation.pending_material_bonus - 0.12).abs() < 1e-9);
+    }
+
+    #[test]
+    fn npc_breakthrough_emits_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (cultivation, meridians) = setup_for_induce();
+        let npc = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("npc_42v0"),
+                Position::new([8.0, 66.0, 8.0]),
+                NpcMarker,
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: npc,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let ids = vfx_events
+            .iter_current_update_events()
+            .filter_map(|event| match &event.payload {
+                VfxEventPayloadV1::SpawnParticle { event_id, .. } => Some(event_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"bong:breakthrough_pillar"));
     }
 
     #[test]

@@ -10,14 +10,13 @@ use valence::prelude::{
     Resource, Uuid, With, Without,
 };
 
-use crate::npc::brain::canonical_npc_id;
-use crate::npc::lifecycle::NpcArchetype;
-
 use super::mineskin::MineSkinClient;
+use super::npc_skin_selector::{NpcSkinPoolKey, NpcVisualProfile};
 use super::{packet, SignedSkin};
+use crate::npc::brain::canonical_npc_id;
 
 pub const MIN_READY_BEFORE_SPAWN: usize = 5;
-const PREFETCH_TARGET_PER_ARCHETYPE: usize = 20;
+const PREFETCH_TARGET_PER_POOL_KEY: usize = 8;
 const REFILL_THRESHOLD: usize = 5;
 const PREFETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const NPC_UUID_NAMESPACE: Uuid = Uuid::from_u128(0x426f_6e67_4e50_4353_6b69_6e56_3101);
@@ -37,11 +36,11 @@ pub enum NpcSkinFallbackPolicy {
 }
 
 pub struct SkinPool {
-    by_archetype: HashMap<NpcArchetype, SkinBucket>,
+    by_pool_key: HashMap<NpcSkinPoolKey, SkinBucket>,
     failover: VecDeque<SignedSkin>,
     receiver: Receiver<SkinFetchResult>,
     sender: Sender<SkinFetchResult>,
-    inflight: HashSet<NpcArchetype>,
+    inflight: HashSet<NpcSkinPoolKey>,
     started_prefetch: bool,
     fallback_mode: bool,
     ready_deadline: Instant,
@@ -54,7 +53,7 @@ impl Default for SkinPool {
     fn default() -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded();
         Self {
-            by_archetype: HashMap::new(),
+            by_pool_key: HashMap::new(),
             failover: VecDeque::new(),
             receiver,
             sender,
@@ -68,31 +67,38 @@ impl Default for SkinPool {
 }
 
 impl SkinPool {
-    pub fn insert(&mut self, archetype: NpcArchetype, skin: SignedSkin) {
-        self.by_archetype
-            .entry(archetype)
+    pub fn insert_for_key(&mut self, key: NpcSkinPoolKey, skin: SignedSkin) {
+        self.by_pool_key
+            .entry(key)
             .or_default()
             .skins
             .push_back(skin);
     }
 
-    pub fn len_for(&self, archetype: NpcArchetype) -> usize {
-        self.by_archetype
-            .get(&archetype)
+    pub fn len_for_key(&self, key: NpcSkinPoolKey) -> usize {
+        self.by_pool_key
+            .get(&key)
             .map_or(0, |bucket| bucket.skins.len())
     }
 
     pub fn ready_count(&self) -> usize {
-        self.len_for(NpcArchetype::Rogue) + self.len_for(NpcArchetype::Commoner)
+        NpcSkinPoolKey::PREFETCH_KEYS
+            .into_iter()
+            .map(|key| self.len_for_key(key))
+            .sum()
     }
 
     pub fn ready_for_spawn(&self) -> bool {
         self.fallback_mode || self.ready_count() >= MIN_READY_BEFORE_SPAWN
     }
 
-    pub fn next_for(&mut self, archetype: NpcArchetype, salt: u64) -> SignedSkin {
+    pub fn next_for_profile(&mut self, profile: NpcVisualProfile, salt: u64) -> SignedSkin {
+        self.next_for_key(profile.skin_pool_key(), salt)
+    }
+
+    fn next_for_key(&mut self, key: NpcSkinPoolKey, salt: u64) -> SignedSkin {
         self.drain_ready();
-        if let Some(bucket) = self.by_archetype.get_mut(&archetype) {
+        if let Some(bucket) = self.by_pool_key.get_mut(&key) {
             if let Some(skin) = bucket.next(salt) {
                 return skin;
             }
@@ -112,17 +118,18 @@ impl SkinPool {
     pub fn drain_ready(&mut self) {
         while let Ok(result) = self.receiver.try_recv() {
             match result {
-                SkinFetchResult::Ready { archetype, skins } => {
-                    self.inflight.remove(&archetype);
+                SkinFetchResult::Ready { key, skins } => {
+                    self.inflight.remove(&key);
                     for skin in skins {
-                        self.insert(archetype, skin);
+                        self.insert_for_key(key, skin);
                     }
                 }
-                SkinFetchResult::Failed { archetype, error } => {
-                    self.inflight.remove(&archetype);
+                SkinFetchResult::Failed { key, error } => {
+                    self.inflight.remove(&key);
                     self.fallback_mode = true;
                     tracing::warn!(
-                        "[bong][skin] MineSkin unavailable (error={error}), falling back to vanilla entity kinds for 100 rogues"
+                        "[bong][skin] MineSkin unavailable for pool {} (error={error}), falling back to vanilla entity kinds",
+                        key.as_str()
                     );
                 }
             }
@@ -147,16 +154,9 @@ impl SkinPool {
             }
         };
 
-        self.spawn_fetch(
-            NpcArchetype::Rogue,
-            PREFETCH_TARGET_PER_ARCHETYPE,
-            client.clone(),
-        );
-        self.spawn_fetch(
-            NpcArchetype::Commoner,
-            PREFETCH_TARGET_PER_ARCHETYPE,
-            client,
-        );
+        for key in NpcSkinPoolKey::PREFETCH_KEYS {
+            self.spawn_fetch(key, PREFETCH_TARGET_PER_POOL_KEY, client.clone());
+        }
     }
 
     fn maybe_mark_timeout(&mut self) {
@@ -176,17 +176,17 @@ impl SkinPool {
         if self.fallback_mode {
             return;
         }
-        for archetype in [NpcArchetype::Rogue, NpcArchetype::Commoner] {
-            if self.len_for(archetype) <= REFILL_THRESHOLD && !self.inflight.contains(&archetype) {
+        for key in NpcSkinPoolKey::PREFETCH_KEYS {
+            if self.len_for_key(key) <= REFILL_THRESHOLD && !self.inflight.contains(&key) {
                 if let Ok(client) = MineSkinClient::from_env() {
-                    self.spawn_fetch(archetype, PREFETCH_TARGET_PER_ARCHETYPE, client);
+                    self.spawn_fetch(key, PREFETCH_TARGET_PER_POOL_KEY, client);
                 }
             }
         }
     }
 
-    fn spawn_fetch(&mut self, archetype: NpcArchetype, count: usize, client: MineSkinClient) {
-        if !self.inflight.insert(archetype) {
+    fn spawn_fetch(&mut self, key: NpcSkinPoolKey, count: usize, client: MineSkinClient) {
+        if !self.inflight.insert(key) {
             return;
         }
         let sender = self.sender.clone();
@@ -198,7 +198,7 @@ impl SkinPool {
                     Ok(runtime) => runtime,
                     Err(error) => {
                         let _ = sender.send(SkinFetchResult::Failed {
-                            archetype,
+                            key,
                             error: format!("tokio runtime: {error}"),
                         });
                         return;
@@ -208,11 +208,11 @@ impl SkinPool {
                 let result = runtime.block_on(async move { client.fetch_random(count).await });
                 match result {
                     Ok(skins) => {
-                        let _ = sender.send(SkinFetchResult::Ready { archetype, skins });
+                        let _ = sender.send(SkinFetchResult::Ready { key, skins });
                     }
                     Err(error) => {
                         let _ = sender.send(SkinFetchResult::Failed {
-                            archetype,
+                            key,
                             error: error.to_string(),
                         });
                     }
@@ -221,7 +221,7 @@ impl SkinPool {
             .map(std::mem::drop)
             .unwrap_or_else(|error| {
                 let _ = self.sender.send(SkinFetchResult::Failed {
-                    archetype,
+                    key,
                     error: format!("thread spawn: {error}"),
                 });
             });
@@ -247,11 +247,11 @@ impl SkinBucket {
 
 enum SkinFetchResult {
     Ready {
-        archetype: NpcArchetype,
+        key: NpcSkinPoolKey,
         skins: Vec<SignedSkin>,
     },
     Failed {
-        archetype: NpcArchetype,
+        key: NpcSkinPoolKey,
         error: String,
     },
 }
@@ -325,6 +325,8 @@ fn broadcast_skin_remove_for_despawned_npcs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::npc::lifecycle::NpcArchetype;
+    use crate::skin::npc_skin_selector::{NpcSkinTier, NpcVisualProfile};
     use crate::skin::{SignedSkin, SkinSource};
 
     fn skin(value: &str) -> SignedSkin {
@@ -335,10 +337,22 @@ mod tests {
         }
     }
 
+    fn profile(key: NpcSkinPoolKey) -> NpcVisualProfile {
+        NpcVisualProfile {
+            archetype: NpcArchetype::Rogue,
+            skin_tier: key.0,
+            skin_pool_key: key,
+            age_band: crate::skin::npc_skin_selector::NpcAgeBand::Adult,
+            high_realm: matches!(key.0, NpcSkinTier::RogueHigh | NpcSkinTier::DiscipleHigh),
+            faction_id: None,
+            faction_rank: None,
+        }
+    }
+
     #[test]
     fn next_for_empty_pool_returns_fallback() {
         let mut pool = SkinPool::default();
-        let skin = pool.next_for(NpcArchetype::Rogue, 0);
+        let skin = pool.next_for_profile(profile(NpcSkinPoolKey(NpcSkinTier::RogueLow)), 0);
 
         assert!(skin.is_fallback());
     }
@@ -346,14 +360,15 @@ mod tests {
     #[test]
     fn next_for_round_robins_bucket_with_salt() {
         let mut pool = SkinPool::default();
-        pool.insert(NpcArchetype::Rogue, skin("a"));
-        pool.insert(NpcArchetype::Rogue, skin("b"));
-        pool.insert(NpcArchetype::Rogue, skin("c"));
+        let key = NpcSkinPoolKey(NpcSkinTier::RogueLow);
+        pool.insert_for_key(key, skin("a"));
+        pool.insert_for_key(key, skin("b"));
+        pool.insert_for_key(key, skin("c"));
 
-        assert_eq!(pool.next_for(NpcArchetype::Rogue, 0).value, "a");
-        assert_eq!(pool.next_for(NpcArchetype::Rogue, 0).value, "b");
-        assert_eq!(pool.next_for(NpcArchetype::Rogue, 1).value, "a");
-        assert_eq!(pool.len_for(NpcArchetype::Rogue), 3);
+        assert_eq!(pool.next_for_profile(profile(key), 0).value, "a");
+        assert_eq!(pool.next_for_profile(profile(key), 0).value, "b");
+        assert_eq!(pool.next_for_profile(profile(key), 1).value, "a");
+        assert_eq!(pool.len_for_key(key), 3);
     }
 
     #[test]
