@@ -5,6 +5,7 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 
 pub const CULTIVATION_ABSORB: &str = "bong:cultivation_absorb";
 pub const MERIDIAN_OPEN: &str = "bong:meridian_open";
+pub const BREAKTHROUGH_PILLAR: &str = "bong:breakthrough_pillar";
 pub const BREAKTHROUGH_FAIL: &str = "bong:breakthrough_fail";
 pub const COMBAT_HIT: &str = "bong:combat_hit";
 pub const COMBAT_PARRY: &str = "bong:combat_parry";

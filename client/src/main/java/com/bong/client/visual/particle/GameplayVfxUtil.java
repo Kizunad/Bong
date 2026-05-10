@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.particle.SpriteProvider;
 import net.minecraft.client.world.ClientWorld;
 
-import java.util.OptionalInt;
-
 final class GameplayVfxUtil {
     private GameplayVfxUtil() {
     }
@@ -25,11 +23,11 @@ final class GameplayVfxUtil {
     }
 
     static int count(VfxEventPayload.SpawnParticle payload, int fallback, int min, int max) {
-        return clamp(payload.count().orElse(OptionalInt.of(fallback).getAsInt()), min, max);
+        return clamp(payload.count().orElse(fallback), min, max);
     }
 
     static int duration(VfxEventPayload.SpawnParticle payload, int fallback) {
-        return payload.durationTicks().orElse(OptionalInt.of(fallback).getAsInt());
+        return payload.durationTicks().orElse(fallback);
     }
 
     static double strength(VfxEventPayload.SpawnParticle payload, double fallback) {

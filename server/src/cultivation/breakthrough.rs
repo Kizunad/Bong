@@ -19,7 +19,6 @@ use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
-use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -657,17 +656,14 @@ pub fn breakthrough_system(
                 // plan-particle-system-v1 §4.4：突破成功发 breakthrough_pillar 光柱。
                 if let Ok(pos) = positions.get(req.entity) {
                     let p = pos.get();
-                    vfx_events.send(VfxEventRequest::new(
+                    vfx_events.send(gameplay_vfx::spawn_request(
+                        gameplay_vfx::BREAKTHROUGH_PILLAR,
                         p,
-                        VfxEventPayloadV1::SpawnParticle {
-                            event_id: "bong:breakthrough_pillar".to_string(),
-                            origin: [p.x, p.y, p.z],
-                            direction: None,
-                            color: Some("#FFE8A0".to_string()),
-                            strength: Some(1.0),
-                            count: Some(12),
-                            duration_ticks: Some(60),
-                        },
+                        None,
+                        "#FFE8A0",
+                        1.0,
+                        12,
+                        60,
                     ));
                 }
             }
@@ -814,6 +810,7 @@ mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
     use crate::npc::spawn::NpcMarker;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
     use crate::world::karma::KarmaWeightStore;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update, Username};

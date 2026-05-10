@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Events, ParamSet,
-    Position, Query, Res, ResMut, UniqueId,
+    Position, Query, Res, ResMut, UniqueId, With,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState};
@@ -29,6 +29,7 @@ pub const DUGU_INFUSE_COST: f64 = 5.0;
 pub const DUGU_INFUSION_TTL_TICKS: u64 = 20 * 60;
 pub const DUGU_EXPOSURE_TICKS: u64 = 20 * 5;
 pub const DUGU_POISON_TICK_INTERVAL: u64 = 20 * 60 * 5;
+pub const DUGU_POISON_VFX_INTERVAL: u64 = 60;
 pub const SELF_ANTIDOTE_QI_COST: f64 = 20.0;
 pub const SELF_ANTIDOTE_FAILURE_RATE: f64 = 0.30;
 pub const JIEGU_RUI_ITEM_ID: &str = "jie_gu_rui";
@@ -353,6 +354,34 @@ pub fn dugu_poison_tick(
                 ),
             );
         }
+    }
+}
+
+pub fn dugu_poison_ambient_vfx_tick(
+    clock: Res<CombatClock>,
+    targets: Query<&Position, With<DuguPoisonState>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+) {
+    if clock.tick == 0 || !clock.tick.is_multiple_of(DUGU_POISON_VFX_INTERVAL) {
+        return;
+    }
+    let Some(events) = vfx_events.as_deref_mut() else {
+        return;
+    };
+    for position in &targets {
+        let origin = position.get() + valence::prelude::DVec3::new(0.0, 0.8, 0.0);
+        gameplay_vfx::send_spawn(
+            events,
+            gameplay_vfx::spawn_request(
+                gameplay_vfx::POISON_MIST,
+                origin,
+                Some([0.0, 0.25, 0.0]),
+                "#44AA44",
+                0.35,
+                2,
+                60,
+            ),
+        );
     }
 }
 
@@ -1118,6 +1147,44 @@ mod tests {
         match &emitted.payload {
             crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
                 assert_eq!(event_id, gameplay_vfx::POISON_MIST);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn poison_ambient_emits_mist_vfx_every_sixty_ticks() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: DUGU_POISON_VFX_INTERVAL,
+        });
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, dugu_poison_ambient_vfx_tick);
+        let attacker = app.world_mut().spawn_empty().id();
+        app.world_mut().spawn((
+            Position::new([4.0, 65.0, -2.0]),
+            DuguPoisonState {
+                meridian_id: MeridianId::Heart,
+                attacker,
+                attached_at_tick: 0,
+                poisoner_realm_tier: 2,
+                loss_per_tick: 1.0,
+            },
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("dugu poison ambient tick should emit poison mist vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                event_id, count, ..
+            } => {
+                assert_eq!(event_id, gameplay_vfx::POISON_MIST);
+                assert_eq!(*count, Some(2));
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }

@@ -920,6 +920,18 @@ pub fn resolve_attack_intents(
                 target_position.y - attacker_position.y,
                 target_position.z - attacker_position.z,
             ];
+            let hit_len =
+                (hit_dir[0] * hit_dir[0] + hit_dir[1] * hit_dir[1] + hit_dir[2] * hit_dir[2])
+                    .sqrt();
+            let hit_dir = if hit_len > 1e-6 {
+                [
+                    hit_dir[0] / hit_len,
+                    hit_dir[1] / hit_len,
+                    hit_dir[2] / hit_len,
+                ]
+            } else {
+                [0.0, 0.0, 0.0]
+            };
             gameplay_vfx::send_spawn(
                 events,
                 gameplay_vfx::spawn_request(
