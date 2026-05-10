@@ -35,6 +35,9 @@ public class BongHudOrchestratorTest {
         SkillSetStore.resetForTests();
         PlayerStateStore.resetForTests();
         IdentityPanelStateStore.resetForTest();
+        TargetInfoStateStore.resetForTests();
+        HudImmersionMode.resetForTests();
+        ForgeProgressHudPlanner.resetForTests();
     }
 
     @Test
@@ -240,5 +243,48 @@ public class BongHudOrchestratorTest {
         );
 
         assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BOTANY));
+    }
+
+    @Test
+    void hudModeSwitchesHideCombatOnlyLayersInPeaceAndQuickBarInCultivation() {
+        CombatHudSnapshot combat = CombatHudSnapshot.create(
+            com.bong.client.combat.CombatHudState.create(
+                0.8f,
+                0.7f,
+                0.4f,
+                com.bong.client.combat.DerivedAttrFlags.none()
+            ),
+            null,
+            com.bong.client.combat.QuickSlotConfig.empty(),
+            com.bong.client.combat.SkillBarConfig.empty(),
+            -1,
+            com.bong.client.combat.CastState.idle(),
+            com.bong.client.combat.UnifiedEventStream.empty(),
+            com.bong.client.combat.SpellVolumeState.idle(),
+            com.bong.client.combat.store.CarrierStateStore.State.NONE,
+            com.bong.client.combat.DefenseWindowState.idle(),
+            com.bong.client.combat.UnlockedStyles.none()
+        );
+
+        List<HudRenderCommand> combatCommands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(), combat, 1_000L, FIXED_WIDTH, 220, 320, 180
+        );
+        assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
+
+        HudImmersionMode.resetForTests();
+        List<HudRenderCommand> peaceCommands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(), CombatHudSnapshot.empty(), 12_000L, FIXED_WIDTH, 220, 320, 180
+        );
+        assertTrue(peaceCommands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
+
+        BongHudStateSnapshot meditation = BongHudStateSnapshot.create(
+            ZoneState.empty(),
+            NarrationState.empty(),
+            VisualEffectState.create("meditation_calm", 1.0, 20_000L, 12_000L)
+        );
+        List<HudRenderCommand> cultivationCommands = BongHudOrchestrator.buildCommands(
+            meditation, combat, 12_200L, FIXED_WIDTH, 220, 320, 180
+        );
+        assertTrue(cultivationCommands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.QUICK_BAR));
     }
 }
