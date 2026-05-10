@@ -13,6 +13,10 @@
       "type": "string"
     },
     {
+      "const": "jue_bi",
+      "type": "string"
+    },
+    {
       "const": "ascension_quota_open",
       "type": "string"
     }

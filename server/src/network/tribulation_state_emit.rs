@@ -2,17 +2,19 @@ use valence::prelude::{Client, Entity, EventReader, Local, Query, Username, With
 
 use crate::combat::components::Lifecycle;
 use crate::cultivation::tribulation::{
-    TribulationAnnounce, TribulationKind, TribulationLocked, TribulationPhase, TribulationSettled,
-    TribulationState, TribulationWaveCleared,
+    JueBiTriggeredEvent, TribulationAnnounce, TribulationKind, TribulationLocked, TribulationPhase,
+    TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1, TribulationStateV1};
 use crate::schema::tribulation::DuXuOutcomeV1;
 
+#[allow(clippy::too_many_arguments)]
 pub fn emit_tribulation_state_payloads(
     mut clients: Query<&mut Client, With<Client>>,
     mut announce: EventReader<TribulationAnnounce>,
+    mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
@@ -48,6 +50,17 @@ pub fn emit_tribulation_state_payloads(
             },
         );
         broadcast(&mut clients, data);
+        emitted = true;
+    }
+
+    for ev in juebi_triggered.read() {
+        let Ok((state, lifecycle, username)) = states.get(ev.entity) else {
+            continue;
+        };
+        broadcast(
+            &mut clients,
+            snapshot_from_state(state, lifecycle, username, ev.entity),
+        );
         emitted = true;
     }
 
@@ -163,6 +176,7 @@ fn kind_label(kind: TribulationKind) -> &'static str {
         TribulationKind::DuXu => "du_xu",
         TribulationKind::ZoneCollapse => "zone_collapse",
         TribulationKind::Targeted => "targeted",
+        TribulationKind::JueBi => "jue_bi",
     }
 }
 
@@ -237,6 +251,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_systems(Update, emit_tribulation_state_payloads);
         let mut helper = spawn_mock_client(&mut app, "Azure");
         let entity = app
@@ -286,12 +301,15 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
         app.add_systems(Update, emit_tribulation_state_payloads);
         let mut helper = spawn_mock_client(&mut app, "Azure");
         app.world_mut()
             .resource_mut::<Events<TribulationSettled>>()
             .send(TribulationSettled {
                 entity: Entity::PLACEHOLDER,
+                kind: TribulationKind::DuXu,
+                source: None,
                 result: DuXuResultV1 {
                     char_id: "offline:Azure".to_string(),
                     outcome: DuXuOutcomeV1::Ascended,

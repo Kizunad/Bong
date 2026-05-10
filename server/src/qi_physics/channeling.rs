@@ -29,7 +29,11 @@ pub fn qi_channeling(
         ChannelDirection::Drain => env.local_zone_qi.clamp(0.0, 1.0),
         ChannelDirection::Gather => (env.local_zone_qi + env.ambient_pressure).clamp(0.0, 1.0),
     };
-    let moved = amount * efficiency * env.rhythm_factor() * pressure_factor;
+    let moved = amount
+        * efficiency
+        * env.rhythm_factor()
+        * pressure_factor
+        * env.law_disruption_channeling_multiplier();
     Ok(ChannelingOutcome {
         requested: amount,
         moved,
@@ -95,5 +99,19 @@ mod tests {
         .unwrap();
         assert_eq!(transfer.amount, 10.0);
         assert_eq!(transfer.reason, QiTransferReason::Channeling);
+    }
+
+    #[test]
+    fn law_disruption_makes_channeling_unstable_and_stronger() {
+        let calm = qi_channeling(10.0, ChannelDirection::Drain, 1.0, EnvField::new(1.0)).unwrap();
+        let disrupted = qi_channeling(
+            10.0,
+            ChannelDirection::Drain,
+            1.0,
+            EnvField::new(1.0).with_law_disruption(1.0),
+        )
+        .unwrap();
+        assert_eq!(calm.moved, 10.0);
+        assert_eq!(disrupted.moved, 30.0);
     }
 }

@@ -9,6 +9,7 @@ use crate::cultivation::meridian::severed::{
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
+use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 use crate::qi_physics::{QiAccountKind, QiTransfer, QiTransferReason};
 use crate::skill::events::SkillXpGain;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -73,6 +74,7 @@ fn app(tick: u64) -> App {
     app.add_event::<TurbulenceFieldSpawned>();
     app.add_event::<TurbulenceFieldDecayed>();
     app.add_event::<EntityDisplacedByVortexPull>();
+    app.add_event::<JueBiTriggerEvent>();
     app.add_event::<QiTransfer>();
     app.add_event::<SkillXpGain>();
     app
@@ -771,6 +773,13 @@ fn void_heart_tribulation_waits_for_runtime_active_duration() {
         .find(|event| event.cause == BackfireCauseV2::VoidHeartTribulation)
         .expect("void heart should trigger tribulation after 30 active seconds");
     assert_eq!(event.level, BackfireLevel::Severed);
+    let juebi = app
+        .world()
+        .resource::<Events<JueBiTriggerEvent>>()
+        .iter_current_update_events()
+        .next()
+        .expect("void heart should enqueue JueBi trigger");
+    assert_eq!(juebi.source, JueBiTriggerSource::WoliuVortexHeart);
 }
 
 #[test]

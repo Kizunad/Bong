@@ -1208,6 +1208,60 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "JueBiSurvived"
+      ],
+      "properties": {
+        "JueBiSurvived": {
+          "type": "object",
+          "required": [
+            "source",
+            "tick"
+          ],
+          "properties": {
+            "source": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "JueBiKilled"
+      ],
+      "properties": {
+        "JueBiKilled": {
+          "type": "object",
+          "required": [
+            "source",
+            "tick"
+          ],
+          "properties": {
+            "source": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "TradeCompleted"
       ],
       "properties": {

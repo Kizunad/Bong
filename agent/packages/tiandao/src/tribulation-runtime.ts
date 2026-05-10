@@ -74,6 +74,9 @@ function narrationTarget(payload: TribulationEventV1): string {
   if (payload.kind === "zone_collapse") return `tribulation:zone_collapse|zone:${payload.zone ?? "unknown"}|${phase}`;
   if (payload.kind === "targeted") return `tribulation:targeted|zone:${payload.zone ?? "unknown"}|${phase}`;
   if (payload.kind === "ascension_quota_open") return `tribulation:ascension_quota_open|${phase}`;
+  if (payload.kind === "jue_bi") {
+    return `tribulation:jue_bi|source:${payload.source ?? "unknown"}|char:${charId}|${phase}`;
+  }
   return `tribulation:${payload.kind}|char:${charId}|${phase}`;
 }
 
@@ -116,6 +119,37 @@ function fallbackNarration(payload: TribulationEventV1): Narration {
       scope: "broadcast",
       target: narrationTarget(payload),
       text: "化虚有位，叩关者可往；天道只空出座次，不替任何人铺路。",
+      style: "narration",
+    };
+  }
+  if (payload.kind === "jue_bi") {
+    const actor = actorLabel(payload);
+    const source = payload.source ?? "extreme_operation";
+    let text = `${actor} 搅动天地，绝壁劫已成，方圆之内灵机反卷。`;
+    switch (payload.phase.kind) {
+      case "omen":
+        text = "天地一怒。光先暗下去，雷声反倒迟迟不来。";
+        break;
+      case "wave":
+        if (payload.phase.wave === 1) {
+          text = "灵压坍缩，修士藏器、药草、法阵，都像被看不见的手拧开。";
+        } else if (payload.phase.wave === 2) {
+          text = "法则乱了。真元不认路，出手的人先尝自己这一招。";
+        } else {
+          text = "寂灭圈从震心推开，凡人只觉风冷，化虚者却听见肉身在散。";
+        }
+        break;
+      case "settle":
+        text = settlementText(payload);
+        break;
+      default:
+        text = `${actor} 引来绝壁劫，源头是 ${source}；天道不问缘由，只记反震。`;
+        break;
+    }
+    return {
+      scope: "broadcast",
+      target: narrationTarget(payload),
+      text,
       style: "narration",
     };
   }

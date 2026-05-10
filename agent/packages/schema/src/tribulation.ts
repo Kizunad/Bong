@@ -8,6 +8,7 @@ export const TribulationKindV1 = Type.Union([
   Type.Literal("du_xu"),
   Type.Literal("zone_collapse"),
   Type.Literal("targeted"),
+  Type.Literal("jue_bi"),
   Type.Literal("ascension_quota_open"),
 ]);
 export type TribulationKindV1 = Static<typeof TribulationKindV1>;
@@ -61,6 +62,7 @@ export const TribulationEventV1 = Type.Object(
     char_id: Type.Optional(Type.String({ minLength: 1 })),
     actor_name: Type.Optional(Type.String({ minLength: 1 })),
     zone: Type.Optional(Type.String({ minLength: 1 })),
+    source: Type.Optional(Type.String({ minLength: 1 })),
     epicenter: Type.Optional(Type.Tuple([Type.Number(), Type.Number(), Type.Number()])),
     wave_current: Type.Optional(Type.Integer({ minimum: 0 })),
     wave_total: Type.Optional(Type.Integer({ minimum: 0 })),

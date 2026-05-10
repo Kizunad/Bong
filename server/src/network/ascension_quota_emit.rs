@@ -79,7 +79,7 @@ fn build_ascension_quota_payload(
             }
         },
     };
-    let active_du_xu_slots = match load_active_tribulation_count(settings) {
+    let active_quota_slots = match load_active_tribulation_count(settings) {
         Ok(slots) => slots,
         Err(error) => {
             tracing::warn!("[bong][network] failed to load active tribulation count: {error}");
@@ -87,7 +87,7 @@ fn build_ascension_quota_payload(
         }
     };
     let quota = check_void_quota(
-        occupied_slots.saturating_add(active_du_xu_slots),
+        occupied_slots.saturating_add(active_quota_slots),
         budget,
         void_quota,
     );
@@ -192,6 +192,21 @@ mod tests {
     #[test]
     fn joined_client_receives_current_ascension_quota() {
         let (settings, root) = persistence_settings("join-snapshot");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: "offline:VoidWalker".to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 100,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active DuXu should persist before quota setup");
         complete_tribulation_ascension(&settings, "offline:VoidWalker")
             .expect("quota setup should succeed");
         let mut app = App::new();
@@ -223,12 +238,32 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: "offline:Azure".to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 100,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: "offline:Crimson".to_string(),
+                kind: "jue_bi".to_string(),
+                source: "void_quota_exceeded".to_string(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 120,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 1.6,
+            },
+        )
+        .expect("void-quota JueBi should count as an in-flight quota slot");
         let mut app = App::new();
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(50.0));
@@ -245,7 +280,7 @@ mod tests {
         assert_eq!(
             payloads,
             vec![AscensionQuotaV1::with_world_qi(
-                1,
+                2,
                 1,
                 50.0,
                 DEFAULT_VOID_QUOTA_K,

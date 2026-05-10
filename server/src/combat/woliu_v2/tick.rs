@@ -3,6 +3,7 @@ use valence::prelude::{Commands, DVec3, Entity, EventWriter, Position, Query, Re
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
+use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 use super::backfire::apply_backfire_to_hand_meridians;
@@ -113,6 +114,7 @@ pub fn heart_active_backfire_tick(
         Option<&CurrentDimension>,
     )>,
     mut events: EventWriter<VortexBackfireEventV2>,
+    mut juebi_triggers: EventWriter<JueBiTriggerEvent>,
 ) {
     for (entity, mut state, cultivation, mut meridians, dimension) in &mut states {
         if state.active_skill_kind != WoliuSkillId::Heart
@@ -134,6 +136,13 @@ pub fn heart_active_backfire_tick(
             cause: BackfireCauseV2::VoidHeartTribulation,
             overflow_qi: 0.0,
             tick: clock.tick,
+        });
+        juebi_triggers.send(JueBiTriggerEvent {
+            entity,
+            source: JueBiTriggerSource::WoliuVortexHeart,
+            delay_ticks: VOID_HEART_TRIBULATION_TICKS,
+            triggered_at_tick: clock.tick,
+            epicenter: None,
         });
     }
 }
