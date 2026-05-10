@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::alchemy::AlchemyInterventionV1;
 use super::combat_carrier::AnqiContainerKindV1;
 use super::inventory::{EquipSlotV1, InventoryLocationV1};
+use super::movement::MovementActionRequestV1;
 use super::tuike::FalseSkinKindV1;
 use super::void_actions::VoidActionRequestV1;
 use crate::cultivation::components::MeridianId;
@@ -44,6 +45,11 @@ pub enum ClientRequestV1 {
     VoidAction {
         v: u8,
         request: VoidActionRequestV1,
+    },
+    /// plan-movement-v1 — 冲刺 / 滑铲 / 二段跳移动动作。
+    MovementAction {
+        v: u8,
+        action: MovementActionRequestV1,
     },
     AbortTribulation {
         v: u8,

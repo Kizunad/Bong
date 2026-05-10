@@ -79,6 +79,7 @@ use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
 use crate::lingtian::PlotEnvironment;
 use crate::mineral::probe::is_probe_target_in_range;
 use crate::mineral::MineralProbeIntent;
+use crate::movement::{MovementAction, MovementActionIntent};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -230,6 +231,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
     pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
     pub void_action_tx: Option<ResMut<'w, Events<VoidActionIntent>>>,
+    pub movement_action_tx: Option<ResMut<'w, Events<MovementActionIntent>>>,
     pub heart_demon_choice_tx: Option<ResMut<'w, Events<HeartDemonChoiceSubmitted>>>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
@@ -358,6 +360,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::StartDuXu { v }
             | ClientRequestV1::VoidAction { v, .. }
+            | ClientRequestV1::MovementAction { v, .. }
             | ClientRequestV1::AbortTribulation { v }
             | ClientRequestV1::HeartDemonDecision { v, .. }
             | ClientRequestV1::ForgeRequest { v, .. }
@@ -490,6 +493,24 @@ pub fn handle_client_request_payloads(
                 void_action_tx.send(VoidActionIntent {
                     caster: ev.client,
                     request,
+                    requested_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::MovementAction { action, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request movement_action entity={:?} action={:?}",
+                    ev.client,
+                    action
+                );
+                let Some(movement_action_tx) = dispatch.movement_action_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped movement_action because MovementActionIntent event resource is missing"
+                    );
+                    continue;
+                };
+                movement_action_tx.send(MovementActionIntent {
+                    entity: ev.client,
+                    action: MovementAction::from(action),
                     requested_at_tick: combat_clock.tick,
                 });
             }

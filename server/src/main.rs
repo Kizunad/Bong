@@ -34,6 +34,7 @@ mod lingtian;
 mod mineral;
 #[allow(dead_code)]
 mod mob;
+mod movement;
 mod network;
 mod npc;
 mod persistence;
@@ -134,6 +135,7 @@ fn run_server() {
     mineral::register(&mut app);
     shelflife::register(&mut app);
     economy::register(&mut app);
+    movement::register(&mut app);
     npc::register(&mut app);
     zhenfa::register(&mut app);
     network::register(&mut app);

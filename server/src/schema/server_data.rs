@@ -22,6 +22,7 @@ use super::forge::{
 use super::identity::IdentityPanelStateV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
+use super::movement::MovementStateV1;
 use super::narration::Narration;
 use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
 use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
@@ -169,6 +170,7 @@ pub enum ServerDataType {
     SpiritualSenseTargets,
     HealerNpcAiState,
     YidaoHudState,
+    MovementState,
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList,
     CraftSessionState,
@@ -380,6 +382,7 @@ pub enum ServerDataPayloadV1 {
     SpiritualSenseTargets(SpiritualSenseTargetsV1),
     HealerNpcAiState(HealerNpcAiStateV1),
     YidaoHudState(YidaoHudStateV1),
+    MovementState(MovementStateV1),
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     /// inventory 打开时一次性推全配方表（含解锁状态）。
     CraftRecipeList(Box<RecipeListV1>),
@@ -1130,6 +1133,10 @@ enum ServerDataPayloadWireV1 {
     YidaoHudState {
         #[serde(flatten)]
         state: YidaoHudStateV1,
+    },
+    MovementState {
+        #[serde(flatten)]
+        state: MovementStateV1,
     },
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList {
@@ -1923,6 +1930,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::HealerNpcAiState(state))
             }
             ServerDataPayloadWireV1::YidaoHudState { state } => Ok(Self::YidaoHudState(state)),
+            ServerDataPayloadWireV1::MovementState { state } => Ok(Self::MovementState(state)),
             ServerDataPayloadWireV1::CraftRecipeList { list } => Ok(Self::CraftRecipeList(list)),
             ServerDataPayloadWireV1::CraftSessionState { state } => {
                 Ok(Self::CraftSessionState(state))
@@ -2392,6 +2400,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::YidaoHudState(state) => Self::YidaoHudState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::MovementState(state) => Self::MovementState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::CraftRecipeList(list) => {
                 Self::CraftRecipeList { list: list.clone() }
             }
@@ -2647,6 +2658,7 @@ impl ServerDataPayloadV1 {
             Self::SpiritualSenseTargets(..) => ServerDataType::SpiritualSenseTargets,
             Self::HealerNpcAiState(..) => ServerDataType::HealerNpcAiState,
             Self::YidaoHudState(..) => ServerDataType::YidaoHudState,
+            Self::MovementState(..) => ServerDataType::MovementState,
             Self::CraftRecipeList(..) => ServerDataType::CraftRecipeList,
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
