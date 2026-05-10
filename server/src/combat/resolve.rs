@@ -35,6 +35,7 @@ use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::tribulation::JueBiLawDisruption;
 use crate::inventory::{
     consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     move_equipped_item_to_first_container_slot, set_item_instance_durability, DroppedLootRegistry,
@@ -198,6 +199,7 @@ pub fn resolve_attack_intents(
     npc_markers: Query<(), With<NpcMarker>>,
     npc_positions: Query<(Entity, &Position), With<NpcMarker>>,
     statuses: Query<&StatusEffects>,
+    juebi_law_disruptions: Query<&JueBiLawDisruption>,
     sparring_sessions: Query<&crate::social::components::SparringState>,
     mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
     mut event_writers: CombatResolveEventWriters,
@@ -242,6 +244,11 @@ pub fn resolve_attack_intents(
         }
 
         let qi_invest = f64::from(intent.qi_invest);
+        let juebi_law_env = juebi_law_disruptions
+            .get(intent.attacker)
+            .ok()
+            .map(|disruption| disruption.env_field())
+            .unwrap_or_default();
 
         {
             let mut attacker_query = combatants.p0();
@@ -292,7 +299,10 @@ pub fn resolve_attack_intents(
         let Some(hit_probe) = raycast_humanoid(
             attacker_position + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0),
             target_position,
-            f64::from(intent.reach.max),
+            f64::from(
+                intent.reach.max
+                    / (juebi_law_env.law_disruption_distance_multiplier() as f32).max(1.0),
+            ),
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
@@ -331,7 +341,9 @@ pub fn resolve_attack_intents(
             }
             if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut attacker_meridians)
             {
-                primary_meridian.throughput_current += qi_invest * ATTACK_QI_THROUGHPUT_FACTOR;
+                primary_meridian.throughput_current += qi_invest
+                    * ATTACK_QI_THROUGHPUT_FACTOR
+                    * juebi_law_env.law_disruption_channeling_multiplier();
             }
             attacker_attrs
                 .map(|attrs| attrs.attack_power)
@@ -394,15 +406,17 @@ pub fn resolve_attack_intents(
             .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
             .map(|active| active.incoming_damage_multiplier)
             .unwrap_or(1.0);
-        let damage = (hit_qi
+        let base_damage = hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
             * damage_multiplier
             * attacker_damage_multiplier
             * defender_damage_multiplier
             * weapon_multiplier
             * harden_damage_multiplier
-            * backfire_incoming_damage_multiplier)
-            .max(1.0);
+            * backfire_incoming_damage_multiplier;
+        let juebi_backfire_fraction = juebi_law_env.law_disruption_backfire_fraction() as f32;
+        let damage = (base_damage * (1.0 - juebi_backfire_fraction)).max(1.0);
+        let juebi_backfire_damage = (base_damage * juebi_backfire_fraction).max(0.0);
         let was_alive = wounds.health_current > 0.0;
         let mut pending_reflected_qi = 0.0_f64;
         if let Some(active) = multipoint_active.as_deref_mut() {
@@ -441,6 +455,16 @@ pub fn resolve_attack_intents(
             commands.add(
                 move |world: &mut valence::prelude::bevy_ecs::world::World| {
                     zhenmai_v2::apply_reflected_qi(world, attacker, pending_reflected_qi);
+                },
+            );
+        }
+        if juebi_backfire_damage > f32::EPSILON {
+            let attacker = intent.attacker;
+            commands.add(
+                move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                    if let Some(mut wounds) = world.get_mut::<Wounds>(attacker) {
+                        zhenmai_v2::apply_self_damage(&mut wounds, juebi_backfire_damage);
+                    }
                 },
             );
         }
@@ -1898,6 +1922,76 @@ mod tests {
             app.world().resource::<Events<SkillXpGain>>().is_empty(),
             "NPC attackers should not earn player skill XP"
         );
+    }
+
+    #[test]
+    fn juebi_law_disruption_reduces_hit_and_backfires_attacker() {
+        fn run_once(disrupted: bool) -> (f32, f32, f64) {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 12 });
+            app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
+            app.add_event::<crate::combat::weapon::WeaponBroken>();
+            app.add_event::<InventoryDurabilityChangedEvent>();
+            app.add_systems(Update, resolve_attack_intents);
+
+            let attacker = spawn_player(
+                &mut app,
+                "Azure",
+                [0.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target = spawn_player(
+                &mut app,
+                "Crimson",
+                [0.25, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            if disrupted {
+                app.world_mut()
+                    .entity_mut(attacker)
+                    .insert(JueBiLawDisruption {
+                        epicenter: valence::prelude::BlockPos::new(0, 64, 0),
+                        distance: 0.0,
+                        seed: 11,
+                    });
+            }
+
+            app.world_mut().send_event(AttackIntent {
+                attacker,
+                target: Some(target),
+                issued_at_tick: 11,
+                reach: FIST_REACH,
+                qi_invest: 20.0,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: None,
+            });
+            app.update();
+            app.update();
+
+            let attacker_wounds = app.world().get::<Wounds>(attacker).unwrap();
+            let target_wounds = app.world().get::<Wounds>(target).unwrap();
+            let attacker_meridians = app.world().get::<MeridianSystem>(attacker).unwrap();
+            (
+                target_wounds.health_max - target_wounds.health_current,
+                attacker_wounds.health_max - attacker_wounds.health_current,
+                attacker_meridians.get(MeridianId::Lung).throughput_current,
+            )
+        }
+
+        let (normal_damage, normal_backfire, normal_throughput) = run_once(false);
+        let (disrupted_damage, disrupted_backfire, disrupted_throughput) = run_once(true);
+
+        assert!(normal_damage > 1.0);
+        assert_eq!(normal_backfire, 0.0);
+        assert!(disrupted_damage < normal_damage);
+        assert!(disrupted_backfire > 0.0);
+        assert!(disrupted_throughput > normal_throughput);
     }
 
     #[test]

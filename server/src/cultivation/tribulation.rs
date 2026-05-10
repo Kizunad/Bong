@@ -10,8 +10,8 @@
 //! P1/P5：本文件只定义状态机 + 事件；真实天劫伤害由战斗 plan 实施。
 
 use valence::prelude::{
-    bevy_ecs, BlockPos, BlockState, ChunkLayer, Client, Commands, Component, Entity, Event,
-    EventReader, EventWriter, Events, Or, Position, Query, RemovedComponents, Res, ResMut,
+    bevy_ecs, BlockPos, BlockState, ChunkLayer, ChunkPos, Client, Commands, Component, Entity,
+    Event, EventReader, EventWriter, Events, Or, Position, Query, RemovedComponents, Res, ResMut,
     Resource, Username, With,
 };
 
@@ -26,7 +26,7 @@ use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
-use crate::qi_physics::{constants::DEFAULT_SPIRIT_QI_TOTAL, QiTransfer, WorldQiBudget};
+use crate::qi_physics::{constants::DEFAULT_SPIRIT_QI_TOTAL, EnvField, QiTransfer, WorldQiBudget};
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
 };
@@ -285,6 +285,20 @@ pub struct JueBiLawDisruption {
     pub seed: u64,
 }
 
+impl JueBiLawDisruption {
+    pub fn intensity(self) -> f64 {
+        juebi_near_factor(self.distance)
+    }
+
+    pub fn apply_to_env(self, env: EnvField) -> EnvField {
+        env.with_law_disruption(self.intensity())
+    }
+
+    pub fn env_field(self) -> EnvField {
+        self.apply_to_env(EnvField::default())
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct JueBiNullField {
     pub epicenter: BlockPos,
@@ -317,6 +331,7 @@ struct TerrainModOp {
     pos: BlockPos,
     new_state: BlockState,
     anim_order: u32,
+    restore_at_tick: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1512,7 +1527,12 @@ pub fn juebi_terrain_seed_system(
     mut overlay: ResMut<JueBiTerrainOverlay>,
 ) {
     for event in triggered.read() {
-        enqueue_juebi_terrain_ops(&mut overlay.pending, event.epicenter, event.started_tick);
+        enqueue_juebi_terrain_ops(
+            &mut overlay.pending,
+            event.epicenter,
+            event.started_tick,
+            event.started_tick.saturating_add(5 * 60 * 20),
+        );
     }
 }
 
@@ -1539,14 +1559,16 @@ pub fn juebi_terrain_tick_system(
         let Some(op) = overlay.pending.pop_front() else {
             break;
         };
-        let original = layer
-            .block(op.pos)
-            .map(|block| block.state)
-            .unwrap_or(BlockState::AIR);
+        if layer.chunk(chunk_pos_for_block(op.pos)).is_none() {
+            continue;
+        }
+        let Some(original) = layer.block(op.pos).map(|block| block.state) else {
+            continue;
+        };
         overlay.placed.push(JueBiTerrainBlock {
             pos: op.pos,
             original,
-            restore_at_tick: clock.tick.saturating_add(5 * 60 * 20),
+            restore_at_tick: op.restore_at_tick,
             scar_permanent: false,
         });
         layer.set_block(op.pos, op.new_state);
@@ -1675,17 +1697,27 @@ pub fn juebi_settlement_system(
     }
 }
 
-fn enqueue_juebi_terrain_ops(pending: &mut VecDeque<TerrainModOp>, epicenter: [f64; 3], seed: u64) {
+fn enqueue_juebi_terrain_ops(
+    pending: &mut VecDeque<TerrainModOp>,
+    epicenter: [f64; 3],
+    seed: u64,
+    restore_at_tick: u64,
+) {
     let origin = block_pos_from_epicenter(epicenter);
     let mut ops = Vec::new();
-    generate_radial_fissures(&mut ops, origin, seed);
-    generate_eruption_cones(&mut ops, origin, seed.rotate_left(17));
-    generate_surface_upheaval(&mut ops, origin, seed.rotate_left(31));
+    generate_radial_fissures(&mut ops, origin, seed, restore_at_tick);
+    generate_eruption_cones(&mut ops, origin, seed.rotate_left(17), restore_at_tick);
+    generate_surface_upheaval(&mut ops, origin, seed.rotate_left(31), restore_at_tick);
     ops.sort_by_key(|op| op.anim_order);
     pending.extend(ops);
 }
 
-fn generate_radial_fissures(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: u64) {
+fn generate_radial_fissures(
+    ops: &mut Vec<TerrainModOp>,
+    origin: BlockPos,
+    seed: u64,
+    restore_at_tick: u64,
+) {
     for crack in 0..JUEBI_FISSURE_COUNT {
         let base_angle = std::f64::consts::TAU * crack as f64 / JUEBI_FISSURE_COUNT as f64;
         let jitter = (hash_unit(seed, crack as u64) - 0.5) * 0.6;
@@ -1720,6 +1752,7 @@ fn generate_radial_fissures(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed:
                         pos,
                         new_state,
                         anim_order: step as u32,
+                        restore_at_tick,
                     });
                 }
             }
@@ -1727,7 +1760,12 @@ fn generate_radial_fissures(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed:
     }
 }
 
-fn generate_eruption_cones(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: u64) {
+fn generate_eruption_cones(
+    ops: &mut Vec<TerrainModOp>,
+    origin: BlockPos,
+    seed: u64,
+    restore_at_tick: u64,
+) {
     for cone in 0..JUEBI_CONE_COUNT {
         let theta = hash_unit(seed, cone as u64) * std::f64::consts::TAU;
         let radius = 8.0
@@ -1761,6 +1799,7 @@ fn generate_eruption_cones(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: 
                         pos: BlockPos::new(cx + dx, (origin.y + dy).clamp(-64, 319), cz + dz),
                         new_state: cone_block(dy, height, dist, layer_radius, seed),
                         anim_order: 220 + dy as u32,
+                        restore_at_tick,
                     });
                 }
             }
@@ -1768,7 +1807,12 @@ fn generate_eruption_cones(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: 
     }
 }
 
-fn generate_surface_upheaval(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed: u64) {
+fn generate_surface_upheaval(
+    ops: &mut Vec<TerrainModOp>,
+    origin: BlockPos,
+    seed: u64,
+    restore_at_tick: u64,
+) {
     for x in (origin.x - JUEBI_UPHEAVAL_OUTER_RADIUS)..=(origin.x + JUEBI_UPHEAVAL_OUTER_RADIUS) {
         for z in (origin.z - JUEBI_UPHEAVAL_OUTER_RADIUS)..=(origin.z + JUEBI_UPHEAVAL_OUTER_RADIUS)
         {
@@ -1799,6 +1843,7 @@ fn generate_surface_upheaval(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed
                         pos: BlockPos::new(x, (origin.y + dy).clamp(-64, 319), z),
                         new_state: BlockState::DEEPSLATE,
                         anim_order: 560 + dist.round() as u32,
+                        restore_at_tick,
                     });
                 }
             } else {
@@ -1807,6 +1852,7 @@ fn generate_surface_upheaval(ops: &mut Vec<TerrainModOp>, origin: BlockPos, seed
                         pos: BlockPos::new(x, (origin.y - dy).clamp(-64, 319), z),
                         new_state: BlockState::AIR,
                         anim_order: 560 + dist.round() as u32,
+                        restore_at_tick,
                     });
                 }
             }
@@ -1874,6 +1920,10 @@ fn block_pos_from_epicenter(epicenter: [f64; 3]) -> BlockPos {
         (epicenter[1].round() as i32).clamp(-64, 319),
         epicenter[2].round() as i32,
     )
+}
+
+fn chunk_pos_for_block(pos: BlockPos) -> ChunkPos {
+    ChunkPos::new(pos.x.div_euclid(16), pos.z.div_euclid(16))
 }
 
 fn hash_unit(seed: u64, salt: u64) -> f64 {
@@ -5900,13 +5950,40 @@ mod tests {
     #[test]
     fn juebi_terrain_generation_keeps_animation_order() {
         let mut pending = VecDeque::new();
-        enqueue_juebi_terrain_ops(&mut pending, [0.0, 64.0, 0.0], 42);
+        enqueue_juebi_terrain_ops(&mut pending, [0.0, 64.0, 0.0], 42, 6_000);
         assert!(pending.len() > 10_000);
         let mut last = 0;
         for op in pending {
             assert!(op.anim_order >= last);
+            assert_eq!(op.restore_at_tick, 6_000);
             last = op.anim_order;
         }
+    }
+
+    #[test]
+    fn juebi_terrain_tick_skips_unloaded_chunks_without_air_restore() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(CombatClock { tick: 10 });
+        let mut overlay = JueBiTerrainOverlay::default();
+        overlay.pending.push_back(TerrainModOp {
+            pos: BlockPos::new(32, 64, 32),
+            new_state: BlockState::MAGMA_BLOCK,
+            anim_order: 0,
+            restore_at_tick: 6_000,
+        });
+        app.insert_resource(overlay);
+        app.add_systems(Update, juebi_terrain_tick_system);
+
+        app.update();
+
+        let overlay = app.world().resource::<JueBiTerrainOverlay>();
+        assert!(
+            overlay.placed.is_empty(),
+            "unloaded chunks must not record AIR as original block for later restore"
+        );
+        assert!(overlay.pending.is_empty());
     }
 
     #[test]
