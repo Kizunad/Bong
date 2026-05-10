@@ -72,7 +72,11 @@ const SNAPSHOT_FILE_PREFIX = "tiandao-snapshot-";
 const SNAPSHOT_FILE_SUFFIX = ".json";
 const WORLD_MODEL_RECONCILE_INTERVAL_MS = 300_000;
 const WORLD_MODEL_RECONCILE_INTERVAL_LOOPS = Math.max(1, Math.floor(WORLD_MODEL_RECONCILE_INTERVAL_MS / TICK_INTERVAL_MS));
-const SCORCH_WEATHER_ZONE_MARKERS = ["scorch", "blood_valley"] as const;
+const SCORCH_WEATHER_ZONE_IDS = new Set([
+  "blood_valley_east_scorch",
+  "north_waste_east_scorch",
+  "drift_scorch_001",
+]);
 export const ALLOWED_LLM_MODELS = Object.freeze([DEFAULT_MODEL, "gpt-5.4"] as const);
 export const MODEL_ROUTE_ROLES = Object.freeze([
   "default",
@@ -848,7 +852,7 @@ function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["
 }
 
 function isScorchWeatherZone(zone: string): boolean {
-  return SCORCH_WEATHER_ZONE_MARKERS.some((marker) => zone.includes(marker));
+  return SCORCH_WEATHER_ZONE_IDS.has(zone) || zone.endsWith("_scorch");
 }
 
 export async function processLocustSwarmEvents(args: {

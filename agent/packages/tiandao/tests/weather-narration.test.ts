@@ -30,6 +30,30 @@ describe("zone weather narration", () => {
     );
   });
 
+  it("renders exact configured scorch ids without matching generic blood valley", () => {
+    expect(
+      renderWeatherNarration(
+        weather({
+          data: {
+            ...weather().data,
+            zone_id: "drift_scorch_001",
+          },
+        }),
+      )?.text,
+    ).toContain("焦土");
+
+    expect(
+      renderWeatherNarration(
+        weather({
+          data: {
+            ...weather().data,
+            zone_id: "blood_valley",
+          },
+        }),
+      )?.text,
+    ).not.toContain("焦土");
+  });
+
   it("ignores expired events to avoid duplicate narration", () => {
     expect(renderWeatherNarration(weather({ kind: "expired" }))).toBeNull();
   });

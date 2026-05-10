@@ -505,7 +505,6 @@ pub struct ZoneAwareWeatherGenerationParams<'w> {
 pub fn weather_generator_system_zone_aware(
     params: ZoneAwareWeatherGenerationParams,
     mut active: ResMut<ActiveWeather>,
-    mut rng: ResMut<WeatherRng>,
     mut lifecycle: EventWriter<WeatherLifecycleEvent>,
 ) {
     if params.accumulator.raw() != 0 {
@@ -528,24 +527,24 @@ pub fn weather_generator_system_zone_aware(
         .as_deref()
         .map(|s| s.current.season)
         .unwrap_or_default();
-    let zone_names: Vec<String> = params
-        .zone_registry
-        .as_ref()
-        .map(|registry| {
-            registry
-                .zones
-                .iter()
-                .map(|zone| zone.name.clone())
-                .collect::<Vec<_>>()
-        })
-        .filter(|zones| !zones.is_empty())
-        .unwrap_or_else(|| vec![DEFAULT_ZONE.to_string()]);
+    let zone_names: Vec<String> = match params.zone_registry.as_ref() {
+        Some(registry) => registry
+            .zones
+            .iter()
+            .map(|zone| zone.name.clone())
+            .collect(),
+        None => vec![DEFAULT_ZONE.to_string()],
+    };
+    if zone_names.is_empty() {
+        return;
+    }
 
     for zone in zone_names {
         if active.last_rolled_day_for(zone.as_str()) == Some(current_day) {
             continue;
         }
         active.set_last_rolled_day_for(zone.clone(), current_day);
+        let mut zone_rng = WeatherRng::new(weather_zone_day_seed(zone.as_str(), current_day));
         let profile = params
             .profile_registry
             .as_deref()
@@ -557,7 +556,7 @@ pub fn weather_generator_system_zone_aware(
             season,
             now,
             &mut active,
-            &mut rng,
+            &mut zone_rng,
             &profile,
         ) {
             let entry = active
@@ -571,6 +570,15 @@ pub fn weather_generator_system_zone_aware(
             });
         }
     }
+}
+
+fn weather_zone_day_seed(zone: &str, current_day: u64) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ current_day.rotate_left(17);
+    for byte in zone.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash ^ current_day.wrapping_mul(0x9e37_79b9_7f4a_7c15).max(1)
 }
 
 /// plan §3 / §4.1 — game-day 边界跑一次：兜底 expire 清理（generator 已在
@@ -1214,12 +1222,74 @@ mod tests {
     }
 
     #[test]
+    fn zone_aware_generator_empty_registry_does_not_roll_default_zone() {
+        let mut app = App::new();
+        app.insert_resource(LingtianTickAccumulator::new());
+        app.insert_resource(LingtianClock::default());
+        app.insert_resource(ActiveWeather::new());
+        app.insert_resource(ZoneWeatherProfileRegistry::new());
+        app.insert_resource(ZoneRegistry { zones: Vec::new() });
+        app.add_event::<WeatherLifecycleEvent>();
+        app.add_systems(Update, weather_generator_system_zone_aware);
+
+        app.update();
+
+        let active = app.world().resource::<ActiveWeather>();
+        assert_eq!(active.last_rolled_day_for(DEFAULT_ZONE), None);
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn zone_aware_generator_uses_zone_day_seed_not_previous_zone_rolls() {
+        fn zone_b_expiry(zone_names: Vec<&str>) -> u64 {
+            let mut profiles = ZoneWeatherProfileRegistry::new();
+            for zone in &zone_names {
+                profiles
+                    .insert(
+                        *zone,
+                        ZoneWeatherProfile {
+                            force_event: Some(WeatherEvent::LingMist),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+            }
+            let mut app = App::new();
+            app.insert_resource(LingtianTickAccumulator::new());
+            app.insert_resource(LingtianClock::default());
+            app.insert_resource(ActiveWeather::new());
+            app.insert_resource(profiles);
+            app.insert_resource(ZoneRegistry {
+                zones: zone_names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, zone)| test_zone(zone, (index as f64) * 20.0))
+                    .collect(),
+            });
+            app.add_event::<WeatherLifecycleEvent>();
+            app.add_systems(Update, weather_generator_system_zone_aware);
+
+            app.update();
+
+            app.world()
+                .resource::<ActiveWeather>()
+                .current_entry("zone_b")
+                .expect("zone_b should roll forced weather")
+                .expires_at_lingtian_tick
+        }
+
+        assert_eq!(
+            zone_b_expiry(vec!["zone_b"]),
+            zone_b_expiry(vec!["zone_a", "zone_b"])
+        );
+    }
+
+    #[test]
     fn single_zone_mvp_compat_when_no_zone_registry_registered() {
         let mut app = App::new();
         app.insert_resource(LingtianTickAccumulator::new());
         app.insert_resource(LingtianClock::default());
         app.insert_resource(ActiveWeather::new());
-        app.insert_resource(WeatherRng::new(1));
         app.insert_resource(ZoneWeatherProfileRegistry::new());
         app.add_event::<WeatherLifecycleEvent>();
         app.add_systems(Update, weather_generator_system_zone_aware);
