@@ -58,4 +58,79 @@ public class DroppedLootSyncHandlerTest {
         assertTrue(result.isHandled(), result.logMessage());
         assertTrue(DroppedItemStore.snapshot().isEmpty());
     }
+
+    @Test
+    void droppedLootSyncPreservesAncientChargesMetadata() {
+        String payload = """
+            {
+              "v": 1,
+              "type": "dropped_loot_sync",
+              "drops": [
+                {
+                  "instance_id": 9001,
+                  "source_container_id": "main_pack",
+                  "source_row": 0,
+                  "source_col": 0,
+                  "world_pos": [1.0, 64.0, 2.0],
+                  "item": {
+                    "instance_id": 9001,
+                    "item_id": "ancient_relic",
+                    "display_name": "上古遗物",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.5,
+                    "rarity": "ancient",
+                    "description": "",
+                    "stack_count": 1,
+                    "spirit_quality": 0.0,
+                    "durability": 1.0,
+                    "charges": 3
+                  }
+                }
+              ]
+            }
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
+
+        assertTrue(result.isHandled(), result.logMessage());
+        assertEquals(3, DroppedItemStore.get(9001L).item().charges());
+    }
+
+    @Test
+    void malformedDroppedLootPositionIsRejectedWithoutThrowing() {
+        String payload = """
+            {
+              "v": 1,
+              "type": "dropped_loot_sync",
+              "drops": [
+                {
+                  "instance_id": 9002,
+                  "source_container_id": "main_pack",
+                  "source_row": 0,
+                  "source_col": 0,
+                  "world_pos": [1.0, 64.0],
+                  "item": {
+                    "instance_id": 9002,
+                    "item_id": "rare_relic",
+                    "display_name": "稀有遗物",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.5,
+                    "rarity": "rare",
+                    "description": "",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0
+                  }
+                }
+              ]
+            }
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
+
+        assertFalse(result.isHandled(), result.logMessage());
+        assertTrue(DroppedItemStore.snapshot().isEmpty());
+    }
 }
