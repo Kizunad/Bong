@@ -1,0 +1,122 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "event",
+    "array_id",
+    "kind",
+    "owner",
+    "x",
+    "y",
+    "z",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "event": {
+      "anyOf": [
+        {
+          "const": "deploy",
+          "type": "string"
+        },
+        {
+          "const": "decay",
+          "type": "string"
+        },
+        {
+          "const": "breakthrough",
+          "type": "string"
+        },
+        {
+          "const": "deceive_heaven_exposed",
+          "type": "string"
+        }
+      ]
+    },
+    "array_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "trap",
+          "type": "string"
+        },
+        {
+          "const": "ward",
+          "type": "string"
+        },
+        {
+          "const": "shrine_ward",
+          "type": "string"
+        },
+        {
+          "const": "lingju",
+          "type": "string"
+        },
+        {
+          "const": "deceive_heaven",
+          "type": "string"
+        },
+        {
+          "const": "illusion",
+          "type": "string"
+        }
+      ]
+    },
+    "owner": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "x": {
+      "type": "integer"
+    },
+    "y": {
+      "type": "integer"
+    },
+    "z": {
+      "type": "integer"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "radius": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "density_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tiandao_gaze_weight": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "reveal_chance_per_tick": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "reveal_threshold": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "self_weight_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "target_weight_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "force_break": {
+      "type": "boolean"
+    }
+  }
+}

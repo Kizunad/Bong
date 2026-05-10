@@ -679,6 +679,10 @@ export type AnqiContainerSwitchRequestV1 = Static<typeof AnqiContainerSwitchRequ
 export const ZhenfaKindV1 = Type.Union([
   Type.Literal("trap"),
   Type.Literal("ward"),
+  Type.Literal("shrine_ward"),
+  Type.Literal("lingju"),
+  Type.Literal("deceive_heaven"),
+  Type.Literal("illusion"),
 ]);
 export type ZhenfaKindV1 = Static<typeof ZhenfaKindV1>;
 

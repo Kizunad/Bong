@@ -137,6 +137,9 @@ export const CHANNELS = {
   /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
   ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
 
+  /** Server → Agent: 阵法 v2 deploy / decay / breakthrough / 欺天暴露事件 */
+  ZHENFA_V2_EVENT: "bong:zhenfa/v2_event",
+
   /** Server → Agent: 涡流反噬事件（plan-woliu-v1 §3.2.D） */
   WOLIU_BACKFIRE: "bong:woliu/backfire",
 

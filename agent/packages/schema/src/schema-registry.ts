@@ -319,6 +319,7 @@ import {
   VortexFieldStateV1,
 } from "./woliu.js";
 import { ZhenmaiSkillEventV1 } from "./zhenmai-v2.js";
+import { ZhenfaV2EventV1 } from "./zhenfa-v2.js";
 import {
   HealerNpcAiStateV1,
   MedicalContractStateV1,
@@ -588,6 +589,7 @@ export const SCHEMA_REGISTRY = {
   vortexBackfireEventV1: VortexBackfireEventV1,
   projectileQiDrainedEventV1: ProjectileQiDrainedEventV1,
   zhenmaiSkillEventV1: ZhenmaiSkillEventV1,
+  zhenfaV2EventV1: ZhenfaV2EventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
   woliuSkillIdV1: WoliuSkillIdV1,
   woliuBackfireLevelV1: WoliuBackfireLevelV1,
@@ -861,6 +863,7 @@ export const GENERATED_SCHEMA_FILES = {
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "zhenmai-skill-event-v1.json": SCHEMA_REGISTRY.zhenmaiSkillEventV1,
+  "zhenfa-v2-event-v1.json": SCHEMA_REGISTRY.zhenfaV2EventV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
   "style-balance-telemetry-event-v1.json":

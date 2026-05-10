@@ -2632,6 +2632,22 @@
             {
               "const": "ward",
               "type": "string"
+            },
+            {
+              "const": "shrine_ward",
+              "type": "string"
+            },
+            {
+              "const": "lingju",
+              "type": "string"
+            },
+            {
+              "const": "deceive_heaven",
+              "type": "string"
+            },
+            {
+              "const": "illusion",
+              "type": "string"
             }
           ]
         },
