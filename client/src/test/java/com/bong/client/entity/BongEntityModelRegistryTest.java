@@ -91,6 +91,28 @@ public class BongEntityModelRegistryTest {
         assertEquals(expected, BongEntityRegistry.expectedRawIdsForTests());
     }
 
+    @Test
+    void visualStateIsClampedInsteadOfWrapped() {
+        assertEquals(0, BongEntityModelKind.SPIRIT_NICHE.normalizeVisualState(-1));
+        assertEquals(0, BongEntityModelKind.SPIRIT_NICHE.normalizeVisualState(0));
+        assertEquals(2, BongEntityModelKind.SPIRIT_NICHE.normalizeVisualState(99));
+        assertEquals(
+            "bong:textures/entity/spirit_niche_invaded.png",
+            BongEntityModelKind.SPIRIT_NICHE.textureForState(99).toString()
+        );
+    }
+
+    @Test
+    void modelFallsBackToRendererKindWhenEntityIsNull() {
+        BongModeledEntityModel model = new BongModeledEntityModel(BongEntityModelKind.RIFT_PORTAL);
+        assertEquals(
+            BongEntityModelKind.RIFT_PORTAL.textureForState(0),
+            model.getTextureResource(null)
+        );
+        assertEquals(BongEntityModelKind.RIFT_PORTAL.modelResource(), model.getModelResource(null));
+        assertEquals(BongEntityModelKind.RIFT_PORTAL.animationResource(), model.getAnimationResource(null));
+    }
+
     private static void assertRenderer(
         BongEntityModelKind kind,
         Class<? extends BongModeledEntityRenderer> rendererClass,

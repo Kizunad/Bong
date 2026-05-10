@@ -20,6 +20,13 @@ public final class BongEntityRegistry {
         return Holder.TYPES.get(modelKind);
     }
 
+    /**
+     * Validates raw ids assigned during Holder class initialization.
+     *
+     * <p>The actual Fabric registration happens when {@link Holder#TYPES} is
+     * initialized; this method deliberately fails fast if a later bootstrap
+     * change shifts the server-facing protocol ids.
+     */
     public static void register() {
         Holder.TYPES.forEach((kind, type) -> {
             int rawId = Registries.ENTITY_TYPE.getRawId(type);

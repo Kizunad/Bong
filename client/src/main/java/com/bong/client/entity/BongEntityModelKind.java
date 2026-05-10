@@ -232,8 +232,16 @@ public enum BongEntityModelKind {
     }
 
     public Identifier textureForState(int visualState) {
-        String suffix = textureStates.get(Math.floorMod(visualState, textureStates.size()));
+        String suffix = textureStates.get(normalizeVisualState(visualState));
         return new Identifier(MOD_ID, "textures/entity/" + entityId + "_" + suffix + ".png");
+    }
+
+    public int normalizeVisualState(int visualState) {
+        if (visualState < 0) {
+            return 0;
+        }
+        int maxState = textureStates.size() - 1;
+        return Math.min(visualState, maxState);
     }
 
     public int stateCount() {

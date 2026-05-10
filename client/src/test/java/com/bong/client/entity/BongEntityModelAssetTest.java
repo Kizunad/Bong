@@ -44,6 +44,10 @@ public class BongEntityModelAssetTest {
                 body.contains("geometry.bong." + kind.entityId()),
                 "Geo asset must expose geometry.bong." + kind.entityId()
             );
+            assertTrue(
+                countOccurrences(body, "\"origin\"") >= 2,
+                "Geo asset must have multiple modeled parts, not a single cube placeholder: " + kind.entityId()
+            );
         }
     }
 
@@ -56,6 +60,18 @@ public class BongEntityModelAssetTest {
             assertTrue(
                 body.contains(kind.idleAnimationName()),
                 "Animation asset must expose " + kind.idleAnimationName()
+            );
+            assertTrue(body.contains("\"loop\": true"), "Animation must loop for " + kind.entityId());
+            assertTrue(
+                body.contains("\"Accent\"")
+                    || body.contains("\"Glow\"")
+                    || body.contains("\"Lid\"")
+                    || body.contains("\"Hammer\"")
+                    || body.contains("\"Veil\"")
+                    || body.contains("\"Runes\"")
+                    || body.contains("\"Body\"")
+                    || body.contains("\"Bones\""),
+                "Animation must target a meaningful non-root bone for " + kind.entityId()
             );
         }
     }
@@ -73,6 +89,19 @@ public class BongEntityModelAssetTest {
                 ));
                 assertTrue(Files.exists(texture), "Missing state texture: " + texture.toAbsolutePath());
             }
+        }
+    }
+
+    private static int countOccurrences(String body, String needle) {
+        int count = 0;
+        int offset = 0;
+        while (true) {
+            int index = body.indexOf(needle, offset);
+            if (index < 0) {
+                return count;
+            }
+            count++;
+            offset = index + needle.length();
         }
     }
 }

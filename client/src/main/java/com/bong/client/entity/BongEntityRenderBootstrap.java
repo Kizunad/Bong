@@ -35,6 +35,7 @@ public final class BongEntityRenderBootstrap {
     private BongEntityRenderBootstrap() {}
 
     public static void register() {
+        LingtianPlotBlock.register();
         BongEntityRegistry.register();
         for (RendererBinding binding : BINDINGS) {
             EntityRendererRegistry.register(BongEntityRegistry.type(binding.kind()), binding.factory());

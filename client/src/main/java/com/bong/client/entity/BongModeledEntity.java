@@ -51,7 +51,7 @@ public final class BongModeledEntity extends Entity implements GeoEntity {
             dataTracker.set(VISUAL_STATE, 0);
             return;
         }
-        dataTracker.set(VISUAL_STATE, Math.floorMod(visualState, stateCount));
+        dataTracker.set(VISUAL_STATE, modelKind.normalizeVisualState(visualState));
     }
 
     @Override
@@ -75,11 +75,11 @@ public final class BongModeledEntity extends Entity implements GeoEntity {
 
     @Override
     protected void readCustomDataFromNbt(NbtCompound nbt) {
-        setVisualState(nbt.getInt("VisualState"));
+        // EntityType is disableSaving(); visual state is server metadata, not local NBT.
     }
 
     @Override
     protected void writeCustomDataToNbt(NbtCompound nbt) {
-        nbt.putInt("VisualState", visualState());
+        // EntityType is disableSaving(); visual state is server metadata, not local NBT.
     }
 }

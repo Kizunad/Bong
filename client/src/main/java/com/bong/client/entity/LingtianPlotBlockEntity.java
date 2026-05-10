@@ -1,15 +1,26 @@
 package com.bong.client.entity;
 
+import net.minecraft.block.BlockState;
+import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.util.math.BlockPos;
 
-public record LingtianPlotBlockEntity(BlockPos pos, LingtianPlotBlock.VisualState state) {
-    public LingtianPlotBlockEntity {
-        if (state == null) {
-            state = LingtianPlotBlock.VisualState.WILD;
-        }
+public final class LingtianPlotBlockEntity extends BlockEntity {
+    private LingtianPlotBlock.VisualState visualState = LingtianPlotBlock.VisualState.WILD;
+
+    public LingtianPlotBlockEntity(BlockPos pos, BlockState state) {
+        super(LingtianPlotBlock.entityType(), pos, state);
+    }
+
+    public LingtianPlotBlock.VisualState visualState() {
+        return visualState;
+    }
+
+    public void setVisualState(LingtianPlotBlock.VisualState visualState) {
+        this.visualState = LingtianPlotBlock.normalize(visualState);
+        markDirty();
     }
 
     public int textureState() {
-        return state.textureState();
+        return visualState.textureState();
     }
 }
