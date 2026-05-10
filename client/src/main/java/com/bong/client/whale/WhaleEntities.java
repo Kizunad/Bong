@@ -24,7 +24,7 @@ public final class WhaleEntities {
      * 协议契约 raw id —— 与 server 的 {@code WHALE_ENTITY_KIND::new(125)} 对齐。
      *
      * <p>Fabric 注册顺序敏感：BongClient 先 botany_plant_v2 (raw_id=124) → whale (125)
-     * → plan-entity-model-v1 的 BongEntityRenderBootstrap (126..136)。任何新 EntityType 插队都会让
+     * → fauna (126..133) → plan-entity-model-v1 的 BongEntityRenderBootstrap (134..144)。任何新 EntityType 插队都会让
      * server 端 {@code WHALE_ENTITY_KIND} / {@code BONG_*_ENTITY_KIND} 偏移。
      */
     public static final int EXPECTED_RAW_ID = 125;

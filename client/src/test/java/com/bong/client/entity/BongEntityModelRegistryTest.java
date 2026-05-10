@@ -1,5 +1,7 @@
 package com.bong.client.entity;
 
+import com.bong.client.fauna.FaunaVisualKind;
+import com.bong.client.whale.WhaleEntities;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumMap;
@@ -25,14 +27,34 @@ public class BongEntityModelRegistryTest {
     }
 
     @Test
-    void rawIdsStayAfterWhaleWithoutShiftingExistingContract() {
-        int expectedRawId = 126;
+    void rawIdsStayAfterFaunaWithoutShiftingExistingContract() {
+        int expectedRawId = 134;
         for (BongEntityModelKind kind : BongEntityRegistry.orderedKindsForTests()) {
             assertEquals(
                 expectedRawId++,
                 kind.expectedRawId(),
-                "New entity raw ids must start after whale raw_id=125 and stay sequential"
+                "Entity model raw ids must start after fauna raw_id=133 and stay sequential"
             );
+        }
+    }
+
+    @Test
+    void entityModelRawIdsDoNotOverlapWhaleOrFaunaVisualShells() {
+        Set<Integer> occupied = new HashSet<>();
+        assertTrue(occupied.add(WhaleEntities.EXPECTED_RAW_ID), "whale raw id must be unique");
+        int maxFaunaRawId = WhaleEntities.EXPECTED_RAW_ID;
+        for (FaunaVisualKind kind : FaunaVisualKind.values()) {
+            assertTrue(occupied.add(kind.expectedRawId()), "Duplicate fauna raw id: " + kind);
+            maxFaunaRawId = Math.max(maxFaunaRawId, kind.expectedRawId());
+        }
+
+        assertEquals(133, maxFaunaRawId, "Entity model ids must move if fauna reserves more ids");
+        for (BongEntityModelKind kind : BongEntityModelKind.values()) {
+            assertTrue(
+                kind.expectedRawId() > maxFaunaRawId,
+                "Entity model raw id must stay after fauna range: " + kind
+            );
+            assertTrue(occupied.add(kind.expectedRawId()), "Duplicate entity model raw id: " + kind);
         }
     }
 

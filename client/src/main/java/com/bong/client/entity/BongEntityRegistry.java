@@ -33,7 +33,8 @@ public final class BongEntityRegistry {
             if (rawId != kind.expectedRawId()) {
                 LOGGER.error(
                     "[bong][entity-model] raw_id MISMATCH: {} expected {} actual {}. "
-                        + "Keep BongEntityRenderBootstrap after WhaleRenderBootstrap, or update server EntityKind ids.",
+                        + "Keep BongEntityRenderBootstrap after WhaleRenderBootstrap and FaunaRenderBootstrap, "
+                        + "or update server EntityKind ids.",
                     kind.identifier(),
                     kind.expectedRawId(),
                     rawId

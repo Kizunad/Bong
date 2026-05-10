@@ -1,9 +1,10 @@
 //! plan-entity-model-v1 — server ↔ Fabric custom entity model contract.
 //!
-//! The client registers `bong:*` entity types immediately after `bong:whale`
-//! (`raw_id=125`). This module is the server-side mirror: existing gameplay
-//! components keep owning logic, while this layer spawns lightweight marker
-//! entities with the custom `EntityKind` ids that the Fabric renderer consumes.
+//! The client registers `bong:*` entity types after whale (`raw_id=125`) and
+//! fauna (`raw_id=126..133`). This module is the server-side mirror: existing
+//! gameplay components keep owning logic, while this layer spawns lightweight
+//! marker entities with the custom `EntityKind` ids that the Fabric renderer
+//! consumes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,17 +28,17 @@ use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::zhenfa::ZhenfaAnchor;
 
-pub const SPIRIT_NICHE_ENTITY_KIND: EntityKind = EntityKind::new(126);
-pub const SPIRIT_EYE_ENTITY_KIND: EntityKind = EntityKind::new(127);
-pub const RIFT_PORTAL_ENTITY_KIND: EntityKind = EntityKind::new(128);
-pub const FORGE_STATION_ENTITY_KIND: EntityKind = EntityKind::new(129);
-pub const ALCHEMY_FURNACE_ENTITY_KIND: EntityKind = EntityKind::new(130);
-pub const FORMATION_CORE_ENTITY_KIND: EntityKind = EntityKind::new(131);
-pub const LINGTIAN_PLOT_ENTITY_KIND: EntityKind = EntityKind::new(132);
-pub const DRY_CORPSE_ENTITY_KIND: EntityKind = EntityKind::new(133);
-pub const BONE_SKELETON_ENTITY_KIND: EntityKind = EntityKind::new(134);
-pub const STORAGE_POUCH_ENTITY_KIND: EntityKind = EntityKind::new(135);
-pub const STONE_CASKET_ENTITY_KIND: EntityKind = EntityKind::new(136);
+pub const SPIRIT_NICHE_ENTITY_KIND: EntityKind = EntityKind::new(134);
+pub const SPIRIT_EYE_ENTITY_KIND: EntityKind = EntityKind::new(135);
+pub const RIFT_PORTAL_ENTITY_KIND: EntityKind = EntityKind::new(136);
+pub const FORGE_STATION_ENTITY_KIND: EntityKind = EntityKind::new(137);
+pub const ALCHEMY_FURNACE_ENTITY_KIND: EntityKind = EntityKind::new(138);
+pub const FORMATION_CORE_ENTITY_KIND: EntityKind = EntityKind::new(139);
+pub const LINGTIAN_PLOT_ENTITY_KIND: EntityKind = EntityKind::new(140);
+pub const DRY_CORPSE_ENTITY_KIND: EntityKind = EntityKind::new(141);
+pub const BONE_SKELETON_ENTITY_KIND: EntityKind = EntityKind::new(142);
+pub const STORAGE_POUCH_ENTITY_KIND: EntityKind = EntityKind::new(143);
+pub const STONE_CASKET_ENTITY_KIND: EntityKind = EntityKind::new(144);
 
 const BONG_VISUAL_STATE_INDEX: u8 = 8;
 const TRACKED_DATA_TYPE_INTEGER: u8 = 1;
@@ -530,7 +531,7 @@ mod tests {
         ]
         .map(|kind| kind.get());
 
-        assert_eq!(ids, [126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136]);
+        assert_eq!(ids, [134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144]);
     }
 
     #[test]
