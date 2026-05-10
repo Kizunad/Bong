@@ -259,8 +259,8 @@ pub fn dehydrate_far_npcs_system(
     }
 
     candidates.sort_by(|left, right| left.1.cmp(&right.1));
-    for (dehydrated, (entity, char_id, mut snapshot)) in candidates.into_iter().enumerate() {
-        if dehydrated >= config.max_dormant_count {
+    for (entity, char_id, mut snapshot) in candidates {
+        if !can_insert_dormant_snapshot(&store, char_id.as_str(), config.max_dormant_count) {
             break;
         }
         snapshot.patrol = snapshot.patrol.or_else(|| {
@@ -276,6 +276,14 @@ pub fn dehydrate_far_npcs_system(
         store.insert(snapshot);
         commands.entity(entity).despawn();
     }
+}
+
+fn can_insert_dormant_snapshot(
+    store: &NpcDormantStore,
+    char_id: &str,
+    max_dormant_count: usize,
+) -> bool {
+    store.contains(char_id) || store.len() < max_dormant_count
 }
 
 fn spawn_from_snapshot(
@@ -361,6 +369,7 @@ fn spawn_from_snapshot(
 
     let mut entity_commands = commands.entity(entity);
     entity_commands.insert((
+        snapshot.archetype,
         snapshot.cultivation,
         snapshot.meridian_system,
         snapshot.meridian_severed,
@@ -486,6 +495,15 @@ mod tests {
         let mut missing_meridian = ready.clone();
         missing_meridian.meridian_system.regular[0].opened = false;
         assert!(!dormant_tribulation_ready(&missing_meridian));
+    }
+
+    #[test]
+    fn dormant_capacity_uses_store_len_not_tick_candidate_count() {
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_existing", DVec3::new(10.0, 64.0, 10.0)));
+
+        assert!(!can_insert_dormant_snapshot(&store, "npc_new", 1));
+        assert!(can_insert_dormant_snapshot(&store, "npc_existing", 1));
     }
 
     #[test]
