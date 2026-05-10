@@ -149,9 +149,9 @@
 
 ### 关键 commits
 
-- `b99072a19` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
-- `941505aec` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
-- `2ff3253dc` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
+- `aa8caa230` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
+- `51c69000d` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
+- `9b54b4347` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
 
 ### 测试结果
 
