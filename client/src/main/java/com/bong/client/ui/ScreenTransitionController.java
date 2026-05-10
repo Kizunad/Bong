@@ -43,7 +43,7 @@ public final class ScreenTransitionController {
             cancelledTransitions++;
         }
 
-        long now = System.currentTimeMillis();
+        long now = ScreenTransition.nowMillis();
         ScreenTransition.TransitionHandle handle = ScreenTransition.play(
             oldScreen,
             nextScreen,
@@ -63,7 +63,7 @@ public final class ScreenTransitionController {
         }
         int width = client.getWindow() == null ? 0 : client.getWindow().getScaledWidth();
         int height = client.getWindow() == null ? 0 : client.getWindow().getScaledHeight();
-        if (active.handle().sample(System.currentTimeMillis(), width, height).finished()) {
+        if (active.handle().sample(ScreenTransition.nowMillis(), width, height).finished()) {
             activeTransition = null;
             active.handle().complete();
         }
@@ -86,7 +86,7 @@ public final class ScreenTransitionController {
         if (active == null) {
             return false;
         }
-        return active.handle().sample(System.currentTimeMillis(), 1, 1).inputLocked();
+        return active.handle().sample(ScreenTransition.nowMillis(), 1, 1).inputLocked();
     }
 
     public static ActiveTransition activeTransition() {

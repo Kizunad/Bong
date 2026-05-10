@@ -26,7 +26,7 @@ public final class ScreenTransition {
             normalizedType,
             clampDuration(normalizedType, durationMs),
             easing == null ? Easing.EASE_OUT_CUBIC : easing,
-            System.currentTimeMillis(),
+            nowMillis(),
             callback
         );
         if (handle.durationMs() == 0) {
@@ -86,6 +86,10 @@ public final class ScreenTransition {
             return 0;
         }
         return Math.max(MIN_DURATION_MS, Math.min(MAX_DURATION_MS, durationMs));
+    }
+
+    public static long nowMillis() {
+        return System.nanoTime() / 1_000_000L;
     }
 
     private static double clamp01(double value) {

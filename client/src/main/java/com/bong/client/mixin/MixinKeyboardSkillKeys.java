@@ -15,10 +15,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinKeyboardSkillKeys {
     @Inject(method = "onKey", at = @At("HEAD"), cancellable = true)
     private void bong$skillBarHotbarKeys(long window, int key, int scancode, int action, int modifiers, CallbackInfo ci) {
+        MinecraftClient client = MinecraftClient.getInstance();
         TransitionInputPolicy.KeyDecision transitionDecision =
             TransitionInputPolicy.keyDecision(ScreenTransitionController.inputLocked(), key, action);
         if (transitionDecision == TransitionInputPolicy.KeyDecision.CANCEL_AND_CLOSE) {
-            ScreenTransitionController.cancelAndClose(MinecraftClient.getInstance());
+            ScreenTransitionController.cancelAndClose(client);
             ci.cancel();
             return;
         }
@@ -30,7 +31,6 @@ public class MixinKeyboardSkillKeys {
         if (action != GLFW.GLFW_PRESS) {
             return;
         }
-        MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.player == null || client.currentScreen != null) {
             return;
         }

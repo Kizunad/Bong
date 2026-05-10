@@ -95,6 +95,23 @@ class ScreenTransitionTest {
     }
 
     @Test
+    void null_type_completes_immediately() {
+        final boolean[] called = {false};
+        ScreenTransition.TransitionHandle handle = ScreenTransition.play(
+            new DummyScreen("old"),
+            new DummyScreen("new"),
+            null,
+            200,
+            ScreenTransition.Easing.LINEAR,
+            () -> called[0] = true
+        );
+
+        assertTrue(handle.completed());
+        assertTrue(called[0]);
+        assertEquals(ScreenTransition.Type.NONE, handle.type());
+    }
+
+    @Test
     void unregistered_screen_uses_default() {
         TransitionConfig config = ScreenTransitionRegistry.getOrDefault(DummyScreen.class);
 

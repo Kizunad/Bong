@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.ui.ScreenTransition;
 import com.bong.client.ui.ScreenTransitionOverlay;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -16,6 +17,6 @@ public class MixinScreenTransitionRender {
 
     @Inject(method = "renderWithTooltip", at = @At("RETURN"))
     private void bong$renderTransitionOverlay(DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        ScreenTransitionOverlay.render(context, width, height, System.currentTimeMillis());
+        ScreenTransitionOverlay.render(context, width, height, ScreenTransition.nowMillis());
     }
 }
