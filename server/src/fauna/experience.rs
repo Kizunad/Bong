@@ -115,13 +115,16 @@ pub fn emit_fauna_death_vfx_audio_system(
 
 pub fn emit_rat_bite_audio_system(
     mut bites: EventReader<RatBiteEvent>,
-    rats: Query<&Position>,
+    rats: Query<(&Position, &FaunaTag)>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for bite in bites.read() {
-        let Ok(position) = rats.get(bite.rat) else {
+        let Ok((position, tag)) = rats.get(bite.rat) else {
             continue;
         };
+        if !matches!(tag.beast_kind, BeastKind::Rat) {
+            continue;
+        }
         audio_events.send(play_audio("fauna_rat_squeal", position.get(), 1.0, 0.0));
     }
 }
@@ -241,7 +244,13 @@ mod tests {
         app.add_event::<RatBiteEvent>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_rat_bite_audio_system);
-        let rat = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let rat = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                FaunaTag::new(BeastKind::Rat),
+            ))
+            .id();
         let target = app.world_mut().spawn_empty().id();
         app.world_mut().send_event(RatBiteEvent {
             rat,
@@ -257,6 +266,32 @@ mod tests {
             .next()
             .expect("rat bite should emit squeal audio");
         assert_eq!(event.recipe_id, "fauna_rat_squeal");
+    }
+
+    #[test]
+    fn rat_bite_audio_skips_non_rat_entities() {
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_rat_bite_audio_system);
+        let spider = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                FaunaTag::new(BeastKind::Spider),
+            ))
+            .id();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RatBiteEvent {
+            rat: spider,
+            target,
+            qi_steal: 1,
+        });
+
+        app.update();
+
+        let events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        assert_eq!(events.iter_current_update_events().count(), 0);
     }
 
     #[test]

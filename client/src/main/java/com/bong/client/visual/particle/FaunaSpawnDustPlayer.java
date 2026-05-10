@@ -25,6 +25,7 @@ public final class FaunaSpawnDustPlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         int count = clamp(payload.count().orElse(8), 1, 32);
+        int durationTicks = clamp(payload.durationTicks().orElse(24), 6, 80);
 
         for (int i = 0; i < count; i++) {
             double angle = world.random.nextDouble() * Math.PI * 2.0;
@@ -46,7 +47,7 @@ public final class FaunaSpawnDustPlayer implements VfxPlayer {
                 g,
                 b,
                 0.55f,
-                payload.durationTicks().orElse(24),
+                durationTicks,
                 0.08f
             );
         }

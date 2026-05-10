@@ -1774,10 +1774,12 @@ mod tests {
             Some(&crate::fauna::visual::entity_kind_for_beast(tag.beast_kind)),
             "beast should spawn with a fauna custom visual entity kind"
         );
-        assert!(app
-            .world()
-            .get::<crate::fauna::visual::FaunaVisualKind>(beast)
-            .is_some());
+        assert_eq!(
+            app.world()
+                .get::<crate::fauna::visual::FaunaVisualKind>(beast)
+                .copied(),
+            crate::fauna::visual::visual_kind_for_beast(tag.beast_kind)
+        );
         let _thinker = app
             .world()
             .get::<ThinkerBuilder>(beast)

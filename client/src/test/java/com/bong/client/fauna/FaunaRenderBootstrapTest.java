@@ -8,7 +8,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class FaunaRenderBootstrapTest {
     @Test
@@ -29,14 +28,17 @@ public class FaunaRenderBootstrapTest {
             .map(kind -> kind.modelId().getPath())
             .collect(Collectors.toSet());
 
-        assertTrue(paths.contains("geo/devour_rat.geo.json"));
-        assertTrue(paths.contains("geo/ash_spider.geo.json"));
-        assertTrue(paths.contains("geo/hybrid_beast.geo.json"));
-        assertTrue(paths.contains("geo/void_distorted.geo.json"));
-        assertTrue(paths.contains("geo/daoxiang.geo.json"));
-        assertTrue(paths.contains("geo/zhinian.geo.json"));
-        assertTrue(paths.contains("geo/tsy_sentinel.geo.json"));
-        assertTrue(paths.contains("geo/fuya.geo.json"));
+        Set<String> expected = Set.of(
+            "geo/devour_rat.geo.json",
+            "geo/ash_spider.geo.json",
+            "geo/hybrid_beast.geo.json",
+            "geo/void_distorted.geo.json",
+            "geo/daoxiang.geo.json",
+            "geo/zhinian.geo.json",
+            "geo/tsy_sentinel.geo.json",
+            "geo/fuya.geo.json"
+        );
+        assertEquals(expected, paths);
     }
 
     @Test

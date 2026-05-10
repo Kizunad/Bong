@@ -25,6 +25,7 @@ public final class FaunaBoneShatterPlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         int count = clamp(payload.count().orElse(6), 1, 18);
+        int durationTicks = clamp(payload.durationTicks().orElse(18), 6, 60);
 
         for (int i = 0; i < count; i++) {
             double theta = world.random.nextDouble() * Math.PI * 2.0;
@@ -36,7 +37,7 @@ public final class FaunaBoneShatterPlayer implements VfxPlayer {
             shard.setLineShape(1.2, 0.16, 0.025);
             shard.setColor(r, g, b);
             shard.setAlphaPublic(0.78f);
-            shard.setMaxAgePublic(payload.durationTicks().orElse(18));
+            shard.setMaxAgePublic(durationTicks);
             if (BongParticles.swordQiTrailSprites != null) {
                 shard.setSpritePublic(BongParticles.swordQiTrailSprites.getSprite(world.random));
             }

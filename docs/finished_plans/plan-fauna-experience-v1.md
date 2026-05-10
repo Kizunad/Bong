@@ -123,12 +123,14 @@
 - `3d49ec185`（2026-05-10）接入异变兽客户端渲染资源：client 侧 GeckoLib fauna entity/model/renderer/bootstrap、8 个非鲸视觉壳模型、贴图、动画、VFX player 与注册测试。
 - `4d5f146ff`（2026-05-10）fix(fauna-experience-v1): 避免鲸误挂异变兽视觉壳：保留已有鲸 `WHALE_ENTITY_KIND=125` / WhaleRenderer 语义，非本 plan 视觉壳不覆盖鲸。
 - `0d0cc1fd3`（2026-05-10）fix(fauna-experience-v1): 接通 Fuya 压力嗡鸣 loop：client 侧 `SoundRecipePlayer` 支持 payload-owned loop flag，server 侧 Fuya spawn/death 负责 play/stop。
+- review hardening（2026-05-10）：按 CodeRabbit 反馈补 raw_id fail-fast、`FaunaEntity.visualKind` 非空保护、fauna 粒子寿命 clamp、RatBite 消费侧 Rat tag 校验、Beast visual optional 契约断言、TSY hostile archetype 显式映射与 Fuya aura query type alias。
 
 ### 测试结果
 
 - rebase 前本地全量：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过，`3639 passed; 0 failed`；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` 通过。
 - review 修复后本地增量：`cd server && cargo fmt --check` 通过；`cd server && CARGO_BUILD_JOBS=1 cargo check --tests` 通过；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` 通过。
-- review 修复后本地 `cargo test fuya_pressure_hum_audio_emits_on_aura_spawn` 在 test binary 链接阶段被系统 SIGKILL，无 Rust 诊断；该路径需由 PR CI 的 server/e2e 阶段继续核验。
+- CodeRabbit hardening 后本地增量：`cd server && cargo fmt --check` 通过；`cd server && CARGO_BUILD_JOBS=1 cargo check --tests` 通过；`cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` 通过；`cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew test --tests com.bong.client.fauna.FaunaRenderBootstrapTest --tests com.bong.client.audio.SoundRecipePlayerTest --tests com.bong.client.vfx.FaunaVfxBootstrapTest` 通过。
+- review 修复后本地 `cargo test fuya_pressure_hum_audio_emits_on_aura_spawn` 与 `cargo test rat_bite_audio -- --nocapture` 均在 test binary 链接阶段被系统 SIGKILL，无 Rust 诊断；对应逻辑由 `cargo check --tests` / clippy 编译校验和 PR CI 继续兜底。
 
 ### 跨仓库核验
 

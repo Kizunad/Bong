@@ -57,6 +57,9 @@ const FUYA_DEFAULT_AURA_RADIUS: f32 = 8.0;
 const FUYA_DEFAULT_DRAIN_MULTIPLIER: f64 = 1.5;
 const FUYA_PRESSURE_AUDIO_FLAG_PREFIX: &str = "fauna_fuya_pressure";
 
+type AddedFuyaAuraQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Position), (With<FuyaAura>, Added<FuyaAura>)>;
+
 pub const DEFAULT_TSY_SPAWN_POOLS_PATH: &str = "tsy_spawn_pools.json";
 pub const DEFAULT_TSY_DROPS_PATH: &str = "tsy_drops.json";
 
@@ -886,7 +889,7 @@ pub fn spawn_tsy_sentinel_at(
 }
 
 pub fn emit_fuya_pressure_hum_audio_system(
-    fuyas: Query<(Entity, &Position), (With<FuyaAura>, Added<FuyaAura>)>,
+    fuyas: AddedFuyaAuraQuery<'_, '_>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for (fuya, position) in &fuyas {
@@ -978,21 +981,35 @@ fn spawn_zombie_shell(
         .id()
 }
 
-const fn entity_kind_for_tsy_archetype(archetype: NpcArchetype) -> valence::prelude::EntityKind {
+fn entity_kind_for_tsy_archetype(archetype: NpcArchetype) -> valence::prelude::EntityKind {
     match archetype {
         NpcArchetype::Daoxiang => DAOXIANG_ENTITY_KIND,
         NpcArchetype::Zhinian => ZHINIAN_ENTITY_KIND,
         NpcArchetype::Fuya => FUYA_ENTITY_KIND,
-        _ => DAOXIANG_ENTITY_KIND,
+        NpcArchetype::Zombie
+        | NpcArchetype::Commoner
+        | NpcArchetype::Rogue
+        | NpcArchetype::Beast
+        | NpcArchetype::Disciple
+        | NpcArchetype::GuardianRelic => {
+            unreachable!("entity_kind_for_tsy_archetype only supports TSY hostile archetypes")
+        }
     }
 }
 
-const fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
+fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
     match archetype {
         NpcArchetype::Daoxiang => FaunaVisualKind::Daoxiang,
         NpcArchetype::Zhinian => FaunaVisualKind::Zhinian,
         NpcArchetype::Fuya => FaunaVisualKind::Fuya,
-        _ => FaunaVisualKind::Daoxiang,
+        NpcArchetype::Zombie
+        | NpcArchetype::Commoner
+        | NpcArchetype::Rogue
+        | NpcArchetype::Beast
+        | NpcArchetype::Disciple
+        | NpcArchetype::GuardianRelic => {
+            unreachable!("visual_kind_for_tsy_archetype only supports TSY hostile archetypes")
+        }
     }
 }
 

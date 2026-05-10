@@ -12,6 +12,8 @@ import software.bernie.geckolib.core.animation.RawAnimation;
 import software.bernie.geckolib.core.object.PlayState;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
+import java.util.Objects;
+
 public final class FaunaEntity extends Entity implements GeoEntity {
     private static final RawAnimation IDLE =
         RawAnimation.begin().thenLoop("animation.fauna.idle");
@@ -21,7 +23,7 @@ public final class FaunaEntity extends Entity implements GeoEntity {
 
     public FaunaEntity(EntityType<? extends FaunaEntity> type, World world, FaunaVisualKind visualKind) {
         super(type, world);
-        this.visualKind = visualKind;
+        this.visualKind = Objects.requireNonNull(visualKind, "visualKind");
     }
 
     public FaunaVisualKind visualKind() {

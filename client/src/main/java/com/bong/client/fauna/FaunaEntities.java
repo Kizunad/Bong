@@ -26,13 +26,14 @@ public final class FaunaEntities {
             EntityType<FaunaEntity> type = type(kind);
             int rawId = Registries.ENTITY_TYPE.getRawId(type);
             if (rawId != kind.expectedRawId()) {
-                LOGGER.error(
-                    "[bong][fauna] raw_id MISMATCH: {} expected {}, got {}. "
+                String message = String.format(
+                    "[bong][fauna] raw_id MISMATCH: %s expected %d, got %d. "
                         + "Fauna custom entities must be registered immediately after whale.",
                     kind.entityId(),
                     kind.expectedRawId(),
                     rawId
                 );
+                throw new IllegalStateException(message);
             } else {
                 LOGGER.info("[bong][fauna] registered {} raw_id={}", kind.entityId(), rawId);
             }
