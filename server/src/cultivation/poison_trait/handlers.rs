@@ -62,7 +62,7 @@ pub fn consume_poison_pill_now(
                 lifespan_penalty_years: severity.lifespan_penalty_years(),
                 micro_tear_probability: severity
                     .micro_tear_probability()
-                    .max(spec.micro_tear_probability),
+                    .min(spec.micro_tear_probability),
                 at_tick,
             }
         });

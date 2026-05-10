@@ -127,7 +127,7 @@ public final class PoisonTraitServerDataHandler implements ServerDataHandler {
         JsonPrimitive primitive = element.getAsJsonPrimitive();
         if (!primitive.isNumber()) return null;
         double value = primitive.getAsDouble();
-        if (!Double.isFinite(value) || value < 0.0 || value > Long.MAX_VALUE || value % 1.0 != 0.0) return null;
+        if (!Double.isFinite(value) || value < 0.0 || value > Long.MAX_VALUE || Math.floor(value) != value) return null;
         return (long) value;
     }
 

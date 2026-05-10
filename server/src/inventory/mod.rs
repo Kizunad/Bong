@@ -3620,6 +3620,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_item_effect_rejects_poison_pill_missing_or_empty_target() {
+        for target in [None, Some("   ".to_string())] {
+            let error = parse_item_effect(
+                ItemEffectToml {
+                    kind: "poison_pill".to_string(),
+                    magnitude: 0.0,
+                    target,
+                },
+                Path::new("<inline-items.toml>"),
+                "poison_pill_missing_target",
+            )
+            .expect_err("poison_pill effect without target should fail");
+
+            assert!(
+                error.contains("item.effect.target"),
+                "expected target validation error, got {error}"
+            );
+        }
+    }
+
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(0),

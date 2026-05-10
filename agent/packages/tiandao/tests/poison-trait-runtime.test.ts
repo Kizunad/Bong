@@ -48,7 +48,10 @@ describe("PoisonTraitNarrationRuntime", () => {
 
     await runtime.connect();
 
-    expect(sub.subscribedChannels).toEqual([POISON_DOSE_EVENT, POISON_OVERDOSE_EVENT]);
+    expect(sub.subscribedChannels).toEqual(
+      expect.arrayContaining([POISON_DOSE_EVENT, POISON_OVERDOSE_EVENT]),
+    );
+    expect(sub.subscribedChannels).toHaveLength(2);
   });
 
   it("publishes dose narration to agent narration channel", async () => {
@@ -99,6 +102,7 @@ describe("PoisonTraitNarrationRuntime", () => {
     );
 
     expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
     const envelope = JSON.parse(pub.published[0].message);
     expect(envelope.narrations[0].target).toBe("poison_overdose:7|tick:120");
     expect(envelope.narrations[0].text).toContain("寿元折去 1.0 年");

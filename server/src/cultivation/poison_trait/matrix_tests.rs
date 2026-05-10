@@ -444,6 +444,34 @@ fn overdose_ignores_zero_capacity() {
 }
 
 #[test]
+fn overdose_micro_tear_probability_respects_pill_cap() {
+    let mut toxicity = PoisonToxicity::default();
+    let mut digestion = DigestionLoad {
+        current: 160.0,
+        capacity: 100.0,
+        ..Default::default()
+    };
+
+    let outcome = consume_poison_pill_now(
+        Entity::PLACEHOLDER,
+        PoisonPillKind::TieFuSheDan,
+        Realm::Awaken,
+        &mut toxicity,
+        &mut digestion,
+        10,
+    );
+
+    let overdose = outcome
+        .overdose_event
+        .expect("large overflow should emit overdose");
+    assert_eq!(overdose.severity, PoisonOverdoseSeverity::Severe);
+    assert_eq!(
+        overdose.micro_tear_probability,
+        PoisonPillKind::TieFuSheDan.spec().micro_tear_probability
+    );
+}
+
+#[test]
 fn realm_awaken_digestion_capacity() {
     assert_eq!(digestion_capacity_for_realm(Realm::Awaken), 100.0);
 }

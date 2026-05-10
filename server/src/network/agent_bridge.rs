@@ -709,6 +709,18 @@ mod server_data_tests {
             payload_type_label(ServerDataType::SpiritualSenseTargets),
             "spiritual_sense_targets"
         );
+        assert_eq!(
+            payload_type_label(ServerDataType::PoisonDoseEvent),
+            "poison_dose_event"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::PoisonOverdoseEvent),
+            "poison_overdose_event"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::PoisonTraitState),
+            "poison_trait_state"
+        );
     }
 
     #[test]
