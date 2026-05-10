@@ -1,3 +1,4 @@
+use valence::entity::Look;
 use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut};
 
 use crate::combat::components::{
@@ -449,12 +450,17 @@ fn apply_v3_runtime_effects(world: &mut bevy_ecs::world::World, ctx: V3RuntimeEf
                     ctx.now_tick,
                 );
             }
-            let recoil_origin = world
+            let caster_pos = world
                 .get::<Position>(ctx.caster)
                 .map(|position| position.get())
                 .unwrap_or(ctx.center);
+            let facing = world
+                .get::<Look>(ctx.caster)
+                .and_then(horizontal_facing_from_look)
+                .unwrap_or(DVec3::X);
+            let recoil_origin = caster_pos + facing;
             if let Some(actual_displacement) =
-                apply_radial_displacement(world, ctx.caster, recoil_origin + DVec3::X, 2.0, true)
+                apply_radial_displacement(world, ctx.caster, recoil_origin, 2.0, true)
             {
                 send_event_if_present(
                     world,
@@ -816,6 +822,12 @@ fn apply_radial_displacement(
     }
     target_pos.set(current + offset / distance * step);
     Some(step as f32)
+}
+
+fn horizontal_facing_from_look(look: &Look) -> Option<DVec3> {
+    let yaw = f64::from(look.yaw).to_radians();
+    let facing = DVec3::new(-yaw.sin(), 0.0, yaw.cos());
+    facing.is_finite().then_some(facing)
 }
 
 fn cast_center(

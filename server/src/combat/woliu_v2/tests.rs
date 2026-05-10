@@ -1,3 +1,4 @@
+use valence::entity::Look;
 use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
 use crate::combat::components::{SkillBarBindings, Wounds, TICKS_PER_SECOND};
@@ -898,6 +899,10 @@ fn resolve_vortex_resonance_pulls_multiple_targets_with_resonance_bonus() {
 fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    app.world_mut()
+        .entity_mut(actor)
+        .insert(Look::new(0.0, 0.0));
+    let caster_start = app.world().get::<Position>(actor).unwrap().get();
     let target = spawn_actor(&mut app, Realm::Induce, 80.0);
     app.world_mut().entity_mut(target).insert(Wounds::default());
     app.world_mut()
@@ -937,6 +942,15 @@ fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
             .get()
             .distance(DVec3::new(8.0, 66.0, 8.0))
             > 2.0
+    );
+    let caster_after = app.world().get::<Position>(actor).unwrap().get();
+    assert!(
+        caster_after.z < caster_start.z,
+        "yaw=0 faces +Z, so turbulence burst recoil should move the caster backward on -Z; start={caster_start:?}, after={caster_after:?}"
+    );
+    assert!(
+        (caster_after.x - caster_start.x).abs() < 1e-5,
+        "recoil should follow facing direction instead of hard-coding an X-axis offset; start={caster_start:?}, after={caster_after:?}"
     );
 }
 
