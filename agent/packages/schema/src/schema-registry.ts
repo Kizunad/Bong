@@ -813,6 +813,8 @@ export const GENERATED_SCHEMA_FILES = {
   "weather-event-kind-v1.json": SCHEMA_REGISTRY.weatherEventKindV1,
   "weather-event-data-v1.json": SCHEMA_REGISTRY.weatherEventDataV1,
   "weather-event-update-v1.json": SCHEMA_REGISTRY.weatherEventUpdateV1,
+  "environment-effect-v1.json": SCHEMA_REGISTRY.environmentEffectV1,
+  "zone-environment-state-v1.json": SCHEMA_REGISTRY.zoneEnvironmentStateV1,
   "bone-coin-tick-v1.json": SCHEMA_REGISTRY.boneCoinTickV1,
   "price-sample-v1.json": SCHEMA_REGISTRY.priceSampleV1,
   "price-index-v1.json": SCHEMA_REGISTRY.priceIndexV1,

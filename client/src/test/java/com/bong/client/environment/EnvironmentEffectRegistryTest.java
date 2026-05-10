@@ -72,6 +72,20 @@ class EnvironmentEffectRegistryTest {
     }
 
     @Test
+    void lightningPillarUsesEffectSpecificFadeTicks() {
+        EnvironmentEffectRegistry registry = registry();
+        registry.onZoneStateUpdate(state(1, new EnvironmentEffect.LightningPillar(8.0, 64.0, 8.0, 4.0, 2.0)));
+        Vec3d player = new Vec3d(8.0, 70.0, 8.0);
+
+        for (int i = 0; i < 20; i++) {
+            registry.tickFade(player, 80.0);
+        }
+
+        ActiveEmitter active = registry.activeEmitters().iterator().next();
+        assertEquals(1.0f, active.alpha(), 0.0001f);
+    }
+
+    @Test
     void tornadoColumnZeroDensityStillCullsSafely() {
         EnvironmentEffect.TornadoColumn tornado =
             new EnvironmentEffect.TornadoColumn(0.0, 64.0, 0.0, 8.0, 48.0, 0.0);
@@ -127,6 +141,24 @@ class EnvironmentEffectRegistryTest {
     }
 
     @Test
+    void staleGenerationUpdateCannotOverwriteNewerState() {
+        EnvironmentEffectRegistry registry = registry();
+        registry.onZoneStateUpdate(state(5, fog(0x788494, 0.32)));
+        Vec3d player = new Vec3d(8.0, 70.0, 8.0);
+        for (int i = 0; i < 40; i++) {
+            registry.tickFade(player, 80.0);
+        }
+
+        registry.onZoneStateUpdate(new ZoneEnvironmentState(1, "spawn", List.of(), 4));
+
+        ZoneEnvironmentState state = registry.zoneState("spawn");
+        ActiveEmitter active = registry.activeEmitters().iterator().next();
+        assertEquals(5L, state.generation());
+        assertEquals(1, registry.activeEmitters().size());
+        assertFalse(active.fadingOut());
+    }
+
+    @Test
     void particleRepeatCountScalesWithWireIntensity() {
         EnvironmentEffect.FogVeil faint = fog(0x788494, 0.25);
         EnvironmentEffect.FogVeil dense = fog(0x788494, 1.25);
@@ -135,6 +167,21 @@ class EnvironmentEffectRegistryTest {
             EnvironmentParticleHelper.repeatCountForTests(dense, 1.0f)
                 > EnvironmentParticleHelper.repeatCountForTests(faint, 1.0f)
         );
+    }
+
+    @Test
+    void lightningParticleCircleOffsetStaysInsideRadius() {
+        Vec3d offset = EnvironmentParticleHelper.circleOffset(Math.PI / 3.0, 1.0, 4.0);
+
+        assertTrue(offset.x * offset.x + offset.z * offset.z <= 16.0 + 0.0001);
+    }
+
+    @Test
+    void snowParticleVerticalWindAffectsYVelocity() {
+        EnvironmentEffect.SnowDrift snow =
+            new EnvironmentEffect.SnowDrift(0.0, 60.0, 0.0, 16.0, 90.0, 16.0, 0.5, 0.0, 1.0, 0.0);
+
+        assertEquals(-0.005, EnvironmentParticleHelper.snowYVelocity(snow, 1.0f), 0.0001);
     }
 
     @Test

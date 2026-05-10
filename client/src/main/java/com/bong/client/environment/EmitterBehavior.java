@@ -18,11 +18,11 @@ public interface EmitterBehavior {
         return effect.ambientLoopRecipe();
     }
 
-    default int fadeInTicks() {
-        return 40;
+    default int fadeInTicks(EnvironmentEffect effect) {
+        return effect == null ? 40 : effect.fadeInTicks();
     }
 
-    default int fadeOutTicks() {
-        return 40;
+    default int fadeOutTicks(EnvironmentEffect effect) {
+        return effect == null ? 40 : effect.fadeOutTicks();
     }
 }

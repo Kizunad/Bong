@@ -9,6 +9,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -77,7 +78,7 @@ class EnvironmentFogPlannerTest {
         EnvironmentAudioLoopState.clear();
         EnvironmentAudioController controller = new EnvironmentAudioController();
         ActiveEmitter emitter = active("fog-loop", 1, fog(0x788494, 0.5));
-        String flag = "zone_env:" + emitter.key().hashCode();
+        String flag = EnvironmentAudioController.loopFlag(emitter.key());
 
         controller.update(List.of(emitter), new Vec3d(8.0, 70.0, 8.0));
         assertEquals(1, controller.activeLoopCountForTests());
@@ -86,6 +87,15 @@ class EnvironmentFogPlannerTest {
         controller.update(List.of(), new Vec3d(200.0, 70.0, 200.0));
         assertEquals(0, controller.activeLoopCountForTests());
         assertFalse(EnvironmentAudioLoopState.isActive(flag));
+    }
+
+    @Test
+    void audioLoopFlagUsesFullKeyInsteadOfHashCode() {
+        assertEquals("FB".hashCode(), "Ea".hashCode());
+        assertNotEquals(
+            EnvironmentAudioController.loopFlag("FB"),
+            EnvironmentAudioController.loopFlag("Ea")
+        );
     }
 
     private static ActiveEmitter active(String key, long generation, EnvironmentEffect effect) {

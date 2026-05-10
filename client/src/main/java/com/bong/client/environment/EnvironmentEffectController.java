@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Collection;
@@ -14,6 +15,7 @@ public final class EnvironmentEffectController {
     private static final EnvironmentEffectRegistry REGISTRY = new EnvironmentEffectRegistry();
     private static final EnvironmentAudioController AUDIO = new EnvironmentAudioController();
     private static boolean bootstrapped;
+    private static ClientWorld lastWorld;
 
     private EnvironmentEffectController() {
     }
@@ -56,9 +58,21 @@ public final class EnvironmentEffectController {
     }
 
     private static void tick(MinecraftClient client) {
-        ClientPlayerEntity player = client.player;
-        if (client.world == null || player == null) {
+        if (client == null) {
+            return;
+        }
+        ClientWorld world = client.world;
+        if (world != null && lastWorld != null && lastWorld != world) {
             clear();
+        }
+        if (world != null) {
+            lastWorld = world;
+        }
+
+        ClientPlayerEntity player = client.player;
+        if (world == null || player == null) {
+            AUDIO.clear();
+            EnvironmentFogController.clear();
             return;
         }
 
@@ -88,5 +102,6 @@ public final class EnvironmentEffectController {
         REGISTRY.clear();
         AUDIO.clear();
         EnvironmentFogController.clear();
+        lastWorld = null;
     }
 }

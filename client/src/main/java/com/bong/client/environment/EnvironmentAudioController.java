@@ -63,7 +63,7 @@ public final class EnvironmentAudioController {
 
     private ActiveLoop startLoop(String key, String recipeId, EnvironmentEffect effect, Vec3d playerPos) {
         long instanceId = ++nextInstanceId;
-        String flag = "zone_env:" + key.hashCode();
+        String flag = loopFlag(key);
         EnvironmentAudioLoopState.activate(flag);
         SoundRecipePlayer.instance().play(new AudioEventPayload.PlaySoundRecipe(
             recipeId,
@@ -75,6 +75,10 @@ public final class EnvironmentAudioController {
             recipe(recipeId, flag)
         ));
         return new ActiveLoop(instanceId, flag, effect.fadeOutTicks());
+    }
+
+    static String loopFlag(String key) {
+        return "zone_env:" + key;
     }
 
     private void stopLoop(String key) {

@@ -39,14 +39,14 @@ public final class ActiveEmitter {
     boolean advanceFade(boolean nextInRadius) {
         this.inRadius = nextInRadius;
         if (fadingOut || !nextInRadius) {
-            alpha -= 1.0f / Math.max(1, behavior.fadeOutTicks());
+            alpha -= 1.0f / Math.max(1, behavior.fadeOutTicks(effect));
             if (alpha <= 0.0f) {
                 alpha = 0.0f;
                 return !fadingOut;
             }
             return true;
         }
-        alpha += 1.0f / Math.max(1, behavior.fadeInTicks());
+        alpha += 1.0f / Math.max(1, behavior.fadeInTicks(effect));
         alpha = Math.min(1.0f, alpha);
         return true;
     }

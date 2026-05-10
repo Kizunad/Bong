@@ -65,8 +65,9 @@ public final class EnvironmentParticleHelper {
         Random random,
         float alpha
     ) {
-        double x = effect.centerX() + (random.nextDouble() - 0.5) * effect.radius();
-        double z = effect.centerZ() + (random.nextDouble() - 0.5) * effect.radius();
+        Vec3d offset = circleOffset(random.nextDouble() * Math.PI * 2.0, random.nextDouble(), effect.radius());
+        double x = effect.centerX() + offset.x;
+        double z = effect.centerZ() + offset.z;
         double y = effect.centerY() + random.nextDouble() * 10.0;
         world.addParticle(ParticleTypes.ELECTRIC_SPARK, x, y, z, 0.0, 0.2 * alpha, 0.0);
         world.addParticle(ParticleTypes.FLAME, x, y - 0.25, z, 0.0, 0.05 * alpha, 0.0);
@@ -152,11 +153,29 @@ public final class EnvironmentParticleHelper {
         double x = lerp(effect.minX(), effect.maxX(), random.nextDouble());
         double y = lerp(effect.minY(), effect.maxY(), random.nextDouble());
         double z = lerp(effect.minZ(), effect.maxZ(), random.nextDouble());
-        world.addParticle(ParticleTypes.SNOWFLAKE, x, y, z, effect.windX() * 0.015 * alpha, -0.02 * alpha, effect.windZ() * 0.015 * alpha);
+        world.addParticle(
+            ParticleTypes.SNOWFLAKE,
+            x,
+            y,
+            z,
+            effect.windX() * 0.015 * alpha,
+            snowYVelocity(effect, alpha),
+            effect.windZ() * 0.015 * alpha
+        );
     }
 
     private static double lerp(double min, double max, double t) {
         return min + (max - min) * t;
+    }
+
+    static Vec3d circleOffset(double angle, double normalizedDistance, double radius) {
+        double clampedDistance = Math.max(0.0, Math.min(1.0, normalizedDistance));
+        double r = Math.sqrt(clampedDistance) * Math.max(0.0, radius);
+        return new Vec3d(Math.cos(angle) * r, 0.0, Math.sin(angle) * r);
+    }
+
+    static double snowYVelocity(EnvironmentEffect.SnowDrift effect, float alpha) {
+        return (-0.02 + effect.windY() * 0.015) * alpha;
     }
 
     static int repeatCountForTests(EnvironmentEffect effect, float alpha) {

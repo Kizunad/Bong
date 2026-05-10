@@ -49,6 +49,10 @@ public final class EnvironmentEffectRegistry {
         if (state == null || !state.valid()) {
             return;
         }
+        ZoneEnvironmentState existing = statesByZone.get(state.zoneId());
+        if (existing != null && state.generation() <= existing.generation()) {
+            return;
+        }
         statesByZone.put(state.zoneId(), state);
 
         Set<String> nextKeys = new HashSet<>();
