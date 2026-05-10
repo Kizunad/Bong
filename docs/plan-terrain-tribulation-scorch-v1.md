@@ -1,4 +1,4 @@
-# Bong · plan-terrain-tribulation-scorch-v1 · 骨架
+# Bong · plan-terrain-tribulation-scorch-v1
 
 **烬焰焦土**（`tribulation_scorch`）。worldview §八 天道激烈手段："直接对高境界修士降天劫" + §十三 血谷"天劫多发"。**长期天劫频劈**会在某些区域累积出可识别的地理特征：玻璃化沙地、雷劈焦炭树、磁石矿露头、被劫劈出的玄武岩坑。本 profile 是天劫累积带的物理化——不是单次天劫地点，而是历代天劫积累形成的**焦土集中带**。雷雨天气仍会真的招雷，是雷法染色专修的天然圣地（也是普通修士的死亡陷阱）。
 
@@ -20,12 +20,26 @@
 - `plan-mineral-v1`（lodestone / copper / iron 露头——天劫遗下的雷磁矿）
 - `plan-perception-v1`（雷雨预警 narration）
 - `plan-vfx-v1`（玻璃化沙地 / 雷劈树 / 雷磁柱视觉）
+- `plan-zone-weather-v1` ✅（zone weather profile / lightning override / style modifier 已落地）
+- `plan-zone-environment-v1` ✅（WeatherEvent → EnvironmentEffect bundle / 客户端持续环境效果已落地）
 
 **阶段总览**：
-- P0 ⬜ profile 注册 + 2-3 处 zone 候选位（血谷东陲 + 北荒东陲呼应 world-0004 "二在北荒东陲已殒"）
+- P0 ⬜ worldgen profile 注册 + 2-3 处 zone 候选位（血谷东陲 + 北荒东陲呼应 world-0004 "二在北荒东陲已殒"），并对齐已存在的 server weather profile zone id
 - P1 ⬜ `TribulationScorchGenerator` 实装（地形 field + 玻璃化沙地 + 焦炭树 + 雷磁柱）
-- P2 ⬜ 雷雨真招雷事件 + 雷法染色专修 buff + 普通修士暴露惩罚
-- P3 ⬜ 化虚渡劫遗迹 structure（极稀有，相当于本 profile 的"宝藏点"）+ 整合 plan-tribulation-v1 全服广播 hook
+- P2 ⬜ 复用现有 zone weather / environment / lightning hook，把焦土雷雨伤害、暴烈色 ×0.7、金属甲 ×1.5 串成一个真实机制
+- P3 ⬜ 化虚渡劫遗迹 structure（极稀有，相当于本 profile 的"宝藏点"）+ 整合 plan-tribulation-v1 全服广播 hook；`虚劫残屑`用途在 P3 前决策
+
+---
+
+## 当前代码实地核验（2026-05-11）
+
+- **旧阻塞已解除**：`plan-zone-weather-v1` / `plan-zone-environment-v1` 已在 `docs/finished_plans/`，不再是本 plan 升 active 的前置 blocker。
+- **server weather 脚手架已存在**：`server/src/lingtian/weather_profile.rs` 已有 `ZoneWeatherProfile` / `ZoneWeatherProfileRegistry` 和 `lightning_strike_per_min_override`；`server/weather_profiles.json` 已包含 `blood_valley_east_scorch`、`north_waste_east_scorch`、`drift_scorch_001` 三个焦土 zone 的雷雨偏置。
+- **物理/视觉 hook 已有入口**：`server/src/world/weather_to_environment.rs` 已有 `weather_to_environment_bundle`；`server/src/world/weather_physics/lightning.rs` 已有 `lightning_strike_at`；`server/src/cultivation/style_modifier.rs::for_zone_weather` 已落地暴烈色 ×0.7、金属甲 ×1.5 的乘性规则。
+- **真正缺口在 worldgen 与结构物**：当前 `rg tribulation_scorch/TribulationScorchGenerator/ascension_pit` 仍只命中文档和 weather profile，不存在 `worldgen/scripts/terrain_gen/profiles/tribulation_scorch.py`、地形 profile 注册、`tianjie_ascension_pit` structure spawner。
+- **实现约束**：P2 不再新增平行的 `server/src/world/weather/scorch.rs` 体系；优先复用现有 `ZoneWeatherProfile`、`weather_to_environment_bundle`、`lightning_strike_at`、`style_modifier::for_zone_weather`，只在缺少编排函数时补薄 adapter。
+
+**结论**：可升 active。P0/P1 是未落地的 worldgen 主体；P2 是把已完成的 weather/environment 能力接到焦土 zone；P3 的 `虚劫残屑`用途不阻塞 P0-P2。
 
 ---
 
@@ -157,7 +171,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
 }
 ```
 
-> **注**：原本草稿写过 `weather_overrides` 字段——但 MC 天气是**全局**的，没有 zone-scoped 系统消费。删除该字段（dead 字段会让人误以为已实装）。"雷雨实招雷"的实现路径见 §6 P2，由 `plan-zone-weather-v1`（骨架，2026-05-08 立）的 `ZoneWeatherProfile { thunderstorm_multiplier, force_event, lightning_strike_per_min_override }` 提供 zone 级偏置 + 物理 hook，视觉走 `plan-zone-environment-v1`（骨架，同日立）的 `LightningPillar / EmberDrift / FogVeil` effect bundle。原"plan-weather-zone-override"占位作废。
+> **注**：原本草稿写过 `weather_overrides` 字段——但 MC 天气是**全局**的，没有 zone-scoped 系统消费。删除该字段（dead 字段会让人误以为已实装）。"雷雨实招雷"的实现路径见 §6 P2：复用已落地的 `ZoneWeatherProfile { thunderstorm_multiplier, drought_wind_multiplier, lightning_strike_per_min_override }`、`weather_to_environment_bundle`、`lightning_strike_at`、`style_modifier::for_zone_weather`，不再新建平行天气 override 系统。原"plan-weather-zone-override"占位作废。
 ```
 
 ### Blueprint zone 候选（首版 3 处）
@@ -253,25 +267,26 @@ extra_layers = (
 | P0 | `tribulation_scorch` profile + 3 zone | `worldgen/terrain-profiles.example.json` + blueprint |
 | P1 | `class TribulationScorchGenerator` + `fill_tribulation_scorch_tile` | `worldgen/scripts/terrain_gen/profiles/tribulation_scorch.py`（新增） |
 | P1 | `TRIBULATION_SCORCH_DECORATIONS` 7 项 | 同上 |
-| P2 | `struct ScorchWeatherHook { thunder_rate, lightning_strike_per_min }` | `server/src/world/weather/scorch.rs`（新增） |
-| P2 | 雷法染色加成查询 hook 命中本 zone | `server/src/cultivation/style_modifier.rs::for_zone` |
-| P2 | `lightning_strike` event payload + 命中率公式 | IPC schema 已有 `LightningStrike`（如未定义则新增） |
+| P2 | 焦土 zone 读取 `ZoneWeatherProfile::lightning_strike_per_min_override` | `server/src/lingtian/weather_profile.rs` + `server/weather_profiles.json` |
+| P2 | 雷雨视觉 bundle 复用现有 weather → environment 映射 | `server/src/world/weather_to_environment.rs::weather_to_environment_bundle` |
+| P2 | 真实雷击落点 / 伤害入口 | `server/src/world/weather_physics/lightning.rs::lightning_strike_at` |
+| P2 | 雷法染色加成查询 hook 命中本 zone | `server/src/cultivation/style_modifier.rs::for_zone_weather` |
 | P3 | `tianjie_ascension_pit` structure spawner（读 zone.extras.ascension_pit_xz 单点生成）| `worldgen/scripts/terrain_gen/structures/ascension_pit.py`（新增） |
 | P3 | `xujie_canxie`（虚劫残屑）item id + drop table | `server/assets/items/tianjie/xujie_canxie.toml` |
 | P3 | plan-tribulation-v1 实时渡劫事件命中 zone → 在地表写入新 `glass_fulgurite` 记号 | `server/src/tribulation/scorch_record.rs` |
-| P2 | 雷击命中率公式（暴烈色 ×0.7 + 金属甲 ×1.5，乘性叠加）| `server/src/world/weather/scorch.rs::compute_strike_chance` |
+| P2 | 雷击命中率公式（暴烈色 ×0.7 + 金属甲 ×1.5，乘性叠加）| 复用 `style_modifier::for_zone_weather`，焦土编排层只负责传入天气/染色/护甲上下文 |
 
 ## §7 实施节点
 
 - [ ] **P0** profile + 3 zone 注册 — 验收：raster manifest 含 3 zone；`ambient_hint` 字段通过 schema 校验（仅文档字段，不进 server 系统消费）
 - [ ] **P1** generator + 装饰物 — 验收：raster `mineral_density` 表层（y > 70）峰值命中 lodestone / copper；6 种装饰各自命中 ≥ 1 处（化虚遗迹**不**走装饰，由 P3 structure 接入）
-- [ ] **P2** 雷雨实招雷 + 染色加成 + 漏失副作用 — 验收：单测雨天 5 分钟内击中数 ∈ [5, 15]；暴烈色玩家命中率 ×0.7±10%；金属甲玩家 ×1.5±10%；**所有玩家**（含暴烈色）真元漏失 ×1.3±10%——契合 worldview §六 雷法 阴雨副作用对暴烈色不豁免
+- [ ] **P2** 雷雨实招雷 + 染色加成 + 漏失副作用 — 验收：单测雨天 5 分钟内击中数 ∈ [5, 15]；暴烈色玩家命中率 ×0.7±10%；金属甲玩家 ×1.5±10%；**所有玩家**（含暴烈色）真元漏失 ×1.3±10%——契合 worldview §六 雷法 阴雨副作用对暴烈色不豁免；不得绕过现有 `ZoneWeatherProfile` / `style_modifier::for_zone_weather`
 - [ ] **P3** 化虚遗迹 structure（zone.extras.ascension_pit_xz 单点生成）+ 虚劫残屑 + 实时天劫钩子 — 验收：smoke test 化虚 NPC 死亡触发 → zone 内地表新增 1 玻璃熔痕；虚劫残屑 0.5% 掉率统计正确；化虚遗迹仅在 north_waste_east_scorch 出现 1 个，其他 zone 0 个
 
 ## §8 开放问题
 
-- [ ] ~~zone-scoped 天气改写需立 plan-weather-zone-override~~ **2026-05-08 重定向**：由 `plan-zone-weather-v1`（骨架）+ `plan-zone-environment-v1`（骨架）双 plan 接管。本 plan §6 P2 表 `server/src/world/weather/scorch.rs::compute_strike_chance` 的命中率公式改为调用 `cultivation::style_modifier::for_zone_weather`（zone-weather P2 暴露），让暴烈色 ×0.7 / 金属甲 ×1.5 在系统层只有一个实现入口
-- [ ] 虚劫残屑的用途：plan-skill-v1（雷法残卷材料）vs plan-weapon-v1（雷霆器修高阶载体）vs plan-cultivation-v1（暴烈色染色催化）？建议 P3 阶段三选一立项
+- [x] ~~zone-scoped 天气改写需立 plan-weather-zone-override~~ **2026-05-11 已解除**：`plan-zone-weather-v1` + `plan-zone-environment-v1` 已 finished；本 plan 只消费 `ZoneWeatherProfile`、`weather_to_environment_bundle`、`lightning_strike_at`、`style_modifier::for_zone_weather`，不新造平行天气系统。
+- [ ] 虚劫残屑的用途：plan-skill-v1（雷法残卷材料）vs plan-weapon-v1（雷霆器修高阶载体）vs plan-cultivation-v1（暴烈色染色催化）？P3 启动前三选一；不阻塞 P0-P2。
 - [ ] 雷击死亡的运数 / 寿元结算（worldview §十二）：本是天劫直接干预，是否应**算"突破反噬 / 天劫失败"**？倾向**否**——这是"环境天劫"，不是玩家主动渡劫，按正常死亡 Roll
 - [ ] 玩家在化虚遗迹周围"假装渡劫"（armor_stand + 雷云）是否触发天劫 narration 误判？建议 P3 阶段做 narration 检测白名单
 - [ ] 鞭炮 / TNT 等可触发 lightning_rod 的玩家行为是否破坏 immersion？倾向**禁止**主动招雷（仅天气 + lodestone_vortex 自然招雷）
@@ -286,12 +301,13 @@ extra_layers = (
   - **mid-7** 修：化虚遗迹 `tianjie_ascension_pit` 从 DecorationSpec 移除（rarity 采样无法保证"每 zone 0-1"约束），改为独立 structure spawner，由 zone.extras.ascension_pit_xz 显式坐标驱动；只有 north_waste_east_scorch zone 有此字段（呼应 world-0004 "二在北荒东陲已殒"）。
   - **mid-12** 修：删 `weather_overrides` profile 字段——MC 天气全局，无 zone-scope 系统消费；改为纯文档 `ambient_hint`，"雷雨实招雷"走 server tick 强制 spawn lightning entity。
   - **weak-13** 修：`anomaly_kind` 复用现有 `4 = cursed_echo`（天劫余响 = 神识残留，语义最贴），删除草稿"提议新增 6 = tribulation_residue"——避免 enum 通胀。
-- **2026-04-29**：实地核验 + 决策标注（**保留骨架**，**强阻塞**——前置 plan-tribulation-v1 仅 schema + 化虚结算两条落地，P1 / P2 渡劫核心机制（预兆锁定 / 雷劫渲染 / location 广播 RPC）大量未实装；本 plan P3 "实时天劫钩子"无 emit 接口可挂；plan-cultivation-v1 无独立 plan 文档，P2 "暴烈色 ×0.7 命中率"无染色查询 API）。
+- **2026-04-29**：实地核验 + 决策标注（当时仍处占位阶段，强阻塞——前置 plan-tribulation-v1 仅 schema + 化虚结算两条落地，P1 / P2 渡劫核心机制（预兆锁定 / 雷劫渲染 / location 广播 RPC）大量未实装；本 plan P3 "实时天劫钩子"无 emit 接口可挂；plan-cultivation-v1 无独立 plan 文档，P2 "暴烈色 ×0.7 命中率"无染色查询 API）。
   - **季节联动**（用户决策 2026-04-29）：焦地 qi_density 永久归 0，不参与季节节律；生态层缓慢恢复（每 game-year ×1.05），不与季节耦合。已写入头部锚点 + §0 设计轴心。
   - **§8 第 2 项虚劫残屑用途**：仍待 plan-skill-v1 / plan-weapon-v1 / plan-cultivation-v1 三选一立项；不阻塞 P0–P2，可在 P3 启动前 1 周决策。
   - 补 `## Finish Evidence` 占位。
-  - 升 active 触发条件：（a）plan-tribulation-v1 P1 完成（预兆锁定 + 雷劫渲染 + location 广播 RPC）；（b）plan-cultivation-v1 立骨架 + 暴露染色查询 API 签名；（c）§8 第 2 项虚劫残屑用途三选一决策。三件 done 后再升。
-- **2026-05-08**：天气 / 视觉路径重设计。立两份骨架 `plan-zone-environment-v1`（zone-scoped 持续视觉协议 + 客户端 emitter 注册表 + mixin 扩展）+ `plan-zone-weather-v1`（zone profile 概率覆写 + WeatherEvent → EnvironmentEffect 映射 + 物理 hook）；原占位 "plan-weather-zone-override" 作废。本 plan 头部 §4 / §8 / Finish Evidence 三处注释已重定向。升 active 新增前置：plan-zone-environment-v1 P0 + plan-zone-weather-v1 P0 至少落地。
+  - 当时记录的升 active 触发条件已由 2026-05-11 实地核验覆盖；P0-P2 现在不再依赖这些旧阻塞，P3 再处理实时渡劫互写与虚劫残屑用途。
+- **2026-05-08**：天气 / 视觉路径重设计。`plan-zone-environment-v1`（zone-scoped 持续视觉协议 + 客户端 emitter 注册表 + mixin 扩展）+ `plan-zone-weather-v1`（zone profile 概率覆写 + WeatherEvent → EnvironmentEffect 映射 + 物理 hook）接管原占位 "plan-weather-zone-override"。
+- **2026-05-11**：实地核验发现 `plan-zone-environment-v1` / `plan-zone-weather-v1` 已 finished，且 server 已有三处焦土 weather profile、雷击物理 hook、雷法染色 multiplier；移除旧前置阻塞，升 active。剩余主体是 worldgen profile / generator / structure spawner，P3 的虚劫残屑用途改为阶段内决策。
 
 ---
 
@@ -302,7 +318,7 @@ extra_layers = (
 - 落地清单：
   - P0：`worldgen/terrain-profiles.example.json` 加 `tribulation_scorch` profile + `xue_gu_dong_lu_scorch` / `north_waste_east_scorch` 等 zone JSON
   - P1：`worldgen/scripts/terrain_gen/profiles/tribulation_scorch.py`（generator + 7 装饰物 incl. glass_fulgurite / charred_tree / lodestone_pillar）
-  - P2：`server/src/cultivation/tribulation_scorch_tick.rs`（lightning 强制 spawn + 暴烈色 ×0.7 命中率 + 阴雨漏失 +30%）+ plan-cultivation-v1 染色查询接入
+  - P2：焦土 zone tick / 编排层消费 `ZoneWeatherProfile` + `lightning_strike_at` + `style_modifier::for_zone_weather`（lightning 强制 spawn + 暴烈色 ×0.7 命中率 + 金属甲 ×1.5 + 阴雨漏失 +30%）
   - P3：`tianjie_ascension_pit` structure spawner + 虚劫残屑 loot + plan-tribulation-v1 实时天劫 hook
 - 关键 commit：
 - 测试结果：
@@ -312,6 +328,6 @@ extra_layers = (
   - agent：天劫 narration（依 plan-tribulation-v1 emit 接口）
 - 遗留 / 后续：
   - 虚劫残屑用途（依 §8 第 2 项决策）
-  - zone-scoped 天气改写：由 `plan-zone-weather-v1` + `plan-zone-environment-v1` 接管（2026-05-08 立骨架）
+  - zone-scoped 天气改写已由 `plan-zone-weather-v1` + `plan-zone-environment-v1` 接管；本 plan 不再实现平行天气系统
   - 古战场焦土带复合 zone（§8 第 6 项，首版不做）
   - lightning_rod 主动招雷防御（§8 第 5 项，建议禁止）
