@@ -50,7 +50,7 @@ pub use session::{
     cancel_craft, consume_materials_from_inventory, count_template_in_inventory, finalize_craft,
     start_craft, tick_session, CancelCraftOutcome, CraftSession, FinalizeCraftOutcome,
     MaterialDeficit, StartCraftDeps, StartCraftError, StartCraftRequest, StartCraftSuccess,
-    CANCEL_REFUND_RATIO,
+    CANCEL_REFUND_RATIO, MAX_CRAFT_QUANTITY,
 };
 #[allow(unused_imports)]
 pub use unlock::{

@@ -27,6 +27,7 @@ import com.bong.client.input.InteractionKeybindings;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
+import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.npc.NpcNametagRenderer;
 import com.bong.client.preview.PreviewHarnessClient;
@@ -69,6 +70,7 @@ public class BongClient implements ClientModInitializer {
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
         ForgeScreenBootstrap.register();
+        CraftScreenBootstrap.register();
         IdentityPanelScreenBootstrap.register();
         LingtianActionScreenBootstrap.register();
         VoidActionScreenBootstrap.register();

@@ -84,6 +84,8 @@ fn build_session_state_payload(
             recipe_id: Some(session.recipe_id.as_str().to_string()),
             elapsed_ticks: elapsed,
             total_ticks: session.total_ticks,
+            completed_count: session.completed_count,
+            total_count: session.quantity_total,
             ts: current_unix_millis(),
         }
     } else {
@@ -94,6 +96,8 @@ fn build_session_state_payload(
             recipe_id: None,
             elapsed_ticks: 0,
             total_ticks: 0,
+            completed_count: 0,
+            total_count: 0,
             ts: current_unix_millis(),
         }
     }
@@ -166,6 +170,7 @@ pub fn apply_craft_intents(
             recipe_id: &intent.recipe_id,
             current_tick: clock.tick,
             zone_id: DEFAULT_CRAFT_ZONE_ID,
+            quantity: intent.quantity,
         };
         let deps = StartCraftDeps {
             registry: &registry,
@@ -180,10 +185,11 @@ pub fn apply_craft_intents(
         match start_craft(req, deps) {
             Ok(success) => {
                 tracing::info!(
-                    "[bong][craft] start ok player={} recipe={} ticks={}",
+                    "[bong][craft] start ok player={} recipe={} ticks={} quantity={}",
                     player_id,
                     success.event.recipe_id,
-                    success.event.total_ticks
+                    success.event.total_ticks,
+                    intent.quantity
                 );
                 started_tx.send(success.event);
                 commands
@@ -335,24 +341,52 @@ pub fn tick_craft_sessions(
                 count,
             ) {
                 Ok(_) => {
+                    let next_completed = session.completed_count.saturating_add(1);
                     tracing::info!(
-                        "[bong][craft] finalize caster={entity:?} recipe={} output={template} x{count}",
-                        event.recipe_id
+                        "[bong][craft] finalize caster={entity:?} recipe={} output={template} x{count} completed={}/{}",
+                        event.recipe_id,
+                        next_completed,
+                        session.quantity_total
                     );
                     completed_tx.send(event);
+                    if next_completed < session.quantity_total {
+                        session.completed_count = next_completed;
+                        session.remaining_ticks = session.total_ticks;
+                        commands.entity(entity).insert(CraftSessionStateDirty);
+                        continue;
+                    }
                 }
                 Err(err) => {
                     tracing::error!(
-                        "[bong][craft] finalize FAILED: recipe={} output={template} x{count} grant_err={err} — qi & 材料已扣，对玩家显示 InternalError 失败",
+                        "[bong][craft] finalize FAILED: recipe={} output={template} x{count} grant_err={err} — cancel remaining batch and refund materials",
                         event.recipe_id
                     );
-                    failed_tx.send(CraftFailedEvent {
-                        caster: entity,
-                        recipe_id: event.recipe_id,
-                        reason: CraftFailureReason::InternalError,
-                        material_returned: 0,
-                        qi_refunded: 0.0,
-                    });
+                    let CancelCraftOutcome {
+                        mut event,
+                        refund_manifest,
+                    } = cancel_craft(&session, recipe, entity, CraftFailureReason::InternalError);
+                    let mut material_returned = 0;
+                    for (refund_template, refund_count) in refund_manifest {
+                        match add_item_to_player_inventory(
+                            &mut inventory,
+                            &item_registry,
+                            &mut allocator,
+                            &refund_template,
+                            refund_count,
+                        ) {
+                            Ok(_) => {
+                                material_returned += refund_count;
+                            }
+                            Err(refund_err) => {
+                                tracing::error!(
+                                    "[bong][craft] refund FAILED after finalize failure: recipe={} refund={refund_template} x{refund_count} err={refund_err}",
+                                    event.recipe_id
+                                );
+                            }
+                        }
+                    }
+                    event.material_returned = material_returned;
+                    failed_tx.send(event);
                 }
             }
             commands
@@ -628,12 +662,16 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Alice".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let state = build_session_state_payload("offline:Alice", Some(&session));
         assert!(state.active);
         assert_eq!(state.recipe_id.as_deref(), Some("craft.test.x"));
         assert_eq!(state.elapsed_ticks, 70);
         assert_eq!(state.total_ticks, 100);
+        assert_eq!(state.completed_count, 0);
+        assert_eq!(state.total_count, 1);
     }
 
     #[test]
@@ -645,10 +683,14 @@ mod tests {
             total_ticks: 100,
             owner_player_id: "offline:Bob".into(),
             qi_paid: 5.0,
+            quantity_total: 1,
+            completed_count: 0,
         };
         let state = build_session_state_payload("offline:Bob", Some(&session));
         assert_eq!(state.elapsed_ticks, 100);
         assert_eq!(state.total_ticks, 100);
+        assert_eq!(state.completed_count, 0);
+        assert_eq!(state.total_count, 1);
     }
 
     #[test]

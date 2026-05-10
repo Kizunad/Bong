@@ -112,6 +112,7 @@ pub enum UnlockEventSource {
 pub struct CraftStartIntent {
     pub caster: Entity,
     pub recipe_id: RecipeId,
+    pub quantity: u32,
 }
 
 /// plan-craft-v1 P2 — client → server 取消 craft session intent。

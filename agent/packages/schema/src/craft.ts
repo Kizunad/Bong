@@ -18,6 +18,7 @@ import { type ValidationResult, validate } from "./validate.js";
 
 const RecipeId = Type.String({ minLength: 1 });
 const PlayerId = Type.String({ minLength: 1 });
+const MAX_CRAFT_QUANTITY = 64;
 
 export const CraftCategoryV1 = Type.Union([
   Type.Literal("anqi_carrier"),
@@ -106,6 +107,7 @@ export const CraftStartReqV1 = Type.Object(
     v: Type.Literal(1),
     player_id: PlayerId,
     recipe_id: RecipeId,
+    quantity: Type.Integer({ minimum: 1, maximum: MAX_CRAFT_QUANTITY }),
     ts: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
@@ -121,6 +123,8 @@ export const CraftSessionStateV1 = Type.Object(
     recipe_id: Type.Optional(RecipeId),
     elapsed_ticks: Type.Integer({ minimum: 0 }),
     total_ticks: Type.Integer({ minimum: 0 }),
+    completed_count: Type.Integer({ minimum: 0 }),
+    total_count: Type.Integer({ minimum: 0 }),
     ts: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },

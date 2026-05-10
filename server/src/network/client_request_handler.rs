@@ -1827,15 +1827,20 @@ pub fn handle_client_request_payloads(
                 );
             }
             // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
-            ClientRequestV1::CraftStart { recipe_id, .. } => {
+            ClientRequestV1::CraftStart {
+                recipe_id,
+                quantity,
+                ..
+            } => {
                 tracing::info!(
-                    "[bong][network][craft] start entity={:?} recipe={recipe_id}",
+                    "[bong][network][craft] start entity={:?} recipe={recipe_id} quantity={quantity}",
                     ev.client,
                 );
                 if let Some(craft_start_tx) = dispatch.craft_start_tx.as_deref_mut() {
                     craft_start_tx.send(crate::craft::CraftStartIntent {
                         caster: ev.client,
                         recipe_id: crate::craft::RecipeId::new(recipe_id),
+                        quantity,
                     });
                 }
             }

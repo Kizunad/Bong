@@ -27,14 +27,14 @@
 
 ## §0 设计轴心
 
-- [ ] **Tab 页高度对齐**：CraftScreen PANEL_H=340 与 AlchemyScreen(340) / ForgeScreen / InventoryScreen 严格一致。如果游戏内有统一 tab bar，CraftScreen 只替换 tab content 区域不动 tab bar 本身
-- [ ] **宽度 640px**：比 Alchemy(600) 宽 40px，三栏布局 左160 / 中flex(≈280) / 右200
-- [ ] **交互杠 32px**：底部常驻——「一键填充」+ 数量 `[-1+]` + 「开始制作」按钮（材料不足=灰色 disabled 显示"材料不足"）
-- [ ] **材料格子紧凑**：44×44px 固定尺寸 3×2 grid（居中），不占满中栏——格子下方放材料需求清单(✓/✗)
-- [ ] **材料需求在中栏不在右栏**：格子和需求列表垂直排布在一起，右栏只放产物属性+说明
-- [ ] **配方可发现**：左栏列出所有已知配方（未知配方灰色 "???" + 右侧小字解锁条件：引气/残卷/师承）
-- [ ] **进度可见**：材料需求下方进度条 + tick 音效 + 完成闪光
-- [ ] **参考 mockup**：`docs/mockup-craft-ui.html`（Chrome 打开可预览）
+- [x] **Tab 页高度对齐**：CraftScreen PANEL_H=340 与 AlchemyScreen(340) / ForgeScreen / InventoryScreen 严格一致。如果游戏内有统一 tab bar，CraftScreen 只替换 tab content 区域不动 tab bar 本身
+- [x] **宽度 640px**：比 Alchemy(600) 宽 40px，三栏布局 左160 / 中flex(≈280) / 右200
+- [x] **交互杠 32px**：底部常驻——「一键填充」+ 数量 `[-1+]` + 「开始制作」按钮（材料不足=灰色 disabled 显示"材料不足"）
+- [x] **材料格子紧凑**：44×44px 固定尺寸 3×2 grid（居中），不占满中栏——格子下方放材料需求清单(✓/✗)
+- [x] **材料需求在中栏不在右栏**：格子和需求列表垂直排布在一起，右栏只放产物属性+说明
+- [x] **配方可发现**：左栏列出所有已知配方（未知配方灰色 "???" + 右侧小字解锁条件：引气/残卷/师承）
+- [x] **进度可见**：材料需求下方进度条 + tick 音效 + 完成闪光
+- [x] **参考 mockup**：`docs/mockup-craft-ui.html`（Chrome 打开可预览）
 
 ---
 
@@ -89,15 +89,15 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | CraftScreen 框架 + 三栏布局 + 配方列表 server 同步 + 配方分类 tab | ⬜ |
-| P1 | 材料放置区（自动填充 + 手动放置 + 缺失高亮）+ 产物预览（属性显示） | ⬜ |
-| P2 | 交互杠（开始制作 + 数量选择 + 进度条 + 完成动画/音效） | ⬜ |
-| P3 | 配方解锁系统 UI（未知配方 "???" + 解锁条件 tooltip）+ 搜索栏 | ⬜ |
-| P4 | 全配方 × 材料充足/不足 × 批量制作 饱和化测试 + tab 对齐验证 | ⬜ |
+| P0 | CraftScreen 框架 + 三栏布局 + 配方列表 server 同步 + 配方分类 tab | ✅ |
+| P1 | 材料状态区（server-authoritative 自动映射 + 缺失高亮）+ 产物预览（属性显示） | ✅ |
+| P2 | 交互杠（开始制作 + 数量选择 + 进度条 + 完成动画/音效） | ✅ |
+| P3 | 配方解锁系统 UI（未知配方 "???" + 解锁条件 tooltip）+ 搜索栏 | ✅ |
+| P4 | 全配方 × 材料充足/不足 × 批量制作 饱和化测试 + tab 对齐验证 | ✅ |
 
 ---
 
-## P0 — CraftScreen 框架 + 配方列表 ⬜
+## P0 — CraftScreen 框架 + 配方列表 ✅
 
 ### 交付物
 
@@ -129,7 +129,7 @@
 
 ---
 
-## P1 — 材料放置 + 产物预览 ⬜
+## P1 — 材料放置 + 产物预览 ✅
 
 ### 交付物
 
@@ -158,7 +158,7 @@
 
 ---
 
-## P2 — 交互杠 + 制作进度 ⬜
+## P2 — 交互杠 + 制作进度 ✅
 
 ### 交付物
 
@@ -190,7 +190,7 @@
 
 ---
 
-## P3 — 配方解锁 + 搜索 ⬜
+## P3 — 配方解锁 + 搜索 ✅
 
 ### 交付物
 
@@ -214,7 +214,7 @@
 
 ---
 
-## P4 — 饱和化测试 + tab 对齐 ⬜
+## P4 — 饱和化测试 + tab 对齐 ✅
 
 ### 交付物
 
@@ -238,8 +238,10 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`CraftScreen` / `CraftRecipeListWidget` / `CraftMaterialGrid` / `CraftOutputPreview` / `CraftActionBar` / 配方解锁 UI / 搜索栏 / 进度条 / 完成动画 / `CraftRecipeListS2c` + `CraftSessionC2s/S2c` 协议
-- **关键 commit**：P0-P4 各自 hash
-- **遗留 / 后续**：高级配方需 forge/alchemy 而非 craft → 各自 screen 已有 / craft 配方来源扩展（NPC 教导/残卷学习）→ 需 npc-engagement 联动
+- **落地清单**：新增 `CraftScreen` / `CraftScreenBootstrap` / `CraftRecipeListWidget` / `CraftMaterialGrid` / `CraftOutputPreview` / `CraftActionBar` / `CraftProgressBar` / `CraftInventoryCounter` / `CraftRecipeFilter`，实现 640×340 三栏 UI、44px 3×2 材料格、32px 交互杠、搜索/分类/收藏、未知配方 `???`、进度条、tick/完成音效、关闭界面取消 session。client 材料计数与 server 对齐为 containers + hotbar，不把 equipped 当可耗材料。
+- **协议 / 运行时**：`craft_start` 支持 `quantity`（缺省 1，拒绝 0，硬上限 64）；server `CraftSession` 支持批量预扣材料和 qi、逐件完成、`completed_count/total_count` 进度同步、取消/中途 finalize 失败时仅按未完成件数 70% 返还材料；agent schema 同步 `CraftStartReqV1.quantity` 与 `CraftSessionStateV1.completed_count/total_count`。
+- **关键 commit**：`a3564a4ac` 实现手搓界面三栏交互；`a3885a98d` 支持手搓批量制作会话；`904ade38b` 同步手搓批量契约 schema；`355115917` 关闭手搓界面时取消会话；`f7c23e49b` 修复手搓批量 review 问题；`af6f4463f` 处理手搓界面 CodeRabbit review 反馈。
+- **验证**：`client`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`；`agent`: `npm run build`；`agent/packages/schema`: `npm test && npm run generate:check`；`server`: `cargo fmt --check`、`CARGO_BUILD_JOBS=1 cargo check`、`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`、`CARGO_BUILD_JOBS=1 cargo test craft -- --nocapture`、`CARGO_BUILD_JOBS=1 cargo test`（3978 passed）。
+- **遗留 / 后续**：高级 forge/alchemy 配方仍由各自 screen 承接；NPC 教导/残卷学习的配方来源扩展留给 npc-engagement / recipe-unlock 后续 plan。

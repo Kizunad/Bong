@@ -491,11 +491,38 @@ pub enum ClientRequestV1 {
     CraftStart {
         v: u8,
         recipe_id: String,
+        #[serde(
+            default = "default_craft_quantity",
+            deserialize_with = "deserialize_craft_quantity"
+        )]
+        quantity: u32,
     },
     /// plan-craft-v1 §5 决策门 #3 — 取消进行中的 craft session，70% 材料返还，qi 不退。
     CraftCancel {
         v: u8,
     },
+}
+
+fn default_craft_quantity() -> u32 {
+    1
+}
+
+const MAX_CRAFT_QUANTITY_V1: u32 = crate::craft::MAX_CRAFT_QUANTITY;
+
+fn deserialize_craft_quantity<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let quantity = u32::deserialize(deserializer)?;
+    if quantity == 0 {
+        return Err(serde::de::Error::custom("craft quantity must be >= 1"));
+    }
+    if quantity > MAX_CRAFT_QUANTITY_V1 {
+        return Err(serde::de::Error::custom(format!(
+            "craft quantity must be <= {MAX_CRAFT_QUANTITY_V1}"
+        )));
+    }
+    Ok(quantity)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1420,6 +1447,37 @@ mod tests {
 
         let typo_feed = r#"{"type":"alchemy_feed_slot","v":1,"furnace_position":[-12,64,38],"slot_idx":0,"material":"ci_she_hao","count":3}"#;
         assert!(serde_json::from_str::<ClientRequestV1>(typo_feed).is_err());
+    }
+
+    #[test]
+    fn craft_start_accepts_quantity_and_defaults_to_one() {
+        let with_quantity = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":3}"#;
+        let req: ClientRequestV1 = serde_json::from_str(with_quantity).unwrap();
+        match req {
+            ClientRequestV1::CraftStart {
+                v,
+                recipe_id,
+                quantity,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(recipe_id, "craft.example.herb_knife.iron");
+                assert_eq!(quantity, 3);
+            }
+            other => panic!("expected CraftStart, got {other:?}"),
+        }
+
+        let legacy = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(legacy).unwrap();
+        match req {
+            ClientRequestV1::CraftStart { quantity, .. } => assert_eq!(quantity, 1),
+            other => panic!("expected CraftStart, got {other:?}"),
+        }
+
+        let zero = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":0}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(zero).is_err());
+
+        let too_large = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":65}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(too_large).is_err());
     }
 
     #[test]

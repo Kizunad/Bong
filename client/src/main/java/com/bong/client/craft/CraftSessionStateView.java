@@ -11,24 +11,45 @@ import java.util.Optional;
  */
 public final class CraftSessionStateView {
     public static final CraftSessionStateView IDLE =
-        new CraftSessionStateView(false, null, 0L, 0L);
+        new CraftSessionStateView(false, null, 0L, 0L, 0, 0, "");
 
     private final boolean active;
     private final String recipeId;
     private final long elapsedTicks;
     private final long totalTicks;
+    private final int completedCount;
+    private final int totalCount;
+    private final String error;
 
     public CraftSessionStateView(boolean active, String recipeId, long elapsedTicks, long totalTicks) {
+        this(active, recipeId, elapsedTicks, totalTicks, 0, active ? 1 : 0, "");
+    }
+
+    public CraftSessionStateView(
+        boolean active,
+        String recipeId,
+        long elapsedTicks,
+        long totalTicks,
+        int completedCount,
+        int totalCount,
+        String error
+    ) {
         this.active = active;
         this.recipeId = recipeId;
         this.elapsedTicks = elapsedTicks;
         this.totalTicks = totalTicks;
+        this.completedCount = Math.max(0, completedCount);
+        this.totalCount = Math.max(0, totalCount);
+        this.error = error == null ? "" : error;
     }
 
     public boolean active() { return active; }
     public Optional<String> recipeId() { return Optional.ofNullable(recipeId); }
     public long elapsedTicks() { return elapsedTicks; }
     public long totalTicks() { return totalTicks; }
+    public int completedCount() { return completedCount; }
+    public int totalCount() { return totalCount; }
+    public String error() { return error; }
 
     /** 0..1 进度比例。`totalTicks=0` 视为 0。 */
     public float progress() {
@@ -52,11 +73,14 @@ public final class CraftSessionStateView {
         return active == other.active
             && elapsedTicks == other.elapsedTicks
             && totalTicks == other.totalTicks
-            && Objects.equals(recipeId, other.recipeId);
+            && completedCount == other.completedCount
+            && totalCount == other.totalCount
+            && Objects.equals(recipeId, other.recipeId)
+            && Objects.equals(error, other.error);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(active, recipeId, elapsedTicks, totalTicks);
+        return Objects.hash(active, recipeId, elapsedTicks, totalTicks, completedCount, totalCount, error);
     }
 }
