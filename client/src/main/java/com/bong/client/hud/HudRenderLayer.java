@@ -3,6 +3,10 @@ package com.bong.client.hud;
 public enum HudRenderLayer {
     BASELINE,
     ZONE,
+    COMPASS,
+    QI_RADAR,
+    THREAT_INDICATOR,
+    HUD_VARIANT,
     TARGET_INFO,
     MINI_BODY,
     QUICK_BAR,

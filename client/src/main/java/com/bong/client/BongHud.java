@@ -16,6 +16,7 @@ import com.bong.client.hud.BongToast;
 import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.ui.ClientConnectionStatusStore;
@@ -39,6 +40,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -78,6 +80,7 @@ public class BongHud {
         CombatHudSnapshot combatSnapshot = captureCombatSnapshot(client);
 
         BotanyProjection.Anchor botanyAnchor = computeBotanyAnchor(client);
+        HudRuntimeContext runtimeContext = captureRuntimeContext(client);
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateStore.snapshot(),
@@ -87,7 +90,8 @@ public class BongHud {
             HUD_TEXT_MAX_WIDTH,
             client.getWindow().getScaledWidth(),
             client.getWindow().getScaledHeight(),
-            botanyAnchor
+            botanyAnchor,
+            runtimeContext
         );
         List<EdgeIndicatorCmd> spiritualSenseIndicators = computeSpiritualSenseIndicators(client);
         if (!spiritualSenseIndicators.isEmpty()) {
@@ -253,6 +257,36 @@ public class BongHud {
             DefenseWindowStore.snapshot(),
             UnlockedStylesStore.snapshot()
         );
+    }
+
+    private static HudRuntimeContext captureRuntimeContext(MinecraftClient client) {
+        if (client == null || client.getWindow() == null) {
+            return HudRuntimeContext.empty();
+        }
+        Camera camera = client.gameRenderer == null ? null : client.gameRenderer.getCamera();
+        double yaw = camera == null ? 0.0 : camera.getYaw();
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        if (client.player != null) {
+            Vec3d pos = client.player.getPos();
+            x = pos.x;
+            y = pos.y;
+            z = pos.z;
+        }
+        long handle = client.getWindow().getHandle();
+        boolean altDown = InputState.isKeyPressed(handle, GLFW.GLFW_KEY_LEFT_ALT)
+            || InputState.isKeyPressed(handle, GLFW.GLFW_KEY_RIGHT_ALT);
+        return new HudRuntimeContext(yaw, x, y, z, altDown, List.of());
+    }
+
+    private static final class InputState {
+        private InputState() {
+        }
+
+        private static boolean isKeyPressed(long window, int key) {
+            return window != 0L && GLFW.glfwGetKey(window, key) == GLFW.GLFW_PRESS;
+        }
     }
 
     private static List<HudRenderCommand> filterCastBarOnly(List<HudRenderCommand> commands) {
