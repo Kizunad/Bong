@@ -73,6 +73,11 @@ public final class ZoneAtmosphereRenderer {
         );
     }
 
+    public static void clear() {
+        currentCommand = null;
+        FOOTPRINTS.clear();
+    }
+
     public static EnvironmentFogCommand mergeFogCommands(EnvironmentFogCommand environment, EnvironmentFogCommand atmosphere) {
         if (environment == null) {
             return atmosphere;
@@ -110,7 +115,8 @@ public final class ZoneAtmosphereRenderer {
         Random random = world.random;
         long tick = world.getTime();
         for (ZoneAtmosphereProfile.ParticleConfig particle : command.particles()) {
-            if (tick % particle.intervalTicks() != 0) {
+            int intervalTicks = Math.max(1, particle.intervalTicks());
+            if (tick % intervalTicks != 0) {
                 continue;
             }
             int count = Math.max(1, (int) Math.round(particle.density()));

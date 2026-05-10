@@ -18,8 +18,8 @@ public final class AshFootprintTracker {
         }
         StepSnapshot previous = lastStepByEntity.get(entityId);
         if (previous != null
-            && previous.pos().squaredDistanceTo(pos) < MIN_STEP_DISTANCE_SQ
-            && worldTick - previous.worldTick() < MIN_STEP_INTERVAL_TICKS) {
+            && (previous.pos().squaredDistanceTo(pos) < MIN_STEP_DISTANCE_SQ
+                || worldTick - previous.worldTick() < MIN_STEP_INTERVAL_TICKS)) {
             return List.of();
         }
         lastStepByEntity.put(entityId, new StepSnapshot(pos, worldTick));

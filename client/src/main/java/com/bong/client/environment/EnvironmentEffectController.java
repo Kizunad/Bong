@@ -73,6 +73,7 @@ public final class EnvironmentEffectController {
         ClientPlayerEntity player = client.player;
         if (world == null || player == null) {
             AUDIO.clear();
+            ZoneAtmosphereRenderer.clear();
             EnvironmentFogController.clear();
             return;
         }
@@ -103,6 +104,7 @@ public final class EnvironmentEffectController {
     public static void clear() {
         REGISTRY.clear();
         AUDIO.clear();
+        ZoneAtmosphereRenderer.clear();
         EnvironmentFogController.clear();
         lastWorld = null;
     }

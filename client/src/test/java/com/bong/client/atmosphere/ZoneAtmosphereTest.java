@@ -7,6 +7,7 @@ import net.minecraft.util.math.Vec3d;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -162,6 +163,23 @@ class ZoneAtmosphereTest {
     }
 
     @Test
+    void ash_footprint_throttles_by_distance_or_interval() {
+        ZoneAtmosphereCommand dead = commandFor(
+            ZoneState.create("blood_valley", "Blood Valley", 0.0, 5, "collapsed", 10L),
+            null
+        );
+
+        AshFootprintTracker distanceTracker = new AshFootprintTracker();
+        assertFalse(distanceTracker.onEntityStep(7L, new Vec3d(1.0, 64.0, 1.0), 20L, dead).isEmpty());
+        assertTrue(distanceTracker.onEntityStep(7L, new Vec3d(1.1, 64.0, 1.1), 40L, dead).isEmpty());
+
+        AshFootprintTracker intervalTracker = new AshFootprintTracker();
+        assertFalse(intervalTracker.onEntityStep(8L, new Vec3d(1.0, 64.0, 1.0), 20L, dead).isEmpty());
+        assertTrue(intervalTracker.onEntityStep(8L, new Vec3d(3.0, 64.0, 3.0), 22L, dead).isEmpty());
+        assertFalse(intervalTracker.onEntityStep(8L, new Vec3d(3.0, 64.0, 3.0), 50L, dead).isEmpty());
+    }
+
+    @Test
     void tsy_fog_by_tier() {
         ZoneAtmosphereCommand shallow = commandForTsyTier(2);
         ZoneAtmosphereCommand middle = commandForTsyTier(5);
@@ -193,6 +211,23 @@ class ZoneAtmosphereTest {
         assertEquals(0x000000, command.fogColorRgb());
         assertEquals(0.5, command.cameraShakeIntensity(), 0.0001);
         assertTrue(command.hardClipVoid());
+    }
+
+    @Test
+    void collapse_vignette_renders_without_negative_qi() {
+        ZoneAtmosphereCommand command = ZoneAtmospherePlanner.plan(
+            ZoneAtmosphereProfileRegistry.loadDefault(),
+            ZoneAtmosphereContext
+                .of(ZoneState.create("tsy_lingxu", "TSY", 0.4, 5, 10L), null)
+                .withTsyTier(7)
+                .withCollapse(400, 1200),
+            1L
+        );
+        List<com.bong.client.hud.HudRenderCommand> commands = new ArrayList<>();
+
+        ZoneAtmosphereHudPlanner.append(commands, command);
+
+        assertTrue(commands.stream().anyMatch(com.bong.client.hud.HudRenderCommand::isEdgeVignette));
     }
 
     @Test

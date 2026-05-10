@@ -72,7 +72,7 @@ public final class ZoneAtmosphereProfileParser {
         try {
             return ZoneAtmosphereProfile.TransitionFx.valueOf(raw.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException("unknown entry_transition_fx: " + raw);
+            throw new IllegalArgumentException("unknown entry_transition_fx: " + raw, ex);
         }
     }
 

@@ -17,7 +17,7 @@ public final class ZoneAtmosphereHudPlanner {
             int alpha = (int) Math.round(96.0 * command.desaturation());
             out.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, (alpha << 24) | 0xC8C8C8));
         }
-        if (command.negativeZoneVisual() && command.vignetteIntensity() > 0.0) {
+        if (command.vignetteIntensity() > 0.0) {
             out.add(HudRenderCommand.edgeVignette(HudRenderLayer.VISUAL, command.vignetteArgb()));
         }
         if (command.cameraShakeIntensity() > 0.0 || command.hardClipVoid()) {
