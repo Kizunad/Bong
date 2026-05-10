@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use valence::prelude::{Commands, Entity, Query, Res, ResMut, With};
+use valence::prelude::{Commands, Entity, Events, Query, Res, ResMut, With};
 
+use crate::inventory::ItemRegistry;
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::terrain::TerrainProviders;
 use crate::world::zone::{BotanyZoneTag, Zone, ZoneRegistry};
 
@@ -13,6 +16,33 @@ use super::registry::{
 };
 
 const LIFECYCLE_INTERVAL_TICKS: u64 = 100;
+const BOTANY_AURA_INTERVAL_TICKS: u64 = 200;
+const BOTANY_AURA_EVENT_ID: &str = "bong:botany_aura";
+const BOTANY_PLANT_STAGE_EVENT_PREFIX: &str = "bong:botany_plant_stage";
+const BOTANY_PLANT_STAGE_TTL_TICKS: u16 = 140;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlantGrowthStage {
+    Seedling,
+    Growing,
+    Mature,
+    Wilted,
+}
+
+impl PlantGrowthStage {
+    fn as_wire_name(self) -> &'static str {
+        match self {
+            Self::Seedling => "seedling",
+            Self::Growing => "growing",
+            Self::Mature => "mature",
+            Self::Wilted => "wilted",
+        }
+    }
+
+    fn can_emit_aura(self) -> bool {
+        self == Self::Mature
+    }
+}
 
 #[allow(dead_code)]
 pub fn spawn_static_points_for_zone(zone: &Zone) -> Vec<PlantStaticPoint> {
@@ -292,11 +322,13 @@ pub fn run_botany_lifecycle_tick(
     mut commands: Commands,
     mut lifecycle_clock: ResMut<PlantLifecycleClock>,
     registry: Res<BotanyKindRegistry>,
+    item_registry: Option<Res<ItemRegistry>>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut static_points: ResMut<PlantStaticPointStore>,
     variant_roll: Res<BotanyVariantRoll>,
     terrain_providers: Option<Res<TerrainProviders>>,
     plants: Query<(Entity, &Plant), With<Plant>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     lifecycle_clock.tick = lifecycle_clock.tick.saturating_add(1);
     if !lifecycle_clock
@@ -343,6 +375,8 @@ pub fn run_botany_lifecycle_tick(
         }
 
         let age = lifecycle_clock.tick.saturating_sub(plant.planted_at_tick);
+        let growth_stage = plant_growth_stage(age, kind.max_age_ticks, plant.wither_progress);
+        let spirit_quality = plant_spirit_quality(kind, plant.variant, item_registry.as_deref());
         let wither_due_harvest = plant.harvested;
         let wither_due_trampled = plant.trampled;
         // EventTriggered 植物（如 kong_shou_hen）不检查 biome / spirit_qi 下限（plan §1.2.3）。
@@ -375,6 +409,19 @@ pub fn run_botany_lifecycle_tick(
                 }
             }
             continue;
+        }
+
+        if let Some(vfx_events) = vfx_events.as_deref_mut() {
+            emit_botany_plant_stage_vfx(vfx_events, plant, growth_stage, spirit_quality);
+        }
+
+        if now_tick.is_multiple_of(BOTANY_AURA_INTERVAL_TICKS)
+            && zone.spirit_qi >= 0.5
+            && growth_stage.can_emit_aura()
+        {
+            if let Some(vfx_events) = vfx_events.as_deref_mut() {
+                emit_botany_aura_vfx(vfx_events, plant.position, spirit_quality);
+            }
         }
 
         *active_counts
@@ -505,6 +552,97 @@ pub fn run_botany_lifecycle_tick(
     }
 }
 
+fn plant_growth_stage(
+    age_ticks: u64,
+    max_age_ticks: u64,
+    wither_progress: u32,
+) -> PlantGrowthStage {
+    if max_age_ticks == 0 {
+        return PlantGrowthStage::Mature;
+    }
+    let scaled_age = age_ticks.saturating_mul(10);
+    if wither_progress > 0 || scaled_age >= max_age_ticks.saturating_mul(9) {
+        PlantGrowthStage::Wilted
+    } else if scaled_age < max_age_ticks.saturating_mul(2) {
+        PlantGrowthStage::Seedling
+    } else if scaled_age < max_age_ticks.saturating_mul(7) {
+        PlantGrowthStage::Growing
+    } else {
+        PlantGrowthStage::Mature
+    }
+}
+
+fn plant_spirit_quality(
+    kind: &super::registry::BotanyPlantKind,
+    variant: PlantVariant,
+    item_registry: Option<&ItemRegistry>,
+) -> f32 {
+    let base = item_registry
+        .and_then(|registry| registry.get(kind.item_id))
+        .map(|template| template.spirit_quality_initial)
+        .unwrap_or_else(|| f64::from(kind.survive_threshold.max(0.5)));
+    (base + variant.quality_modifier()).clamp(0.0, 1.0) as f32
+}
+
+fn botany_stage_event_id(plant_id: BotanyPlantId, stage: PlantGrowthStage) -> String {
+    format!(
+        "{BOTANY_PLANT_STAGE_EVENT_PREFIX}__{}__{}",
+        plant_id.as_str(),
+        stage.as_wire_name()
+    )
+}
+
+fn emit_botany_plant_stage_vfx(
+    vfx_events: &mut Events<VfxEventRequest>,
+    plant: &Plant,
+    stage: PlantGrowthStage,
+    spirit_quality: f32,
+) {
+    let origin = [plant.position[0], plant.position[1], plant.position[2]];
+    vfx_events.send(VfxEventRequest::new(
+        valence::prelude::DVec3::new(origin[0], origin[1], origin[2]),
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: botany_stage_event_id(plant.id, stage),
+            origin,
+            direction: None,
+            color: Some(botany_quality_color(spirit_quality).to_string()),
+            strength: Some(spirit_quality.clamp(0.0, 1.0)),
+            count: Some(1),
+            duration_ticks: Some(BOTANY_PLANT_STAGE_TTL_TICKS),
+        },
+    ));
+}
+
+fn emit_botany_aura_vfx(
+    vfx_events: &mut Events<VfxEventRequest>,
+    position: [f64; 3],
+    spirit_quality: f32,
+) {
+    let origin = [position[0], position[1] + 0.55, position[2]];
+    vfx_events.send(VfxEventRequest::new(
+        valence::prelude::DVec3::new(origin[0], origin[1], origin[2]),
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: BOTANY_AURA_EVENT_ID.to_string(),
+            origin,
+            direction: Some([0.0, 1.0, 0.0]),
+            color: Some(botany_quality_color(spirit_quality).to_string()),
+            strength: Some(spirit_quality.clamp(0.5, 1.0)),
+            count: Some(4),
+            duration_ticks: Some(80),
+        },
+    ));
+}
+
+pub(crate) fn botany_quality_color(spirit_quality: f32) -> &'static str {
+    if spirit_quality >= 0.9 {
+        "#FFDD22"
+    } else if spirit_quality >= 0.7 {
+        "#22FF44"
+    } else {
+        "#88CC88"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use valence::prelude::{App, Position, Update};
@@ -592,6 +730,196 @@ mod tests {
             zone_registry.zones[0].spirit_qi > 0.1,
             "natural wither should restore spirit_qi"
         );
+    }
+
+    #[test]
+    fn mature_plant_emits_aura_vfx_on_cadence() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(BotanyVariantRoll::default());
+        app.insert_resource(PlantLifecycleClock { tick: 5_199 });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "spawn".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([1.0, 1.0, 1.0]).get(),
+                ),
+                spirit_qi: 0.8,
+                danger_level: 1,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_event::<VfxEventRequest>();
+        app.world_mut().spawn(Plant {
+            id: BotanyPlantId::NingMaiCao,
+            zone_name: "spawn".to_string(),
+            position: [0.5, 1.0, 0.5],
+            planted_at_tick: 0,
+            wither_progress: 0,
+            source_point: None,
+            harvested: false,
+            trampled: false,
+            variant: PlantVariant::None,
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .collect();
+        let aura = emitted
+            .iter()
+            .find(|request| {
+                matches!(
+                    &request.payload,
+                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == BOTANY_AURA_EVENT_ID
+                )
+            })
+            .expect("mature plant should emit aura on cadence");
+        match &aura.payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                color,
+                count,
+                strength,
+                ..
+            } => {
+                assert_eq!(event_id, BOTANY_AURA_EVENT_ID);
+                assert_eq!(color.as_deref(), Some("#FFDD22"));
+                assert_eq!(*strength, Some(0.95));
+                assert_eq!(*count, Some(4));
+            }
+            other => panic!("expected botany aura SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn immature_plant_emits_stage_vfx_without_aura() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(BotanyVariantRoll::default());
+        app.insert_resource(PlantLifecycleClock {
+            tick: BOTANY_AURA_INTERVAL_TICKS - 1,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "spawn".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([1.0, 1.0, 1.0]).get(),
+                ),
+                spirit_qi: 0.8,
+                danger_level: 1,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_event::<VfxEventRequest>();
+        app.world_mut().spawn(Plant {
+            id: BotanyPlantId::NingMaiCao,
+            zone_name: "spawn".to_string(),
+            position: [0.5, 1.0, 0.5],
+            planted_at_tick: 0,
+            wither_progress: 0,
+            source_point: None,
+            harvested: false,
+            trampled: false,
+            variant: PlantVariant::None,
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            emitted.iter().all(|request| !matches!(
+                &request.payload,
+                VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == BOTANY_AURA_EVENT_ID
+            )),
+            "seedling should not emit mature aura"
+        );
+        let stage_id = botany_stage_event_id(BotanyPlantId::NingMaiCao, PlantGrowthStage::Seedling);
+        assert!(emitted.iter().any(|request| matches!(
+            &request.payload,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                color,
+                strength,
+                ..
+            } if event_id == &stage_id
+                && color.as_deref() == Some("#FFDD22")
+                && *strength == Some(0.95)
+        )));
+    }
+
+    #[test]
+    fn low_qi_mature_plant_does_not_emit_aura() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(BotanyVariantRoll::default());
+        app.insert_resource(PlantLifecycleClock { tick: 5_199 });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "spawn".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([1.0, 1.0, 1.0]).get(),
+                ),
+                spirit_qi: 0.49,
+                danger_level: 1,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_event::<VfxEventRequest>();
+        app.world_mut().spawn(Plant {
+            id: BotanyPlantId::NingMaiCao,
+            zone_name: "spawn".to_string(),
+            position: [0.5, 1.0, 0.5],
+            planted_at_tick: 0,
+            wither_progress: 0,
+            source_point: None,
+            harvested: false,
+            trampled: false,
+            variant: PlantVariant::None,
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .collect();
+        assert!(emitted.iter().all(|request| !matches!(
+            &request.payload,
+            VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                if event_id == BOTANY_AURA_EVENT_ID
+        )));
     }
 
     #[test]

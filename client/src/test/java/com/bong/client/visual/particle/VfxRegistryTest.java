@@ -143,6 +143,22 @@ public class VfxRegistryTest {
             "bootstrap should register zhenmai sever flash");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.EVENT_ID),
             "bootstrap should register vortex_spiral");
+        assertTrue(VfxRegistry.instance().contains(BotanyAuraPlayer.EVENT_ID),
+            "bootstrap should register botany aura");
+        assertTrue(VfxRegistry.instance().contains(BotanyHarvestBurstPlayer.EVENT_ID),
+            "bootstrap should register botany harvest burst");
+        assertTrue(VfxRegistry.instance().contains(BotanyPlantStagePlayer.ROUTE_ID),
+            "bootstrap should register botany plant stage route");
+        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.TILL),
+            "bootstrap should register lingtian till rune");
+        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.PLANT),
+            "bootstrap should register lingtian plant rune");
+        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.REPLENISH),
+            "bootstrap should register lingtian replenish rune");
+        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.HARVEST),
+            "bootstrap should register lingtian harvest rune");
+        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.DRAIN),
+            "bootstrap should register lingtian drain rune");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 

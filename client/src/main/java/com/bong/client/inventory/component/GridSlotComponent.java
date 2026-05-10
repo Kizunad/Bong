@@ -1,5 +1,6 @@
 package com.bong.client.inventory.component;
 
+import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.model.InventoryItem;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
@@ -106,6 +107,12 @@ public class GridSlotComponent extends BaseComponent {
             context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, overlay);
         }
 
+        int botanyBorder = BotanySpiritQualityVisuals.borderColor(item);
+        if (botanyBorder != BotanySpiritQualityVisuals.NO_BORDER) {
+            drawSlotBorder(context, dx, dy, dw, dh, botanyBorder);
+            drawSlotBorder(context, dx + 1, dy + 1, dw - 2, dh - 2, botanyBorder & 0x88FFFFFF);
+        }
+
         // 堆叠数字 —— 右下角（与原版 MC 物品栏一致，保证在贴图上层可见）。
         if (item.stackCount() > 1) {
             var tr = MinecraftClient.getInstance().textRenderer;
@@ -179,7 +186,7 @@ public class GridSlotComponent extends BaseComponent {
             || itemId.endsWith("_scroll");
     }
 
-    static void drawSlotBorder(OwoUIDrawContext context, int x, int y, int w, int h, int color) {
+    static void drawSlotBorder(net.minecraft.client.gui.DrawContext context, int x, int y, int w, int h, int color) {
         context.fill(x, y, x + w, y + 1, color);
         context.fill(x, y + h - 1, x + w, y + h, color);
         context.fill(x, y + 1, x + 1, y + h - 1, color);

@@ -1,10 +1,7 @@
 package com.bong.client.visual.particle;
 
 /**
- * 集中注册 {@link VfxRegistry} 的默认 event → player 绑定（plan-particle-system-v1 §4.4 首批事件）。
- *
- * <p>Phase 1 只接一个 {@code bong:sword_qi_slash} 用于端到端演示。后续 phase 按 plan §4.4 表格逐个加：
- * {@code breakthrough_pillar} / {@code enlightenment_aura} / {@code tribulation_lightning} / ...
+ * 集中注册 {@link VfxRegistry} 的默认 event → player 绑定。
  *
  * <p>调用点：{@code BongClient#onInitializeClient}。
  */
@@ -34,6 +31,15 @@ public final class VfxBootstrap {
         registry.register(ReleaseLightningVfx.EVENT_ID,          new ReleaseLightningVfx());
         registry.register(ExhaustedGreyMistVfx.EVENT_ID,         new ExhaustedGreyMistVfx());
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
+        registry.register(BotanyAuraPlayer.EVENT_ID,             new BotanyAuraPlayer());
+        registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     new BotanyHarvestBurstPlayer());
+        registry.register(BotanyPlantStagePlayer.ROUTE_ID,       new BotanyPlantStagePlayer());
+        LingtianPlotRunePlayer lingtianPlotRunes = new LingtianPlotRunePlayer();
+        registry.register(LingtianPlotRunePlayer.TILL,           lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.PLANT,          lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.REPLENISH,      lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.HARVEST,        lingtianPlotRunes);
+        registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
         registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
         registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);

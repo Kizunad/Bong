@@ -4,6 +4,8 @@ import com.bong.client.network.VfxEventPayload;
 import com.bong.client.network.VfxParticleBridge;
 import net.minecraft.client.MinecraftClient;
 
+import java.util.Optional;
+
 /**
  * {@link VfxParticleBridge} 的 MC-in-process 实现：查 {@link VfxRegistry}，找到就派发。
  *
@@ -30,7 +32,7 @@ public final class BongVfxParticleBridge implements VfxParticleBridge {
 
     @Override
     public boolean spawnParticle(VfxEventPayload.SpawnParticle payload) {
-        return registry.lookup(payload.eventId()).map(player -> {
+        return lookupPlayer(payload).map(player -> {
             MinecraftClient client = MinecraftClient.getInstance();
             // client 在单测 / pre-init 时可能为 null（registry 注册完但 MC 还没启动）；
             // 这时候当作"未就绪"返回 false，router 记 bridgeMiss。
@@ -40,5 +42,13 @@ public final class BongVfxParticleBridge implements VfxParticleBridge {
             player.play(client, payload);
             return true;
         }).orElse(false);
+    }
+
+    private Optional<VfxPlayer> lookupPlayer(VfxEventPayload.SpawnParticle payload) {
+        Optional<VfxPlayer> exact = registry.lookup(payload.eventId());
+        if (exact.isPresent() || !BotanyPlantStagePlayer.isStageEvent(payload.eventId())) {
+            return exact;
+        }
+        return registry.lookup(BotanyPlantStagePlayer.ROUTE_ID);
     }
 }

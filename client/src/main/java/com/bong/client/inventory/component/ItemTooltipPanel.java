@@ -1,5 +1,6 @@
 package com.bong.client.inventory.component;
 
+import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.model.InventoryItem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -60,6 +61,9 @@ public class ItemTooltipPanel extends BaseComponent {
         int needed = PADDING_TOP + lineBlock + lineBlock;
         if (!formatStatusLine(item).isEmpty()) {
             needed += lineBlock;
+        }
+        if (BotanySpiritQualityVisuals.isBotanyPlant(item)) {
+            needed += lineBlock + 6;
         }
         if (item.forgeQuality() != null) {
             needed += lineBlock;
@@ -138,6 +142,14 @@ public class ItemTooltipPanel extends BaseComponent {
         if (!status.isEmpty()) {
             context.drawTextWithShadow(textRenderer, Text.literal(status), cx, cy, statusColor(hoveredItem));
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        }
+
+        if (BotanySpiritQualityVisuals.isBotanyPlant(hoveredItem)) {
+            String qualityLabel = BotanySpiritQualityVisuals.qualityLabel(hoveredItem);
+            context.drawTextWithShadow(textRenderer, Text.literal(qualityLabel), cx, cy, BotanySpiritQualityVisuals.barColor(hoveredItem));
+            cy += textRenderer.fontHeight + 1;
+            appendSpiritQualityBar(context, hoveredItem, cx, cy);
+            cy += 5;
         }
 
         if (hoveredItem.forgeQuality() != null) {
@@ -248,6 +260,16 @@ public class ItemTooltipPanel extends BaseComponent {
     private static int statusColor(InventoryItem item) {
         return (item.spiritQuality() < 0.3 || item.durability() < 0.3)
             ? 0xFFFF6666 : 0xFFAA8866;
+    }
+
+    private static void appendSpiritQualityBar(OwoUIDrawContext context, InventoryItem item, int bx, int by) {
+        int width = 58;
+        int filled = Math.max(0, Math.min(width, (int) Math.round(width * item.spiritQuality())));
+        context.fill(bx, by, bx + width, by + 3, 0xFF222222);
+        if (filled > 0) {
+            context.fill(bx, by, bx + filled, by + 3, BotanySpiritQualityVisuals.barColor(item));
+        }
+        context.fill(bx, by + 3, bx + width, by + 4, 0xFF3A3A3A);
     }
 
     private static String renderMitigationCell(String kind, float mitigation) {

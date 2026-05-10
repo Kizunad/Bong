@@ -498,6 +498,8 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::tribulation::start_tribulation_system)
                 .after(crate::cultivation::tribulation::tribulation_failure_system),
             vfx_animation_trigger::emit_woliu_v2_visual_triggers,
+            vfx_animation_trigger::emit_botany_harvest_visual_triggers,
+            vfx_animation_trigger::emit_lingtian_visual_triggers,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
