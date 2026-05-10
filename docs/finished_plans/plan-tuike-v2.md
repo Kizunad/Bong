@@ -394,11 +394,11 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 
 ### 关键 commit
 
-- `32f9e83fe` / 2026-05-10 / `feat(tuike): 实现蜕壳三招完整链路`：server + agent + client 跨栈实现、100 个 server 单测、schema/generated、HUD/VFX/动画/音频/叙事事件接入；rebase 到 `origin/main` 后保留 botany/fauna/lingtian 上游 VFX/音频注册并合入替尸 v2 注册。
-- `c067592f3` / 2026-05-10 / `fix(tuike): 对齐音效 recipe schema`：替尸 v2 三份音效 recipe 改用当前合法 `HOSTILE` category，并把污染转移 hum pitch 收进 schema 下限。
-- `ca65d4411` / 2026-05-10 / `修复替尸 review 阻断项`：补 server `false_skin_state` 真实 `layers` 数组、裸壳期承伤放大、普通/永久污染转移 cooldown 分流、qi 不足自动蜕最外层、替尸空经脉依赖声明、`TUIKE_BETA` 归位 qi_physics、K_shed 真元释放入 zone/overflow 账本。
-- `a94b54fa1` / 2026-05-10 / `修复替尸 v2 CodeRabbit 反馈`：补 client HUD payload 非负清洗与同帧 snapshot、替尸粒子 origin/duration 防御、spent qi overflow 构造失败日志、Redis/VFX 映射回归测试、`TuikeSkillEventV1` 非空视觉 contract。
-- `6c8392b09` / 2026-05-10 / `修复替尸 v2 运行时边界反馈`：按 CodeRabbit 反馈收紧 server 运行时边界：`shed_to_carrier` 返回实际污染写回/溢出量、重复外层着壳拒绝且不产 cooldown/event/XP、裸壳窗口未过期时保留空 `StackedFalseSkins`、腐烂残渣发事件后 despawn 实体。
+- `84a63145f` / 2026-05-10 / `feat(tuike): 实现蜕壳三招完整链路`：server + agent + client 跨栈实现、100 个 server 单测、schema/generated、HUD/VFX/动画/音频/叙事事件接入；rebase 到 `origin/main` 后保留 botany/fauna/lingtian/Dugu v2/zone-atmosphere 上游注册并合入替尸 v2 注册。
+- `d7553c871` / 2026-05-10 / `fix(tuike): 对齐音效 recipe schema`：替尸 v2 三份音效 recipe 改用当前合法 `HOSTILE` category，并把污染转移 hum pitch 收进 schema 下限。
+- `7ddb8b375` / 2026-05-10 / `修复替尸 review 阻断项`：补 server `false_skin_state` 真实 `layers` 数组、裸壳期承伤放大、普通/永久污染转移 cooldown 分流、qi 不足自动蜕最外层、替尸空经脉依赖声明、`TUIKE_BETA` 归位 qi_physics、K_shed 真元释放入 zone/overflow 账本。
+- `d22b4a7ce` / 2026-05-10 / `修复替尸 v2 CodeRabbit 反馈`：补 client HUD payload 非负清洗与同帧 snapshot、替尸粒子 origin/duration 防御、spent qi overflow 构造失败日志、Redis/VFX 映射回归测试、`TuikeSkillEventV1` 非空视觉 contract。
+- `5e3fa230d` / 2026-05-10 / `修复替尸 v2 运行时边界反馈`：按 CodeRabbit 反馈收紧 server 运行时边界：`shed_to_carrier` 返回实际污染写回/溢出量、重复外层着壳拒绝且不产 cooldown/event/XP、裸壳窗口未过期时保留空 `StackedFalseSkins`、腐烂残渣发事件后 despawn 实体。
 
 ### 测试结果
 
@@ -412,12 +412,12 @@ worldview §十六.三 一次性脆化级。材料源应该是：
 - `grep -rcE '#\[test\]' server/src/combat/tuike_v2/`：`tests.rs:109`，满足 P1 `>= 80`。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -- -D warnings`：通过。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test audio`：通过，22 passed；验证替尸 v2 三份音效 recipe 符合当前音频 schema。
-- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3768 passed。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3925 passed。
 - `cd agent && npm run generate -w @bong/schema`：通过。
-- `cd agent && npm run generate:check -w @bong/schema`：通过，327 个 generated schema 文件保持 fresh。
+- `cd agent && npm run generate:check -w @bong/schema`：通过，332 个 generated schema 文件保持 fresh。
 - `cd agent && npm run build`：通过。
-- `cd agent && npm test -w @bong/schema -- --maxWorkers=1`：通过，14 files / 351 tests。
-- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 329 tests。
+- `cd agent && npm test -w @bong/schema -- --maxWorkers=1`：通过，15 files / 353 tests。
+- `cd agent && npm test -w @bong/tiandao`：通过，48 files / 333 tests。
 - `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test --tests "com.bong.client.combat.handler.FalseSkinStateHandlerTest"`：通过。
 - `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew --no-daemon test build`：通过。
 
