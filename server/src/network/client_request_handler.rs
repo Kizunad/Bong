@@ -91,7 +91,9 @@ use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
-use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
+use crate::network::{
+    gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
+};
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
@@ -207,6 +209,7 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub instance_allocator: Option<ResMut<'w, InventoryInstanceIdAllocator>>,
     pub redis: Option<Res<'w, RedisBridgeResource>>,
     pub zones: Option<Res<'w, ZoneRegistry>>,
+    pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
 }
 
 #[derive(SystemParam)]
@@ -567,6 +570,7 @@ pub fn handle_client_request_payloads(
                     &mut alchemy_params.furnaces,
                     alchemy_params.zones.as_deref(),
                     alchemy_params.redis.as_deref(),
+                    alchemy_params.vfx_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyOpenFurnace { furnace_pos, .. } => {
@@ -868,6 +872,7 @@ pub fn handle_client_request_payloads(
                     &alchemy_params.recipe_registry,
                     alchemy_params.zones.as_deref(),
                     alchemy_params.redis.as_deref(),
+                    alchemy_params.vfx_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyFeedSlot {
@@ -910,6 +915,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &alchemy_params.item_registry,
                     alchemy_params.instance_allocator.as_deref_mut(),
+                    alchemy_params.vfx_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::InventoryMoveIntent {
@@ -2830,6 +2836,50 @@ mod tests {
 
         let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
         assert!(furnace.session.is_none());
+    }
+
+    #[test]
+    fn brew_emits_vapor() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
+        furnace.owner = Some("offline:Azure".into());
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .get::<AlchemyFurnace>(furnace_entity)
+            .unwrap()
+            .session
+            .is_some());
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("alchemy ignite should emit vapor vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::ALCHEMY_BREW_VAPOR);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]
@@ -6382,6 +6432,7 @@ fn handle_alchemy_open_furnace(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_alchemy_intervention(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
@@ -6390,6 +6441,7 @@ fn handle_alchemy_intervention(
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -6412,6 +6464,27 @@ fn handle_alchemy_intervention(
             }
         };
         session.apply_intervention(intervention.clone());
+        if let Some(events) = vfx_events {
+            let (event_id, color, strength, count) = match intervention {
+                Intervention::AdjustTemp(temp) if temp >= 0.85 => {
+                    (gameplay_vfx::ALCHEMY_OVERHEAT, "#FF4433", 0.85, 10)
+                }
+                Intervention::InjectQi(_) => (gameplay_vfx::ALCHEMY_BREW_VAPOR, "#AA66FF", 0.65, 8),
+                _ => (gameplay_vfx::ALCHEMY_BREW_VAPOR, "#88CCFF", 0.45, 6),
+            };
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    event_id,
+                    alchemy_furnace_origin(furnace_pos),
+                    Some([0.0, 0.6, 0.0]),
+                    color,
+                    strength,
+                    count,
+                    30,
+                ),
+            );
+        }
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` intervention {intervention:?} pos={furnace_pos:?} → temp={:.2} qi={:.2}",
             session.temp_current, session.qi_injected
@@ -6440,6 +6513,7 @@ fn handle_alchemy_ignite(
     registry: &RecipeRegistry,
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -6474,6 +6548,20 @@ fn handle_alchemy_ignite(
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` ignite `{recipe_id}` at pos={furnace_pos:?}"
         );
+        if let Some(events) = vfx_events {
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::ALCHEMY_BREW_VAPOR,
+                    alchemy_furnace_origin(furnace_pos),
+                    Some([0.0, 0.5, 0.0]),
+                    "#88CCFF",
+                    0.55,
+                    8,
+                    40,
+                ),
+            );
+        }
         publish_alchemy_session_start(
             redis,
             furnace_pos,
@@ -6513,6 +6601,14 @@ fn check_alchemy_zone_qi(
         ));
     }
     Ok(())
+}
+
+fn alchemy_furnace_origin(furnace_pos: (i32, i32, i32)) -> DVec3 {
+    DVec3::new(
+        f64::from(furnace_pos.0) + 0.5,
+        f64::from(furnace_pos.1) + 1.0,
+        f64::from(furnace_pos.2) + 0.5,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6626,6 +6722,7 @@ fn handle_alchemy_take_back(
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
     mut instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -6664,6 +6761,26 @@ fn handle_alchemy_take_back(
             let resolved = crate::alchemy::resolver::resolve_with_meta(&ended, recipe, registry);
             let bucket = resolved.bucket;
             let outcome = resolved.outcome;
+            if let Some(events) = vfx_events {
+                let (event_id, color, strength, count, duration) =
+                    if matches!(&outcome, crate::alchemy::ResolvedOutcome::Explode { .. }) {
+                        (gameplay_vfx::ALCHEMY_EXPLODE, "#FF5533", 1.0, 18, 30)
+                    } else {
+                        (gameplay_vfx::ALCHEMY_COMPLETE, "#FFD700", 0.9, 10, 40)
+                    };
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        event_id,
+                        alchemy_furnace_origin(furnace_pos),
+                        Some([0.0, 0.8, 0.0]),
+                        color,
+                        strength,
+                        count,
+                        duration,
+                    ),
+                );
+            }
             let event_recipe_id = Some(recipe.id.clone());
             match &outcome {
                 crate::alchemy::ResolvedOutcome::Explode {

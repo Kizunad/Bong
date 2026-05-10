@@ -15,6 +15,7 @@ use valence::prelude::{
 
 use crate::combat::components::StatusEffects;
 use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
+use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
@@ -678,6 +679,18 @@ pub fn breakthrough_system(
                         tick: now,
                     });
                 }
+                if let Ok(pos) = positions.get(req.entity) {
+                    let p = pos.get();
+                    vfx_events.send(gameplay_vfx::spawn_request(
+                        gameplay_vfx::BREAKTHROUGH_FAIL,
+                        p,
+                        None,
+                        "#FF3344",
+                        (*severity as f32).clamp(0.35, 1.0),
+                        (8.0 + *severity as f32 * 16.0).round() as u32,
+                        60,
+                    ));
+                }
             }
             Err(BreakthroughError::EnvInsufficient { .. }) => {
                 if let (Some(narrations), Some(username)) =
@@ -1167,6 +1180,59 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(ids.contains(&"bong:breakthrough_pillar"));
+    }
+
+    #[test]
+    fn breakthrough_fail_emits_vfx() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (mut cultivation, meridians) = setup_for_induce();
+        cultivation.composure = 0.0;
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::default(),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::BREAKTHROUGH_FAIL
+                )
+            })
+            .expect("rolled breakthrough failure should emit breakthrough_fail vfx");
+        match &emitted.payload {
+            VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::BREAKTHROUGH_FAIL);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

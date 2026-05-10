@@ -15,8 +15,8 @@ use valence::message::SendMessage;
 use valence::prelude::bevy_ecs::system::ParamSet;
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, DiggingEvent,
-    DiggingState, Entity, EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res,
-    ResMut, Resource, Update, Username, With, Without,
+    DiggingState, Entity, EventReader, EventWriter, Events, IntoSystemConfigs, Position, Query,
+    Res, ResMut, Resource, Update, Username, With, Without,
 };
 
 use self::components::{
@@ -45,6 +45,7 @@ use crate::inventory::{
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::redis_bridge::RedisOutbound;
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::network::{send_server_data_payload, RedisBridgeResource};
 use crate::npc::faction::FactionId;
 use crate::persistence::PersistenceSettings;
@@ -1411,6 +1412,7 @@ fn handle_spirit_niche_place_requests(
     zone_registry: Option<Res<ZoneRegistry>>,
     mut registry: ResMut<SpiritNicheRegistry>,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     let zone_registry = zone_registry
         .as_deref()
@@ -1514,6 +1516,20 @@ fn handle_spirit_niche_place_requests(
         let old_niche = registry.niches.get(&lifecycle.character_id).cloned();
         registry.upsert(niche.clone());
         commands.entity(event.player).insert(niche.clone());
+        if let Some(events) = vfx_events.as_deref_mut() {
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::SOCIAL_NICHE_ESTABLISH,
+                    gameplay_vfx::block_center(event.pos),
+                    Some([0.0, 0.8, 0.0]),
+                    "#C4E0FF",
+                    0.8,
+                    12,
+                    60,
+                ),
+            );
+        }
         if let Ok(mut layer) = layers.get_single_mut() {
             if let Some(old_niche) = old_niche {
                 if !old_niche.revealed && old_niche.pos != event.pos {
@@ -4147,6 +4163,7 @@ mod tests {
         app.insert_resource(persistence.clone());
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_spirit_niche_place_requests);
 
         let (mut client_bundle, _helper) = create_mock_client("Azure");
@@ -4189,6 +4206,17 @@ mod tests {
             [11, 64, 10],
             registry
         ));
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = vfx_events
+            .iter_current_update_events()
+            .next()
+            .expect("spirit niche placement should emit vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::SOCIAL_NICHE_ESTABLISH);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
 
         let _ = std::fs::remove_dir_all(data_dir);
     }

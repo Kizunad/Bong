@@ -30,6 +30,7 @@ pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod full_power_emit;
+pub mod gameplay_vfx;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;

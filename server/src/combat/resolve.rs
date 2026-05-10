@@ -42,6 +42,7 @@ use crate::inventory::{
     InventoryDurabilityChangedEvent, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN,
     EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
@@ -145,6 +146,7 @@ pub struct CombatResolveEventWriters<'w> {
     out_events: EventWriter<'w, CombatEvent>,
     qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
     multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
+    vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     death_events: EventWriter<'w, DeathEvent>,
     durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
 }
@@ -911,6 +913,40 @@ pub fn resolve_attack_intents(
             defense_contam_reduced: jiemai_contam_reduced,
             defense_wound_severity: jiemai_wound_severity,
         });
+        if let Some(events) = event_writers.vfx_events.as_deref_mut() {
+            let hit_origin = target_position + DVec3::new(0.0, 1.0, 0.0);
+            let hit_dir = [
+                target_position.x - attacker_position.x,
+                target_position.y - attacker_position.y,
+                target_position.z - attacker_position.z,
+            ];
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::COMBAT_HIT,
+                    hit_origin,
+                    Some(hit_dir),
+                    "#FF3344",
+                    (wound_severity / 20.0).clamp(0.25, 1.0),
+                    6,
+                    12,
+                ),
+            );
+            if jiemai_success {
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::COMBAT_PARRY,
+                        hit_origin,
+                        Some([-hit_dir[0], -hit_dir[1], -hit_dir[2]]),
+                        "#4488FF",
+                        jiemai_effectiveness_value.unwrap_or(0.6).clamp(0.3, 1.0),
+                        8,
+                        16,
+                    ),
+                );
+            }
+        }
 
         if let Some(active_events) = active_events.as_deref_mut() {
             active_events.record_recent_event(GameEvent {
@@ -1538,6 +1574,64 @@ mod tests {
             LifeRecord::new(canonical),
         ));
         entity
+    }
+
+    #[test]
+    fn hit_emits_direction_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = vfx_events
+            .iter_current_update_events()
+            .next()
+            .expect("resolved hit should emit combat_hit vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                ..
+            } => {
+                assert_eq!(event_id, gameplay_vfx::COMBAT_HIT);
+                assert!(direction.is_some(), "combat_hit should carry hit direction");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

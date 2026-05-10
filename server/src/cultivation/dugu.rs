@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, ParamSet, Query, Res,
-    UniqueId,
+    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Events, ParamSet,
+    Position, Query, Res, ResMut, UniqueId,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState};
@@ -17,6 +17,7 @@ use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, PlayerInventory,
 };
 use crate::network::cast_emit::current_unix_millis;
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::qi_physics::{MediumKind, StyleAttack};
 use crate::schema::dugu::{
     AntidoteResultEventV1, AntidoteResultV1, DuguObfuscationStateV1, DuguPoisonProgressEventV1,
@@ -290,17 +291,19 @@ pub fn dugu_poison_tick(
     clock: Res<CombatClock>,
     mut targets: Query<(
         Entity,
+        Option<&Position>,
         &mut MeridianSystem,
         &mut Cultivation,
         &DuguPoisonState,
     )>,
     mut progress_events: EventWriter<DuguPoisonProgressEvent>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     if clock.tick == 0 {
         return;
     }
 
-    for (entity, mut meridians, mut cultivation, poison) in &mut targets {
+    for (entity, position, mut meridians, mut cultivation, poison) in &mut targets {
         let elapsed_ticks = clock.tick.saturating_sub(poison.attached_at_tick);
         if elapsed_ticks == 0 || !elapsed_ticks.is_multiple_of(DUGU_POISON_TICK_INTERVAL) {
             continue;
@@ -335,6 +338,21 @@ pub fn dugu_poison_tick(
             actual_loss_this_tick: actual_loss,
             tick: clock.tick,
         });
+        if let (Some(events), Some(position)) = (vfx_events.as_deref_mut(), position) {
+            let origin = position.get() + valence::prelude::DVec3::new(0.0, 0.8, 0.0);
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::POISON_MIST,
+                    origin,
+                    Some([0.0, 0.25, 0.0]),
+                    "#44AA44",
+                    0.55,
+                    6,
+                    60,
+                ),
+            );
+        }
     }
 }
 
@@ -1059,6 +1077,50 @@ mod tests {
             .get_reader()
             .read(events)
             .any(|event| event.actual_loss_this_tick == 0.7));
+    }
+
+    #[test]
+    fn poison_tick_emits_mist_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: DUGU_POISON_TICK_INTERVAL,
+        });
+        app.add_event::<DuguPoisonProgressEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, dugu_poison_tick);
+        let attacker = app.world_mut().spawn_empty().id();
+        let mut meridians = MeridianSystem::default();
+        open(&mut meridians, MeridianId::Heart, 100.0);
+        app.world_mut().spawn((
+            Position::new([4.0, 65.0, -2.0]),
+            meridians,
+            Cultivation {
+                qi_current: 80.0,
+                qi_max: 110.0,
+                ..Cultivation::default()
+            },
+            DuguPoisonState {
+                meridian_id: MeridianId::Heart,
+                attacker,
+                attached_at_tick: 0,
+                poisoner_realm_tier: 2,
+                loss_per_tick: 1.0,
+            },
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("dugu poison tick should emit poison mist vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::POISON_MIST);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

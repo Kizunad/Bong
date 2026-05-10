@@ -32,6 +32,7 @@ use crate::inventory::{
     MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
@@ -124,6 +125,7 @@ pub struct CompletionEventWriters<'w> {
     pub drain_qi: EventWriter<'w, DrainQiCompleted>,
     pub dye_warning: EventWriter<'w, DyeContaminationWarning>,
     pub qi_transfer: EventWriter<'w, QiTransfer>,
+    pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
 }
 
 /// 灵田逻辑时间：冷却仍用 lingtian-tick，残料保鲜用真实 server tick。
@@ -623,6 +625,15 @@ pub fn apply_completed_sessions(
                     hoe: s.hoe,
                     hoe_instance_id: s.hoe_instance_id,
                 });
+                emit_lingtian_vfx(
+                    writers.vfx_events.as_deref_mut(),
+                    gameplay_vfx::LINGTIAN_TILL,
+                    s.pos,
+                    "#8B5A2B",
+                    0.6,
+                    8,
+                    24,
+                );
                 emit_lingtian_skill_xp(&mut skill_xp_events, player, 1, "till");
             }
             ActiveSession::Renew(s) => {
@@ -641,6 +652,15 @@ pub fn apply_completed_sessions(
                         hoe: s.hoe,
                         hoe_instance_id: s.hoe_instance_id,
                     });
+                    emit_lingtian_vfx(
+                        writers.vfx_events.as_deref_mut(),
+                        gameplay_vfx::LINGTIAN_TILL,
+                        s.pos,
+                        "#8B5A2B",
+                        0.7,
+                        8,
+                        24,
+                    );
                     emit_lingtian_skill_xp(&mut skill_xp_events, player, 2, "renew");
                 } else {
                     tracing::warn!(
@@ -659,6 +679,15 @@ pub fn apply_completed_sessions(
                     &seeds,
                     &mut writers.planting,
                     &mut skill_xp_events,
+                );
+                emit_lingtian_vfx(
+                    writers.vfx_events.as_deref_mut(),
+                    gameplay_vfx::LINGTIAN_PLANT,
+                    s.pos,
+                    "#44AA44",
+                    0.75,
+                    6,
+                    30,
                 );
             }
             ActiveSession::Harvest(s) => {
@@ -701,6 +730,15 @@ pub fn apply_completed_sessions(
                     &mut writers.dye_warning,
                     &mut skill_xp_events,
                 );
+                emit_lingtian_vfx(
+                    writers.vfx_events.as_deref_mut(),
+                    gameplay_vfx::LINGTIAN_REPLENISH,
+                    s.pos,
+                    "#66FFCC",
+                    0.8,
+                    8,
+                    30,
+                );
             }
             ActiveSession::DrainQi(s) => {
                 apply_drain_qi_completion(
@@ -717,6 +755,33 @@ pub fn apply_completed_sessions(
             }
         }
     }
+}
+
+fn emit_lingtian_vfx(
+    events: Option<&mut Events<VfxEventRequest>>,
+    event_id: &'static str,
+    pos: valence::prelude::BlockPos,
+    color: &'static str,
+    strength: f32,
+    count: u32,
+    duration_ticks: u32,
+) {
+    let Some(events) = events else {
+        return;
+    };
+    let origin = gameplay_vfx::block_center([pos.x, pos.y, pos.z]);
+    gameplay_vfx::send_spawn(
+        events,
+        gameplay_vfx::spawn_request(
+            event_id,
+            origin,
+            Some([0.0, 0.8, 0.0]),
+            color,
+            strength,
+            count,
+            duration_ticks,
+        ),
+    );
 }
 
 pub fn emit_harvest_inventory_snapshots(
@@ -1805,6 +1870,40 @@ mod tests {
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         let dur = inv.equipped.get(MAIN_HAND_SLOT).unwrap().durability;
         assert!((dur - 0.95).abs() < 1e-9, "Iron 锄一次扣 0.05；实得 {dur}");
+    }
+
+    #[test]
+    fn till_emits_vfx() {
+        let mut app = build_app();
+        app.add_event::<VfxEventRequest>();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
+            .id();
+        let pos = BlockPos::new(10, 64, 10);
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+        for _ in 0..TILL_MANUAL_TICKS {
+            app.update();
+        }
+
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("finished till session should emit vfx");
+        match &emitted.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::LINGTIAN_TILL);
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]
