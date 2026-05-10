@@ -191,6 +191,7 @@
 - `185a43121`（2026-05-10）`fix(entity): 避让 fauna 实体 raw id 区间`
 - `dc1ad4f19`（2026-05-10）`fix(server): 同步阵法核心视觉状态`
 - `9e1be3ec1`（2026-05-10）`fix(entity): 收敛实体模型 review 边界`
+- `8d23cd000`（2026-05-10）`fix(client): 移除实体模型无效动画轨道`
 
 ### 测试结果
 
@@ -201,7 +202,7 @@
   - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
 - `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build`
   - `BUILD SUCCESSFUL`
-- `cd client && export JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test --tests com.bong.client.entity.BongEntityModelRegistryTest`
+- `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test --tests com.bong.client.entity.BongEntityModelRegistryTest`
   - `BUILD SUCCESSFUL`
 - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo check --bin bong-server`
   - `Finished dev profile`
@@ -225,6 +226,7 @@
   - `server/src/world/tsy.rs` / `server/src/world/tsy_container.rs`：`LootContainer`
 - client 新增 `BongEntityModelKind` 将 11 个视觉实体固定在 `raw_id=134..144`，保持在既有 `WhaleEntities.EXPECTED_RAW_ID=125` 与 `fauna raw_id=126..133` 之后。
 - `BongEntityRenderBootstrap` 对 renderer binding 重复 / 缺失做 fail-fast；`LingtianPlotBlockEntity` 仅在视觉状态变化时标脏。
+- 11 个 GeckoLib animation asset 只保留实际存在于对应 geo 的骨骼轨道；`BongEntityModelAssetTest` 同步校验 animation bone ↔ geo bone 对齐。
 - server 新增 `world::entity_model` 将 gameplay component 映射到 `EntityKind::new(134..144)` 视觉 marker，`VisualState` 使用 DataTracker index `8`、type `INTEGER`、VarInt 编码，与 `BongModeledEntity.VISUAL_STATE` 对齐。
 - `SpiritEyeRegistry` stale visual cleanup 先从 `by_eye_id` 收集移除，再批量提交 despawn，避免 retain 闭包内混合 map 修改与 Commands 操作。
 - 阵法核心视觉状态由 `ZhenfaRegistry::anchor_visual_state` 提供，覆盖 inactive / active / exhausted，避免 marker 层写死 active。
