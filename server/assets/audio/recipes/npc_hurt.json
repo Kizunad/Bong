@@ -1,0 +1,9 @@
+{
+  "id": "npc_hurt",
+  "layers": [
+    { "sound": "minecraft:entity.player.hurt", "volume": 0.35, "pitch": 0.7, "delay_ticks": 0 }
+  ],
+  "priority": 45,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

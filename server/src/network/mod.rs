@@ -36,6 +36,7 @@ pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
+pub mod npc_metadata;
 pub mod poi_novice_bridge;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
@@ -516,6 +517,8 @@ pub fn register(app: &mut App) {
         (
             audio_trigger::emit_combat_audio_triggers
                 .after(crate::combat::resolve::resolve_attack_intents),
+            audio_trigger::emit_npc_death_audio_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
             audio_trigger::emit_cultivation_audio_triggers,
             audio_trigger::emit_tribulation_audio_triggers,
             audio_trigger::emit_alchemy_audio_triggers,
@@ -527,6 +530,7 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),
             audio_trigger::emit_player_state_audio_triggers,
+            npc_metadata::emit_npc_metadata_payloads,
         )
             .before(audio_event_emit::emit_audio_play_payloads),
     );
@@ -694,6 +698,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
     app.init_resource::<audio_trigger::AudioTriggerState>();
+    app.init_resource::<npc_metadata::NpcMetadataSyncState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<qi_color_observed_emit::QiColorInspectRequest>();
