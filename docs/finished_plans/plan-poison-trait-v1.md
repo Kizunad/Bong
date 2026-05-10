@@ -485,21 +485,21 @@ PoisonOverdoseEvent severity → MICRO_TEAR 抽取经脉概率？
   - client：HUD planner/store `PoisonTraitHudPlanner` / `PoisonTraitHudStateStore`；server-data handler `PoisonTraitServerDataHandler` + router registration；HUD layer `POISON_TRAIT`；2 粒子、1 音效 recipe、10 个透明 item icon；通用 `bong:eat_food` PlayerAnimator JSON 与 `client/tools/gen_eat_food.py`。
 
 - **关键 commit**
-  - `065c17042` · 2026-05-11 · `plan-poison-trait-v1: 落地毒性真元服务端底盘`
-  - `ecdb67fb7` · 2026-05-11 · `plan-poison-trait-v1: 接入 agent 毒性叙事契约`
-  - `ad0fdea34` · 2026-05-11 · `plan-poison-trait-v1: 补齐客户端毒性反馈资产`
-  - `a13949aa2` · 2026-05-11 · `plan-poison-trait-v1: 修复毒性服务端 review 阻断`
-  - `ae9dc914b` · 2026-05-11 · `plan-poison-trait-v1: 接入毒性 agent 叙事通道`
-  - `a20ea66d1` · 2026-05-11 · `plan-poison-trait-v1: 接入客户端毒性 server-data`
+  - `db75bfa94` · 2026-05-11 · `plan-poison-trait-v1: 落地毒性真元服务端底盘`
+  - `e4b640461` · 2026-05-11 · `plan-poison-trait-v1: 接入 agent 毒性叙事契约`
+  - `be5110992` · 2026-05-11 · `plan-poison-trait-v1: 补齐客户端毒性反馈资产`
+  - `d9a8c9cb3` · 2026-05-11 · `plan-poison-trait-v1: 修复毒性服务端 review 阻断`
+  - `a562ee9be` · 2026-05-11 · `plan-poison-trait-v1: 接入毒性 agent 叙事通道`
+  - `b0f594436` · 2026-05-11 · `plan-poison-trait-v1: 接入客户端毒性 server-data`
 
 - **测试结果**
   - `cargo fmt --check`（server）→ passed。
   - `cargo check --all-targets -j 1`（server）→ passed。
   - `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`（server）→ passed。
-  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test poison_trait -j 1`（server）→ 118 passed / 3836 filtered。
+  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test poison_trait -j 1`（server）→ 118 passed / 3975 filtered。
   - `npm run build`（agent workspace）→ passed。
   - `cd agent/packages/schema && npm test` → 17 files / 358 tests passed。
-  - `cd agent/packages/tiandao && npm test` → 49 files / 339 tests passed。
+  - `cd agent/packages/tiandao && npm test` → 50 files / 343 tests passed。
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew test build`（client）→ BUILD SUCCESSFUL。
   - 资源检查：10 个 poison icon 均为 RGBA，且同时存在透明像素与不透明像素；`eat_food` / particle / audio recipe JSON 均通过 `python3 -m json.tool`；`python3 tools/render_animation.py ...eat_food.json --ticks 0,6,12,18,24` 生成 headless preview 成功。
 
