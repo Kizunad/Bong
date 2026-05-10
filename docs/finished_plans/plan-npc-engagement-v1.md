@@ -130,13 +130,13 @@
 - P1：新增 `npc_trade_request` C2S 契约、client trade UI、server 信誉定价/拒绝校验、骨币扣款与背包快照回推；本版交易只接受骨币结算，非空 `offered_items` 会被明确拒绝。
 - P2：新增 dialogue choice C2S、server 下发 greeting text、基础 dialogue UI，以及 NPC greeting/refuse/hurt/death/aggro audio recipe 与触发。
 - 关键 commit：
-  - `a6700f951`（2026-05-10）：接入 server NPC 元数据、NPC audio recipe、信誉定价 helper 与 C2S schema。
-  - `a6476af9`（2026-05-10）：补齐 client NPC metadata store、nametag、inspect/dialogue/trade UI 与 agent schema registry/generated JSON。
-  - `02db71a17`（2026-05-10）：接入 server NPC inspect/dialogue/trade request handler，校验存活距离、信誉、骨币与背包快照回推。
-  - `a97c88f9d`（2026-05-10）：兼容旧 client-request 测试 harness 未注册 NPC 音效事件的场景。
-  - `0e996c607`（2026-05-10）：收敛 review 反馈，补跨维度拦截、骨币-only 交易边界、NPC schema 独立导出与客户端边界校验。
-  - `322381e5f`（2026-05-10）：收敛 follow-up review，统一 NPC metadata channel 常量、补境界 rank/负 entity 回归，并让 `reputation_to_player` 叠加当前玩家 active identity 声望。
-  - `1a5975c06`（2026-05-10）：归档 `plan-npc-engagement-v1` 到 `docs/finished_plans/`。
+  - `4c9d2355b`（2026-05-10）：接入 server NPC 元数据、NPC audio recipe、信誉定价 helper 与 C2S schema。
+  - `05902a0e6`（2026-05-10）：补齐 client NPC metadata store、nametag、inspect/dialogue/trade UI 与 agent schema registry/generated JSON。
+  - `73973380a`（2026-05-10）：接入 server NPC inspect/dialogue/trade request handler，校验存活距离、信誉、骨币与背包快照回推。
+  - `16b415ccb`（2026-05-10）：兼容旧 client-request 测试 harness 未注册 NPC 音效事件的场景。
+  - `9596fa238`（2026-05-10）：收敛 review 反馈，补跨维度拦截、骨币-only 交易边界、NPC schema 独立导出与客户端边界校验。
+  - `1409315f5`（2026-05-10）：收敛 follow-up review，统一 NPC metadata channel 常量、补境界 rank/负 entity 回归，并让 `reputation_to_player` 叠加当前玩家 active identity 声望。
+  - `cbb8d72fd`（2026-05-10）：归档 `plan-npc-engagement-v1` 到 `docs/finished_plans/`。
 - 验证：
   - `cd server && cargo fmt --check`
   - `cd server && cargo check`
