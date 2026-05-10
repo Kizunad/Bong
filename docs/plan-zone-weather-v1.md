@@ -1,4 +1,4 @@
-# Bong · plan-zone-weather-v1 · 骨架
+# Bong · plan-zone-weather-v1
 
 **zone-scoped 天气逻辑**。复用 `plan-lingtian-weather-v1` 的 `ActiveWeather` 数据层（已完成 2026-05-08，本就 zone-scoped），扩 `weather_generator_system` 接收 zone 列表 + `ZoneWeatherProfile` 概率覆写表（让"焦土雷暴 ×5"这类 zone 偏置成为一行配置而非硬编码）；并把 `WeatherEvent` 自动映射到 `plan-zone-environment-v1` 的 `EnvironmentEffect`，让"雷暴 = 一组视觉效果"成为系统自动结果而非每 plan 自己拼。
 
