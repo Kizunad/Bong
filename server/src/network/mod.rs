@@ -436,7 +436,8 @@ pub fn register(app: &mut App) {
             dugu_v2_event_bridge::publish_dugu_v2_shroud_events,
             dugu_v2_event_bridge::publish_dugu_v2_self_cure_events,
             dugu_v2_event_bridge::publish_dugu_v2_reverse_events,
-            baomai_v3_event_bridge::publish_baomai_v3_skill_events,
+            baomai_v3_event_bridge::publish_baomai_v3_skill_events
+                .after(client_request_handler::handle_client_request_payloads),
         ),
     );
     app.add_systems(

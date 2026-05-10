@@ -1,4 +1,4 @@
-use valence::prelude::{App, DVec3, Events, Position, Update};
+use valence::prelude::{App, DVec3, Events, Position};
 
 use super::events::{
     BaomaiSkillEvent, BaomaiSkillId, BloodBurnEvent, DispersedQiEvent, MountainShakeEvent,
@@ -353,7 +353,6 @@ fn blood_burn_tick_expires_and_adds_contamination() {
         .insert(crate::cultivation::components::Contamination::default());
     cast_blood_burn(app.world_mut(), caster, 0, None);
     app.insert_resource(CombatClock { tick: 1_000 });
-    app.add_systems(Update, super::tick::blood_burn_tick);
     app.update();
     assert!(app.world().get::<BloodBurnActive>(caster).is_none());
     assert!(!app
@@ -456,7 +455,6 @@ fn body_transcendence_tick_restores_flow_rates() {
         20.0
     );
     app.insert_resource(CombatClock { tick: 1_000 });
-    app.add_systems(Update, super::tick::body_transcendence_tick);
     app.update();
     assert!(app.world().get::<BodyTranscendence>(caster).is_none());
     assert_eq!(
