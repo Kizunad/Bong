@@ -167,10 +167,10 @@
   - P1/P2 client：`client/src/main/java/com/bong/client/armor/ArmorTintRegistry.java`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityArmor.java` 将 Bong armor 映射为染色 leather armor；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_*.png` 提供 6 张图标；`ItemIconRegistry` / `ItemTooltipPanel` 显示 armor icon、材质、防御、损坏与修复提示。
   - P3/P4 反馈与测试：`ArmorBreakParticles`、`InventoryEventHandler`、`VisualEffectState/Profile/Planner`、`GridSlotComponent` 接入装备 flash、低耐久红闪、toast、破碎粒子与 `server/assets/audio/recipes/armor_break.json`（`PLAYERS` 音频分类）；client/server/schema 测试覆盖 tint、装备规则、tooltip、icon、craft、视觉事件、音频 recipe 与 armor 注册。
 - **关键 commit**：
-  - `cf358c41e` · 2026-05-11 · `plan-armor-visual-v1: 注册凡物盔甲与手搓配方`
-  - `4f8a4528c` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
-  - `8c76d463e` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐盔甲破碎音频分类`
-  - `741244d9b` · 2026-05-11 · `fix(plan-armor-visual-v1): 收敛 review 边界反馈`
+  - `096c2d84d` · 2026-05-11 · `plan-armor-visual-v1: 注册凡物盔甲与手搓配方`
+  - `85b61a167` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
+  - `088c27245` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐盔甲破碎音频分类`
+  - `c90e47ea3` · 2026-05-11 · `fix(plan-armor-visual-v1): 收敛 review 边界反馈`
 - **测试结果**：
   - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 3987 passed。
   - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）：通过，BUILD SUCCESSFUL。
