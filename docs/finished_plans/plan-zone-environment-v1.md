@@ -2,6 +2,8 @@
 
 **zone-scoped 持续视觉 / 音效 / 局部物理 hook 协议**。把"龙卷风、漂灰、雷柱、雾笼、热浪、晶莹蒸汽"这类**长时间持续**且**空间分布**（柱形 / 球形 / AABB / SDF 切片）的环境效果，做成 zone 级别的**第一公民**。
 
+**日期约定**：本文所有 `YYYY-MM-DD` 均使用 Pacific/Auckland 本地日期。
+
 `plan-vfx-v1` + `plan-particle-system-v1` 已搭好"一次性 VFX 事件"基建（`SpawnParticle.duration_ticks ≤ 200` = 10s 上限）；常态环境效果按 plan-particle-system-v1 §2.4 原则归"客户端自演 / 不广播"。本 plan **补齐**第三类：**zone-scoped 长时持续效果**——server 推 zone state，client 按 state 自演 emitter，进出 zone 平滑过渡。是 `plan-zone-weather-v1` 的硬前置。
 
 **世界观锚点**：
@@ -275,7 +277,7 @@ public interface EmitterBehavior {
 ## Finish Evidence
 
 - 落地清单：
-  - P0：`server/src/world/environment.rs`（8 变体 `EnvironmentEffect`、`ZoneEnvironmentRegistry`、dirty generation、dimension tracking、lifecycle event queue、`EnvironmentPhysicsHook` trait）+ `server/src/schema/zone_environment.rs` + `agent/packages/schema/src/zone-environment.ts` + sample 双端对拍。
+  - P0：`server/src/world/environment.rs`（8 变体 `EnvironmentEffect`、`ZoneEnvironmentRegistry`、dirty generation、dimension tracking、lifecycle event queue、`EnvironmentPhysicsHook` trait）+ `server/src/schema/zone_environment.rs` + `agent/packages/schema/src/zone-environment.ts` + `agent/packages/schema/generated/environment-effect-v1.json` / `zone-environment-state-v1.json` + sample 双端对拍。
   - P0 出料：`server/src/network/zone_environment_bridge.rs` 把 dirty zone 组装为带 `dimension` 的 `ZoneEnvironmentStateV1`，同时发 Redis `bong:zone_environment_update` 与 S2C `bong:zone_environment`；新 client join 会触发当前 snapshot 重发，serialize 失败会重标 dirty 重试；`agent/packages/tiandao/src/redis-ipc.ts` 已订阅该 cross-system channel。
   - P1：`client/src/main/java/com/bong/client/environment/EnvironmentEffectRegistry.java`、`ActiveEmitter.java`、`EmitterBehavior.java`、`EnvironmentEffectParser.java`，实现 zone state update、dimension 过滤、80 格 culling、40 tick fade in/out。
   - P1/P3 emitter：`client/src/main/java/com/bong/client/environment/emitter/` 下 8 个内置行为（Tornado / LightningPillar / AshFall / FogVeil / DustDevil / EmberDrift / HeatHaze / SnowDrift）接 `EnvironmentParticleHelper` 按 client tick 自演粒子；`density` / `glow` / `distortion_strength` / `particle_density` 会影响 repeat budget，参数变化通过 refresh 更新，不重启 fade。
@@ -287,14 +289,16 @@ public interface EmitterBehavior {
   - `84e9a5527` 2026-05-10 — `plan-zone-environment-v1: 补环境回归测试`
   - `74439b5b5` 2026-05-10 — `修复 zone environment review 反馈`
   - `824cd1a48` 2026-05-10 — `清理 zone environment 维度化接口`
+  - `d0cce7023` 2026-05-10 — `修复 zone environment review follow-up`
 - 测试结果：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3512 passed。
+  - `cd agent && npm run generate:check -w @bong/schema` ✅ generated schema artifacts are fresh，325 files。
   - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao` ✅ schema 351 passed，tiandao 320 passed。
-  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 978 tests。
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 983 tests。
   - `git diff --check` ✅ 无 whitespace 错误。
 - 跨仓库核验：
   - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / `ZoneEnvironmentLifecycleEvent` / `mark_zone_environment_dirty_for_new_clients` / `zone_environment_broadcast_system` / `RedisOutbound::ZoneEnvironmentUpdate` / `EnvironmentPhysicsHook`。
-  - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1.dimension` / bounded `tint_rgb` channels / `CHANNELS.ZONE_ENVIRONMENT_UPDATE` / `SCHEMA_REGISTRY.zoneEnvironmentStateV1` / tiandao cross-system subscription。
+  - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1.dimension` / bounded `tint_rgb` channels / `CHANNELS.ZONE_ENVIRONMENT_UPDATE` / `SCHEMA_REGISTRY.zoneEnvironmentStateV1` / `GENERATED_SCHEMA_FILES` / tiandao cross-system subscription。
   - client：`EnvironmentEffectController` / `ZoneEnvironmentState.dimension` / `EnvironmentEffectRegistry` / `EmitterBehavior` / `EnvironmentAudioController` / 8 tick-based emitter / `MixinFogPerZone` / `MixinSkyPerZone`。
   - 守恒红旗：本 plan 实装代码不写 `cultivation.qi_current` / zone qi；`rg "DECAY|DRAIN|RHO|BETA|qi_current|spirit_qi" ...` 仅命中 server 测试 fixture 的 `spirit_qi: 0.3`。
 - 遗留 / 后续：
