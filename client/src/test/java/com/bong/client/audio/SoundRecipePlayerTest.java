@@ -47,7 +47,7 @@ public class SoundRecipePlayerTest {
         RecordingSink sink = new RecordingSink();
         SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false);
 
-        player.play(playPayload(lowPitchRecipe(), 1.0f, 0.0f));
+        player.play(playPayload(lowPitchRecipe(), 1.0f, -1.0f));
         player.tick();
 
         assertEquals(1, sink.played.size());

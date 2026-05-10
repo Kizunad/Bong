@@ -11,6 +11,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MusicStateMachineTest {
@@ -98,6 +99,64 @@ class MusicStateMachineTest {
         assertTrue(machine.apply(changedRecipe));
 
         assertEquals(firstInstance, sink.stoppedInstanceId);
+    }
+
+    @Test
+    void updateRejectsInvalidWireFields() {
+        AudioRecipe recipe = recipe("ambient_spawn_plain", "ambient_flag", 50);
+
+        assertThrows(IllegalArgumentException.class, () -> new MusicStateMachine.AmbientZoneUpdate(
+            "spawn",
+            "ambient_spawn_plain",
+            MusicStateMachine.State.AMBIENT,
+            false,
+            "summer",
+            Optional.of("abyss"),
+            60,
+            Optional.of(new AudioPosition(0, 64, 0)),
+            1.0f,
+            0.0f,
+            recipe
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new MusicStateMachine.AmbientZoneUpdate(
+            "spawn",
+            "ambient_spawn_plain",
+            MusicStateMachine.State.AMBIENT,
+            false,
+            "summer",
+            Optional.empty(),
+            -1,
+            Optional.of(new AudioPosition(0, 64, 0)),
+            1.0f,
+            0.0f,
+            recipe
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new MusicStateMachine.AmbientZoneUpdate(
+            "spawn",
+            "ambient_spawn_plain",
+            MusicStateMachine.State.AMBIENT,
+            false,
+            "summer",
+            Optional.empty(),
+            60,
+            Optional.of(new AudioPosition(30_000_001, 64, 0)),
+            1.0f,
+            0.0f,
+            recipe
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new MusicStateMachine.AmbientZoneUpdate(
+            "spawn",
+            "ambient_spawn_plain",
+            MusicStateMachine.State.AMBIENT,
+            false,
+            "summer",
+            Optional.empty(),
+            60,
+            Optional.of(new AudioPosition(0, 64, 0)),
+            4.5f,
+            0.0f,
+            recipe
+        ));
     }
 
     private static MusicStateMachine.AmbientZoneUpdate update(

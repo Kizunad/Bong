@@ -106,6 +106,21 @@ class AmbientZoneHandlerTest {
         assertTrue(!AmbientZoneHandler.parse(highPitchShift, highPitchShift.getBytes().length).isSuccess());
     }
 
+    @Test
+    void parserRejectsInvalidTsyDepth() {
+        String nonStringDepth = validPayload().replace(
+            "\"season\": \"summer\",",
+            "\"season\": \"summer\",\n              \"tsy_depth\": 7,"
+        );
+        String unknownDepth = validPayload().replace(
+            "\"season\": \"summer\",",
+            "\"season\": \"summer\",\n              \"tsy_depth\": \"abyss\","
+        );
+
+        assertTrue(!AmbientZoneHandler.parse(nonStringDepth, nonStringDepth.getBytes().length).isSuccess());
+        assertTrue(!AmbientZoneHandler.parse(unknownDepth, unknownDepth.getBytes().length).isSuccess());
+    }
+
     private static String validPayload() {
         return """
             {

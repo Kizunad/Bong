@@ -22,9 +22,7 @@ use crate::schema::audio::{
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::season::{Season, WorldSeasonState, VANILLA_DAY_TICKS};
 use crate::world::tsy::TsyPresence;
-use crate::world::zone::{
-    TsyDepth, Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME, DEFAULT_ZONES_PATH,
-};
+use crate::world::zone::{TsyDepth, Zone, ZoneRegistry, DEFAULT_ZONES_PATH};
 
 #[cfg(test)]
 const AUDIO_AMBIENT_ZONE_CHANNEL: &str = "bong:audio/ambient_zone";
@@ -36,6 +34,7 @@ const NIGHT_START_TICK: u64 = 13_000;
 const NIGHT_END_TICK: u64 = 23_000;
 const PITCH_SHIFT_SUMMER: f32 = 0.10;
 const PITCH_SHIFT_WINTER: f32 = -0.10;
+const WILDERNESS_ZONE_NAME: &str = "wilderness";
 
 #[derive(Debug, Default)]
 pub struct AmbientAudioState {
@@ -234,7 +233,7 @@ pub fn ambient_zone_change_system(
         let zone_name = zone
             .map(|zone| zone.name.clone())
             .or_else(|| tsy_presence.map(|presence| presence.family_id.clone()))
-            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
+            .unwrap_or_else(|| WILDERNESS_ZONE_NAME.to_string());
         let tsy_depth = zone.and_then(Zone::tsy_depth);
         let is_tsy = dim == DimensionKind::Tsy || tsy_presence.is_some() || tsy_depth.is_some();
         let is_cultivating = params
@@ -266,6 +265,7 @@ pub fn ambient_zone_change_system(
 
         let Some(base_recipe) = registry.get(recipe_id) else {
             tracing::warn!("[bong][audio] ambient recipe `{recipe_id}` is missing");
+            state.last_by_entity.insert(entity, key);
             continue;
         };
         let recipe = recipe_with_context(base_recipe, music_state, is_night, season, tsy_depth);
@@ -287,6 +287,7 @@ pub fn ambient_zone_change_system(
             Ok(bytes) => bytes,
             Err(error) => {
                 tracing::warn!("[bong][audio] dropping ambient packet for {entity:?}: {error:?}");
+                state.last_by_entity.insert(entity, key);
                 continue;
             }
         };
@@ -571,6 +572,50 @@ mod tests {
         assert_eq!(second.len(), 1);
         assert_eq!(second[0].zone_name, "lingquan_marsh");
         assert_eq!(second[0].ambient_recipe_id, "ambient_spring_marsh");
+    }
+
+    #[test]
+    fn unknown_zone_uses_wilderness_not_spawn_recipe() {
+        let mut app = setup_app(ZoneRegistry {
+            zones: vec![test_zone(
+                "spawn",
+                [0.0, 60.0, 0.0],
+                [16.0, 90.0, 16.0],
+                DimensionKind::Overworld,
+            )],
+        });
+        let (_entity, mut helper) = spawn_client(&mut app, "wanderer", [128.0, 64.0, 128.0]);
+
+        app.update();
+        flush_packets(&mut app);
+        let payloads = collect_ambient(&mut helper);
+
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].zone_name, WILDERNESS_ZONE_NAME);
+        assert_eq!(payloads[0].ambient_recipe_id, "ambient_wilderness");
+    }
+
+    #[test]
+    fn missing_recipe_records_failed_key_until_state_changes() {
+        let mut app = setup_app(ZoneRegistry::fallback());
+        app.insert_resource(AmbientZoneRecipes::from_pairs([(
+            "spawn",
+            "missing_recipe",
+        )]));
+        let (entity, mut helper) = spawn_client(&mut app, "listener", [8.0, 64.0, 8.0]);
+
+        app.update();
+        flush_packets(&mut app);
+        assert!(collect_ambient(&mut helper).is_empty());
+        assert!(app
+            .world()
+            .resource::<AmbientAudioState>()
+            .last_by_entity
+            .contains_key(&entity));
+
+        app.update();
+        flush_packets(&mut app);
+        assert!(collect_ambient(&mut helper).is_empty());
     }
 
     #[test]

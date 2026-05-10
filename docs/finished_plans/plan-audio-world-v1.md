@@ -37,7 +37,7 @@
    - `ambient_qingyun_peaks.json`：`minecraft:ambient.basalt_deltas.mood`(pitch 1.5, volume 0.1)（高山风啸）
    - `ambient_spring_marsh.json`：`minecraft:block.pointed_dripstone.drip_water`(loop, pitch 0.8)（灵泉滴水）
    - `ambient_rift_valley.json`：`minecraft:ambient.warped_forest.mood`(volume 0.15)（裂谷低鸣）
-   - `ambient_north_wastes.json`：`minecraft:weather.rain`(pitch 0.1, volume 0.08) + `minecraft:entity.wind_charge.wind_burst`(pitch 0.2, volume 0.03)（北荒寒风）
+   - `ambient_north_wastes.json`：`minecraft:weather.rain`(pitch 0.1, volume 0.08) + `minecraft:entity.phantom.flap`(pitch 0.2, volume 0.03)（北荒寒风）
    - `ambient_wilderness.json`：`minecraft:ambient.cave`(volume 0.05)（荒野静谧）
 
 3. **昼夜音量切换**

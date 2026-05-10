@@ -9,6 +9,8 @@ import java.util.Optional;
 
 public final class MusicStateMachine {
     private static final long INSTANCE_ID_BASE = 60_000L;
+    private static final int MAX_ABS_BLOCK_POS = 30_000_000;
+    private static final float MAX_VOLUME_MUL = 4.0f;
     private static final MusicStateMachine INSTANCE = new MusicStateMachine(SoundRecipePlayer.instance());
 
     private final SoundRecipePlayer player;
@@ -137,9 +139,44 @@ public final class MusicStateMachine {
                 throw new IllegalArgumentException("season must not be blank");
             }
             tsyDepth = tsyDepth == null ? Optional.empty() : tsyDepth;
+            tsyDepth.ifPresent(depth -> {
+                if (!isTsyDepth(depth)) {
+                    throw new IllegalArgumentException("tsyDepth must be shallow, mid, or deep");
+                }
+            });
+            if (fadeTicks < 0) {
+                throw new IllegalArgumentException("fadeTicks must be >= 0");
+            }
             pos = pos == null ? Optional.empty() : pos;
+            pos.ifPresent(position -> {
+                if (!isBlockPosInProtocolRange(position)) {
+                    throw new IllegalArgumentException("pos must be within Minecraft block coordinate range");
+                }
+            });
+            if (!Float.isFinite(volumeMul) || volumeMul < 0.0f || volumeMul > MAX_VOLUME_MUL) {
+                throw new IllegalArgumentException("volumeMul out of range");
+            }
+            if (!Float.isFinite(pitchShift) || pitchShift < -1.0f || pitchShift > 1.0f) {
+                throw new IllegalArgumentException("pitchShift out of range");
+            }
             Objects.requireNonNull(recipe, "recipe");
+            if (!ambientRecipeId.equals(recipe.id())) {
+                throw new IllegalArgumentException("ambientRecipeId must match recipe.id");
+            }
         }
+    }
+
+    private static boolean isTsyDepth(String depth) {
+        return switch (depth) {
+            case "shallow", "mid", "deep" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isBlockPosInProtocolRange(AudioPosition pos) {
+        return Math.abs(pos.x()) <= MAX_ABS_BLOCK_POS
+            && Math.abs(pos.y()) <= MAX_ABS_BLOCK_POS
+            && Math.abs(pos.z()) <= MAX_ABS_BLOCK_POS;
     }
 
     private record ActiveMusic(long instanceId, TransitionKey key, Optional<String> loopFlag) {

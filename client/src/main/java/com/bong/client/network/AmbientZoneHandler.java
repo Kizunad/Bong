@@ -50,11 +50,12 @@ public final class AmbientZoneHandler {
         Boolean night = readBoolean(root, "is_night");
         String season = AudioEventEnvelope.readRequiredString(root, "season");
         Integer fadeTicks = AudioEventEnvelope.readRequiredInteger(root, "fade_ticks");
+        Optional<String> tsyDepth = readOptionalTsyDepth(root, "tsy_depth");
         Optional<AudioPosition> pos = AudioEventEnvelope.readOptionalPos(root, "pos");
         Float volumeMul = AudioEventEnvelope.readRequiredFloat(root, "volume_mul");
         Float pitchShift = AudioEventEnvelope.readRequiredFloat(root, "pitch_shift");
         AudioRecipe recipe = AudioEventEnvelope.parseRecipe(root.get("recipe"));
-        if (night == null || season == null || fadeTicks == null || pos == null || volumeMul == null || pitchShift == null || recipe == null) {
+        if (night == null || season == null || fadeTicks == null || tsyDepth == null || pos == null || volumeMul == null || pitchShift == null || recipe == null) {
             return AmbientZoneParseResult.error("Invalid ambient_zone payload fields");
         }
         if (!isSeason(season)) {
@@ -78,7 +79,7 @@ public final class AmbientZoneHandler {
             state.get(),
             night,
             season,
-            readOptionalString(root, "tsy_depth"),
+            tsyDepth,
             fadeTicks,
             pos,
             volumeMul,
@@ -103,16 +104,26 @@ public final class AmbientZoneHandler {
         return primitive.isBoolean() ? primitive.getAsBoolean() : null;
     }
 
-    private static Optional<String> readOptionalString(JsonObject root, String fieldName) {
+    private static Optional<String> readOptionalTsyDepth(JsonObject root, String fieldName) {
         JsonElement element = root.get(fieldName);
         if (element == null || element.isJsonNull()) {
             return Optional.empty();
         }
         if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
-            return Optional.empty();
+            return null;
         }
         String value = element.getAsString().trim();
-        return value.isEmpty() ? Optional.empty() : Optional.of(value);
+        if (value.isEmpty() || !isTsyDepth(value)) {
+            return null;
+        }
+        return Optional.of(value);
+    }
+
+    private static boolean isTsyDepth(String value) {
+        return switch (value) {
+            case "shallow", "mid", "deep" -> true;
+            default -> false;
+        };
     }
 
     public static final class RouteResult {
