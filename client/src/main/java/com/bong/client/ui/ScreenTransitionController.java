@@ -31,7 +31,7 @@ public final class ScreenTransitionController {
             return false;
         }
         Screen oldScreen = client.currentScreen;
-        if (oldScreen == nextScreen) {
+        if (clearActiveTransitionIfSameScreen(oldScreen, nextScreen)) {
             return false;
         }
 
@@ -97,6 +97,10 @@ public final class ScreenTransitionController {
         return cancelledTransitions;
     }
 
+    static void setActiveTransitionForTests(ActiveTransition transition) {
+        activeTransition = transition;
+    }
+
     static void resetForTests() {
         activeTransition = null;
         applyingDirectly = false;
@@ -110,6 +114,14 @@ public final class ScreenTransitionController {
         } finally {
             applyingDirectly = false;
         }
+    }
+
+    static boolean clearActiveTransitionIfSameScreen(Screen oldScreen, Screen nextScreen) {
+        if (oldScreen != nextScreen) {
+            return false;
+        }
+        clearActiveTransition();
+        return true;
     }
 
     private static void clearActiveTransition() {

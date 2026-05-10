@@ -15,12 +15,14 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScreenTransitionTest {
     @AfterEach
     void resetRegistry() {
         ScreenTransitionRegistry.resetForTests();
+        ScreenTransitionController.resetForTests();
         UiTransitionSettings.resetForTests();
     }
 
@@ -266,6 +268,38 @@ class ScreenTransitionTest {
             TransitionInputPolicy.KeyDecision.CONSUME,
             TransitionInputPolicy.keyDecision(active.inputLocked(), GLFW.GLFW_KEY_A, GLFW.GLFW_PRESS)
         );
+    }
+
+    @Test
+    void same_screen_request_clears_previous_transition() {
+        DummyScreen current = new DummyScreen("current");
+        ScreenTransition.TransitionHandle stale = ScreenTransition.play(
+            new DummyScreen("old"),
+            new DummyScreen("stale"),
+            ScreenTransition.Type.FADE,
+            200,
+            ScreenTransition.Easing.LINEAR,
+            () -> {
+            }
+        );
+        ScreenTransitionController.setActiveTransitionForTests(new ScreenTransitionController.ActiveTransition(
+            stale,
+            new TransitionConfig.TransitionSpec(
+                ScreenTransition.Type.FADE,
+                200,
+                ScreenTransition.Easing.LINEAR,
+                TransitionConfig.OverlayStyle.NONE,
+                false
+            ),
+            ScreenTransition.nowMillis()
+        ));
+
+        boolean sameScreen = ScreenTransitionController.clearActiveTransitionIfSameScreen(current, current);
+
+        assertTrue(sameScreen);
+        assertNull(ScreenTransitionController.activeTransition());
+        assertTrue(stale.cancelled());
+        assertEquals(1, ScreenTransitionController.cancelledTransitionsForTests());
     }
 
     private static class DummyScreen extends Screen {

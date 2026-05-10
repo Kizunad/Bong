@@ -35,8 +35,16 @@ public final class ScreenTransitionRegistry {
         if (defaultsBootstrapped) {
             return;
         }
-        defaultsBootstrapped = true;
+        synchronized (ScreenTransitionRegistry.class) {
+            if (defaultsBootstrapped) {
+                return;
+            }
+            bootstrapDefaultsLocked();
+            defaultsBootstrapped = true;
+        }
+    }
 
+    private static void bootstrapDefaultsLocked() {
         register(InspectScreen.class, TransitionConfig.of(
             InspectScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
         ));
