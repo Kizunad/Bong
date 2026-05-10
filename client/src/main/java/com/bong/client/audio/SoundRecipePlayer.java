@@ -47,17 +47,26 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     @Override
     public boolean play(AudioEventPayload.PlaySoundRecipe payload) {
-        payload.recipe().loop().ifPresent(loop -> loops.put(payload.instanceId(), new ActiveLoop(
-            payload,
-            tick + loop.intervalTicks()
-        )));
+        payload.recipe().loop().ifPresent(loop -> {
+            String whileFlag = payload.flag().orElse(loop.whileFlag());
+            payload.flag().ifPresent(EnvironmentAudioLoopState::activate);
+            loops.put(payload.instanceId(), new ActiveLoop(
+                payload,
+                tick + loop.intervalTicks(),
+                whileFlag,
+                payload.flag().orElse(null)
+            ));
+        });
         enqueue(payload);
         return true;
     }
 
     @Override
     public boolean stop(AudioEventPayload.StopSoundRecipe payload) {
-        loops.remove(payload.instanceId());
+        ActiveLoop removed = loops.remove(payload.instanceId());
+        if (removed != null) {
+            removed.deactivateOwnedFlag();
+        }
         sink.stop(payload.instanceId(), payload.fadeOutTicks());
         return true;
     }
@@ -69,8 +78,8 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         while (iterator.hasNext()) {
             Map.Entry<Long, ActiveLoop> entry = iterator.next();
             ActiveLoop active = entry.getValue();
-            String flag = active.payload.recipe().loop().map(AudioLoopConfig::whileFlag).orElse("");
-            if (!flagProvider.test(flag)) {
+            if (!flagProvider.test(active.whileFlag)) {
+                active.deactivateOwnedFlag();
                 iterator.remove();
                 continue;
             }
@@ -94,6 +103,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
                 boolean sameCategory = entry.getValue().payload.recipe().category() == payload.recipe().category();
                 boolean lowerPriority = entry.getValue().payload.recipe().priority() < payload.recipe().priority();
                 if (sameCategory && lowerPriority) {
+                    entry.getValue().deactivateOwnedFlag();
                     sink.stop(entry.getKey(), 0);
                     return true;
                 }
@@ -188,11 +198,26 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     private static final class ActiveLoop {
         final AudioEventPayload.PlaySoundRecipe payload;
+        final String whileFlag;
+        final String ownedFlag;
         long nextTick;
 
-        ActiveLoop(AudioEventPayload.PlaySoundRecipe payload, long nextTick) {
+        ActiveLoop(
+            AudioEventPayload.PlaySoundRecipe payload,
+            long nextTick,
+            String whileFlag,
+            String ownedFlag
+        ) {
             this.payload = payload;
             this.nextTick = nextTick;
+            this.whileFlag = whileFlag;
+            this.ownedFlag = ownedFlag;
+        }
+
+        void deactivateOwnedFlag() {
+            if (ownedFlag != null) {
+                EnvironmentAudioLoopState.deactivate(ownedFlag);
+            }
         }
     }
 }

@@ -29,7 +29,7 @@ use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
     DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
 };
-use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+use crate::network::audio_event_emit::{PlaySoundRecipeRequest, StopSoundRecipeRequest};
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, MeleeAttackAction, MeleeRangeScorer,
     RetireAction, WanderAction, WanderScorer,
@@ -55,6 +55,7 @@ const FUYA_CHARGE_MIN_RANGE: f32 = 5.0;
 const FUYA_CHARGE_MAX_RANGE: f32 = 12.0;
 const FUYA_DEFAULT_AURA_RADIUS: f32 = 8.0;
 const FUYA_DEFAULT_DRAIN_MULTIPLIER: f64 = 1.5;
+const FUYA_PRESSURE_AUDIO_FLAG_PREFIX: &str = "fauna_fuya_pressure";
 
 pub const DEFAULT_TSY_SPAWN_POOLS_PATH: &str = "tsy_spawn_pools.json";
 pub const DEFAULT_TSY_DROPS_PATH: &str = "tsy_drops.json";
@@ -401,6 +402,7 @@ pub fn register(app: &mut App) {
                 emit_tsy_hostile_spawn_summary
                     .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
                 emit_fuya_pressure_hum_audio_system,
+                stop_fuya_pressure_hum_audio_on_death_system,
                 handle_npc_death_drop,
             ),
         );
@@ -884,17 +886,57 @@ pub fn spawn_tsy_sentinel_at(
 }
 
 pub fn emit_fuya_pressure_hum_audio_system(
-    fuyas: Query<&Position, (With<FuyaAura>, Added<FuyaAura>)>,
+    fuyas: Query<(Entity, &Position), (With<FuyaAura>, Added<FuyaAura>)>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
-    for position in &fuyas {
-        audio_events.send(play_audio(
-            "fauna_fuya_pressure_hum",
-            position.get(),
-            1.0,
-            0.0,
-        ));
+    for (fuya, position) in &fuyas {
+        let pos = position.get();
+        audio_events.send(PlaySoundRecipeRequest {
+            recipe_id: "fauna_fuya_pressure_hum".to_string(),
+            instance_id: fuya_pressure_audio_instance_id(fuya),
+            pos: Some([
+                pos.x.floor() as i32,
+                pos.y.floor() as i32,
+                pos.z.floor() as i32,
+            ]),
+            flag: Some(fuya_pressure_audio_flag(fuya)),
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: crate::network::audio_event_emit::AudioRecipient::Radius {
+                origin: pos,
+                radius: 64.0,
+            },
+        });
     }
+}
+
+pub fn stop_fuya_pressure_hum_audio_on_death_system(
+    mut deaths: EventReader<crate::combat::events::DeathEvent>,
+    fuyas: Query<(), With<FuyaAura>>,
+    mut audio_events: EventWriter<StopSoundRecipeRequest>,
+) {
+    for death in deaths.read() {
+        if fuyas.get(death.target).is_err() {
+            continue;
+        }
+        audio_events.send(StopSoundRecipeRequest {
+            instance_id: fuya_pressure_audio_instance_id(death.target),
+            fade_out_ticks: 20,
+            recipient: crate::network::audio_event_emit::AudioRecipient::All,
+        });
+    }
+}
+
+fn fuya_pressure_audio_instance_id(fuya: Entity) -> u64 {
+    fuya.to_bits().max(1)
+}
+
+fn fuya_pressure_audio_flag(fuya: Entity) -> String {
+    format!(
+        "{}:{}",
+        FUYA_PRESSURE_AUDIO_FLAG_PREFIX,
+        fuya_pressure_audio_instance_id(fuya)
+    )
 }
 
 fn spawn_zombie_shell(
@@ -1958,8 +2000,10 @@ mod tests {
             valence::prelude::Update,
             emit_fuya_pressure_hum_audio_system,
         );
-        app.world_mut()
-            .spawn((Position::new([0.0, 64.0, 0.0]), FuyaAura::default()));
+        let fuya = app
+            .world_mut()
+            .spawn((Position::new([0.0, 64.0, 0.0]), FuyaAura::default()))
+            .id();
 
         app.update();
 
@@ -1971,6 +2015,46 @@ mod tests {
             .next()
             .expect("new Fuya aura should emit pressure hum");
         assert_eq!(event.recipe_id, "fauna_fuya_pressure_hum");
+        assert_eq!(event.instance_id, fuya_pressure_audio_instance_id(fuya));
+        assert_eq!(
+            event.flag.as_deref(),
+            Some(fuya_pressure_audio_flag(fuya).as_str())
+        );
+    }
+
+    #[test]
+    fn fuya_pressure_hum_stops_on_death() {
+        let mut app = valence::prelude::App::new();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<StopSoundRecipeRequest>();
+        app.add_systems(
+            valence::prelude::Update,
+            stop_fuya_pressure_hum_audio_on_death_system,
+        );
+        let fuya = app
+            .world_mut()
+            .spawn((Position::new([0.0, 64.0, 0.0]), FuyaAura::default()))
+            .id();
+        app.world_mut()
+            .send_event(crate::combat::events::DeathEvent {
+                target: fuya,
+                cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 1,
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StopSoundRecipeRequest>>();
+        let event = events
+            .iter_current_update_events()
+            .next()
+            .expect("Fuya death should stop pressure hum loop");
+        assert_eq!(event.instance_id, fuya_pressure_audio_instance_id(fuya));
+        assert_eq!(event.fade_out_ticks, 20);
     }
 
     #[test]
