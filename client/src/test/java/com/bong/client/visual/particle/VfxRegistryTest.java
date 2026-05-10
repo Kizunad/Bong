@@ -177,6 +177,28 @@ public class VfxRegistryTest {
             "bootstrap should register lingtian harvest rune");
         assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.DRAIN),
             "bootstrap should register lingtian drain rune");
+        assertTrue(VfxRegistry.instance().contains(CultivationAbsorbPlayer.EVENT_ID),
+            "bootstrap should register cultivation_absorb");
+        assertTrue(VfxRegistry.instance().contains(MeridianOpenFlashPlayer.EVENT_ID),
+            "bootstrap should register meridian_open");
+        assertTrue(VfxRegistry.instance().contains(BreakthroughFailPlayer.EVENT_ID),
+            "bootstrap should register breakthrough_fail");
+        assertTrue(VfxRegistry.instance().contains(CombatHitDirectionPlayer.HIT),
+            "bootstrap should register combat_hit");
+        assertTrue(VfxRegistry.instance().contains(CombatHitDirectionPlayer.PARRY),
+            "bootstrap should register combat_parry");
+        assertTrue(VfxRegistry.instance().contains(ForgeHammerStrikePlayer.HAMMER),
+            "bootstrap should register forge_hammer_strike");
+        assertTrue(VfxRegistry.instance().contains(AlchemyBrewVaporPlayer.BREW),
+            "bootstrap should register alchemy_brew_vapor");
+        assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.TILL),
+            "bootstrap should register lingtian_till");
+        assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.TRAP),
+            "bootstrap should register zhenfa_trap");
+        assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
+            "bootstrap should register social_niche_establish");
+        assertTrue(VfxRegistry.instance().contains(PoisonMistPlayer.EVENT_ID),
+            "bootstrap should register poison_mist");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 
