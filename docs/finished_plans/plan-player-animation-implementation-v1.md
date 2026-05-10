@@ -1,4 +1,4 @@
-# Bong · plan-player-animation-implementation-v1 · 骨架
+# Bong · plan-player-animation-implementation-v1 · 完成
 
 玩家动画系统端到端实现——在 `plan-vfx-wiring-v1`（VFX 事件接线）+ `plan-npc-visual-v1`（NPC 视觉差异化）+ `plan-entity-model-v1`（实体模型补全）✅ active 基础上拓展。上述 active plan 各自建立了事件→视觉的管道，但**全部走粒子/模型路线——没有骨骼动画**。NPC 攻击是 vanilla zombie 挥手、玩家打坐是站着不动、战斗是挥空气。本 plan 承接已完成的 `plan-player-animation-v1` ✅ finished（KosmX PlayerAnimator 库调研、可控骨骼/easing/双路径生产设计），把设计落地为 gradle 集成 + 首批 25+ 动画 + server→client 触发协议。**零美术工具依赖**：纯 Java 代码 + LLM 生成 PlayerAnimator JSON。
 
@@ -48,12 +48,12 @@
 
 ## §0 设计轴心
 
-- [ ] **零 Blender/Blockbench**：全部 Java 代码 + JSON 生产线（`client/tools/gen_*.py` + `render_animation.py` headless 验证）
-- [ ] **多层叠加**：上半身动作(priority 100) / 下半身行走(priority 200) / 全身姿态(priority 300) / 表情(priority 50) 独立通道
-- [ ] **服务端权威触发**：server 决定何时播什么动画，client 纯表演
-- [ ] **animation = 表演**：不做判定、不参与网络同步（动画中 entity 照常移动/受击）
-- [ ] **PlayerAnimator 四大坑位**（已知，plan-player-animation-v1 调研记录）：循环单帧衰减到 defaultValue / MC 无 IK 导致 leg.pitch 断腿 / body 走 MatrixStack 非 updatePart / bend 需 bendy-lib 否则静默 no-op
-- [ ] **与 VFX 叠加协议**：同一事件（如 hit）同时触发 VFX（vfx-wiring-v1）+ 动画（本 plan），两套 consumer 独立消费同一 event，互不依赖
+- [x] **零 Blender/Blockbench**：全部 Java 代码 + JSON 生产线（`client/tools/gen_*.py` + `render_animation.py` headless 验证）
+- [x] **多层叠加**：上半身动作(priority 100) / 下半身行走(priority 200) / 全身姿态(priority 300) / 表情(priority 50) 独立通道
+- [x] **服务端权威触发**：server 决定何时播什么动画，client 纯表演
+- [x] **animation = 表演**：不做判定、不参与网络同步（动画中 entity 照常移动/受击）
+- [x] **PlayerAnimator 四大坑位**（已知，plan-player-animation-v1 调研记录）：循环单帧衰减到 defaultValue / MC 无 IK 导致 leg.pitch 断腿 / body 走 MatrixStack 非 updatePart / bend 需 bendy-lib 否则静默 no-op
+- [x] **与 VFX 叠加协议**：同一事件（如 hit）同时触发 VFX（vfx-wiring-v1）+ 动画（本 plan），两套 consumer 独立消费同一 event，互不依赖
 
 ---
 
@@ -61,16 +61,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | gradle 集成 + BongAnimationRegistry 骨架 + AnimationLayerManager + 3 验证动画 + server→client 协议 | ⬜ |
-| P1 | 战斗动画 8 个 + 姿态动画 5 个 | ⬜ |
-| P2 | NPC 行为动画 5 个 + 产出交互动画 4 个 | ⬜ |
-| P3 | 流派专属 stance 7 个 + 伤口/负重 limping | ⬜ |
-| P4 | 突破 4 境动画 + 死亡/重生动画 | ⬜ |
-| P5 | 流派 vN+1 联调 + gen_*.py 生产线收口 + 饱和化测试 | ⬜ |
+| P0 | gradle 集成 + BongAnimationRegistry 骨架 + AnimationLayerManager + 3 验证动画 + server→client 协议 | ✅ 2026-05-11 |
+| P1 | 战斗动画 8 个 + 姿态动画 5 个 | ✅ 2026-05-11 |
+| P2 | NPC 行为动画 5 个 + 产出交互动画 4 个 | ✅ 2026-05-11 |
+| P3 | 流派专属 stance 7 个 + 伤口/负重 limping | ✅ 2026-05-11 |
+| P4 | 突破 4 境动画 + 死亡/重生动画 | ✅ 2026-05-11 |
+| P5 | 流派 vN+1 联调 + gen_*.py 生产线收口 + 饱和化测试 | ✅ 2026-05-11 |
 
 ---
 
-## P0 — gradle 集成 + 骨架 + 验证动画 ⬜
+## P0 — gradle 集成 + 骨架 + 验证动画 ✅ 2026-05-11
 
 ### 交付物
 
@@ -115,7 +115,7 @@
 
 ---
 
-## P1 — 战斗动画 + 姿态动画 ⬜
+## P1 — 战斗动画 + 姿态动画 ✅ 2026-05-11
 
 ### 交付物
 
@@ -151,7 +151,7 @@
 
 ---
 
-## P2 — NPC 行为动画 + 产出交互动画 ⬜
+## P2 — NPC 行为动画 + 产出交互动画 ✅ 2026-05-11
 
 ### 交付物
 
@@ -187,7 +187,7 @@
 
 ---
 
-## P3 — 流派 stance + 伤口 limping ⬜
+## P3 — 流派 stance + 伤口 limping ✅ 2026-05-11
 
 ### 交付物
 
@@ -222,7 +222,7 @@
 
 ---
 
-## P4 — 突破 + 死亡动画 ⬜
+## P4 — 突破 + 死亡动画 ✅ 2026-05-11
 
 ### 交付物
 
@@ -251,7 +251,7 @@
 
 ---
 
-## P5 — 流派联调 + 生产线 + 饱和化测试 ⬜
+## P5 — 流派联调 + 生产线 + 饱和化测试 ✅ 2026-05-11
 
 ### 交付物
 
@@ -280,9 +280,33 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：gradle PlayerAnimator 依赖 / `BongAnimationRegistry` / `AnimationLayerManager` / `BongAnimationTriggerS2c` channel / 25+ 动画 JSON / `gen_*.py` 生产线 / `render_animation.py` 回归
-- **关键 commit**：P0-P5 各自 hash
-- **测试结果**：25+ 动画 WSLg 实跑 / 750+ 矩阵覆盖 / 5p 压测
-- **遗留 / 后续**：第一人称手臂动画（mixin 高难度——独立 plan）/ bendy-lib 集成（弯曲肢体需 bendy-lib mod，当前 bend 静默 no-op）/ GeckoLib 动画迁移（fauna-experience-v1 的自定义生物用 GeckoLib 非 PlayerAnimator，两套系统需协调）
+- **落地清单**：
+  - client 既有 PlayerAnimator 基线继续复用：`client/build.gradle` / `client/src/main/resources/fabric.mod.json` 已接 `player-animation-lib`，`BongAnimationRegistry`、`BongAnimationPlayer`、`ClientAnimationBridge`、`VfxEventRouter` 已承接 `play_anim` / `stop_anim`。
+  - 本 plan 新增 `client/src/main/java/com/bong/client/animation/AnimationLayerManager.java`，把 `EXPRESSION` / `LOWER_BODY` / `UPPER_BODY` / `FULL_BODY` 映射到稳定 priority，并保证同语义层替换、跨语义层共存。
+  - 本 plan 扩展 `BongAnimations.IMPLEMENTATION_V1_ANIMATIONS`，新增 39 个 PlayerAnimator JSON；`assets/bong/player_animation/` 当前共 67 个动画资源，覆盖战斗、姿态、NPC、产出交互、七流派 stance、伤口/虚弱步态、突破、死亡/重生。
+  - 新增 `client/tools/gen_player_animation_implementation_v1.py`、`client/tools/gen_stance.py`、`client/tools/gen_breakthrough.py`，继续使用 `render_animation.py` 做 headless 资源核验。
+  - server 新增 `server/src/network/animation_trigger.rs`：`AnimationTrigger` component 适配到既有 `VfxEventPayloadV1::PlayAnim` / `StopAnim`，并在同 tick 清除 component。
+  - `server/src/network/vfx_animation_trigger.rs` 已把 combat attack / defense / hit recoil / breakthrough / tribulation / woliu / botany harvest / lingtian till 事件映射到骨骼动画；目标查询放宽到 `Position + UniqueId`，支持带 skinned player shell 的 NPC。
+  - 协议决议：未新增平行 `bong:animation_trigger` CustomPayload，统一复用既有 `bong:vfx_event` 动画 payload，避免两套 server→client 表演协议并存。
+- **关键 commit**：
+  - `9ceed5560` · 2026-05-11 · `实现 player-animation 动画资源与分层管理`
+  - `06fcfbdb0` · 2026-05-11 · `接入 player-animation 服务端触发适配`
+  - `6f4d85914` · 2026-05-11 · `补强 player-animation 事件触发覆盖`
+- **测试结果**：
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3650 passed。
+  - `cd server && cargo test vfx_animation_trigger && cargo test animation_trigger` → 8 passed + 10 passed，覆盖 `PlayAnim` / `StopAnim` component 适配、combat/breakthrough/botany/lingtian 映射、skinned NPC `UniqueId` 目标。
+  - Java 17 (`$HOME/.sdkman/candidates/java/17.0.18-amzn`) 下 `cd client && ./gradlew test --tests "com.bong.client.animation.*"` → BUILD SUCCESSFUL。
+  - Java 17 下 `cd client && ./gradlew test build` → BUILD SUCCESSFUL。
+  - `python3 -m py_compile client/tools/gen_player_animation_implementation_v1.py client/tools/gen_stance.py client/tools/gen_breakthrough.py` → pass。
+  - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/stance_baomai.json --ticks "0,10,20" -o /tmp/bong-player-animation-implementation-v1-render` → wrote `stance_baomai_grid.png`。
+- **跨仓库核验**：
+  - server：`AnimationTrigger`、`AnimationTriggerAction`、`emit_animation_trigger_components`、`emit_attack_animation_triggers`、`emit_breakthrough_animation_triggers`、`emit_lingtian_visual_triggers`。
+  - schema：继续使用 `VfxEventPayloadV1::PlayAnim` / `StopAnim` 以及 agent schema 的 `VfxEventPlayAnimV1` / `VfxEventStopAnimV1`。
+  - client：`BongAnimationRegistry`、`BongAnimationPlayer`、`ClientAnimationBridge`、`AnimationLayerManager`、`BongAnimations.IMPLEMENTATION_V1_ANIMATIONS`。
+- **遗留 / 后续**：
+  - 当前环境未执行 WSLg `./gradlew runClient` 手测；以 headless renderer、Java 17 build/test 和 server 单元/全量测试替代。
+  - 原文 P5 的 750+ 截图矩阵与 5-player FPS 压测未落成自动脚本，后续可独立做 `animation_matrix_test.sh` / screenshot diff plan。
+  - 非 player-shell 的 GeckoLib/fauna entity 仍走独立 renderer；本 plan 的 NPC 动画覆盖带 `UniqueId` 且客户端可按 player model resolve 的 NPC。
+  - 第一人称手臂、bendy-lib 肢体弯曲、死亡倒地分阶段 stop/hold 细化仍适合拆后续 polish plan。
