@@ -171,12 +171,13 @@
   - `85b61a167` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
   - `088c27245` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐盔甲破碎音频分类`
   - `c90e47ea3` · 2026-05-11 · `fix(plan-armor-visual-v1): 收敛 review 边界反馈`
+  - `b78d0f296` · 2026-05-11 · `fix(plan-armor-visual-v1): 补齐盔甲配方预览分类`
 - **测试结果**：
-  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 3987 passed。
+  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 4049 passed。
   - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）：通过，BUILD SUCCESSFUL。
-  - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（336 files）。
+  - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（338 files）。
   - `npm run build`（agent）：通过。
-  - `npm test`（agent/packages/schema）：通过，16 files / 355 tests。
+  - `npm test`（agent/packages/schema）：通过，17 files / 360 tests。
   - `git diff --check`：通过。
 - **跨仓库核验**：
   - server：`register_mundane_armors` / `register_mundane_armor_recipes` / `CraftCategory::ArmorCraft` / `AudioSoundCategory::Players` / `armor_break`。
