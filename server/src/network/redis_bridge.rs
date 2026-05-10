@@ -32,11 +32,12 @@ use crate::schema::channels::{
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_VOID_ACTION_BARRIER,
-    CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
-    CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
-    CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT,
-    CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
+    CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
+    CH_VOID_ACTION_SUPPRESS_TSY, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
+    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
+    CH_ZONE_ENVIRONMENT_UPDATE,
     CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
@@ -82,6 +83,7 @@ use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, Tribulat
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
+use crate::schema::tuike_v2::TuikeSkillEventV1;
 use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCastV1};
@@ -194,6 +196,7 @@ pub enum RedisOutbound {
     AnqiCarrierAbrasion(CarrierAbrasionEventV1),
     AnqiContainerSwap(ContainerSwapEventV1),
     TuikeShed(ShedEventV1),
+    TuikeV2SkillEvent(TuikeSkillEventV1),
     YidaoEvent(YidaoEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
     WantedPlayer(WantedPlayerEventV1),
@@ -1237,6 +1240,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_TUIKE_SHED,
+                payload,
+            })
+        }
+        RedisOutbound::TuikeV2SkillEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TuikeSkillEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TUIKE_V2_SKILL_EVENT,
                 payload,
             })
         }

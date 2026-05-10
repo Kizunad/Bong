@@ -28,7 +28,7 @@ impl Default for KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 25] = [
+const TECHNIQUE_IDS: [&str; 28] = [
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -48,6 +48,9 @@ const TECHNIQUE_IDS: [&str; 25] = [
     "woliu.heart",
     "dugu.shoot_needle",
     "dugu.infuse_poison",
+    "tuike.don",
+    "tuike.shed",
+    "tuike.transfer_taint",
     "anqi.charge_carrier",
     "anqi.single_snipe",
     "anqi.multi_shot",
@@ -77,7 +80,7 @@ pub struct TechniqueRequiredMeridian {
     pub min_health: f32,
 }
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 25] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 28] = [
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -373,6 +376,45 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 25] = [
         cooldown_ticks: 40,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/dugu_infuse_poison.png",
+    },
+    TechniqueDefinition {
+        id: "tuike.don",
+        display_name: "着壳",
+        grade: "yellow",
+        description: "把当前伪灵皮贴入气息外壳，形成可蜕落的钱包防线。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        cast_ticks: 12,
+        cooldown_ticks: 20,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/skill/tuike_don.png",
+    },
+    TechniqueDefinition {
+        id: "tuike.shed",
+        display_name: "蜕一层",
+        grade: "profound",
+        description: "弃掉最外层伪皮，带走承载的伤与污染，启动成本走当前真元池。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        cast_ticks: 8,
+        cooldown_ticks: 160,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/skill/tuike_shed.png",
+    },
+    TechniqueDefinition {
+        id: "tuike.transfer_taint",
+        display_name: "转移污染",
+        grade: "profound",
+        description: "把经脉里已入侵的异种真元推到伪皮，化虚上古皮可吸永久标记。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        cast_ticks: 10,
+        cooldown_ticks: 600,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png",
     },
     TechniqueDefinition {
         id: "anqi.charge_carrier",

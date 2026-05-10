@@ -143,6 +143,12 @@ public class VfxRegistryTest {
             "bootstrap should register fauna_bone_shatter");
         assertTrue(VfxRegistry.instance().contains(SpiderShimmerPlayer.EVENT_ID),
             "bootstrap should register spider_shimmer");
+        assertTrue(VfxRegistry.instance().contains(TuikeFalseSkinParticlePlayer.DON_DUST),
+            "bootstrap should register false_skin_don_dust");
+        assertTrue(VfxRegistry.instance().contains(TuikeFalseSkinParticlePlayer.SHED_BURST),
+            "bootstrap should register false_skin_shed_burst");
+        assertTrue(VfxRegistry.instance().contains(TuikeFalseSkinParticlePlayer.ANCIENT_GLOW),
+            "bootstrap should register ancient_skin_glow");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MERIDIAN_REPAIR),
             "bootstrap should register yidao_meridian_repair");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.CONTAM_PURGE),

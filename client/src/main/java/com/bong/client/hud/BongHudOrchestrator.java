@@ -217,6 +217,16 @@ public final class BongHudOrchestrator {
                 screenHeight,
                 nowMillis
             ));
+            commands.addAll(FalseSkinStackHud.buildCommands(
+                com.bong.client.combat.store.FalseSkinHudStateStore.snapshot(),
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(ContamLoadHud.buildCommands(
+                com.bong.client.combat.store.FalseSkinHudStateStore.snapshot(),
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(ChargingProgressBarHud.buildCommands(screenWidth, screenHeight));
             commands.addAll(ExhaustedGreyOverlay.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(YidaoHudPlanner.buildCommands(

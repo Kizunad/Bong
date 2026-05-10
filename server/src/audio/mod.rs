@@ -171,8 +171,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            67,
-            "audio registry should include MVP cues plus JueBi, botany visual cues, TSY experience, fauna-experience-v1 creature recipes, dugu-v2 recipes, and NPC engagement cues"
+            70,
+            "audio registry should include MVP cues plus JueBi, botany visual cues, TSY experience, fauna-experience-v1 creature recipes, dugu-v2 recipes, NPC engagement cues, and tuike-v2 recipes"
         );
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
@@ -187,6 +187,9 @@ mod tests {
         assert!(registry.get("vortex_qi_siphon").is_some());
         assert!(registry.get("lingtian_plant_seed").is_some());
         assert!(registry.get("lingtian_drain").is_some());
+        assert!(registry.get("don_skin_low_thud").is_some());
+        assert!(registry.get("shed_skin_burst").is_some());
+        assert!(registry.get("contam_transfer_hum").is_some());
         assert!(registry.get("ground_crack_rumble").is_some());
         assert!(registry.get("pillar_eruption_boom").is_some());
         assert!(registry.get("pressure_collapse_whoosh").is_some());

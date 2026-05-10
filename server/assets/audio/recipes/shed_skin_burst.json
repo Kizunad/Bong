@@ -1,0 +1,11 @@
+{
+  "id": "shed_skin_burst",
+  "layers": [
+    { "sound": "minecraft:item.armor.equip_leather", "volume": 0.48, "pitch": 0.58, "delay_ticks": 0 },
+    { "sound": "minecraft:block.hanging_roots.break", "volume": 0.6, "pitch": 0.7, "delay_ticks": 1 },
+    { "sound": "minecraft:entity.player.attack.sweep", "volume": 0.35, "pitch": 0.62, "delay_ticks": 2 }
+  ],
+  "priority": 66,
+  "attenuation": "world_3d",
+  "category": "PLAYERS"
+}

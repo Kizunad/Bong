@@ -1,0 +1,127 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "caster_id",
+    "skill_id",
+    "tier",
+    "layers_after",
+    "contam_moved_percent",
+    "permanent_absorbed",
+    "qi_cost",
+    "tick",
+    "animation_id",
+    "particle_id",
+    "sound_recipe_id",
+    "icon_texture"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "tuike_v2_skill_event",
+      "type": "string"
+    },
+    "caster_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "skill_id": {
+      "anyOf": [
+        {
+          "const": "don",
+          "type": "string"
+        },
+        {
+          "const": "shed",
+          "type": "string"
+        },
+        {
+          "const": "transfer_taint",
+          "type": "string"
+        }
+      ]
+    },
+    "tier": {
+      "anyOf": [
+        {
+          "const": "fan",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "type": "string"
+        },
+        {
+          "const": "mid",
+          "type": "string"
+        },
+        {
+          "const": "heavy",
+          "type": "string"
+        },
+        {
+          "const": "ancient",
+          "type": "string"
+        }
+      ]
+    },
+    "layers_after": {
+      "minimum": 0,
+      "maximum": 3,
+      "type": "integer"
+    },
+    "contam_moved_percent": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "permanent_absorbed": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "qi_cost": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "damage_absorbed": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "damage_overflow": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "contam_load": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "active_shed": {
+      "type": "boolean"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "animation_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "particle_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "sound_recipe_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "icon_texture": {
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

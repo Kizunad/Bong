@@ -10,6 +10,7 @@ use crate::botany::components::HarvestTerminalEvent;
 use crate::botany::lifecycle::botany_quality_color;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
+use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed};
@@ -39,6 +40,7 @@ const LINGTIAN_REPLENISH_VFX: &str = "bong:lingtian_replenish";
 const LINGTIAN_HARVEST_VFX: &str = "bong:lingtian_harvest";
 const LINGTIAN_DRAIN_VFX: &str = "bong:lingtian_drain";
 const WOLIU_PRIORITY: u16 = 1300;
+const TUIKE_PRIORITY: u16 = 1350;
 
 const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
@@ -287,6 +289,55 @@ pub fn emit_lingtian_visual_triggers(
     }
 }
 
+pub fn emit_tuike_v2_visual_triggers(
+    mut don_events: EventReader<DonFalseSkinEvent>,
+    mut shed_events: EventReader<FalseSkinSheddedEvent>,
+    mut transfer_events: EventReader<ContamTransferredEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in don_events.read() {
+        emit_tuike_visual_for_entity(
+            event.caster,
+            &event.visual,
+            "#D8C08A",
+            10,
+            &players,
+            &mut vfx_events,
+        );
+    }
+    for event in shed_events.read() {
+        let color = if event.permanent_taint_load > 0.0 {
+            "#BFD8FF"
+        } else {
+            "#B58B5A"
+        };
+        emit_tuike_visual_for_entity(
+            event.owner,
+            &event.visual,
+            color,
+            18,
+            &players,
+            &mut vfx_events,
+        );
+    }
+    for event in transfer_events.read() {
+        let color = if event.permanent_absorbed > 0.0 {
+            "#9EC7FF"
+        } else {
+            "#7B5B8C"
+        };
+        emit_tuike_visual_for_entity(
+            event.caster,
+            &event.visual,
+            color,
+            12,
+            &players,
+            &mut vfx_events,
+        );
+    }
+}
+
 fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
     match skill {
         WoliuSkillId::Hold => "#244872",
@@ -370,6 +421,41 @@ fn breakthrough_anim_for_outcome(outcome: &BreakthroughOutcome) -> &'static str 
         ) => ANIM_BREAKTHROUGH_GUYUAN,
         _ => ANIM_BREAKTHROUGH_TONGLING,
     }
+}
+
+fn emit_tuike_visual_for_entity(
+    entity: valence::prelude::Entity,
+    visual: &crate::combat::tuike_v2::events::TuikeSkillVisualPayload,
+    color: &str,
+    count: u16,
+    players: &Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok((position, unique_id)) = players.get(entity) else {
+        return;
+    };
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::PlayAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: visual.animation_id.clone(),
+            priority: TUIKE_PRIORITY,
+            fade_in_ticks: Some(2),
+        },
+    ));
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: visual.particle_id.clone(),
+            origin: [origin.x, origin.y + 1.0, origin.z],
+            direction: None,
+            color: Some(color.to_string()),
+            strength: Some(0.8),
+            count: Some(count),
+            duration_ticks: Some(36),
+        },
+    ));
 }
 
 fn emit_play_for_entity(

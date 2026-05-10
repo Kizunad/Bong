@@ -1,0 +1,10 @@
+{
+  "id": "don_skin_low_thud",
+  "layers": [
+    { "sound": "minecraft:block.wool.place", "volume": 0.55, "pitch": 0.72, "delay_ticks": 0 },
+    { "sound": "minecraft:item.armor.equip_leather", "volume": 0.35, "pitch": 0.82, "delay_ticks": 1 }
+  ],
+  "priority": 58,
+  "attenuation": "world_3d",
+  "category": "PLAYERS"
+}

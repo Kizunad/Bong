@@ -324,6 +324,13 @@ import {
   ShedEventV1,
 } from "./tuike.js";
 import {
+  FalseSkinLayerStateV1,
+  FalseSkinStackStateV1,
+  FalseSkinTierV1,
+  TuikeV2SkillEventV1,
+  TuikeV2SkillIdV1,
+} from "./tuike-v2.js";
+import {
   ProjectileQiDrainedEventV1,
   VortexBackfireEventV1,
   VortexFieldStateV1,
@@ -635,6 +642,11 @@ export const SCHEMA_REGISTRY = {
   falseSkinKindV1: FalseSkinKindV1,
   falseSkinStateV1: FalseSkinStateV1,
   shedEventV1: ShedEventV1,
+  tuikeV2SkillIdV1: TuikeV2SkillIdV1,
+  falseSkinTierV1: FalseSkinTierV1,
+  tuikeV2SkillEventV1: TuikeV2SkillEventV1,
+  falseSkinLayerStateV1: FalseSkinLayerStateV1,
+  falseSkinStackStateV1: FalseSkinStackStateV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
   yidaoSkillIdV1: YidaoSkillIdV1,
   yidaoEventKindV1: YidaoEventKindV1,
@@ -882,6 +894,8 @@ export const GENERATED_SCHEMA_FILES = {
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "zhenmai-skill-event-v1.json": SCHEMA_REGISTRY.zhenmaiSkillEventV1,
   "zhenfa-v2-event-v1.json": SCHEMA_REGISTRY.zhenfaV2EventV1,
+  "tuike-v2-skill-event-v1.json": SCHEMA_REGISTRY.tuikeV2SkillEventV1,
+  "false-skin-stack-state-v1.json": SCHEMA_REGISTRY.falseSkinStackStateV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
   "style-balance-telemetry-event-v1.json":

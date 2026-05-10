@@ -1,0 +1,10 @@
+{
+  "id": "contam_transfer_hum",
+  "layers": [
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.28, "pitch": 0.45, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.evoker.prepare_wololo", "volume": 0.22, "pitch": 0.78, "delay_ticks": 3 }
+  ],
+  "priority": 64,
+  "attenuation": "world_3d",
+  "category": "PLAYERS"
+}

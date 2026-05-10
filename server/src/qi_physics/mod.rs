@@ -34,9 +34,9 @@ pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
 pub use field::{
     density_amplifier, density_echo, inverse_diffusion, multi_point_dispersion,
-    reverse_burst_all_marks, sever_meridian, tiandao_signal_distort, DensityAmplifierOutcome,
-    DuguReverseBurstOutcome, EchoFractalOutcome, InverseDiffusionOutcome,
-    TiandaoSignalDistortionOutcome,
+    reverse_burst_all_marks, sever_meridian, shed_to_carrier, tiandao_signal_distort,
+    DensityAmplifierOutcome, DuguReverseBurstOutcome, EchoFractalOutcome,
+    InverseDiffusionOutcome, ShedToCarrierOutcome, TiandaoSignalDistortionOutcome,
 };
 pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,

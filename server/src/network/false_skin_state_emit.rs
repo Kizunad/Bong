@@ -6,6 +6,7 @@ use valence::prelude::{
 
 use crate::combat::components::Lifecycle;
 use crate::combat::tuike::{empty_false_skin_state, FalseSkin};
+use crate::combat::tuike_v2::{FalseSkinTier, StackedFalseSkins};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -28,6 +29,20 @@ type AnyClient<'a> = (
     &'a mut Client,
     &'a Username,
     Option<&'a FalseSkin>,
+    Option<&'a Lifecycle>,
+);
+type ChangedStackedFalseSkinClient<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Username,
+    &'a StackedFalseSkins,
+    Option<&'a Lifecycle>,
+);
+type AnyStackedClient<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Username,
+    Option<&'a StackedFalseSkins>,
     Option<&'a Lifecycle>,
 );
 
@@ -71,6 +86,51 @@ pub fn emit_false_skin_state_payloads(
     }
 }
 
+#[allow(clippy::type_complexity)]
+pub fn emit_tuike_v2_false_skin_state_payloads(
+    mut clients: ParamSet<(
+        Query<ChangedStackedFalseSkinClient<'static>, (With<Client>, Changed<StackedFalseSkins>)>,
+        Query<AnyStackedClient<'static>, With<Client>>,
+    )>,
+    npc_markers: Query<(), With<NpcMarker>>,
+    mut removed: RemovedComponents<StackedFalseSkins>,
+) {
+    {
+        let mut changed = clients.p0();
+        for (entity, mut client, username, stack, lifecycle) in &mut changed {
+            let target_id = target_id_for(entity, username, lifecycle, &npc_markers);
+            send_false_skin_state(
+                entity,
+                &mut client,
+                username,
+                stacked_state_payload(target_id, stack),
+            );
+        }
+    }
+
+    let removed_entities = removed.read().collect::<Vec<_>>();
+    if removed_entities.is_empty() {
+        return;
+    }
+
+    let mut all = clients.p1();
+    for entity in removed_entities {
+        let Ok((entity, mut client, username, stack, lifecycle)) = all.get_mut(entity) else {
+            continue;
+        };
+        if stack.is_some() {
+            continue;
+        }
+        let target_id = target_id_for(entity, username, lifecycle, &npc_markers);
+        send_false_skin_state(
+            entity,
+            &mut client,
+            username,
+            empty_false_skin_state(target_id),
+        );
+    }
+}
+
 fn send_false_skin_state(
     entity: Entity,
     client: &mut Client,
@@ -95,6 +155,31 @@ fn send_false_skin_state(
         username.0,
         state.layers_remaining,
     );
+}
+
+fn stacked_state_payload(target_id: String, stack: &StackedFalseSkins) -> FalseSkinStateV1 {
+    let outer = stack.outer();
+    FalseSkinStateV1 {
+        target_id,
+        kind: outer.map(|layer| false_skin_kind_for_tier(layer.tier)),
+        layers_remaining: stack.layer_count().min(3) as u8,
+        contam_capacity_per_layer: outer
+            .map(|layer| layer.contam_capacity_percent())
+            .unwrap_or(0.0),
+        absorbed_contam: outer.map(|layer| layer.contam_load).unwrap_or(0.0),
+        equipped_at_tick: outer.map(|layer| layer.equipped_at_tick).unwrap_or(0),
+    }
+}
+
+fn false_skin_kind_for_tier(tier: FalseSkinTier) -> crate::schema::tuike::FalseSkinKindV1 {
+    match tier {
+        FalseSkinTier::Fan | FalseSkinTier::Light => {
+            crate::schema::tuike::FalseSkinKindV1::SpiderSilk
+        }
+        FalseSkinTier::Mid | FalseSkinTier::Heavy | FalseSkinTier::Ancient => {
+            crate::schema::tuike::FalseSkinKindV1::RottenWoodArmor
+        }
+    }
 }
 
 fn target_id_for(
