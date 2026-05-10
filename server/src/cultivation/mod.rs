@@ -562,14 +562,25 @@ fn attach_cultivation_to_joined_clients(
         let restored_juebi_runtime = active_tribulation
             .as_ref()
             .filter(|record| record.kind == "jue_bi")
-            .map(|record| JueBiRuntimeContext {
-                source: JueBiTriggerSource::from_wire_name(record.source.as_str())
-                    .unwrap_or(JueBiTriggerSource::VoidQuotaExceeded),
-                intensity: if record.intensity > 0.0 {
-                    record.intensity
-                } else {
-                    tribulation::JUEBI_INTENSITY_BASE
-                },
+            .map(|record| {
+                let source = JueBiTriggerSource::from_wire_name(record.source.as_str())
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            "[bong][cultivation] unknown JueBi trigger source `{}` for active tribulation char_id={} kind={}; falling back to void_quota_exceeded",
+                            record.source,
+                            record.char_id,
+                            record.kind,
+                        );
+                        JueBiTriggerSource::VoidQuotaExceeded
+                    });
+                JueBiRuntimeContext {
+                    source,
+                    intensity: if record.intensity > 0.0 {
+                        record.intensity
+                    } else {
+                        tribulation::JUEBI_INTENSITY_BASE
+                    },
+                }
             });
         if active_tribulation
             .as_ref()

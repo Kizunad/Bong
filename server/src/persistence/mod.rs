@@ -1474,8 +1474,20 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 "
                 ALTER TABLE tribulations_active
                 ADD COLUMN epicenter_x REAL NOT NULL DEFAULT 0.0;
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "epicenter_y") {
+            transaction.execute_batch(
+                "
                 ALTER TABLE tribulations_active
                 ADD COLUMN epicenter_y REAL NOT NULL DEFAULT 64.0;
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "epicenter_z") {
+            transaction.execute_batch(
+                "
                 ALTER TABLE tribulations_active
                 ADD COLUMN epicenter_z REAL NOT NULL DEFAULT 0.0;
                 ",
@@ -6438,6 +6450,77 @@ mod persistence_tests {
             .optional()
             .expect("sqlite_master tribulations_active query should succeed");
         assert_eq!(exists.as_deref(), Some("tribulations_active"));
+    }
+
+    #[test]
+    fn v21_migration_backfills_partial_juebi_epicenter_columns() {
+        let db_path = database_path("v21-partial-juebi-epicenter");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE tribulations_active (
+                    char_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT 'du_xu',
+                    source TEXT NOT NULL DEFAULT '',
+                    wave_current INTEGER NOT NULL CHECK (wave_current >= 0),
+                    waves_total INTEGER NOT NULL CHECK (waves_total > 0),
+                    started_tick INTEGER NOT NULL CHECK (started_tick >= 0),
+                    epicenter_x REAL NOT NULL DEFAULT 0.0,
+                    intensity REAL NOT NULL DEFAULT 0.0,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                INSERT INTO tribulations_active (
+                    char_id,
+                    kind,
+                    source,
+                    wave_current,
+                    waves_total,
+                    started_tick,
+                    epicenter_x,
+                    intensity,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (
+                    'offline:Azure',
+                    'jue_bi',
+                    'void_action_explode_zone',
+                    2,
+                    3,
+                    120,
+                    12.0,
+                    1.6,
+                    1,
+                    1
+                );
+                PRAGMA user_version = 20;
+                ",
+            )
+            .expect("partial v20 tribulation table should be created");
+
+        apply_migrations(&mut connection).expect("partial v20 table should migrate to v21");
+
+        for column in ["epicenter_x", "epicenter_y", "epicenter_z"] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('tribulations_active') WHERE name = ?1",
+                    params![column],
+                    |row| row.get(0),
+                )
+                .expect("tribulations_active column query should succeed");
+            assert_eq!(count, 1, "{column} should exist after v21 migration");
+        }
+        let active = load_active_tribulation_from_connection(&connection, "offline:Azure")
+            .expect("active tribulation query should succeed")
+            .expect("legacy active row should survive migration");
+        assert_eq!(active.kind, "jue_bi");
+        assert_eq!(active.epicenter, [12.0, 64.0, 0.0]);
+        assert_eq!(active.intensity, 1.6);
+
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
     }
 
     #[test]
