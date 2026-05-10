@@ -173,6 +173,14 @@ public enum BongEntityModelKind {
         float shadowRadius,
         String... textureStates
     ) {
+        if (textureStates == null || textureStates.length == 0) {
+            throw new IllegalArgumentException("textureStates must not be empty for " + entityId);
+        }
+        for (String textureState : textureStates) {
+            if (textureState == null || textureState.isBlank()) {
+                throw new IllegalArgumentException("textureStates must not contain blank values for " + entityId);
+            }
+        }
         this.entityId = entityId;
         this.blockbenchFileName = blockbenchFileName;
         this.expectedRawId = expectedRawId;

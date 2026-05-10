@@ -46,7 +46,12 @@ public final class BongModeledEntity extends Entity implements GeoEntity {
     }
 
     public void setVisualState(int visualState) {
-        dataTracker.set(VISUAL_STATE, Math.floorMod(visualState, modelKind.stateCount()));
+        int stateCount = modelKind.stateCount();
+        if (stateCount <= 0) {
+            dataTracker.set(VISUAL_STATE, 0);
+            return;
+        }
+        dataTracker.set(VISUAL_STATE, Math.floorMod(visualState, stateCount));
     }
 
     @Override

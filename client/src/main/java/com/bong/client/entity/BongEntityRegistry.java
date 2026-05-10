@@ -31,7 +31,11 @@ public final class BongEntityRegistry {
                     kind.expectedRawId(),
                     rawId
                 );
-                return;
+                throw new IllegalStateException(
+                    "Entity raw_id mismatch for " + kind.identifier()
+                        + " expected=" + kind.expectedRawId()
+                        + " actual=" + rawId
+                );
             }
             LOGGER.info("[bong][entity-model] registered {} raw_id={}", kind.identifier(), rawId);
         });

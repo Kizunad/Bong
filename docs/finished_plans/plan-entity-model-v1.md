@@ -183,12 +183,12 @@
 
 ### 测试结果
 
-- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test`
+- `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test`
   - `BUILD SUCCESSFUL`
   - `client/build/test-results/test`: `tests=997 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelRegistryTest`: `tests=9 failures=0 errors=0 skipped=0`
   - 新增 `BongEntityModelAssetTest`: `tests=4 failures=0 errors=0 skipped=0`
-- `cd client && JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build`
+- `cd client && export JAVA_HOME="${JAVA_HOME:-$HOME/.sdkman/candidates/java/17.0.18-amzn}" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build`
   - `BUILD SUCCESSFUL`
 
 ### 跨仓库核验

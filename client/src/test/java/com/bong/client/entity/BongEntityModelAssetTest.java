@@ -10,9 +10,21 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongEntityModelAssetTest {
-    private static final Path CLIENT_ROOT = Path.of(".");
+    private static final Path CLIENT_ROOT = resolveClientRoot();
     private static final Path RESOURCES = CLIENT_ROOT.resolve(Path.of("src", "main", "resources"));
-    private static final Path LOCAL_MODELS = Path.of("..", "local_models");
+    private static final Path LOCAL_MODELS = CLIENT_ROOT.getParent().resolve("local_models");
+
+    private static Path resolveClientRoot() {
+        Path cwd = Path.of("").toAbsolutePath().normalize();
+        if (Files.isDirectory(cwd.resolve(Path.of("src", "main", "resources")))) {
+            return cwd;
+        }
+        Path nestedClient = cwd.resolve("client");
+        if (Files.isDirectory(nestedClient.resolve(Path.of("src", "main", "resources")))) {
+            return nestedClient;
+        }
+        throw new IllegalStateException("Cannot locate client module root from " + cwd);
+    }
 
     @Test
     void blockbenchSourcesExistForEveryGameEntity() {
