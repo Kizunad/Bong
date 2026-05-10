@@ -33,6 +33,8 @@ public class NpcNametagRendererTest {
         assertEquals("[散修·凝脉]", NpcNametagRenderer.labelForDistance(metadata, 19.0, "凝脉"));
         assertEquals("散", NpcNametagRenderer.labelForDistance(metadata, 25.0, "凝脉"));
         assertEquals("", NpcNametagRenderer.labelForDistance(metadata, 40.0, "凝脉"));
-        assertTrue(NpcNametagRenderer.labelForDistance(metadata, 19.0, "引气").startsWith("⚠ "));
+        assertEquals("[散修·凝脉]", NpcNametagRenderer.labelForDistance(metadata, 19.0, "引气"));
+        assertTrue(NpcNametagRenderer.labelForDistance(metadata, 19.0, "Awaken").startsWith("⚠ "));
+        assertEquals("[散修·凝脉]", NpcNametagRenderer.labelForDistance(metadata, 19.0, "Induce"));
     }
 }

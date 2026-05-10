@@ -72,7 +72,7 @@ public class BongNetworkHandler {
     }
 
     private static void registerNpcMetadataChannel() {
-        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "npc_metadata"), (client, handler, buf, responseSender) -> {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(NpcMetadataHandler.CHANNEL_NAMESPACE, NpcMetadataHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
             int readableBytes = buf.readableBytes();
             byte[] bytes = new byte[readableBytes];
             buf.readBytes(bytes);

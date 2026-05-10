@@ -11,6 +11,7 @@ use valence::prelude::{
 
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::identity::PlayerIdentities;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::npc::faction::{FactionId, FactionMembership, FactionRank};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
@@ -65,6 +66,7 @@ type ClientMetadataItem<'a> = (
     &'a mut Client,
     &'a Position,
     Option<&'a Cultivation>,
+    Option<&'a PlayerIdentities>,
 );
 type NpcMetadataItem<'a> = (
     Entity,
@@ -91,7 +93,9 @@ pub fn emit_npc_metadata_payloads(
 
     let mut active_pairs = HashSet::new();
     let radius_sq = NPC_METADATA_SYNC_RADIUS * NPC_METADATA_SYNC_RADIUS;
-    for (client_entity, mut client, client_position, player_cultivation) in &mut clients {
+    for (client_entity, mut client, client_position, player_cultivation, player_identities) in
+        &mut clients
+    {
         for (
             npc_entity,
             entity_id,
@@ -117,6 +121,7 @@ pub fn emit_npc_metadata_payloads(
                 membership,
                 lifespan,
                 player_cultivation,
+                player_identities,
             );
             let bytes = match metadata.to_json_bytes_checked() {
                 Ok(bytes) => bytes,
@@ -159,13 +164,12 @@ pub fn build_npc_metadata(
     membership: Option<&FactionMembership>,
     lifespan: Option<&NpcLifespan>,
     player_cultivation: Option<&Cultivation>,
+    player_identities: Option<&PlayerIdentities>,
 ) -> NpcMetadataS2c {
     let realm = cultivation
         .map(|cultivation| cultivation.realm)
         .unwrap_or(Realm::Awaken);
-    let reputation_to_player = membership
-        .map(reputation_to_player_score)
-        .unwrap_or_default();
+    let reputation_to_player = reputation_to_player_score_for_client(membership, player_identities);
     let faction_name = membership.map(|membership| faction_name(membership.faction_id).to_string());
     let faction_rank = membership.map(|membership| faction_rank_label(membership.rank).to_string());
     let display_name = display_name(archetype, realm, membership);
@@ -261,6 +265,22 @@ pub fn reputation_to_player_score(membership: &FactionMembership) -> i32 {
     ((membership.reputation.loyalty() - 0.5) * 200.0).round() as i32
 }
 
+pub fn reputation_to_player_score_for_client(
+    membership: Option<&FactionMembership>,
+    player_identities: Option<&PlayerIdentities>,
+) -> i32 {
+    let faction_baseline = membership
+        .map(reputation_to_player_score)
+        .unwrap_or_default();
+    let identity_reputation = player_identities
+        .and_then(PlayerIdentities::active)
+        .map(|identity| identity.reputation_score())
+        .unwrap_or_default();
+    faction_baseline
+        .saturating_add(identity_reputation)
+        .clamp(-100, 100)
+}
+
 fn age_band_for_lifespan(lifespan: &NpcLifespan) -> &'static str {
     let ratio = lifespan.age_ratio().clamp(0.0, 1.0);
     if ratio >= 0.85 {
@@ -348,6 +368,7 @@ mod tests {
                 realm: Realm::Awaken,
                 ..Cultivation::default()
             }),
+            None,
         );
 
         let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
@@ -360,6 +381,25 @@ mod tests {
         assert!(json.contains(r#""greeting_text":"道友，可有灵草出让？""#));
         assert!(json.contains(r#""reputation_to_player":50"#));
         assert!(json.contains(r#""qi_hint":"你看不清此人深浅""#));
+    }
+
+    #[test]
+    fn npc_metadata_reputation_is_player_specific() {
+        let membership = membership(0.5);
+        let mut identities = crate::identity::PlayerIdentities::with_default("Azure", 0);
+        identities.active_mut().unwrap().renown.notoriety = 80;
+
+        let payload = build_npc_metadata(
+            42,
+            NpcArchetype::Rogue,
+            None,
+            Some(&membership),
+            None,
+            None,
+            Some(&identities),
+        );
+
+        assert_eq!(payload.reputation_to_player, -80);
     }
 
     #[test]

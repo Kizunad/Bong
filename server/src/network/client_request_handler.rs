@@ -88,9 +88,11 @@ use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
+use crate::identity::PlayerIdentities;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::npc_metadata::{
-    display_name as npc_display_name, greeting_text_for_archetype, reputation_to_player_score,
+    display_name as npc_display_name, greeting_text_for_archetype,
+    reputation_to_player_score_for_client,
 };
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
@@ -286,6 +288,7 @@ pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
+    pub identities: Query<'w, 's, &'static PlayerIdentities, With<Client>>,
     pub audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
 }
 
@@ -5754,14 +5757,13 @@ fn resolve_npc_engagement_target(
     {
         return None;
     }
+    let player_identities = npc_params.identities.get(player).ok();
     let realm = cultivation
         .map(|cultivation| cultivation.realm)
         .unwrap_or(crate::cultivation::components::Realm::Awaken);
     Some(NpcEngagementTarget {
         archetype: *archetype,
-        reputation_to_player: membership
-            .map(reputation_to_player_score)
-            .unwrap_or_default(),
+        reputation_to_player: reputation_to_player_score_for_client(membership, player_identities),
         display_name: npc_display_name(*archetype, realm, membership),
         greeting_text: greeting_text_for_archetype(*archetype).to_string(),
         position: npc_position,

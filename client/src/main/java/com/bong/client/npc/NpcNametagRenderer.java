@@ -120,11 +120,12 @@ public final class NpcNametagRenderer {
 
     private static int realmRank(String realm) {
         return switch (realm) {
-            case "引灵" -> 1;
-            case "凝脉" -> 2;
-            case "固元" -> 3;
-            case "化神" -> 4;
-            case "渡虚" -> 5;
+            case "醒灵", "Awaken", "awaken" -> 0;
+            case "引气", "引灵", "Induce", "induce" -> 1;
+            case "凝脉", "Condense", "condense" -> 2;
+            case "固元", "Solidify", "solidify" -> 3;
+            case "通灵", "化神", "Spirit", "spirit" -> 4;
+            case "化虚", "渡虚", "Void", "void" -> 5;
             default -> 0;
         };
     }

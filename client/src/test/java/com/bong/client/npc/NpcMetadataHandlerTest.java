@@ -36,4 +36,14 @@ public class NpcMetadataHandlerTest {
         assertFalse(NpcMetadataHandler.handle(payload, ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1));
         assertEquals(0, NpcMetadataStore.snapshot().size());
     }
+
+    @Test
+    void rejectsNegativeEntityId() {
+        String payload = """
+            {"type":"npc_metadata","v":1,"entity_id":-1,"archetype":"rogue","realm":"凝脉","reputation_to_player":0,"display_name":"散修·凝脉"}
+            """.trim();
+
+        assertFalse(NpcMetadataHandler.handle(payload, payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length));
+        assertEquals(0, NpcMetadataStore.snapshot().size());
+    }
 }
