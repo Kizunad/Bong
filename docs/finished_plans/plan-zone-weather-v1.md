@@ -264,14 +264,15 @@ pub fn weather_environment_sync_system(/* WeatherLifecycleEvent → ZoneEnvironm
   - `54ecaa7a3`（2026-05-10）`plan-zone-weather-v1: 接入 zone 天气 profile 与物理 hook`
   - `fe70c2c81`（2026-05-10）`plan-zone-weather-v1: 接入天气事件 narration`
   - `5bb6969ae`（2026-05-10）`plan-zone-weather-v1: 收敛 review 反馈`
+  - `d30b3d23e`（2026-05-10）`plan-zone-weather-v1: 修复 zone roll 与视野 profile`
 - 测试结果：
   - `cd server && cargo fmt --check` ✅
   - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-  - `cd server && cargo test` ✅ 3604 passed
-  - `cd server && cargo test weather -- --nocapture` ✅ 81 passed
+  - `cd server && cargo test` ✅ 3607 passed
+  - `cd server && cargo test weather -- --nocapture` ✅ 84 passed
   - `cd agent && npm run build` ✅
-  - `cd agent && npm test -w @bong/tiandao` ✅ 46 files / 323 tests
-  - `cd agent && npm test -w @bong/tiandao -- weather-narration` ✅ 1 file / 2 tests
+  - `cd agent && npm test -w @bong/tiandao` ✅ 46 files / 324 tests
+  - `cd agent && npm test -w @bong/tiandao -- weather-narration` ✅ 1 file / 3 tests
   - `cd agent && npm test -w @bong/schema` ✅ 14 files / 351 tests
 - 跨仓库核验：
   - server：`ZoneWeatherProfile` / `ZoneWeatherProfileRegistry` / `weather_generator_system_zone_aware` / `weather_to_environment_bundle` / `lightning_strike_at` / `apply_dust_devil_push` / `obscure_vision` / `style_modifier::for_zone_weather`
