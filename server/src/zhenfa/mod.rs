@@ -1176,6 +1176,7 @@ fn tick_zhenfa_registry(
                     now,
                     &mut targets,
                     &mut combat_events,
+                    &mut death_events,
                     &mut status_effects,
                 );
             }
@@ -1373,6 +1374,7 @@ fn apply_shrine_ward_pressure(
     tick: u64,
     targets: &mut Query<ZhenfaDamageTarget<'_>>,
     combat_events: &mut EventWriter<CombatEvent>,
+    death_events: &mut EventWriter<DeathEvent>,
     status_effects: &mut EventWriter<ApplyStatusEffectIntent>,
 ) {
     for (
@@ -1437,6 +1439,16 @@ fn apply_shrine_ward_pressure(
                 )
             })
         {
+            let cause_target = username
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .unwrap_or_else(|| format!("entity:{:?}", target));
+            death_events.send(DeathEvent {
+                target,
+                cause: format!("zhenfa_shrine_ward:{cause_target}"),
+                attacker: Some(instance.owner),
+                attacker_player_id: Some(instance.owner_player_id.clone()),
+                at_tick: tick,
+            });
             tracing::warn!(
                 "[bong][zhenfa] shrine ward reduced {:?} ({:?}) to zero health",
                 target,
@@ -2471,6 +2483,46 @@ mod tests {
             .entries
             .iter()
             .any(|w| w.inflicted_by.as_deref() == Some("zhenfa_shrine_ward:1")));
+    }
+
+    #[test]
+    fn shrine_ward_lethal_pressure_emits_death_event() {
+        let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
+        app.world_mut()
+            .get_mut::<Wounds>(intruder)
+            .unwrap()
+            .health_current = 4.0;
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::ShrineWard,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let deaths: Vec<_> = app
+            .world()
+            .resource::<Events<DeathEvent>>()
+            .get_reader()
+            .read(app.world().resource::<Events<DeathEvent>>())
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].target, intruder);
+        assert_eq!(deaths[0].attacker, Some(owner));
+        assert_eq!(
+            deaths[0].attacker_player_id.as_deref(),
+            Some("offline:Alice")
+        );
+        assert_eq!(deaths[0].cause, "zhenfa_shrine_ward:offline:Bob");
     }
 
     #[test]

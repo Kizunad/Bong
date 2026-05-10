@@ -26,6 +26,7 @@ export const ZhenfaV2EventV1 = Type.Object(
     array_id: Type.Integer({ minimum: 0 }),
     kind: ZhenfaArrayKindV2,
     owner: Type.String({ minLength: 1 }),
+    zone: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     x: Type.Integer(),
     y: Type.Integer(),
     z: Type.Integer(),

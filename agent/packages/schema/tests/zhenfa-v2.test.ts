@@ -30,6 +30,7 @@ describe("zhenfa-v2 schema", () => {
         array_id: 7,
         kind: "lingju",
         owner: "offline:Azure",
+        zone: "spawn",
         x: 12,
         y: 64,
         z: -9,

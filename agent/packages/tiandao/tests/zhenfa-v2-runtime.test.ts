@@ -83,7 +83,7 @@ describe("ZhenfaV2NarrationRuntime", () => {
     expect(runtime.stats.rejectedContract).toBe(1);
   });
 
-  it("routes non-broadcast events to the routeable spawn zone", async () => {
+  it("broadcasts non-exposure events when no zone metadata exists", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
     const runtime = new ZhenfaV2NarrationRuntime({ sub, pub, logger: silent });
@@ -106,8 +106,38 @@ describe("ZhenfaV2NarrationRuntime", () => {
     expect(pub.published).toHaveLength(1);
     const envelope = JSON.parse(pub.published[0].message);
     expect(envelope.narrations[0]).toMatchObject({
+      scope: "broadcast",
+      target: "zhenfa:deploy|lingju|id:9|tick:201",
+      style: "narration",
+    });
+  });
+
+  it("routes events with explicit zone metadata to that zone", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new ZhenfaV2NarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        event: "deploy",
+        array_id: 10,
+        kind: "shrine_ward",
+        owner: "offline:Azure",
+        zone: "blood_valley",
+        x: 1,
+        y: 64,
+        z: -2,
+        tick: 202,
+        radius: 5,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toMatchObject({
       scope: "zone",
-      target: "spawn",
+      target: "blood_valley",
       style: "narration",
     });
   });

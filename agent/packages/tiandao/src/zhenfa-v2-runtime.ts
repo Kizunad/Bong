@@ -7,7 +7,6 @@ import {
 } from "@bong/schema";
 
 const { AGENT_NARRATE, ZHENFA_V2_EVENT } = CHANNELS;
-const DEFAULT_ROUTEABLE_ZONE = "spawn";
 
 export interface ZhenfaV2NarrationRuntimeClient {
   subscribe(channel: string): Promise<unknown>;
@@ -39,8 +38,13 @@ export interface ZhenfaV2NarrationRuntimeStats {
 export function renderZhenfaV2Narration(event: ZhenfaV2EventV1): Narration | null {
   const actor = shortName(event.owner);
   const metadataTarget = `zhenfa:${event.event}|${event.kind}|id:${event.array_id}|tick:${event.tick}`;
-  const scope = event.event === "deceive_heaven_exposed" ? "broadcast" : "zone";
-  const target = scope === "zone" ? DEFAULT_ROUTEABLE_ZONE : metadataTarget;
+  const zone = event.zone?.trim();
+  let scope: Narration["scope"] = "broadcast";
+  let target = metadataTarget;
+  if (event.event !== "deceive_heaven_exposed" && zone) {
+    scope = "zone";
+    target = zone;
+  }
   let text: string;
 
   switch (event.event) {

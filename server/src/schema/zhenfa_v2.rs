@@ -27,6 +27,8 @@ pub struct ZhenfaV2EventV1 {
     pub array_id: u64,
     pub kind: ZhenfaArrayKindV2,
     pub owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
     pub x: i32,
     pub y: i32,
     pub z: i32,
@@ -63,6 +65,7 @@ impl ZhenfaV2EventV1 {
             array_id,
             kind,
             owner: owner.into(),
+            zone: None,
             x: pos[0],
             y: pos[1],
             z: pos[2],
@@ -99,5 +102,10 @@ mod tests {
         assert_eq!(json["event"], "deceive_heaven_exposed");
         assert_eq!(json["kind"], "deceive_heaven");
         assert_eq!(json["reveal_chance_per_tick"], 0.002);
+        assert!(json.get("zone").is_none());
+
+        event.zone = Some("spawn".to_string());
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["zone"], "spawn");
     }
 }

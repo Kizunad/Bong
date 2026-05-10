@@ -73,6 +73,11 @@
       "minLength": 1,
       "type": "string"
     },
+    "zone": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
     "x": {
       "type": "integer"
     },
