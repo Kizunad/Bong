@@ -25,7 +25,8 @@ use crate::alchemy::{
 use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
-    CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot, Wounds,
+    CastSource, Casting, Lifecycle, LifecycleState, QuickSlotBindings, SkillBarBindings, SkillSlot,
+    Wounds,
 };
 use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
@@ -55,8 +56,8 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
-    add_item_to_player_inventory_with_alchemy, apply_inventory_move, apply_item_spiritual_wear,
-    consume_item_instance_once, discard_inventory_item_to_dropped_loot,
+    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
+    apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
     InventoryMoveOutcome, ItemInstance, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID,
@@ -82,11 +83,15 @@ use crate::network::agent_bridge::{
 };
 use crate::network::alchemy_bridge::alchemy_session_id;
 use crate::network::alchemy_snapshot_emit;
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::npc_metadata::{
+    display_name as npc_display_name, greeting_text_for_archetype, reputation_to_player_score,
+};
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
@@ -94,6 +99,9 @@ use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::{
     gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
 };
+use crate::npc::faction::FactionMembership;
+use crate::npc::lifecycle::NpcArchetype;
+use crate::npc::spawn::NpcMarker;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
@@ -265,9 +273,25 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub forge_sessions: Option<Res<'w, ForgeSessions>>,
 }
 
+type NpcEngagementItem = (
+    &'static valence::prelude::Position,
+    &'static NpcArchetype,
+    Option<&'static FactionMembership>,
+    Option<&'static Cultivation>,
+    Option<&'static Lifecycle>,
+);
+
+#[derive(SystemParam)]
+pub struct NpcEngagementRequestParams<'w, 's> {
+    pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
+    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub audio_tx: EventWriter<'w, PlaySoundRecipeRequest>,
+}
+
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
 const QI_COLOR_INSPECT_MAX_DISTANCE: f64 = 6.0;
+const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
@@ -289,6 +313,7 @@ pub fn handle_client_request_payloads(
     mut dropped_loot_params: DroppedLootRequestParams,
     mut lingtian_tx: LingtianRequestParams,
     mut skill_scroll_params: SkillScrollRequestParams,
+    mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
@@ -349,6 +374,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::SparringInviteResponse { v, .. }
             | ClientRequestV1::TradeOfferRequest { v, .. }
             | ClientRequestV1::TradeOfferResponse { v, .. }
+            | ClientRequestV1::NpcInspectRequest { v, .. }
+            | ClientRequestV1::NpcDialogueChoice { v, .. }
+            | ClientRequestV1::NpcTradeRequest { v, .. }
             | ClientRequestV1::ZhenfaPlace { v, .. }
             | ClientRequestV1::ZhenfaTrigger { v, .. }
             | ClientRequestV1::ZhenfaDisarm { v, .. }
@@ -794,6 +822,238 @@ pub fn handle_client_request_payloads(
                     requested_instance_id,
                     tick: combat_clock.tick,
                 });
+            }
+            ClientRequestV1::NpcInspectRequest { npc_entity_id, .. } => {
+                let Some(target) = resolve_npc_engagement_target(
+                    ev.client,
+                    npc_entity_id,
+                    &combat_params,
+                    &npc_engagement_params,
+                ) else {
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "[NPC] 目标已不在附近，无法查看。",
+                    );
+                    continue;
+                };
+                if target.reputation_to_player < -30 {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_tx,
+                        ev.client,
+                        target.position,
+                    );
+                }
+                send_npc_interaction_feedback(
+                    ev.client,
+                    &mut clients,
+                    format!("§7[NPC] {}：{}", target.display_name, target.greeting_text),
+                );
+            }
+            ClientRequestV1::NpcDialogueChoice {
+                npc_entity_id,
+                option_id,
+                ..
+            } => {
+                let Some(target) = resolve_npc_engagement_target(
+                    ev.client,
+                    npc_entity_id,
+                    &combat_params,
+                    &npc_engagement_params,
+                ) else {
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "[NPC] 目标已不在附近，无法交谈。",
+                    );
+                    continue;
+                };
+                let option = option_id.trim();
+                match option {
+                    "inspect" => send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§7[NPC] 你端详了一眼 {}。", target.display_name),
+                    ),
+                    "trade" if target.can_trade() => send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§7[NPC] {} 摊开了随身货物。", target.display_name),
+                    ),
+                    "leave" => {}
+                    _ => {
+                        emit_npc_refuse_audio(
+                            &mut npc_engagement_params.audio_tx,
+                            ev.client,
+                            target.position,
+                        );
+                        send_npc_interaction_feedback(
+                            ev.client,
+                            &mut clients,
+                            format!("§c[NPC] {} 不愿回应这个选择。", target.display_name),
+                        );
+                    }
+                }
+            }
+            ClientRequestV1::NpcTradeRequest {
+                npc_entity_id,
+                offered_items,
+                requested_item_id,
+                ..
+            } => {
+                let Some(target) = resolve_npc_engagement_target(
+                    ev.client,
+                    npc_entity_id,
+                    &combat_params,
+                    &npc_engagement_params,
+                ) else {
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "[NPC] 目标已不在附近，无法交易。",
+                    );
+                    continue;
+                };
+                let Some((template_id, base_price)) = npc_trade_catalog_entry(&requested_item_id)
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_tx,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 没有这件货。", target.display_name),
+                    );
+                    continue;
+                };
+                if !target.can_trade() {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_tx,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 不做买卖。", target.display_name),
+                    );
+                    continue;
+                }
+                let price = match crate::npc::scattered_cultivator::trade_price_for_reputation(
+                    base_price,
+                    target.reputation_to_player,
+                ) {
+                    Ok(price) => price,
+                    Err(_) => {
+                        let attack_hint =
+                            if crate::npc::scattered_cultivator::should_attack_for_reputation(
+                                target.reputation_to_player,
+                            ) {
+                                "，已经起了杀心"
+                            } else {
+                                ""
+                            };
+                        emit_npc_refuse_audio(
+                            &mut npc_engagement_params.audio_tx,
+                            ev.client,
+                            target.position,
+                        );
+                        send_npc_interaction_feedback(
+                            ev.client,
+                            &mut clients,
+                            format!(
+                                "§c[NPC] {} 对你充满敌意，拒绝交易{attack_hint}。",
+                                target.display_name
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                let Ok(mut inventory) = inventories.get_mut(ev.client) else {
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "[NPC] 你的行囊尚未就绪，交易失败。",
+                    );
+                    continue;
+                };
+                if !offered_items
+                    .iter()
+                    .all(|id| inventory_item_by_instance_borrow(&inventory, *id).is_some())
+                {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_tx,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "§c[NPC] 出价物品不存在，交易取消。",
+                    );
+                    continue;
+                }
+                if inventory.bone_coins < price {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_tx,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] 骨币不足，需要 {price} 枚。"),
+                    );
+                    continue;
+                }
+                let Some(instance_allocator) = alchemy_params.instance_allocator.as_deref_mut()
+                else {
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "[NPC] 交易账本未就绪。",
+                    );
+                    continue;
+                };
+                if let Err(error) = add_item_to_player_inventory(
+                    &mut inventory,
+                    &alchemy_params.item_registry,
+                    instance_allocator,
+                    template_id,
+                    1,
+                ) {
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] 交易失败：{error}"),
+                    );
+                    continue;
+                }
+                inventory.bone_coins = inventory.bone_coins.saturating_sub(price);
+                inventory.revision.0 = inventory.revision.0.saturating_add(1);
+                let Ok((username, mut client)) = clients.get_mut(ev.client) else {
+                    continue;
+                };
+                client.send_chat_message(format!(
+                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {}。",
+                    target.display_name, template_id
+                ));
+                if let (Ok(player_state), Ok(cultivation)) = (
+                    player_states.get(ev.client),
+                    skill_scroll_params.cultivations.get(ev.client),
+                ) {
+                    send_inventory_snapshot_to_client(
+                        ev.client,
+                        &mut client,
+                        username.0.as_str(),
+                        &inventory,
+                        player_state,
+                        cultivation,
+                        "npc_trade",
+                    );
+                }
             }
             ClientRequestV1::ZhenfaPlace {
                 x,
@@ -5450,6 +5710,98 @@ fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) ->
         return None;
     }
     resolve_skill_cast_target(Some(raw), combat_params)
+}
+
+#[derive(Debug, Clone)]
+struct NpcEngagementTarget {
+    archetype: NpcArchetype,
+    reputation_to_player: i32,
+    display_name: String,
+    greeting_text: String,
+    position: DVec3,
+}
+
+impl NpcEngagementTarget {
+    fn can_trade(&self) -> bool {
+        matches!(self.archetype, NpcArchetype::Rogue | NpcArchetype::Commoner)
+            && self.reputation_to_player >= -30
+    }
+}
+
+fn resolve_npc_engagement_target(
+    player: Entity,
+    npc_entity_id: i32,
+    combat_params: &CombatRequestParams,
+    npc_params: &NpcEngagementRequestParams,
+) -> Option<NpcEngagementTarget> {
+    let npc = combat_params
+        .entity_manager
+        .as_deref()
+        .and_then(|manager| manager.get_by_id(npc_entity_id))?;
+    let player_position = npc_params.positions.get(player).ok()?.get();
+    let (npc_position, archetype, membership, cultivation, lifecycle) =
+        npc_params.npcs.get(npc).ok()?;
+    if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
+        return None;
+    }
+    let npc_position = npc_position.get();
+    if player_position.distance_squared(npc_position)
+        > NPC_INTERACTION_MAX_DISTANCE * NPC_INTERACTION_MAX_DISTANCE
+    {
+        return None;
+    }
+    let realm = cultivation
+        .map(|cultivation| cultivation.realm)
+        .unwrap_or(crate::cultivation::components::Realm::Awaken);
+    Some(NpcEngagementTarget {
+        archetype: *archetype,
+        reputation_to_player: membership
+            .map(reputation_to_player_score)
+            .unwrap_or_default(),
+        display_name: npc_display_name(*archetype, realm, membership),
+        greeting_text: greeting_text_for_archetype(*archetype).to_string(),
+        position: npc_position,
+    })
+}
+
+fn npc_trade_catalog_entry(requested_item_id: &str) -> Option<(&'static str, u64)> {
+    match requested_item_id.trim() {
+        "lingcao" | "spirit_grass" => Some(("spirit_grass", 10)),
+        "fragment_scroll" | "broken_artifact_scroll" => Some(("broken_artifact_scroll", 40)),
+        "skill_scroll_herbalism_baicao_can" => Some(("skill_scroll_herbalism_baicao_can", 30)),
+        _ => None,
+    }
+}
+
+fn send_npc_interaction_feedback(
+    player: Entity,
+    clients: &mut Query<(&Username, &mut Client)>,
+    message: impl Into<String>,
+) {
+    let Ok((_, mut client)) = clients.get_mut(player) else {
+        return;
+    };
+    client.send_chat_message(message.into());
+}
+
+fn emit_npc_refuse_audio(
+    audio_tx: &mut EventWriter<PlaySoundRecipeRequest>,
+    player: Entity,
+    position: DVec3,
+) {
+    audio_tx.send(PlaySoundRecipeRequest {
+        recipe_id: "npc_refuse".to_string(),
+        instance_id: 0,
+        pos: Some([
+            position.x.floor() as i32,
+            position.y.floor() as i32,
+            position.z.floor() as i32,
+        ]),
+        flag: None,
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Single(player),
+    });
 }
 
 fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Entity, slot: u8) {
