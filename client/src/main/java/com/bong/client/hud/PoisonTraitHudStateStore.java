@@ -15,9 +15,13 @@ public final class PoisonTraitHudStateStore {
 
         public State {
             toxicity = clamp(toxicity, 0.0f, 100.0f);
-            digestionCapacity = Math.max(1.0f, digestionCapacity);
+            digestionCapacity = Float.isFinite(digestionCapacity) && digestionCapacity > 0.0f
+                ? digestionCapacity
+                : 1.0f;
             digestionCurrent = clamp(digestionCurrent, 0.0f, digestionCapacity);
-            lifespanYearsLost = Math.max(0.0f, lifespanYearsLost);
+            lifespanYearsLost = Float.isFinite(lifespanYearsLost)
+                ? Math.max(0.0f, lifespanYearsLost)
+                : 0.0f;
         }
 
         public float toxicityRatio() {

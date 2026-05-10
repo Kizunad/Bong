@@ -47,4 +47,15 @@ class PoisonTraitHudPlannerTest {
         assertEquals(1.0f, state.digestionCurrent(), 0.001f);
         assertEquals(0.0f, state.lifespanYearsLost(), 0.001f);
     }
+
+    @Test
+    void stateNormalizesNonFiniteCapacityAndLifespanWarning() {
+        PoisonTraitHudStateStore.State state = new PoisonTraitHudStateStore.State(
+            true, Float.NaN, 12.0f, Float.NaN, 0L, Float.POSITIVE_INFINITY
+        );
+        assertEquals(0.0f, state.toxicity(), 0.001f);
+        assertEquals(1.0f, state.digestionCapacity(), 0.001f);
+        assertEquals(1.0f, state.digestionCurrent(), 0.001f);
+        assertEquals(0.0f, state.lifespanYearsLost(), 0.001f);
+    }
 }

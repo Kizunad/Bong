@@ -19,6 +19,7 @@ class EatFoodAnimationTest {
     @Test
     void packagedJsonAnimationExists() {
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        assertNotNull(loader);
         assertNotNull(loader.getResource("assets/bong/player_animation/eat_food.json"));
     }
 }

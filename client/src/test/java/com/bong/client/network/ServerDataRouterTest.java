@@ -74,6 +74,10 @@ public class ServerDataRouterTest {
             "vortex_state",
             // plan-dugu-v1 P0/P1 — 毒蛊受毒状态 HUD 推送。
             "dugu_poison_state",
+            // plan-poison-trait-v1 — 毒性真元 HUD 与服丹事件推送。
+            "poison_dose_event",
+            "poison_overdose_event",
+            "poison_trait_state",
             // plan-anqi-v1 P1 暗器载体 HUD 状态推送。
             "carrier_state",
             // plan-tuike-v1 §P0 伪皮 HUD 状态推送。
