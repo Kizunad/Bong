@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /** {@code bong:botany_aura} —— 成熟灵草周围的低频浮光。 */
 public final class BotanyAuraPlayer implements VfxPlayer {
     public static final Identifier EVENT_ID = new Identifier("bong", "botany_aura");
@@ -27,8 +25,8 @@ public final class BotanyAuraPlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         float alpha = (float) Math.max(0.35, Math.min(0.9, payload.strength().orElse(0.65)));
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 12);
-        int maxAgeBase = payload.durationTicks().orElse(OptionalInt.of(60).getAsInt());
+        int count = clamp(payload.count().orElse(DEFAULT_COUNT), 1, 12);
+        int maxAgeBase = payload.durationTicks().orElse(60);
 
         for (int i = 0; i < count; i++) {
             double angle = (Math.PI * 2.0 * i / count) + world.random.nextDouble() * 0.45;

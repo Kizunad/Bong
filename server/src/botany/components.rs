@@ -258,6 +258,7 @@ pub struct HarvestTerminalEvent {
     pub completed: bool,
     pub detail: String,
     pub target_pos: Option<[f64; 3]>,
+    pub spirit_quality: f32,
 }
 
 /// botany-v2 `AttractsMobs` 真 spawn 请求。

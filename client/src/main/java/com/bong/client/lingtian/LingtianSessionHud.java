@@ -82,6 +82,8 @@ public final class LingtianSessionHud {
 
         int x = surface.windowWidth() / 2 + 14;
         int y = surface.windowHeight() / 2 - 32;
+        int barTop = surface.windowHeight() - BOTTOM_OFFSET - 1;
+        y = Math.max(4, Math.min(y, barTop - MINI_PANEL_HEIGHT - 6));
         int panelRight = Math.min(surface.windowWidth() - 4, x + MINI_PANEL_WIDTH);
         x = Math.max(4, panelRight - MINI_PANEL_WIDTH);
 

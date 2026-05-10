@@ -7,6 +7,7 @@
 use valence::prelude::{Client, EventReader, EventWriter, Position, Query, UniqueId, With};
 
 use crate::botany::components::HarvestTerminalEvent;
+use crate::botany::lifecycle::botany_quality_color;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
@@ -200,8 +201,8 @@ pub fn emit_botany_harvest_visual_triggers(
             &mut vfx_events,
             BOTANY_HARVEST_VFX,
             valence::prelude::DVec3::new(pos[0], pos[1] + 0.45, pos[2]),
-            "#88CC55",
-            0.85,
+            botany_quality_color(event.spirit_quality),
+            event.spirit_quality.clamp(0.5, 1.0),
             12,
             36,
         );
@@ -519,6 +520,7 @@ mod tests {
             completed: true,
             detail: "done".to_string(),
             target_pos: Some([10.0, 64.0, 10.0]),
+            spirit_quality: 0.95,
         });
 
         app.update();
@@ -526,6 +528,15 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 1);
         assert_spawn_particle(&emitted[0], BOTANY_HARVEST_VFX, Some(12));
+        match &emitted[0].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                color, strength, ..
+            } => {
+                assert_eq!(color.as_deref(), Some("#FFDD22"));
+                assert_eq!(*strength, Some(0.95));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     #[test]

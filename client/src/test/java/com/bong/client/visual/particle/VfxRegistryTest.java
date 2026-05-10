@@ -147,6 +147,8 @@ public class VfxRegistryTest {
             "bootstrap should register botany aura");
         assertTrue(VfxRegistry.instance().contains(BotanyHarvestBurstPlayer.EVENT_ID),
             "bootstrap should register botany harvest burst");
+        assertTrue(VfxRegistry.instance().contains(BotanyPlantStagePlayer.ROUTE_ID),
+            "bootstrap should register botany plant stage route");
         assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.TILL),
             "bootstrap should register lingtian till rune");
         assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.PLANT),

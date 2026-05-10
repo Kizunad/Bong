@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /** {@code bong:botany_harvest} —— 采收瞬间的碎叶与稀有光柱。 */
 public final class BotanyHarvestBurstPlayer implements VfxPlayer {
     public static final Identifier EVENT_ID = new Identifier("bong", "botany_harvest");
@@ -27,8 +25,8 @@ public final class BotanyHarvestBurstPlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         float alpha = (float) Math.max(0.5, Math.min(1.0, payload.strength().orElse(0.85)));
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 32);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(36).getAsInt());
+        int count = clamp(payload.count().orElse(DEFAULT_COUNT), 1, 32);
+        int maxAge = payload.durationTicks().orElse(36);
 
         for (int i = 0; i < count; i++) {
             double angle = world.random.nextDouble() * Math.PI * 2.0;
@@ -62,10 +60,10 @@ public final class BotanyHarvestBurstPlayer implements VfxPlayer {
                     BreakthroughPillarPlayer.EVENT_ID,
                     new double[] { ox, oy, oz },
                     java.util.Optional.empty(),
-                    OptionalInt.of(0xFFDD66),
+                    java.util.OptionalInt.of(0xFFDD66),
                     java.util.Optional.of(0.55),
-                    OptionalInt.of(4),
-                    OptionalInt.of(20)
+                    java.util.OptionalInt.of(4),
+                    java.util.OptionalInt.of(20)
                 )
             );
         }

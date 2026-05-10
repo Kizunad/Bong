@@ -48,27 +48,31 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
         );
 
         matrices.push();
-        matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - dispatcher.camera.getYaw()));
-        matrices.translate(0.0, 0.02, 0.0);
-        matrices.scale(visual.scale(), visual.scale(), visual.scale());
-        if (visual.swayRadians() != 0.0f) {
-            matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
+        try {
+            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - dispatcher.camera.getYaw()));
+            matrices.translate(0.0, 0.02, 0.0);
+            matrices.scale(visual.scale(), visual.scale(), visual.scale());
+            if (visual.swayRadians() != 0.0f) {
+                matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
+            }
+            Identifier texture = textureFor(profile.baseMeshRef());
+            drawPlantQuad(
+                consumers,
+                matrices,
+                texture,
+                visual.tintRgb(),
+                light,
+                visual.alpha()
+            );
+            if (
+                entity.growthStage() != PlantGrowthStage.WILTED
+                    && profile.overlay() == BotanyPlantRenderProfile.ModelOverlay.EMISSIVE
+            ) {
+                drawPlantQuad(consumers, matrices, texture, visual.tintRgb(), 0x00F000F0, 96);
+            }
+        } finally {
+            matrices.pop();
         }
-        drawPlantQuad(
-            consumers,
-            matrices,
-            textureFor(profile.baseMeshRef()),
-            visual.tintRgb(),
-            light,
-            visual.alpha()
-        );
-        if (
-            entity.growthStage() != PlantGrowthStage.WILTED
-                && profile.overlay() == BotanyPlantRenderProfile.ModelOverlay.EMISSIVE
-        ) {
-            drawPlantQuad(consumers, matrices, textureFor(profile.baseMeshRef()), visual.tintRgb(), 0x00F000F0, 96);
-        }
-        matrices.pop();
 
         super.render(entity, yaw, tickDelta, matrices, consumers, light);
     }
@@ -126,15 +130,12 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
         Block block = blockFor(baseMeshRef);
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getBlockRenderManager() != null) {
-            Identifier spriteId = client
+            return client
                 .getBlockRenderManager()
                 .getModel(block.getDefaultState())
                 .getParticleSprite()
                 .getContents()
                 .getId();
-            if (spriteId != null) {
-                return spriteId;
-            }
         }
         return new Identifier("minecraft", "textures/block/grass.png");
     }

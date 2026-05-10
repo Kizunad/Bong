@@ -5,8 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
-import java.util.OptionalInt;
-
 /** 灵田地块灵纹 decal，复用同一个 player 承接开垦/种植/补灵/收获/吸灵事件。 */
 public final class LingtianPlotRunePlayer implements VfxPlayer {
     public static final Identifier TILL = new Identifier("bong", "lingtian_till");
@@ -27,7 +25,7 @@ public final class LingtianPlotRunePlayer implements VfxPlayer {
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         double strength = payload.strength().orElse(0.7);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(80).getAsInt());
+        int maxAge = payload.durationTicks().orElse(80);
         double halfSize = 0.42 + 0.28 * strength;
 
         BongGroundDecalParticle decal = new BongGroundDecalParticle(
