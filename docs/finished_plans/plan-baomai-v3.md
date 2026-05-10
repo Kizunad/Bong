@@ -511,15 +511,15 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 
 ### 关键 commit
 
-- `16e715f3f`（2026-05-10）`plan-baomai-v3: 接入爆脉五招 server 链路`
-- `d0fe99276`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
-- `970227f3d`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
+- `eaf696088`（2026-05-10）`plan-baomai-v3: 接入爆脉五招 server 链路`
+- `7fcf68a82`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
+- `5aef42aa6`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && cargo test` ✅ 3666 passed；其中 `server/src/combat/baomai_v3/` 当前 30 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射。
+- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3683 passed；其中 `server/src/combat/baomai_v3/` 当前 30 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射。
 - `cd agent && npm run build` ✅
 - `cd agent/packages/schema && npm test` ✅ 353 passed；`npm run generate:check` ✅ 327 schemas fresh。
 - `cd agent/packages/tiandao && npm test` ✅ 329 passed。
