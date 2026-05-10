@@ -1,0 +1,24 @@
+{
+  "anyOf": [
+    {
+      "const": "qi_focus_drift_2h",
+      "type": "string"
+    },
+    {
+      "const": "rage_burst_30min",
+      "type": "string"
+    },
+    {
+      "const": "hallucin_tint_6h",
+      "type": "string"
+    },
+    {
+      "const": "digest_lock_6h",
+      "type": "string"
+    },
+    {
+      "const": "toxicity_tier_unlock",
+      "type": "string"
+    }
+  ]
+}

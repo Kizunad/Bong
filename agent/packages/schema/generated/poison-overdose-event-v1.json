@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_entity_id",
+    "severity",
+    "overflow",
+    "lifespan_penalty_years",
+    "micro_tear_probability",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "severity": {
+      "anyOf": [
+        {
+          "const": "mild",
+          "type": "string"
+        },
+        {
+          "const": "moderate",
+          "type": "string"
+        },
+        {
+          "const": "severe",
+          "type": "string"
+        }
+      ]
+    },
+    "overflow": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "lifespan_penalty_years": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "micro_tear_probability": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

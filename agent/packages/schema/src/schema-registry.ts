@@ -212,6 +212,13 @@ import {
   TrespassEventV1,
 } from "./poi-novice.js";
 import {
+  PoisonDoseEventV1,
+  PoisonOverdoseEventV1,
+  PoisonOverdoseSeverityV1,
+  PoisonSideEffectTagV1,
+  PoisonTraitStateV1,
+} from "./poison-trait.js";
+import {
   FreshnessUpdateV1,
   ProcessingKindV1,
   ProcessingSessionDataV1,
@@ -454,6 +461,11 @@ export const SCHEMA_REGISTRY = {
   poiNoviceKindV1: PoiNoviceKindV1,
   poiSpawnedEventV1: PoiSpawnedEventV1,
   trespassEventV1: TrespassEventV1,
+  poisonSideEffectTagV1: PoisonSideEffectTagV1,
+  poisonOverdoseSeverityV1: PoisonOverdoseSeverityV1,
+  poisonDoseEventV1: PoisonDoseEventV1,
+  poisonOverdoseEventV1: PoisonOverdoseEventV1,
+  poisonTraitStateV1: PoisonTraitStateV1,
   factionEventV1: FactionEventV1,
   pseudoVeinSeasonV1: PseudoVeinSeasonV1,
   pseudoVeinSnapshotV1: PseudoVeinSnapshotV1,
@@ -833,6 +845,11 @@ export const GENERATED_SCHEMA_FILES = {
   "poi-novice-kind-v1.json": SCHEMA_REGISTRY.poiNoviceKindV1,
   "poi-spawned-event-v1.json": SCHEMA_REGISTRY.poiSpawnedEventV1,
   "trespass-event-v1.json": SCHEMA_REGISTRY.trespassEventV1,
+  "poison-side-effect-tag-v1.json": SCHEMA_REGISTRY.poisonSideEffectTagV1,
+  "poison-overdose-severity-v1.json": SCHEMA_REGISTRY.poisonOverdoseSeverityV1,
+  "poison-dose-event-v1.json": SCHEMA_REGISTRY.poisonDoseEventV1,
+  "poison-overdose-event-v1.json": SCHEMA_REGISTRY.poisonOverdoseEventV1,
+  "poison-trait-state-v1.json": SCHEMA_REGISTRY.poisonTraitStateV1,
   "faction-event-v1.json": SCHEMA_REGISTRY.factionEventV1,
   "pseudo-vein-season-v1.json": SCHEMA_REGISTRY.pseudoVeinSeasonV1,
   "pseudo-vein-snapshot-v1.json": SCHEMA_REGISTRY.pseudoVeinSnapshotV1,

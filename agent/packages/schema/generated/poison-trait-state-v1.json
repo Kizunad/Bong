@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_entity_id",
+    "poison_toxicity",
+    "digestion_current",
+    "digestion_capacity",
+    "toxicity_tier_unlocked"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "poison_toxicity": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "digestion_current": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "digestion_capacity": {
+      "exclusiveMinimum": 0,
+      "type": "number"
+    },
+    "toxicity_tier_unlocked": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "mild",
+      "type": "string"
+    },
+    {
+      "const": "moderate",
+      "type": "string"
+    },
+    {
+      "const": "severe",
+      "type": "string"
+    }
+  ]
+}

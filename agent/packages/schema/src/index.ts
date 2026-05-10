@@ -28,6 +28,7 @@ export * from "./lingtian-weather.js";
 export * from "./narration.js";
 export * from "./npc.js";
 export * from "./poi-novice.js";
+export * from "./poison-trait.js";
 export * from "./processing.js";
 export * from "./pseudo-vein.js";
 export * from "./rat-phase-event.js";
