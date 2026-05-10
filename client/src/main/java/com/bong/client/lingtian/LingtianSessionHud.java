@@ -25,6 +25,10 @@ public final class LingtianSessionHud {
     static final int LABEL_COLOR = 0xFFF4F4F4;
     /** 距底部像素（让出 hotbar 留出位置）。 */
     static final int BOTTOM_OFFSET = 60;
+    static final int MINI_PANEL_WIDTH = 132;
+    static final int MINI_PANEL_HEIGHT = 42;
+    static final int MINI_PANEL_BG = 0xCC101416;
+    static final int MINI_TRACK_BG = 0xFF1E2528;
 
     private LingtianSessionHud() {}
 
@@ -53,6 +57,8 @@ public final class LingtianSessionHud {
         int labelX = (surface.windowWidth() - labelWidth) / 2;
         int labelY = y - 12;
         surface.drawText(text, labelX, labelY, LABEL_COLOR, true);
+
+        renderPlotOverlay(surface, LingtianPlotVisualState.fromSnapshot(snapshot));
     }
 
     static String formatLabel(LingtianSessionStore.Snapshot s) {
@@ -67,5 +73,57 @@ public final class LingtianSessionHud {
             sb.append(" · 已染杂");
         }
         return sb.toString();
+    }
+
+    static void renderPlotOverlay(HudSurface surface, LingtianPlotVisualState state) {
+        if (state == null || state.title().isEmpty()) {
+            return;
+        }
+
+        int x = surface.windowWidth() / 2 + 14;
+        int y = surface.windowHeight() / 2 - 32;
+        int panelRight = Math.min(surface.windowWidth() - 4, x + MINI_PANEL_WIDTH);
+        x = Math.max(4, panelRight - MINI_PANEL_WIDTH);
+
+        surface.fill(x + 1, y + 1, x + MINI_PANEL_WIDTH + 1, y + MINI_PANEL_HEIGHT + 1, 0x66000000);
+        surface.fill(x, y, x + MINI_PANEL_WIDTH, y + MINI_PANEL_HEIGHT, MINI_PANEL_BG);
+        surface.fill(x, y, x + MINI_PANEL_WIDTH, y + 1, state.runeColor());
+        surface.fill(x, y + MINI_PANEL_HEIGHT - 1, x + MINI_PANEL_WIDTH, y + MINI_PANEL_HEIGHT, state.runeColor());
+        surface.fill(x, y, x + 1, y + MINI_PANEL_HEIGHT, state.runeColor());
+        surface.fill(x + MINI_PANEL_WIDTH - 1, y, x + MINI_PANEL_WIDTH, y + MINI_PANEL_HEIGHT, state.runeColor());
+
+        surface.fill(x + 5, y + 6, x + 25, y + 26, state.runeColor() & 0x99FFFFFF);
+        surface.drawText(state.icon(), x + 10, y + 12, LABEL_COLOR, true);
+
+        String title = clipByMeasure(surface, state.title(), 92);
+        String detail = clipByMeasure(surface, state.detail(), 92);
+        surface.drawText(title, x + 31, y + 6, LABEL_COLOR, true);
+        surface.drawText(detail, x + 31, y + 17, 0xFFB8C8C8, true);
+
+        int trackX = x + 31;
+        int trackY = y + 31;
+        int trackW = MINI_PANEL_WIDTH - 38;
+        surface.fill(trackX, trackY, trackX + trackW, trackY + 4, MINI_TRACK_BG);
+        int filled = Math.round(trackW * state.progress());
+        if (filled > 0) {
+            surface.fill(trackX, trackY, trackX + filled, trackY + 4, state.fillColor());
+        }
+    }
+
+    private static String clipByMeasure(HudSurface surface, String text, int maxWidth) {
+        if (surface.measureText(text) <= maxWidth) {
+            return text;
+        }
+        String ellipsis = "...";
+        int limit = Math.max(0, maxWidth - surface.measureText(ellipsis));
+        StringBuilder clipped = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            String next = clipped.toString() + text.charAt(i);
+            if (surface.measureText(next) > limit) {
+                break;
+            }
+            clipped.append(text.charAt(i));
+        }
+        return clipped + ellipsis;
     }
 }
