@@ -223,6 +223,30 @@ fn beng_quan_records_ripple_scar_and_meridian_cracks() {
 }
 
 #[test]
+fn overload_sends_meridian_severed_only_on_first_drop_to_zero() {
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Condense, 100.0, 100.0, DVec3::ZERO);
+    let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+    app.world_mut()
+        .get_mut::<MeridianSystem>(caster)
+        .unwrap()
+        .get_mut(MeridianId::LargeIntestine)
+        .integrity = 0.04;
+
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+    app.world_mut()
+        .get_mut::<SkillBarBindings>(caster)
+        .unwrap()
+        .cooldown_until_tick = [0; SkillBarBindings::SLOT_COUNT];
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+    assert_eq!(
+        app.world().resource::<Events<MeridianSeveredEvent>>().len(),
+        1
+    );
+}
+
+#[test]
 fn mountain_shake_hits_targets_inside_radius_and_stuns() {
     let mut app = app();
     let caster = spawn_actor(&mut app, Realm::Solidify, 100.0, 1_000.0, DVec3::ZERO);
@@ -268,6 +292,14 @@ fn blood_burn_inserts_active_state_when_health_remains_above_ten_percent() {
     let active = app.world().get::<BloodBurnActive>(caster).unwrap();
     assert_eq!(active.hp_burned, 20.0);
     assert!(active.qi_multiplier >= 1.5);
+    let skill_event = app
+        .world()
+        .resource::<Events<BaomaiSkillEvent>>()
+        .iter_current_update_events()
+        .next()
+        .unwrap();
+    assert_eq!(skill_event.skill, BaomaiSkillId::BloodBurn);
+    assert_eq!(skill_event.blood_multiplier, active.qi_multiplier);
 }
 
 #[test]
@@ -349,6 +381,15 @@ fn disperse_void_burns_qi_max_and_inserts_transcendence() {
             .flow_rate_multiplier,
         10.0
     );
+    let skill_event = app
+        .world()
+        .resource::<Events<BaomaiSkillEvent>>()
+        .iter_current_update_events()
+        .next()
+        .unwrap();
+    assert_eq!(skill_event.skill, BaomaiSkillId::Disperse);
+    assert_eq!(skill_event.qi_invested, 5_350.0);
+    assert_eq!(skill_event.flow_rate_multiplier, 10.0);
 }
 
 #[test]

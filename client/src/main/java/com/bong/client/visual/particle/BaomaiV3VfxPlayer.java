@@ -36,7 +36,7 @@ public final class BaomaiV3VfxPlayer implements VfxPlayer {
             if (shouldUpdateLocalHud(client, payload)) {
                 BaomaiV3HudStateStore.recordBodyTranscendence(
                     payload.durationTicks().orElse(100),
-                    10.0
+                    bodyTranscendenceFlowMultiplier(payload)
                 );
             }
             playPillar(client, payload);
@@ -70,6 +70,12 @@ public final class BaomaiV3VfxPlayer implements VfxPlayer {
         double dy = localPos[1] - origin[1];
         double dz = localPos[2] - origin[2];
         return dx * dx + dy * dy + dz * dz <= 2.25;
+    }
+
+    static double bodyTranscendenceFlowMultiplier(VfxEventPayload.SpawnParticle payload) {
+        return payload.strength()
+            .map(strength -> Math.max(1.0, Math.min(10.0, strength * 10.0)))
+            .orElse(10.0);
     }
 
     private static void playGroundWave(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {

@@ -459,6 +459,21 @@ pub fn cast_blood_burn(
         active_until_tick: now_tick.saturating_add(outcome.duration_ticks),
         ended_in_near_death: outcome.ends_in_near_death,
     });
+    emit_skill_event(
+        world,
+        BaomaiSkillEvent {
+            skill: BaomaiSkillId::BloodBurn,
+            caster,
+            target: None,
+            tick: now_tick,
+            qi_invested: 0.0,
+            damage: outcome.hp_burned,
+            radius_blocks: None,
+            blood_multiplier: outcome.qi_multiplier,
+            flow_rate_multiplier: active_flow_multiplier(world, caster, now_tick),
+            meridian_dependencies: BLOOD_BURN_DEPS.to_vec(),
+        },
+    );
     record_practice(world, caster, BaomaiSkillId::BloodBurn);
     if let Some(position) = world.get::<Position>(caster).map(|p| p.get()) {
         emit_particle(
@@ -555,6 +570,23 @@ pub fn cast_disperse(
             .then_some(now_tick.saturating_add(profile.duration_ticks)),
         failed_reason: (!profile.has_transcendence).then_some("凡躯不应".to_string()),
     });
+    if profile.has_transcendence {
+        emit_skill_event(
+            world,
+            BaomaiSkillEvent {
+                skill: BaomaiSkillId::Disperse,
+                caster,
+                target: None,
+                tick: now_tick,
+                qi_invested: outcome.qi_max_lost,
+                damage: 0.0,
+                radius_blocks: None,
+                blood_multiplier: active_blood_multiplier(world, caster, now_tick),
+                flow_rate_multiplier: outcome.flow_rate_multiplier,
+                meridian_dependencies: MeridianId::ALL.to_vec(),
+            },
+        );
+    }
     record_practice(world, caster, BaomaiSkillId::Disperse);
     if profile.has_transcendence {
         if let Some(position) = world.get::<Position>(caster).map(|p| p.get()) {
@@ -563,7 +595,7 @@ pub fn cast_disperse(
                 position,
                 "bong:body_transcendence_pillar",
                 "#F5D36A",
-                1.0,
+                (outcome.flow_rate_multiplier / 10.0).clamp(0.0, 1.0) as f32,
                 32,
             );
         }
@@ -794,10 +826,15 @@ fn record_overload(
             })
             .unwrap_or(severity)
     };
+    let permanent_severed = world.get::<MeridianSeveredPermanent>(caster).cloned();
     let mut newly_severed = Vec::new();
     if let Some(mut meridians) = world.get_mut::<MeridianSystem>(caster) {
         for id in deps {
             let meridian = meridians.get_mut(*id);
+            let already_severed = permanent_severed
+                .as_ref()
+                .is_some_and(|severed| severed.is_severed(*id))
+                || meridian.integrity <= f64::EPSILON;
             meridian.integrity = (meridian.integrity - severity).clamp(0.0, 1.0);
             meridian.cracks.push(MeridianCrack {
                 severity,
@@ -805,7 +842,7 @@ fn record_overload(
                 cause: CrackCause::Overload,
                 created_at: tick,
             });
-            if meridian.integrity <= f64::EPSILON {
+            if !already_severed && meridian.integrity <= f64::EPSILON {
                 newly_severed.push(*id);
             }
         }
