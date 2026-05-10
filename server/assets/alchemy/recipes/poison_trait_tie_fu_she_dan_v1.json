@@ -1,0 +1,33 @@
+{
+  "id": "poison_trait_tie_fu_she_dan_v1",
+  "name": "铁腹蛇胆丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "snake_gall", "count": 1 },
+      { "material": "tie_fu_sand", "count": 2 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.62,
+    "target_duration_ticks": 210,
+    "qi_cost": 12.0,
+    "tolerance": { "temp_band": 0.08, "duration_band": 25 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "poison_pill_tie_fu_she_dan", "quality": 1.0, "toxin_amount": 0.40, "toxin_color": "Insidious" },
+    "good": { "pill": "poison_pill_tie_fu_she_dan", "quality": 0.7, "toxin_amount": 0.58, "toxin_color": "Insidious" },
+    "flawed": { "pill": "poison_pill_tie_fu_she_dan", "quality": 0.4, "toxin_amount": 0.82, "toxin_color": "Sharp" },
+    "waste": null,
+    "explode": { "damage": 14.0, "meridian_crack": 0.05 }
+  },
+  "flawed_fallback": {
+    "pill": "poison_pill_tie_fu_she_dan",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      { "tag": "poison_dose_tie_fu_she_dan", "duration_s": 0, "weight": 1 },
+      { "tag": "digest_lock_6h", "duration_s": 21600, "weight": 1 }
+    ]
+  }
+}

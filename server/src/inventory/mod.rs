@@ -174,6 +174,7 @@ pub enum ItemEffect {
     ContaminationCleanse { magnitude: f64 },
     LifespanExtension { years: u32, source: String },
     AntiSpiritPressure { duration_ticks: u64 },
+    PoisonPill { pill_item_id: String },
 }
 
 #[derive(Debug, Default)]
@@ -1589,6 +1590,11 @@ fn parse_item_effect(
         "anti_spirit_pressure" => Ok(ItemEffect::AntiSpiritPressure {
             duration_ticks: effect.magnitude.floor() as u64,
         }),
+        "poison_pill" => {
+            let pill_item_id =
+                required_non_empty_option(effect.target, source_path, "item.effect.target")?;
+            Ok(ItemEffect::PoisonPill { pill_item_id })
+        }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
             source_path.display()

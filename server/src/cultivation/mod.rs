@@ -54,6 +54,7 @@ pub mod meridian_open;
 pub mod neg_pressure;
 pub mod negative_zone;
 pub mod overload;
+pub mod poison_trait;
 pub mod possession;
 pub mod qi_field;
 pub mod qi_zero_decay;
@@ -121,6 +122,11 @@ use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::{
     apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
     MeridianCrackEvent, MeridianOverloadEvent,
+};
+use self::poison_trait::{
+    apply_poison_overdose_costs, consume_poison_pill_system, digestion_load_decay_tick,
+    poison_toxicity_decay_tick, ConsumePoisonPillIntent, DigestionLoad, DigestionOverloadEvent,
+    PoisonDoseEvent, PoisonOverdoseEvent, PoisonPowderConsumedEvent, PoisonToxicity,
 };
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
@@ -238,6 +244,11 @@ pub fn register(app: &mut App) {
     app.add_event::<DuguPoisonProgressEvent>();
     app.add_event::<SelfAntidoteIntent>();
     app.add_event::<AntidoteResultEvent>();
+    app.add_event::<ConsumePoisonPillIntent>();
+    app.add_event::<PoisonDoseEvent>();
+    app.add_event::<PoisonOverdoseEvent>();
+    app.add_event::<DigestionOverloadEvent>();
+    app.add_event::<PoisonPowderConsumedEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
     app.add_systems(
@@ -352,6 +363,17 @@ pub fn register(app: &mut App) {
             meridian_heal_tick
                 .after(apply_meridian_crack_events)
                 .after(apply_meridian_overload_events),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            consume_poison_pill_system.after(lifespan_aging_tick),
+            apply_poison_overdose_costs
+                .after(consume_poison_pill_system)
+                .before(apply_meridian_crack_events),
+            poison_toxicity_decay_tick.after(consume_poison_pill_system),
+            digestion_load_decay_tick.after(consume_poison_pill_system),
         ),
     );
     app.add_systems(
@@ -624,6 +646,7 @@ fn attach_cultivation_to_joined_clients(
             }
         }
 
+        let digestion_load = DigestionLoad::for_realm(cultivation.realm);
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
@@ -641,6 +664,7 @@ fn attach_cultivation_to_joined_clients(
             DuguPractice::default(),
             severed_permanent,
         ));
+        entity_commands.insert((PoisonToxicity::default(), digestion_load));
         if restored_lifespan.is_none() {
             entity_commands.insert(default_lifespan);
         }

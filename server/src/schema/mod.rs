@@ -33,6 +33,7 @@ pub mod lingtian_weather;
 pub mod narration;
 pub mod npc;
 pub mod poi_novice;
+pub mod poison_trait;
 pub mod processing;
 pub mod pseudo_vein;
 pub mod realm_vision;

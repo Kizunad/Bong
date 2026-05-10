@@ -1,0 +1,33 @@
+{
+  "id": "poison_trait_fu_xin_xuan_gui_v1",
+  "name": "腐心玄龟丹",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "xuan_gui_shell", "count": 1 },
+      { "material": "fu_xin_algae", "count": 3 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.70,
+    "target_duration_ticks": 260,
+    "qi_cost": 16.0,
+    "tolerance": { "temp_band": 0.07, "duration_band": 20 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 1.0, "toxin_amount": 0.52, "toxin_color": "Insidious" },
+    "good": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 0.7, "toxin_amount": 0.72, "toxin_color": "Insidious" },
+    "flawed": { "pill": "poison_pill_fu_xin_xuan_gui", "quality": 0.4, "toxin_amount": 1.00, "toxin_color": "Turbid" },
+    "waste": null,
+    "explode": { "damage": 20.0, "meridian_crack": 0.08 }
+  },
+  "flawed_fallback": {
+    "pill": "poison_pill_fu_xin_xuan_gui",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.6,
+    "side_effect_pool": [
+      { "tag": "poison_dose_fu_xin_xuan_gui", "duration_s": 0, "weight": 1 },
+      { "tag": "toxicity_tier_unlock", "duration_s": 0, "weight": 1 }
+    ]
+  }
+}

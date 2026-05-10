@@ -430,6 +430,11 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] AntiSpiritPressure duration_ticks={duration_ticks} for `{username}` ({entity:?}) — handled by take_pill path"
             );
         }
+        ItemEffect::PoisonPill { pill_item_id } => {
+            tracing::info!(
+                "[bong][network][cast] PoisonPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by take_pill path"
+            );
+        }
     }
 }
 

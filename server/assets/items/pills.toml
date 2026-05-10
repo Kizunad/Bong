@@ -93,6 +93,131 @@ cast_duration_ms = 2200
 cooldown_ms = 9000
 
 [[item]]
+id = "poison_pill_wu_sui_san_xin"
+name = "乌髓散心丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "uncommon"
+spirit_quality_initial = 0.75
+description = "乌髓汁与散心草炼成的温和毒丹，少量累积毒性真元。"
+effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_wu_sui_san_xin" }
+cast_duration_ms = 1800
+cooldown_ms = 6000
+
+[[item]]
+id = "poison_pill_chi_tuo_zhi_sui"
+name = "赤陀蜘髓丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "uncommon"
+spirit_quality_initial = 0.78
+description = "蛛髓与赤陀粉入炉，短时激血，折一点寿元。"
+effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_chi_tuo_zhi_sui" }
+cast_duration_ms = 1800
+cooldown_ms = 6000
+
+[[item]]
+id = "poison_pill_qing_lin_man_tuo"
+name = "青鳞曼陀丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 0.82
+description = "青鳞与曼陀花毒同炼，药色发青，易生幻晕。"
+effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_qing_lin_man_tuo" }
+cast_duration_ms = 1900
+cooldown_ms = 6500
+
+[[item]]
+id = "poison_pill_tie_fu_she_dan"
+name = "铁腹蛇胆丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 0.84
+description = "蛇胆以铁腹砂封毒，服后丹毒难消，消化负荷加重。"
+effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_tie_fu_she_dan" }
+cast_duration_ms = 2000
+cooldown_ms = 7000
+
+[[item]]
+id = "poison_pill_fu_xin_xuan_gui"
+name = "腐心玄龟丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "epic"
+spirit_quality_initial = 0.88
+description = "玄龟壳与腐心藻久熬成丹，毒性最重，能开附毒上限。"
+effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_fu_xin_xuan_gui" }
+cast_duration_ms = 2200
+cooldown_ms = 8000
+
+[[item]]
+id = "poison_powder_wu_sui_san_xin"
+name = "乌髓散心粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.65
+description = "乌髓散心丹研成的灰白细粉，可涂在暗器上。"
+
+[[item]]
+id = "poison_powder_chi_tuo_zhi_sui"
+name = "赤陀蜘髓粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.68
+description = "赤陀蜘髓丹研成的赤红粉末，适合一次性附毒。"
+
+[[item]]
+id = "poison_powder_qing_lin_man_tuo"
+name = "青鳞曼陀粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.72
+description = "青鳞曼陀丹研成的青绿粉末，命中后带短暂迷晕。"
+
+[[item]]
+id = "poison_powder_tie_fu_she_dan"
+name = "铁腹蛇胆粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "铁腹蛇胆丹研成的黑铁色粉末，毒劲更久。"
+
+[[item]]
+id = "poison_powder_fu_xin_xuan_gui"
+name = "腐心玄龟粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.80
+description = "腐心玄龟丹研成的墨黑粉末，重毒可伤经脉。"
+
+[[item]]
 id = "alchemy_recipe_fragment"
 name = "丹方残卷"
 category = "recipe_fragment"

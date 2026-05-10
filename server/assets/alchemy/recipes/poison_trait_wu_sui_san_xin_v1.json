@@ -1,0 +1,33 @@
+{
+  "id": "poison_trait_wu_sui_san_xin_v1",
+  "name": "乌髓散心丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "wu_sui_youse_sap", "count": 2 },
+      { "material": "san_xin_herb", "count": 3 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.38,
+    "target_duration_ticks": 120,
+    "qi_cost": 6.0,
+    "tolerance": { "temp_band": 0.12, "duration_band": 30 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "poison_pill_wu_sui_san_xin", "quality": 1.0, "toxin_amount": 0.15, "toxin_color": "Insidious" },
+    "good": { "pill": "poison_pill_wu_sui_san_xin", "quality": 0.7, "toxin_amount": 0.25, "toxin_color": "Insidious" },
+    "flawed": { "pill": "poison_pill_wu_sui_san_xin", "quality": 0.4, "toxin_amount": 0.40, "toxin_color": "Turbid" },
+    "waste": null,
+    "explode": { "damage": 6.0, "meridian_crack": 0.02 }
+  },
+  "flawed_fallback": {
+    "pill": "poison_pill_wu_sui_san_xin",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.2,
+    "side_effect_pool": [
+      { "tag": "poison_dose_wu_sui_san_xin", "duration_s": 0, "weight": 1 },
+      { "tag": "qi_focus_drift_2h", "duration_s": 7200, "weight": 1 }
+    ]
+  }
+}

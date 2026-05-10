@@ -1,0 +1,33 @@
+{
+  "id": "poison_trait_qing_lin_man_tuo_v1",
+  "name": "青鳞曼陀丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "qing_lin_lizard_skin", "count": 2 },
+      { "material": "man_tuo_luo", "count": 2 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.56,
+    "target_duration_ticks": 180,
+    "qi_cost": 10.0,
+    "tolerance": { "temp_band": 0.09, "duration_band": 25 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "poison_pill_qing_lin_man_tuo", "quality": 1.0, "toxin_amount": 0.32, "toxin_color": "Insidious" },
+    "good": { "pill": "poison_pill_qing_lin_man_tuo", "quality": 0.7, "toxin_amount": 0.48, "toxin_color": "Insidious" },
+    "flawed": { "pill": "poison_pill_qing_lin_man_tuo", "quality": 0.4, "toxin_amount": 0.70, "toxin_color": "Turbid" },
+    "waste": null,
+    "explode": { "damage": 10.0, "meridian_crack": 0.04 }
+  },
+  "flawed_fallback": {
+    "pill": "poison_pill_qing_lin_man_tuo",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.4,
+    "side_effect_pool": [
+      { "tag": "poison_dose_qing_lin_man_tuo", "duration_s": 0, "weight": 1 },
+      { "tag": "hallucin_tint_6h", "duration_s": 21600, "weight": 1 }
+    ]
+  }
+}
