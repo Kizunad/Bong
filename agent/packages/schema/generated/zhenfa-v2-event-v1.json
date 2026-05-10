@@ -73,6 +73,10 @@
       "minLength": 1,
       "type": "string"
     },
+    "breaker": {
+      "minLength": 1,
+      "type": "string"
+    },
     "zone": {
       "minLength": 1,
       "maxLength": 128,

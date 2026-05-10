@@ -28,6 +28,8 @@ pub struct ZhenfaV2EventV1 {
     pub kind: ZhenfaArrayKindV2,
     pub owner: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breaker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     pub x: i32,
     pub y: i32,
@@ -65,6 +67,7 @@ impl ZhenfaV2EventV1 {
             array_id,
             kind,
             owner: owner.into(),
+            breaker: None,
             zone: None,
             x: pos[0],
             y: pos[1],
@@ -102,10 +105,13 @@ mod tests {
         assert_eq!(json["event"], "deceive_heaven_exposed");
         assert_eq!(json["kind"], "deceive_heaven");
         assert_eq!(json["reveal_chance_per_tick"], 0.002);
+        assert!(json.get("breaker").is_none());
         assert!(json.get("zone").is_none());
 
+        event.breaker = Some("offline:Breaker".to_string());
         event.zone = Some("spawn".to_string());
         let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["breaker"], "offline:Breaker");
         assert_eq!(json["zone"], "spawn");
     }
 }

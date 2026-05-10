@@ -27,7 +27,7 @@ pub fn publish_zhenfa_v2_events(
         let mut payload = deploy_payload(
             event.array_id,
             ZhenfaArrayKindV2::ShrineWard,
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.placed_at_tick,
         );
@@ -38,7 +38,7 @@ pub fn publish_zhenfa_v2_events(
         let mut payload = deploy_payload(
             event.array_id,
             ZhenfaArrayKindV2::Lingju,
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.placed_at_tick,
         );
@@ -51,7 +51,7 @@ pub fn publish_zhenfa_v2_events(
         let mut payload = deploy_payload(
             event.array_id,
             ZhenfaArrayKindV2::DeceiveHeaven,
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.placed_at_tick,
         );
@@ -65,7 +65,7 @@ pub fn publish_zhenfa_v2_events(
             ZhenfaV2EventKind::DeceiveHeavenExposed,
             event.array_id,
             ZhenfaArrayKindV2::DeceiveHeaven,
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.exposed_at_tick,
         );
@@ -78,7 +78,7 @@ pub fn publish_zhenfa_v2_events(
         let mut payload = deploy_payload(
             event.array_id,
             ZhenfaArrayKindV2::Illusion,
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.placed_at_tick,
         );
@@ -90,7 +90,7 @@ pub fn publish_zhenfa_v2_events(
             ZhenfaV2EventKind::Decay,
             event.array_id,
             map_kind(event.kind),
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.decayed_at_tick,
         );
@@ -101,10 +101,11 @@ pub fn publish_zhenfa_v2_events(
             ZhenfaV2EventKind::Breakthrough,
             event.array_id,
             map_kind(event.kind),
-            event.owner,
+            event.owner_player_id.as_str(),
             event.pos,
             event.broken_at_tick,
         );
+        payload.breaker = Some(event.breaker_player_id.clone());
         payload.force_break = Some(event.force_break);
         send_zhenfa_v2_event(&redis, payload);
     }
@@ -131,7 +132,7 @@ fn send_zhenfa_v2_event(redis: &RedisBridgeResource, payload: ZhenfaV2EventV1) {
 fn deploy_payload(
     array_id: u64,
     kind: ZhenfaArrayKindV2,
-    owner: valence::prelude::Entity,
+    owner: &str,
     pos: [i32; 3],
     tick: u64,
 ) -> ZhenfaV2EventV1 {
@@ -142,17 +143,11 @@ fn event_payload(
     event: ZhenfaV2EventKind,
     array_id: u64,
     kind: ZhenfaArrayKindV2,
-    owner: valence::prelude::Entity,
+    owner: &str,
     pos: [i32; 3],
     tick: u64,
 ) -> ZhenfaV2EventV1 {
-    let mut payload = ZhenfaV2EventV1::deploy(
-        array_id,
-        kind,
-        format!("entity_bits:{}", owner.to_bits()),
-        pos,
-        tick,
-    );
+    let mut payload = ZhenfaV2EventV1::deploy(array_id, kind, owner, pos, tick);
     payload.event = event;
     payload
 }
@@ -165,5 +160,28 @@ fn map_kind(kind: ZhenfaKind) -> ZhenfaArrayKindV2 {
         ZhenfaKind::Lingju => ZhenfaArrayKindV2::Lingju,
         ZhenfaKind::DeceiveHeaven => ZhenfaArrayKindV2::DeceiveHeaven,
         ZhenfaKind::Illusion => ZhenfaArrayKindV2::Illusion,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_payload_uses_stable_owner_id() {
+        let payload = event_payload(
+            ZhenfaV2EventKind::Breakthrough,
+            7,
+            ZhenfaArrayKindV2::Illusion,
+            "offline:Alice",
+            [1, 64, -2],
+            20,
+        );
+
+        assert_eq!(payload.owner, "offline:Alice");
+        assert!(
+            !payload.owner.starts_with("entity_bits:"),
+            "zhenfa v2 events must not expose process-local entity ids"
+        );
     }
 }

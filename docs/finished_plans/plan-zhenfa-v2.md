@@ -359,16 +359,16 @@ HUD 组件（plan-HUD-v1 接入）：
 - `cd server && cargo fmt --check`：通过。
 - `cd server && cargo check`：通过。
 - `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test zhenfa`：通过，28 passed / 0 failed / 3635 filtered out。
-- `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：通过，3663 passed / 0 failed。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test zhenfa`：通过，29 passed / 0 failed / 3635 filtered out。
+- `cd server && CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：通过，3664 passed / 0 failed。
 - `cd agent && npm run generate -w @bong/schema`：通过，326 schemas exported。
 - `cd agent && npm run build`：通过。
 - `cd agent && npm test -w @bong/schema`：通过，15 files / 353 tests。
-- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 329 tests。
+- `cd agent && npm test -w @bong/tiandao`：通过，47 files / 330 tests。
 - `cd client && JAVA_HOME="<java-17-home>" PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL（本地使用 Corretto 17.0.18）。
 - `git diff --check`：通过。
 
 ### 备注 / 后续
 
-- 普通 `CARGO_BUILD_JOBS=1 cargo test zhenfa` 在本机 debug test binary 链接阶段曾被 `SIGKILL`；使用 `RUSTFLAGS="-C debuginfo=0"` 后定向与全量 server 测试均通过，判定为本地链接内存压力而非源码失败。
+- 普通 `CARGO_BUILD_JOBS=1 cargo test zhenfa` 在本机 debug test binary 链接阶段曾被 `SIGKILL`；使用低 debuginfo test profile 后定向与全量 server 测试均通过，判定为本地链接内存压力而非源码失败。
 - plan 文本早期写过"跨位面阵"和 P4 专用视觉/HUD 全量交付；2026-05-10 范围已收敛为 v2 runtime / contract / physics / craft / narration / protocol 闭环，跨位面阵留 zhenfa-v3，专用视觉资产留后续 plan。

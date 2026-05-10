@@ -48,6 +48,7 @@ describe("zhenfa-v2 schema", () => {
         array_id: 8,
         kind: "deceive_heaven",
         owner: "offline:Azure",
+        breaker: "offline:Breaker",
         x: 12,
         y: 64,
         z: -9,

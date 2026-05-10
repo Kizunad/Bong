@@ -141,4 +141,30 @@ describe("ZhenfaV2NarrationRuntime", () => {
       style: "narration",
     });
   });
+
+  it("names the breaker on breakthrough events", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new ZhenfaV2NarrationRuntime({ sub, pub, logger: silent });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        event: "breakthrough",
+        array_id: 11,
+        kind: "illusion",
+        owner: "offline:Azure",
+        breaker: "offline:Breaker",
+        x: 1,
+        y: 64,
+        z: -2,
+        tick: 203,
+        force_break: true,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0].text).toContain("Breaker 硬破了Azure");
+  });
 });

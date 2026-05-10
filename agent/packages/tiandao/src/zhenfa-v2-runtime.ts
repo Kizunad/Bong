@@ -55,9 +55,10 @@ export function renderZhenfaV2Narration(event: ZhenfaV2EventV1): Narration | nul
       text = `${actor} 留下的${arrayName(event.kind)}气机散了，阵眼只剩一圈冷灰。`;
       break;
     case "breakthrough":
+      const breaker = event.breaker ? shortName(event.breaker) : "破阵者";
       text = event.force_break
-        ? `${actor} 的${arrayName(event.kind)}被人硬破，反冲先咬住破阵者。`
-        : `${actor} 的${arrayName(event.kind)}被拆开，封存的真元漏回地脉。`;
+        ? `${breaker} 硬破了${actor} 的${arrayName(event.kind)}，反冲先咬住破阵者。`
+        : `${breaker} 拆开了${actor} 的${arrayName(event.kind)}，封存的真元漏回地脉。`;
       break;
     case "deceive_heaven_exposed":
       text = "欺天阵露了破绽。天道不懂羞辱，只把假账连本带息记回布阵者身上。";

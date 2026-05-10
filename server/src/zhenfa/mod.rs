@@ -124,6 +124,7 @@ pub struct ZhenfaSensePulse {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct WardArrayDeployEvent {
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub pos: [i32; 3],
     pub radius: u8,
@@ -134,6 +135,7 @@ pub struct WardArrayDeployEvent {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct LingArrayDeployEvent {
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub pos: [i32; 3],
     pub radius: u8,
@@ -145,6 +147,7 @@ pub struct LingArrayDeployEvent {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct DeceiveHeavenEvent {
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub pos: [i32; 3],
     pub self_weight_multiplier: f64,
@@ -156,6 +159,7 @@ pub struct DeceiveHeavenEvent {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct DeceiveHeavenExposedEvent {
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub pos: [i32; 3],
     pub self_weight_multiplier: f64,
@@ -167,6 +171,7 @@ pub struct DeceiveHeavenExposedEvent {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct IllusionArrayDeployEvent {
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub pos: [i32; 3],
     pub reveal_threshold: f64,
@@ -176,6 +181,7 @@ pub struct IllusionArrayDeployEvent {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct ArrayDecayEvent {
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub kind: ZhenfaKind,
     pub pos: [i32; 3],
@@ -185,7 +191,9 @@ pub struct ArrayDecayEvent {
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct ArrayBreakthroughEvent {
     pub breaker: Entity,
+    pub breaker_player_id: String,
     pub owner: Entity,
+    pub owner_player_id: String,
     pub array_id: u64,
     pub kind: ZhenfaKind,
     pub pos: [i32; 3],
@@ -837,6 +845,7 @@ fn handle_zhenfa_place_requests(
         let realm_at_cast = cultivation.realm;
         let specialist = zhenfa_specialist_level(modifiers);
         let duration_ticks = effective_duration_ticks(profile.duration_ticks, qi_color, specialist);
+        let owner_player_id = canonical_player_id(username.0.as_str());
         let anchor_entity = commands
             .spawn((
                 ZhenfaAnchor { id: 0 },
@@ -857,7 +866,7 @@ fn handle_zhenfa_place_requests(
             id: 0,
             kind: req.kind,
             owner: req.player,
-            owner_player_id: canonical_player_id(username.0.as_str()),
+            owner_player_id: owner_player_id.clone(),
             pos: req.pos,
             carrier: req.carrier,
             qi_invest_ratio: invest_ratio,
@@ -884,6 +893,7 @@ fn handle_zhenfa_place_requests(
                 emit_deploy_event(
                     req.kind,
                     req.player,
+                    owner_player_id,
                     id,
                     req.pos,
                     &profile,
@@ -995,6 +1005,7 @@ fn handle_zhenfa_trigger_requests(
 fn emit_deploy_event(
     kind: ZhenfaKind,
     owner: Entity,
+    owner_player_id: String,
     array_id: u64,
     pos: [i32; 3],
     profile: &ZhenfaKindProfile,
@@ -1008,6 +1019,7 @@ fn emit_deploy_event(
         ZhenfaKind::ShrineWard => {
             ward_events.send(WardArrayDeployEvent {
                 owner,
+                owner_player_id,
                 array_id,
                 pos,
                 radius: profile.radius,
@@ -1018,6 +1030,7 @@ fn emit_deploy_event(
         ZhenfaKind::Lingju => {
             ling_events.send(LingArrayDeployEvent {
                 owner,
+                owner_player_id,
                 array_id,
                 pos,
                 radius: profile.radius,
@@ -1029,6 +1042,7 @@ fn emit_deploy_event(
         ZhenfaKind::DeceiveHeaven => {
             deceive_events.send(DeceiveHeavenEvent {
                 owner,
+                owner_player_id,
                 array_id,
                 pos,
                 self_weight_multiplier: 0.5,
@@ -1040,6 +1054,7 @@ fn emit_deploy_event(
         ZhenfaKind::Illusion => {
             illusion_events.send(IllusionArrayDeployEvent {
                 owner,
+                owner_player_id,
                 array_id,
                 pos,
                 reveal_threshold: profile.reveal_threshold,
@@ -1082,6 +1097,7 @@ type ZhenfaTriggerPlayer<'a> = (
 
 type ZhenfaDisarmPlayer<'a> = (
     &'a Position,
+    Option<&'a Username>,
     &'a mut Wounds,
     Option<&'a mut Contamination>,
     Option<&'a mut MeridianSystem>,
@@ -1114,6 +1130,7 @@ fn tick_zhenfa_registry(
     for instance in &expired {
         decay_events.send(ArrayDecayEvent {
             owner: instance.owner,
+            owner_player_id: instance.owner_player_id.clone(),
             array_id: instance.id,
             kind: instance.kind,
             pos: instance.pos,
@@ -1232,6 +1249,7 @@ fn tick_zhenfa_registry(
             });
             deceive_exposed_events.send(DeceiveHeavenExposedEvent {
                 owner: instance.owner,
+                owner_player_id: instance.owner_player_id.clone(),
                 array_id: instance.id,
                 pos: instance.pos,
                 self_weight_multiplier: 0.5,
@@ -1268,7 +1286,7 @@ fn handle_zhenfa_disarm_requests(
     mut breakthrough_events: EventWriter<ArrayBreakthroughEvent>,
 ) {
     for req in requests.read() {
-        let Ok((position, mut wounds, contamination, meridians, modifiers, inventory)) =
+        let Ok((position, username, mut wounds, contamination, meridians, modifiers, inventory)) =
             players.get_mut(req.player)
         else {
             tracing::warn!(
@@ -1299,7 +1317,11 @@ fn handle_zhenfa_disarm_requests(
         commands.entity(instance.anchor_entity).despawn();
         breakthrough_events.send(ArrayBreakthroughEvent {
             breaker: req.player,
+            breaker_player_id: username
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .unwrap_or_else(|| format!("entity_bits:{}", req.player.to_bits())),
             owner: instance.owner,
+            owner_player_id: instance.owner_player_id.clone(),
             array_id: instance.id,
             kind: instance.kind,
             pos: instance.pos,
