@@ -91,6 +91,8 @@ pub struct NpcVisualProfile {
     pub skin_tier: NpcSkinTier,
     pub skin_pool_key: NpcSkinPoolKey,
     pub age_band: NpcAgeBand,
+    #[serde(default)]
+    pub high_realm: bool,
     pub faction_id: Option<FactionId>,
     pub faction_rank: Option<FactionRank>,
 }
@@ -101,10 +103,7 @@ impl NpcVisualProfile {
     }
 
     pub const fn has_high_realm_aura(self) -> bool {
-        matches!(
-            self.skin_tier,
-            NpcSkinTier::RogueHigh | NpcSkinTier::DiscipleHigh
-        )
+        self.high_realm
     }
 }
 
@@ -115,6 +114,7 @@ pub fn select_npc_visual_profile(
     faction_rank: Option<FactionRank>,
     age_ratio: f64,
 ) -> NpcVisualProfile {
+    let high_realm = is_high_realm(realm);
     let skin_tier = match archetype {
         NpcArchetype::Commoner => NpcSkinTier::Commoner,
         NpcArchetype::Disciple => disciple_skin_tier(realm, faction_rank),
@@ -127,6 +127,7 @@ pub fn select_npc_visual_profile(
         skin_tier,
         skin_pool_key: NpcSkinPoolKey(skin_tier),
         age_band: NpcAgeBand::from_ratio(age_ratio),
+        high_realm,
         faction_id,
         faction_rank,
     }
@@ -175,6 +176,10 @@ fn disciple_skin_tier(realm: Realm, rank: Option<FactionRank>) -> NpcSkinTier {
     }
 }
 
+const fn is_high_realm(realm: Realm) -> bool {
+    matches!(realm, Realm::Spirit | Realm::Void)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,7 +204,30 @@ mod tests {
             0.5,
         );
         assert_eq!(high.skin_pool_key.as_str(), "disciple_high_true");
+        assert!(!high.has_high_realm_aura());
         assert_eq!(high.faction_rank, Some(FactionRank::Leader));
+    }
+
+    #[test]
+    fn high_realm_aura_uses_realm_not_rank_skin_tier() {
+        let low_realm_leader = select_npc_visual_profile(
+            NpcArchetype::Disciple,
+            Realm::Induce,
+            Some(FactionId::Attack),
+            Some(FactionRank::Leader),
+            0.5,
+        );
+        assert_eq!(low_realm_leader.skin_tier, NpcSkinTier::DiscipleHigh);
+        assert!(!low_realm_leader.has_high_realm_aura());
+
+        let high_realm_disciple = select_npc_visual_profile(
+            NpcArchetype::Disciple,
+            Realm::Spirit,
+            Some(FactionId::Attack),
+            Some(FactionRank::Disciple),
+            0.5,
+        );
+        assert!(high_realm_disciple.has_high_realm_aura());
     }
 
     #[test]

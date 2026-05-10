@@ -144,7 +144,7 @@
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test near_death_npc_termination_keeps_high_realm_qi_burst_profile -- --nocapture` → 1 passed。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test tribulation_ready_dormant_hydrates_without_player_distance_gate -- --nocapture` → 1 passed。
 - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test default_priority_covers_all_known_events -- --nocapture` → 1 passed。
-- `export JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn; export PATH=$JAVA_HOME/bin:$PATH; cd client && ./gradlew test build` → BUILD SUCCESSFUL；test XML 统计 1012 tests / 0 failures / 0 errors / 0 skipped。
+- `export JAVA_HOME=<JAVA_17_HOME>; export PATH=$JAVA_HOME/bin:$PATH; java -version; cd client && ./gradlew test build` → BUILD SUCCESSFUL；test XML 统计 1012 tests / 0 failures / 0 errors / 0 skipped。
 
 ### 跨仓库核验
 

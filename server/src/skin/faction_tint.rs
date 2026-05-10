@@ -288,6 +288,10 @@ mod tests {
             skin_tier,
             skin_pool_key: NpcSkinPoolKey(skin_tier),
             age_band,
+            high_realm: matches!(
+                skin_tier,
+                NpcSkinTier::RogueHigh | NpcSkinTier::DiscipleHigh
+            ),
             faction_id,
             faction_rank,
         }

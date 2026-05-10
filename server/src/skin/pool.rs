@@ -343,6 +343,7 @@ mod tests {
             skin_tier: key.0,
             skin_pool_key: key,
             age_band: crate::skin::npc_skin_selector::NpcAgeBand::Adult,
+            high_realm: matches!(key.0, NpcSkinTier::RogueHigh | NpcSkinTier::DiscipleHigh),
             faction_id: None,
             faction_rank: None,
         }
