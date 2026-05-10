@@ -18,7 +18,6 @@ use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::ServerDataBuildError;
 
-pub const NPC_METADATA_CHANNEL: &str = "bong:npc_metadata";
 pub const NPC_METADATA_SYNC_RADIUS: f64 = 64.0;
 pub const NPC_METADATA_SYNC_INTERVAL_TICKS: u64 = 20;
 
@@ -129,7 +128,6 @@ pub fn emit_npc_metadata_payloads(
                     continue;
                 }
             };
-            let _ = NPC_METADATA_CHANNEL;
             client.send_custom_payload(ident!("bong:npc_metadata"), &bytes);
 
             let pair = (client_entity, npc_entity);

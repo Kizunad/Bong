@@ -45,10 +45,14 @@ public final class NpcInspectScreen extends Screen {
 
     private static List<String> lines(NpcMetadata metadata) {
         List<String> lines = new ArrayList<>();
-        lines.add("§7类型 §f" + metadata.archetype());
+        lines.add("§7类型 §f" + archetypeLabel(metadata.archetype()));
         lines.add("§7境界 §f" + metadata.realm());
         if (metadata.factionName() != null) {
-            lines.add("§7派系 §f" + metadata.factionName() + " / " + metadata.factionRank());
+            if (metadata.factionRank() != null && !metadata.factionRank().isEmpty()) {
+                lines.add("§7派系 §f" + metadata.factionName() + " / " + metadata.factionRank());
+            } else {
+                lines.add("§7派系 §f" + metadata.factionName());
+            }
         }
         lines.add("§7寿元 §f" + metadata.ageBand());
         lines.add("§7态度 §f" + reputationLabel(metadata.reputationToPlayer()));
@@ -59,6 +63,21 @@ public final class NpcInspectScreen extends Screen {
             lines.add("§c此人对你充满敌意");
         }
         return lines;
+    }
+
+    private static String archetypeLabel(String archetype) {
+        return switch (archetype) {
+            case "rogue" -> "散修";
+            case "commoner" -> "凡人";
+            case "disciple" -> "宗门弟子";
+            case "beast" -> "异兽";
+            case "zombie" -> "游尸";
+            case "guardian_relic" -> "遗迹守卫";
+            case "daoxiang" -> "道伥";
+            case "zhinian" -> "执念";
+            case "fuya" -> "负压畸变体";
+            default -> "未知";
+        };
     }
 
     private static String reputationLabel(int reputation) {

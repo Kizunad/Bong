@@ -29,7 +29,7 @@ public final class NpcMetadataHandler {
             return false;
         }
         int entityId = intField(root, "entity_id", Integer.MIN_VALUE);
-        if (entityId == Integer.MIN_VALUE) {
+        if (entityId == Integer.MIN_VALUE || entityId < 0) {
             return false;
         }
 

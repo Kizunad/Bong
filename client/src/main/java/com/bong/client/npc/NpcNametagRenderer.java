@@ -105,10 +105,15 @@ public final class NpcNametagRenderer {
 
     private static String archetypeIcon(String archetype) {
         return switch (archetype) {
+            case "zombie" -> "尸";
             case "rogue" -> "散";
             case "commoner" -> "凡";
             case "disciple" -> "宗";
             case "beast" -> "兽";
+            case "guardian_relic" -> "守";
+            case "daoxiang" -> "伥";
+            case "zhinian" -> "执";
+            case "fuya" -> "压";
             default -> "人";
         };
     }

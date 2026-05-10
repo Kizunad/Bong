@@ -285,6 +285,7 @@ type NpcEngagementItem = (
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
     pub audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
 }
 
@@ -914,7 +915,21 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 };
-                let Some((template_id, base_price)) = npc_trade_catalog_entry(&requested_item_id)
+                if !offered_items.is_empty() {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        "§c[NPC] 当前交易只支持骨币结算。",
+                    );
+                    continue;
+                }
+                let Some((template_id, base_price)) =
+                    npc_trade_catalog_entry(target.archetype, &requested_item_id)
                 else {
                     emit_npc_refuse_audio(
                         &mut npc_engagement_params.audio_events,
@@ -979,22 +994,6 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 };
-                if !offered_items
-                    .iter()
-                    .all(|id| inventory_item_by_instance_borrow(&inventory, *id).is_some())
-                {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "§c[NPC] 出价物品不存在，交易取消。",
-                    );
-                    continue;
-                }
                 if inventory.bone_coins < price {
                     emit_npc_refuse_audio(
                         &mut npc_engagement_params.audio_events,
@@ -5738,6 +5737,11 @@ fn resolve_npc_engagement_target(
         .entity_manager
         .as_deref()
         .and_then(|manager| manager.get_by_id(npc_entity_id))?;
+    if dimension_kind_for(&npc_params.dimensions, player)
+        != dimension_kind_for(&npc_params.dimensions, npc)
+    {
+        return None;
+    }
     let player_position = npc_params.positions.get(player).ok()?.get();
     let (npc_position, archetype, membership, cultivation, lifecycle) =
         npc_params.npcs.get(npc).ok()?;
@@ -5764,11 +5768,19 @@ fn resolve_npc_engagement_target(
     })
 }
 
-fn npc_trade_catalog_entry(requested_item_id: &str) -> Option<(&'static str, u64)> {
-    match requested_item_id.trim() {
-        "lingcao" | "spirit_grass" => Some(("spirit_grass", 10)),
-        "fragment_scroll" | "broken_artifact_scroll" => Some(("broken_artifact_scroll", 40)),
-        "skill_scroll_herbalism_baicao_can" => Some(("skill_scroll_herbalism_baicao_can", 30)),
+fn npc_trade_catalog_entry(
+    archetype: NpcArchetype,
+    requested_item_id: &str,
+) -> Option<(&'static str, u64)> {
+    match (archetype, requested_item_id.trim()) {
+        (NpcArchetype::Commoner, "lingcao" | "spirit_grass") => Some(("spirit_grass", 10)),
+        (NpcArchetype::Rogue, "lingcao" | "spirit_grass") => Some(("spirit_grass", 10)),
+        (NpcArchetype::Rogue, "fragment_scroll" | "broken_artifact_scroll") => {
+            Some(("broken_artifact_scroll", 40))
+        }
+        (NpcArchetype::Rogue, "skill_scroll_herbalism_baicao_can") => {
+            Some(("skill_scroll_herbalism_baicao_can", 30))
+        }
         _ => None,
     }
 }

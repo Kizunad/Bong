@@ -1300,6 +1300,23 @@ mod tests {
             }
             other => panic!("expected NpcTradeRequest, got {other:?}"),
         }
+
+        let trade_without_offers = r#"{"type":"npc_trade_request","v":1,"npc_entity_id":42,"requested_item_id":"spirit_grass"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(trade_without_offers).unwrap();
+        match req {
+            ClientRequestV1::NpcTradeRequest {
+                v,
+                npc_entity_id,
+                offered_items,
+                requested_item_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(npc_entity_id, 42);
+                assert!(offered_items.is_empty());
+                assert_eq!(requested_item_id, "spirit_grass");
+            }
+            other => panic!("expected NpcTradeRequest, got {other:?}"),
+        }
     }
 
     #[test]

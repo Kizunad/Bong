@@ -369,6 +369,10 @@ public class ClientRequestProtocolTest {
             IllegalArgumentException.class,
             () -> ClientRequestProtocol.encodeNpcTradeRequest(1, List.of(-1L), "spirit_grass")
         );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeNpcTradeRequest(1, List.of(1L), " ")
+        );
     }
 
     @Test

@@ -104,14 +104,14 @@ pub fn emit_combat_audio_triggers(
             continue;
         };
         let origin = position.get();
-        let recipe_id = if npc_markers.get(event.target).is_ok() && event.damage > 0.0 {
-            "npc_hurt"
-        } else if npc_markers.get(event.attacker).is_ok() && event.damage > 0.0 {
-            "npc_aggro"
-        } else if event.description.contains("jiemai=true") {
+        let recipe_id = if event.description.contains("jiemai=true") {
             "parry_clang"
         } else if event.damage >= 0.5 {
             "meridian_crack"
+        } else if npc_markers.get(event.target).is_ok() && event.damage > 0.0 {
+            "npc_hurt"
+        } else if npc_markers.get(event.attacker).is_ok() && event.damage > 0.0 {
+            "npc_aggro"
         } else {
             continue;
         };

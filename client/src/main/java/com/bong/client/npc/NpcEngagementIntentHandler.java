@@ -28,17 +28,36 @@ public final class NpcEngagementIntentHandler implements IntentHandler {
 
     @Override
     public boolean dispatch(MinecraftClient client, InteractCandidate candidate) {
-        EntityHitResult hit = entityHit(client);
-        if (hit == null) {
+        int candidateEntityId = candidateEntityId(candidate);
+        if (candidateEntityId < 0) {
             return false;
         }
-        NpcMetadata metadata = NpcMetadataStore.get(hit.getEntity().getId());
+        EntityHitResult hit = entityHit(client);
+        if (hit == null || hit.getEntity().getId() != candidateEntityId) {
+            return false;
+        }
+        NpcMetadata metadata = NpcMetadataStore.get(candidateEntityId);
         if (metadata == null) {
             return false;
         }
         ClientRequestSender.sendNpcInspectRequest(metadata.entityId());
         client.setScreen(new NpcDialogueScreen(metadata));
         return true;
+    }
+
+    private static int candidateEntityId(InteractCandidate candidate) {
+        if (candidate == null || candidate.debugLabel() == null) {
+            return -1;
+        }
+        String prefix = "talk_npc:";
+        if (!candidate.debugLabel().startsWith(prefix)) {
+            return -1;
+        }
+        try {
+            return Integer.parseInt(candidate.debugLabel().substring(prefix.length()));
+        } catch (NumberFormatException exception) {
+            return -1;
+        }
     }
 
     private static EntityHitResult entityHit(MinecraftClient client) {

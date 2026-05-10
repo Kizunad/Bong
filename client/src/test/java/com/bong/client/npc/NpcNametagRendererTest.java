@@ -9,7 +9,9 @@ public class NpcNametagRendererTest {
     @Test
     void nametagColorTracksReputation() {
         assertEquals(0xE05A47, NpcNametagRenderer.colorByReputation(-31));
+        assertEquals(0xC8C8C8, NpcNametagRenderer.colorByReputation(-30));
         assertEquals(0xC8C8C8, NpcNametagRenderer.colorByReputation(0));
+        assertEquals(0xC8C8C8, NpcNametagRenderer.colorByReputation(50));
         assertEquals(0x5DD17A, NpcNametagRenderer.colorByReputation(51));
     }
 

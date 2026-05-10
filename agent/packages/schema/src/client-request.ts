@@ -645,7 +645,7 @@ export const NpcDialogueChoiceRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("npc_dialogue_choice"),
     npc_entity_id: Type.Integer({ minimum: 0 }),
-    option_id: Type.String({ minLength: 1, maxLength: 64 }),
+    option_id: Type.String({ minLength: 1, maxLength: 64, pattern: ".*\\S.*" }),
   },
   { additionalProperties: false },
 );
@@ -656,8 +656,10 @@ export const NpcTradeRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("npc_trade_request"),
     npc_entity_id: Type.Integer({ minimum: 0 }),
-    offered_items: Type.Array(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
-    requested_item_id: Type.String({ minLength: 1, maxLength: 128 }),
+    offered_items: Type.Optional(
+      Type.Array(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+    ),
+    requested_item_id: Type.String({ minLength: 1, maxLength: 128, pattern: ".*\\S.*" }),
   },
   { additionalProperties: false },
 );

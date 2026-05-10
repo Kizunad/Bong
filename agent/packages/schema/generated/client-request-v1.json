@@ -2516,6 +2516,7 @@
         "option_id": {
           "minLength": 1,
           "maxLength": 64,
+          "pattern": ".*\\S.*",
           "type": "string"
         }
       }
@@ -2527,7 +2528,6 @@
         "v",
         "type",
         "npc_entity_id",
-        "offered_items",
         "requested_item_id"
       ],
       "properties": {
@@ -2554,6 +2554,7 @@
         "requested_item_id": {
           "minLength": 1,
           "maxLength": 128,
+          "pattern": ".*\\S.*",
           "type": "string"
         }
       }
