@@ -285,7 +285,7 @@ type NpcEngagementItem = (
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
-    pub audio_tx: EventWriter<'w, PlaySoundRecipeRequest>,
+    pub audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
 }
 
 const CHANNEL: &str = "bong:client_request";
@@ -839,7 +839,7 @@ pub fn handle_client_request_payloads(
                 };
                 if target.reputation_to_player < -30 {
                     emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_tx,
+                        &mut npc_engagement_params.audio_events,
                         ev.client,
                         target.position,
                     );
@@ -883,7 +883,7 @@ pub fn handle_client_request_payloads(
                     "leave" => {}
                     _ => {
                         emit_npc_refuse_audio(
-                            &mut npc_engagement_params.audio_tx,
+                            &mut npc_engagement_params.audio_events,
                             ev.client,
                             target.position,
                         );
@@ -917,7 +917,7 @@ pub fn handle_client_request_payloads(
                 let Some((template_id, base_price)) = npc_trade_catalog_entry(&requested_item_id)
                 else {
                     emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_tx,
+                        &mut npc_engagement_params.audio_events,
                         ev.client,
                         target.position,
                     );
@@ -930,7 +930,7 @@ pub fn handle_client_request_payloads(
                 };
                 if !target.can_trade() {
                     emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_tx,
+                        &mut npc_engagement_params.audio_events,
                         ev.client,
                         target.position,
                     );
@@ -956,7 +956,7 @@ pub fn handle_client_request_payloads(
                                 ""
                             };
                         emit_npc_refuse_audio(
-                            &mut npc_engagement_params.audio_tx,
+                            &mut npc_engagement_params.audio_events,
                             ev.client,
                             target.position,
                         );
@@ -984,7 +984,7 @@ pub fn handle_client_request_payloads(
                     .all(|id| inventory_item_by_instance_borrow(&inventory, *id).is_some())
                 {
                     emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_tx,
+                        &mut npc_engagement_params.audio_events,
                         ev.client,
                         target.position,
                     );
@@ -997,7 +997,7 @@ pub fn handle_client_request_payloads(
                 }
                 if inventory.bone_coins < price {
                     emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_tx,
+                        &mut npc_engagement_params.audio_events,
                         ev.client,
                         target.position,
                     );
@@ -5785,11 +5785,14 @@ fn send_npc_interaction_feedback(
 }
 
 fn emit_npc_refuse_audio(
-    audio_tx: &mut EventWriter<PlaySoundRecipeRequest>,
+    audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     player: Entity,
     position: DVec3,
 ) {
-    audio_tx.send(PlaySoundRecipeRequest {
+    let Some(audio_events) = audio_events.as_mut() else {
+        return;
+    };
+    audio_events.send(PlaySoundRecipeRequest {
         recipe_id: "npc_refuse".to_string(),
         instance_id: 0,
         pos: Some([
