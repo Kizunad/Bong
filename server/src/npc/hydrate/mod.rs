@@ -6,9 +6,10 @@
 use std::collections::BTreeMap;
 
 use valence::client::ClientMarker;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    App, Commands, Despawned, Entity, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut,
-    Update, With, Without,
+    bevy_ecs, App, Commands, Despawned, Entity, EventWriter, IntoSystemConfigs, Position, Query,
+    Res, ResMut, Update, With, Without,
 };
 
 use crate::combat::components::Lifecycle;
@@ -19,8 +20,10 @@ use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::tribulation::{du_xu_prereqs_met, InitiateXuhuaTribulation};
 use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
-    dvec3_from_array, planar_distance, vec3_to_array, DormantBehaviorIntent, DormantPatrolSnapshot,
-    NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig,
+    dvec3_from_array, planar_distance, vec3_to_array, DormantBehaviorIntent,
+    DormantDaoxiangOriginSnapshot, DormantFuyaAuraSnapshot, DormantGuardianRelicSnapshot,
+    DormantPatrolSnapshot, DormantTsyHostileSnapshot, DormantZhinianPhase, NpcDormantSnapshot,
+    NpcDormantStore, NpcVirtualizationConfig,
 };
 use crate::npc::faction::{FactionMembership, FactionRank};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan, NpcRegistry};
@@ -28,17 +31,33 @@ use crate::npc::lod::NpcLodTier;
 use crate::npc::loot::{default_loot_for_archetype, NpcLootTable};
 use crate::npc::movement::GameTick;
 use crate::npc::patrol::NpcPatrol;
+use crate::npc::relic::{GuardianDuty, TrialEval};
 use crate::npc::spawn::{
     spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
     spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::npc::tsy_hostile::{
+    spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_zhinian_at, FuyaAura, TsyHostileMarker,
+    ZhinianMind, ZhinianPhase,
+};
 use crate::skin::NpcSkinFallbackPolicy;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::tsy_lifecycle::DaoxiangOrigin;
 use crate::world::zone::ZoneRegistry;
 
 const DORMANT_TRIBULATION_MIN_QI_RATIO: f64 = 0.8;
 type PlayerPosition = (DimensionKind, valence::prelude::DVec3);
+
+#[derive(SystemParam)]
+pub struct DormantExtraComponentQueries<'w, 's> {
+    guardian_duties: Query<'w, 's, Option<&'static GuardianDuty>, With<NpcMarker>>,
+    trial_evals: Query<'w, 's, Option<&'static TrialEval>, With<NpcMarker>>,
+    tsy_markers: Query<'w, 's, Option<&'static TsyHostileMarker>, With<NpcMarker>>,
+    zhinian_minds: Query<'w, 's, Option<&'static ZhinianMind>, With<NpcMarker>>,
+    fuya_auras: Query<'w, 's, Option<&'static FuyaAura>, With<NpcMarker>>,
+    daoxiang_origins: Query<'w, 's, Option<&'static DaoxiangOrigin>, With<NpcMarker>>,
+}
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering hydrate/dehydrate bridge");
@@ -147,6 +166,7 @@ pub fn dehydrate_far_npcs_system(
     death_registry: Query<Option<&DeathRegistry>, With<NpcMarker>>,
     life_record: Query<Option<&LifeRecord>, With<NpcMarker>>,
     loot_tables: Query<Option<&NpcLootTable>, With<NpcMarker>>,
+    extras: DormantExtraComponentQueries,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
     if !crate::npc::dormant::should_run_interval(tick, config.transition_interval_ticks) {
@@ -249,6 +269,16 @@ pub fn dehydrate_far_npcs_system(
                     .flatten()
                     .cloned()
                     .or_else(|| Some(default_loot_for_archetype(*archetype))),
+                guardian_relic: dormant_guardian_relic_snapshot(
+                    extras.guardian_duties.get(entity).ok().flatten(),
+                    extras.trial_evals.get(entity).ok().flatten(),
+                ),
+                tsy_hostile: dormant_tsy_hostile_snapshot(
+                    extras.tsy_markers.get(entity).ok().flatten(),
+                    extras.zhinian_minds.get(entity).ok().flatten(),
+                    extras.fuya_auras.get(entity).ok().flatten(),
+                    extras.daoxiang_origins.get(entity).ok().flatten(),
+                ),
                 intent,
                 dormant_since_tick: tick,
                 last_dormant_tick_processed: tick,
@@ -284,6 +314,60 @@ fn can_insert_dormant_snapshot(
     max_dormant_count: usize,
 ) -> bool {
     store.contains(char_id) || store.len() < max_dormant_count
+}
+
+fn dormant_guardian_relic_snapshot(
+    duty: Option<&GuardianDuty>,
+    trial: Option<&TrialEval>,
+) -> Option<DormantGuardianRelicSnapshot> {
+    let duty = duty?;
+    let trial = trial?;
+    Some(DormantGuardianRelicSnapshot {
+        relic_id: duty.relic_id.clone(),
+        alarm_center: vec3_to_array(duty.alarm_center),
+        alarm_radius: duty.alarm_radius,
+        trial_template_id: trial.trial_template_id.clone(),
+        last_offered_tick: trial.last_offered_tick,
+        offer_cooldown_ticks: trial.offer_cooldown_ticks,
+    })
+}
+
+fn dormant_tsy_hostile_snapshot(
+    marker: Option<&TsyHostileMarker>,
+    zhinian: Option<&ZhinianMind>,
+    fuya: Option<&FuyaAura>,
+    daoxiang_origin: Option<&DaoxiangOrigin>,
+) -> Option<DormantTsyHostileSnapshot> {
+    let marker = marker?;
+    Some(DormantTsyHostileSnapshot {
+        family_id: marker.family_id.clone(),
+        zhinian_phase: zhinian.map(|mind| dormant_zhinian_phase(mind.phase)),
+        zhinian_phase_entered_at_tick: zhinian.map(|mind| mind.phase_entered_at_tick),
+        fuya_aura: fuya.map(|aura| DormantFuyaAuraSnapshot {
+            radius_blocks: aura.radius_blocks,
+            drain_boost_multiplier: aura.drain_boost_multiplier,
+        }),
+        daoxiang_origin: daoxiang_origin.map(|origin| DormantDaoxiangOriginSnapshot {
+            from_family: origin.from_family.clone(),
+            from_corpse_death_cause: origin.from_corpse_death_cause.clone(),
+            activated_at_tick: origin.activated_at_tick,
+            inherited_drops: origin.inherited_drops.clone(),
+        }),
+    })
+}
+
+fn dormant_zhinian_phase(phase: ZhinianPhase) -> DormantZhinianPhase {
+    match phase {
+        ZhinianPhase::Masquerade => DormantZhinianPhase::Masquerade,
+        ZhinianPhase::Aggressive => DormantZhinianPhase::Aggressive,
+    }
+}
+
+fn hydrate_zhinian_phase(phase: DormantZhinianPhase) -> ZhinianPhase {
+    match phase {
+        DormantZhinianPhase::Masquerade => ZhinianPhase::Masquerade,
+        DormantZhinianPhase::Aggressive => ZhinianPhase::Aggressive,
+    }
 }
 
 fn dimension_kind(dimension: Option<&CurrentDimension>) -> DimensionKind {
@@ -369,18 +453,64 @@ fn spawn_from_snapshot(
                 .and_then(|lineage| lineage.master_id.clone()),
             snapshot.lifespan.age_ticks,
         ),
-        NpcArchetype::GuardianRelic => spawn_relic_guard_npc_at(
-            commands,
-            layer,
-            home_zone,
-            pos,
-            40.0,
-            format!("relic:{home_zone}"),
-            format!("trial:{home_zone}"),
-        ),
-        NpcArchetype::Daoxiang | NpcArchetype::Zhinian | NpcArchetype::Fuya => {
-            spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)
+        NpcArchetype::GuardianRelic => {
+            let relic = snapshot.guardian_relic.as_ref();
+            spawn_relic_guard_npc_at(
+                commands,
+                layer,
+                home_zone,
+                pos,
+                relic.map(|snapshot| snapshot.alarm_radius).unwrap_or(40.0),
+                relic
+                    .map(|snapshot| snapshot.relic_id.clone())
+                    .unwrap_or_else(|| format!("relic:{home_zone}")),
+                relic
+                    .map(|snapshot| snapshot.trial_template_id.clone())
+                    .unwrap_or_else(|| format!("trial:{home_zone}")),
+            )
         }
+        NpcArchetype::Daoxiang => snapshot
+            .tsy_hostile
+            .as_ref()
+            .map(|tsy| {
+                spawn_tsy_daoxiang_at(
+                    commands,
+                    layer,
+                    tsy.family_id.as_str(),
+                    home_zone,
+                    pos,
+                    patrol_target,
+                )
+            })
+            .unwrap_or_else(|| spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)),
+        NpcArchetype::Zhinian => snapshot
+            .tsy_hostile
+            .as_ref()
+            .map(|tsy| {
+                spawn_tsy_zhinian_at(
+                    commands,
+                    layer,
+                    tsy.family_id.as_str(),
+                    home_zone,
+                    pos,
+                    patrol_target,
+                )
+            })
+            .unwrap_or_else(|| spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)),
+        NpcArchetype::Fuya => snapshot
+            .tsy_hostile
+            .as_ref()
+            .map(|tsy| {
+                spawn_tsy_fuya_at(
+                    commands,
+                    layer,
+                    tsy.family_id.as_str(),
+                    home_zone,
+                    pos,
+                    patrol_target,
+                )
+            })
+            .unwrap_or_else(|| spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)),
     };
 
     let mut entity_commands = commands.entity(entity);
@@ -413,6 +543,45 @@ fn spawn_from_snapshot(
             NpcPatrol::new(patrol.home_zone, dvec3_from_array(patrol.current_target));
         patrol_component.anchor_index = patrol.anchor_index;
         entity_commands.insert(patrol_component);
+    }
+    if let Some(relic) = snapshot.guardian_relic {
+        entity_commands.insert((
+            GuardianDuty::new(relic.relic_id, dvec3_from_array(relic.alarm_center))
+                .with_radius(relic.alarm_radius),
+            TrialEval {
+                trial_template_id: relic.trial_template_id,
+                last_offered_tick: relic.last_offered_tick,
+                offer_cooldown_ticks: relic.offer_cooldown_ticks,
+            },
+        ));
+    }
+    if let Some(tsy) = snapshot.tsy_hostile {
+        entity_commands.insert(TsyHostileMarker {
+            family_id: tsy.family_id,
+        });
+        if let (Some(phase), Some(phase_entered_at_tick)) =
+            (tsy.zhinian_phase, tsy.zhinian_phase_entered_at_tick)
+        {
+            entity_commands.insert(ZhinianMind {
+                phase: hydrate_zhinian_phase(phase),
+                phase_entered_at_tick,
+                combat_memory: Default::default(),
+            });
+        }
+        if let Some(aura) = tsy.fuya_aura {
+            entity_commands.insert(FuyaAura {
+                radius_blocks: aura.radius_blocks,
+                drain_boost_multiplier: aura.drain_boost_multiplier,
+            });
+        }
+        if let Some(origin) = tsy.daoxiang_origin {
+            entity_commands.insert(DaoxiangOrigin {
+                from_family: origin.from_family,
+                from_corpse_death_cause: origin.from_corpse_death_cause,
+                activated_at_tick: origin.activated_at_tick,
+                inherited_drops: origin.inherited_drops,
+            });
+        }
     }
     entity
 }
@@ -471,6 +640,8 @@ mod tests {
             faction: None,
             patrol: None,
             loot_table: None,
+            guardian_relic: None,
+            tsy_hostile: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },
@@ -541,6 +712,57 @@ mod tests {
                 &players,
             ),
             0.0
+        );
+    }
+
+    #[test]
+    fn dormant_guardian_relic_snapshot_carries_guard_and_trial_metadata() {
+        let duty = GuardianDuty::new("relic:old", DVec3::new(2.0, 64.0, 3.0)).with_radius(32.0);
+        let mut trial = TrialEval::new("trial:old");
+        trial.last_offered_tick = Some(42);
+        trial.offer_cooldown_ticks = 900;
+
+        let snapshot = dormant_guardian_relic_snapshot(Some(&duty), Some(&trial))
+            .expect("guardian relic metadata should snapshot");
+
+        assert_eq!(snapshot.relic_id, "relic:old");
+        assert_eq!(snapshot.alarm_center, [2.0, 64.0, 3.0]);
+        assert_eq!(snapshot.alarm_radius, 32.0);
+        assert_eq!(snapshot.trial_template_id, "trial:old");
+        assert_eq!(snapshot.last_offered_tick, Some(42));
+        assert_eq!(snapshot.offer_cooldown_ticks, 900);
+    }
+
+    #[test]
+    fn dormant_tsy_hostile_snapshot_carries_family_phase_and_aura() {
+        let marker = TsyHostileMarker {
+            family_id: "family-a".to_string(),
+        };
+        let mind = ZhinianMind {
+            phase: ZhinianPhase::Aggressive,
+            phase_entered_at_tick: 77,
+            combat_memory: Default::default(),
+        };
+        let aura = FuyaAura {
+            radius_blocks: 12.0,
+            drain_boost_multiplier: 2.0,
+        };
+
+        let snapshot = dormant_tsy_hostile_snapshot(Some(&marker), Some(&mind), Some(&aura), None)
+            .expect("TSY hostile metadata should snapshot");
+
+        assert_eq!(snapshot.family_id, "family-a");
+        assert_eq!(
+            snapshot.zhinian_phase,
+            Some(DormantZhinianPhase::Aggressive)
+        );
+        assert_eq!(snapshot.zhinian_phase_entered_at_tick, Some(77));
+        assert_eq!(
+            snapshot.fuya_aura,
+            Some(DormantFuyaAuraSnapshot {
+                radius_blocks: 12.0,
+                drain_boost_multiplier: 2.0,
+            })
         );
     }
 

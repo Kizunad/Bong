@@ -104,6 +104,51 @@ pub struct DormantPatrolSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantGuardianRelicSnapshot {
+    pub relic_id: String,
+    pub alarm_center: [f64; 3],
+    pub alarm_radius: f64,
+    pub trial_template_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_offered_tick: Option<u32>,
+    pub offer_cooldown_ticks: u32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DormantZhinianPhase {
+    Masquerade,
+    Aggressive,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantFuyaAuraSnapshot {
+    pub radius_blocks: f32,
+    pub drain_boost_multiplier: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DormantDaoxiangOriginSnapshot {
+    pub from_family: String,
+    pub from_corpse_death_cause: String,
+    pub activated_at_tick: u64,
+    pub inherited_drops: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantTsyHostileSnapshot {
+    pub family_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub zhinian_phase: Option<DormantZhinianPhase>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub zhinian_phase_entered_at_tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fuya_aura: Option<DormantFuyaAuraSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub daoxiang_origin: Option<DormantDaoxiangOriginSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DormantBehaviorIntent {
     Wander { drift_radius: f64 },
@@ -157,6 +202,10 @@ pub struct NpcDormantSnapshot {
     pub patrol: Option<DormantPatrolSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub loot_table: Option<NpcLootTable>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub guardian_relic: Option<DormantGuardianRelicSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tsy_hostile: Option<DormantTsyHostileSnapshot>,
     pub intent: DormantBehaviorIntent,
     pub dormant_since_tick: u64,
     pub last_dormant_tick_processed: u64,
@@ -563,6 +612,8 @@ fn dormant_rogue_seed_snapshot(
         faction: None,
         patrol,
         loot_table: Some(default_loot_for_archetype(archetype)),
+        guardian_relic: None,
+        tsy_hostile: None,
         intent,
         dormant_since_tick: tick,
         last_dormant_tick_processed: tick,
@@ -894,6 +945,8 @@ mod tests {
             faction: None,
             patrol: None,
             loot_table: None,
+            guardian_relic: None,
+            tsy_hostile: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },

@@ -2900,6 +2900,8 @@ mod tests {
                 faction: None,
                 patrol: None,
                 loot_table: None,
+                guardian_relic: None,
+                tsy_hostile: None,
                 intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },
                 dormant_since_tick: 0,
                 last_dormant_tick_processed: 0,
