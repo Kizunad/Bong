@@ -50,6 +50,7 @@ class LingtianOverlayHudPlannerTest {
         List<HudRenderCommand> commands = LingtianOverlayHudPlanner.buildCommands(snapshot, 80, 30);
 
         assertTrue(commands.stream().allMatch(cmd -> cmd.x() >= 0 && cmd.y() >= 0));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("凝脉草 100%")));
         assertEquals(
             LingtianOverlayHudPlanner.PANEL_WIDTH - 12,
             commands.stream()

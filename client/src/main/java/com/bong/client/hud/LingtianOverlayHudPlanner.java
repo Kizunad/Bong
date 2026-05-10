@@ -23,6 +23,7 @@ public final class LingtianOverlayHudPlanner {
         if (!safeSnapshot.active() || screenWidth <= 0 || screenHeight <= 0) {
             return List.of();
         }
+        float clampedProgress = clamp01(safeSnapshot.progress());
         int x = clampPosition(screenWidth / 2 + 18, screenWidth, PANEL_WIDTH);
         int y = clampPosition(screenHeight / 2 + 18, screenHeight, PANEL_HEIGHT);
         List<HudRenderCommand> out = new ArrayList<>();
@@ -31,14 +32,14 @@ public final class LingtianOverlayHudPlanner {
         String plant = safeSnapshot.plantId() == null || safeSnapshot.plantId().isBlank() ? "地块" : safeSnapshot.plantId();
         out.add(HudRenderCommand.text(
             HudRenderLayer.LINGTIAN_OVERLAY,
-            icon(safeSnapshot) + " " + plant + " " + Math.round(safeSnapshot.progress() * 100.0f) + "%",
+            icon(safeSnapshot) + " " + plant + " " + Math.round(clampedProgress * 100.0f) + "%",
             x + 6,
             y + 5,
             safeSnapshot.dyeContaminationWarning() ? WARNING : TEXT
         ));
         out.add(HudRenderCommand.rect(HudRenderLayer.LINGTIAN_OVERLAY, x + 6, y + 20, PANEL_WIDTH - 12, 4, TRACK));
         int trackWidth = PANEL_WIDTH - 12;
-        int progressWidth = Math.max(0, Math.min(trackWidth, Math.round(trackWidth * safeSnapshot.progress())));
+        int progressWidth = Math.max(0, Math.min(trackWidth, Math.round(trackWidth * clampedProgress)));
         out.add(HudRenderCommand.rect(
             HudRenderLayer.LINGTIAN_OVERLAY,
             x + 6,
@@ -71,6 +72,13 @@ public final class LingtianOverlayHudPlanner {
     private static int clampPosition(int preferred, int screenSize, int panelSize) {
         int max = Math.max(0, screenSize - panelSize - 8);
         return Math.max(0, Math.min(preferred, max));
+    }
+
+    private static float clamp01(float value) {
+        if (!Float.isFinite(value)) {
+            return 0.0f;
+        }
+        return Math.max(0.0f, Math.min(1.0f, value));
     }
 
     private static void appendBorder(List<HudRenderCommand> out, int x, int y, int width, int height, int color) {

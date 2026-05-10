@@ -57,7 +57,9 @@ public final class HudImmersionMode {
         } else if (combatState != null && combatState.active()) {
             lastCombatAtMs = safeNow;
             next = Mode.COMBAT;
-        } else if (lastCombatAtMs >= 0L && safeNow - lastCombatAtMs < PEACE_AFTER_COMBAT_MS) {
+        } else if (lastCombatAtMs >= 0L
+            && safeNow >= lastCombatAtMs
+            && safeNow - lastCombatAtMs < PEACE_AFTER_COMBAT_MS) {
             next = Mode.COMBAT;
         } else {
             next = Mode.PEACE;
