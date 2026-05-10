@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HudImmersionModeTest {
     @AfterEach
@@ -65,5 +67,109 @@ class HudImmersionModeTest {
 
         assertEquals(1, filtered.size());
         assertEquals(HudRenderLayer.ZONE, filtered.get(0).layer());
+    }
+
+    @Test
+    void immersiveFadeDuration() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+
+        assertEquals(1.0, HudImmersionMode.immersiveAlpha(true, false, 1_000L), 0.0001);
+        assertEquals(0.0, HudImmersionMode.immersiveAlpha(true, false, 1_500L), 0.0001);
+    }
+
+    @Test
+    void altPeekTemporary() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        List<HudRenderCommand> peeked = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.PEACE,
+            VisualEffectState.none(),
+            new HudRuntimeContext(0.0, 0.0, 0.0, 0.0, true, List.of()),
+            1_600L
+        );
+
+        assertEquals(0x99FFFFFF, peeked.get(0).color());
+        assertTrue(HudImmersionMode.manualImmersive());
+    }
+
+    @Test
+    void altPeekThreeSecondsExit() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+        HudRuntimeContext altDown = new HudRuntimeContext(0.0, 0.0, 0.0, 0.0, true, List.of());
+
+        HudImmersionMode.applyImmersiveAlpha(commands, HudImmersionMode.Mode.PEACE, VisualEffectState.none(), altDown, 1_000L);
+        HudImmersionMode.applyImmersiveAlpha(commands, HudImmersionMode.Mode.PEACE, VisualEffectState.none(), altDown, 4_100L);
+
+        assertFalse(HudImmersionMode.manualImmersive());
+    }
+
+    @Test
+    void combatTemporaryRestoreKeepsHudOpaque() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        List<HudRenderCommand> restored = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.COMBAT,
+            VisualEffectState.none(),
+            HudRuntimeContext.empty(),
+            1_600L
+        );
+
+        assertEquals(0xFFFFFFFF, restored.get(0).color());
+    }
+
+    @Test
+    void immersiveAlphaKeepsTransparentColorsTransparent() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0x00FFFFFF)
+        );
+
+        List<HudRenderCommand> faded = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.PEACE,
+            VisualEffectState.none(),
+            HudRuntimeContext.empty(),
+            1_250L
+        );
+
+        assertEquals(0x00FFFFFF, faded.get(0).color());
+    }
+
+    @Test
+    void meditateAutoImmersive() {
+        VisualEffectState meditation = VisualEffectState.create("meditation_calm", 1.0, 10_000L, 1_000L);
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        HudImmersionMode.applyImmersiveAlpha(commands, HudImmersionMode.Mode.CULTIVATION, meditation, HudRuntimeContext.empty(), 1_000L);
+        List<HudRenderCommand> halfway = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.CULTIVATION,
+            meditation,
+            HudRuntimeContext.empty(),
+            4_250L
+        );
+        List<HudRenderCommand> dimmed = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.CULTIVATION,
+            meditation,
+            HudRuntimeContext.empty(),
+            4_500L
+        );
+
+        assertEquals(0x80FFFFFF, halfway.get(0).color());
+        assertEquals(0x00FFFFFF, dimmed.get(0).color());
     }
 }

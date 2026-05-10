@@ -1,22 +1,34 @@
-# Bong · plan-hud-immersion-v2 · 骨架
+# Bong · plan-hud-immersion-v2
 
-HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-polish-v1 已覆盖 **P0 目标HP/realm条+区域切换提示+HUD沉浸隐显（和平/战斗/修炼三模式） / P1 物品inspect+forge/alchemy进度增强 / P2 灵田overlay+全HUD动画polish+全屏事件特效**。本 plan **不重复**目标条、区域提示、inspect、进度条、基础隐显逻辑，而是在其之上新增 4 个独立 HUD widget：① 灵压雷达（mini 圆环显示周边灵气方向密度）② 方向罗盘 ③ 威胁感知指示器 ④ HUD layout preset 系统 + 极端环境 HUD 变体。
+HUD 感知增强——在 `plan-hud-polish-v1` 已落地的 HUD 基座上拓展。hud-polish-v1 已覆盖 **目标 HP/realm 条、区域切换提示、和平/战斗/修炼三模式、物品 inspect、forge/alchemy 进度、灵田 overlay、全 HUD 动画 polish、全屏事件特效**。本 plan **不重复**目标条、区域提示、inspect、进度条、基础隐显逻辑，而是在其之上新增 4 个独立 HUD widget：① 灵压雷达（mini 圆环显示周边灵气方向密度）② 方向罗盘 ③ 威胁感知指示器 ④ HUD layout preset 系统 + 极端环境 HUD 变体。
 
 **世界观锚点**：`worldview.md §三` 凝脉+ 可感知区域灵气精确值 → 灵压雷达的 lore 依据 · `§五` 通灵境可感知天道注意力（危机预警）→ 威胁指示器的 lore 依据 · `§十一` 匿名系统（默认不显示名字）→ HUD 不应暴露他人太多信息 · `§八` 天道语调冷漠——HUD 警告不应甜腻
 
 **library 锚点**：`cultivation-0001 六境要录`（各境界感知力描述）
 
 **前置依赖**：
-- `plan-hud-polish-v1` 🆕 active → **硬依赖**（`TargetInfoHudPlanner` / `ZoneTransitionHudPlanner` / `ImmersiveModeToggle` / 全 HUD 动画 polish 均由其建立）
+- `plan-hud-polish-v1` ✅ finished → **硬依赖已满足**（当前 repo 仍有同名 active 文档 drift；消费本 plan 时以 client 代码符号和 finished evidence 为准，不依赖该 active 路径）
 - `plan-HUD-v1` ✅ → `BongHudOrchestrator` / `BongHudStateSnapshot` / ZoneHudRenderer
 - `plan-spirit-eye-v1` ✅ → spiritual_sense 感知范围
 - `plan-perception-v1.1` ✅ → PerceptionEdgeState 威胁感知
 - `plan-realm-vision` (impl) ✅ → fog/tint 层
-- `plan-zone-atmosphere-v2` 🆕 skeleton → zone profile（雷达配色依据）
+- `plan-zone-atmosphere-v2` ✅ finished → `ZoneAtmosphereProfileRegistry` / `ZoneAtmospherePlanner` 可作为极端环境 HUD 变体配色依据
 
 **反向被依赖**：
 - `plan-breakthrough-cinematic-v1` 🆕 → 突破 cinematic 中 HUD 自动切沉浸模式
 - `plan-death-rebirth-cinematic-v1` 🆕 → 濒死/死亡 cinematic 中 HUD 特殊 layout
+
+---
+
+## 当前代码实地核验（2026-05-11）
+
+- **HUD 基座已存在**：`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java` 已集中组装 HUD command；`BongHudStateSnapshot` 已封装 `ZoneState` / `NarrationState` / `VisualEffectState`；`HudImmersionMode` 已按战斗/修炼/和平过滤 HUD layer。
+- **hud-polish-v1 关键符号已落地**：`TargetInfoHudPlanner`、`BongZoneHud`、`LingtianOverlayHudPlanner`、`HudAnimation` 等已在 client 代码和 finished evidence 中；区域切换由 `BongZoneHud` + `ZoneState.changedAtMillis()` / `dimensionTransition()` 承担，不存在独立区域切换 planner 文件。
+- **本 plan 的新 widget 尚未存在**：当前未发现 `QiDensityRadarHudPlanner`、`DirectionalCompassHudPlanner`、`ThreatIndicatorHudPlanner`、`HudLayoutPreset`。
+- **环境/感知数据源可复用**：`ZoneState` 已有 `spiritQiNormalized()` / `spiritQiRaw()` / `negativeSpiritQi()` / `collapsed()` / `dangerLevel()`；`EnvironmentEffectController` / `ZoneEnvironmentState` / `ZoneAtmosphereProfileRegistry` 已存在；`PerceptionEdgeState` 目前是 `entries()` + `SenseEntry(kind,x,y,z,intensity)`，没有 `locked_by_count` 字段；`TribulationStateStore` 有 active tribulation phase/wave state。
+- **实现约束**：本 plan 默认 client-only，不新增 server protocol。只有当现有 store 无法表达 widget 必需状态时，才在独立后续 plan 里扩 server payload；本 plan 内优先从 `BongHudStateSnapshot`、`ZoneState`、`PlayerStateStore`、`PerceptionEdgeStateStore`、`TribulationStateStore` 和本地 client world query 衍生。
+
+**结论**：可升 active。前置已满足，新 widget 不存在且边界清晰；需要先接入现有 HUD command/layer 体系，再补 planner/unit test。
 
 ---
 
@@ -25,7 +37,7 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 | 维度 | hud-polish-v1 已做 | 本 plan 拓展 |
 |------|-------------------|-------------|
 | 目标信息 | `TargetInfoHudPlanner`（锁定目标 HP/realm 条） | 不碰 |
-| 区域切换 | `ZoneTransitionHudPlanner`（切换时中央文字） | 不碰。罗盘上附带 zone 名是增量 |
+| 区域切换 | `BongZoneHud` + `ZoneState.changedAtMillis()` / `dimensionTransition()`（切换时中央文字 / 维度 blackout） | 不碰。罗盘上附带 zone 名是增量 |
 | 隐显模式 | 和平/战斗/修炼三模式 + crossfade 0.3s | 增强：沉浸模式 fade 效果 + 被攻击临时恢复 + Alt peek + 自动进入时机 |
 | inspect | `ItemInspectScreen`（长按物品全屏查看） | 不碰 |
 | 进度条 | forge/alchemy 进度增强 + smooth lerp | 不碰 |
@@ -40,9 +52,9 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ## 接入面 Checklist
 
-- **进料**：`BongHudOrchestrator`（hud-polish-v1 增强版）/ `BongHudStateSnapshot` / `spirit_eye::SpiritualSense` / `perception::PerceptionEdgeState` / `cultivation::Realm` / `ZoneEnvironment`（zone 灵气浓度）/ `SeasonState`
+- **进料**：`BongHudOrchestrator` / `BongHudStateSnapshot` / `ZoneState` / `PlayerStateStore` / `PerceptionEdgeStateStore` / `TribulationStateStore` / `EnvironmentEffectController` / `ZoneEnvironmentState` / `ZoneAtmosphereProfileRegistry` / `SeasonStateStore`
 - **出料**：`QiDensityRadarHudPlanner`（圆形 mini 灵压雷达）+ `DirectionalCompassHudPlanner`（顶栏方向 + zone 名）+ `ThreatIndicatorHudPlanner`（通灵+ 危机预警闪烁）+ `HudLayoutPreset`（战斗/探索/修炼三套 layout 对应 widget 集合）+ 负灵域/死域 HUD 变体渲染
-- **跨仓库契约**：纯 client 侧——消费已有 server state
+- **跨仓库契约**：纯 client 侧——消费已有 server state 与本地 client world query；不新增网络 schema
 
 ---
 
@@ -59,16 +71,16 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 灵压雷达 + 方向罗盘 | ⬜ |
-| P1 | 威胁感知指示器 | ⬜ |
-| P2 | HUD layout preset 系统 | ⬜ |
-| P3 | 负灵域/死域 HUD 变体 | ⬜ |
-| P4 | 沉浸模式增强（fade/peek/auto） | ⬜ |
-| P5 | 全矩阵压测（layout × 境界 × 模式 × 环境） | ⬜ |
+| P0 | 灵压雷达 + 方向罗盘 | ✅ 2026-05-11 |
+| P1 | 威胁感知指示器 | ✅ 2026-05-11 |
+| P2 | HUD layout preset 系统 | ✅ 2026-05-11 |
+| P3 | 负灵域/死域 HUD 变体 | ✅ 2026-05-11 |
+| P4 | 沉浸模式增强（fade/peek/auto） | ✅ 2026-05-11 |
+| P5 | 全矩阵压测（layout × 境界 × 模式 × 环境） | ✅ 2026-05-11 |
 
 ---
 
-## P0 — 灵压雷达 + 方向罗盘 ⬜
+## P0 — 灵压雷达 + 方向罗盘 ✅ 2026-05-11
 
 ### 交付物
 
@@ -82,14 +94,14 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
      - 低浓度（死域附近）：短标记 + 灰色
      - 负浓度（负灵域）：标记反转内指 + 紫色（灵气被抽入方向）
    - "有修士气息"标记：8 格内有其他玩家/NPC → 对应方向出现小白点（不暴露 identity/realm/HP——匿名系统）
-   - 数据源：client 侧按 `ZoneEnvironment.spirit_qi` + entity spatial query 本地计算（不加 server 通信）
+   - 数据源：首版用 `BongHudStateSnapshot.zoneState().spiritQiNormalized()` / `spiritQiRaw()` 给 zone 级基线，再用本地 client world/entity query 计算方向采样；若没有细粒度灵气栅格，不新增 server 通信，先以 zone 级雷达 + 本地实体方向完成闭环
 
 2. **`DirectionalCompassHudPlanner`**（`client/src/main/java/com/bong/client/hud/DirectionalCompassHudPlanner.java`）
    - 位置：屏幕顶栏正中（不遮挡 `TargetInfoHudPlanner`——它在顶部偏下）
    - 外观：横向刻度条（240px 宽），标注 N/S/E/W + 角度刻度每 30°
    - 当前朝向在正中央，两侧显示 ±90° 范围
    - 刻度条下方小字：当前 zone 名称（中文，alpha 0.6——不抢眼）
-   - zone 切换时名称 flash 1s（配合 hud-polish-v1 的 `ZoneTransitionHudPlanner` 中央大字）
+   - zone 切换时名称 flash 1s（配合 hud-polish-v1 的 `BongZoneHud` 中央大字）
    - 灵龛方向标记：如果玩家已设灵龛 → 罗盘上对应方向小蓝三角（死亡后重生方向提示）
    - 坍缩渊入口标记：如果当前 zone 有 TSY portal → 罗盘上紫色菱形标记
 
@@ -105,7 +117,7 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ---
 
-## P1 — 威胁感知指示器 ⬜
+## P1 — 威胁感知指示器 ✅ 2026-05-11
 
 ### 交付物
 
@@ -117,19 +129,19 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
    - pulse 频率 = 威胁距离的函数：远 → 慢闪(1s 周期) / 近 → 快闪(0.3s 周期) / 极近 → 常亮
 
 2. **被锁定预警**
-   - 其他玩家对你使用 inspect/锁定 → `PerceptionEdgeState.locked_by_count > 0`
+   - 其他玩家对你使用 inspect/锁定 → 若后续已有 lock/inspect store 则消费；当前 `PerceptionEdgeState` 无 `locked_by_count`，首版只从高强度 hostile `SenseEntry` 衍生边缘预警，不新增 schema
    - 预警 pulse：全屏边缘红色闪烁 1s（不透露谁锁定了你——匿名系统）
    - 接 worldview §六 顿悟 "敌人锁定你时有 1 秒预警"
 
 3. **天劫预警**
-   - 天劫临近（`tribulation::TribulationTimer` 距离触发 < 60s）→ 全屏边缘紫电纹路 pulse
+   - 天劫临近（当前优先消费 `TribulationStateStore` 的 active phase/wave state；若只有已开始状态，则只做进行中预警，不虚构 countdown 字段）→ 全屏边缘紫电纹路 pulse
    - 与 hud-polish-v1 P2 的"全屏紫电纹路 2s"不冲突：hud-polish 是渡劫**开始**时的一次性特效，本 plan 是渡劫**临近**时的持续预警 pulse
 
 4. **化虚增强**
    - 化虚境玩家：ThreatIndicator 追加"天道注意力条"
    - 外观：屏幕右下角微型竖条 3×20px
    - 天道注意力高 → 条满 + 红色 → 暗示"你太引人注目了"
-   - 数据源：`cultivation::Cultivation.tiandao_attention`（已有 component）
+   - 数据源：若已有 client store 暴露 `tiandao_attention` 则消费；当前未在 client/server grep 到稳定字段，首版不得新增协议，可先从 `TribulationStateStore` / `PerceptionEdgeState` 强度衍生或延后到独立契约 plan
 
 ### 验收抓手
 
@@ -138,7 +150,7 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ---
 
-## P2 — HUD layout preset 系统 ⬜
+## P2 — HUD layout preset 系统 ✅ 2026-05-11
 
 ### 交付物
 
@@ -173,7 +185,7 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ---
 
-## P3 — 负灵域/死域 HUD 变体 ⬜
+## P3 — 负灵域/死域 HUD 变体 ✅ 2026-05-11
 
 ### 交付物
 
@@ -206,7 +218,7 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ---
 
-## P4 — 沉浸模式增强 ⬜
+## P4 — 沉浸模式增强 ✅ 2026-05-11
 
 ### 交付物
 
@@ -238,7 +250,7 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ---
 
-## P5 — 全矩阵压测 ⬜
+## P5 — 全矩阵压测 ✅ 2026-05-11
 
 ### 交付物
 
@@ -260,8 +272,31 @@ HUD 感知增强——在 `plan-hud-polish-v1` ✅ active 基础上拓展。hud-
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`QiDensityRadarHudPlanner` / `DirectionalCompassHudPlanner` / `ThreatIndicatorHudPlanner` / `HudLayoutPreset` / 3 layout / 负灵域/死域/TSY HUD 变体 / 沉浸模式增强
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：minimap 大地图（M 键，需 `plan-worldmap-v1`）/ HUD 自定义拖拽布局（需独立 plan）
+- **落地清单**：
+  - P0：`client/src/main/java/com/bong/client/hud/QiDensityRadarHudPlanner.java`、`DirectionalCompassHudPlanner.java`、`HudRuntimeContext.java`；凝脉+ 可见，雷达消费 `ZoneState` + `PerceptionEdgeState`，罗盘消费 runtime yaw / zone label / TSY exit marker。
+  - P1：`ThreatIndicatorHudPlanner.java`；通灵+ 消费 `PerceptionEdgeState`，天劫态消费 `TribulationStateStore`，化虚追加天道注意力竖条；未新增 server schema。
+  - P2：`HudLayoutPreset.java`、`HudLayoutPreferenceStore.java`、`BongHudOrchestrator.java`；战斗 / 探索 / 修炼 preset、density override、preset stagger alpha 已接入现有 `HudImmersionMode` filter。
+  - P3：`HudEnvironmentVariant.java`、`HudEnvironmentVariantPlanner.java`；负灵域紫 tint、死域灰化、TSY tint / jitter / 雷达假标记 / collapse edge 已接入。
+  - P4：`HudImmersionMode.java`、`HudImmersionControls.java`、`BongHud.java`；F6 toggle、0.5s fade out、0.3s fade in、Alt peek、3s auto-exit、战斗恢复、打坐 3s auto immersive。
+  - P5：`client/src/test/java/com/bong/client/hud/HudImmersionMatrixTest.java`、`scripts/hud_matrix_test.sh`；3 layout × 6 realm × 2 immersive × 4 environment × 3 resolution matrix。
+- **关键 commit**：
+  - `f4516451b`（2026-05-11）`docs(plan-hud-immersion-v2): 升级为 active plan`
+  - `4eed43c11`（2026-05-11）`docs(plan-hud-immersion-v2): 补充实地核验边界`
+  - `1305a3531`（2026-05-11）`feat(plan-hud-immersion-v2): 增加 HUD 沉浸感知组件`
+  - `ec2137542`（2026-05-11）`test(plan-hud-immersion-v2): 覆盖 HUD 沉浸矩阵`
+  - `1b8c5b18a`（2026-05-11）`docs(plan-hud-immersion-v2): finish evidence 并归档至 finished_plans/`
+  - `fb2f90692`（2026-05-11）`fix(plan-hud-immersion-v2): 修正 HUD 方位与时间基准`
+  - `71c4c408d`（2026-05-11）`fix(plan-hud-immersion-v2): 收紧沉浸 alpha 状态边界`
+  - `a120e9954`（2026-05-11）`test(plan-hud-immersion-v2): 稳定 HUD 矩阵验证入口`
+- **测试结果**：
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew test --tests "com.bong.client.hud.*"`：通过。
+  - `scripts/hud_matrix_test.sh`：通过。
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon test build`：通过，`client/build/test-results/test` 汇总 1158 tests / 0 failure / 0 error / 0 skipped。
+- **跨仓库核验**：本 plan 为纯 client 侧；消费既有 `ZoneState` / `PlayerStateStore` / `PerceptionEdgeStateStore` / `TribulationStateStore` / `ExtractStateStore`，没有新增 server payload、agent schema 或 Redis contract。
+- **遗留 / 后续**：minimap 大地图仍留给 `plan-worldmap-v1`；HUD 自定义拖拽布局仍需独立 plan；真实灵气栅格采样、`locked_by_count`、`tiandao_attention` 若要做 server-authoritative 字段，应另开契约 plan。
+
+## 进度日志
+
+- 2026-05-11：实地核验 client HUD / environment / perception 代码，确认前置已满足、新 widget 未落地、且 `locked_by_count` / `tiandao_attention` 等旧文案字段当前不存在；按 client-only 边界升 active。

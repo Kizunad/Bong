@@ -2,12 +2,17 @@ package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
 import com.bong.client.combat.store.FalseSkinHudStateStore;
+import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.tsy.ExtractState;
+import com.bong.client.tsy.ExtractStateStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.ConnectionStatusIndicator;
+import com.bong.client.visual.realm_vision.PerceptionEdgeState;
+import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -74,8 +79,42 @@ public final class BongHudOrchestrator {
         int screenHeight,
         BotanyProjection.Anchor botanyAnchor
     ) {
+        return buildCommands(
+            snapshot,
+            combat,
+            nowMillis,
+            widthMeasurer,
+            maxTextWidth,
+            screenWidth,
+            screenHeight,
+            botanyAnchor,
+            HudRuntimeContext.empty()
+        );
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor,
+        HudRuntimeContext runtimeContext
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
+        HudRuntimeContext runtime = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
+        HudImmersionMode.Mode mode = HudImmersionMode.resolve(
+            combatSnapshot.combatHudState(),
+            safeSnapshot.visualEffectState(),
+            nowMillis
+        );
+        PlayerStateViewModel playerState = PlayerStateStore.snapshot();
+        PerceptionEdgeState perceptionState = PerceptionEdgeStateStore.snapshot();
+        ExtractState extractState = ExtractStateStore.snapshot();
+        HudEnvironmentVariant environmentVariant = HudEnvironmentVariant.from(safeSnapshot.zoneState(), extractState);
         int normalizedWidth = normalizeWidth(maxTextWidth);
         List<HudRenderCommand> commands = new ArrayList<>();
         commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, BASELINE_LABEL, BASELINE_X, BASELINE_Y, 0xFFFFFF));
@@ -144,11 +183,52 @@ public final class BongHudOrchestrator {
                 commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
             }
             commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
-                PlayerStateStore.snapshot().localNegPressure(),
+                playerState.localNegPressure(),
                 screenWidth,
                 screenHeight
             ));
         }
+
+        commands.addAll(HudEnvironmentVariantPlanner.buildCommands(
+            environmentVariant,
+            safeSnapshot.zoneState(),
+            extractState,
+            screenWidth,
+            screenHeight,
+            nowMillis
+        ));
+        commands.addAll(QiDensityRadarHudPlanner.buildCommands(
+            playerState,
+            safeSnapshot.zoneState(),
+            perceptionState,
+            mode,
+            environmentVariant,
+            runtime,
+            nowMillis,
+            screenWidth,
+            screenHeight
+        ));
+        if (HudRealmGate.atLeastCondense(playerState.realm())) {
+            commands.addAll(DirectionalCompassHudPlanner.buildCommands(
+                safeSnapshot.zoneState(),
+                extractState,
+                mode,
+                runtime,
+                widthMeasurer,
+                screenWidth,
+                screenHeight,
+                nowMillis
+            ));
+        }
+        commands.addAll(ThreatIndicatorHudPlanner.buildCommands(
+            playerState,
+            perceptionState,
+            TribulationStateStore.snapshot(),
+            runtime,
+            nowMillis,
+            screenWidth,
+            screenHeight
+        ));
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {
             commands.addAll(MiniBodyHudPlanner.buildCommands(
@@ -314,12 +394,19 @@ public final class BongHudOrchestrator {
             screenHeight
         ));
 
-        HudImmersionMode.Mode mode = HudImmersionMode.resolve(
-            combatSnapshot.combatHudState(),
-            safeSnapshot.visualEffectState(),
+        List<HudRenderCommand> layoutCommands = HudLayoutPreset.filter(
+            commands,
+            mode,
+            HudLayoutPreferenceStore.density(),
             nowMillis
         );
-        return List.copyOf(HudImmersionMode.filter(commands, mode));
+        return List.copyOf(HudImmersionMode.applyImmersiveAlpha(
+            layoutCommands,
+            mode,
+            safeSnapshot.visualEffectState(),
+            runtime,
+            nowMillis
+        ));
     }
 
     private static int normalizeWidth(int requestedWidth) {
