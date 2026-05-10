@@ -149,6 +149,9 @@ export const CHANNELS = {
   /** Server → Agent: 截脉 v2 五招叙事事件 */
   ZHENMAI_SKILL_EVENT: "bong:zhenmai/skill_event",
 
+  /** Server → Agent: 爆脉 v3 五招叙事事件 */
+  BAOMAI_V3_SKILL_EVENT: "bong:baomai_v3/skill_event",
+
   /** Server → Agent: 涡流 v2 五招 cast 流水（plan-woliu-v2 P3） */
   WOLIU_V2_CAST: "bong:woliu_v2/cast",
 
@@ -362,6 +365,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.WANTED_PLAYER,
   CHANNELS.MERIDIAN_SEVERED,
   CHANNELS.ZHENMAI_SKILL_EVENT,
+  CHANNELS.BAOMAI_V3_SKILL_EVENT,
   CHANNELS.CRAFT_OUTCOME,
   CHANNELS.CRAFT_RECIPE_UNLOCKED,
 ] as const;

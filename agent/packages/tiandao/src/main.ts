@@ -18,6 +18,7 @@ import { YidaoNarrationRuntime } from "./yidao-runtime.js";
 import { WoliuV2NarrationRuntime } from "./woliu_v2_runtime.js";
 import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
+import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
@@ -168,6 +169,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const yidaoCleanup = await startYidaoRuntime({
     redisUrl: config.redisUrl,
   });
+  const baomaiV3Cleanup = await startBaomaiV3Runtime({
+    redisUrl: config.redisUrl,
+  });
   const anqiCleanup = await startAnqiRuntime({
     ...runtimeOpts,
   });
@@ -199,6 +203,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     heartDemonCleanup,
     craftCleanup,
     anqiCleanup,
+    baomaiV3Cleanup,
     yidaoCleanup,
     zhenmaiCleanup,
     tuikeCleanup,
@@ -308,6 +313,33 @@ async function startYidaoRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] yidao runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startBaomaiV3Runtime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof BaomaiV3NarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof BaomaiV3NarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new BaomaiV3NarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] baomai v3 runtime online"))
+    .catch((error) => console.warn("[tiandao] baomai v3 runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] baomai v3 runtime disconnect error:", error);
     }
   };
 }
