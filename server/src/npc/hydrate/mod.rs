@@ -200,6 +200,9 @@ pub fn dehydrate_far_npcs_system(
         let dimension = current_dimension
             .map(|dimension| dimension.0)
             .unwrap_or(DimensionKind::Overworld);
+        if live_tribulation_ready(cultivation, meridian_system) {
+            continue;
+        }
         let nearest =
             nearest_same_dimension_player_distance(position.get(), dimension, &player_positions);
 
@@ -587,9 +590,12 @@ fn spawn_from_snapshot(
 }
 
 fn dormant_tribulation_ready(snapshot: &NpcDormantSnapshot) -> bool {
-    du_xu_prereqs_met(&snapshot.cultivation, &snapshot.meridian_system)
-        && snapshot.cultivation.qi_current
-            >= snapshot.cultivation.qi_max * DORMANT_TRIBULATION_MIN_QI_RATIO
+    live_tribulation_ready(&snapshot.cultivation, &snapshot.meridian_system)
+}
+
+fn live_tribulation_ready(cultivation: &Cultivation, meridian_system: &MeridianSystem) -> bool {
+    du_xu_prereqs_met(cultivation, meridian_system)
+        && cultivation.qi_current >= cultivation.qi_max * DORMANT_TRIBULATION_MIN_QI_RATIO
 }
 
 #[cfg(test)]
@@ -674,6 +680,10 @@ mod tests {
         let mut ready = snapshot("npc_ready", DVec3::new(10.0, 64.0, 10.0));
         open_all_meridians(&mut ready);
         assert!(dormant_tribulation_ready(&ready));
+        assert!(live_tribulation_ready(
+            &ready.cultivation,
+            &ready.meridian_system
+        ));
 
         let mut low_qi = ready.clone();
         low_qi.cultivation.qi_current = 700.0;

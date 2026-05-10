@@ -29,8 +29,8 @@ use crate::npc::loot::NpcLootTable;
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index, seed_position_for_zone};
 use crate::qi_physics::{
-    constants::QI_ZONE_UNIT_CAPACITY, qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer,
-    QiTransferReason, WorldQiAccount,
+    constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
+    qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::schema::cultivation::realm_to_string;
 use crate::social::components::CharId;
@@ -486,6 +486,14 @@ fn dormant_global_tick_system(
             if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
                 release_dormant_qi_to_zone(snapshot, zones, ledger);
             }
+            if snapshot.cultivation.qi_current > QI_EPSILON {
+                tracing::warn!(
+                    "[bong][npc] retained expired dormant NPC `{}` until {:.6} qi releases",
+                    snapshot.char_id,
+                    snapshot.cultivation.qi_current
+                );
+                continue;
+            }
             death_notices.send(dormant_death_notice(snapshot));
             expired.push(char_id);
         }
@@ -814,9 +822,10 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     );
     match result {
         Ok(success) => {
-            snapshot
-                .shared_lifespan
-                .apply_cap(LifespanCapTable::for_realm(success.to));
+            let previous_cap = snapshot.shared_lifespan.cap_by_realm.max(1) as f64;
+            let new_cap = LifespanCapTable::for_realm(success.to);
+            snapshot.shared_lifespan.apply_cap(new_cap);
+            snapshot.lifespan.max_age_ticks *= new_cap as f64 / previous_cap;
             snapshot
                 .life_record
                 .push(BiographyEntry::BreakthroughSucceeded {
@@ -907,6 +916,7 @@ mod tests {
     use crate::cultivation::components::{MeridianId, Realm};
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::Events;
 
     fn zone() -> Zone {
         Zone {
@@ -1110,6 +1120,44 @@ mod tests {
     }
 
     #[test]
+    fn dormant_global_tick_retains_expired_snapshot_until_qi_fully_released() {
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..Default::default()
+        });
+        app.insert_resource(GameTick(1));
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 0.99;
+        app.insert_resource(ZoneRegistry {
+            zones: vec![full_zone],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        let mut expired = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        expired.cultivation.qi_current = 2.0;
+        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
+        let mut store = NpcDormantStore::default();
+        store.insert(expired);
+        app.insert_resource(store);
+        app.add_systems(Update, dormant_global_tick_system);
+
+        app.update();
+
+        let store = app.world().resource::<NpcDormantStore>();
+        let retained = store
+            .snapshots
+            .get("npc_a")
+            .expect("overflowing qi must keep expired dormant NPC for retry");
+        assert!((retained.cultivation.qi_current - 1.5).abs() < 1e-9);
+        let events = app.world().resource::<Events<NpcDeathNotice>>();
+        assert!(
+            events.iter_current_update_events().next().is_none(),
+            "death notice must wait until qi release reaches zero"
+        );
+    }
+
+    #[test]
     fn dormant_wander_uses_absolute_tick_salt() {
         let mut snapshot = snapshot("npc_a", DVec3::ZERO);
         snapshot.intent = DormantBehaviorIntent::Wander {
@@ -1207,6 +1255,7 @@ mod tests {
         snapshot.cultivation.realm = Realm::Awaken;
         snapshot.cultivation.qi_current = 20.0;
         snapshot.cultivation.qi_max = 100.0;
+        snapshot.lifespan.age_ticks = 1_100.0;
         open_regular_meridians(&mut snapshot, 3);
         let mut roll = FixedRoll(0.0);
 
@@ -1226,6 +1275,8 @@ mod tests {
             snapshot.shared_lifespan.cap_by_realm,
             LifespanCapTable::INDUCE
         );
+        assert!((snapshot.lifespan.max_age_ticks - 1_666.666_666_666_666_7).abs() < 1e-9);
+        assert!(!snapshot.lifespan.is_expired());
         assert!(snapshot.life_record.biography.iter().any(|entry| {
             matches!(
                 entry,

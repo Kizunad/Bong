@@ -1321,7 +1321,7 @@ fn collect_npc_snapshots(
                     );
                     NpcSnapshot {
                         id: snapshot.char_id.clone(),
-                        kind: format!("dormant:{:?}", snapshot.archetype).to_ascii_lowercase(),
+                        kind: format!("dormant:{}", snapshot.archetype.as_str()),
                         zone: snapshot.zone_name.clone(),
                         pos: snapshot.position,
                         state: NpcStateKind::Idle,
