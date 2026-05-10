@@ -290,6 +290,7 @@ public interface EmitterBehavior {
   - `74439b5b5` 2026-05-10 — `修复 zone environment review 反馈`
   - `824cd1a48` 2026-05-10 — `清理 zone environment 维度化接口`
   - `d0cce7023` 2026-05-10 — `修复 zone environment review follow-up`
+  - `6c07237f7` 2026-05-10 — `修复环境天空与广播重试`
 - 测试结果：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 3512 passed。
   - `cd agent && npm run generate:check -w @bong/schema` ✅ generated schema artifacts are fresh，325 files。
@@ -297,9 +298,9 @@ public interface EmitterBehavior {
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL，JUnit 983 tests。
   - `git diff --check` ✅ 无 whitespace 错误。
 - 跨仓库核验：
-  - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / `ZoneEnvironmentLifecycleEvent` / `mark_zone_environment_dirty_for_new_clients` / `zone_environment_broadcast_system` / `RedisOutbound::ZoneEnvironmentUpdate` / `EnvironmentPhysicsHook`。
+  - server：`EnvironmentEffect` enum / `ZoneEnvironmentRegistry` / `ZoneEnvironmentLifecycleEvent` / `mark_zone_environment_dirty_for_new_clients` / `zone_environment_broadcast_system` / Redis 发送失败重标 dirty retry / `RedisOutbound::ZoneEnvironmentUpdate` / `EnvironmentPhysicsHook`。
   - agent：`EnvironmentEffectV1` / `ZoneEnvironmentStateV1.dimension` / bounded `tint_rgb` channels / `CHANNELS.ZONE_ENVIRONMENT_UPDATE` / `SCHEMA_REGISTRY.zoneEnvironmentStateV1` / `GENERATED_SCHEMA_FILES` / tiandao cross-system subscription。
-  - client：`EnvironmentEffectController` / `ZoneEnvironmentState.dimension` / `EnvironmentEffectRegistry` / `EmitterBehavior` / `EnvironmentAudioController` / 8 tick-based emitter / `MixinFogPerZone` / `MixinSkyPerZone`。
+  - client：`EnvironmentEffectController` / `ZoneEnvironmentState.dimension` / `EnvironmentEffectRegistry` / `EmitterBehavior` / `EnvironmentAudioController` / 8 tick-based emitter / `MixinFogPerZone` / `MixinSkyPerZone` / `EnvironmentSkyController` 原 shader color capture/restore。
   - 守恒红旗：本 plan 实装代码不写 `cultivation.qi_current` / zone qi；`rg "DECAY|DRAIN|RHO|BETA|qi_current|spirit_qi" ...` 仅命中 server 测试 fixture 的 `spirit_qi: 0.3`。
 - 遗留 / 后续：
   - vanilla rain renderer 替换（§5 第 1 项，v2+）
