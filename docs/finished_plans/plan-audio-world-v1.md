@@ -63,10 +63,10 @@
 1. **战斗音乐状态切换**
    - 进入战斗（`CombatState::InCombat`）→ `MusicStateMachine` 切换到 `COMBAT`
    - `combat_music.json`：`minecraft:music.dragon`(pitch 0.6, volume 0.15) + `minecraft:entity.warden.heartbeat`(pitch 0.8, volume 0.1)
-   - 脱战 5s 后 fade out → 回到 AMBIENT
+   - 脱战由 `CombatState::in_combat_until_tick` 结束窗口控制，回到 AMBIENT 时按 3 秒 / 60 ticks crossfade
 
 2. **修炼冥想音**
-   - 进入打坐（`cultivation::Cultivation::is_meditating`）→ `MusicStateMachine` 切换到 `CULTIVATION`
+   - 实际引气修炼窗口（`CultivationSessionPracticeAccumulator::is_recently_practicing`）→ `MusicStateMachine` 切换到 `CULTIVATION`
    - `cultivation_meditate.json`：`minecraft:block.amethyst_block.chime`(pitch 0.5, volume 0.08, loop 4s interval) + `minecraft:ambient.underwater.loop`(pitch 0.3, volume 0.03)（深沉冥想氛围）
    - 经脉打通瞬间：`minecraft:block.amethyst_cluster.break`(pitch 1.5, volume 0.3)（清脆灵感音）
 
@@ -91,8 +91,8 @@
    - 深层 tier：追加 `minecraft:block.respawn_anchor.deplete`(pitch 0.4, volume 0.06)（更重的负压嗡鸣）
 
 2. **节律音差**（配合 plan-jiezeq-v1 ✅）
-   - 炎汐期：ambient pitch ×1.1 + 追加 `minecraft:block.fire.ambient`(volume 0.02)（温暖感）
-   - 凝汐期：ambient pitch ×0.9 + 追加 `minecraft:block.powder_snow.step`(volume 0.02)（寒冷感）
+   - 炎汐期：ambient `pitch_shift=+0.10` + 追加 `minecraft:block.fire.ambient`(volume 0.02)（温暖感）
+   - 凝汐期：ambient `pitch_shift=-0.10` + 追加 `minecraft:block.powder_snow.step`(volume 0.02)（寒冷感）
    - 不给玩家显式提示（worldview §K 红线"不显式提示汐转期"），仅通过音差暗示
 
 3. **天劫氛围**
@@ -113,7 +113,7 @@
 |-----------|------|---------|
 | plan-audio-v1 | ✅ finished | SoundRecipePlayer / AudioTriggerS2c / recipe JSON schema / 38 existing recipes |
 | plan-combat-no_ui | ✅ finished | CombatState |
-| plan-cultivation-v1 | ✅ finished | Cultivation::is_meditating / MeridianSystem |
+| plan-cultivation-v1 | ✅ finished | CultivationSessionPracticeAccumulator / MeridianSystem |
 | plan-tsy-dimension-v1 | ✅ finished | DimensionKind::Tsy / TsyPresence |
 | plan-jiezeq-v1 | ✅ finished | SeasonState / 炎汐/凝汐 |
 | plan-tribulation-v1 | ✅ finished | TribulationAnnounce / wave flow |
@@ -133,33 +133,36 @@
 
 - P1 战斗音乐 + 修炼冥想音：
   - `server/src/audio/ambient.rs` 按 `TRIBULATION > COMBAT > TSY > CULTIVATION > AMBIENT` 解析音乐状态，`CombatState` 进入 `combat_music`。
-  - 当前代码没有 `Cultivation::is_meditating`，改用既有 `server/src/fauna/rat_phase.rs` 的 `MeditatingState` 作为冥想状态来源，进入 `cultivation_meditate`。
+  - 当前代码没有 `Cultivation::is_meditating`，改用 `qi_regen_and_zone_drain_tick` 记录的真实引气窗口：`CultivationSessionPracticeAccumulator::is_recently_practicing` 为真时进入 `cultivation_meditate`。
   - `server/src/cultivation/meridian_open.rs` 新增 `MeridianOpenedEvent`，`server/src/network/audio_trigger.rs` 将经脉打通瞬间映射到 `meridian_open_chime`。
   - 低 HP 心跳阈值从 30% 收敛到 plan 要求的 20%，新 flag 为 `hp_below_20`，client 保留 `hp_below_30` 兼容。
 
 - P2 TSY + 节律 + 天劫：
   - TSY 维度 / `TsyPresence` / TSY zone depth 进入 `ambient_tsy`，deep tier 追加 `minecraft:block.respawn_anchor.deplete`。
-  - `WorldSeasonState` / `query_season` 驱动炎汐 pitch shift + fire layer、凝汐 pitch shift + powder snow layer，不发显式提示。
+  - `WorldSeasonState` / `query_season` 驱动炎汐 `pitch_shift=+0.10` + fire layer、凝汐 `pitch_shift=-0.10` + powder snow layer，不发显式提示。
   - `TribulationState` 进入最高优先级 `tribulation_atmosphere`，现有 wave 音效 trigger 保持接线。
 
 - 跨仓库契约：
-  - `server/src/schema/audio.rs` 增加 `AmbientZoneS2c`，pitch 下限调整为 0.1。
-  - `agent/packages/schema/src/audio-event.ts` 增加 `AmbientZoneEventV1`，generated schema 已刷新。
-  - `client/src/main/java/com/bong/client/network/AmbientZoneHandler.java` 解析并校验 `ambient_recipe_id == recipe.id` 后交给 `MusicStateMachine`。
+  - `server/src/schema/audio.rs` 增加 `AmbientZoneS2c`，并校验 version、music_state、season 与数值范围。
+  - `agent/packages/schema/src/audio-event.ts` 增加 `AmbientZoneEventV1` / `AudioSeasonV1`，generated schema 已刷新。
+  - `client/src/main/java/com/bong/client/network/AmbientZoneHandler.java` 强制解析并校验 `season`、`ambient_recipe_id == recipe.id`、fade/volume/pitch 范围后交给 `MusicStateMachine`。
 
 ### 关键 commits
 
 - `a8ebb4240` 2026-05-10 `plan-audio-world-v1: 接入服务端环境音状态`
 - `8ad2afb52` 2026-05-10 `plan-audio-world-v1: 接入客户端音乐状态机`
 - `693a5a783` 2026-05-10 `plan-audio-world-v1: 扩展音频事件契约`
+- `a5081e0e8` 2026-05-10 `fix(audio): 收紧环境音乐状态契约`
 
 ### 测试结果
 
 - `git diff --check` ✅
 - `server/`: `cargo fmt --check` ✅
-- `server/`: `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅
-- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test audio::` ✅ 13 passed
-- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test` ✅ 3656 passed
+- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings` ✅
+- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test audio::` ✅ 15 passed
+- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test practice_accumulator` ✅ 2 passed
+- `server/`: `CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test` ✅ 3659 passed
+- `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.audio.MusicStateMachineTest" --tests "com.bong.client.network.AmbientZoneHandlerTest"` ✅ BUILD SUCCESSFUL
 - `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ BUILD SUCCESSFUL
 - `agent/`: `npm run build` ✅
 - `agent/packages/schema`: `npm test` ✅ 351 passed
