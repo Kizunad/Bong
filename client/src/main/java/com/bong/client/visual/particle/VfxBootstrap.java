@@ -36,6 +36,11 @@ public final class VfxBootstrap {
         registry.register(ChargingOrbVfx.EVENT_ID,               new ChargingOrbVfx());
         registry.register(ReleaseLightningVfx.EVENT_ID,          new ReleaseLightningVfx());
         registry.register(ExhaustedGreyMistVfx.EVENT_ID,         new ExhaustedGreyMistVfx());
+        BaomaiV3VfxPlayer baomaiV3 = new BaomaiV3VfxPlayer();
+        registry.register(BaomaiV3VfxPlayer.GROUND_WAVE_DUST,              baomaiV3);
+        registry.register(BaomaiV3VfxPlayer.BLOOD_BURN_CRIMSON,            baomaiV3);
+        registry.register(BaomaiV3VfxPlayer.BODY_TRANSCENDENCE_PILLAR,     baomaiV3);
+        registry.register(BaomaiV3VfxPlayer.MERIDIAN_RIPPLE_SCAR,          baomaiV3);
         registry.register(FrostBreathPlayer.EVENT_ID,            new FrostBreathPlayer());
         registry.register(BotanyAuraPlayer.EVENT_ID,             new BotanyAuraPlayer());
         registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     new BotanyHarvestBurstPlayer());

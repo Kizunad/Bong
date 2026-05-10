@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "baomai_blood_burn",
+  "description": "爆脉 v3 焚血：左臂割血，右拳收紧，血雾沿手臂上燃。",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 10,
+    "stopTick": 12,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.45, "yaw": 0.1 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.4, "yaw": -0.1 } },
+      { "tick": 3, "easing": "INOUTSINE", "leftArm": { "pitch": -1.15, "yaw": 0.35, "bend": 0.85 } },
+      { "tick": 3, "easing": "INOUTSINE", "rightArm": { "pitch": -1.0, "yaw": -0.35, "bend": 0.65 } },
+      { "tick": 6, "easing": "INOUTSINE", "torso": { "pitch": 0.12 } },
+      { "tick": 6, "easing": "INOUTSINE", "leftArm": { "pitch": -0.9, "roll": 0.35 } },
+      { "tick": 6, "easing": "INOUTSINE", "rightArm": { "pitch": -1.35, "bend": 0.3 } },
+      { "tick": 10, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 10, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "bend": 0.0 } },
+      { "tick": 10, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "yaw": 0.0, "bend": 0.0 } }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "baomai_mountain_shake",
+  "description": "爆脉 v3 撼山：沉肩蓄势后双拳砸地，震波沿地表外扩。",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 12,
+    "stopTick": 14,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 4, "easing": "INOUTSINE", "body": { "y": -0.10 } },
+      { "tick": 4, "easing": "INOUTSINE", "torso": { "pitch": 0.35 } },
+      { "tick": 4, "easing": "INOUTSINE", "rightArm": { "pitch": -1.55, "bend": 0.35 } },
+      { "tick": 4, "easing": "INOUTSINE", "leftArm": { "pitch": -1.55, "bend": 0.35 } },
+      { "tick": 7, "easing": "INOUTSINE", "body": { "y": -0.22 } },
+      { "tick": 7, "easing": "INOUTSINE", "torso": { "pitch": 0.78 } },
+      { "tick": 7, "easing": "INOUTSINE", "rightArm": { "pitch": -2.15, "bend": 0.05 } },
+      { "tick": 7, "easing": "INOUTSINE", "leftArm": { "pitch": -2.15, "bend": 0.05 } },
+      { "tick": 12, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 12, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 12, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0, "bend": 0.0 } },
+      { "tick": 12, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0, "bend": 0.0 } }
+    ]
+  }
+}
