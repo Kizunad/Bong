@@ -6,6 +6,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -61,7 +65,8 @@ public class BongEntityModelAssetTest {
                 body.contains(kind.idleAnimationName()),
                 "Animation asset must expose " + kind.idleAnimationName()
             );
-            assertTrue(body.contains("\"loop\": true"), "Animation must loop for " + kind.entityId());
+            String compact = body.replaceAll("\\s+", "");
+            assertTrue(compact.contains("\"loop\":true"), "Animation must loop for " + kind.entityId());
             assertTrue(
                 body.contains("\"Accent\"")
                     || body.contains("\"Glow\"")
@@ -72,6 +77,10 @@ public class BongEntityModelAssetTest {
                     || body.contains("\"Body\"")
                     || body.contains("\"Bones\""),
                 "Animation must target a meaningful non-root bone for " + kind.entityId()
+            );
+            assertTrue(
+                geoBoneNames(kind).containsAll(animatedBoneNames(body)),
+                "Animation must only target bones present in geo asset for " + kind.entityId()
             );
         }
     }
@@ -103,5 +112,26 @@ public class BongEntityModelAssetTest {
             count++;
             offset = index + needle.length();
         }
+    }
+
+    private static Set<String> geoBoneNames(BongEntityModelKind kind) throws IOException {
+        Path geo = RESOURCES.resolve(Path.of("assets", "bong", "geo", kind.entityId() + ".geo.json"));
+        Matcher matcher = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"")
+            .matcher(Files.readString(geo, StandardCharsets.UTF_8));
+        Set<String> names = new HashSet<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
+    }
+
+    private static Set<String> animatedBoneNames(String body) {
+        Matcher matcher = Pattern.compile("\"([^\"]+)\"\\s*:\\s*\\{\\s*\"(?:rotation|position|scale)\"")
+            .matcher(body);
+        Set<String> names = new HashSet<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
     }
 }
