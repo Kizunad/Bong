@@ -18,13 +18,13 @@
 
 | 阶段 | 目标 | 状态 |
 |------|------|------|
-| P0 | Portal VFX + 坍缩视觉 + race-out 音效 | ⬜ |
-| P1 | 负压视觉反馈 + Fuya 光环 + 上古遗物发光 | ⬜ |
-| P2 | 容器搜刮动画 + narration 触发接线 + 高手死处 zone 补全 | ⬜ |
+| P0 | Portal VFX + 坍缩视觉 + race-out 音效 | ✅ 2026-05-10 |
+| P1 | 负压视觉反馈 + Fuya 光环 + 上古遗物发光 | ✅ 2026-05-10 |
+| P2 | 容器搜刮动画 + narration 触发接线 + 高手死处 zone 补全 | ✅ 2026-05-10 |
 
 ---
 
-## P0 — Portal VFX + 坍缩视觉 + race-out 音效 ⬜
+## P0 — Portal VFX + 坍缩视觉 + race-out 音效 ✅ 2026-05-10
 
 ### 交付物
 
@@ -55,7 +55,7 @@
 
 ---
 
-## P1 — 负压视觉反馈 + Fuya 光环 + 上古遗物发光 ⬜
+## P1 — 负压视觉反馈 + Fuya 光环 + 上古遗物发光 ✅ 2026-05-10
 
 ### 交付物
 
@@ -80,7 +80,7 @@
 
 ---
 
-## P2 — 容器搜刮动画 + narration 接线 + 高手死处补全 ⬜
+## P2 — 容器搜刮动画 + narration 接线 + 高手死处补全 ✅ 2026-05-10
 
 ### 交付物
 
@@ -103,6 +103,14 @@
 - E2E：完整 TSY 跑一轮（入场 → 搜刮 → 坍缩 → race-out / 死亡两路径），全程视觉/音效/narration 无缺失
 
 ---
+
+## Finish Evidence
+
+- 实现提交：`0ff4530ba`（`实现坍缩渊体验层反馈闭环`）
+- P0：client 注册 `tsy_portal_idle` / `tsy_portal_deep` / `tsy_portal_tear` / `tsy_collapse_burst`，server 在 portal、collapse、extract、race-out 路径 emit VFX/audio，新增 4 个 TSY audio recipe。
+- P1：接入 `TsyPressureOverlay`、FOV offset、Fuya aura VFX，以及上古遗物 tooltip/grid/drop glow 与 `charges` 显示。
+- P2：容器搜刮 start/complete VFX/audio、loot pop 方向、`ZoneStatusV1::race_out` schema 与 tiandao context/insight 文案、`tsy_gaoshou_01_{shallow,mid,deep}` POI 契约补全。
+- 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（3612 passed）、`./gradlew test build`（JDK 17）、`npm run build`、`agent/packages/tiandao npm test`、`agent/packages/schema npm test`、`npm run generate:check`、`git diff --check`。
 
 ## 前置依赖
 
