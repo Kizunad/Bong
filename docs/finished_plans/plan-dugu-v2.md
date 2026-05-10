@@ -295,6 +295,8 @@ pub fn register_skills(registry: &mut SkillRegistry) {
 }
 ```
 
+**经脉依赖**：五招统一声明 `SkillMeridianDependencies::declare("dugu.*", vec![MeridianId::Liver])`。毒蛊自蕴的慢性侵蚀锚定肝经，`MeridianSeveredPermanent { Liver }` 会让蚀针 / 自蕴 / 侵染 / 神识遮蔽 / 倒蚀在通用 cast 前置检查中返回 `CastRejectReason::MeridianSevered(Some(MeridianId::Liver))`。
+
 **PracticeLog 接入**（每招触发后）：
 
 ```rust
@@ -322,9 +324,9 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 | 动画 | `bong:dugu_self_cure_pose` | 新建 JSON | P2 | 服毒姿态（端碗 + 仰脖 + 静坐），priority 300（姿态层）|
 | 动画 | `bong:dugu_shroud_activate` | 新建 JSON | P2 | 双手交叉胸前，全身阴影渐现，priority 400（进阶姿态）|
 | 动画 | `bong:dugu_pointing_curse` | 新建 JSON | P2 | 化虚级远指，单指点向远方，priority 1500（高阶战斗）|
-| 粒子 | `DUGU_DARK_GREEN_MIST` ParticleType + Player | 新建 | P2 | 阴诡色暗绿雾，自蕴气息周围 + 化虚倒蚀余响 |
-| 粒子 | `DUGU_TAINT_PULSE` ParticleType + Player | 新建 | P2 | 受害者身上脉动可视（仅高境 inspect 可见时渲染）|
-| 粒子 | `DUGU_REVERSE_BURST` ParticleType + Player | 新建 | P2 | 倒蚀引爆瞬间在受害者位置爆开 |
+| 粒子 | `DUGU_DARK_GREEN_MIST` ParticleType + Player | 新建专属 PNG：`textures/particle/dugu_dark_green_mist.png` | P2 | 阴诡色暗绿雾，自蕴气息周围；神识遮蔽复用该粒子是同一"阴诡色外覆气息"的设计意图，动画/HUD 与自蕴区分 |
+| 粒子 | `DUGU_TAINT_PULSE` ParticleType + Player | 新建专属 PNG：`textures/particle/dugu_taint_pulse.png` | P2 | 受害者身上脉动可视；侵染复用蚀针掷针姿态 + taint pulse 是"二次注入触发"的设计意图，HUD 文案与 payload skill 区分 |
+| 粒子 | `DUGU_REVERSE_BURST` ParticleType + Player | 新建专属 PNG：`textures/particle/dugu_reverse_burst.png` | P2 | 倒蚀引爆瞬间在受害者位置爆开 |
 | 音效 | `dugu_needle_hiss` | recipe 新建 | P3 | layers: `[{ sound: "entity.spider.hurt", pitch: 1.5, volume: 0.4 }, { sound: "block.fire.extinguish", pitch: 1.2, volume: 0.3, delay_ticks: 1 }]`（针刺低频嘶 + 蛇音）|
 | 音效 | `dugu_self_cure_drink` | recipe 新建 | P3 | layers: `[{ sound: "entity.witch.drink", pitch: 0.8, volume: 0.5 }]`（服毒声）|
 | 音效 | `dugu_curse_cackle` | recipe 新建 | P3 | layers: `[{ sound: "entity.witch.celebrate", pitch: 0.7, volume: 0.6 }, { sound: "ambient.cave", pitch: 1.2, volume: 0.3, delay_ticks: 5 }]`（化虚倒蚀远程嘲笑/嗤笑）|
@@ -437,9 +439,9 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
 ## Finish Evidence
 
 - **落地清单**：
-  - P0/P1 server：`server/src/combat/dugu_v2/{skills,physics,state,tick,events}.rs` 落地五招 `dugu.eclipse/self_cure/penetrate/shroud/reverse`、三档永久阈值、ρ=0.05 脏真元、99% zone qi 回流、暴露概率、自蕴阴诡色、`TaintMark`、`ShroudActive`、`ReverseAftermathCloud`、`DuguRevealedEvent` 与 `JueBiTriggerSource::DuguReverse`。
+  - P0/P1 server：`server/src/combat/dugu_v2/{skills,physics,state,tick,events}.rs` 落地五招 `dugu.eclipse/self_cure/penetrate/shroud/reverse`、三档永久阈值、ρ=0.05 脏真元、99% zone qi 回流、真实 `reveal_probability` 事件透传、自蕴阴诡色、`TaintMark`、`ShroudActive`、`ReverseAftermathCloud`、肝经 `SkillMeridianDependencies` 守门、`DuguRevealedEvent` 与 `JueBiTriggerSource::DuguReverse`。
   - P1 qi/color/env：`server/src/qi_physics/{constants,env,field}.rs` 增加 `DUGU_RHO`、`reverse_burst_all_marks`、三种 dugu EnvField 痕迹；`server/src/cultivation/components.rs` 增加 `QiColor::permanent_lock_mask`。
-  - P2 client：`client/src/main/resources/assets/bong/player_animation/dugu_{needle_throw,self_cure_pose,shroud_activate,pointing_curse}.json`、`client/src/main/resources/assets/bong/particles/dugu_{dark_green_mist,taint_pulse,reverse_burst}.json`、`client/src/main/java/com/bong/client/hud/DuguV2HudPlanner.java` / `DuguV2HudStateStore.java`。
+  - P2 client：`client/src/main/resources/assets/bong/player_animation/dugu_{needle_throw,self_cure_pose,shroud_activate,pointing_curse}.json`、`client/src/main/resources/assets/bong/particles/dugu_{dark_green_mist,taint_pulse,reverse_burst}.json`、`client/src/main/resources/assets/bong/textures/particle/dugu_{dark_green_mist,taint_pulse,reverse_burst}.png`、`client/src/main/java/com/bong/client/hud/DuguV2HudPlanner.java` / `DuguV2HudStateStore.java`。
   - P3 agent/audio：`agent/packages/schema/src/dugu_v2.ts`、`agent/packages/tiandao/src/dugu_v2_runtime.ts`、`server/src/network/dugu_v2_event_bridge.rs`、`server/assets/audio/recipes/dugu_{needle_hiss,self_cure_drink,curse_cackle}.json`。
   - P4 telemetry/联动：`server/src/combat/style_telemetry.rs`、`server/src/network/qi_color_observed_emit.rs`、`server/src/network/redis_bridge.rs` 接入毒蛊事件、阴诡色观测、天道叙事 channel。
 
@@ -448,11 +450,13 @@ PracticeLog 累积驱动 QiColor **阴诡色**（worldview §六:618）演化，
   - `edb1d70da`（2026-05-10）`feat(dugu-v2): 接通 schema 与天道叙事`
   - `7bceeb80e`（2026-05-10）`feat(dugu-v2): 补客户端 HUD 粒子与音效配方`
   - `1842f6684`（2026-05-10）`fix(dugu-v2): 补齐四招客户端动画资源`
+  - `7f904a1e0`（2026-05-10）`fix(dugu-v2): 处理 review 阻塞项`
 
 - **测试结果**：
-  - `cd server && cargo test combat::dugu_v2`：120 passed。
+  - `cd server && cargo test combat::dugu_v2`：121 passed。
+  - `cd server && cargo test network::dugu_v2_event_bridge`：2 passed。
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
-  - `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：3772 passed（默认 debuginfo test 链接在当前执行环境被 SIGKILL，降调试符号后同一测试集通过）。
+  - `cd server && CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" cargo test`：3775 passed（默认 debuginfo test 链接在当前执行环境曾被 SIGKILL，降调试符号后同一测试集通过）。
   - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：tiandao 47 files / 328 tests passed；schema 15 files / 353 tests passed。
   - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon test build`：BUILD SUCCESSFUL；1019 tests, 0 failures。
   - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/dugu_*.json -o /tmp/...`：4 个新增动画 headless grid 渲染成功。
