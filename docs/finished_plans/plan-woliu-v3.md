@@ -118,12 +118,12 @@
   - agent：`agent/packages/schema/src/woliu_v2.ts` / `tests/woliu_v2.test.ts` 和 `agent/packages/tiandao/src/woliu_v2_runtime.ts` / `tests/woliu_v2_runtime.test.ts` 已识别五个 v3 skill id 并生成 narration label。
   - client：`client/src/main/java/com/bong/client/visual/particle/VortexSpiralPlayer.java`、`VfxBootstrap.java`、`VfxRegistryTest.java` 注册五个 v3 particle id；`client/src/main/resources/assets/bong/player_animation/woliu_*.json` 提供五个动画；`server/assets/audio/recipes/woliu_*.json` 提供五个音效。
 - **关键 commit**：
-  - `9232e4f59`（2026-05-11）`plan-woliu-v3: 接入涡流真空五招`
-  - `640e9c5eb`（2026-05-11）`plan-woliu-v3: 补齐真空五招运行效果`
+  - `7e3eec26c`（2026-05-11）`plan-woliu-v3: 接入涡流真空五招`
+  - `442e4a90d`（2026-05-11）`plan-woliu-v3: 补齐真空五招运行效果`
 - **测试结果**：
-  - server：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test -j 1` ✅ 3983 passed。
+  - server：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test -j 1` ✅ 4023 passed。
   - server targeted：`CARGO_BUILD_JOBS=1 cargo test -j 1 combat::woliu_v2` ✅ 144 passed；`cargo test loads_default_audio_recipes` ✅ 1 passed；`cargo test woliu_v3_techniques_require_breath_and_heart_meridians` ✅ 1 passed。
-  - agent：`npm run build` ✅；`npm run generate:check -w @bong/schema` ✅ 336 generated schema files fresh；`npm test -w @bong/schema` ✅ 356 passed；`npm test -w @bong/tiandao -- woliu_v2_runtime` ✅ 3 passed。
+  - agent：`npm run build` ✅；`npm run generate:check -w @bong/schema` ✅ 338 generated schema files fresh；`npm test -w @bong/schema` ✅ 358 passed；`npm test -w @bong/tiandao -- woliu_v2_runtime` ✅ 3 passed。
   - client：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` ✅ BUILD SUCCESSFUL。
   - animation render：`/tmp/woliu_v3_anim_vacuum_palm/woliu_vacuum_palm_grid.png`、`/tmp/woliu_v3_anim_vortex_shield/woliu_vortex_shield_grid.png`、`/tmp/woliu_v3_anim_vacuum_lock/woliu_vacuum_lock_grid.png`、`/tmp/woliu_v3_anim_vortex_resonance/woliu_vortex_resonance_grid.png`、`/tmp/woliu_v3_anim_turbulence_burst/woliu_turbulence_burst_grid.png`。
 - **跨仓库核验**：server `WoliuSkillId::{VacuumPalm,VortexShield,VacuumLock,VortexResonance,TurbulenceBurst}` ↔ agent `WoliuSkillCastV1["skill"]` literal set ↔ client `VortexSpiralPlayer.{VACUUM_PALM,VORTEX_SHIELD,VACUUM_LOCK,VORTEX_RESONANCE,TURBULENCE_BURST}`。
