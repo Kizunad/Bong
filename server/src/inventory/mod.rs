@@ -10,6 +10,7 @@ use valence::prelude::{
 
 use crate::cultivation::death_hooks::{PlayerRevived, PlayerTerminated};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::poison_trait::PoisonPillKind;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 /// Worldview §十二：死亡掉落应落在「死亡点」而不是「重生点」。
@@ -174,6 +175,7 @@ pub enum ItemEffect {
     ContaminationCleanse { magnitude: f64 },
     LifespanExtension { years: u32, source: String },
     AntiSpiritPressure { duration_ticks: u64 },
+    PoisonPill { pill_item_id: String },
 }
 
 #[derive(Debug, Default)]
@@ -1589,6 +1591,17 @@ fn parse_item_effect(
         "anti_spirit_pressure" => Ok(ItemEffect::AntiSpiritPressure {
             duration_ticks: effect.magnitude.floor() as u64,
         }),
+        "poison_pill" => {
+            let pill_item_id =
+                required_non_empty_option(effect.target, source_path, "item.effect.target")?;
+            if PoisonPillKind::from_item_id(&pill_item_id).is_none() {
+                return Err(format!(
+                    "{} item `{item_id}` effect `poison_pill` has unknown poison pill target `{pill_item_id}`",
+                    source_path.display()
+                ));
+            }
+            Ok(ItemEffect::PoisonPill { pill_item_id })
+        }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
             source_path.display()
@@ -3591,6 +3604,67 @@ mod tests {
                 .map(|template| (template.id.clone(), template))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn parse_item_effect_accepts_poison_pill_target() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "poison_pill".to_string(),
+                magnitude: 0.0,
+                target: Some("poison_pill_qing_lin_man_tuo".to_string()),
+            },
+            Path::new("<inline-items.toml>"),
+            "poison_pill_qing_lin_man_tuo",
+        )
+        .expect("poison_pill effect should parse");
+
+        assert_eq!(
+            effect,
+            ItemEffect::PoisonPill {
+                pill_item_id: "poison_pill_qing_lin_man_tuo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_poison_pill_missing_or_empty_target() {
+        for target in [None, Some("   ".to_string())] {
+            let error = parse_item_effect(
+                ItemEffectToml {
+                    kind: "poison_pill".to_string(),
+                    magnitude: 0.0,
+                    target,
+                },
+                Path::new("<inline-items.toml>"),
+                "poison_pill_missing_target",
+            )
+            .expect_err("poison_pill effect without target should fail");
+
+            assert!(
+                error.contains("item.effect.target"),
+                "expected target validation error, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_poison_pill_unknown_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "poison_pill".to_string(),
+                magnitude: 0.0,
+                target: Some("poison_pill_typo".to_string()),
+            },
+            Path::new("<inline-items.toml>"),
+            "poison_pill_unknown_target",
+        )
+        .expect_err("poison_pill effect should reject unknown target ids");
+
+        assert!(
+            error.contains("unknown poison pill target `poison_pill_typo`"),
+            "expected poison pill target validation error, got {error}"
+        );
     }
 
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {

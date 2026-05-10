@@ -167,6 +167,12 @@ export const CHANNELS = {
   /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
   DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
 
+  /** Server → Agent: 毒性真元服丹剂量事件（plan-poison-trait-v1） */
+  POISON_DOSE_EVENT: "bong:poison/dose",
+
+  /** Server → Agent: 毒性真元消化过载事件（plan-poison-trait-v1） */
+  POISON_OVERDOSE_EVENT: "bong:poison/overdose",
+
   /** Server → Agent: 毒蛊 v2 五招 cast 流水（plan-dugu-v2 P3） */
   DUGU_V2_CAST: "bong:dugu_v2/cast",
 
@@ -372,6 +378,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ALCHEMY_INSIGHT,
   CHANNELS.WANTED_PLAYER,
   CHANNELS.MERIDIAN_SEVERED,
+  CHANNELS.POISON_DOSE_EVENT,
+  CHANNELS.POISON_OVERDOSE_EVENT,
   CHANNELS.ZHENMAI_SKILL_EVENT,
   CHANNELS.BAOMAI_V3_SKILL_EVENT,
   CHANNELS.CRAFT_OUTCOME,

@@ -44,6 +44,7 @@ use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
+use crate::cultivation::poison_trait::{ConsumePoisonPillIntent, PoisonPillKind};
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
@@ -183,6 +184,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
     pub season_state: Option<Res<'w, WorldSeasonState>>,
+    pub poison_pill_tx: Option<ResMut<'w, Events<ConsumePoisonPillIntent>>>,
 }
 
 #[derive(SystemParam)]
@@ -7591,6 +7593,41 @@ fn handle_alchemy_take_pill(
         return;
     }
 
+    let poison_pill_kind = match &effect {
+        ItemEffect::PoisonPill { pill_item_id } => {
+            let Some(kind) = PoisonPillKind::from_item_id(pill_item_id.as_str()) else {
+                tracing::warn!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} unknown poison pill id `{pill_item_id}`"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "take_pill_poison_invalid",
+                );
+                return;
+            };
+            if combat_params.poison_pill_tx.is_none() {
+                tracing::warn!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} poison intent resource missing"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "take_pill_poison_unavailable",
+                );
+                return;
+            }
+            Some(kind)
+        }
+        _ => None,
+    };
+
     let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);
     if let Err(error) = consume_result {
         tracing::warn!(
@@ -7675,6 +7712,31 @@ fn handle_alchemy_take_pill(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → AntiSpiritPressurePill for {} ticks",
                 duration_ticks.saturating_mul(duration_multiplier)
             );
+        }
+        ItemEffect::PoisonPill { pill_item_id } => {
+            match (
+                poison_pill_kind,
+                combat_params.poison_pill_tx.as_deref_mut(),
+            ) {
+                (Some(pill), Some(poison_pill_tx)) => {
+                    poison_pill_tx.send(ConsumePoisonPillIntent {
+                        entity,
+                        pill,
+                        issued_at_tick: clock.tick,
+                    });
+                    tracing::info!(
+                        "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → PoisonToxicity intent"
+                    );
+                }
+                (None, _) => {
+                    tracing::warn!("[bong][network][alchemy] take_pill entity={entity:?} poisoned pill prevalidation disappeared for `{pill_item_id}`");
+                }
+                (_, None) => {
+                    tracing::warn!(
+                        "[bong][network][alchemy] take_pill entity={entity:?} poison intent resource missing"
+                    );
+                }
+            }
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             let meridians = combat_params.meridians.get_mut(entity).ok();

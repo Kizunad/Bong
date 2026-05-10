@@ -29,6 +29,7 @@ pub enum CraftCategoryV1 {
     ZhenfaTrap,
     Tool,
     Container,
+    PoisonPowder,
     Misc,
 }
 
@@ -41,6 +42,7 @@ impl From<crate::craft::CraftCategory> for CraftCategoryV1 {
             crate::craft::CraftCategory::ZhenfaTrap => Self::ZhenfaTrap,
             crate::craft::CraftCategory::Tool => Self::Tool,
             crate::craft::CraftCategory::Container => Self::Container,
+            crate::craft::CraftCategory::PoisonPowder => Self::PoisonPowder,
             crate::craft::CraftCategory::Misc => Self::Misc,
         }
     }

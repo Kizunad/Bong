@@ -23,6 +23,7 @@ use super::identity::IdentityPanelStateV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
+use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
 use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
 use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
@@ -115,6 +116,9 @@ pub enum ServerDataType {
     TreasureEquipped,
     VortexState,
     DuguPoisonState,
+    PoisonDoseEvent,
+    PoisonOverdoseEvent,
+    PoisonTraitState,
     CarrierState,
     FalseSkinState,
     LingtianSession,
@@ -306,6 +310,9 @@ pub enum ServerDataPayloadV1 {
     TreasureEquipped(TreasureEquippedV1),
     VortexState(VortexFieldStateV1),
     DuguPoisonState(DuguPoisonStateV1),
+    PoisonDoseEvent(PoisonDoseEventV1),
+    PoisonOverdoseEvent(PoisonOverdoseEventV1),
+    PoisonTraitState(PoisonTraitStateV1),
     CarrierState(CarrierStateV1),
     FalseSkinState(FalseSkinStateV1),
     LingtianSession(Box<LingtianSessionDataV1>),
@@ -870,6 +877,18 @@ enum ServerDataPayloadWireV1 {
     DuguPoisonState {
         #[serde(flatten)]
         state: DuguPoisonStateV1,
+    },
+    PoisonDoseEvent {
+        #[serde(flatten)]
+        event: PoisonDoseEventV1,
+    },
+    PoisonOverdoseEvent {
+        #[serde(flatten)]
+        event: PoisonOverdoseEventV1,
+    },
+    PoisonTraitState {
+        #[serde(flatten)]
+        state: PoisonTraitStateV1,
     },
     CarrierState {
         #[serde(flatten)]
@@ -1669,6 +1688,13 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::VortexState { state } => Ok(Self::VortexState(state)),
             ServerDataPayloadWireV1::DuguPoisonState { state } => Ok(Self::DuguPoisonState(state)),
+            ServerDataPayloadWireV1::PoisonDoseEvent { event } => Ok(Self::PoisonDoseEvent(event)),
+            ServerDataPayloadWireV1::PoisonOverdoseEvent { event } => {
+                Ok(Self::PoisonOverdoseEvent(event))
+            }
+            ServerDataPayloadWireV1::PoisonTraitState { state } => {
+                Ok(Self::PoisonTraitState(state))
+            }
             ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
             ServerDataPayloadWireV1::FalseSkinState { state } => Ok(Self::FalseSkinState(state)),
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
@@ -2155,6 +2181,15 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::DuguPoisonState(state) => Self::DuguPoisonState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::PoisonDoseEvent(event) => Self::PoisonDoseEvent {
+                event: event.clone(),
+            },
+            ServerDataPayloadV1::PoisonOverdoseEvent(event) => Self::PoisonOverdoseEvent {
+                event: event.clone(),
+            },
+            ServerDataPayloadV1::PoisonTraitState(state) => Self::PoisonTraitState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::CarrierState(state) => Self::CarrierState {
                 state: state.clone(),
             },
@@ -2559,6 +2594,9 @@ impl ServerDataPayloadV1 {
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::VortexState(..) => ServerDataType::VortexState,
             Self::DuguPoisonState(..) => ServerDataType::DuguPoisonState,
+            Self::PoisonDoseEvent(..) => ServerDataType::PoisonDoseEvent,
+            Self::PoisonOverdoseEvent(..) => ServerDataType::PoisonOverdoseEvent,
+            Self::PoisonTraitState(..) => ServerDataType::PoisonTraitState,
             Self::CarrierState(..) => ServerDataType::CarrierState,
             Self::FalseSkinState(..) => ServerDataType::FalseSkinState,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
@@ -2622,6 +2660,7 @@ impl ServerDataPayloadV1 {
 mod tests {
     use super::*;
     use crate::network::agent_bridge::payload_type_label;
+    use crate::schema::poison_trait::{PoisonOverdoseSeverityV1, PoisonSideEffectTagV1};
 
     /// Catches wire-vs-label drift like the QuickSlotConfig "snake_case" bug
     /// (would have routed `quick_slot_config` while client expected `quickslot_config`).
@@ -2866,6 +2905,32 @@ mod tests {
                 is_chaotic: false,
                 is_hunyuan: false,
                 realm_diff: 2,
+            }),
+            ServerDataPayloadV1::PoisonDoseEvent(PoisonDoseEventV1 {
+                v: 1,
+                player_entity_id: 7,
+                dose_amount: 5.0,
+                side_effect_tag: PoisonSideEffectTagV1::QiFocusDrift2h,
+                poison_level_after: 17.0,
+                digestion_after: 50.0,
+                at_tick: 100,
+            }),
+            ServerDataPayloadV1::PoisonOverdoseEvent(PoisonOverdoseEventV1 {
+                v: 1,
+                player_entity_id: 7,
+                severity: PoisonOverdoseSeverityV1::Moderate,
+                overflow: 30.0,
+                lifespan_penalty_years: 1.0,
+                micro_tear_probability: 0.1,
+                at_tick: 120,
+            }),
+            ServerDataPayloadV1::PoisonTraitState(PoisonTraitStateV1 {
+                v: 1,
+                player_entity_id: 7,
+                poison_toxicity: 17.0,
+                digestion_current: 50.0,
+                digestion_capacity: 100.0,
+                toxicity_tier_unlocked: false,
             }),
             ServerDataPayloadV1::BotanyPlantV2RenderProfiles(vec![BotanyPlantV2RenderProfileV1 {
                 plant_id: "ying_yuan_gu".to_string(),

@@ -84,6 +84,9 @@ pub fn register(app: &mut App) {
     register_tuike_v2_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register tuike-v2 recipes: {err}");
     });
+    crate::cultivation::poison_trait::register_craft_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register poison-trait recipes: {err}");
+    });
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);

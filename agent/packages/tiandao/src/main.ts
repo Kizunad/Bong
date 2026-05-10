@@ -8,6 +8,7 @@ import { DuguV2NarrationRuntime } from "./dugu_v2_runtime.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
+import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
@@ -192,6 +193,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const duguV2Cleanup = await startDuguV2Runtime({
     ...runtimeOpts,
   });
+  const poisonTraitCleanup = await startPoisonTraitRuntime({
+    redisUrl: config.redisUrl,
+  });
   const scatteredCultivatorCleanup = await startScatteredCultivatorRuntime({
     redisUrl: config.redisUrl,
   });
@@ -219,6 +223,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     tuikeCleanup,
     duguV2Cleanup,
     duguCleanup,
+    poisonTraitCleanup,
     scatteredCultivatorCleanup,
     woliuV2Cleanup,
     woliuCleanup,
@@ -438,6 +443,33 @@ async function startScatteredCultivatorRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] scattered cultivator runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startPoisonTraitRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof PoisonTraitNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof PoisonTraitNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new PoisonTraitNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] poison trait runtime online"))
+    .catch((error) => console.warn("[tiandao] poison trait runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] poison trait runtime disconnect error:", error);
     }
   };
 }

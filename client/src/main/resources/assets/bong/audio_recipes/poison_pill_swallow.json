@@ -1,0 +1,16 @@
+{
+  "id": "poison_pill_swallow",
+  "layers": [
+    {
+      "sound": "entity.witch.drink",
+      "pitch": 1.1,
+      "volume": 0.4
+    },
+    {
+      "sound": "block.fire.extinguish",
+      "pitch": 0.9,
+      "volume": 0.2,
+      "delay_ticks": 3
+    }
+  ]
+}

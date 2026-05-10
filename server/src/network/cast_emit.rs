@@ -14,17 +14,21 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::{Client, Commands, Entity, EventWriter, Position, Query, Res, Username};
+use valence::prelude::{
+    Client, Commands, Entity, EventWriter, Mut, ParamSet, Position, Query, Res, Username,
+};
 
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
 };
-use crate::combat::events::StatusEffectKind;
+use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::yidao::YidaoCastCompleteEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     recover_current_qi, Contamination, Cultivation, MeridianSystem,
 };
+use crate::cultivation::lifespan::LifespanExtensionIntent;
+use crate::cultivation::poison_trait::{ConsumePoisonPillIntent, PoisonPillKind};
 use crate::inventory::{ItemEffect, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -60,12 +64,29 @@ type CastTickQueryItem<'a> = (
     Option<&'a mut Contamination>,
 );
 
+struct CastItemEffectTargets<'a> {
+    cultivation: Option<&'a mut Cultivation>,
+    meridians: Option<Mut<'a, MeridianSystem>>,
+    contamination: Option<Mut<'a, Contamination>>,
+}
+
+struct CastItemEffectContext<'a> {
+    issued_at_tick: u64,
+    username: &'a str,
+    entity: Entity,
+}
+
 pub fn tick_casts_or_interrupt(
     clock: Res<CombatClock>,
     mut commands: Commands,
     item_registry: Res<ItemRegistry>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
     mut yidao_complete_events: EventWriter<YidaoCastCompleteEvent>,
+    mut effect_intents: ParamSet<(
+        EventWriter<ApplyStatusEffectIntent>,
+        EventWriter<LifespanExtensionIntent>,
+        EventWriter<ConsumePoisonPillIntent>,
+    )>,
     mut clients: Query<CastTickQueryItem<'_>>,
 ) {
     for (
@@ -217,13 +238,19 @@ pub fn tick_casts_or_interrupt(
             };
             // 2) 应用效果
             if let Some(effect) = effect_to_apply.as_ref() {
-                apply_item_effect(
+                apply_cast_item_effect(
                     effect,
-                    cultivation.as_deref_mut(),
-                    meridians,
-                    contamination,
-                    &username.0,
-                    entity,
+                    CastItemEffectTargets {
+                        cultivation: cultivation.as_deref_mut(),
+                        meridians,
+                        contamination,
+                    },
+                    &mut effect_intents,
+                    CastItemEffectContext {
+                        issued_at_tick: clock.tick,
+                        username: &username.0,
+                        entity,
+                    },
                 );
             }
             // 3) 设置完成冷却（来自 ItemTemplate.cooldown_ms 折算后的 ticks）
@@ -430,6 +457,79 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] AntiSpiritPressure duration_ticks={duration_ticks} for `{username}` ({entity:?}) — handled by take_pill path"
             );
         }
+        ItemEffect::PoisonPill { pill_item_id } => {
+            tracing::info!(
+                "[bong][network][cast] PoisonPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by take_pill path"
+            );
+        }
+    }
+}
+
+fn apply_cast_item_effect(
+    effect: &ItemEffect,
+    targets: CastItemEffectTargets<'_>,
+    effect_intents: &mut ParamSet<(
+        EventWriter<ApplyStatusEffectIntent>,
+        EventWriter<LifespanExtensionIntent>,
+        EventWriter<ConsumePoisonPillIntent>,
+    )>,
+    context: CastItemEffectContext<'_>,
+) {
+    match effect {
+        ItemEffect::LifespanExtension { years, source } => {
+            effect_intents.p1().send(LifespanExtensionIntent {
+                entity: context.entity,
+                requested_years: (*years).max(1),
+                source: source.clone(),
+            });
+            tracing::info!(
+                "[bong][network][cast] LifespanExtension years={years} source={source} for `{}` ({:?})",
+                context.username,
+                context.entity
+            );
+        }
+        ItemEffect::AntiSpiritPressure { duration_ticks } => {
+            effect_intents.p0().send(ApplyStatusEffectIntent {
+                target: context.entity,
+                kind: StatusEffectKind::AntiSpiritPressurePill,
+                magnitude: 1.0,
+                duration_ticks: (*duration_ticks).max(1),
+                issued_at_tick: context.issued_at_tick,
+            });
+            tracing::info!(
+                "[bong][network][cast] AntiSpiritPressure duration_ticks={duration_ticks} for `{}` ({:?})",
+                context.username,
+                context.entity
+            );
+        }
+        ItemEffect::PoisonPill { pill_item_id } => {
+            let Some(pill) = PoisonPillKind::from_item_id(pill_item_id) else {
+                tracing::warn!(
+                    "[bong][network][cast] PoisonPill `{pill_item_id}` for `{}` ({:?}) has no poison pill kind",
+                    context.username,
+                    context.entity
+                );
+                return;
+            };
+            effect_intents.p2().send(ConsumePoisonPillIntent {
+                entity: context.entity,
+                pill,
+                issued_at_tick: context.issued_at_tick,
+            });
+            tracing::info!(
+                "[bong][network][cast] PoisonPill `{pill_item_id}` for `{}` ({:?}) → PoisonToxicity intent",
+                context.username,
+                context.entity
+            );
+        }
+        _ => apply_item_effect(
+            effect,
+            targets.cultivation,
+            targets.meridians,
+            targets.contamination,
+            context.username,
+            context.entity,
+        ),
     }
 }
 
@@ -638,6 +738,124 @@ mod tests {
         assert_eq!(cultivation.qi_current, 190.0);
         assert_eq!(cultivation.qi_max, 210.0);
         assert_eq!(cultivation.qi_max_frozen, Some(20.0));
+    }
+
+    #[test]
+    fn cast_poison_pill_effect_emits_consume_intent() {
+        fn emit_for_test(
+            mut effect_intents: ParamSet<(
+                EventWriter<ApplyStatusEffectIntent>,
+                EventWriter<LifespanExtensionIntent>,
+                EventWriter<ConsumePoisonPillIntent>,
+            )>,
+        ) {
+            apply_cast_item_effect(
+                &ItemEffect::PoisonPill {
+                    pill_item_id: "poison_pill_qing_lin_man_tuo".to_string(),
+                },
+                CastItemEffectTargets {
+                    cultivation: None,
+                    meridians: None,
+                    contamination: None,
+                },
+                &mut effect_intents,
+                CastItemEffectContext {
+                    issued_at_tick: 42,
+                    username: "Azure",
+                    entity: Entity::PLACEHOLDER,
+                },
+            );
+        }
+
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<ConsumePoisonPillIntent>();
+        app.add_systems(Update, emit_for_test);
+
+        app.update();
+
+        let events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ConsumePoisonPillIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].pill, PoisonPillKind::QingLinManTuo);
+        assert_eq!(events[0].issued_at_tick, 42);
+    }
+
+    #[test]
+    fn cast_lifespan_and_pressure_effects_emit_runtime_intents() {
+        fn emit_for_test(
+            mut effect_intents: ParamSet<(
+                EventWriter<ApplyStatusEffectIntent>,
+                EventWriter<LifespanExtensionIntent>,
+                EventWriter<ConsumePoisonPillIntent>,
+            )>,
+        ) {
+            apply_cast_item_effect(
+                &ItemEffect::LifespanExtension {
+                    years: 0,
+                    source: "test_core".to_string(),
+                },
+                CastItemEffectTargets {
+                    cultivation: None,
+                    meridians: None,
+                    contamination: None,
+                },
+                &mut effect_intents,
+                CastItemEffectContext {
+                    issued_at_tick: 7,
+                    username: "Azure",
+                    entity: Entity::PLACEHOLDER,
+                },
+            );
+            apply_cast_item_effect(
+                &ItemEffect::AntiSpiritPressure { duration_ticks: 0 },
+                CastItemEffectTargets {
+                    cultivation: None,
+                    meridians: None,
+                    contamination: None,
+                },
+                &mut effect_intents,
+                CastItemEffectContext {
+                    issued_at_tick: 9,
+                    username: "Azure",
+                    entity: Entity::PLACEHOLDER,
+                },
+            );
+        }
+
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<ConsumePoisonPillIntent>();
+        app.add_systems(Update, emit_for_test);
+
+        app.update();
+
+        let lifespan_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<LifespanExtensionIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(lifespan_events.len(), 1);
+        assert_eq!(lifespan_events[0].requested_years, 1);
+        assert_eq!(lifespan_events[0].source, "test_core");
+
+        let status_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(status_events.len(), 1);
+        assert_eq!(
+            status_events[0].kind,
+            StatusEffectKind::AntiSpiritPressurePill
+        );
+        assert_eq!(status_events[0].duration_ticks, 1);
+        assert_eq!(status_events[0].issued_at_tick, 9);
     }
 
     #[test]

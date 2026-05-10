@@ -82,6 +82,9 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::VortexState => "vortex_state",
         ServerDataType::DuguPoisonState => "dugu_poison_state",
+        ServerDataType::PoisonDoseEvent => "poison_dose_event",
+        ServerDataType::PoisonOverdoseEvent => "poison_overdose_event",
+        ServerDataType::PoisonTraitState => "poison_trait_state",
         ServerDataType::CarrierState => "carrier_state",
         ServerDataType::FalseSkinState => "false_skin_state",
         ServerDataType::LingtianSession => "lingtian_session",
@@ -705,6 +708,18 @@ mod server_data_tests {
         assert_eq!(
             payload_type_label(ServerDataType::SpiritualSenseTargets),
             "spiritual_sense_targets"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::PoisonDoseEvent),
+            "poison_dose_event"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::PoisonOverdoseEvent),
+            "poison_overdose_event"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::PoisonTraitState),
+            "poison_trait_state"
         );
     }
 

@@ -40,6 +40,7 @@ pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
 pub mod npc_metadata;
 pub mod poi_novice_bridge;
+pub mod poison_trait_emit;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
@@ -417,6 +418,21 @@ pub fn register(app: &mut App) {
         ),
     );
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
+    app.add_systems(
+        Update,
+        (
+            poison_trait_emit::publish_poison_dose_events
+                .after(crate::cultivation::poison_trait::consume_poison_pill_system),
+            poison_trait_emit::publish_poison_overdose_events
+                .after(crate::cultivation::poison_trait::consume_poison_pill_system),
+        ),
+    );
+    app.add_systems(
+        Update,
+        poison_trait_emit::emit_poison_trait_state_payloads
+            .after(crate::cultivation::poison_trait::poison_toxicity_decay_tick)
+            .after(crate::cultivation::poison_trait::digestion_load_decay_tick),
+    );
     app.add_systems(
         Update,
         zhenfa_v2_event_bridge::publish_zhenfa_v2_events

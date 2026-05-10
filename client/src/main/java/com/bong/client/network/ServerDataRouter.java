@@ -50,6 +50,7 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.VortexStateHandler();
         com.bong.client.combat.handler.DuguPoisonStateHandler duguPoisonStateHandler =
             new com.bong.client.combat.handler.DuguPoisonStateHandler();
+        PoisonTraitServerDataHandler poisonTraitServerDataHandler = new PoisonTraitServerDataHandler();
         com.bong.client.combat.handler.CarrierStateHandler carrierStateHandler =
             new com.bong.client.combat.handler.CarrierStateHandler();
         com.bong.client.combat.handler.FalseSkinStateHandler falseSkinStateHandler =
@@ -120,6 +121,9 @@ public final class ServerDataRouter {
         handlers.put("derived_attrs_sync", derivedAttrsHandler);
         handlers.put("vortex_state", vortexStateHandler);
         handlers.put("dugu_poison_state", duguPoisonStateHandler);
+        handlers.put("poison_dose_event", poisonTraitServerDataHandler);
+        handlers.put("poison_overdose_event", poisonTraitServerDataHandler);
+        handlers.put("poison_trait_state", poisonTraitServerDataHandler);
         handlers.put("carrier_state", carrierStateHandler);
         handlers.put("false_skin_state", falseSkinStateHandler);
         handlers.put("death_screen", deathScreenHandler);

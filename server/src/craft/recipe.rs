@@ -56,7 +56,7 @@ impl std::fmt::Display for RecipeId {
 /// §5 决策门 #1 = A。流派/物品大类，UI 左列表分组依据。
 ///
 /// 后续若新流派/系统要加类别（如 BaomaiSpecial 体修自损增益、SpiritEyeEquipment
-/// 灵眼勘探），plan vN+1 再扩，**禁止本 plan P1 内私下加 variant**。
+/// 灵眼勘探），plan vN+1 再扩；`poison_trait` 作为 active plan 明确补 `PoisonPowder`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CraftCategory {
@@ -72,6 +72,8 @@ pub enum CraftCategory {
     Tool,
     /// 容器 / 装具（箭袋、裤袋、封灵匣等）。
     Container,
+    /// 毒丹研磨粉末（poison-trait-v1 双层附毒的消耗品路径）。
+    PoisonPowder,
     /// 兜底类别。新流派 plan 应明确选 5 类之一，避免堆 Misc
     Misc,
 }
@@ -85,19 +87,21 @@ impl CraftCategory {
             Self::ZhenfaTrap => "zhenfa_trap",
             Self::Tool => "tool",
             Self::Container => "container",
+            Self::PoisonPowder => "poison_powder",
             Self::Misc => "misc",
         }
     }
 
     /// UI 左列表分组顺序固定（§5 决策门 #2 = A，按类别分组 + 字母）。
     /// 客户端不应自行打乱该顺序，否则解锁状态视觉跟服务端不一致。
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::AnqiCarrier,
         Self::DuguPotion,
         Self::TuikeSkin,
         Self::ZhenfaTrap,
         Self::Tool,
         Self::Container,
+        Self::PoisonPowder,
         Self::Misc,
     ];
 }
@@ -370,6 +374,7 @@ mod tests {
                 "zhenfa_trap",
                 "tool",
                 "container",
+                "poison_powder",
                 "misc"
             ]
         );

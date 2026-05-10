@@ -44,6 +44,7 @@ public final class BongAnimations {
     public static final Identifier SWORD_RIDE = new Identifier(MOD_ID, "sword_ride");
     public static final Identifier CAST_INVOKE = new Identifier(MOD_ID, "cast_invoke");
     public static final Identifier RUNE_DRAW = new Identifier(MOD_ID, "rune_draw");
+    public static final Identifier EAT_FOOD = new Identifier(MOD_ID, "eat_food");
     public static final Identifier HARVEST_CROUCH = new Identifier(MOD_ID, "harvest_crouch");
     public static final Identifier LOOT_BEND = new Identifier(MOD_ID, "loot_bend");
     public static final Identifier STEALTH_CROUCH = new Identifier(MOD_ID, "stealth_crouch");

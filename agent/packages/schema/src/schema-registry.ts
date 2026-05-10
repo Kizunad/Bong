@@ -213,6 +213,13 @@ import {
   TrespassEventV1,
 } from "./poi-novice.js";
 import {
+  PoisonDoseEventV1,
+  PoisonOverdoseEventV1,
+  PoisonOverdoseSeverityV1,
+  PoisonSideEffectTagV1,
+  PoisonTraitStateV1,
+} from "./poison-trait.js";
+import {
   FreshnessUpdateV1,
   ProcessingKindV1,
   ProcessingSessionDataV1,
@@ -271,6 +278,9 @@ import {
   ServerDataVortexStateV1,
   ServerDataCarrierStateV1,
   ServerDataDuguPoisonStateV1,
+  ServerDataPoisonDoseEventV1,
+  ServerDataPoisonOverdoseEventV1,
+  ServerDataPoisonTraitStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataHealerNpcAiStateV1,
@@ -455,6 +465,11 @@ export const SCHEMA_REGISTRY = {
   poiNoviceKindV1: PoiNoviceKindV1,
   poiSpawnedEventV1: PoiSpawnedEventV1,
   trespassEventV1: TrespassEventV1,
+  poisonSideEffectTagV1: PoisonSideEffectTagV1,
+  poisonOverdoseSeverityV1: PoisonOverdoseSeverityV1,
+  poisonDoseEventV1: PoisonDoseEventV1,
+  poisonOverdoseEventV1: PoisonOverdoseEventV1,
+  poisonTraitStateV1: PoisonTraitStateV1,
   factionEventV1: FactionEventV1,
   pseudoVeinSeasonV1: PseudoVeinSeasonV1,
   pseudoVeinSnapshotV1: PseudoVeinSnapshotV1,
@@ -632,6 +647,9 @@ export const SCHEMA_REGISTRY = {
   duguSelfCureProgressV1: DuguSelfCureProgressV1,
   duguReverseTriggeredV1: DuguReverseTriggeredV1,
   serverDataDuguPoisonStateV1: ServerDataDuguPoisonStateV1,
+  serverDataPoisonDoseEventV1: ServerDataPoisonDoseEventV1,
+  serverDataPoisonOverdoseEventV1: ServerDataPoisonOverdoseEventV1,
+  serverDataPoisonTraitStateV1: ServerDataPoisonTraitStateV1,
   carrierStateV1: CarrierStateV1,
   carrierChargedEventV1: CarrierChargedEventV1,
   carrierImpactEventV1: CarrierImpactEventV1,
@@ -836,6 +854,11 @@ export const GENERATED_SCHEMA_FILES = {
   "poi-novice-kind-v1.json": SCHEMA_REGISTRY.poiNoviceKindV1,
   "poi-spawned-event-v1.json": SCHEMA_REGISTRY.poiSpawnedEventV1,
   "trespass-event-v1.json": SCHEMA_REGISTRY.trespassEventV1,
+  "poison-side-effect-tag-v1.json": SCHEMA_REGISTRY.poisonSideEffectTagV1,
+  "poison-overdose-severity-v1.json": SCHEMA_REGISTRY.poisonOverdoseSeverityV1,
+  "poison-dose-event-v1.json": SCHEMA_REGISTRY.poisonDoseEventV1,
+  "poison-overdose-event-v1.json": SCHEMA_REGISTRY.poisonOverdoseEventV1,
+  "poison-trait-state-v1.json": SCHEMA_REGISTRY.poisonTraitStateV1,
   "faction-event-v1.json": SCHEMA_REGISTRY.factionEventV1,
   "pseudo-vein-season-v1.json": SCHEMA_REGISTRY.pseudoVeinSeasonV1,
   "pseudo-vein-snapshot-v1.json": SCHEMA_REGISTRY.pseudoVeinSnapshotV1,
@@ -1063,6 +1086,12 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.duguReverseTriggeredV1,
   "server-data-dugu-poison-state-v1.json":
     SCHEMA_REGISTRY.serverDataDuguPoisonStateV1,
+  "server-data-poison-dose-event-v1.json":
+    SCHEMA_REGISTRY.serverDataPoisonDoseEventV1,
+  "server-data-poison-overdose-event-v1.json":
+    SCHEMA_REGISTRY.serverDataPoisonOverdoseEventV1,
+  "server-data-poison-trait-state-v1.json":
+    SCHEMA_REGISTRY.serverDataPoisonTraitStateV1,
   "false-skin-kind-v1.json": SCHEMA_REGISTRY.falseSkinKindV1,
   "false-skin-state-v1.json": SCHEMA_REGISTRY.falseSkinStateV1,
   "shed-event-v1.json": SCHEMA_REGISTRY.shedEventV1,

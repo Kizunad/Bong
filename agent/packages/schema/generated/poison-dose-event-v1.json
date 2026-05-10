@@ -1,0 +1,66 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_entity_id",
+    "dose_amount",
+    "side_effect_tag",
+    "poison_level_after",
+    "digestion_after",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_entity_id": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "dose_amount": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "side_effect_tag": {
+      "anyOf": [
+        {
+          "const": "qi_focus_drift_2h",
+          "type": "string"
+        },
+        {
+          "const": "rage_burst_30min",
+          "type": "string"
+        },
+        {
+          "const": "hallucin_tint_6h",
+          "type": "string"
+        },
+        {
+          "const": "digest_lock_6h",
+          "type": "string"
+        },
+        {
+          "const": "toxicity_tier_unlock",
+          "type": "string"
+        }
+      ]
+    },
+    "poison_level_after": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "digestion_after": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    }
+  }
+}

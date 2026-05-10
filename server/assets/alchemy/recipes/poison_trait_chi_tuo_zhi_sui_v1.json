@@ -1,0 +1,33 @@
+{
+  "id": "poison_trait_chi_tuo_zhi_sui_v1",
+  "name": "赤陀蜘髓丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "ash_spider_silk", "count": 2 },
+      { "material": "chi_sui_cao", "count": 2 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.48,
+    "target_duration_ticks": 150,
+    "qi_cost": 8.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 25 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 1.0, "toxin_amount": 0.24, "toxin_color": "Turbid" },
+    "good": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 0.7, "toxin_amount": 0.35, "toxin_color": "Turbid" },
+    "flawed": { "pill": "poison_pill_chi_tuo_zhi_sui", "quality": 0.4, "toxin_amount": 0.55, "toxin_color": "Sharp" },
+    "waste": null,
+    "explode": { "damage": 8.0, "meridian_crack": 0.03 }
+  },
+  "flawed_fallback": {
+    "pill": "poison_pill_chi_tuo_zhi_sui",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.3,
+    "side_effect_pool": [
+      { "tag": "poison_dose_chi_tuo_zhi_sui", "duration_s": 0, "weight": 1 },
+      { "tag": "rage_burst_30min", "duration_s": 1800, "weight": 1 }
+    ]
+  }
+}
