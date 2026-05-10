@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 20;
+const CURRENT_USER_VERSION: i32 = 21;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -350,12 +350,16 @@ pub struct AgentDecisionRecord {
     pub observed_at_wall: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActiveTribulationRecord {
     pub char_id: String,
+    pub kind: String,
+    pub source: String,
     pub wave_current: u32,
     pub waves_total: u32,
     pub started_tick: u64,
+    pub epicenter: [f64; 3],
+    pub intensity: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1426,6 +1430,69 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 21 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS tribulations_active (
+                char_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'du_xu',
+                source TEXT NOT NULL DEFAULT '',
+                wave_current INTEGER NOT NULL CHECK (wave_current >= 0),
+                waves_total INTEGER NOT NULL CHECK (waves_total > 0),
+                started_tick INTEGER NOT NULL CHECK (started_tick >= 0),
+                epicenter_x REAL NOT NULL DEFAULT 0.0,
+                epicenter_y REAL NOT NULL DEFAULT 64.0,
+                epicenter_z REAL NOT NULL DEFAULT 0.0,
+                intensity REAL NOT NULL DEFAULT 0.0,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            ",
+        )?;
+        let columns = table_columns(&transaction, "tribulations_active")?;
+        if !columns.iter().any(|column| column == "kind") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN kind TEXT NOT NULL DEFAULT 'du_xu';
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "source") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN source TEXT NOT NULL DEFAULT '';
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "epicenter_x") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN epicenter_x REAL NOT NULL DEFAULT 0.0;
+                ALTER TABLE tribulations_active
+                ADD COLUMN epicenter_y REAL NOT NULL DEFAULT 64.0;
+                ALTER TABLE tribulations_active
+                ADD COLUMN epicenter_z REAL NOT NULL DEFAULT 0.0;
+                ",
+            )?;
+        }
+        if !columns.iter().any(|column| column == "intensity") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE tribulations_active
+                ADD COLUMN intensity REAL NOT NULL DEFAULT 0.0;
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 21;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1928,9 +1995,11 @@ pub fn load_active_tribulation(
 pub fn load_active_tribulation_count(settings: &PersistenceSettings) -> io::Result<u32> {
     let connection = open_persistence_connection(settings)?;
     let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM tribulations_active", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM tribulations_active WHERE kind = 'du_xu'",
+            [],
+            |row| row.get(0),
+        )
         .map_err(io::Error::other)?;
     sql_to_u32(count)
 }
@@ -3400,24 +3469,42 @@ fn upsert_active_tribulation(
             "
             INSERT INTO tribulations_active (
                 char_id,
+                kind,
+                source,
                 wave_current,
                 waves_total,
                 started_tick,
+                epicenter_x,
+                epicenter_y,
+                epicenter_z,
+                intensity,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(char_id) DO UPDATE SET
+                kind = excluded.kind,
+                source = excluded.source,
                 wave_current = excluded.wave_current,
                 waves_total = excluded.waves_total,
                 started_tick = excluded.started_tick,
+                epicenter_x = excluded.epicenter_x,
+                epicenter_y = excluded.epicenter_y,
+                epicenter_z = excluded.epicenter_z,
+                intensity = excluded.intensity,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
             params![
-                record.char_id,
+                record.char_id.as_str(),
+                record.kind.as_str(),
+                record.source.as_str(),
                 i64::from(record.wave_current),
                 i64::from(record.waves_total),
                 tick_to_sql(record.started_tick)?,
+                record.epicenter[0],
+                record.epicenter[1],
+                record.epicenter[2],
+                f64::from(record.intensity),
                 CURRENT_SCHEMA_VERSION,
                 wall_clock,
             ],
@@ -3555,27 +3642,45 @@ fn load_active_tribulation_from_connection(
     connection: &Connection,
     char_id: &str,
 ) -> io::Result<Option<ActiveTribulationRecord>> {
-    let row: Option<(i64, i64, i64)> = connection
+    type ActiveTribulationRow = (String, String, i64, i64, i64, f64, f64, f64, f64);
+    let row: Option<ActiveTribulationRow> = connection
         .query_row(
             "
-            SELECT wave_current, waves_total, started_tick
+            SELECT kind, source, wave_current, waves_total, started_tick, epicenter_x, epicenter_y, epicenter_z, intensity
             FROM tribulations_active
             WHERE char_id = ?1
             ",
             params![char_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
         )
         .optional()
         .map_err(io::Error::other)?;
-    let Some((wave_current, waves_total, started_tick)) = row else {
+    let Some((kind, source, wave_current, waves_total, started_tick, x, y, z, intensity)) = row
+    else {
         return Ok(None);
     };
 
     Ok(Some(ActiveTribulationRecord {
         char_id: char_id.to_string(),
+        kind,
+        source,
         wave_current: sql_to_u32(wave_current)?,
         waves_total: sql_to_u32(waves_total)?,
         started_tick: sql_to_tick(started_tick)?,
+        epicenter: [x, y, z],
+        intensity: intensity as f32,
     }))
 }
 
@@ -6858,9 +6963,13 @@ mod persistence_tests {
 
         let record = ActiveTribulationRecord {
             char_id: "offline:Azure".to_string(),
+            kind: "jue_bi".to_string(),
+            source: "void_action_explode_zone".to_string(),
             wave_current: 2,
             waves_total: 5,
             started_tick: 1440,
+            epicenter: [12.0, 66.0, -3.0],
+            intensity: 1.6,
         };
         persist_active_tribulation(&settings, &record).expect("active tribulation should persist");
 
@@ -6912,9 +7021,13 @@ mod persistence_tests {
 
         let record = ActiveTribulationRecord {
             char_id: "offline:Azure".to_string(),
+            kind: "du_xu".to_string(),
+            source: String::new(),
             wave_current: 4,
             waves_total: 5,
             started_tick: 2880,
+            epicenter: [0.0, 64.0, 0.0],
+            intensity: 0.0,
         };
         persist_active_tribulation(&settings, &record).expect("active tribulation should persist");
 

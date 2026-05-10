@@ -308,6 +308,8 @@ mod tests {
             .resource_mut::<Events<TribulationSettled>>()
             .send(TribulationSettled {
                 entity: Entity::PLACEHOLDER,
+                kind: TribulationKind::DuXu,
+                source: None,
                 result: DuXuResultV1 {
                     char_id: "offline:Azure".to_string(),
                     outcome: DuXuOutcomeV1::Ascended,

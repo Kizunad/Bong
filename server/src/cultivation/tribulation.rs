@@ -17,7 +17,7 @@ use valence::prelude::{
 
 use std::collections::{HashSet, VecDeque};
 
-use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
+use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
 use crate::cultivation::death_hooks::CultivationDeathTrigger;
@@ -229,6 +229,19 @@ impl JueBiTriggerSource {
             Self::KarmaThreshold => "karma_threshold",
         }
     }
+
+    pub fn from_wire_name(value: &str) -> Option<Self> {
+        match value {
+            "void_quota_exceeded" => Some(Self::VoidQuotaExceeded),
+            "void_action_explode_zone" => Some(Self::VoidActionExplodeZone),
+            "dugu_reverse" => Some(Self::DuguReverse),
+            "baomai_disperse" => Some(Self::BaomaiDisperse),
+            "woliu_vortex_heart" => Some(Self::WoliuVortexHeart),
+            "zhenfa_deception_exposed" => Some(Self::ZhenfaDeceptionExposed),
+            "karma_threshold" => Some(Self::KarmaThreshold),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Event)]
@@ -258,6 +271,7 @@ pub struct JueBiTriggeredEvent {
     pub entity: Entity,
     pub source: JueBiTriggerSource,
     pub epicenter: [f64; 3],
+    pub dimension: DimensionKind,
     pub waves_total: u32,
     pub started_tick: u64,
     pub intensity: f32,
@@ -269,6 +283,12 @@ pub struct JueBiAfterDuXuQuota {
     pub quota_limit: u32,
     pub total_world_qi: f64,
     pub quota_k: f64,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct JueBiRuntimeContext {
+    pub source: JueBiTriggerSource,
+    pub intensity: f32,
 }
 
 #[derive(Debug, Clone, Copy, Component)]
@@ -362,6 +382,7 @@ impl Default for JueBiTerrainOverlay {
 #[derive(Debug, Clone)]
 struct JueBiZoneAftershock {
     name: String,
+    dimension: DimensionKind,
     original_qi: f64,
     started_tick: u64,
     restore_until_tick: u64,
@@ -425,14 +446,36 @@ pub enum TribulationPhase {
 
 impl TribulationState {
     pub fn restored(wave_current: u32, waves_total: u32, started_tick: u64) -> Self {
+        Self::restored_for_kind(
+            "du_xu",
+            wave_current,
+            waves_total,
+            started_tick,
+            [0.0, 64.0, 0.0],
+        )
+    }
+
+    pub fn restored_for_kind(
+        kind: &str,
+        wave_current: u32,
+        waves_total: u32,
+        started_tick: u64,
+        epicenter: [f64; 3],
+    ) -> Self {
+        let kind = match kind {
+            "jue_bi" => TribulationKind::JueBi,
+            _ => TribulationKind::DuXu,
+        };
         Self {
-            kind: TribulationKind::DuXu,
-            phase: if wave_current == DUXU_HEART_DEMON_WAVE {
+            kind,
+            phase: if kind == TribulationKind::DuXu && wave_current == DUXU_HEART_DEMON_WAVE {
                 TribulationPhase::HeartDemon
+            } else if kind == TribulationKind::JueBi && wave_current == 0 {
+                TribulationPhase::Omen
             } else {
                 TribulationPhase::Wave(wave_current.max(1))
             },
-            epicenter: [0.0, 64.0, 0.0],
+            epicenter,
             wave_current,
             waves_total,
             started_tick,
@@ -495,6 +538,48 @@ impl TribulationState {
     }
 }
 
+fn active_record_for_state(
+    char_id: &str,
+    state: &TribulationState,
+    runtime: Option<&JueBiRuntimeContext>,
+) -> ActiveTribulationRecord {
+    ActiveTribulationRecord {
+        char_id: char_id.to_string(),
+        kind: tribulation_kind_record_label(state.kind).to_string(),
+        source: runtime
+            .map(|runtime| runtime.source.wire_name().to_string())
+            .unwrap_or_default(),
+        wave_current: state.wave_current,
+        waves_total: state.waves_total,
+        started_tick: state.started_tick,
+        epicenter: state.epicenter,
+        intensity: runtime.map(|runtime| runtime.intensity).unwrap_or(0.0),
+    }
+}
+
+fn tribulation_kind_record_label(kind: TribulationKind) -> &'static str {
+    match kind {
+        TribulationKind::JueBi => "jue_bi",
+        _ => "du_xu",
+    }
+}
+
+fn persist_active_state(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    state: &TribulationState,
+    runtime: Option<&JueBiRuntimeContext>,
+) -> std::io::Result<()> {
+    persist_active_tribulation(
+        settings,
+        &active_record_for_state(lifecycle.character_id.as_str(), state, runtime),
+    )
+}
+
+fn juebi_intensity_scale(intensity: f32) -> f32 {
+    (intensity / JUEBI_INTENSITY_BASE).clamp(0.5, 2.0)
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct InitiateXuhuaTribulation {
     pub entity: Entity,
@@ -530,6 +615,8 @@ pub struct TribulationLocked {
 #[derive(Debug, Clone, Event)]
 pub struct TribulationSettled {
     pub entity: Entity,
+    pub kind: TribulationKind,
+    pub source: Option<JueBiTriggerSource>,
     pub result: DuXuResultV1,
 }
 
@@ -729,15 +816,7 @@ pub fn start_tribulation_system(
                 participants: vec![lifecycle.character_id.clone()],
                 failed: false,
             };
-            if let Err(error) = persist_active_tribulation(
-                &settings,
-                &ActiveTribulationRecord {
-                    char_id: lifecycle.character_id.clone(),
-                    wave_current: state.wave_current,
-                    waves_total: state.waves_total,
-                    started_tick: state.started_tick,
-                },
-            ) {
+            if let Err(error) = persist_active_state(&settings, lifecycle, &state, None) {
                 tracing::warn!(
                     "[bong][cultivation] failed to persist active tribulation for {:?}: {error}",
                     ev.entity,
@@ -921,6 +1000,7 @@ pub fn schedule_juebi_triggers_system(
 
 #[allow(clippy::type_complexity)]
 pub fn start_due_juebi_triggers_system(
+    settings: Option<Res<PersistenceSettings>>,
     clock: Res<CombatClock>,
     mut pending: ResMut<PendingJueBiTriggers>,
     karma: Option<Res<KarmaWeightStore>>,
@@ -963,9 +1043,24 @@ pub fn start_due_juebi_triggers_system(
         let dimension = tribulation_dimension_for_participant(current_dimension);
         let intensity = juebi_intensity_for_source(item.source, lifecycle, karma.as_deref());
         let state = juebi_state(p, clock.tick, lifecycle.character_id.clone());
-        commands
-            .entity(item.entity)
-            .insert((state, TribulationOriginDimension(dimension)));
+        let runtime = JueBiRuntimeContext {
+            source: item.source,
+            intensity,
+        };
+        if let Some(settings) = settings.as_deref() {
+            if let Err(error) = persist_active_state(settings, lifecycle, &state, Some(&runtime)) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to persist JueBi trigger for {:?}: {error}",
+                    item.entity,
+                );
+                continue;
+            }
+        }
+        commands.entity(item.entity).insert((
+            state,
+            TribulationOriginDimension(dimension),
+            runtime,
+        ));
         let _actor_name = username
             .map(|username| username.0.clone())
             .unwrap_or_else(|| lifecycle.character_id.clone());
@@ -973,6 +1068,7 @@ pub fn start_due_juebi_triggers_system(
             entity: item.entity,
             source: item.source,
             epicenter: p,
+            dimension,
             waves_total: JUEBI_WAVES_TOTAL,
             started_tick: clock.tick,
             intensity,
@@ -1215,6 +1311,7 @@ pub fn juebi_phase_effect_system(
     mut null_fields: ResMut<JueBiNullFields>,
     tribulations: Query<(
         &TribulationState,
+        Option<&JueBiRuntimeContext>,
         Option<&CurrentDimension>,
         Option<&TribulationOriginDimension>,
     )>,
@@ -1243,13 +1340,17 @@ pub fn juebi_phase_effect_system(
             .remove::<(JueBiPressureCollapse, JueBiLawDisruption, JueBiNullified)>();
     }
 
-    for (state, current_dimension, origin_dimension) in &tribulations {
+    for (state, runtime, current_dimension, origin_dimension) in &tribulations {
         if state.kind != TribulationKind::JueBi {
             continue;
         }
         let TribulationPhase::Wave(wave) = state.phase else {
             continue;
         };
+        let intensity = runtime
+            .map(|runtime| runtime.intensity)
+            .unwrap_or(JUEBI_INTENSITY_BASE);
+        let intensity_scale = f64::from(juebi_intensity_scale(intensity));
         let dimension = active_tribulation_dimension(origin_dimension, current_dimension);
         let epicenter_vec =
             valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
@@ -1284,6 +1385,7 @@ pub fn juebi_phase_effect_system(
                     wounds,
                     lifecycle,
                     state,
+                    intensity,
                     clock.tick,
                     &mut deaths,
                 );
@@ -1301,7 +1403,7 @@ pub fn juebi_phase_effect_system(
                     });
                     let before = cultivation.qi_current;
                     cultivation.qi_current = (cultivation.qi_current
-                        * (1.0 - JUEBI_PRESSURE_DRAIN_PER_TICK * factor))
+                        * (1.0 - JUEBI_PRESSURE_DRAIN_PER_TICK * intensity_scale * factor))
                         .max(0.0);
                     if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
                         deaths.send(DeathEvent {
@@ -1339,7 +1441,7 @@ pub fn juebi_phase_effect_system(
                         accumulated_null_time: clock.tick.saturating_sub(state.phase_started_tick)
                             as f64,
                     });
-                    let decay = juebi_null_decay_for_realm(cultivation.realm);
+                    let decay = juebi_null_decay_for_realm(cultivation.realm) * intensity_scale;
                     if decay <= 0.0 {
                         continue;
                     }
@@ -1373,13 +1475,14 @@ fn apply_juebi_phase_damage(
     wounds: Option<valence::prelude::Mut<'_, Wounds>>,
     lifecycle: Option<&Lifecycle>,
     state: &TribulationState,
+    intensity: f32,
     tick: u64,
     deaths: &mut EventWriter<DeathEvent>,
 ) {
     let Some(mut wounds) = wounds else {
         return;
     };
-    let damage = juebi_phase_damage(wave, distance, cultivation.realm);
+    let damage = juebi_phase_damage(wave, distance, cultivation.realm, intensity);
     if damage <= 0.0 {
         return;
     }
@@ -1412,7 +1515,7 @@ fn apply_juebi_phase_damage(
     });
 }
 
-fn juebi_phase_damage(wave: u32, distance: f64, realm: Realm) -> f32 {
+fn juebi_phase_damage(wave: u32, distance: f64, realm: Realm, intensity: f32) -> f32 {
     let realm_factor = match realm {
         Realm::Void => 1.0,
         Realm::Spirit => 0.65,
@@ -1428,7 +1531,11 @@ fn juebi_phase_damage(wave: u32, distance: f64, realm: Realm) -> f32 {
     } else {
         0.0
     };
-    (DUXU_AOE_DAMAGE_BASE * wave as f32 * JUEBI_INTENSITY_BASE * realm_factor * distance_factor)
+    (DUXU_AOE_DAMAGE_BASE
+        * wave as f32
+        * intensity.clamp(JUEBI_INTENSITY_BASE, 2.0)
+        * realm_factor
+        * distance_factor)
         .max(0.0)
 }
 
@@ -1473,16 +1580,15 @@ pub fn juebi_zone_aftershock_system(
         let p =
             valence::math::DVec3::new(event.epicenter[0], event.epicenter[1], event.epicenter[2]);
         for zone in &mut zones.zones {
-            if zone.dimension != DimensionKind::Overworld || !zone.contains(p) {
+            if zone.dimension != event.dimension || !zone.contains(p) {
                 continue;
             }
-            if !aftershocks
-                .zones
-                .iter()
-                .any(|aftershock| aftershock.name == zone.name)
-            {
+            if !aftershocks.zones.iter().any(|aftershock| {
+                aftershock.name == zone.name && aftershock.dimension == zone.dimension
+            }) {
                 aftershocks.zones.push(JueBiZoneAftershock {
                     name: zone.name.clone(),
+                    dimension: zone.dimension,
                     original_qi: zone.spirit_qi,
                     started_tick: clock.tick,
                     restore_until_tick: clock.tick.saturating_add(5 * 60 * 20),
@@ -1503,7 +1609,7 @@ pub fn juebi_zone_aftershock_system(
         let Some(zone) = zones
             .zones
             .iter_mut()
-            .find(|zone| zone.name == aftershock.name)
+            .find(|zone| zone.name == aftershock.name && zone.dimension == aftershock.dimension)
         else {
             return false;
         };
@@ -1527,6 +1633,9 @@ pub fn juebi_terrain_seed_system(
     mut overlay: ResMut<JueBiTerrainOverlay>,
 ) {
     for event in triggered.read() {
+        if event.dimension != DimensionKind::Overworld {
+            continue;
+        }
         enqueue_juebi_terrain_ops(
             &mut overlay.pending,
             event.epicenter,
@@ -1555,6 +1664,8 @@ pub fn juebi_terrain_tick_system(
     }
     overlay.placed = remaining;
 
+    let mut recorded_originals: HashSet<BlockPos> =
+        overlay.placed.iter().map(|block| block.pos).collect();
     for _ in 0..overlay.budget_per_tick {
         let Some(op) = overlay.pending.pop_front() else {
             break;
@@ -1562,15 +1673,17 @@ pub fn juebi_terrain_tick_system(
         if layer.chunk(chunk_pos_for_block(op.pos)).is_none() {
             continue;
         }
-        let Some(original) = layer.block(op.pos).map(|block| block.state) else {
-            continue;
-        };
-        overlay.placed.push(JueBiTerrainBlock {
-            pos: op.pos,
-            original,
-            restore_at_tick: op.restore_at_tick,
-            scar_permanent: false,
-        });
+        if recorded_originals.insert(op.pos) {
+            let Some(original) = layer.block(op.pos).map(|block| block.state) else {
+                continue;
+            };
+            overlay.placed.push(JueBiTerrainBlock {
+                pos: op.pos,
+                original,
+                restore_at_tick: op.restore_at_tick,
+                scar_permanent: false,
+            });
+        }
         layer.set_block(op.pos, op.new_state);
     }
 }
@@ -1588,35 +1701,45 @@ pub fn juebi_settlement_system(
         Entity,
         &mut Cultivation,
         &Lifecycle,
+        Option<&Wounds>,
         Option<&mut LifespanComponent>,
         Option<&mut LifeRecord>,
         &TribulationState,
+        Option<&JueBiRuntimeContext>,
         Option<&JueBiAfterDuXuQuota>,
     )>,
 ) {
-    for (entity, mut cultivation, lifecycle, lifespan, life_record, state, quota_marker) in
-        &mut players
+    for (
+        entity,
+        mut cultivation,
+        lifecycle,
+        wounds,
+        lifespan,
+        life_record,
+        state,
+        runtime,
+        quota_marker,
+    ) in &mut players
     {
         if state.kind != TribulationKind::JueBi || !matches!(state.phase, TribulationPhase::Settle)
         {
             continue;
         }
-        let survived = cultivation.qi_current > f64::EPSILON;
+        let survived = cultivation.qi_current > f64::EPSILON
+            && lifecycle.state == LifecycleState::Alive
+            && wounds.is_none_or(|wounds| wounds.health_current > 0.0);
+        let source = runtime
+            .map(|runtime| runtime.source)
+            .unwrap_or(JueBiTriggerSource::VoidQuotaExceeded);
         if let Some(mut life_record) = life_record {
             life_record.push(if survived {
                 BiographyEntry::JueBiSurvived {
-                    source: quota_marker
-                        .map(|_| JueBiTriggerSource::VoidQuotaExceeded.wire_name())
-                        .unwrap_or("extreme_operation")
-                        .to_string(),
+                    source: source.wire_name().to_string(),
                     tick: clock.tick,
                 }
             } else {
                 BiographyEntry::JueBiKilled {
-                    source: quota_marker
-                        .map(|_| JueBiTriggerSource::VoidQuotaExceeded.wire_name())
-                        .unwrap_or("extreme_operation")
-                        .to_string(),
+                    source: source.wire_name().to_string(),
                     tick: clock.tick,
                 }
             });
@@ -1653,12 +1776,12 @@ pub fn juebi_settlement_system(
                 });
             }
         }
-        if !survived && quota_marker.is_some() {
+        if !(survived && quota_marker.is_some()) {
             if let Err(error) =
                 delete_active_tribulation(&settings, lifecycle.character_id.as_str())
             {
                 tracing::warn!(
-                    "[bong][cultivation] failed to delete over-quota JueBi death for {:?}: {error}",
+                    "[bong][cultivation] failed to delete settled JueBi active row for {:?}: {error}",
                     entity,
                 );
             }
@@ -1666,16 +1789,24 @@ pub fn juebi_settlement_system(
 
         settled.send(TribulationSettled {
             entity,
+            kind: TribulationKind::JueBi,
+            source: Some(source),
             result: DuXuResultV1 {
                 char_id: lifecycle.character_id.clone(),
-                outcome: if survived {
+                outcome: if survived && quota_marker.is_some() {
                     DuXuOutcomeV1::Ascended
+                } else if survived {
+                    DuXuOutcomeV1::HalfStep
                 } else {
                     DuXuOutcomeV1::Killed
                 },
                 killer: None,
                 waves_survived: state.waves_total,
-                reason: quota_marker.map(|_| VOID_QUOTA_EXCEEDED_REASON.to_string()),
+                reason: Some(
+                    quota_marker
+                        .map(|_| VOID_QUOTA_EXCEEDED_REASON.to_string())
+                        .unwrap_or_else(|| format!("jue_bi:{}", source.wire_name())),
+                ),
             },
         });
         if survived {
@@ -1690,6 +1821,7 @@ pub fn juebi_settlement_system(
             HeartDemonResolution,
             PendingHeartDemonOffer,
             JueBiAfterDuXuQuota,
+            JueBiRuntimeContext,
             JueBiPressureCollapse,
             JueBiLawDisruption,
             JueBiNullified,
@@ -2392,6 +2524,8 @@ pub fn tribulation_wave_system(
         &mut TribulationState,
         &MeridianSystem,
         &Lifecycle,
+        Option<&TribulationOriginDimension>,
+        Option<&JueBiRuntimeContext>,
         Option<&mut LifespanComponent>,
         Option<&JueBiAfterDuXuQuota>,
     )>,
@@ -2402,28 +2536,61 @@ pub fn tribulation_wave_system(
     mut juebi_triggered: EventWriter<JueBiTriggeredEvent>,
 ) {
     for ev in cleared.read() {
-        if let Ok((mut c, mut state, _, lifecycle, lifespan, juebi_after_quota)) =
-            players.get_mut(ev.entity)
+        if let Ok((
+            mut c,
+            mut state,
+            _,
+            lifecycle,
+            origin_dimension,
+            runtime,
+            lifespan,
+            juebi_after_quota,
+        )) = players.get_mut(ev.entity)
         {
             if state.failed {
                 continue;
             }
             state.wave_current = state.wave_current.max(ev.wave);
             if state.kind == TribulationKind::JueBi {
+                if let Err(error) = persist_active_state(&settings, lifecycle, &state, runtime) {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to update active JueBi for {:?}: {error}",
+                        ev.entity,
+                    );
+                }
                 continue;
             }
             if state.wave_current >= state.waves_total {
                 if let Some(quota_marker) = juebi_after_quota {
                     let epicenter = state.epicenter;
                     let started_tick = state.phase_started_tick;
-                    *state = juebi_state(epicenter, started_tick, lifecycle.character_id.clone());
+                    let dimension = active_tribulation_dimension(origin_dimension, None);
+                    let intensity = juebi_intensity_for_quota_marker(quota_marker);
+                    let next_state =
+                        juebi_state(epicenter, started_tick, lifecycle.character_id.clone());
+                    let next_runtime = JueBiRuntimeContext {
+                        source: JueBiTriggerSource::VoidQuotaExceeded,
+                        intensity,
+                    };
+                    if let Err(error) =
+                        persist_active_state(&settings, lifecycle, &next_state, Some(&next_runtime))
+                    {
+                        tracing::warn!(
+                            "[bong][cultivation] failed to persist over-quota JueBi for {:?}: {error}",
+                            ev.entity,
+                        );
+                        continue;
+                    }
+                    *state = next_state;
+                    commands.entity(ev.entity).insert(next_runtime);
                     juebi_triggered.send(JueBiTriggeredEvent {
                         entity: ev.entity,
                         source: JueBiTriggerSource::VoidQuotaExceeded,
                         epicenter,
+                        dimension,
                         waves_total: JUEBI_WAVES_TOTAL,
                         started_tick,
-                        intensity: juebi_intensity_for_quota_marker(quota_marker),
+                        intensity,
                     });
                     tracing::info!(
                         "[bong][cultivation] {:?} cleared over-quota DuXu; JueBi sequence appended",
@@ -2464,6 +2631,8 @@ pub fn tribulation_wave_system(
                 }
                 settled.send(TribulationSettled {
                     entity: ev.entity,
+                    kind: TribulationKind::DuXu,
+                    source: None,
                     result: DuXuResultV1 {
                         char_id: lifecycle.character_id.clone(),
                         outcome: DuXuOutcomeV1::Ascended,
@@ -2485,15 +2654,7 @@ pub fn tribulation_wave_system(
                     DuXuOutcomeV1::Ascended,
                     state.waves_total
                 );
-            } else if let Err(error) = persist_active_tribulation(
-                &settings,
-                &ActiveTribulationRecord {
-                    char_id: lifecycle.character_id.clone(),
-                    wave_current: state.wave_current,
-                    waves_total: state.waves_total,
-                    started_tick: state.started_tick,
-                },
-            ) {
+            } else if let Err(error) = persist_active_state(&settings, lifecycle, &state, None) {
                 tracing::warn!(
                     "[bong][cultivation] failed to update active tribulation for {:?}: {error}",
                     ev.entity,
@@ -2582,6 +2743,8 @@ pub fn tribulation_failure_system(
             );
             settled.send(TribulationSettled {
                 entity: ev.entity,
+                kind: TribulationKind::DuXu,
+                source: None,
                 result: DuXuResultV1 {
                     char_id: lifecycle.character_id.clone(),
                     outcome: DuXuOutcomeV1::Failed,
@@ -2814,6 +2977,8 @@ fn settle_fled_tribulation(
     }
     settled.send(TribulationSettled {
         entity,
+        kind: TribulationKind::DuXu,
+        source: None,
         result: DuXuResultV1 {
             char_id: lifecycle.character_id.clone(),
             outcome: DuXuOutcomeV1::Fled,
@@ -2890,6 +3055,8 @@ pub fn tribulation_intercept_death_system(
         }
         settled.send(TribulationSettled {
             entity: death.target,
+            kind: TribulationKind::DuXu,
+            source: None,
             result: DuXuResultV1 {
                 char_id: lifecycle.character_id.clone(),
                 outcome: DuXuOutcomeV1::Killed,
@@ -2907,7 +3074,7 @@ pub fn tribulation_intercept_death_system(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn publish_tribulation_events(
     redis: Res<RedisBridgeResource>,
     mut announce: EventReader<TribulationAnnounce>,
@@ -2916,7 +3083,12 @@ pub fn publish_tribulation_events(
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
     mut quota_opened: EventReader<AscensionQuotaOpened>,
-    states: Query<(&TribulationState, Option<&Lifecycle>, Option<&Username>)>,
+    states: Query<(
+        &TribulationState,
+        Option<&Lifecycle>,
+        Option<&Username>,
+        Option<&JueBiRuntimeContext>,
+    )>,
     actors: Query<(Option<&Lifecycle>, Option<&Username>)>,
 ) {
     for ev in announce.read() {
@@ -2974,7 +3146,7 @@ pub fn publish_tribulation_events(
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
     }
     for ev in cleared.read() {
-        let Ok((state, lifecycle, username)) = states.get(ev.entity) else {
+        let Ok((state, lifecycle, username, runtime)) = states.get(ev.entity) else {
             continue;
         };
         let char_id = lifecycle
@@ -2993,7 +3165,7 @@ pub fn publish_tribulation_events(
                 phase,
                 char_id,
                 actor_name,
-                None,
+                runtime.map(|runtime| runtime.source.wire_name().to_string()),
                 Some(state.epicenter),
                 Some(ev.wave),
                 Some(state.waves_total),
@@ -3022,15 +3194,28 @@ pub fn publish_tribulation_events(
                     .map(|name| name.0.clone())
                     .or_else(|| lifecycle.map(|lifecycle| lifecycle.character_id.clone()))
             });
-        let payload = TribulationEventV1::du_xu(
-            TribulationPhaseV1::Settle,
-            Some(ev.result.char_id.clone()),
-            actor_name,
-            None,
-            Some(ev.result.waves_survived),
-            None,
-            Some(ev.result.clone()),
-        );
+        let payload = if ev.kind == TribulationKind::JueBi {
+            TribulationEventV1::jue_bi(
+                TribulationPhaseV1::Settle,
+                Some(ev.result.char_id.clone()),
+                actor_name,
+                ev.source.map(|source| source.wire_name().to_string()),
+                None,
+                Some(ev.result.waves_survived),
+                None,
+                Some(ev.result.clone()),
+            )
+        } else {
+            TribulationEventV1::du_xu(
+                TribulationPhaseV1::Settle,
+                Some(ev.result.char_id.clone()),
+                actor_name,
+                None,
+                Some(ev.result.waves_survived),
+                None,
+                Some(ev.result.clone()),
+            )
+        };
         let _ = redis
             .tx_outbound
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
@@ -5061,6 +5246,8 @@ mod tests {
             .resource_mut::<Events<TribulationSettled>>()
             .send(TribulationSettled {
                 entity,
+                kind: TribulationKind::DuXu,
+                source: None,
                 result: DuXuResultV1 {
                     char_id: "offline:Azure".to_string(),
                     outcome: DuXuOutcomeV1::Ascended,
@@ -5802,6 +5989,9 @@ mod tests {
     #[test]
     fn juebi_trigger_event_starts_juebi_state_after_delay() {
         let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-trigger-start");
+        let char_id = "offline:Azure";
+        app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 40 });
         app.insert_resource(PendingJueBiTriggers::default());
         app.add_event::<JueBiTriggerEvent>();
@@ -5817,7 +6007,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Lifecycle {
-                    character_id: "offline:Azure".to_string(),
+                    character_id: char_id.to_string(),
                     ..Default::default()
                 },
                 Username("Azure".to_string()),
@@ -5849,6 +6039,13 @@ mod tests {
         assert_eq!(state.epicenter, [12.0, 66.0, -3.0]);
         let events = app.world().resource::<Events<JueBiTriggeredEvent>>();
         assert_eq!(events.len(), 1);
+        let active = load_active_tribulation(&settings, char_id)
+            .expect("active tribulation query should succeed")
+            .expect("JueBi trigger should persist active row");
+        assert_eq!(active.kind, "jue_bi");
+        assert_eq!(active.epicenter, [12.0, 66.0, -3.0]);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -5948,6 +6145,159 @@ mod tests {
     }
 
     #[test]
+    fn juebi_settlement_treats_zero_health_as_killed_even_with_qi() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-zero-health-settle");
+        let char_id = "offline:Azure";
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 600 });
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_systems(Update, juebi_settlement_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::JueBi,
+                    phase: TribulationPhase::Settle,
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: JUEBI_WAVES_TOTAL,
+                    waves_total: JUEBI_WAVES_TOTAL,
+                    started_tick: 0,
+                    phase_started_tick: 600,
+                    next_wave_tick: 600,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                },
+                JueBiRuntimeContext {
+                    source: JueBiTriggerSource::VoidActionExplodeZone,
+                    intensity: 1.6,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let settled = app.world().resource::<Events<TribulationSettled>>();
+        let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].kind, TribulationKind::JueBi);
+        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
+        let life_record = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached");
+        assert!(life_record
+            .biography
+            .iter()
+            .any(|entry| matches!(entry, BiographyEntry::JueBiKilled { .. })));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn juebi_settlement_clears_independent_active_row() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-settle-clears-active-row");
+        let char_id = "offline:Azure";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "jue_bi".to_string(),
+                source: JueBiTriggerSource::VoidActionExplodeZone
+                    .wire_name()
+                    .to_string(),
+                wave_current: JUEBI_WAVES_TOTAL,
+                waves_total: JUEBI_WAVES_TOTAL,
+                started_tick: 120,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 1.6,
+            },
+        )
+        .expect("active JueBi should persist before settlement");
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 600 });
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_systems(Update, juebi_settlement_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 100.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::JueBi,
+                    phase: TribulationPhase::Settle,
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: JUEBI_WAVES_TOTAL,
+                    waves_total: JUEBI_WAVES_TOTAL,
+                    started_tick: 120,
+                    phase_started_tick: 600,
+                    next_wave_tick: 600,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                },
+                JueBiRuntimeContext {
+                    source: JueBiTriggerSource::VoidActionExplodeZone,
+                    intensity: 1.6,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<TribulationState>(entity).is_none());
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "settled independent JueBi should clear active row"
+        );
+        let settled = app.world().resource::<Events<TribulationSettled>>();
+        let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].kind, TribulationKind::JueBi);
+        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::HalfStep);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn juebi_terrain_generation_keeps_animation_order() {
         let mut pending = VecDeque::new();
         enqueue_juebi_terrain_ops(&mut pending, [0.0, 64.0, 0.0], 42, 6_000);
@@ -5987,6 +6337,63 @@ mod tests {
     }
 
     #[test]
+    fn juebi_terrain_tick_records_original_once_for_overlapping_ops() {
+        let scenario = ScenarioSingleClient::new();
+        let layer = scenario.layer;
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer)
+            .expect("test layer should carry ChunkLayer")
+            .insert_chunk([0, 0], valence::prelude::UnloadedChunk::new());
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer)
+            .expect("test layer should carry ChunkLayer")
+            .set_block(pos, BlockState::STONE);
+        let mut overlay = JueBiTerrainOverlay::default();
+        overlay.pending.push_back(TerrainModOp {
+            pos,
+            new_state: BlockState::MAGMA_BLOCK,
+            anim_order: 0,
+            restore_at_tick: 20,
+        });
+        overlay.pending.push_back(TerrainModOp {
+            pos,
+            new_state: BlockState::DEEPSLATE,
+            anim_order: 1,
+            restore_at_tick: 20,
+        });
+        app.insert_resource(CombatClock { tick: 10 });
+        app.insert_resource(overlay);
+        app.add_systems(Update, juebi_terrain_tick_system);
+
+        app.update();
+
+        {
+            let overlay = app.world().resource::<JueBiTerrainOverlay>();
+            assert_eq!(overlay.placed.len(), 1);
+            assert_eq!(overlay.placed[0].original, BlockState::STONE);
+        }
+        {
+            let layer_ref = app.world().get::<ChunkLayer>(layer).unwrap();
+            assert_eq!(
+                layer_ref.block(pos).map(|block| block.state),
+                Some(BlockState::DEEPSLATE)
+            );
+        }
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 20;
+        app.update();
+
+        let layer_ref = app.world().get::<ChunkLayer>(layer).unwrap();
+        assert_eq!(
+            layer_ref.block(pos).map(|block| block.state),
+            Some(BlockState::STONE)
+        );
+    }
+
+    #[test]
     fn tribulation_failure_regresses_without_death_lifecycle_side_effects() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("failure-not-death");
@@ -5995,9 +6402,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: char_id.to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 2,
                 waves_total: 5,
                 started_tick: 120,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist before failure");
@@ -6757,9 +7168,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: char_id.to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 80,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist before disconnect");
@@ -6863,9 +7278,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: char_id.to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 80,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist before flee");
@@ -6958,9 +7377,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: char_id.to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 80,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist before flee");

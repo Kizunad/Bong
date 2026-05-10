@@ -147,11 +147,11 @@ use self::tribulation::{
     tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
     tribulation_intercept_death_system, tribulation_omen_cloud_block_overlay_system,
     tribulation_phase_tick_system, tribulation_wave_system, AscensionQuotaOccupied,
-    AscensionQuotaOpened, HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, JueBiTerrainOverlay,
-    JueBiTriggerEvent, JueBiTriggeredEvent, JueBiZoneAftershocks, PendingJueBiTriggers,
-    StartDuXuRequest, TribulationAnnounce, TribulationFailed, TribulationFled, TribulationLocked,
-    TribulationOmenCloudBlocks, TribulationOriginDimension, TribulationSettled, TribulationState,
-    TribulationWaveCleared,
+    AscensionQuotaOpened, HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, JueBiRuntimeContext,
+    JueBiTerrainOverlay, JueBiTriggerEvent, JueBiTriggerSource, JueBiTriggeredEvent,
+    JueBiZoneAftershocks, PendingJueBiTriggers, StartDuXuRequest, TribulationAnnounce,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationOmenCloudBlocks,
+    TribulationOriginDimension, TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::npc::possession::DuoSheIntentForwardSet;
@@ -542,13 +542,15 @@ fn attach_cultivation_to_joined_clients(
         };
         let restored_tribulation = active_tribulation.as_ref().map(|record| {
             (
-                TribulationState::restored(
+                TribulationState::restored_for_kind(
+                    record.kind.as_str(),
                     record
                         .wave_current
                         .saturating_add(1)
                         .min(record.waves_total),
                     record.waves_total,
                     record.started_tick,
+                    record.epicenter,
                 ),
                 TribulationOriginDimension(
                     current_dimension
@@ -557,7 +559,22 @@ fn attach_cultivation_to_joined_clients(
                 ),
             )
         });
-        if restored_tribulation.is_some() {
+        let restored_juebi_runtime = active_tribulation
+            .as_ref()
+            .filter(|record| record.kind == "jue_bi")
+            .map(|record| JueBiRuntimeContext {
+                source: JueBiTriggerSource::from_wire_name(record.source.as_str())
+                    .unwrap_or(JueBiTriggerSource::VoidQuotaExceeded),
+                intensity: if record.intensity > 0.0 {
+                    record.intensity
+                } else {
+                    tribulation::JUEBI_INTENSITY_BASE
+                },
+            });
+        if active_tribulation
+            .as_ref()
+            .is_some_and(|record| record.kind == "du_xu")
+        {
             cultivation.realm = Realm::Spirit;
         }
         let default_lifespan =
@@ -597,6 +614,9 @@ fn attach_cultivation_to_joined_clients(
         }
         if let Some(restored_tribulation) = restored_tribulation {
             entity_commands.insert(restored_tribulation);
+        }
+        if let Some(restored_juebi_runtime) = restored_juebi_runtime {
+            entity_commands.insert(restored_juebi_runtime);
         }
         tracing::info!("[bong][cultivation] attached full cultivation bundle to {entity:?}");
     }
@@ -793,9 +813,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: canonical_player_id("Alice"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 2,
                 waves_total: 5,
                 started_tick: 1440,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist");
@@ -861,9 +885,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: canonical_player_id("Azure"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 2,
                 waves_total: 5,
                 started_tick: 1440,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist");
@@ -897,6 +925,78 @@ mod tests {
     }
 
     #[test]
+    fn joined_clients_restore_juebi_active_tribulation_kind() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-juebi-restore-kind-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                kind: "jue_bi".to_string(),
+                source: "void_action_explode_zone".to_string(),
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 2880,
+                epicenter: [12.0, 66.0, -3.0],
+                intensity: 1.6,
+            },
+        )
+        .expect("active JueBi should persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should attach");
+        let tribulation = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("JueBi should restore");
+        assert_eq!(cultivation.realm, Realm::Awaken);
+        assert_eq!(tribulation.kind, tribulation::TribulationKind::JueBi);
+        assert_eq!(tribulation.epicenter, [12.0, 66.0, -3.0]);
+        let runtime = app
+            .world()
+            .get::<JueBiRuntimeContext>(entity)
+            .expect("JueBi runtime context should restore");
+        assert_eq!(runtime.source, JueBiTriggerSource::VoidActionExplodeZone);
+        assert_eq!(runtime.intensity, 1.6);
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn joined_clients_cap_restored_auto_pass_wave_at_total_waves() {
         let temp_root = std::env::temp_dir().join(format!(
             "bong-cultivation-tribulation-restore-cap-{}-{}",
@@ -918,9 +1018,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: canonical_player_id("Azure"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 5,
                 waves_total: 5,
                 started_tick: 1888,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist");
@@ -976,9 +1080,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: canonical_player_id("Azure"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 4,
                 waves_total: 5,
                 started_tick: 2880,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist");

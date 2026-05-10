@@ -223,9 +223,13 @@ mod tests {
             &settings,
             &ActiveTribulationRecord {
                 char_id: "offline:Azure".to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 100,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
             },
         )
         .expect("active tribulation should persist");
