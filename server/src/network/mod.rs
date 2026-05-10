@@ -3991,6 +3991,44 @@ mod tests {
                 other => panic!("expected zone_info payload, got {other:?}"),
             }
         }
+
+        #[test]
+        fn zone_info_marks_tsy_race_out_zone() {
+            let race_out_zone = Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
+                spirit_qi: -0.7,
+                danger_level: 5,
+                active_events: vec![EVENT_TSY_RACE_OUT.to_string()],
+                patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                blocked_tiles: vec![],
+            };
+            let mut app = setup_zone_transition_app(ZoneRegistry {
+                zones: vec![race_out_zone],
+            });
+            let (_entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(payloads.len(), 1);
+            match &payloads[0].payload {
+                ServerDataPayloadV1::ZoneInfo {
+                    zone,
+                    status,
+                    active_events,
+                    ..
+                } => {
+                    assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
+                    assert_eq!(*status, ZoneStatusV1::RaceOut);
+                    assert_eq!(active_events, &Some(vec![EVENT_TSY_RACE_OUT.to_string()]));
+                }
+                other => panic!("expected zone_info payload, got {other:?}"),
+            }
+        }
     }
 
     mod player_state_payload_tests {
