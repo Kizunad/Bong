@@ -511,17 +511,17 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 
 ### 关键 commit
 
-- `eaf696088`（2026-05-10）`plan-baomai-v3: 接入爆脉五招 server 链路`
-- `7fcf68a82`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
-- `5aef42aa6`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
-- `b9142c391`（2026-05-10）`修复 plan-baomai-v3 review：接通 HUD 与散功边界`
-- `135b7e961`（2026-05-10）`修复 plan-baomai-v3 review：收紧焚血与视听边界`
+- `1151b8671`（2026-05-10）`plan-baomai-v3: 接入爆脉五招 server 链路`
+- `5ed27714e`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
+- `2bfd0980e`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
+- `e039e31ac`（2026-05-10）`修复 plan-baomai-v3 review：接通 HUD 与散功边界`
+- `233c61c3b`（2026-05-10）`修复 plan-baomai-v3 review：收紧焚血与视听边界`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
-- `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3686 passed；其中 `server/src/combat/baomai_v3/` 当前 33 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射；`qi_physics::field` 与 `network::audio_trigger` 已补焚血 HP 越界拒绝和 `blood_burn_sizzle` 本地衰减回归。
+- `cd server && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -j 1 -- -D warnings` ✅
+- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3823 passed；其中 `server/src/combat/baomai_v3/` 当前 33 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射；`qi_physics::field` 与 `network::audio_trigger` 已补焚血 HP 越界拒绝和 `blood_burn_sizzle` 本地衰减回归。
 - `cd agent && npm run build` ✅
 - `cd agent/packages/schema && npm test` ✅ 353 passed；`npm run generate:check` ✅ 327 schemas fresh。
 - `cd agent/packages/tiandao && npm test` ✅ 329 passed。
