@@ -9,6 +9,7 @@
     "MixinCamera",
     "MixinClientPlayerInteractionManagerAlchemy",
     "MixinEntityRenderer",
+    "MixinFogPerZone",
     "MixinGameRenderer",
     "MixinHeldItemRenderer",
     "MixinInGameHudRealmVignette",
@@ -17,7 +18,8 @@
     "MixinMinecraftClient",
     "MixinMouse",
     "MixinPlayerEntityDrop",
-    "MixinPlayerEntityHeldItem"
+    "MixinPlayerEntityHeldItem",
+    "MixinSkyPerZone"
   ],
   "injectors": {
     "defaultRequire": 1

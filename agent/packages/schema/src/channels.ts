@@ -116,6 +116,9 @@ export const CHANNELS = {
    * 单 zone MVP 用 zone_id="default"，未来扩展时按 zone 分发。 */
   WEATHER_EVENT_UPDATE: "bong:weather_event_update",
 
+  /** Server → Client / Agent: zone-scoped 持续环境状态（plan-zone-environment-v1） */
+  ZONE_ENVIRONMENT_UPDATE: "bong:zone_environment_update",
+
   /** Server → Agent: 噬元鼠局部相变事件（plan-rat-v1 P4） */
   RAT_PHASE_EVENT: "bong:rat_phase_event",
 
@@ -312,6 +315,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.HIGH_RENOWN_MILESTONE,
   CHANNELS.ZONE_PRESSURE_CROSSED,
   CHANNELS.WEATHER_EVENT_UPDATE,
+  CHANNELS.ZONE_ENVIRONMENT_UPDATE,
   CHANNELS.RAT_PHASE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,

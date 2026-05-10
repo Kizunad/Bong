@@ -34,7 +34,8 @@ use crate::schema::channels::{
     CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY,
     CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED,
     CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT,
-    CH_ZHENMAI_SKILL_EVENT, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
+    CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
+    CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -84,6 +85,7 @@ use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCast
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::yidao::YidaoEventV1;
 use crate::schema::zhenmai_v2::ZhenmaiSkillEventV1;
+use crate::schema::zone_environment::ZoneEnvironmentStateV1;
 use crate::schema::zone_pressure::ZonePressureCrossedV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
 
@@ -188,6 +190,7 @@ pub enum RedisOutbound {
     /// plan-lingtian-weather-v1 §3 / §4.4 — 天气事件起 / 落
     #[allow(dead_code)]
     WeatherEventUpdate(WeatherEventUpdateV1),
+    ZoneEnvironmentUpdate(ZoneEnvironmentStateV1),
     /// plan-craft-v1 P3 — 通用手搓出炉结果（成功 / 失败），agent narration 出炉叙事 trigger
     CraftOutcome(crate::schema::craft::CraftOutcomeV1),
     /// plan-craft-v1 P3 — 三渠道解锁广播，agent narration 首学/师承/顿悟 trigger
@@ -530,6 +533,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_WEATHER_EVENT_UPDATE,
+                payload,
+            })
+        }
+        RedisOutbound::ZoneEnvironmentUpdate(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ZoneEnvironmentStateV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ZONE_ENVIRONMENT_UPDATE,
                 payload,
             })
         }

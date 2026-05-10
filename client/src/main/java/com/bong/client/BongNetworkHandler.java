@@ -2,6 +2,7 @@ package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
@@ -55,6 +56,7 @@ public class BongNetworkHandler {
         registerVfxEventChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
+        registerZoneEnvironmentChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -189,6 +191,17 @@ public class BongNetworkHandler {
                 }
                 BongClient.LOGGER.info("Processed bong:audio/stop payload: {}", result.logMessage());
             });
+        });
+    }
+
+    private static void registerZoneEnvironmentChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "zone_environment"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> EnvironmentEffectController.acceptPayload(jsonPayload));
         });
     }
 

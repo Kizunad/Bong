@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "dimension": "minecraft:overworld",
+  "zone_id": "spawn",
+  "generation": 7,
+  "effects": [
+    {
+      "kind": "tornado_column",
+      "center": [12.0, 72.0, -8.0],
+      "radius": 9.0,
+      "height": 48.0,
+      "particle_density": 0.6
+    },
+    {
+      "kind": "fog_veil",
+      "aabb_min": [0.0, 60.0, 0.0],
+      "aabb_max": [32.0, 95.0, 32.0],
+      "tint_rgb": [120, 132, 148],
+      "density": 0.32
+    }
+  ]
+}

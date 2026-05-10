@@ -75,6 +75,10 @@ pub const CH_ZONE_PRESSURE_CROSSED: &str = "bong:zone/pressure_crossed";
 // `crate::schema::lingtian_weather::WeatherEventUpdateV1`。
 pub const CH_WEATHER_EVENT_UPDATE: &str = "bong:weather_event_update";
 
+// zone-scoped 长时环境效果（plan-zone-environment-v1）。payload 见
+// `crate::schema::zone_environment::ZoneEnvironmentStateV1`。
+pub const CH_ZONE_ENVIRONMENT_UPDATE: &str = "bong:zone_environment_update";
+
 // 噬元鼠相变（plan-rat-v1 P4）。server 检测 chunk 局部相变，agent 决定是否升级为跨 zone 灵蝗潮。
 pub const CH_RAT_PHASE_EVENT: &str = "bong:rat_phase_event";
 
@@ -204,6 +208,7 @@ mod tests {
         assert_eq!(CH_HIGH_RENOWN_MILESTONE, "bong:high_renown_milestone");
         assert_eq!(CH_ZONE_PRESSURE_CROSSED, "bong:zone/pressure_crossed");
         assert_eq!(CH_WEATHER_EVENT_UPDATE, "bong:weather_event_update");
+        assert_eq!(CH_ZONE_ENVIRONMENT_UPDATE, "bong:zone_environment_update");
         assert_eq!(CH_RAT_PHASE_EVENT, "bong:rat_phase_event");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");

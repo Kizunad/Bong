@@ -715,6 +715,7 @@ describe("redis-ipc", () => {
       expect.arrayContaining([
         BOTANY_ECOLOGY,
         ZONE_PRESSURE_CROSSED,
+        CHANNELS.ZONE_ENVIRONMENT_UPDATE,
         AGING,
         BREAKTHROUGH_EVENT,
         SOCIAL_FEUD,

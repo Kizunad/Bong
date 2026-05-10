@@ -1,0 +1,449 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "center",
+        "radius",
+        "height",
+        "particle_density"
+      ],
+      "properties": {
+        "kind": {
+          "const": "tornado_column",
+          "type": "string"
+        },
+        "center": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "height": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "particle_density": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "center",
+        "radius",
+        "strike_rate_per_min"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lightning_pillar",
+          "type": "string"
+        },
+        "center": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "strike_rate_per_min": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "aabb_min",
+        "aabb_max",
+        "density"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ash_fall",
+          "type": "string"
+        },
+        "aabb_min": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "aabb_max": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "density": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "aabb_min",
+        "aabb_max",
+        "tint_rgb",
+        "density"
+      ],
+      "properties": {
+        "kind": {
+          "const": "fog_veil",
+          "type": "string"
+        },
+        "aabb_min": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "aabb_max": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "tint_rgb": {
+          "type": "array",
+          "items": [
+            {
+              "minimum": 0,
+              "maximum": 255,
+              "type": "integer"
+            },
+            {
+              "minimum": 0,
+              "maximum": 255,
+              "type": "integer"
+            },
+            {
+              "minimum": 0,
+              "maximum": 255,
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "density": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "center",
+        "radius",
+        "height"
+      ],
+      "properties": {
+        "kind": {
+          "const": "dust_devil",
+          "type": "string"
+        },
+        "center": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "height": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "aabb_min",
+        "aabb_max",
+        "density",
+        "glow"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ember_drift",
+          "type": "string"
+        },
+        "aabb_min": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "aabb_max": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "density": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "glow": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "aabb_min",
+        "aabb_max",
+        "distortion_strength"
+      ],
+      "properties": {
+        "kind": {
+          "const": "heat_haze",
+          "type": "string"
+        },
+        "aabb_min": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "aabb_max": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "distortion_strength": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "aabb_min",
+        "aabb_max",
+        "density",
+        "wind_dir"
+      ],
+      "properties": {
+        "kind": {
+          "const": "snow_drift",
+          "type": "string"
+        },
+        "aabb_min": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "aabb_max": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "density": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "wind_dir": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    }
+  ]
+}
