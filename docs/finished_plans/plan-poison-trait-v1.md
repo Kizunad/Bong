@@ -481,25 +481,32 @@ PoisonOverdoseEvent severity → MICRO_TEAR 抽取经脉概率？
   - 毒丹/毒粉数据：5 个 alchemy recipe 位于 `server/assets/alchemy/recipes/poison_trait_*_v1.json`；5 丹 + 5 粉 item template 位于 `server/assets/items/pills.toml`；5 个研磨 recipe 由 `register_craft_recipes` 注入 `CraftCategory::PoisonPowder`。
   - consume / cost 链路：`ConsumePoisonPillIntent` 从 `server/src/network/client_request_handler.rs` 发出；`consume_poison_pill_system` 写 `PoisonToxicity` / `DigestionLoad`；`apply_poison_overdose_costs` 扣寿元并 emit `MeridianCrackEvent` MICRO_TEAR。
   - Attack hook：`apply_poison_attack_modifier` 覆盖长期 `PoisonToxicity` 修饰 + 瞬时毒粉 debuff，毒蛊招式路径排除长期毒性修饰。
-  - IPC / agent：Rust schema `server/src/schema/poison_trait.rs`；TypeBox schema `agent/packages/schema/src/poison-trait.ts` + generated JSON；叙事 runtime `agent/packages/tiandao/src/poison-trait-runtime.ts`。
-  - client：HUD planner/store `PoisonTraitHudPlanner` / `PoisonTraitHudStateStore`；HUD layer `POISON_TRAIT`；2 粒子、1 音效 recipe、10 个透明 item icon；通用 `bong:eat_food` PlayerAnimator JSON 与 `client/tools/gen_eat_food.py`。
+  - IPC / agent：Rust schema `server/src/schema/poison_trait.rs`；server-data emit `server/src/network/poison_trait_emit.rs`；Redis channels `bong:poison/dose` / `bong:poison/overdose`；TypeBox schema `agent/packages/schema/src/poison-trait.ts` + generated JSON；叙事 runtime `agent/packages/tiandao/src/poison-trait-runtime.ts`。
+  - client：HUD planner/store `PoisonTraitHudPlanner` / `PoisonTraitHudStateStore`；server-data handler `PoisonTraitServerDataHandler` + router registration；HUD layer `POISON_TRAIT`；2 粒子、1 音效 recipe、10 个透明 item icon；通用 `bong:eat_food` PlayerAnimator JSON 与 `client/tools/gen_eat_food.py`。
 
 - **关键 commit**
-  - `7ba5f52c5` · 2026-05-11 · `plan-poison-trait-v1: 落地毒性真元服务端底盘`
-  - `95d932050` · 2026-05-11 · `plan-poison-trait-v1: 接入 agent 毒性叙事契约`
-  - `5ceb0ce44` · 2026-05-11 · `plan-poison-trait-v1: 补齐客户端毒性反馈资产`
+  - `065c17042` · 2026-05-11 · `plan-poison-trait-v1: 落地毒性真元服务端底盘`
+  - `ecdb67fb7` · 2026-05-11 · `plan-poison-trait-v1: 接入 agent 毒性叙事契约`
+  - `ad0fdea34` · 2026-05-11 · `plan-poison-trait-v1: 补齐客户端毒性反馈资产`
+  - `a13949aa2` · 2026-05-11 · `plan-poison-trait-v1: 修复毒性服务端 review 阻断`
+  - `ae9dc914b` · 2026-05-11 · `plan-poison-trait-v1: 接入毒性 agent 叙事通道`
+  - `a20ea66d1` · 2026-05-11 · `plan-poison-trait-v1: 接入客户端毒性 server-data`
 
 - **测试结果**
-  - `cargo test cultivation::poison_trait` → 109 passed；`grep -rcE '#\[test\]' server/src/cultivation/poison_trait/` → `matrix_tests.rs:109`。
-  - `cargo fmt --check && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 cargo test` → 3895 passed。
-  - `npm run build`（agent workspace）→ passed；`cd agent/packages/tiandao && npm test` → 48 files / 331 tests passed；`cd agent/packages/schema && npm test` → 15 files / 353 tests passed。
-  - `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build`（client）→ BUILD SUCCESSFUL。
+  - `cargo fmt --check`（server）→ passed。
+  - `cargo check --all-targets -j 1`（server）→ passed。
+  - `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`（server）→ passed。
+  - `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test poison_trait -j 1`（server）→ 118 passed / 3836 filtered。
+  - `npm run build`（agent workspace）→ passed。
+  - `cd agent/packages/schema && npm test` → 17 files / 358 tests passed。
+  - `cd agent/packages/tiandao && npm test` → 49 files / 339 tests passed。
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew test build`（client）→ BUILD SUCCESSFUL。
   - 资源检查：10 个 poison icon 均为 RGBA，且同时存在透明像素与不透明像素；`eat_food` / particle / audio recipe JSON 均通过 `python3 -m json.tool`；`python3 tools/render_animation.py ...eat_food.json --ticks 0,6,12,18,24` 生成 headless preview 成功。
 
 - **跨仓库核验**
-  - server 符号：`PoisonToxicity`、`DigestionLoad`、`PoisonDoseEvent`、`PoisonOverdoseEvent`、`PoisonPowderConsumedEvent`、`PoisonAttackKind`、`CraftCategory::PoisonPowder`。
-  - agent 符号：`PoisonTraitStateV1`、`PoisonDoseEventV1`、`PoisonOverdoseEventV1`、`buildPoisonTraitNarrationPrompt`。
-  - client 符号：`PoisonTraitHudPlanner`、`PoisonTraitHudStateStore`、`HudRenderLayer.POISON_TRAIT`、`BongAnimations.EAT_FOOD`、`EatFoodAnimation.ID`。
+  - server 符号：`PoisonToxicity`、`DigestionLoad`、`PoisonDoseEvent`、`PoisonOverdoseEvent`、`PoisonPowderConsumedEvent`、`PoisonAttackKind`、`CraftCategory::PoisonPowder`、`RedisOutbound::PoisonDoseEvent`、`ServerDataPayloadV1::PoisonTraitState`。
+  - agent 符号：`PoisonTraitStateV1`、`PoisonDoseEventV1`、`PoisonOverdoseEventV1`、`PoisonTraitNarrationRuntime`、`CHANNELS.POISON_DOSE_EVENT`。
+  - client 符号：`PoisonTraitHudPlanner`、`PoisonTraitHudStateStore`、`PoisonTraitServerDataHandler`、`ServerDataRouter`、`HudRenderLayer.POISON_TRAIT`、`BongAnimations.EAT_FOOD`、`EatFoodAnimation.ID`。
 
 - **遗留 / 后续**
   - WSLg `runClient` 双视角手动实跑未纳入本次自动验证；当前以 Gradle build、headless animation render、资源 JSON 和 icon alpha 检查覆盖。
