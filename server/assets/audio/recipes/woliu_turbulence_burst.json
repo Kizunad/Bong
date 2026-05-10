@@ -1,0 +1,10 @@
+{
+  "id": "woliu_turbulence_burst",
+  "layers": [
+    { "sound": "minecraft:block.beacon.deactivate", "volume": 0.2, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.generic.explode", "volume": 0.5, "pitch": 1.5, "delay_ticks": 40 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

@@ -125,6 +125,11 @@ fn woliu_skill_payload(skill: WoliuSkillId) -> WoliuSkillIdV1 {
         WoliuSkillId::Mouth => WoliuSkillIdV1::Mouth,
         WoliuSkillId::Pull => WoliuSkillIdV1::Pull,
         WoliuSkillId::Heart => WoliuSkillIdV1::Heart,
+        WoliuSkillId::VacuumPalm => WoliuSkillIdV1::VacuumPalm,
+        WoliuSkillId::VortexShield => WoliuSkillIdV1::VortexShield,
+        WoliuSkillId::VacuumLock => WoliuSkillIdV1::VacuumLock,
+        WoliuSkillId::VortexResonance => WoliuSkillIdV1::VortexResonance,
+        WoliuSkillId::TurbulenceBurst => WoliuSkillIdV1::TurbulenceBurst,
     }
 }
 

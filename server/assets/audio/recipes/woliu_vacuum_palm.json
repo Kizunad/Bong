@@ -1,0 +1,10 @@
+{
+  "id": "woliu_vacuum_palm",
+  "layers": [
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.3, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.beacon.deactivate", "volume": 0.12, "pitch": 0.6, "delay_ticks": 3 }
+  ],
+  "priority": 66,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

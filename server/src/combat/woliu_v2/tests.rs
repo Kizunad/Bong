@@ -1,6 +1,8 @@
+use valence::entity::Look;
 use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
-use crate::combat::components::{SkillBarBindings, TICKS_PER_SECOND};
+use crate::combat::components::{SkillBarBindings, Wounds, TICKS_PER_SECOND};
+use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -10,7 +12,7 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
-use crate::qi_physics::{QiAccountKind, QiTransfer, QiTransferReason};
+use crate::qi_physics::{QiAccountId, QiAccountKind, QiTransfer, QiTransferReason};
 use crate::skill::events::SkillXpGain;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{default_spawn_bounds, Zone, ZoneRegistry};
@@ -27,7 +29,8 @@ use super::physics::{
     turbulence_decay_step, StirInput,
 };
 use super::skills::{
-    declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill, skill_spec, visual_for,
+    apply_target_siphon, declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill,
+    skill_spec, visual_for,
 };
 use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
 
@@ -77,6 +80,8 @@ fn app(tick: u64) -> App {
     app.add_event::<JueBiTriggerEvent>();
     app.add_event::<QiTransfer>();
     app.add_event::<SkillXpGain>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
     app
 }
 
@@ -141,6 +146,17 @@ fn all_skill_ids_are_stable_wire_strings() {
     assert_eq!(WoliuSkillId::Mouth.as_str(), "woliu.mouth");
     assert_eq!(WoliuSkillId::Pull.as_str(), "woliu.pull");
     assert_eq!(WoliuSkillId::Heart.as_str(), "woliu.heart");
+    assert_eq!(WoliuSkillId::VacuumPalm.as_str(), "woliu.vacuum_palm");
+    assert_eq!(WoliuSkillId::VortexShield.as_str(), "woliu.vortex_shield");
+    assert_eq!(WoliuSkillId::VacuumLock.as_str(), "woliu.vacuum_lock");
+    assert_eq!(
+        WoliuSkillId::VortexResonance.as_str(),
+        "woliu.vortex_resonance"
+    );
+    assert_eq!(
+        WoliuSkillId::TurbulenceBurst.as_str(),
+        "woliu.turbulence_burst"
+    );
 }
 
 #[test]
@@ -150,6 +166,11 @@ fn practice_xp_matches_plan_amounts() {
     assert_eq!(WoliuSkillId::Mouth.practice_xp(), 2);
     assert_eq!(WoliuSkillId::Pull.practice_xp(), 3);
     assert_eq!(WoliuSkillId::Heart.practice_xp(), 5);
+    assert_eq!(WoliuSkillId::VacuumPalm.practice_xp(), 2);
+    assert_eq!(WoliuSkillId::VortexShield.practice_xp(), 2);
+    assert_eq!(WoliuSkillId::VacuumLock.practice_xp(), 3);
+    assert_eq!(WoliuSkillId::VortexResonance.practice_xp(), 4);
+    assert_eq!(WoliuSkillId::TurbulenceBurst.practice_xp(), 5);
 }
 
 #[test]
@@ -330,7 +351,7 @@ fn resolve_hold_persists_stir_contamination_gain() {
 }
 
 #[test]
-fn startup_declares_lung_dependency_for_all_woliu_v2_skills() {
+fn startup_declares_expected_meridian_dependencies_for_woliu_skills() {
     let mut app = App::new();
     app.insert_resource(SkillMeridianDependencies::default());
     app.add_systems(Startup, declare_woliu_v2_meridian_dependencies);
@@ -338,8 +359,26 @@ fn startup_declares_lung_dependency_for_all_woliu_v2_skills() {
     app.update();
 
     let deps = app.world().resource::<SkillMeridianDependencies>();
-    for skill in WoliuSkillId::ALL {
+    for skill in [
+        WoliuSkillId::Hold,
+        WoliuSkillId::Burst,
+        WoliuSkillId::Mouth,
+        WoliuSkillId::Pull,
+        WoliuSkillId::Heart,
+    ] {
         assert_eq!(deps.lookup(skill.as_str()), &[MeridianId::Lung]);
+    }
+    for skill in [
+        WoliuSkillId::VacuumPalm,
+        WoliuSkillId::VortexShield,
+        WoliuSkillId::VacuumLock,
+        WoliuSkillId::VortexResonance,
+        WoliuSkillId::TurbulenceBurst,
+    ] {
+        assert_eq!(
+            deps.lookup(skill.as_str()),
+            &[MeridianId::Lung, MeridianId::Heart]
+        );
     }
 }
 
@@ -357,6 +396,25 @@ fn resolve_rejects_when_lung_meridian_is_permanently_severed() {
         result,
         CastResult::Rejected {
             reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
+        }
+    );
+}
+
+#[test]
+fn resolve_v3_skill_rejects_when_heart_meridian_is_permanently_severed() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    let mut severed = MeridianSeveredPermanent::default();
+    severed.insert(MeridianId::Heart, SeveredSource::BackfireOverload, 10);
+    app.world_mut().entity_mut(actor).insert(severed);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::VortexShield);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::MeridianSevered(Some(MeridianId::Heart))
         }
     );
 }
@@ -659,6 +717,346 @@ fn resolve_mouth_rejects_out_of_range_target_without_cooldown() {
         .get::<SkillBarBindings>(actor)
         .unwrap()
         .is_on_cooldown(2, 10));
+}
+
+#[test]
+fn resolve_vacuum_palm_requires_target_before_spending_qi() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::VacuumPalm);
+
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(actor).unwrap().qi_current,
+        200.0
+    );
+    assert!(!app
+        .world()
+        .get::<SkillBarBindings>(actor)
+        .unwrap()
+        .is_on_cooldown(1, 10));
+}
+
+#[test]
+fn resolve_vacuum_palm_pulls_target_and_siphons_qi() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 40.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([11.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        Some(target),
+        WoliuSkillId::VacuumPalm,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Cultivation>(target).unwrap().qi_current,
+        25.0
+    );
+    assert!(
+        app.world().get::<Cultivation>(actor).unwrap().qi_current > 180.0,
+        "caster should recover the siphoned target qi after paying the cast cost"
+    );
+    assert!(app
+        .world()
+        .resource::<Events<EntityDisplacedByVortexPull>>()
+        .iter_current_update_events()
+        .any(|event| event.target == target && event.displacement_blocks > 0.0));
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(
+            |event| event.from == QiAccountId::player(format!("entity:{}", target.to_bits()))
+                && event.to == QiAccountId::player(format!("entity:{}", actor.to_bits()))
+                && (event.amount - 15.0).abs() < f64::EPSILON
+        ));
+}
+
+#[test]
+fn target_siphon_caps_drain_by_caster_remaining_qi() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 95.0);
+    app.world_mut()
+        .get_mut::<Cultivation>(actor)
+        .unwrap()
+        .qi_max = 100.0;
+    let target = spawn_actor(&mut app, Realm::Induce, 40.0);
+
+    let drained = apply_target_siphon(
+        app.world_mut(),
+        actor,
+        Some(target),
+        WoliuSkillId::VacuumPalm,
+        skill_spec(WoliuSkillId::VacuumPalm, Realm::Condense),
+    );
+
+    assert_eq!(drained, 5.0);
+    assert_eq!(
+        app.world().get::<Cultivation>(target).unwrap().qi_current,
+        35.0
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(actor).unwrap().qi_current,
+        100.0
+    );
+}
+
+#[test]
+fn resolve_vortex_shield_emits_damage_reduction_status() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+
+    let result =
+        resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::VortexShield);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let status = app
+        .world()
+        .resource::<Events<ApplyStatusEffectIntent>>()
+        .iter_current_update_events()
+        .next()
+        .expect("vortex shield should emit defensive status intent");
+    assert_eq!(status.target, actor);
+    assert_eq!(status.kind, StatusEffectKind::DamageReduction);
+    assert_eq!(status.magnitude, 0.6);
+    assert_eq!(status.duration_ticks, 5 * TICKS_PER_SECOND);
+}
+
+#[test]
+fn resolve_vacuum_lock_slows_target_and_siphons_qi() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        Some(target),
+        WoliuSkillId::VacuumLock,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Cultivation>(target).unwrap().qi_current,
+        50.0
+    );
+    let status = app
+        .world()
+        .resource::<Events<ApplyStatusEffectIntent>>()
+        .iter_current_update_events()
+        .next()
+        .expect("vacuum lock should slow locked target");
+    assert_eq!(status.target, target);
+    assert_eq!(status.kind, StatusEffectKind::Slowed);
+    assert_eq!(status.magnitude, 0.8);
+    assert_eq!(status.duration_ticks, 3 * TICKS_PER_SECOND);
+}
+
+#[test]
+fn resolve_vortex_resonance_pulls_multiple_targets_with_resonance_bonus() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    let near = spawn_actor(&mut app, Realm::Induce, 80.0);
+    let far = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut()
+        .get_mut::<Position>(near)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+    app.world_mut()
+        .get_mut::<Position>(far)
+        .unwrap()
+        .set([12.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::VortexResonance,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let caster_pos = app.world().get::<Position>(actor).unwrap().get();
+    assert!(
+        app.world()
+            .get::<Position>(near)
+            .unwrap()
+            .get()
+            .distance(caster_pos)
+            < 2.0
+    );
+    assert!(
+        app.world()
+            .get::<Position>(far)
+            .unwrap()
+            .get()
+            .distance(caster_pos)
+            < 4.0
+    );
+    let displacements = app
+        .world()
+        .resource::<Events<EntityDisplacedByVortexPull>>()
+        .iter_current_update_events()
+        .filter(|event| event.target == near || event.target == far)
+        .map(|event| event.displacement_blocks)
+        .collect::<Vec<_>>();
+    assert_eq!(displacements.len(), 2);
+    assert!(displacements
+        .iter()
+        .all(|value| (*value - 1.4).abs() < 1e-5));
+}
+
+#[test]
+fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    app.world_mut()
+        .entity_mut(actor)
+        .insert(Look::new(0.0, 0.0));
+    let caster_start = app.world().get::<Position>(actor).unwrap().get();
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut().entity_mut(target).insert(Wounds::default());
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::TurbulenceBurst,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let wounds = app.world().get::<Wounds>(target).unwrap();
+    assert_eq!(wounds.health_current, 40.0);
+    assert_eq!(wounds.entries.len(), 1);
+    assert_eq!(
+        app.world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .filter(|event| event.target == target && event.damage == 60.0)
+            .count(),
+        1
+    );
+    assert!(app
+        .world()
+        .resource::<Events<ApplyStatusEffectIntent>>()
+        .iter_current_update_events()
+        .any(|event| event.target == target && event.kind == StatusEffectKind::Stunned));
+    assert!(
+        app.world()
+            .get::<Position>(target)
+            .unwrap()
+            .get()
+            .distance(DVec3::new(8.0, 66.0, 8.0))
+            > 2.0
+    );
+    let caster_after = app.world().get::<Position>(actor).unwrap().get();
+    assert!(
+        caster_after.z < caster_start.z,
+        "yaw=0 faces +Z, so turbulence burst recoil should move the caster backward on -Z; start={caster_start:?}, after={caster_after:?}"
+    );
+    assert!(
+        (caster_after.x - caster_start.x).abs() < 1e-5,
+        "recoil should follow facing direction instead of hard-coding an X-axis offset; start={caster_start:?}, after={caster_after:?}"
+    );
+}
+
+#[test]
+fn resolve_turbulence_burst_without_look_skips_caster_recoil() {
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    let caster_start = app.world().get::<Position>(actor).unwrap().get();
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut().entity_mut(target).insert(Wounds::default());
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::TurbulenceBurst,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Position>(actor).unwrap().get(),
+        caster_start,
+        "caster without Look should not fall back to a fixed-axis recoil"
+    );
+    assert!(!app
+        .world()
+        .resource::<Events<EntityDisplacedByVortexPull>>()
+        .iter_current_update_events()
+        .any(|event| event.target == actor));
+}
+
+#[test]
+fn resolve_v3_area_skills_emit_distinct_visual_contracts() {
+    let cases = [
+        (
+            WoliuSkillId::VortexShield,
+            "bong:woliu_vortex_shield",
+            "bong:woliu_vortex_shield_sphere",
+            "woliu_vortex_shield",
+        ),
+        (
+            WoliuSkillId::VortexResonance,
+            "bong:woliu_vortex_resonance",
+            "bong:woliu_vortex_resonance_field",
+            "woliu_vortex_resonance",
+        ),
+        (
+            WoliuSkillId::TurbulenceBurst,
+            "bong:woliu_turbulence_burst",
+            "bong:woliu_turbulence_burst_wave",
+            "woliu_turbulence_burst",
+        ),
+    ];
+    for (idx, (skill, animation, particle, sound)) in cases.into_iter().enumerate() {
+        let mut app = app(10 + idx as u64);
+        let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+
+        let result = resolve_woliu_v2_skill(app.world_mut(), actor, idx as u8, None, skill);
+
+        assert!(matches!(result, CastResult::Started { .. }));
+        let event = app
+            .world()
+            .resource::<Events<VortexCastEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("v3 area skill should emit cast event");
+        assert_eq!(event.skill, skill);
+        assert_eq!(event.visual.animation_id, animation);
+        assert_eq!(event.visual.particle_id, particle);
+        assert_eq!(event.visual.sound_recipe_id, sound);
+    }
 }
 
 #[test]

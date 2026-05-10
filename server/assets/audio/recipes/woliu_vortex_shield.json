@@ -1,0 +1,10 @@
+{
+  "id": "woliu_vortex_shield",
+  "layers": [
+    { "sound": "minecraft:block.portal.ambient", "volume": 0.08, "pitch": 2.0, "delay_ticks": 0 },
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.12, "pitch": 0.7, "delay_ticks": 4 }
+  ],
+  "priority": 63,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

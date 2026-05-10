@@ -167,6 +167,16 @@ public class VfxRegistryTest {
             "bootstrap should register zhenmai sever flash");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.EVENT_ID),
             "bootstrap should register vortex_spiral");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VACUUM_PALM),
+            "bootstrap should register woliu-v3 vacuum palm particle");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VORTEX_SHIELD),
+            "bootstrap should register woliu-v3 vortex shield particle");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VACUUM_LOCK),
+            "bootstrap should register woliu-v3 vacuum lock particle");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VORTEX_RESONANCE),
+            "bootstrap should register woliu-v3 vortex resonance particle");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.TURBULENCE_BURST),
+            "bootstrap should register woliu-v3 turbulence burst particle");
         assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.MAIN_RIFT),
             "bootstrap should register TSY main rift portal VFX");
         assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.DEEP_RIFT),

@@ -88,7 +88,13 @@ public final class VfxBootstrap {
             new net.minecraft.util.Identifier("bong", "jiemai_sever_flash"),
             new SwordQiSlashPlayer()
         );
-        registry.register(VortexSpiralPlayer.EVENT_ID,           new VortexSpiralPlayer());
+        VortexSpiralPlayer woliuVortex = new VortexSpiralPlayer();
+        registry.register(VortexSpiralPlayer.EVENT_ID,           woliuVortex);
+        registry.register(VortexSpiralPlayer.VACUUM_PALM,        woliuVortex);
+        registry.register(VortexSpiralPlayer.VORTEX_SHIELD,      woliuVortex);
+        registry.register(VortexSpiralPlayer.VACUUM_LOCK,        woliuVortex);
+        registry.register(VortexSpiralPlayer.VORTEX_RESONANCE,   woliuVortex);
+        registry.register(VortexSpiralPlayer.TURBULENCE_BURST,   woliuVortex);
         registry.register(CultivationAbsorbPlayer.EVENT_ID,      new CultivationAbsorbPlayer());
         registry.register(MeridianOpenFlashPlayer.EVENT_ID,      new MeridianOpenFlashPlayer());
         registry.register(BreakthroughFailPlayer.EVENT_ID,       new BreakthroughFailPlayer());

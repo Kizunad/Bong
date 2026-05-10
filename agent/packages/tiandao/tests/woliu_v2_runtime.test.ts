@@ -55,8 +55,19 @@ describe("WoliuV2NarrationRuntime", () => {
     ]);
   });
 
-  it("renders deterministic fallback for every woliu v2 skill", () => {
-    for (const skill of ["hold", "burst", "mouth", "pull", "heart"] as const) {
+  it("renders deterministic fallback for every woliu v2/v3 skill", () => {
+    for (const skill of [
+      "hold",
+      "burst",
+      "mouth",
+      "pull",
+      "heart",
+      "vacuum_palm",
+      "vortex_shield",
+      "vacuum_lock",
+      "vortex_resonance",
+      "turbulence_burst",
+    ] as const) {
       const narration = renderWoliuV2Narration({
         kind: "cast",
         payload: {

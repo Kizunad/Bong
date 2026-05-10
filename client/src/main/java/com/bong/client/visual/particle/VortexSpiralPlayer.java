@@ -10,6 +10,11 @@ import java.util.OptionalInt;
 /** Spawns several inward ribbon trails around a woliu-v2 low-pressure point. */
 public final class VortexSpiralPlayer implements VfxPlayer {
     public static final Identifier EVENT_ID = new Identifier("bong", "vortex_spiral");
+    public static final Identifier VACUUM_PALM = new Identifier("bong", "woliu_vacuum_palm_spiral");
+    public static final Identifier VORTEX_SHIELD = new Identifier("bong", "woliu_vortex_shield_sphere");
+    public static final Identifier VACUUM_LOCK = new Identifier("bong", "woliu_vacuum_lock_cage");
+    public static final Identifier VORTEX_RESONANCE = new Identifier("bong", "woliu_vortex_resonance_field");
+    public static final Identifier TURBULENCE_BURST = new Identifier("bong", "woliu_turbulence_burst_wave");
 
     private static final int DEFAULT_COUNT = 10;
     private static final int FALLBACK_RGB = 0x201832;

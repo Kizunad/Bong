@@ -48,6 +48,11 @@ const SKILL_LABEL: Record<WoliuSkillCastV1["skill"], string> = {
   mouth: "涡口",
   pull: "涡引",
   heart: "涡心",
+  vacuum_palm: "吸涡掌",
+  vortex_shield: "涡流护体",
+  vacuum_lock: "真空锁",
+  vortex_resonance: "涡流共振",
+  turbulence_burst: "紊流爆发",
 };
 
 export function renderWoliuV2Narration(event: WoliuV2Payload): Narration {

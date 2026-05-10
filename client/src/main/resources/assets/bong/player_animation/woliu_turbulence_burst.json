@@ -1,0 +1,28 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "woliu_turbulence_burst",
+  "description": "woliu-v3 two-second inward charge ending in an outward burst.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 40,
+    "stopTick": 46,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "z": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.65, "yaw": -0.20, "roll": -0.10, "bend": 1.15, "axis": 3.1415927 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": -0.65, "yaw": 0.20, "roll": 0.10, "bend": 1.15, "axis": 3.1415927 } },
+      { "tick": 32, "easing": "INOUTSINE", "body": { "z": -0.08 } },
+      { "tick": 32, "easing": "INOUTSINE", "torso": { "pitch": -0.18 } },
+      { "tick": 32, "easing": "INOUTSINE", "rightArm": { "pitch": -1.18, "yaw": -0.04, "roll": -0.02, "bend": 1.38, "axis": 3.1415927 } },
+      { "tick": 32, "easing": "INOUTSINE", "leftArm": { "pitch": -1.18, "yaw": 0.04, "roll": 0.02, "bend": 1.38, "axis": 3.1415927 } },
+      { "tick": 40, "easing": "OUTSINE", "body": { "z": 0.12 } },
+      { "tick": 40, "easing": "OUTSINE", "torso": { "pitch": 0.16 } },
+      { "tick": 40, "easing": "OUTSINE", "rightArm": { "pitch": -1.42, "yaw": -0.62, "roll": -0.48, "bend": 0.48, "axis": 3.1415927 } },
+      { "tick": 40, "easing": "OUTSINE", "leftArm": { "pitch": -1.42, "yaw": 0.62, "roll": 0.48, "bend": 0.48, "axis": 3.1415927 } }
+    ]
+  }
+}

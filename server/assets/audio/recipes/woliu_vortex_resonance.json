@@ -1,0 +1,10 @@
+{
+  "id": "woliu_vortex_resonance",
+  "layers": [
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.1, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.portal.ambient", "volume": 0.12, "pitch": 1.5, "delay_ticks": 2 }
+  ],
+  "priority": 67,
+  "attenuation": "world_3d",
+  "category": "AMBIENT"
+}

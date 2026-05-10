@@ -8,6 +8,11 @@ export const WoliuSkillIdV1 = Type.Union([
   Type.Literal("mouth"),
   Type.Literal("pull"),
   Type.Literal("heart"),
+  Type.Literal("vacuum_palm"),
+  Type.Literal("vortex_shield"),
+  Type.Literal("vacuum_lock"),
+  Type.Literal("vortex_resonance"),
+  Type.Literal("turbulence_burst"),
 ]);
 export type WoliuSkillIdV1 = Static<typeof WoliuSkillIdV1>;
 

@@ -8,6 +8,11 @@ pub enum WoliuSkillIdV1 {
     Mouth,
     Pull,
     Heart,
+    VacuumPalm,
+    VortexShield,
+    VacuumLock,
+    VortexResonance,
+    TurbulenceBurst,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +77,7 @@ mod tests {
     fn woliu_skill_cast_serializes_snake_case_skill() {
         let payload = WoliuSkillCastV1 {
             caster: "player:a".to_string(),
-            skill: WoliuSkillIdV1::Mouth,
+            skill: WoliuSkillIdV1::VacuumPalm,
             tick: 7,
             lethal_radius: 3.0,
             influence_radius: 30.0,
@@ -85,7 +90,7 @@ mod tests {
             icon_texture: "bong:textures/gui/skill/woliu_mouth.png".to_string(),
         };
         let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains(r#""skill":"mouth""#));
+        assert!(json.contains(r#""skill":"vacuum_palm""#));
         assert!(json.contains("vortex_qi_siphon"));
     }
 }
