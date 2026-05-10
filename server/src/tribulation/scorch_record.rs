@@ -6,7 +6,7 @@
 pub const GLASS_FULGURITE_MARKER_ID: &str = "glass_fulgurite";
 pub const TRIBULATION_SCORCH_EVENT: &str = "tribulation_scorch";
 
-use valence::prelude::{DVec3, EventReader, Position, Query, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, DVec3, EventReader, Position, Query, Res, ResMut, Resource};
 
 use crate::combat::CombatClock;
 use crate::cultivation::tribulation::TribulationSettled;
@@ -22,12 +22,10 @@ pub struct ScorchRecord {
     pub source_event: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Resource)]
 pub struct TribulationScorchRecords {
     records: Vec<ScorchRecord>,
 }
-
-impl Resource for TribulationScorchRecords {}
 
 impl TribulationScorchRecords {
     pub fn push(&mut self, record: ScorchRecord) {

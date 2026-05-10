@@ -6,6 +6,7 @@ from ..blueprint import BlueprintZone
 
 
 XUJIE_CANXIE_ITEM_ID = "xujie_canxie"
+ASCENSION_PIT_DEFAULT_RADIUS = 34.0
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ def _spec_for_zone(zone: BlueprintZone) -> AscensionPitSpec | None:
     raw = zone.worldgen.extras.get("ascension_pit_xz")
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
         return None
-    radius = float(zone.worldgen.extras.get("ascension_pit_radius", 34.0))
+    radius = float(zone.worldgen.extras.get("ascension_pit_radius", ASCENSION_PIT_DEFAULT_RADIUS))
     return AscensionPitSpec(
         zone=zone.name,
         name=f"{zone.name}_tianjie_ascension_pit",

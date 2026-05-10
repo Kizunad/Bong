@@ -5,6 +5,7 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..structures.ascension_pit import ASCENSION_PIT_DEFAULT_RADIUS
 from .base import DecorationSpec, EcologySpec, ProfileContext, TerrainProfileGenerator
 
 
@@ -330,5 +331,5 @@ def _ascension_pit_mask(
         return np.zeros_like(wx, dtype=bool)
     pit_x = float(raw[0])
     pit_z = float(raw[1])
-    radius = float(zone.worldgen.extras.get("ascension_pit_radius", 30.0))
+    radius = float(zone.worldgen.extras.get("ascension_pit_radius", ASCENSION_PIT_DEFAULT_RADIUS))
     return ((wx - pit_x) ** 2 + (wz - pit_z) ** 2) <= radius**2
