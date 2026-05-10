@@ -189,6 +189,26 @@ pub fn npc_death_smoke_request(origin: DVec3) -> VfxEventRequest {
     )
 }
 
+pub fn npc_death_qi_burst_request(
+    origin: DVec3,
+    profile: Option<&NpcVisualProfile>,
+) -> Option<VfxEventRequest> {
+    profile?.has_high_realm_aura().then(|| {
+        VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: "bong:npc_death_qi_burst".to_string(),
+                origin: [origin.x, origin.y + 0.8, origin.z],
+                direction: None,
+                color: Some("#8FE6B8".to_string()),
+                strength: Some(0.75),
+                count: Some(8),
+                duration_ticks: Some(12),
+            },
+        )
+    })
+}
+
 fn send_visual_particle(
     vfx_events: &mut EventWriter<VfxEventRequest>,
     event_id: &str,
@@ -337,5 +357,20 @@ mod tests {
             rank_aura_event_id(&leader),
             Some("bong:npc_rank_aura_master")
         );
+    }
+
+    #[test]
+    fn high_realm_death_burst_only_emits_for_high_tier() {
+        let high = profile(None, None, NpcAgeBand::Adult, NpcSkinTier::RogueHigh);
+        let low = profile(None, None, NpcAgeBand::Adult, NpcSkinTier::RogueLow);
+
+        let request = npc_death_qi_burst_request(DVec3::new(1.0, 2.0, 3.0), Some(&high))
+            .expect("high realm NPC death should emit qi burst");
+        assert!(matches!(
+            request.payload,
+            VfxEventPayloadV1::SpawnParticle { ref event_id, .. } if event_id == "bong:npc_death_qi_burst"
+        ));
+        assert!(npc_death_qi_burst_request(DVec3::ZERO, Some(&low)).is_none());
+        assert!(npc_death_qi_burst_request(DVec3::ZERO, None).is_none());
     }
 }

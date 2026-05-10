@@ -52,6 +52,7 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::spirit_eye::DeathInsightSpiritEyeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
+use crate::skin::NpcVisualProfile;
 use crate::world::dimension::DimensionKind;
 use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::zone::ZoneRegistry;
@@ -91,6 +92,7 @@ type DeathArbiterQueryItem<'a> = (
     Option<&'a mut DeathRegistry>,
     Option<&'a mut LifespanComponent>,
     Option<&'a Position>,
+    Option<&'a NpcVisualProfile>,
 );
 
 type NearDeathPersistenceQueryItem<'a> = (
@@ -283,6 +285,7 @@ pub fn death_arbiter_tick(
             mut death_registry,
             mut lifespan,
             position,
+            npc_visual_profile,
         )) = lifecycle_q.get_mut(event.target)
         else {
             continue;
@@ -361,6 +364,7 @@ pub fn death_arbiter_tick(
                 now_tick,
                 &mut terminated,
                 position,
+                npc_visual_profile,
                 &mut vfx_events,
                 "natural_end",
                 Some(event.cause.as_str()),
@@ -431,6 +435,7 @@ pub fn death_arbiter_tick(
             mut death_registry,
             mut lifespan,
             position,
+            npc_visual_profile,
         )) = lifecycle_q.get_mut(event.entity)
         else {
             continue;
@@ -531,6 +536,7 @@ pub fn death_arbiter_tick(
                 clock.tick,
                 &mut terminated,
                 position,
+                npc_visual_profile,
                 &mut vfx_events,
                 if void_quota_exceeded {
                     crate::cultivation::tribulation::VOID_QUOTA_EXCEEDED_REASON
@@ -1316,6 +1322,7 @@ fn terminate_lifecycle(
         now_tick,
         terminated,
         position,
+        None,
         vfx_events,
         cause,
         None,
@@ -1332,6 +1339,7 @@ fn terminate_lifecycle_with_death_context(
     now_tick: u64,
     terminated: &mut EventWriter<PlayerTerminated>,
     position: Option<&Position>,
+    npc_visual_profile: Option<&NpcVisualProfile>,
     vfx_events: &mut EventWriter<VfxEventRequest>,
     cause: &str,
     death_registry_cause: Option<&str>,
@@ -1405,6 +1413,11 @@ fn terminate_lifecycle_with_death_context(
         ));
         if lifecycle.character_id.starts_with("npc_") {
             vfx_events.send(crate::skin::faction_tint::npc_death_smoke_request(p));
+            if let Some(request) =
+                crate::skin::faction_tint::npc_death_qi_burst_request(p, npc_visual_profile)
+            {
+                vfx_events.send(request);
+            }
         }
     }
     true

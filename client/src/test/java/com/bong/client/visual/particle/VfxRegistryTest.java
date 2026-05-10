@@ -125,6 +125,8 @@ public class VfxRegistryTest {
             "bootstrap should register realm_collapse_boundary");
         assertTrue(VfxRegistry.instance().contains(NpcDeathSmokePlayer.EVENT_ID),
             "bootstrap should register npc_death_smoke");
+        assertTrue(VfxRegistry.instance().contains(NpcDeathQiBurstPlayer.EVENT_ID),
+            "bootstrap should register npc_death_qi_burst");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.ELDER),
             "bootstrap should register npc_rank_aura_elder");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.MASTER),
