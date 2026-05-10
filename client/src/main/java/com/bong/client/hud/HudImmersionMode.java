@@ -25,6 +25,7 @@ public final class HudImmersionMode {
     private static volatile Mode currentMode = Mode.PEACE;
     private static volatile long changedAtMs = 0L;
     private static volatile boolean manualImmersive = false;
+    private static volatile boolean immersiveActive = false;
     private static volatile long immersiveChangedAtMs = -IMMERSIVE_FADE_IN_MS;
     private static volatile long altPeekStartedAtMs = -1L;
     private static volatile long meditationStartedAtMs = -1L;
@@ -117,6 +118,7 @@ public final class HudImmersionMode {
         currentMode = Mode.PEACE;
         changedAtMs = 0L;
         manualImmersive = false;
+        immersiveActive = false;
         immersiveChangedAtMs = -IMMERSIVE_FADE_IN_MS;
         altPeekStartedAtMs = -1L;
         meditationStartedAtMs = -1L;
@@ -129,8 +131,10 @@ public final class HudImmersionMode {
 
     public static void setManualImmersive(boolean enabled, long nowMs) {
         if (manualImmersive != enabled) {
+            long safeNow = Math.max(0L, nowMs);
             manualImmersive = enabled;
-            immersiveChangedAtMs = Math.max(0L, nowMs);
+            immersiveActive = enabled;
+            immersiveChangedAtMs = safeNow;
         }
     }
 
@@ -152,20 +156,21 @@ public final class HudImmersionMode {
         if (commands == null || commands.isEmpty()) {
             return List.of();
         }
+        long safeNow = Math.max(0L, nowMs);
         HudRuntimeContext runtime = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
         if (runtime.altPeekDown()) {
             if (altPeekStartedAtMs < 0L) {
-                altPeekStartedAtMs = Math.max(0L, nowMs);
-            } else if (manualImmersive && Math.max(0L, nowMs) - altPeekStartedAtMs >= ALT_PEEK_EXIT_MS) {
+                altPeekStartedAtMs = safeNow;
+            } else if (manualImmersive && safeNow - altPeekStartedAtMs >= ALT_PEEK_EXIT_MS) {
                 setManualImmersive(false, nowMs);
             }
         } else {
             altPeekStartedAtMs = -1L;
         }
 
-        if (isMeditating(visualEffectState, Math.max(0L, nowMs))) {
+        if (isMeditating(visualEffectState, safeNow)) {
             if (meditationStartedAtMs < 0L) {
-                meditationStartedAtMs = Math.max(0L, nowMs);
+                meditationStartedAtMs = safeNow;
             }
         } else {
             meditationStartedAtMs = -1L;
@@ -173,10 +178,17 @@ public final class HudImmersionMode {
 
         boolean autoMeditation = autoMeditationImmersive
             && meditationStartedAtMs >= 0L
-            && Math.max(0L, nowMs) - meditationStartedAtMs >= AUTO_MEDITATION_DELAY_MS;
+            && safeNow - meditationStartedAtMs >= AUTO_MEDITATION_DELAY_MS;
         boolean combatRestore = mode == Mode.COMBAT;
         boolean active = (manualImmersive || autoMeditation) && !combatRestore;
-        double alpha = immersiveAlpha(active, runtime.altPeekDown(), nowMs);
+        long transitionAtMs = active && autoMeditation && !manualImmersive
+            ? meditationStartedAtMs + AUTO_MEDITATION_DELAY_MS
+            : safeNow;
+        updateImmersiveTransition(active, transitionAtMs);
+        if (combatRestore) {
+            return commands;
+        }
+        double alpha = immersiveAlpha(active, runtime.altPeekDown(), safeNow);
         if (alpha >= 0.999) {
             return commands;
         }
@@ -201,6 +213,13 @@ public final class HudImmersionMode {
             return 1.0;
         }
         return Math.min(1.0, elapsed / (double) IMMERSIVE_FADE_IN_MS);
+    }
+
+    private static void updateImmersiveTransition(boolean active, long nowMs) {
+        if (immersiveActive != active) {
+            immersiveActive = active;
+            immersiveChangedAtMs = Math.max(0L, nowMs);
+        }
     }
 
     private static boolean criticalLayer(HudRenderLayer layer) {

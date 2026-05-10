@@ -129,6 +129,24 @@ class HudImmersionModeTest {
     }
 
     @Test
+    void immersiveAlphaKeepsTransparentColorsTransparent() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0x00FFFFFF)
+        );
+
+        List<HudRenderCommand> faded = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.PEACE,
+            VisualEffectState.none(),
+            HudRuntimeContext.empty(),
+            1_250L
+        );
+
+        assertEquals(0x00FFFFFF, faded.get(0).color());
+    }
+
+    @Test
     void meditateAutoImmersive() {
         VisualEffectState meditation = VisualEffectState.create("meditation_calm", 1.0, 10_000L, 1_000L);
         List<HudRenderCommand> commands = List.of(
@@ -136,6 +154,13 @@ class HudImmersionModeTest {
         );
 
         HudImmersionMode.applyImmersiveAlpha(commands, HudImmersionMode.Mode.CULTIVATION, meditation, HudRuntimeContext.empty(), 1_000L);
+        List<HudRenderCommand> halfway = HudImmersionMode.applyImmersiveAlpha(
+            commands,
+            HudImmersionMode.Mode.CULTIVATION,
+            meditation,
+            HudRuntimeContext.empty(),
+            4_250L
+        );
         List<HudRenderCommand> dimmed = HudImmersionMode.applyImmersiveAlpha(
             commands,
             HudImmersionMode.Mode.CULTIVATION,
@@ -144,6 +169,7 @@ class HudImmersionModeTest {
             4_500L
         );
 
+        assertEquals(0x80FFFFFF, halfway.get(0).color());
         assertEquals(0x00FFFFFF, dimmed.get(0).color());
     }
 }

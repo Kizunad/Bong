@@ -50,7 +50,7 @@ final class HudCommandAlpha {
     }
 
     private static int multiplyAlpha(int color, double factor) {
-        int originalAlpha = (color >>> 24) == 0 ? 0xFF : (color >>> 24);
+        int originalAlpha = (color >>> 24) & 0xFF;
         int alpha = (int) Math.round(originalAlpha * factor);
         return (Math.max(0, Math.min(255, alpha)) << 24) | (color & 0x00FFFFFF);
     }

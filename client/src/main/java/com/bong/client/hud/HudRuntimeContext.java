@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import java.util.List;
+import java.util.Objects;
 
 public record HudRuntimeContext(
     double yawDegrees,
@@ -15,7 +16,9 @@ public record HudRuntimeContext(
         if (!Double.isFinite(playerX)) playerX = 0.0;
         if (!Double.isFinite(playerY)) playerY = 0.0;
         if (!Double.isFinite(playerZ)) playerZ = 0.0;
-        compassMarkers = compassMarkers == null ? List.of() : List.copyOf(compassMarkers);
+        compassMarkers = compassMarkers == null ? List.of() : compassMarkers.stream()
+            .filter(Objects::nonNull)
+            .toList();
     }
 
     public static HudRuntimeContext empty() {
