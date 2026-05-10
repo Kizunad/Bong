@@ -190,6 +190,7 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 - `a6450ceb7` — 2026-05-11 — `docs(plan-style-balance-v1): 升级 active 计划`
 - `b356aeeab` — 2026-05-11 — `fix(style-balance): 引入 rejection_rate 并修正 qi_collision`
 - `5edfef712` — 2026-05-11 — `feat(style-balance): 扩展 telemetry 物理观测字段`
+- `2fb31a5d4` — 2026-05-11 — `docs(plan-style-balance-v1): finish evidence 并归档至 finished_plans`
 
 ### 测试结果
 
@@ -206,6 +207,8 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 - `cd agent && npm run build` — pass
 - `python3 scripts/balance/style_collision_sim.py` — pass，重生成 `scripts/balance/style_collision_sim.html`
 - `python3 scripts/balance/style_telemetry_replay.py --sample` — pass，3 个 sample group 均为 `OK`
+- 归档后：`rg -n "docs/plan-style-balance-v1\\.md" README.md docs scripts` — no matches
+- 归档后：`cd server && cargo test qi_physics::collision` — pass，19 passed
 
 ### 跨仓库核验
 
