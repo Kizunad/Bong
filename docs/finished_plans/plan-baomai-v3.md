@@ -515,12 +515,13 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 - `7fcf68a82`（2026-05-10）`plan-baomai-v3: 接入爆脉 agent 契约叙事`
 - `5aef42aa6`（2026-05-10）`plan-baomai-v3: 接入爆脉 client 视听 HUD`
 - `b9142c391`（2026-05-10）`修复 plan-baomai-v3 review：接通 HUD 与散功边界`
+- `135b7e961`（2026-05-10）`修复 plan-baomai-v3 review：收紧焚血与视听边界`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check` ✅
 - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3684 passed；其中 `server/src/combat/baomai_v3/` 当前 33 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射。
+- `cd server && CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1` ✅ 3686 passed；其中 `server/src/combat/baomai_v3/` 当前 33 个 `#[test]` 覆盖 5 招、经脉依赖、焚血反噬、散功 qi_max -50%、flow_rate 恢复、绝壁劫触发和契约映射；`qi_physics::field` 与 `network::audio_trigger` 已补焚血 HP 越界拒绝和 `blood_burn_sizzle` 本地衰减回归。
 - `cd agent && npm run build` ✅
 - `cd agent/packages/schema && npm test` ✅ 353 passed；`npm run generate:check` ✅ 327 schemas fresh。
 - `cd agent/packages/tiandao && npm test` ✅ 329 passed。
@@ -530,7 +531,7 @@ worldview §四:354 引气期 5/s 安全流量 → ×10 = 50/s（化虚级）。
 
 - **server**：`BaomaiSkillId` 六个 skill id 全注册；`SkillMeridianDependencies` 覆盖手三阳、任督、足三阳、肝/任督、全 20 经脉；散功 component 不含 immunity flag，敌方攻击路径不被短路。
 - **agent**：`BaomaiSkillEventV1` 拒绝未知 skill id；散功叙事明确“脉流暴涨十倍”且“没有一分免伤”。
-- **client**：新增 3 个动画 JSON、4 个粒子 ID 注册、3 个 HUD 行渲染测试；`BaomaiV3VfxPlayer` 将焚血 / 散功 / 经脉龟裂 VFX 同步到 HUD state。
+- **client**：新增 3 个动画 JSON、4 个粒子 ID 注册、3 个 HUD 行渲染测试；`BaomaiV3VfxPlayer` 将焚血 / 散功 / 经脉龟裂 VFX 同步到 HUD state；HUD 龟裂严重度在可见窗口过期后重置，避免旧高强度残留到下一次低强度事件。
 
 ### 遗留 / 后续
 
