@@ -630,14 +630,15 @@ fn dehydrate_far_npcs(
 - `4175e06cd` · 2026-05-10 · `feat(network): 同步 dormant NPC 状态到 agent`
 - `8ca24a9bc` · 2026-05-10 · `feat(npc): 启动恢复 dormant Redis 快照`
 - `9baa1dbb1` · 2026-05-10 · `feat(npc): dormant tick 推进普通境界突破`
+- `6875b82ee` · 2026-05-10 · `fix(npc): 修复 dormant review 边界回归`
 
 ### 测试结果
 
 - `cargo fmt --check` ✅
 - `cargo clippy --all-targets -- -D warnings` ✅
-- `cargo test` ✅ `3497 passed; 0 failed`
-- `cargo test npc::dormant` ✅ `6 passed; 0 failed`
-- `cargo test npc::hydrate` ✅ `3 passed; 0 failed`
+- `cargo test` ✅ `3501 passed; 0 failed`
+- `cargo test npc::dormant` ✅ `9 passed; 0 failed`
+- `cargo test npc::hydrate` ✅ `4 passed; 0 failed`
 - `cargo test publishes_dormant_npcs_in_world_state_and_redis_hash` ✅
 - `cargo test replaces_dormant_npc_hash` ✅
 - `agent/ npm run build` ✅
