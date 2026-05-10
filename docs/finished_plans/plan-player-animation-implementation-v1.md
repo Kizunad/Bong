@@ -291,6 +291,7 @@
   - `067e60794` · 2026-05-11 · `补强 player-animation 事件触发覆盖`
   - `e7a8e85a1` · 2026-05-11 · `修复 player-animation review 反馈`
   - `af567f34a` · 2026-05-11 · `接入 player-animation 分层播放入口`
+  - `5f3c7298a` · 2026-05-11 · `补强 player-animation 分层状态同步`
 - **测试结果**：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 3650 passed。
   - `cd server && cargo test vfx_animation_trigger && cargo test animation_trigger` → 8 passed + 10 passed，覆盖 `PlayAnim` / `StopAnim` component 适配、combat/breakthrough/botany/lingtian 映射、skinned NPC `UniqueId` 目标。
@@ -299,6 +300,8 @@
   - Review 收尾后 Java 17 下 `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build` → BUILD SUCCESSFUL。
   - LayerManager 生产接入后 Java 17 下 `cd client && ./gradlew test --tests "com.bong.client.animation.AnimationLayerManagerTest"` → BUILD SUCCESSFUL。
   - LayerManager 生产接入后 Java 17 下 `cd client && ./gradlew test build` → BUILD SUCCESSFUL。
+  - LayerManager 状态同步修复后 Java 17 下 `cd client && ./gradlew test --tests "com.bong.client.animation.AnimationLayerManagerTest"` → BUILD SUCCESSFUL。
+  - LayerManager 状态同步修复后 Java 17 下 `cd client && ./gradlew test build` → BUILD SUCCESSFUL。
   - `python3 -m py_compile client/tools/gen_player_animation_implementation_v1.py client/tools/gen_stance.py client/tools/gen_breakthrough.py` → pass。
   - `python3 client/tools/render_animation.py client/src/main/resources/assets/bong/player_animation/stance_baomai.json --ticks "0,10,20" -o /tmp/bong-player-animation-implementation-v1-render` → wrote `stance_baomai_grid.png`。
 - **跨仓库核验**：
