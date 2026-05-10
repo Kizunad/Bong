@@ -404,7 +404,6 @@ type CultivationAttachQueryItem<'a> = (
     Entity,
     &'a Username,
     Option<&'a PlayerState>,
-    Option<&'a CurrentDimension>,
     Option<&'a LifespanComponent>,
 );
 
@@ -422,7 +421,7 @@ fn attach_cultivation_to_joined_clients(
     player_persistence: Option<Res<PlayerStatePersistence>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, _current_dimension, restored_lifespan) in &joined_clients {
+    for (entity, username, player_state, restored_lifespan) in &joined_clients {
         let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
         {
             Ok(value) => value,

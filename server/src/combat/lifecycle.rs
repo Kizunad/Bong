@@ -1817,8 +1817,9 @@ mod tests {
     use crate::cultivation::tick::CultivationClock;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{
-        bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota, DeceasedIndexEntry,
-        DeceasedSnapshot, PersistenceSettings,
+        bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota,
+        persist_active_tribulation, ActiveTribulationRecord, DeceasedIndexEntry, DeceasedSnapshot,
+        PersistenceSettings,
     };
     use crate::player::state::player_character_id;
     use crate::qi_physics::constants::QI_ZHENMAI_PREP_WINDOW_MS;
@@ -2970,6 +2971,21 @@ mod tests {
     fn void_revival_releases_ascension_quota() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("void-revival-release-quota");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: "offline:VoidWalker".to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active DuXu should persist before quota setup");
         complete_tribulation_ascension(&settings, "offline:VoidWalker")
             .expect("quota setup should succeed");
         app.insert_resource(settings.clone());

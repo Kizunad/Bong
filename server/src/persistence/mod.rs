@@ -2029,8 +2029,16 @@ pub fn load_active_tribulation_count(settings: &PersistenceSettings) -> io::Resu
     let connection = open_persistence_connection(settings)?;
     let count: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM tribulations_active WHERE kind = ?1",
-            params![TRIBULATION_KIND_DU_XU],
+            "
+            SELECT COUNT(*) FROM tribulations_active
+            WHERE kind = ?1
+               OR (kind = ?2 AND source = ?3)
+            ",
+            params![
+                TRIBULATION_KIND_DU_XU,
+                TRIBULATION_KIND_JUE_BI,
+                JUEBI_SOURCE_VOID_QUOTA_EXCEEDED
+            ],
             |row| row.get(0),
         )
         .map_err(io::Error::other)?;
@@ -2070,10 +2078,13 @@ pub fn complete_tribulation_ascension(
         )
         .optional()
         .map_err(io::Error::other)?;
-    let occupies_quota = active_kind_source.is_none_or(|(kind, source)| {
-        kind == TRIBULATION_KIND_DU_XU
-            || (kind == TRIBULATION_KIND_JUE_BI && source == JUEBI_SOURCE_VOID_QUOTA_EXCEEDED)
-    });
+    let occupies_quota = matches!(
+        active_kind_source
+            .as_ref()
+            .map(|(kind, source)| (kind.as_str(), source.as_str())),
+        Some((TRIBULATION_KIND_DU_XU, _))
+            | Some((TRIBULATION_KIND_JUE_BI, JUEBI_SOURCE_VOID_QUOTA_EXCEEDED))
+    );
     if occupies_quota {
         quota.occupied_slots = quota.occupied_slots.saturating_add(1);
     }
@@ -7189,6 +7200,22 @@ mod persistence_tests {
         let active = load_active_tribulation(&settings, record.char_id.as_str())
             .expect("active tribulation query should succeed");
         assert!(active.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_tribulation_ascension_without_active_row_is_idempotent_for_quota() {
+        let (settings, root) = persistence_settings("ascension-quota-complete-no-active");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let quota = complete_tribulation_ascension(&settings, "offline:Azure")
+            .expect("missing active row completion should stay idempotent");
+        assert_eq!(quota.occupied_slots, 0);
+
+        let loaded_quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(loaded_quota.occupied_slots, 0);
 
         let _ = fs::remove_dir_all(root);
     }

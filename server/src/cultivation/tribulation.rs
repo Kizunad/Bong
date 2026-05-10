@@ -732,7 +732,7 @@ pub fn start_tribulation_system(
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let mut accepted_this_tick = HashSet::new();
-    let active_du_xu_slots = match load_active_tribulation_count(&settings) {
+    let active_quota_slots = match load_active_tribulation_count(&settings) {
         Ok(count) => count,
         Err(error) => {
             tracing::error!(
@@ -785,7 +785,7 @@ pub fn start_tribulation_system(
                             continue;
                         }
                     };
-                    let slots = persisted_occupied.saturating_add(active_du_xu_slots);
+                    let slots = persisted_occupied.saturating_add(active_quota_slots);
                     reserved_occupied_slots = Some(slots);
                     slots
                 }
