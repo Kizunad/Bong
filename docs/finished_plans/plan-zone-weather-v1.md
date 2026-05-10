@@ -255,20 +255,27 @@ pub fn weather_environment_sync_system(/* WeatherLifecycleEvent → ZoneEnvironm
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
 - 落地清单：
-  - P0：`server/src/lingtian/weather_profile.rs` + `weather_generator_system_zone_aware` 扩展
-  - P1：`server/src/world/weather_to_environment.rs`（mapping + sync system）
-  - P2：`server/src/world/weather_physics/{lightning,wind,vision}.rs` + `cultivation/style_modifier::for_zone_weather`
-  - P3：scorch 3 zone profile JSON + tribulation window hook + narration trigger
+  - P0：`server/src/lingtian/weather_profile.rs` 新增 `ZoneWeatherProfile` / `ZoneWeatherProfileRegistry`，`server/weather_profiles.json` 提供 3 个 scorch zone 默认 profile；`server/src/lingtian/weather.rs` 新增 `try_roll_weather_for_zone_with_profile` / `weather_generator_system_zone_aware`，并把 `ActiveWeather` 的 day 去重扩为 per-zone。
+  - P1：`server/src/world/weather_to_environment.rs` 固化 5 类 `WeatherEvent -> EnvironmentEffect` bundle；`server/src/world/environment.rs` 改为用 profile-aware bundle 同步 `ZoneEnvironmentRegistry`。
+  - P2：`server/src/world/weather_physics/{lightning,wind,vision}.rs` 接入 LightningPillar vanilla lightning、DustDevil velocity push、HeavyHaze view distance obscure/restore；`server/src/cultivation/style_modifier.rs::for_zone_weather` 锁住暴烈色 x0.7 / 金属甲 x1.5。
+  - P3：`server/weather_profiles.json` 预置 `blood_valley_east_scorch` / `north_waste_east_scorch` / `drift_scorch_001` 的雷暴 x5、旱风 x2、雷击频率 >= 1.0；`WeatherLifecycleEvent` 透传真实 zone 到 Redis；agent `renderWeatherNarration` 对 weather started 事件生成 zone-scoped narration。
 - 关键 commit：
+  - `54ecaa7a3`（2026-05-10）`plan-zone-weather-v1: 接入 zone 天气 profile 与物理 hook`
+  - `fe70c2c81`（2026-05-10）`plan-zone-weather-v1: 接入天气事件 narration`
 - 测试结果：
+  - `cd server && cargo fmt --check` ✅
+  - `cd server && cargo clippy --all-targets -- -D warnings` ✅
+  - `cd server && cargo test` ✅ 3599 passed
+  - `cd agent && npm run build` ✅
+  - `cd agent && npm test -w @bong/tiandao` ✅ 46 files / 323 tests
+  - `cd agent && npm test -w @bong/schema` ✅ 14 files / 351 tests
 - 跨仓库核验：
-  - server：weather_profile / generator zone-aware / weather_to_environment / weather_physics / style_modifier 扩展
-  - agent：narrative hook 接 WeatherLifecycleEvent
-  - client：environment effect 自动渲染（依 plan-zone-environment-v1）
+  - server：`ZoneWeatherProfile` / `ZoneWeatherProfileRegistry` / `weather_generator_system_zone_aware` / `weather_to_environment_bundle` / `lightning_strike_at` / `apply_dust_devil_push` / `obscure_vision` / `style_modifier::for_zone_weather`
+  - agent：`WEATHER_EVENT_UPDATE` dedicated channel buffer + `drainWeatherEventUpdates` + `renderWeatherNarration`
+  - client：本 plan 未新增 wire schema；client 继续消费 `plan-zone-environment-v1` 已归档的 `EnvironmentEffect` 渲染协议。
 - 遗留 / 后续：
+  - `plan-terrain-tribulation-scorch-v1` 仍是 skeleton；本 PR 只预置 scorch zone profile id 和系统 hook，真实 terrain geometry、zone 写入 `server/zones.json` / worldgen blueprint、入场 smoke test 留给该 plan 升 active 后完成。
   - profile 运行时可改（§7 第 1 项，v2）
   - vanilla rain renderer mixin（§7 第 4 项，v2）
   - zone-physics 拆 plan（§7 第 3 项，长期）
