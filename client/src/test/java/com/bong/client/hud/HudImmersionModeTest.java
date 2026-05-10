@@ -6,6 +6,9 @@ import com.bong.client.state.VisualEffectState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class HudImmersionModeTest {
@@ -26,5 +29,17 @@ class HudImmersionModeTest {
             HudImmersionMode.Mode.PEACE,
             HudImmersionMode.resolve(CombatHudState.empty(), VisualEffectState.none(), 900L)
         );
+    }
+
+    @Test
+    void combatFilterDropsNullCommandsBeforeCopying() {
+        List<HudRenderCommand> commands = new ArrayList<>();
+        commands.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, 1, 2, 3, 4, 0xFFFFFFFF));
+        commands.add(null);
+
+        List<HudRenderCommand> filtered = HudImmersionMode.filter(commands, HudImmersionMode.Mode.COMBAT);
+
+        assertEquals(1, filtered.size());
+        assertEquals(HudRenderLayer.QUICK_BAR, filtered.get(0).layer());
     }
 }

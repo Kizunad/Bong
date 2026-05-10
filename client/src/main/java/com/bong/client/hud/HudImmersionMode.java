@@ -80,15 +80,14 @@ public final class HudImmersionMode {
         if (commands == null || commands.isEmpty()) {
             return List.of();
         }
-        if (mode == Mode.COMBAT) {
-            return List.copyOf(commands);
-        }
-        EnumSet<HudRenderLayer> visible = mode == Mode.CULTIVATION
-            ? VISIBLE_CULTIVATION
-            : VISIBLE_OTHER;
+        EnumSet<HudRenderLayer> visible = switch (mode) {
+            case COMBAT -> null;
+            case CULTIVATION -> VISIBLE_CULTIVATION;
+            case PEACE -> VISIBLE_OTHER;
+        };
         List<HudRenderCommand> filtered = new ArrayList<>(commands.size());
         for (HudRenderCommand command : commands) {
-            if (command != null && visible.contains(command.layer())) {
+            if (command != null && (visible == null || visible.contains(command.layer()))) {
                 filtered.add(command);
             }
         }
