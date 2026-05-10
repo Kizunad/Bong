@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AmbientZoneHandlerTest {
@@ -83,7 +84,7 @@ class AmbientZoneHandlerTest {
 
         AmbientZoneParseResult result = AmbientZoneHandler.parse(json, json.getBytes().length);
 
-        assertTrue(!result.isSuccess());
+        assertFalse(result.isSuccess());
     }
 
     @Test
@@ -92,7 +93,7 @@ class AmbientZoneHandlerTest {
 
         AmbientZoneParseResult result = AmbientZoneHandler.parse(json, json.getBytes().length);
 
-        assertTrue(!result.isSuccess());
+        assertFalse(result.isSuccess());
     }
 
     @Test
@@ -101,9 +102,9 @@ class AmbientZoneHandlerTest {
         String highVolume = validPayload().replace("\"volume_mul\": 1.5", "\"volume_mul\": 4.5");
         String highPitchShift = validPayload().replace("\"pitch_shift\": 0.10", "\"pitch_shift\": 1.5");
 
-        assertTrue(!AmbientZoneHandler.parse(negativeFade, negativeFade.getBytes().length).isSuccess());
-        assertTrue(!AmbientZoneHandler.parse(highVolume, highVolume.getBytes().length).isSuccess());
-        assertTrue(!AmbientZoneHandler.parse(highPitchShift, highPitchShift.getBytes().length).isSuccess());
+        assertFalse(AmbientZoneHandler.parse(negativeFade, negativeFade.getBytes().length).isSuccess());
+        assertFalse(AmbientZoneHandler.parse(highVolume, highVolume.getBytes().length).isSuccess());
+        assertFalse(AmbientZoneHandler.parse(highPitchShift, highPitchShift.getBytes().length).isSuccess());
     }
 
     @Test
@@ -117,8 +118,8 @@ class AmbientZoneHandlerTest {
             "\"season\": \"summer\",\n              \"tsy_depth\": \"abyss\","
         );
 
-        assertTrue(!AmbientZoneHandler.parse(nonStringDepth, nonStringDepth.getBytes().length).isSuccess());
-        assertTrue(!AmbientZoneHandler.parse(unknownDepth, unknownDepth.getBytes().length).isSuccess());
+        assertFalse(AmbientZoneHandler.parse(nonStringDepth, nonStringDepth.getBytes().length).isSuccess());
+        assertFalse(AmbientZoneHandler.parse(unknownDepth, unknownDepth.getBytes().length).isSuccess());
     }
 
     private static String validPayload() {

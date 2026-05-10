@@ -1,5 +1,7 @@
 package com.bong.client.network;
 
+import java.util.Objects;
+
 public final class AmbientZoneParseResult {
     private final AmbientZonePayload payload;
     private final String errorMessage;
@@ -10,11 +12,11 @@ public final class AmbientZoneParseResult {
     }
 
     static AmbientZoneParseResult success(AmbientZonePayload payload) {
-        return new AmbientZoneParseResult(payload, null);
+        return new AmbientZoneParseResult(Objects.requireNonNull(payload, "payload"), null);
     }
 
     static AmbientZoneParseResult error(String errorMessage) {
-        return new AmbientZoneParseResult(null, errorMessage);
+        return new AmbientZoneParseResult(null, Objects.requireNonNull(errorMessage, "errorMessage"));
     }
 
     public boolean isSuccess() {

@@ -241,6 +241,7 @@ public class BongNetworkHandler {
             buf.readBytes(bytes);
 
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
             client.execute(() -> {
                 AmbientZoneHandler.RouteResult result = AMBIENT_ZONE_HANDLER.route(jsonPayload, readableBytes);
                 if (result.isParseError()) {
@@ -249,6 +250,8 @@ public class BongNetworkHandler {
                 }
                 if (result.isHandled()) {
                     BongClient.LOGGER.info("Processed bong:audio/ambient_zone payload: {}", result.logMessage());
+                } else {
+                    BongClient.LOGGER.debug("Ignored bong:audio/ambient_zone payload: {}", result.logMessage());
                 }
             });
         });

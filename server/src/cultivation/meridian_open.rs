@@ -407,4 +407,40 @@ mod tests {
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
     }
+
+    #[test]
+    fn meridian_open_emits_opened_event() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.insert_resource(zones);
+        app.add_event::<MeridianOpenedEvent>();
+        app.add_systems(Update, meridian_open_tick);
+
+        let mut cultivation = player_with_qi(1000.0);
+        cultivation.qi_max = 1000.0;
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).open_progress = 0.999;
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung),
+                cultivation,
+                meridians,
+            ))
+            .id();
+
+        app.update();
+
+        let events = app.world().resource::<Events<MeridianOpenedEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .next()
+            .expect("meridian open should emit MeridianOpenedEvent");
+        assert_eq!(emitted.entity, player);
+        assert_eq!(emitted.origin, valence::prelude::DVec3::new(8.0, 66.0, 8.0));
+    }
 }
