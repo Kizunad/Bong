@@ -45,6 +45,7 @@ public class ServerDataRouterTest {
             "tribulation_broadcast",
             "ascension_quota",
             "heart_demon_offer",
+            "breakthrough_cinematic",
             // Alchemy handlers (plan-alchemy-v1 §4).
             "alchemy_furnace",
             "alchemy_session",

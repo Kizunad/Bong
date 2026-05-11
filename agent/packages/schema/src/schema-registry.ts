@@ -25,6 +25,7 @@ import {
 import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
+import { BreakthroughCinematicEventV1 } from "./breakthrough-cinematic.js";
 import { CalamityIntentV1, CalamityKindV1 } from "./calamity.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
@@ -533,6 +534,7 @@ export const SCHEMA_REGISTRY = {
   heartDemonPregenRequestV1: HeartDemonPregenRequestV1,
   heartDemonOfferDraftV1: HeartDemonOfferDraftV1,
   breakthroughEventV1: BreakthroughEventV1,
+  breakthroughCinematicEventV1: BreakthroughCinematicEventV1,
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
@@ -951,6 +953,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.heartDemonPregenRequestV1,
   "heart-demon-offer-draft-v1.json": SCHEMA_REGISTRY.heartDemonOfferDraftV1,
   "breakthrough-event-v1.json": SCHEMA_REGISTRY.breakthroughEventV1,
+  "breakthrough-cinematic-event-v1.json":
+    SCHEMA_REGISTRY.breakthroughCinematicEventV1,
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "heart-demon-outcome-v1.json": SCHEMA_REGISTRY.heartDemonOutcomeV1,

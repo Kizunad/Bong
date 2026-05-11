@@ -29,6 +29,7 @@ public final class ServerDataRouter {
         BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
+        BreakthroughCinematicHandler breakthroughCinematicHandler = new BreakthroughCinematicHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
             new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
         com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
@@ -124,6 +125,7 @@ public final class ServerDataRouter {
         handlers.put("alchemy_recipe_book", alchemyRecipeBookHandler);
         handlers.put("alchemy_contamination", alchemyContaminationHandler);
         handlers.put("alchemy_outcome_resolved", alchemyOutcomeResolvedHandler);
+        handlers.put("breakthrough_cinematic", breakthroughCinematicHandler);
         handlers.put("combat_event", combatEventHandler);
         handlers.put("status_snapshot", statusSnapshotHandler);
         handlers.put("derived_attrs_sync", derivedAttrsHandler);

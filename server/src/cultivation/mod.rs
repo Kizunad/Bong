@@ -27,6 +27,7 @@
 //!   * 战斗 plan：消费 CultivationDeathTrigger / throughput 写入，并在渡劫波次失败时发送 TribulationFailed
 
 pub mod breakthrough;
+pub mod breakthrough_cinematic;
 pub mod burst_meridian;
 pub mod character_lifecycle;
 pub mod character_select;
@@ -80,6 +81,10 @@ use valence::prelude::{
 use self::breakthrough::{
     breakthrough_system, rapid_breakthrough_karma_mark_system, BreakthroughOutcome,
     BreakthroughRequest,
+};
+use self::breakthrough_cinematic::{
+    breakthrough_cinematic_phase_tick, interrupt_breakthrough_cinematic_on_hit,
+    start_breakthrough_cinematic_on_outcome, BreakthroughCinematicAgentEvent,
 };
 use self::color::{
     qi_color_evolution_tick, record_cultivation_session_practice_events,
@@ -212,6 +217,7 @@ pub fn register(app: &mut App) {
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
     app.add_event::<BreakthroughOutcome>();
+    app.add_event::<BreakthroughCinematicAgentEvent>();
     app.add_event::<ForgeRequest>();
     app.add_event::<ForgeOutcome>();
     app.add_event::<RealmRegressed>();
@@ -288,6 +294,15 @@ pub fn register(app: &mut App) {
             // plan §11-5 业力
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            start_breakthrough_cinematic_on_outcome.after(breakthrough_system),
+            breakthrough_cinematic_phase_tick.after(start_breakthrough_cinematic_on_outcome),
+            interrupt_breakthrough_cinematic_on_hit
+                .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
     // plan-meridian-severed-v1 §1 P1：detection（cracks → integrity ≤ ε → emit

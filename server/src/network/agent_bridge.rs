@@ -119,6 +119,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::AscensionQuota => "ascension_quota",
         ServerDataType::HeartDemonOffer => "heart_demon_offer",
         ServerDataType::BurstMeridianEvent => "burst_meridian_event",
+        ServerDataType::BreakthroughCinematic => "breakthrough_cinematic",
         ServerDataType::FullPowerChargingState => "full_power_charging_state",
         ServerDataType::FullPowerRelease => "full_power_release",
         ServerDataType::FullPowerExhaustedState => "full_power_exhausted_state",

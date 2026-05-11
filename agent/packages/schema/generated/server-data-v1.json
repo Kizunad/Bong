@@ -12466,6 +12466,213 @@
       "required": [
         "v",
         "type",
+        "actor_id",
+        "phase",
+        "phase_tick",
+        "phase_duration_ticks",
+        "realm_from",
+        "realm_to",
+        "result",
+        "interrupted",
+        "world_pos",
+        "visible_radius_blocks",
+        "global",
+        "distant_billboard",
+        "particle_density",
+        "intensity",
+        "season_overlay",
+        "style",
+        "at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "breakthrough_cinematic",
+          "type": "string"
+        },
+        "actor_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "prelude",
+              "type": "string"
+            },
+            {
+              "const": "charge",
+              "type": "string"
+            },
+            {
+              "const": "catalyze",
+              "type": "string"
+            },
+            {
+              "const": "apex",
+              "type": "string"
+            },
+            {
+              "const": "aftermath",
+              "type": "string"
+            }
+          ]
+        },
+        "phase_tick": {
+          "minimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "phase_duration_ticks": {
+          "minimum": 1,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "realm_from": {
+          "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
+          "anyOf": [
+            {
+              "const": "Awaken",
+              "type": "string"
+            },
+            {
+              "const": "Induce",
+              "type": "string"
+            },
+            {
+              "const": "Condense",
+              "type": "string"
+            },
+            {
+              "const": "Solidify",
+              "type": "string"
+            },
+            {
+              "const": "Spirit",
+              "type": "string"
+            },
+            {
+              "const": "Void",
+              "type": "string"
+            }
+          ]
+        },
+        "realm_to": {
+          "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
+          "anyOf": [
+            {
+              "const": "Awaken",
+              "type": "string"
+            },
+            {
+              "const": "Induce",
+              "type": "string"
+            },
+            {
+              "const": "Condense",
+              "type": "string"
+            },
+            {
+              "const": "Solidify",
+              "type": "string"
+            },
+            {
+              "const": "Spirit",
+              "type": "string"
+            },
+            {
+              "const": "Void",
+              "type": "string"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "const": "pending",
+              "type": "string"
+            },
+            {
+              "const": "success",
+              "type": "string"
+            },
+            {
+              "const": "failure",
+              "type": "string"
+            },
+            {
+              "const": "interrupted",
+              "type": "string"
+            }
+          ]
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "visible_radius_blocks": {
+          "minimum": 1,
+          "maximum": 10000,
+          "type": "number"
+        },
+        "global": {
+          "type": "boolean"
+        },
+        "distant_billboard": {
+          "type": "boolean"
+        },
+        "particle_density": {
+          "minimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "intensity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "season_overlay": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "style": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "caster_uuid",
         "active",
         "qi_committed",

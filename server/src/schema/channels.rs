@@ -15,6 +15,7 @@ pub const CH_INSIGHT_OFFER: &str = "bong:insight_offer";
 pub const CH_HEART_DEMON_REQUEST: &str = "bong:heart_demon_request";
 pub const CH_HEART_DEMON_OFFER: &str = "bong:heart_demon_offer";
 pub const CH_BREAKTHROUGH_EVENT: &str = "bong:breakthrough_event";
+pub const CH_BREAKTHROUGH_CINEMATIC: &str = "bong:breakthrough_cinematic";
 pub const CH_FORGE_EVENT: &str = "bong:forge_event";
 pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
 pub const CH_DEATH: &str = "bong:death";
@@ -188,6 +189,7 @@ mod tests {
         assert_eq!(CH_HEART_DEMON_REQUEST, "bong:heart_demon_request");
         assert_eq!(CH_HEART_DEMON_OFFER, "bong:heart_demon_offer");
         assert_eq!(CH_BREAKTHROUGH_EVENT, "bong:breakthrough_event");
+        assert_eq!(CH_BREAKTHROUGH_CINEMATIC, "bong:breakthrough_cinematic");
         assert_eq!(CH_FORGE_EVENT, "bong:forge_event");
         assert_eq!(CH_CULTIVATION_DEATH, "bong:cultivation_death");
         assert_eq!(CH_DEATH, "bong:death");

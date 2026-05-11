@@ -45,6 +45,9 @@ export const CHANNELS = {
   /** Server → Agent: 突破事件（plan-cultivation §6.1） (Pub/Sub) */
   BREAKTHROUGH_EVENT: "bong:breakthrough_event",
 
+  /** Server → Agent: 突破 cinematic 阶段事件（plan-breakthrough-cinematic-v1） */
+  BREAKTHROUGH_CINEMATIC: "bong:breakthrough_cinematic",
+
   /** Server → Agent: 锻造事件（plan-cultivation §6.1） (Pub/Sub) */
   FORGE_EVENT: "bong:forge_event",
 
