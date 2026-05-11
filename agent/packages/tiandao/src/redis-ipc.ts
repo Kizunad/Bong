@@ -6,6 +6,7 @@ import {
   validateAlchemyInsightV1Contract,
   validateAlchemySessionEndV1Contract,
   validateBotanyEcologySnapshotV1Contract,
+  validateDeathCinematicS2cV1Contract,
   validateFactionEventV1Contract,
   validateNpcDeathV1Contract,
   validateNpcSpawnedV1Contract,
@@ -66,6 +67,7 @@ const {
   DUO_SHE_EVENT,
   BREAKTHROUGH_EVENT,
   CULTIVATION_DEATH,
+  DEATH_CINEMATIC,
   FORGE_EVENT,
   FORGE_START,
   FORGE_OUTCOME,
@@ -137,6 +139,7 @@ const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   DUO_SHE_EVENT,
   BREAKTHROUGH_EVENT,
   CULTIVATION_DEATH,
+  DEATH_CINEMATIC,
   FORGE_EVENT,
   FORGE_START,
   FORGE_OUTCOME,
@@ -283,6 +286,11 @@ export class RedisIpc {
 
     if (channel === WEATHER_EVENT_UPDATE) {
       this.handleWeatherEventUpdateMessage(message);
+      return;
+    }
+
+    if (channel === DEATH_CINEMATIC) {
+      this.handleDeathCinematicMessage(message);
       return;
     }
 
@@ -554,6 +562,20 @@ export class RedisIpc {
       this.recordCrossSystemEvent({ channel: WEATHER_EVENT_UPDATE, payload: data });
     } catch (e) {
       console.warn("[redis-ipc] failed to parse weather event update:", e);
+    }
+  }
+
+  private handleDeathCinematicMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateDeathCinematicS2cV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid death cinematic:", result.errors.join("; "));
+        return;
+      }
+      this.recordCrossSystemEvent({ channel: DEATH_CINEMATIC, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse death cinematic:", e);
     }
   }
 
