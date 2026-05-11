@@ -3403,6 +3403,45 @@ mod tests {
     }
 
     #[test]
+    fn warning_ignores_placer() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 66.5, 0.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9108,
+                trap_content::WARNING_TRAP_ITEM_ID,
+                "警示符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::WarningTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(9108),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .is_some());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
+    }
+
+    #[test]
     fn blast_one_shot_removes_node_and_returns_qi_to_zone() {
         let mut app = app_with_loaded_zhenfa();
         app.insert_resource(ZoneRegistry::fallback());
@@ -3452,6 +3491,48 @@ mod tests {
             transfer.to == QiAccountId::zone(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
         });
         assert!(released.is_some_and(|transfer| (transfer.amount - 30.0).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn blast_requires_los() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should exist")
+            .set_block(block_pos_from_array([2, 64, 1]), BlockState::STONE);
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [2.9, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9109,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9109),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .is_some());
+        let wounds = app.world().get::<Wounds>(intruder).unwrap();
+        assert_eq!(wounds.health_current, wounds.health_max);
+        assert!(wounds.entries.is_empty());
     }
 
     #[test]
