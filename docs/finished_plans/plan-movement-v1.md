@@ -209,13 +209,15 @@
   - `ee2571963`（2026-05-11T12:09:00+12:00）`fix(client): 适配 movement HUD 沉浸布局`
   - `a7a397cbc`（2026-05-11T12:13:06+12:00）`fix(movement): 收紧移动状态契约与同步边界`
   - `ce73af438`（2026-05-11T12:28:59+12:00）`fix(client): 补齐主线枚举映射`
+  - `e31381498`（2026-05-11T13:06:13+12:00）`fix(movement): 补齐 review 边界回归`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ cargo test` ✅ 4192 passed
+  - `server/ cargo test` ✅ 4196 passed
+  - `agent/packages/tiandao npm test` ✅ 51 files / 348 tests
   - `agent/packages/schema npm test` ✅ 18 files / 366 tests
   - `agent npm run build` ✅
-  - `client/ JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ 1218 tests, 0 failures, 0 errors
+  - `client/ JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ 1221 tests, 0 failures, 0 errors
   - `client/ ./gradlew test --tests com.bong.client.hud.HudLayoutPresetTest --tests com.bong.client.hud.MovementHudPlannerTest --tests com.bong.client.hud.HudImmersionModeTest` ✅
 - **跨仓库核验**：server `movement_state`/`MovementActionIntent`/audio recipes，agent `movement.ts`/generated artifacts，client `MovementStateStore`/`MovementHudPlanner`/`MOVEMENT_HUD`/VFX registry 均有测试或 build 覆盖。
 - **遗留 / 后续**：轻功、御风、墙跑、真实 runClient 手感调参仍留给 `plan-movement-v2`；本 plan 未在当前 headless 流水线里跑图形化 `runClient` 手动流程。
