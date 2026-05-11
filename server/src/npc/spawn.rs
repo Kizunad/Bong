@@ -46,7 +46,7 @@ use crate::npc::relic::{
     TrialEval, TrialEvalScorer, TrialState,
 };
 use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
-use crate::npc::schedule::{schedule_seed_from_char_id, NpcDailySchedule, NpcHomeBase};
+use crate::npc::schedule::{home_base_for_archetype, schedule_seed_from_char_id, NpcDailySchedule};
 use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
 use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
@@ -1028,7 +1028,7 @@ fn spawn_rogue_commoner_base(
         .id();
     commands.entity(entity).insert((
         NpcDailySchedule::for_archetype(archetype, schedule_seed_for_entity(entity)),
-        NpcHomeBase::from_world_pos(patrol_target, 0.6),
+        home_base_for_archetype(archetype, patrol_target),
         GoToPoiState::default(),
         StallState::default(),
         RestState::default(),
@@ -1110,7 +1110,7 @@ pub fn spawn_beast_npc_at(
 
     commands.entity(entity).insert((
         NpcDailySchedule::for_archetype(NpcArchetype::Beast, schedule_seed_for_entity(entity)),
-        NpcHomeBase::from_world_pos(territory.center, 0.5),
+        home_base_for_archetype(NpcArchetype::Beast, territory.center),
         GoToPoiState::default(),
         StallState::default(),
         RestState::default(),
@@ -1201,7 +1201,7 @@ pub fn spawn_disciple_npc_at(
 
     commands.entity(entity).insert((
         NpcDailySchedule::for_archetype(NpcArchetype::Disciple, schedule_seed_for_entity(entity)),
-        NpcHomeBase::from_world_pos(patrol_target, 0.7),
+        home_base_for_archetype(NpcArchetype::Disciple, patrol_target),
         GoToPoiState::default(),
         StallState::default(),
         RestState::default(),

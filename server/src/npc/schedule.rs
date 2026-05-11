@@ -164,6 +164,15 @@ impl NpcHomeBase {
     }
 }
 
+pub fn home_base_for_archetype(archetype: NpcArchetype, pos: DVec3) -> NpcHomeBase {
+    let quality = match archetype {
+        NpcArchetype::Beast => 0.5,
+        NpcArchetype::Disciple => 0.7,
+        _ => 0.6,
+    };
+    NpcHomeBase::from_world_pos(pos, quality)
+}
+
 pub fn schedule_multiplier(
     schedule: Option<&NpcDailySchedule>,
     tier: Option<&NpcLodTier>,
@@ -697,6 +706,23 @@ mod tests {
         assert_eq!(
             weighted_activity(&weights, 0.99),
             Some(ScheduleActivity::Rest)
+        );
+    }
+
+    #[test]
+    fn home_base_quality_matches_spawn_archetype() {
+        let pos = DVec3::new(10.2, 66.0, 9.8);
+        assert_eq!(
+            home_base_for_archetype(NpcArchetype::Beast, pos).quality,
+            0.5
+        );
+        assert_eq!(
+            home_base_for_archetype(NpcArchetype::Disciple, pos).quality,
+            0.7
+        );
+        assert_eq!(
+            home_base_for_archetype(NpcArchetype::Rogue, pos).quality,
+            0.6
         );
     }
 

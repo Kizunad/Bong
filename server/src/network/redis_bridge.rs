@@ -1372,7 +1372,7 @@ fn runs_on_background_redis_connection(command: &RedisIoCommand) -> bool {
         RedisIoCommand::Publish {
             channel: CH_WORLD_STATE,
             ..
-        } | RedisIoCommand::HashReplace { .. }
+        }
     )
 }
 
@@ -3646,7 +3646,7 @@ mod redis_bridge_tests {
             REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
             "dormant HASH replace writes batches and should not share the tiny per-command timeout"
         );
-        assert!(runs_on_background_redis_connection(
+        assert!(!runs_on_background_redis_connection(
             &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
         ));
     }

@@ -32,7 +32,7 @@ NPC 从"反应式机器人"变成"有生活节奏的人"。两个核心改动：
 - **进料**：`npc::NpcBlackboard`（大脑黑板）/ `npc::Navigator`（A* 寻路）/ `npc::Hunger`（饱食度）/ `npc::NpcLifespan`（寿元）/ `npc::NpcPatrol`（巡逻点）/ `cultivation::Cultivation`（真元/境界）/ `world::zone::ZoneRegistry`（区域灵气）/ `world::season::SeasonState`（季节）/ LOD 层级（`NpcLodLevel`）
 - **出料**：`NpcDailySchedule` component（时段日程）/ `NpcHomeBase` component（居住点）/ `PointOfInterest` 扩展（日程目的地类型）/ 修改 `WanderAction` → `GoToPoiAction`（目的地驱动）/ 新增 `RestAction` / `StallAction` / `ReturnHomeAction` / 时段切换 event
 - **共享类型 / event**：复用 `NpcArchetype`（不新建）/ 复用 `NpcBlackboard`（扩展字段）/ 新增 `DayPhase` enum / 新增 `NpcScheduleChangedEvent`
-- **跨仓库契约**：server only（NPC 日常行为纯 server 逻辑，client 无改动——NPC 动作已有的渲染管线自动覆盖）
+- **跨仓库契约**：server + agent/schema（POI wire literal 扩展与 TypeBox pin），client 无改动——NPC 动作沿用既有渲染管线。
 - **worldview 锚点**：§七 散修状态机 + §十四 世界的一天
 - **qi_physics 锚点**：不涉及（NPC 修炼吸收灵气已在 CultivateAction 中走 qi_physics）
 

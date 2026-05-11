@@ -33,7 +33,7 @@ use crate::npc::movement::GameTick;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::relic::{GuardianDuty, TrialEval};
 use crate::npc::schedule::{
-    hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule, NpcHomeBase,
+    home_base_for_archetype, hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule,
 };
 use crate::npc::spawn::{
     spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
@@ -425,7 +425,7 @@ fn spawn_from_snapshot(
         .as_ref()
         .map(|patrol| dvec3_from_array(patrol.current_target))
         .unwrap_or_else(|| snapshot.position_vec());
-    let home_base = NpcHomeBase::from_world_pos(patrol_target, 0.6);
+    let home_base = home_base_for_archetype(snapshot.archetype, patrol_target);
     let pos = hydrate_position_for(
         &schedule,
         Some(home_base),

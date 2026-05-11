@@ -485,6 +485,63 @@ mod tests {
     }
 
     #[test]
+    fn manifest_poi_id_tag_takes_priority_and_is_sanitized() {
+        let mut poi = novice_poi();
+        poi.tags.extend([
+            "id:fallback".to_string(),
+            "poi_id:herb patch/01".to_string(),
+        ]);
+        poi.tags[1] = "poi_type:herb_patch".to_string();
+
+        let site = site_from_manifest_poi(&poi).expect("tagged herb patch should parse");
+
+        assert_eq!(site.id, "spawn:herb_patch:herb_patch_01");
+    }
+
+    #[test]
+    fn nearest_by_kinds_handles_empty_kinds_and_radius_boundaries() {
+        let mut registry = PoiNoviceRegistry::default();
+        registry.replace_all(vec![
+            PoiNoviceSite {
+                id: "spawn:origin_spring".to_string(),
+                kind: PoiNoviceKind::QiSpring,
+                zone: "spawn".to_string(),
+                name: "原点灵泉".to_string(),
+                pos_xyz: [0.0, 66.0, 0.0],
+                selection_strategy: "test".to_string(),
+                qi_affinity: 0.2,
+                danger_bias: 0,
+                tags: Vec::new(),
+            },
+            PoiNoviceSite {
+                id: "spawn:near_spring".to_string(),
+                kind: PoiNoviceKind::QiSpring,
+                zone: "spawn".to_string(),
+                name: "近处灵泉".to_string(),
+                pos_xyz: [4.0, 66.0, 0.0],
+                selection_strategy: "test".to_string(),
+                qi_affinity: 0.2,
+                danger_bias: 0,
+                tags: Vec::new(),
+            },
+        ]);
+
+        assert!(registry.nearest_by_kinds(DVec3::ZERO, &[], 64.0).is_none());
+        assert_eq!(
+            registry
+                .nearest_by_kinds(DVec3::ZERO, &[PoiNoviceKind::QiSpring], -1.0)
+                .map(|site| site.id.as_str()),
+            Some("spawn:origin_spring")
+        );
+        assert_eq!(
+            registry
+                .nearest_by_kinds(DVec3::ZERO, &[PoiNoviceKind::QiSpring], 3.0)
+                .map(|site| site.id.as_str()),
+            Some("spawn:origin_spring")
+        );
+    }
+
+    #[test]
     fn daily_life_poi_kind_tags_parse_and_find_nearest() {
         let mut registry = PoiNoviceRegistry::default();
         registry.replace_all(vec![

@@ -1695,7 +1695,7 @@ fn go_to_poi_action_system(
         ),
         With<NpcMarker>,
     >,
-    mut actions: Query<(&Actor, &GoToPoiAction, &mut ActionState), With<GoToPoiAction>>,
+    mut actions: Query<(&Actor, &GoToPoiAction, &mut ActionState)>,
     clock: Option<Res<CultivationClock>>,
     game_tick: Option<Res<GameTick>>,
     pois: Option<Res<PoiNoviceRegistry>>,
