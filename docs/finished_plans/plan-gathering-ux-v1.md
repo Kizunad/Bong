@@ -205,8 +205,43 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：6 工具物品 / 工具 icon / 锄头贴图修复 / 植物 icon 去重 / `GatheringSession` / 品质 roll / `GatheringProgressHud` / 3 动画 + 3 粒子 + 5 音效 / 稀有 cinematic / 6 craft 配方 / 工具耐久
-- **关键 commit**：P0-P4 各自 hash
-- **遗留 / 后续**：高级采集工具走 forge / 采集点重生机制 / NPC 采集竞争
+### 落地清单
+
+- **P0 工具 / icon / 贴图核验**：`server/src/gathering/tools.rs` 注册 Axe / Pickaxe / Hoe 三类采集工具与 Bone / Iron / Copper 三材质；`server/assets/items/tools.toml` 增加 6 个斧 / 镐凡器 item；`client/src/main/resources/assets/bong-client/textures/gui/items/tools/` 新增 6 张工具 icon；`client/src/main/java/com/bong/client/inventory/ItemIconRegistry.java` 显式映射工具 icon。锄头沿用现有 `HoeVanillaIconMap` 三档 vanilla 映射；botany 贴图用 md5 校验，`botany/` 下 100 张 PNG 无重复 hash。
+- **P1 server 采集进度**：新增 `server/src/gathering/session.rs` / `tools.rs` / `quality.rs` / `feedback.rs` / `mod.rs`，覆盖 `GatheringSession`、`GatheringProgressFrame`、`GatheringCompleteEvent`、工具速度修正、境界时间修正、移动 / 受击打断、品质 roll、耐久扣减和统一反馈。`server/src/botany/mod.rs`、`server/src/spiritwood/mod.rs`、`server/src/mineral/break_handler.rs` 已把既有采药 / 砍灵木 / 挖矿流程桥接到统一 `gathering_session` 进度帧。
+- **P2 schema + client HUD**：`server/src/schema/server_data.rs`、`agent/packages/schema/src/server-data.ts` 与 generated schema 增加 `gathering_session`；client 新增 `GatheringSessionStore` / `GatheringSessionViewModel` / `GatheringSessionHandler` / `GatheringProgressHud`，并接入 `ServerDataRouter` 与 `BongHudOrchestrator`。HUD 支持 crosshair 进度环、目标名、优良 / 极品提示、完成 / 中断后 auto-hide。
+- **P3 动画 / 粒子 / 音效**：`server/assets/audio/recipes/gather_{herb,mine,chop}_tick.json`、`gather_complete.json`、`gather_perfect.json` 已注册；`VfxBootstrap` 与 `BotanyHarvestBurstPlayer` 注册 herb / mine / chop / complete / perfect 五类采集 VFX；`emit_gathering_feedback` 按目标触发 `harvest_crouch` / `npc_mine` / `npc_chop_tree`，完成时触发 `loot_bend` / `release_burst` 动画。
+- **P4 craft / 耐久 / 覆盖测试**：`server/src/craft/mod.rs` 注册 6 个 ToolCraft 配方；`damage_equipped_gathering_tool` 复用 inventory durability update 与 `InventoryDurabilityChangedEvent`；测试覆盖工具矩阵、速度、品质、反馈、craft、client HUD、server-data router、icon registry、VFX registry。
+
+### 关键 commits
+
+- `fcc591446` 2026-05-11 `feat(gathering): 补采集工具和服务端进度流程`
+- `bda373ff2` 2026-05-11 `feat(gathering): 接入客户端采集 HUD 和协议`
+- `577ac96a5` 2026-05-11 `fix(gathering): 接通采集进度反馈`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4226 passed
+- `cd server && cargo test gathering`：17 passed
+- `cd server && cargo test mineral::break_handler::tests`：12 passed
+- `cd server && cargo test spiritwood`：13 passed
+- `cd agent && npm run build`
+- `cd agent/packages/tiandao && npm test`：348 passed
+- `cd agent/packages/schema && npm test`：366 passed
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL
+- `find client/src/main/resources/assets/bong-client/textures/gui/botany -type f -name "*.png" -print0 | xargs -0 md5sum | sort | uniq -w 32 -d`：0 duplicate hash；botany PNG count = 100
+- `find client/src/main/resources/assets/bong-client/textures/gui/items/tools -type f -name "*.png" | wc -l`：6
+- `git diff --check`：clean
+
+### 跨仓库核验
+
+- **server**：`GatheringToolSpec` / `GatheringSession` / `GatheringProgressFrame` / `GatheringCompleteEvent` / `ServerDataPayloadV1::GatheringSession` / `register_gathering_tool_recipes`
+- **agent/schema**：`ServerDataGatheringSessionV1` / `server-data-gathering-session-v1.json` / `SCHEMA_REGISTRY.serverDataGatheringSessionV1`
+- **client**：`GatheringSessionHandler` / `GatheringProgressHud` / `GatheringSessionViewModel` / `ItemIconRegistry` / `BotanyHarvestBurstPlayer.GATHER_PERFECT`
+
+### 遗留 / 后续
+
+- 高阶采集工具仍归 forge 后续 plan；本 plan 只落凡器斧 / 镐与既有锄头兼容。
+- 采集点重生、NPC 采集竞争、稀有采集的真实 camera slowmo / camera push 需要后续专门 camera / world interaction plan；本次已落 self-visible HUD 金色反馈 + perfect VFX / SFX / player animation。
