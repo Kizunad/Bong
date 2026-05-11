@@ -201,6 +201,11 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(com.bong.client.combat.juice.CombatJuiceHudPlanner.buildCommands(
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
         }
 
         commands.addAll(HudEnvironmentVariantPlanner.buildCommands(

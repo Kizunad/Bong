@@ -154,6 +154,26 @@ pub struct BreakthroughEventV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakthroughCinematicEventV1 {
+    pub v: u8,
+    pub actor_id: String,
+    pub phase: String,
+    pub phase_tick: u32,
+    pub phase_duration_ticks: u32,
+    pub realm_from: String,
+    pub realm_to: String,
+    pub result: String,
+    pub interrupted: bool,
+    pub world_pos: [f64; 3],
+    pub visible_radius_blocks: f64,
+    pub global: bool,
+    pub distant_billboard: bool,
+    pub season_overlay: String,
+    pub style: String,
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeEventV1 {
     pub meridian: String,
     pub axis: String,
