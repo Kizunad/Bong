@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -16,18 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BongWeaponModelRegistryTest {
     private static final Path RESOURCES = Path.of("src", "main", "resources");
-    private static final Map<String, ExpectedWeaponResource> V1_EXPECTED_RESOURCES = Map.of(
-        "iron_sword", new ExpectedWeaponResource("item/iron_sword", "bong:models/item/iron_sword/iron_sword.obj"),
-        "bronze_saber", new ExpectedWeaponResource("item/golden_sword", "bong:models/item/bronze_saber/bronze_saber.obj"),
-        "wooden_staff", new ExpectedWeaponResource("item/totem_of_undying", "bong:models/item/wooden_staff/wooden_staff.obj"),
-        "bone_dagger", new ExpectedWeaponResource("item/bone", "bong:models/item/bone_dagger/bone_dagger.obj"),
-        "hand_wrap", new ExpectedWeaponResource("item/leather", "bong:models/item/hand_wrap/hand_wrap.obj"),
-        "spirit_sword", new ExpectedWeaponResource("item/nether_star", "bong:models/item/spirit_sword/spirit_sword.obj"),
-        "flying_sword_feixuan", new ExpectedWeaponResource("item/diamond_sword", "bong:models/item/flying_sword_feixuan/flying_sword_feixuan.obj")
-    );
+    private static final Map<String, ExpectedWeaponResource> V1_EXPECTED_RESOURCES = expectedResources();
 
     @Test
-    void registryCoversExactlyTheSevenV1WeaponTemplates() {
+    void registryCoversExactlyTheNineV1WeaponTemplates() {
         assertEquals(V1_EXPECTED_RESOURCES.keySet(), BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS);
 
         for (Map.Entry<String, ExpectedWeaponResource> expected : V1_EXPECTED_RESOURCES.entrySet()) {
@@ -36,8 +30,10 @@ class BongWeaponModelRegistryTest {
             assertEquals(expected.getKey(), actual.templateId());
             assertEquals(expected.getValue().vanillaModelPath(), actual.vanillaModelPath());
             assertEquals(expected.getValue().bongObjModelPath(), actual.bongObjModelPath());
-            assertFalse(actual.bongObjModelPath().contains("placeholder"));
-            assertFalse(actual.bongObjModelPath().contains("wooden_totem"));
+            if (actual.bongObjModelPath() != null) {
+                assertFalse(actual.bongObjModelPath().contains("placeholder"));
+                assertFalse(actual.bongObjModelPath().contains("wooden_totem"));
+            }
         }
     }
 
@@ -54,6 +50,9 @@ class BongWeaponModelRegistryTest {
     void v1WeaponResourcePathsExistAndHostJsonPointsAtRegistryObj() throws IOException {
         for (String templateId : BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS) {
             BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(templateId).orElseThrow();
+            if (entry.bongObjModelPath() == null) {
+                continue;
+            }
             JsonObject hostJson = readHostJson(entry);
 
             assertEquals("sml:builtin/obj", hostJson.get("parent").getAsString(), templateId + " host parent");
@@ -66,13 +65,28 @@ class BongWeaponModelRegistryTest {
     }
 
     @Test
-    void vanillaModelPathSetIncludesAllRegisteredHosts() {
+    void vanillaModelPathSetIncludesOnlyObjBackedHosts() {
         Set<String> paths = BongWeaponModelRegistry.vanillaModelPaths();
 
         for (String templateId : BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS) {
-            assertTrue(paths.contains(BongWeaponModelRegistry.get(templateId).orElseThrow().vanillaModelPath()));
+            BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(templateId).orElseThrow();
+            assertEquals(entry.bongObjModelPath() != null, paths.contains(entry.vanillaModelPath()));
         }
         assertTrue(paths.contains(BongWeaponModelRegistry.get("rusted_blade").orElseThrow().vanillaModelPath()));
+    }
+
+    private static Map<String, ExpectedWeaponResource> expectedResources() {
+        Map<String, ExpectedWeaponResource> out = new LinkedHashMap<>();
+        out.put("iron_sword", new ExpectedWeaponResource("item/iron_sword", "bong:models/item/iron_sword/iron_sword.obj"));
+        out.put("bronze_saber", new ExpectedWeaponResource("item/golden_sword", "bong:models/item/bronze_saber/bronze_saber.obj"));
+        out.put("wooden_staff", new ExpectedWeaponResource("item/totem_of_undying", "bong:models/item/wooden_staff/wooden_staff.obj"));
+        out.put("bone_dagger", new ExpectedWeaponResource("item/bone", "bong:models/item/bone_dagger/bone_dagger.obj"));
+        out.put("hand_wrap", new ExpectedWeaponResource("item/leather", "bong:models/item/hand_wrap/hand_wrap.obj"));
+        out.put("bone_sword", new ExpectedWeaponResource("item/stone_sword", null));
+        out.put("lingmu_sword", new ExpectedWeaponResource("item/wooden_sword", null));
+        out.put("spirit_sword", new ExpectedWeaponResource("item/nether_star", "bong:models/item/spirit_sword/spirit_sword.obj"));
+        out.put("flying_sword_feixuan", new ExpectedWeaponResource("item/diamond_sword", "bong:models/item/flying_sword_feixuan/flying_sword_feixuan.obj"));
+        return Collections.unmodifiableMap(out);
     }
 
     private static JsonObject readHostJson(BongWeaponModelRegistry.Entry entry) throws IOException {
