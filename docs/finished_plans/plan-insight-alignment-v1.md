@@ -748,12 +748,43 @@ pub struct InsightModifiers {
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`InsightAlignment` enum / `InsightCost` enum（10 变体）/ `InsightTradeoff` struct / `GenericTalentRegistry`（JSON 加载器）/ `generic_talents.json`（通用天赋数据文件）/ `special_talent.rs`（特殊天赋 Rust 硬编码）/ 对立色映射表（10 对）/ 代价对轴表（10 对）/ `select_aligned_tradeoffs` 三轨选取（合并通用+特殊池）/ `insight_fallback.rs` 重构 / `insight_flavor.rs` 双段文案模板 / DIVERGE PracticeLog 注入 / `InsightModifiers` 新增 7 个代价字段 / Agent prompt 改造 / InsightChoiceV1 alignment + cost 字段 / Client 三轨视觉差异 + 增益绿字 + 代价红字 / 90+ 饱和化测试
-- **关键 commit**：P0-P4 各自 hash
-- **遗留 / 后续**：
-  - Agent LLM 激活后三轨 prompt 实战效果调优
-  - 三轨选择历史可视化（inspect 界面显示"你的顿悟倾向：70% 靠近 / 20% 中性 / 10% 远离"）
-  - PvP 信息战：高境修士 inspect 对方时可模糊感知对方的顿悟倾向（如"此人真元染色走向明确——专精"）
-  - 连续多次选 DIVERGE 触发特殊顿悟"你已不是你"（worldview §六.2 杂色状态的叙事化）
+**归档时间**：2026-05-11
+
+### 落地清单
+
+- P0/P1：`server/src/cultivation/insight.rs` 新增 `InsightAlignment`、`InsightCost`、`InsightTradeoff`，`InsightChoice` 扩展 `alignment` / `cost` / `cost_magnitude` / `cost_flavor` / `target_color`，`validate_offer()` 拒绝纯增益和低代价选项。
+- P1：`server/src/cultivation/generic_talent.rs` + `server/assets/insight/generic_talents.json` 落地 JSON 驱动通用天赋池，覆盖 gain/cost stat 白名单、倍率缩放、颜色 token、模板渲染和数据校验。
+- P1/P4：`server/src/cultivation/color_affinity.rs`、`special_talent.rs`、`insight_flavor.rs`、`insight_fallback.rs` 重构 fallback 为 CONVERGE / NEUTRAL / DIVERGE 三轨生成，按 `QiColor` + `PracticeLog` 选择靠近、通用和转向选项，并覆盖混元/杂色特殊分支。
+- P1/P4：`server/src/cultivation/insight_apply.rs` 新增代价累计字段，应用 `OppositeColorPenalty`、`MainColorPenalty`、`QiVolatility`、`ShockSensitivity`、`MeridianHealSlowdown` 等 cost；DIVERGE 写入目标色 PracticeLog +2.0，混元打破专精 +5.0。
+- P1/P4：`server/src/cultivation/life_record.rs`、`lifespan.rs`、`possession.rs`、`persistence/mod.rs`、`schema/cultivation.rs`、`world/poi_novice.rs` 对齐新 `InsightTaken` 兼容字段与 `InsightDiverge` 审计事件。
+- P2：`agent/packages/schema/src/insight-offer.ts` 与 generated schema 增加 `alignment`、`cost_kind`、`cost_magnitude`、`cost_flavor`；`agent/packages/tiandao/src/insight-runtime.ts` Arbiter 校验三轨唯一性、自动补齐缺失 alignment，并拒绝缺代价/低代价选项。
+- P2：`agent/packages/tiandao/src/skills/insight.md` 明确要求 LLM 返回三轨选项和可感知代价，纯增益输出会被 Arbiter 拒绝。
+- P3：`client/src/main/java/com/bong/client/insight/InsightAlignment.java`、`InsightChoice.java`、`InsightOfferScreen.java`、`MockInsightOfferData.java`、`HeartDemonOfferHandler.java` 展示三轨图标/底色、绿色增益行、红色代价行和 tooltip；旧构造器默认 NEUTRAL + 保底代价文案。
+- P4：server 覆盖 fallback 三轨、全 trigger 有三选项、代价非空、代价幅度不少于增益 50%、混元/杂色分支、DIVERGE PracticeLog 注入、LifeRecord 审计；agent 覆盖 alignment 去重/补齐和 cost 校验；client 覆盖 describe 输出与代价常显。
+
+### 关键 commit
+
+- `01f7765e8` · 2026-05-11 · `plan-insight-alignment-v1: 落地顿悟三轨代价闭环`
+- `22e050f23` · 2026-05-11 · `plan-insight-alignment-v1: 对齐 agent 顿悟契约`
+- `b0ddfc4ed` · 2026-05-11 · `plan-insight-alignment-v1: 展示顿悟三轨代价`
+
+### 测试结果
+
+- `cd server && CARGO_BUILD_JOBS=1 cargo fmt --check && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 cargo test` ✅ `4239 passed; 0 failed`
+- `cd agent && npm run build && npm run check -w @bong/schema && npm test -w @bong/tiandao` ✅ schema artifacts fresh；tiandao `51 passed (51)` / `350 passed (350)`
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build` ✅ `BUILD SUCCESSFUL`
+- `git diff --check origin/main..HEAD` ✅
+
+### 跨仓库核验
+
+- server：`InsightAlignment`、`InsightCost`、`InsightTradeoff`、`GenericTalentRegistry`、`select_aligned_tradeoffs`、`fallback_for_context`、`apply_choice`、`BiographyEntry::InsightDiverge`。
+- agent/schema：`InsightChoiceV1.alignment`、`InsightChoiceV1.cost_*`、`applyInsightArbiter()`、`agent/packages/tiandao/src/skills/insight.md`。
+- client：`InsightAlignment`、`InsightChoice.costSummary/costFlavor`、`InsightOfferScreen.describe()`、`HeartDemonOfferHandler.readChoices()`。
+
+### 遗留 / 后续
+
+- Agent LLM 真实接入后仍需观察三轨 prompt 的实际输出质量；当前 server 仍以本地 fallback 作为可执行权威。
+- inspect 中的"顿悟倾向历史"与 PvP 侧模糊感知不在本 plan 范围，保留给后续 UI / 信息战 plan。
+- 连续 DIVERGE 触发特殊叙事"你已不是你"未在本 plan 内落地，需结合后续杂色/混元叙事切片实现。
