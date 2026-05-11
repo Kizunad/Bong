@@ -1,7 +1,11 @@
 package com.bong.client.visual.particle;
 
 import com.bong.client.network.VfxEventPayload;
+import com.bong.client.season.SeasonBreakthroughOverlay;
+import com.bong.client.season.SeasonBreakthroughOverlayHud;
+import com.bong.client.state.SeasonStateStore;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.particle.SpriteProvider;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
@@ -30,13 +34,20 @@ public final class BreakthroughPillarPlayer implements VfxPlayer {
         double oy = payload.origin()[1];
         double oz = payload.origin()[2];
 
-        int rgb = payload.colorRgb().orElse(FALLBACK_RGB);
+        SeasonBreakthroughOverlay.BreakthroughProfile seasonProfile =
+            SeasonBreakthroughOverlay.breakthroughProfile(SeasonStateStore.snapshot(), true, world.getTime());
+        SeasonBreakthroughOverlayHud.trigger(seasonProfile, System.currentTimeMillis());
+        int rgb = payload.colorRgb().orElse(seasonProfile.pillarTintRgb() == 0 ? FALLBACK_RGB : seasonProfile.pillarTintRgb());
         float r = ((rgb >> 16) & 0xFF) / 255f;
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
         float alpha = (float) Math.max(0.4, Math.min(1.0, payload.strength().orElse(1.0)));
 
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 48);
+        int count = clamp(
+            (int) Math.round(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()) * seasonProfile.lightningMultiplier()),
+            1,
+            64
+        );
         int maxAge = payload.durationTicks().orElse(OptionalInt.of(60).getAsInt());
 
         for (int i = 0; i < count; i++) {
@@ -53,11 +64,20 @@ public final class BreakthroughPillarPlayer implements VfxPlayer {
             p.setColor(r, g, b);
             p.setAlphaPublic(alpha);
             p.setMaxAgePublic(maxAge);
-            if (BongParticles.breakthroughPillarSprites != null) {
-                p.setSpritePublic(BongParticles.breakthroughPillarSprites.getSprite(world.random));
+            SpriteProvider spriteProvider = spriteProviderFor(seasonProfile);
+            if (spriteProvider != null) {
+                p.setSpritePublic(spriteProvider.getSprite(world.random));
             }
             client.particleManager.addParticle(p);
         }
+    }
+
+    private static SpriteProvider spriteProviderFor(SeasonBreakthroughOverlay.BreakthroughProfile profile) {
+        return switch (profile.particleSpriteId()) {
+            case "enlightenment_dust" -> BongParticles.enlightenmentDustSprites;
+            case "tribulation_spark" -> BongParticles.tribulationSparkSprites;
+            default -> BongParticles.breakthroughPillarSprites;
+        };
     }
 
     private static int clamp(int v, int lo, int hi) {

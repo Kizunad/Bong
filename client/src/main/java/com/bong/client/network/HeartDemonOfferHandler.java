@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.insight.InsightCategory;
+import com.bong.client.insight.InsightAlignment;
 import com.bong.client.insight.InsightChoice;
 import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.insight.InsightOfferViewModel;
@@ -75,9 +76,12 @@ public final class HeartDemonOfferHandler implements ServerDataHandler {
             choices.add(new InsightChoice(
                 choiceId,
                 parseCategory(readString(choice, "category")),
+                InsightAlignment.parse(readString(choice, "alignment")),
                 fallback(readString(choice, "title"), "心魔"),
                 fallback(readString(choice, "effect_summary"), "等待服务端结算"),
+                fallback(readString(choice, "cost_summary"), fallback(readString(choice, "cost_flavor"), "代价待结算")),
                 fallback(readString(choice, "flavor"), "心魔无声逼近。"),
+                fallback(readString(choice, "cost_flavor"), "心魔会索取对应代价。"),
                 fallback(readString(choice, "style_hint"), "抉择")
             ));
         }

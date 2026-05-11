@@ -79,4 +79,20 @@ class HudLayoutPresetTest {
 
         assertTrue(minimal.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.MOVEMENT_HUD));
     }
+
+    @Test
+    void coffinHudUsesBarsWidget() {
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.COFFIN, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        List<HudRenderCommand> minimal = HudLayoutPreset.filter(
+            commands,
+            HudImmersionMode.Mode.PEACE,
+            HudLayoutPreferenceStore.Density.MINIMAL,
+            1_000L
+        );
+
+        assertTrue(minimal.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.COFFIN));
+    }
 }

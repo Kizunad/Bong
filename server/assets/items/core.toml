@@ -49,6 +49,18 @@ spirit_quality_initial = 0.9
 description = "稀铁炉壁薄而不裂，可炼会反噬炉火的高阶药料。"
 
 [[item]]
+id = "mundane_coffin"
+name = "凡物棺材"
+category = "misc"
+grid_w = 2
+grid_h = 3
+max_stack_count = 1
+base_weight = 12.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗板拼成的棺材，只够凡人躺进去把寿火烧慢一点。"
+
+[[item]]
 id = "spirit_niche_stone"
 name = "龛石"
 category = "treasure"

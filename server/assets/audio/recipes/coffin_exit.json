@@ -1,0 +1,10 @@
+{
+  "id": "coffin_exit",
+  "layers": [
+    { "sound": "minecraft:block.wooden_door.open", "volume": 0.45, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.player.breath", "volume": 0.25, "pitch": 0.9, "delay_ticks": 3 }
+  ],
+  "priority": 44,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

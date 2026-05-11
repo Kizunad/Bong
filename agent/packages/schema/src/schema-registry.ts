@@ -25,6 +25,7 @@ import {
 import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
+import { CalamityIntentV1, CalamityKindV1 } from "./calamity.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
   ClientNarrationPayloadV1,
@@ -50,6 +51,9 @@ import {
   AbortTribulationRequestV1,
   CancelExtractRequestV1,
   CoffinOpenRequestV1,
+  CoffinEnterRequestV1,
+  CoffinLeaveRequestV1,
+  CoffinPlaceRequestV1,
   CombatCreateNewCharacterRequestV1,
   CombatReincarnateRequestV1,
   CombatTerminateRequestV1,
@@ -286,6 +290,7 @@ import {
   ServerDataV1,
   ServerDataHealerNpcAiStateV1,
   ServerDataMovementStateV1,
+  ServerDataCoffinStateV1,
   ServerDataWeaponBrokenV1,
   ServerDataWeaponEquippedV1,
   ServerDataForgeStationV1,
@@ -307,6 +312,7 @@ import {
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   ServerDataYidaoHudStateV1,
+  CoffinStateV1,
   BurstMeridianEventV1,
   QiColorObservedV1,
   TreasureEquippedV1,
@@ -458,6 +464,8 @@ export const SCHEMA_REGISTRY = {
   agentCommandV1: AgentCommandV1,
   agentWorldModelEnvelopeV1: AgentWorldModelEnvelopeV1,
   agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
+  calamityKindV1: CalamityKindV1,
+  calamityIntentV1: CalamityIntentV1,
   narrationV1: NarrationV1,
   zonePressureLevelV1: ZonePressureLevelV1,
   zonePressureCrossedV1: ZonePressureCrossedV1,
@@ -578,6 +586,9 @@ export const SCHEMA_REGISTRY = {
   clientRequestSkillBarBindV1: SkillBarBindRequestV1,
   clientRequestSkillConfigIntentV1: SkillConfigIntentRequestV1,
   clientRequestCoffinOpenV1: CoffinOpenRequestV1,
+  clientRequestCoffinPlaceV1: CoffinPlaceRequestV1,
+  clientRequestCoffinEnterV1: CoffinEnterRequestV1,
+  clientRequestCoffinLeaveV1: CoffinLeaveRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
@@ -691,6 +702,8 @@ export const SCHEMA_REGISTRY = {
   movementZoneKindV1: MovementZoneKindV1,
   movementStateV1: MovementStateV1,
   serverDataMovementStateV1: ServerDataMovementStateV1,
+  coffinStateV1: CoffinStateV1,
+  serverDataCoffinStateV1: ServerDataCoffinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -853,6 +866,8 @@ export const GENERATED_SCHEMA_FILES = {
   "agent-command-v1.json": SCHEMA_REGISTRY.agentCommandV1,
   "agent-world-model-envelope-v1.json": SCHEMA_REGISTRY.agentWorldModelEnvelopeV1,
   "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
+  "calamity-kind-v1.json": SCHEMA_REGISTRY.calamityKindV1,
+  "calamity-intent-v1.json": SCHEMA_REGISTRY.calamityIntentV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
   "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
@@ -1003,6 +1018,9 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-skill-config-intent-v1.json":
     SCHEMA_REGISTRY.clientRequestSkillConfigIntentV1,
   "client-request-coffin-open-v1.json": SCHEMA_REGISTRY.clientRequestCoffinOpenV1,
+  "client-request-coffin-place-v1.json": SCHEMA_REGISTRY.clientRequestCoffinPlaceV1,
+  "client-request-coffin-enter-v1.json": SCHEMA_REGISTRY.clientRequestCoffinEnterV1,
+  "client-request-coffin-leave-v1.json": SCHEMA_REGISTRY.clientRequestCoffinLeaveV1,
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
@@ -1130,6 +1148,8 @@ export const GENERATED_SCHEMA_FILES = {
   "movement-state-v1.json": SCHEMA_REGISTRY.movementStateV1,
   "server-data-movement-state-v1.json":
     SCHEMA_REGISTRY.serverDataMovementStateV1,
+  "coffin-state-v1.json": SCHEMA_REGISTRY.coffinStateV1,
+  "server-data-coffin-state-v1.json": SCHEMA_REGISTRY.serverDataCoffinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7

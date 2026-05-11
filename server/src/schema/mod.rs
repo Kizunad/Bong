@@ -10,6 +10,7 @@ pub mod armor_event;
 pub mod audio;
 pub mod baomai_v3;
 pub mod botany;
+pub mod calamity;
 pub mod channels;
 pub mod chat_message;
 pub mod client_payload;

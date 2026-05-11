@@ -69,6 +69,15 @@ pub enum BiographyEntry {
     InsightTaken {
         trigger: String,
         choice: String,
+        #[serde(default)]
+        alignment: Option<String>,
+        #[serde(default)]
+        cost_kind: Option<String>,
+        tick: u64,
+    },
+    InsightDiverge {
+        from_color: ColorKind,
+        to_color: ColorKind,
         tick: u64,
     },
     Rebirth {
@@ -253,6 +262,10 @@ pub struct TakenInsight {
     pub choice: String,
     pub magnitude: f64,
     pub flavor: String,
+    #[serde(default)]
+    pub alignment: Option<String>,
+    #[serde(default)]
+    pub cost_kind: Option<String>,
     pub taken_at: u64,
     pub realm_at_time: Realm,
 }
@@ -424,8 +437,19 @@ fn format_entry(entry: &BiographyEntry) -> String {
         BiographyEntry::InsightTaken {
             trigger,
             choice,
+            alignment,
+            cost_kind,
             tick,
-        } => format!("t{tick}:insight:{trigger}:{choice}"),
+        } => {
+            let alignment = alignment.as_deref().unwrap_or("unknown");
+            let cost = cost_kind.as_deref().unwrap_or("unknown");
+            format!("t{tick}:insight:{trigger}:{choice}:{alignment}:{cost}")
+        }
+        BiographyEntry::InsightDiverge {
+            from_color,
+            to_color,
+            tick,
+        } => format!("t{tick}:insight_diverge:{from_color:?}->{to_color:?}"),
         BiographyEntry::Rebirth {
             prior_realm,
             new_realm,

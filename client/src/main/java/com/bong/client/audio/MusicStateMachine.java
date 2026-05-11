@@ -2,6 +2,7 @@ package com.bong.client.audio;
 
 import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.network.AudioEventPayload;
+import com.bong.client.state.SeasonState;
 
 import java.util.Locale;
 import java.util.Objects;
@@ -16,6 +17,7 @@ public final class MusicStateMachine {
     private final SoundRecipePlayer player;
     private long nextInstanceId = INSTANCE_ID_BASE;
     private ActiveMusic active;
+    private SeasonModifier seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
 
     public MusicStateMachine(SoundRecipePlayer player) {
         this.player = Objects.requireNonNull(player, "player");
@@ -63,12 +65,34 @@ public final class MusicStateMachine {
         return active == null ? 0L : active.instanceId;
     }
 
+    public void setSeasonModifier(SeasonState.Phase phase, double progress) {
+        seasonModifier = new SeasonModifier(
+            phase == null ? SeasonState.Phase.SUMMER : phase,
+            clamp01(progress)
+        );
+    }
+
+    public SeasonModifier seasonModifierForTests() {
+        return seasonModifier;
+    }
+
+    public void clearSeasonModifierForTests() {
+        seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
+    }
+
     private void stopActive(int fadeTicks) {
         if (active == null) {
             return;
         }
         active.loopFlag.ifPresent(EnvironmentAudioLoopState::deactivate);
         player.stop(new AudioEventPayload.StopSoundRecipe(active.instanceId, Math.max(0, fadeTicks)));
+    }
+
+    private static double clamp01(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     public enum State {
@@ -182,6 +206,9 @@ public final class MusicStateMachine {
     }
 
     private record ActiveMusic(long instanceId, TransitionKey key, Optional<String> loopFlag) {
+    }
+
+    public record SeasonModifier(SeasonState.Phase phase, double progress) {
     }
 
     private record TransitionKey(

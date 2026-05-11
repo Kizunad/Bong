@@ -20,6 +20,7 @@ pub mod possession;
 pub mod relic;
 pub mod scattered_cultivator;
 pub mod scenario;
+pub mod seasonal_behavior;
 pub mod social;
 pub mod spatial;
 pub mod spawn;
@@ -46,6 +47,7 @@ pub fn register(app: &mut App) {
     hunger::register(app);
     possession::register(app);
     tribulation::register(app);
+    seasonal_behavior::register(app);
     patrol::register(app);
     sync::register(app);
     brain::register(app);

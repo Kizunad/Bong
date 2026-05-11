@@ -2,6 +2,7 @@ package com.bong.client.atmosphere;
 
 import com.bong.client.environment.EnvironmentFogCommand;
 import com.bong.client.hud.BongHudStateStore;
+import com.bong.client.state.SeasonState;
 import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.ZoneState;
 import com.bong.client.tsy.ExtractState;
@@ -24,6 +25,7 @@ public final class ZoneAtmosphereRenderer {
     private static final AshFootprintTracker FOOTPRINTS = new AshFootprintTracker();
     private static volatile ZoneAtmosphereProfileRegistry registry = ZoneAtmosphereProfileRegistry.loadDefault();
     private static volatile ZoneAtmosphereCommand currentCommand;
+    private static volatile SeasonOverride seasonOverride;
     private static boolean bootstrapped;
 
     private ZoneAtmosphereRenderer() {
@@ -73,9 +75,31 @@ public final class ZoneAtmosphereRenderer {
         );
     }
 
+    public static void setSeasonOverride(SeasonState.Phase phase, double progress) {
+        seasonOverride = new SeasonOverride(
+            phase == null ? SeasonState.Phase.SUMMER : phase,
+            clamp01(progress)
+        );
+    }
+
+    public static SeasonOverride currentSeasonOverrideForTests() {
+        return seasonOverride;
+    }
+
+    public static void clearSeasonOverrideForTests() {
+        seasonOverride = null;
+    }
+
     public static void clear() {
         currentCommand = null;
         FOOTPRINTS.clear();
+    }
+
+    private static double clamp01(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     public static EnvironmentFogCommand mergeFogCommands(EnvironmentFogCommand environment, EnvironmentFogCommand atmosphere) {
@@ -105,6 +129,7 @@ public final class ZoneAtmosphereRenderer {
     public static void resetForTests() {
         registry = ZoneAtmosphereProfileRegistry.loadDefault();
         currentCommand = null;
+        seasonOverride = null;
         FOOTPRINTS.clear();
     }
 
@@ -183,5 +208,8 @@ public final class ZoneAtmosphereRenderer {
             ((rgb >>> 8) & 0xFF) / 255.0f,
             (rgb & 0xFF) / 255.0f
         );
+    }
+
+    public record SeasonOverride(SeasonState.Phase phase, double progress) {
     }
 }

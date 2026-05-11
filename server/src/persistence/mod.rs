@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 22;
+const CURRENT_USER_VERSION: i32 = 23;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1164,6 +1164,7 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 years_lived REAL NOT NULL CHECK (years_lived >= 0),
                 cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
                 offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                in_coffin INTEGER NOT NULL DEFAULT 0 CHECK (in_coffin IN (0, 1)),
                 schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
                 last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
             );
@@ -1523,6 +1524,38 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             )?;
         }
         transaction.execute_batch("PRAGMA user_version = 22;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 23 {
+        let transaction = connection.transaction()?;
+        let columns = table_columns(&transaction, "player_lifespan")?;
+        if columns.is_empty() {
+            transaction.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS player_lifespan (
+                    username TEXT PRIMARY KEY,
+                    born_at_tick INTEGER NOT NULL CHECK (born_at_tick >= 0),
+                    years_lived REAL NOT NULL CHECK (years_lived >= 0),
+                    cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
+                    offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                    in_coffin INTEGER NOT NULL DEFAULT 0 CHECK (in_coffin IN (0, 1)),
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                ",
+            )?;
+        } else if !columns.iter().any(|column| column == "in_coffin") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE player_lifespan
+                ADD COLUMN in_coffin INTEGER NOT NULL DEFAULT 0 CHECK (in_coffin IN (0, 1));
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 23;")?;
         transaction.commit()?;
     }
 
@@ -4531,6 +4564,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::ForgedCapacity { .. } => "forged_capacity",
         BiographyEntry::ColorShift { .. } => "color_shift",
         BiographyEntry::InsightTaken { .. } => "insight_taken",
+        BiographyEntry::InsightDiverge { .. } => "insight_diverge",
         BiographyEntry::Rebirth { .. } => "rebirth",
         BiographyEntry::CombatHit { .. } => "combat_hit",
         BiographyEntry::DuguPoisonInflicted { .. } => "dugu_poison_inflicted",
@@ -4618,6 +4652,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::ForgedCapacity { tick, .. }
         | BiographyEntry::ColorShift { tick, .. }
         | BiographyEntry::InsightTaken { tick, .. }
+        | BiographyEntry::InsightDiverge { tick, .. }
         | BiographyEntry::Rebirth { tick, .. }
         | BiographyEntry::CombatHit { tick, .. }
         | BiographyEntry::DuguPoisonInflicted { tick, .. }
@@ -6722,6 +6757,7 @@ mod persistence_tests {
             "years_lived",
             "cap_by_realm",
             "offline_pause_wall",
+            "in_coffin",
             "schema_version",
             "last_updated_wall",
         ] {
@@ -6730,6 +6766,62 @@ mod persistence_tests {
                 "player_lifespan should include {column}"
             );
         }
+    }
+
+    #[test]
+    fn v23_migration_adds_in_coffin_to_legacy_player_lifespan_table() {
+        let db_path = database_path("v23-player-lifespan-in-coffin");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_lifespan (
+                    username TEXT PRIMARY KEY,
+                    born_at_tick INTEGER NOT NULL CHECK (born_at_tick >= 0),
+                    years_lived REAL NOT NULL CHECK (years_lived >= 0),
+                    cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
+                    offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES ('Azure', 0, 3.5, 80, 0, 1, 0);
+                PRAGMA user_version = 22;
+                ",
+            )
+            .expect("legacy player_lifespan fixture should create");
+
+        apply_migrations(&mut connection).expect("v23 migration should succeed");
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_lifespan)")
+            .expect("player_lifespan table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("player_lifespan table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_lifespan columns should collect");
+        assert!(
+            columns.iter().any(|column| column == "in_coffin"),
+            "player_lifespan should include in_coffin after v23 migration"
+        );
+        let in_coffin: i64 = connection
+            .query_row(
+                "SELECT in_coffin FROM player_lifespan WHERE username = 'Azure'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy row should get default in_coffin");
+        assert_eq!(in_coffin, 0);
     }
 
     #[test]

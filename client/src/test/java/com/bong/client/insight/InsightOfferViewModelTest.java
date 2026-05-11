@@ -18,6 +18,9 @@ class InsightOfferViewModelTest {
         assertEquals(InsightCategory.BREAKTHROUGH, offer.choices().get(0).category());
         assertEquals(InsightCategory.COMPOSURE, offer.choices().get(1).category());
         assertEquals(InsightCategory.PERCEPTION, offer.choices().get(2).category());
+        assertEquals(InsightAlignment.CONVERGE, offer.choices().get(0).alignment());
+        assertEquals(InsightAlignment.NEUTRAL, offer.choices().get(1).alignment());
+        assertEquals(InsightAlignment.DIVERGE, offer.choices().get(2).alignment());
     }
 
     @Test
@@ -50,9 +53,10 @@ class InsightOfferViewModelTest {
         assertEquals("境界: 引气境 (3 正经)", content.lines().get(2));
         assertEquals("剩余顿悟额度: 2/2", content.lines().get(4));
         assertTrue(content.lines().get(5).startsWith("⏳ "));
-        assertTrue(content.lines().contains("[E] 下次冲关稳"));
-        assertTrue(content.lines().contains("[C] 闭关心如止"));
-        assertTrue(content.lines().contains("[G] 灵气浓淡可见"));
+        assertTrue(content.lines().contains("[converge/E] 下次冲关稳"));
+        assertTrue(content.lines().contains("[neutral/C] 闭关心如止"));
+        assertTrue(content.lines().contains("[diverge/G] 灵气浓淡可见"));
+        assertTrue(content.lines().stream().anyMatch(l -> l.contains("▼ 沉重色效率 -15%")));
         assertTrue(content.lines().stream().anyMatch(l -> l.contains("✦ 你已知冲关时神识凝聚的诀窍")));
         assertEquals("[ 心未契机 ]", content.lines().get(content.lines().size() - 1));
     }
@@ -68,9 +72,9 @@ class InsightOfferViewModelTest {
         assertEquals("心魔抉择: 3 项", content.lines().get(4));
         assertTrue(content.lines().get(5).startsWith("心魔倒计时: "));
         assertTrue(content.lines().get(5).contains("超时默认执念"));
-        assertTrue(content.lines().contains("[C] 守本心"));
-        assertTrue(content.lines().contains("[E] 斩执念"));
-        assertTrue(content.lines().contains("[G] 无解"));
+        assertTrue(content.lines().contains("[neutral/C] 守本心"));
+        assertTrue(content.lines().contains("[neutral/E] 斩执念"));
+        assertTrue(content.lines().contains("[neutral/G] 无解"));
         assertEquals("[ 不作答 ]", content.lines().get(content.lines().size() - 1));
         assertFalse(content.lines().stream().anyMatch(l -> l.contains("顿悟额度")));
         assertFalse(content.lines().stream().anyMatch(l -> l.contains("心未契机")));
@@ -85,5 +89,14 @@ class InsightOfferViewModelTest {
                     "重色: " + all[i] + " vs " + all[j]);
             }
         }
+    }
+
+    @Test
+    void costLineIsAlwaysRendered() {
+        InsightOfferScreen.RenderContent content = InsightOfferScreen.describe(
+            MockInsightOfferData.firstInduceBreakthrough());
+
+        assertTrue(content.lines().stream().anyMatch(l -> l.startsWith("    ▼ ")));
+        assertTrue(content.lines().stream().anyMatch(l -> l.startsWith("    代价: ")));
     }
 }

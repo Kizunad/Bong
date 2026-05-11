@@ -1897,6 +1897,12 @@ fn event_kind_from_name(event_name: &str) -> Option<EventKind> {
         crate::world::events::EVENT_BEAST_TIDE => Some(EventKind::BeastTide),
         crate::world::events::EVENT_REALM_COLLAPSE => Some(EventKind::RealmCollapse),
         crate::world::events::EVENT_KARMA_BACKLASH => Some(EventKind::KarmaBacklash),
+        crate::world::calamity::EVENT_POISON_MIASMA => Some(EventKind::PoisonMiasma),
+        crate::world::calamity::EVENT_MERIDIAN_SEAL => Some(EventKind::MeridianSeal),
+        crate::world::calamity::EVENT_DAOXIANG_WAVE => Some(EventKind::DaoxiangWave),
+        crate::world::calamity::EVENT_HEAVENLY_FIRE => Some(EventKind::HeavenlyFire),
+        crate::world::calamity::EVENT_PRESSURE_INVERT => Some(EventKind::PressureInvert),
+        crate::world::calamity::EVENT_ALL_WITHER => Some(EventKind::AllWither),
         _ => None,
     }
 }
@@ -1907,6 +1913,12 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
         crate::world::events::EVENT_BEAST_TIDE => "兽潮",
         crate::world::events::EVENT_REALM_COLLAPSE => "域崩",
         crate::world::events::EVENT_KARMA_BACKLASH => "因果反噬",
+        crate::world::calamity::EVENT_POISON_MIASMA => "毒瘴",
+        crate::world::calamity::EVENT_MERIDIAN_SEAL => "封脉阵",
+        crate::world::calamity::EVENT_DAOXIANG_WAVE => "道伥潮",
+        crate::world::calamity::EVENT_HEAVENLY_FIRE => "天火",
+        crate::world::calamity::EVENT_PRESSURE_INVERT => "灵压倒转",
+        crate::world::calamity::EVENT_ALL_WITHER => "万物凋零",
         _ => "异变",
     };
 

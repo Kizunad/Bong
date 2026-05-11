@@ -1,0 +1,11 @@
+{
+  "id": "calamity_pressure_invert",
+  "layers": [
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.7, "pitch": 0.2, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.4, "pitch": 0.1, "delay_ticks": 3 },
+    { "sound": "minecraft:block.portal.ambient", "volume": 0.15, "pitch": 0.2, "delay_ticks": 12 }
+  ],
+  "priority": 90,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

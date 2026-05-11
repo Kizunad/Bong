@@ -17,6 +17,14 @@ public final class VfxBootstrap {
         registry.register(TribulationLightningPlayer.EVENT_ID,   new TribulationLightningPlayer());
         registry.register(TribulationOmenCloudPlayer.EVENT_ID,   new TribulationOmenCloudPlayer());
         registry.register(TribulationBoundaryPlayer.EVENT_ID,    new TribulationBoundaryPlayer());
+        CalamityVfxPlayer calamity = new CalamityVfxPlayer();
+        registry.register(CalamityVfxPlayer.THUNDER,             calamity);
+        registry.register(CalamityVfxPlayer.MIASMA,              calamity);
+        registry.register(CalamityVfxPlayer.MERIDIAN_SEAL,       calamity);
+        registry.register(CalamityVfxPlayer.DAOXIANG_WAVE,       calamity);
+        registry.register(CalamityVfxPlayer.HEAVENLY_FIRE,       calamity);
+        registry.register(CalamityVfxPlayer.PRESSURE_INVERT,     calamity);
+        registry.register(CalamityVfxPlayer.ALL_WITHER,          calamity);
         JueBiTribulationPlayer jueBi = new JueBiTribulationPlayer();
         registry.register(JueBiTribulationPlayer.BOUNDARY,        jueBi);
         registry.register(JueBiTribulationPlayer.FISSURE,         jueBi);
@@ -62,6 +70,7 @@ public final class VfxBootstrap {
         registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
+        registry.register(MigrationVisualPlayer.EVENT_ID,        new MigrationVisualPlayer());
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         registry.register(TuikeFalseSkinParticlePlayer.DON_DUST,
