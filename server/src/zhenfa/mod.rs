@@ -2130,6 +2130,14 @@ mod tests {
         (app, scenario.layer)
     }
 
+    fn app_with_zhenfa_unloaded_layer() -> (App, Entity) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        install_zhenfa_test_systems(&mut app);
+        (app, scenario.layer)
+    }
+
     fn zhenfa_eye_state(charged: bool) -> BlockState {
         BlockState::BONG_ZHENFA_EYE.set(
             PropName::Charged,
@@ -2396,6 +2404,59 @@ mod tests {
             .resource::<ZhenfaRegistry>()
             .find_at(pos)
             .is_none());
+    }
+
+    #[test]
+    fn shrine_ward_writes_charged_custom_block() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let pos = [0, 64, 0];
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos,
+            kind: ZhenfaKind::ShrineWard,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(zhenfa_eye_state(true))
+        );
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at(pos)
+            .is_some());
+    }
+
+    #[test]
+    fn placement_rejects_unloaded_chunk_without_qi_debit_or_registry_entry() {
+        let (mut app, layer_entity) = app_with_zhenfa_unloaded_layer();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let pos = [1, 64, 1];
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos,
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            100.0
+        );
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+        assert_eq!(layer_block_state(&app, layer_entity, pos), None);
     }
 
     #[test]

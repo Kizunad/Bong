@@ -2,8 +2,8 @@ use std::fmt;
 
 use valence::prelude::{BlockPos, BlockState, ChunkLayer};
 
-pub const BONG_BLOCK_STATE_START: u16 = 24135;
-pub const BONG_BLOCK_STATE_END: u16 = 24140;
+pub const BONG_BLOCK_STATE_START: u16 = BlockState::BONG_ZHENFA_NODE.to_raw();
+pub const BONG_BLOCK_STATE_END: u16 = BlockState::max_raw();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaceError {
@@ -69,6 +69,13 @@ mod tests {
         (app, scenario.layer)
     }
 
+    fn test_layer_without_chunk() -> (App, Entity) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        (app, scenario.layer)
+    }
+
     #[test]
     fn place_and_read_back() {
         let (mut app, layer_entity) = test_layer();
@@ -104,6 +111,22 @@ mod tests {
             layer.block(pos).map(|block| block.state),
             Some(BlockState::AIR)
         );
+    }
+
+    #[test]
+    fn place_rejects_unloaded_chunk() {
+        let (mut app, layer_entity) = test_layer_without_chunk();
+        let pos = BlockPos::new(3, 64, 3);
+        let mut layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should carry ChunkLayer");
+
+        assert_eq!(
+            place_bong_block(&mut layer, pos, BlockState::BONG_ZHENFA_NODE),
+            Err(PlaceError::ChunkNotLoaded(pos))
+        );
+        assert_eq!(layer.block(pos).map(|block| block.state), None);
     }
 
     #[test]

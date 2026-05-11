@@ -105,7 +105,7 @@ pub(crate) fn build() -> anyhow::Result<TokenStream> {
         shapes,
         block_entity_types,
     } = serde_json::from_str(include_str!("../extracted/blocks.json"))?;
-    append_bong_blocks(&mut blocks)?;
+    append_bong_blocks(&mut blocks, shapes.len())?;
 
     let max_state_id = blocks.iter().map(|b| b.max_state_id()).max().unwrap();
 
@@ -998,7 +998,7 @@ pub(crate) fn build() -> anyhow::Result<TokenStream> {
     })
 }
 
-fn append_bong_blocks(blocks: &mut Vec<Block>) -> anyhow::Result<()> {
+fn append_bong_blocks(blocks: &mut Vec<Block>, shape_count: usize) -> anyhow::Result<()> {
     let path = bong_blocks_path();
     println!("cargo:rerun-if-changed={}", path.display());
 
@@ -1017,6 +1017,7 @@ fn append_bong_blocks(blocks: &mut Vec<Block>) -> anyhow::Result<()> {
         .context("no room for Bong block states after vanilla max state id")?;
 
     for bong_block in manifest.blocks {
+        bong_block.validate_collision_shapes(shape_count)?;
         let states = bong_block.expand_states(next_state_id)?;
         let state_count = u16::try_from(states.len()).context("Bong block state count exceeds u16")?;
         let block = Block {
@@ -1103,6 +1104,13 @@ impl BongBlockDef {
             if property_name.is_empty() {
                 bail!("Bong custom block `{}` has an empty property name", self.name);
             }
+            if property.name.as_str() != property_name {
+                bail!(
+                    "Bong custom block `{}` property name `{}` must not contain surrounding whitespace",
+                    self.name,
+                    property.name
+                );
+            }
             if !seen_properties.insert(property_name.to_string()) {
                 bail!(
                     "Bong custom block `{}` has duplicate property name `{}`",
@@ -1117,8 +1125,49 @@ impl BongBlockDef {
                     property.name
                 );
             }
+
+            let mut seen_values = HashSet::new();
+            for value in &property.values {
+                let value_name = value.trim();
+                if value_name.is_empty() {
+                    bail!(
+                        "Bong custom block `{}` property `{}` has an empty value",
+                        self.name,
+                        property.name
+                    );
+                }
+                if value.as_str() != value_name {
+                    bail!(
+                        "Bong custom block `{}` property `{}` value `{}` must not contain surrounding whitespace",
+                        self.name,
+                        property.name,
+                        value
+                    );
+                }
+                if !seen_values.insert(value_name.to_string()) {
+                    bail!(
+                        "Bong custom block `{}` property `{}` has duplicate value `{}`",
+                        self.name,
+                        property.name,
+                        value
+                    );
+                }
+            }
         }
 
+        Ok(())
+    }
+
+    fn validate_collision_shapes(&self, shape_count: usize) -> anyhow::Result<()> {
+        for shape_idx in &self.default_state.collision_shapes {
+            if usize::from(*shape_idx) >= shape_count {
+                bail!(
+                    "Bong custom block `{}` references missing collision shape index {}",
+                    self.name,
+                    shape_idx
+                );
+            }
+        }
         Ok(())
     }
 

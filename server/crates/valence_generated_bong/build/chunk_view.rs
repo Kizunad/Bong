@@ -3,6 +3,8 @@ use quote::quote;
 
 const MAX_VIEW_DIST: u8 = 32;
 const EXTRA_VIEW_RADIUS: i32 = 2;
+const _: () =
+    assert!(MAX_VIEW_DIST as i32 + EXTRA_VIEW_RADIUS <= i8::MAX as i32);
 
 pub(crate) fn build() -> anyhow::Result<TokenStream> {
     let entries = (0..=MAX_VIEW_DIST).map(|dist| {
