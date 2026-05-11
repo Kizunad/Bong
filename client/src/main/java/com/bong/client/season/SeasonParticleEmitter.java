@@ -4,8 +4,11 @@ import com.bong.client.state.SeasonState;
 import com.bong.client.visual.particle.BongGroundDecalParticle;
 import com.bong.client.visual.particle.BongLineParticle;
 import com.bong.client.visual.particle.BongParticles;
+import com.bong.client.visual.particle.BongSpriteParticle;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.particle.SpriteProvider;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.particle.DefaultParticleType;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.util.math.random.Random;
 
@@ -162,10 +165,49 @@ public final class SeasonParticleEmitter {
             }
             case HEAT_SHIMMER -> spawnHeatDecal(client, world, cue, x, y - 0.45, z, rgb, random);
             case DISTANT_THUNDER_FLASH, TRIBULATION_MARK ->
-                world.addParticle(BongParticles.TRIBULATION_SPARK, x, y, z, 0.0, cue.yVelocity(), 0.0);
+                spawnSpriteCue(
+                    client, world, cue, x, y, z,
+                    BongParticles.tribulationSparkSprites,
+                    BongParticles.TRIBULATION_SPARK,
+                    rgb,
+                    random
+                );
             case BOTANY_EVAPORATION, ICE_SPARK ->
-                world.addParticle(BongParticles.ENLIGHTENMENT_DUST, x, y, z, 0.0, cue.yVelocity(), 0.0);
+                spawnSpriteCue(
+                    client, world, cue, x, y, z,
+                    BongParticles.enlightenmentDustSprites,
+                    BongParticles.ENLIGHTENMENT_DUST,
+                    rgb,
+                    random
+                );
         }
+    }
+
+    private static void spawnSpriteCue(
+        MinecraftClient client,
+        ClientWorld world,
+        ParticleCue cue,
+        double x,
+        double y,
+        double z,
+        SpriteProvider provider,
+        DefaultParticleType fallbackType,
+        float[] rgb,
+        Random random
+    ) {
+        if (client.particleManager == null || provider == null) {
+            world.addParticle(fallbackType, x, y, z, 0.0, cue.yVelocity(), 0.0);
+            return;
+        }
+        double vx = (random.nextDouble() - 0.5) * 0.02;
+        double vz = (random.nextDouble() - 0.5) * 0.02;
+        BongSpriteParticle particle = new BongSpriteParticle(world, x, y, z, vx, cue.yVelocity(), vz);
+        particle.setSpritePublic(provider.getSprite(random));
+        particle.setColor(rgb[0], rgb[1], rgb[2]);
+        particle.setAlphaPublic(cue.alpha());
+        particle.setMaxAgePublic(cue.lifetimeTicks());
+        particle.setScalePublic((float) cue.scale());
+        client.particleManager.addParticle(particle);
     }
 
     private static void spawnHeatDecal(

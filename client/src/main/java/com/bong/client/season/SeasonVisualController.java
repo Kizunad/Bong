@@ -34,12 +34,13 @@ public final class SeasonVisualController {
         }
         SeasonState state = SeasonStateStore.snapshot();
         long worldTick = client.world.getTime();
+        SeasonState safeState = state == null ? SeasonState.summerAt(worldTick) : state;
         if (state != null && !firstHintShown) {
             firstHintShown = true;
             BongToast.show("你感到天地间灵气在变化", 0xFFE0D0AA, System.currentTimeMillis(), 3500L);
         }
-        tick(state, worldTick);
-        SeasonParticleEmitter.updateSeason(client, state, worldTick);
+        tick(safeState, worldTick);
+        SeasonParticleEmitter.updateSeason(client, safeState, worldTick);
     }
 
     public static SeasonTickResult tick(SeasonState state, long worldTick) {

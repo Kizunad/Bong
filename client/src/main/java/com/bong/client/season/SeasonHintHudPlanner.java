@@ -19,7 +19,9 @@ public final class SeasonHintHudPlanner {
         int screenWidth,
         int screenHeight
     ) {
-        if (state == null || screenWidth <= ICON_SIZE || screenHeight <= ICON_SIZE) {
+        int minWidth = 4 + ICON_SIZE;
+        int minHeight = 10 + ICON_SIZE;
+        if (state == null || screenWidth < minWidth || screenHeight < minHeight) {
             return List.of();
         }
         int x = Math.max(4, screenWidth - 18);

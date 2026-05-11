@@ -88,6 +88,15 @@ class SeasonFullExperienceTest {
     }
 
     @Test
+    void hud_icon_respects_fixed_offset_bounds() {
+        SeasonState winter = new SeasonState(SeasonState.Phase.WINTER, 0L, 1000L, 0L);
+
+        assertTrue(SeasonHintHudPlanner.buildCommands(winter, 11, 18).isEmpty());
+        assertTrue(SeasonHintHudPlanner.buildCommands(winter, 12, 17).isEmpty());
+        assertFalse(SeasonHintHudPlanner.buildCommands(winter, 12, 18).isEmpty());
+    }
+
+    @Test
     void summer_heat_wave_particles() {
         List<SeasonParticleEmitter.ParticleCue> cues = SeasonParticleEmitter.plan(
             new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
