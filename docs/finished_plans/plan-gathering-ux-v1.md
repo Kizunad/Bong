@@ -224,6 +224,7 @@
 - `ba2703c8c` 2026-05-11 `fix(gathering): 收紧矿物采集边界与 Rust 协议枚举`
 - `bc3fdbb5a` 2026-05-11 `fix(gathering): 补齐采集 review 边界护栏`
 - `654680039` 2026-05-11 `fix(gathering): 补齐协议与配方测试护栏`
+- `529945fad` 2026-05-11 `fix(gathering): 对齐采集协议输出与原版镐识别`
 
 ### 测试结果
 
@@ -239,6 +240,9 @@
 - `cd server && CARGO_BUILD_JOBS=1 cargo test register_gathering_tool_recipes`：2 passed
 - `cd server && CARGO_BUILD_JOBS=1 cargo test gathering_session_rejects_invalid_enum_values`：1 passed
 - `cd server && CARGO_BUILD_JOBS=1 cargo test hud_payload_wire_type_matches_label`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test gathering_progress_frame`：2 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test vanilla_pickaxe`：2 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test survival_start_opens_gathering_progress_without_drop_or_cleanup`：1 passed
 - `cd server && cargo test mineral::break_handler::tests`：12 passed
 - `cd server && cargo test spiritwood::tests`：8 passed
 - `cd server && cargo test craft::tests::register_gathering_tool_recipes_adds_six_tool_entries`：1 passed
