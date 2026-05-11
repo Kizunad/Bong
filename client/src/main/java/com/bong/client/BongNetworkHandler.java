@@ -16,6 +16,10 @@ import com.bong.client.network.ServerDataRouter;
 import com.bong.client.network.VfxEventRouter;
 import com.bong.client.npc.NpcMetadataHandler;
 import com.bong.client.npc.NpcMetadataStore;
+import com.bong.client.npc.NpcBubbleHandler;
+import com.bong.client.npc.NpcDialogueBubbleRenderer;
+import com.bong.client.npc.NpcMoodHandler;
+import com.bong.client.npc.NpcMoodStore;
 import com.bong.client.visual.particle.BongVfxParticleBridge;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
@@ -24,6 +28,10 @@ import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.bong.client.tsy.TsyBossHealthHandler;
+import com.bong.client.tsy.TsyBossHealthStore;
+import com.bong.client.tsy.TsyDeathVfxHandler;
+import com.bong.client.tsy.TsyDeathVfxStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
@@ -60,6 +68,10 @@ public class BongNetworkHandler {
     public static void register() {
         registerServerDataChannel();
         registerNpcMetadataChannel();
+        registerNpcBubbleChannel();
+        registerNpcMoodChannel();
+        registerTsyBossHealthChannel();
+        registerTsyDeathVfxChannel();
         registerLocustSwarmWarningChannel();
         registerVfxEventChannel();
         registerAudioPlayChannel();
@@ -73,6 +85,10 @@ public class BongNetworkHandler {
             (handler, client) -> client.execute(() -> {
                 RealmCollapseHudStateStore.clearOnDisconnect();
                 NpcMetadataStore.clearAll();
+                NpcMoodStore.clearAll();
+                NpcDialogueBubbleRenderer.clearForTests();
+                TsyBossHealthStore.resetForTests();
+                TsyDeathVfxStore.resetForTests();
                 ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
                 com.bong.client.audio.MusicStateMachine.instance().clear();
             })
@@ -95,6 +111,70 @@ public class BongNetworkHandler {
                 boolean handled = NpcMetadataHandler.handle(jsonPayload, readableBytes);
                 if (!handled) {
                     BongClient.LOGGER.warn("Ignoring bong:npc_metadata payload");
+                }
+            });
+        });
+    }
+
+    private static void registerNpcBubbleChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(NpcBubbleHandler.CHANNEL_NAMESPACE, NpcBubbleHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                boolean handled = NpcBubbleHandler.handle(jsonPayload, readableBytes, Util.getMeasuringTimeMs());
+                if (!handled) {
+                    BongClient.LOGGER.warn("Ignoring bong:npc_bubble payload");
+                }
+            });
+        });
+    }
+
+    private static void registerNpcMoodChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(NpcMoodHandler.CHANNEL_NAMESPACE, NpcMoodHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                boolean handled = NpcMoodHandler.handle(jsonPayload, readableBytes, Util.getMeasuringTimeMs());
+                if (!handled) {
+                    BongClient.LOGGER.warn("Ignoring bong:npc_mood payload");
+                }
+            });
+        });
+    }
+
+    private static void registerTsyBossHealthChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(TsyBossHealthHandler.CHANNEL_NAMESPACE, TsyBossHealthHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                boolean handled = TsyBossHealthHandler.handle(jsonPayload, readableBytes, Util.getMeasuringTimeMs());
+                if (!handled) {
+                    BongClient.LOGGER.warn("Ignoring bong:tsy_boss_health payload");
+                }
+            });
+        });
+    }
+
+    private static void registerTsyDeathVfxChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(TsyDeathVfxHandler.CHANNEL_NAMESPACE, TsyDeathVfxHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                boolean handled = TsyDeathVfxHandler.handle(jsonPayload, readableBytes, Util.getMeasuringTimeMs());
+                if (!handled) {
+                    BongClient.LOGGER.warn("Ignoring bong:tsy_death_vfx payload");
                 }
             });
         });

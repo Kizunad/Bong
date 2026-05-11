@@ -31,6 +31,9 @@ import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.npc.NpcNametagRenderer;
+import com.bong.client.npc.NpcDialogueBubbleRenderer;
+import com.bong.client.npc.NpcInteractionLogControls;
+import com.bong.client.npc.NpcMoodIcon;
 import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
 import com.bong.client.social.SparringInviteScreenBootstrap;
@@ -60,9 +63,12 @@ public class BongClient implements ClientModInitializer {
 
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
+        NpcDialogueBubbleRenderer.register();
+        NpcMoodIcon.register();
         HudRenderCallback.EVENT.register(BongHud::render);
         ScreenTransitionController.register();
         InteractionKeybindings.register();
+        NpcInteractionLogControls.register();
         HudImmersionControls.register();
         MovementKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();

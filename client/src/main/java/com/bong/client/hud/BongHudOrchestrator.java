@@ -5,6 +5,8 @@ import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
+import com.bong.client.npc.NpcInteractionLogHudPlanner;
+import com.bong.client.npc.NpcInteractionLogStore;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.tsy.ExtractState;
@@ -344,14 +346,33 @@ public final class BongHudOrchestrator {
             commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-            commands.addAll(TargetInfoHudPlanner.buildCommands(
-                TargetInfoStateStore.snapshot(),
-                nowMillis,
-                widthMeasurer,
-                screenWidth,
-                screenHeight
-            ));
-            commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
+        commands.addAll(TargetInfoHudPlanner.buildCommands(
+            TargetInfoStateStore.snapshot(),
+            nowMillis,
+            widthMeasurer,
+            screenWidth,
+            screenHeight
+        ));
+        commands.addAll(com.bong.client.tsy.TsyBossHealthBar.buildCommands(
+            com.bong.client.tsy.TsyBossHealthStore.snapshot(),
+            nowMillis,
+            widthMeasurer,
+            screenWidth
+        ));
+        commands.addAll(com.bong.client.tsy.TsyCorpseDeathVfx.buildCommands(
+            com.bong.client.tsy.TsyDeathVfxStore.snapshot(),
+            nowMillis,
+            screenWidth,
+            screenHeight
+        ));
+        commands.addAll(NpcInteractionLogHudPlanner.buildCommands(
+            NpcInteractionLogStore.snapshot(),
+            NpcInteractionLogStore.visible(),
+            widthMeasurer,
+            screenWidth,
+            screenHeight
+        ));
+        commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
             ));
