@@ -13683,6 +13683,219 @@
       "required": [
         "v",
         "type",
+        "treasures"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spirit_treasure_state",
+          "type": "string"
+        },
+        "treasures": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "template_id",
+              "display_name",
+              "instance_id",
+              "equipped",
+              "passive_active",
+              "affinity",
+              "sleeping",
+              "source_sect",
+              "icon_texture",
+              "passive_effects"
+            ],
+            "properties": {
+              "template_id": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "instance_id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "equipped": {
+                "type": "boolean"
+              },
+              "passive_active": {
+                "type": "boolean"
+              },
+              "affinity": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "sleeping": {
+                "type": "boolean"
+              },
+              "source_sect": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "icon_texture": {
+                "minLength": 1,
+                "maxLength": 160,
+                "type": "string"
+              },
+              "passive_effects": {
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value",
+                    "description"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "minLength": 1,
+                      "maxLength": 96,
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "description": {
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "dialogue",
+        "display_name",
+        "zone"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spirit_treasure_dialogue",
+          "type": "string"
+        },
+        "dialogue": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "request_id",
+            "character_id",
+            "treasure_id",
+            "text",
+            "tone",
+            "affinity_delta"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "request_id": {
+              "minLength": 1,
+              "maxLength": 160,
+              "type": "string"
+            },
+            "character_id": {
+              "minLength": 1,
+              "maxLength": 160,
+              "type": "string"
+            },
+            "treasure_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "text": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tone": {
+              "anyOf": [
+                {
+                  "const": "cold",
+                  "type": "string"
+                },
+                {
+                  "const": "curious",
+                  "type": "string"
+                },
+                {
+                  "const": "warning",
+                  "type": "string"
+                },
+                {
+                  "const": "amused",
+                  "type": "string"
+                },
+                {
+                  "const": "silent",
+                  "type": "string"
+                }
+              ]
+            },
+            "affinity_delta": {
+              "minimum": -1,
+              "maximum": 1,
+              "type": "number"
+            }
+          }
+        },
+        "display_name": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "in_coffin",
         "lifespan_rate_multiplier"
       ],

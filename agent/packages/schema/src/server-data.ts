@@ -91,6 +91,10 @@ import {
   FullPowerExhaustedStateV1,
   FullPowerReleaseV1,
 } from "./full-power.js";
+import {
+  SpiritTreasureDialoguePayloadV1,
+  SpiritTreasureStatePayloadV1,
+} from "./spirit-treasure.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -237,6 +241,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
   Type.Literal("movement_state"),
+  Type.Literal("spirit_treasure_state"),
+  Type.Literal("spirit_treasure_dialogue"),
   Type.Literal("coffin_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
@@ -1056,6 +1062,30 @@ export const ServerDataMovementStateV1 = Type.Object(
 );
 export type ServerDataMovementStateV1 = Static<typeof ServerDataMovementStateV1>;
 
+export const ServerDataSpiritTreasureStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_treasure_state"),
+    ...SpiritTreasureStatePayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSpiritTreasureStateV1 = Static<
+  typeof ServerDataSpiritTreasureStateV1
+>;
+
+export const ServerDataSpiritTreasureDialogueV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_treasure_dialogue"),
+    ...SpiritTreasureDialoguePayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSpiritTreasureDialogueV1 = Static<
+  typeof ServerDataSpiritTreasureDialogueV1
+>;
+
 export const CoffinStateV1 = Type.Object(
   {
     in_coffin: Type.Boolean(),
@@ -1553,6 +1583,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataHealerNpcAiStateV1,
   ServerDataYidaoHudStateV1,
   ServerDataMovementStateV1,
+  ServerDataSpiritTreasureStateV1,
+  ServerDataSpiritTreasureDialogueV1,
   ServerDataCoffinStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,

@@ -40,6 +40,7 @@ export * from "./server-data.js";
 export * from "./skill-config.js";
 export * from "./social.js";
 export * from "./spirit-eye.js";
+export * from "./spirit-treasure.js";
 export * from "./spiritual-sense.js";
 export * from "./spawn-tutorial.js";
 export * from "./style-balance.js";

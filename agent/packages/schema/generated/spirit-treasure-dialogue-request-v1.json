@@ -1,0 +1,122 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "request_id",
+    "character_id",
+    "treasure_id",
+    "trigger",
+    "context"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "request_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "character_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "treasure_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "trigger": {
+      "anyOf": [
+        {
+          "const": "player",
+          "type": "string"
+        },
+        {
+          "const": "random",
+          "type": "string"
+        },
+        {
+          "const": "event",
+          "type": "string"
+        }
+      ]
+    },
+    "player_message": {
+      "maxLength": 512,
+      "type": "string"
+    },
+    "context": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "realm",
+        "qi_percent",
+        "zone",
+        "recent_events",
+        "affinity",
+        "dialogue_history",
+        "equipped"
+      ],
+      "properties": {
+        "realm": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "qi_percent": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "zone": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "recent_events": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "affinity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "dialogue_history": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "speaker",
+              "content"
+            ],
+            "properties": {
+              "speaker": {
+                "minLength": 1,
+                "maxLength": 32,
+                "type": "string"
+              },
+              "content": {
+                "maxLength": 512,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "equipped": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

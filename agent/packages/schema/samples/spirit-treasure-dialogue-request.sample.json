@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "request_id": "spirit_treasure:7:840",
+  "character_id": "offline:Azure",
+  "treasure_id": "spirit_treasure_jizhaojing",
+  "trigger": "player",
+  "player_message": "镜中可见什么？",
+  "context": {
+    "realm": "Condense",
+    "qi_percent": 0.72,
+    "zone": "spawn",
+    "recent_events": ["刚从清风宗遗迹深层取出寂照镜"],
+    "affinity": 0.5,
+    "dialogue_history": [
+      {
+        "speaker": "player",
+        "content": "镜中可见什么？"
+      }
+    ],
+    "equipped": true
+  }
+}
