@@ -1,0 +1,56 @@
+{
+  "blocks": [
+    {
+      "name": "zhenfa_node",
+      "namespace": "bong",
+      "translation_key": "block.bong.zhenfa_node",
+      "properties": [],
+      "default_state": {
+        "luminance": 3,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": false,
+        "collision_shapes": []
+      },
+      "item_id": null
+    },
+    {
+      "name": "zhenfa_line",
+      "namespace": "bong",
+      "translation_key": "block.bong.zhenfa_line",
+      "properties": [
+        {
+          "name": "axis",
+          "values": ["x", "y", "z"]
+        }
+      ],
+      "default_state": {
+        "luminance": 1,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": false,
+        "collision_shapes": []
+      },
+      "item_id": null
+    },
+    {
+      "name": "zhenfa_eye",
+      "namespace": "bong",
+      "translation_key": "block.bong.zhenfa_eye",
+      "properties": [
+        {
+          "name": "charged",
+          "values": ["false", "true"]
+        }
+      ],
+      "default_state": {
+        "luminance": 5,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": false,
+        "collision_shapes": []
+      },
+      "item_id": null
+    }
+  ]
+}

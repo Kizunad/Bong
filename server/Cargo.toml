@@ -28,3 +28,6 @@ zstd = "0.13"
 
 [dev-dependencies]
 wiremock = "0.6"
+
+[patch."https://github.com/valence-rs/valence"]
+valence_generated = { path = "crates/valence_generated_bong" }
