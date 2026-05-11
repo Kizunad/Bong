@@ -89,7 +89,7 @@ public final class ArtifactState {
         return depthCap <= 0.0 ? 0.0 : clamp01(totalDepth / depthCap);
     }
 
-    public double resonanceHint() {
+    public double resonancePreview() {
         double colorFactor = colorWeightTotal <= 0.0 ? 0.5 : 1.0;
         double crackFactor = maxCrackSeverity >= 0.16 ? 0.8 : 1.0;
         return clamp01(maturity() * colorFactor * crackFactor);
@@ -101,7 +101,7 @@ public final class ArtifactState {
 
     public int indicatorColor() {
         int base = mainColor == null ? 0xFF808080 : mainColor.argb();
-        double brightness = 0.35 + 0.65 * resonanceHint();
+        double brightness = 0.35 + 0.65 * resonancePreview();
         return scaleRgb(base, brightness);
     }
 

@@ -2068,6 +2068,7 @@ mod tests {
             body_part: BodyPart::Chest,
             wound_kind: WoundKind::Blunt,
             source: crate::combat::events::AttackSource::Melee,
+            debug_command: false,
             damage: 3.0,
             contam_delta: 0.75,
             description: "hit".to_string(),

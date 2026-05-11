@@ -104,6 +104,7 @@ pub struct ForgeSession {
     pub inscription_result: Option<InscriptionResult>,
     pub consecration_result: Option<ConsecrationResult>,
     /// 开光阶段累计注入真元。ForgeOutcomeEvent 需要它初始化法器铭纹深度。
+    #[serde(default)]
     pub consecration_qi_injected: f64,
 }
 

@@ -303,10 +303,23 @@ mod tests {
     #[test]
     fn damage_multiplier_with_resonance_scales_around_baseline() {
         let w = sample_weapon(0, 200.0);
+        let base = w.damage_multiplier();
 
-        assert!((w.damage_multiplier_with_resonance(0.0) - 0.7).abs() < 1e-6);
-        assert!((w.damage_multiplier_with_resonance(0.5) - w.damage_multiplier()).abs() < 1e-6);
-        assert!((w.damage_multiplier_with_resonance(1.0) - 1.3).abs() < 1e-6);
+        let at_zero = w.damage_multiplier_with_resonance(0.0);
+        assert!(
+            (at_zero - 0.7).abs() < 1e-6,
+            "resonance=0.0 should yield 0.7x baseline, got {at_zero}"
+        );
+        let at_half = w.damage_multiplier_with_resonance(0.5);
+        assert!(
+            (at_half - base).abs() < 1e-6,
+            "resonance=0.5 should equal base {base}, got {at_half}"
+        );
+        let at_full = w.damage_multiplier_with_resonance(1.0);
+        assert!(
+            (at_full - 1.3).abs() < 1e-6,
+            "resonance=1.0 should yield 1.3x baseline, got {at_full}"
+        );
     }
 
     #[test]

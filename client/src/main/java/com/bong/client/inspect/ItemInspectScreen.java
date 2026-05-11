@@ -106,7 +106,7 @@ public final class ItemInspectScreen extends Screen {
         lines.add("铭纹: " + artifact.grooveCount() + "槽 / 深度 "
             + String.format(Locale.ROOT, "%.1f", artifact.averageDepth()) + " / "
             + String.format(Locale.ROOT, "%.0f", artifact.depthCap()));
-        lines.add("共鸣: " + percent(artifact.resonanceHint()) + " / 器色 " + artifact.mainColorLabel());
+        lines.add("共鸣提示: " + percent(artifact.resonancePreview()) + " / 器色 " + artifact.mainColorLabel());
         lines.add("龟裂: " + artifact.crackLabel() + " / 过载 " + artifact.overloadCracks());
     }
 

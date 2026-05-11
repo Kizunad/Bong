@@ -6,7 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Query, Res, ResMut,
+    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Position, Query, Res,
+    ResMut,
 };
 
 use super::artifact_color::ArtifactColor;
@@ -15,11 +16,14 @@ use crate::combat::events::CombatEvent;
 use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor};
 use crate::inventory::{
-    bump_revision, inventory_item_by_instance_mut, move_equipped_item_to_first_container_slot,
-    set_item_instance_durability, ItemInstance, PlayerInventory,
+    bump_revision, discard_inventory_item_to_dropped_loot, inventory_item_by_instance_mut,
+    move_equipped_item_to_first_container_slot, set_item_instance_durability, DroppedLootRegistry,
+    ItemInstance, PlayerInventory,
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
+use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+use crate::world::dimension::DimensionKind;
 
 pub const ARTIFACT_STATE_PREFIX: &str = "artifact_state:";
 const MICRO_CRACK_LIMIT: f64 = 0.15;
@@ -524,10 +528,10 @@ pub fn artifact_resonance_for_item(
     user_color: Option<&QiColor>,
 ) -> Option<f64> {
     let state = artifact_state_from_item(item)?;
-    let user_color = user_color.cloned().unwrap_or_default();
+    let user_color = user_color?;
     Some(compute_resonance(
         &state.color,
-        &user_color,
+        user_color,
         state.meridian.total_depth,
         state.meridian.depth_cap,
     ))
@@ -548,14 +552,17 @@ pub fn apply_evolution_qi_cost(cultivation: &mut Cultivation) -> f64 {
     cost
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system signature; each resource owns a separate side effect.
 pub fn artifact_meridian_deepen_on_use(
     mut events: EventReader<CombatEvent>,
+    positions: Query<&Position>,
     mut holders: Query<(
         &mut Weapon,
         &mut PlayerInventory,
         Option<&QiColor>,
         Option<&mut Cultivation>,
     )>,
+    mut dropped_loot_registry: Option<ResMut<DroppedLootRegistry>>,
     mut commands: Commands,
     mut depth_events: EventWriter<ArtifactMeridianDepthChanged>,
     mut crack_events: EventWriter<ArtifactMeridianCracked>,
@@ -563,6 +570,9 @@ pub fn artifact_meridian_deepen_on_use(
     mut weapon_broken_events: EventWriter<WeaponBroken>,
 ) {
     for event in events.read() {
+        if event.debug_command {
+            continue;
+        }
         let Ok((mut weapon, mut inventory, user_color, cultivation)) =
             holders.get_mut(event.attacker)
         else {
@@ -629,15 +639,75 @@ pub fn artifact_meridian_deepen_on_use(
         write_artifact_state_to_item(item, &state);
 
         if should_broken {
-            weapon.durability = 0.0;
-            let _ = set_item_instance_durability(&mut inventory, weapon_instance_id, 0.0);
-            let _ = move_equipped_item_to_first_container_slot(&mut inventory, weapon_instance_id);
-            commands.entity(event.attacker).remove::<Weapon>();
-            weapon_broken_events.send(WeaponBroken {
-                entity: event.attacker,
-                instance_id: weapon_instance_id,
-                template_id: weapon_template_id,
+            let broken_slot = inventory.equipped.iter().find_map(|(slot, item)| {
+                (item.instance_id == weapon_instance_id).then_some(match slot.as_str() {
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
+                    crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
+                    crate::inventory::EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
+                    _ => EquipSlotV1::MainHand,
+                })
             });
+            weapon.durability = 0.0;
+            if let Err(error) =
+                set_item_instance_durability(&mut inventory, weapon_instance_id, 0.0)
+            {
+                tracing::warn!(
+                    "[bong][forge] failed to persist broken durability for instance {}: {}",
+                    weapon_instance_id,
+                    error
+                );
+            }
+            let moved = match move_equipped_item_to_first_container_slot(
+                &mut inventory,
+                weapon_instance_id,
+            ) {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][forge] failed to move broken weapon instance {} into container: {}",
+                        weapon_instance_id,
+                        error
+                    );
+                    if let Some(slot) = broken_slot {
+                        if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
+                            if let Ok(position) = positions.get(event.attacker) {
+                                match discard_inventory_item_to_dropped_loot(
+                                    &mut inventory,
+                                    dropped_loot_registry,
+                                    [position.0.x, position.0.y, position.0.z],
+                                    DimensionKind::Overworld,
+                                    weapon_instance_id,
+                                    &InventoryLocationV1::Equip { slot },
+                                ) {
+                                    Ok(_) => true,
+                                    Err(drop_error) => {
+                                        tracing::warn!(
+                                            "[bong][forge] failed to drop broken weapon instance {} after container fallback failed: {}",
+                                            weapon_instance_id,
+                                            drop_error
+                                        );
+                                        false
+                                    }
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+            };
+            if moved {
+                commands.entity(event.attacker).remove::<Weapon>();
+                weapon_broken_events.send(WeaponBroken {
+                    entity: event.attacker,
+                    instance_id: weapon_instance_id,
+                    template_id: weapon_template_id,
+                });
+            }
         }
         bump_revision(&mut inventory);
     }
@@ -656,7 +726,18 @@ pub fn artifact_color_evolve_tick(
             let Some(mut state) = artifact_state_from_item(item) else {
                 return false;
             };
+            let old_weights = state.color.practice_log.weights.clone();
+            let old_main = state.color.main;
+            let old_secondary = state.color.secondary;
+            let old_chaotic = state.color.is_chaotic;
             state.color.decay_tick();
+            let color_changed = state.color.practice_log.weights != old_weights
+                || state.color.main != old_main
+                || state.color.secondary != old_secondary
+                || state.color.is_chaotic != old_chaotic;
+            if !color_changed {
+                return false;
+            }
             write_artifact_state_to_item(item, &state);
             true
         });
@@ -683,12 +764,16 @@ pub fn artifact_meridian_maintenance_tick(
             let Some(mut state) = artifact_state_from_item(item) else {
                 return false;
             };
+            let old_meridian = state.meridian.clone();
             state.meridian.self_heal_micro_cracks(clock.tick);
             let had_maintenance = state
                 .meridian
                 .apply_maintenance(&mut available_qi, clock.tick);
             if !had_maintenance {
                 state.meridian.decay_without_maintenance(clock.tick);
+            }
+            if state.meridian == old_meridian {
+                return false;
             }
             write_artifact_state_to_item(item, &state);
             true
@@ -786,6 +871,31 @@ mod tests {
 
     fn meridian(spec: MaterialSpec) -> ArtifactMeridian {
         ArtifactMeridian::new_from_spec(spec, 100.0, 0.8, 0, 0)
+    }
+
+    fn sample_weapon_item(side_effects: Vec<String>) -> ItemInstance {
+        ItemInstance {
+            instance_id: 7,
+            template_id: "bone_sword".to_string(),
+            display_name: "骨剑".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 0.9,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: Some(0.9),
+            forge_color: Some(ColorKind::Solid),
+            forge_side_effects: side_effects,
+            forge_achieved_tier: Some(1),
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
     }
 
     #[test]
@@ -1035,28 +1145,7 @@ mod tests {
 
     #[test]
     fn state_tag_roundtrip_preserves_artifact_state() {
-        let mut item = ItemInstance {
-            instance_id: 7,
-            template_id: "bone_sword".to_string(),
-            display_name: "骨剑".to_string(),
-            grid_w: 1,
-            grid_h: 2,
-            weight: 0.9,
-            rarity: ItemRarity::Common,
-            description: String::new(),
-            stack_count: 1,
-            spirit_quality: 1.0,
-            durability: 1.0,
-            freshness: None,
-            mineral_id: None,
-            charges: None,
-            forge_quality: Some(0.9),
-            forge_color: Some(ColorKind::Solid),
-            forge_side_effects: vec!["brittle_edge".to_string()],
-            forge_achieved_tier: Some(1),
-            alchemy: None,
-            lingering_owner_qi: None,
-        };
+        let mut item = sample_weapon_item(vec!["brittle_edge".to_string()]);
         let state =
             artifact_state_for_outcome("bone_sword", 1, 0.9, Some(ColorKind::Solid), 100.0, 0);
         write_artifact_state_to_item(&mut item, &state);
@@ -1070,14 +1159,43 @@ mod tests {
     }
 
     #[test]
-    fn saturated_matrix_covers_at_least_60_cases() {
-        let material_cases = 7 * 3;
-        let color_cases = 10 * 2;
-        let resonance_cases = 3 * 3;
-        let crack_cases = 4 * 3;
-        let evolution_cases = 5;
+    fn invalid_state_tag_is_ignored() {
+        let item = sample_weapon_item(vec![format!("{ARTIFACT_STATE_PREFIX}not-json")]);
+
         assert!(
-            material_cases + color_cases + resonance_cases + crack_cases + evolution_cases >= 60
+            artifact_state_from_item(&item).is_none(),
+            "malformed artifact_state tag should not deserialize into an artifact"
+        );
+    }
+
+    #[test]
+    fn artifact_resonance_requires_holder_color() {
+        let mut item = sample_weapon_item(Vec::new());
+        let state =
+            artifact_state_for_outcome("bone_sword", 1, 0.9, Some(ColorKind::Solid), 100.0, 0);
+        write_artifact_state_to_item(&mut item, &state);
+
+        assert_eq!(
+            artifact_resonance_for_item(&item, None),
+            None,
+            "artifact resonance should not apply when holder QiColor is unavailable"
+        );
+        let solid_holder = QiColor {
+            main: ColorKind::Solid,
+            ..Default::default()
+        };
+        let heavy_holder = QiColor {
+            main: ColorKind::Heavy,
+            ..Default::default()
+        };
+        let matching = artifact_resonance_for_item(&item, Some(&solid_holder))
+            .expect("matching holder color should compute resonance");
+        let mismatched = artifact_resonance_for_item(&item, Some(&heavy_holder))
+            .expect("mismatched holder color still computes a lower resonance");
+
+        assert!(
+            matching > mismatched,
+            "matching holder color should resonate more than mismatched color: matching={matching}, mismatched={mismatched}"
         );
     }
 }

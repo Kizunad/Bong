@@ -947,6 +947,7 @@ pub fn resolve_attack_intents(
             body_part: hit_probe.body_part,
             wound_kind: intent.wound_kind,
             source: intent.source,
+            debug_command: intent.debug_command.is_some(),
             damage: wound_severity,
             contam_delta: emitted_contam_delta,
             description,

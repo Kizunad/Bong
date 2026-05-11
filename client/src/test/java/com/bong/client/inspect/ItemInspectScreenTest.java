@@ -71,7 +71,7 @@ class ItemInspectScreenTest {
     }
 
     @Test
-    void artifactPageRendersGroovesAndResonance() {
+    void artifactPageRendersGroovesAndResonancePreview() {
         InventoryItem item = InventoryItem.createFullWithForgeMeta(
             42L,
             "bone_sword",
@@ -95,10 +95,22 @@ class ItemInspectScreenTest {
 
         List<String> lines = ItemInspectScreen.detailLines(item);
 
-        assertTrue(lines.stream().anyMatch(line -> line.contains("当前附着: 无")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("铭纹: 1槽")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("共鸣: 27%")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("龟裂: 裂纹")));
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("当前附着: 无")),
+            "detailLines should contain '当前附着: 无', actual lines: " + lines
+        );
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("铭纹: 1槽")),
+            "detailLines should contain '铭纹: 1槽', actual lines: " + lines
+        );
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("共鸣提示: 27%")),
+            "detailLines should contain '共鸣提示: 27%', actual lines: " + lines
+        );
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("龟裂: 裂纹")),
+            "detailLines should contain '龟裂: 裂纹', actual lines: " + lines
+        );
     }
 
     @Test
