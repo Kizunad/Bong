@@ -443,13 +443,13 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4298 passed
+  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4311 passed
   - `agent/ npm run build` ✅
-  - `agent/packages/schema/ npm run check` ✅ generated schema artifacts are fresh（352 files）
-  - `agent/packages/schema/ npm test` ✅ 18 files / 366 tests passed
-  - `agent/packages/tiandao/ npm test` ✅ 51 files / 352 tests passed
-  - `scripts/e2e-redis.sh` ✅ 15 passed, 0 failed（`.sisyphus/evidence/task-13-e2e-redis-run-20260511-210638-550781-default`）
-  - `scripts/smoke-test-e2e.sh` ✅ 8 passed, 0 failed（`.sisyphus/evidence/task-13-smoke-test-e2e-run-20260511-210952-554406-default`）
+  - `agent/packages/schema/ npm run check` ✅ generated schema artifacts are fresh（357 files）
+  - `agent/packages/schema/ npm test` ✅ 19 files / 368 tests passed
+  - `agent/packages/tiandao/ npm test` ✅ 52 files / 354 tests passed
+  - `scripts/e2e-redis.sh` ✅ 15 passed, 0 failed（`.sisyphus/evidence/task-13-e2e-redis-run-20260511-213613-618595-default`）
+  - `scripts/smoke-test-e2e.sh` ✅ 8 passed, 0 failed（`.sisyphus/evidence/task-13-smoke-test-e2e-run-20260511-213853-625658-default`）
 - **跨仓库核验**：
   - server：`NpcDailySchedule`、`DayPhase`、`GoToPoiAction`、`NpcHomeBase`、`ReturnHomeAction`、`StallAction`、`PoiNoviceKind::HerbPatch`
   - agent/schema：`PoiNoviceKindV1` 含 `herb_patch` / `qi_spring` / `trade_spot` / `shelter_spot` / `water_source`
