@@ -1,0 +1,15 @@
+{
+  "id": "inventory_close",
+  "layers": [
+    {
+      "sound": "minecraft:block.chest.close",
+      "volume": 0.15,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 30,
+  "attenuation": "SELF",
+  "category": "MASTER",
+  "bus": "UI"
+}

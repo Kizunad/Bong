@@ -1,6 +1,7 @@
 package com.bong.client.environment;
 
 import com.bong.client.audio.AudioAttenuation;
+import com.bong.client.audio.AudioBus;
 import com.bong.client.audio.AudioCategory;
 import com.bong.client.audio.AudioLayer;
 import com.bong.client.audio.AudioLoopConfig;
@@ -108,7 +109,8 @@ public final class EnvironmentAudioController {
             Optional.of(new AudioLoopConfig(60, flag)),
             priorityFor(recipeId),
             AudioAttenuation.ZONE_BROADCAST,
-            AudioCategory.AMBIENT
+            AudioCategory.AMBIENT,
+            AudioBus.ENVIRONMENT
         );
     }
 

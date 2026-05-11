@@ -1,0 +1,15 @@
+{
+  "id": "zhenfa_hit_heavy",
+  "layers": [
+    {
+      "sound": "minecraft:block.amethyst_block.resonate",
+      "volume": 0.26,
+      "pitch": 0.6,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 66,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "zhenmai_hit_heavy",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.use",
+      "volume": 0.28,
+      "pitch": 1.3,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.bone_block.break",
+      "volume": 0.18,
+      "pitch": 1.0,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 66,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

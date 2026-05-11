@@ -1,0 +1,15 @@
+{
+  "id": "baomai_cast",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.activate",
+      "volume": 0.3,
+      "pitch": 0.3,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

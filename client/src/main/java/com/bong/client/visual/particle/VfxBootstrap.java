@@ -25,6 +25,11 @@ public final class VfxBootstrap {
         registry.register(CalamityVfxPlayer.HEAVENLY_FIRE,       calamity);
         registry.register(CalamityVfxPlayer.PRESSURE_INVERT,     calamity);
         registry.register(CalamityVfxPlayer.ALL_WITHER,          calamity);
+        OmenParticlePlayer omen = new OmenParticlePlayer();
+        registry.register(OmenParticlePlayer.PSEUDO_VEIN,        omen);
+        registry.register(OmenParticlePlayer.BEAST_TIDE,         omen);
+        registry.register(OmenParticlePlayer.REALM_COLLAPSE,     omen);
+        registry.register(OmenParticlePlayer.KARMA_BACKLASH,     omen);
         JueBiTribulationPlayer jueBi = new JueBiTribulationPlayer();
         registry.register(JueBiTribulationPlayer.BOUNDARY,        jueBi);
         registry.register(JueBiTribulationPlayer.FISSURE,         jueBi);
@@ -60,7 +65,14 @@ public final class VfxBootstrap {
         registry.register(TsySearchFeedbackPlayer.DUST,           tsySearch);
         registry.register(TsySearchFeedbackPlayer.LOOT_POP,       tsySearch);
         registry.register(BotanyAuraPlayer.EVENT_ID,             new BotanyAuraPlayer());
-        registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     new BotanyHarvestBurstPlayer());
+        // BotanyHarvestBurstPlayer is stateless, so one instance intentionally serves all gathering burst routes.
+        BotanyHarvestBurstPlayer gatheringBurst = new BotanyHarvestBurstPlayer();
+        registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     gatheringBurst);
+        registry.register(BotanyHarvestBurstPlayer.GATHER_HERB_TICK, gatheringBurst);
+        registry.register(BotanyHarvestBurstPlayer.GATHER_MINE_TICK, gatheringBurst);
+        registry.register(BotanyHarvestBurstPlayer.GATHER_CHOP_TICK, gatheringBurst);
+        registry.register(BotanyHarvestBurstPlayer.GATHER_COMPLETE, gatheringBurst);
+        registry.register(BotanyHarvestBurstPlayer.GATHER_PERFECT, gatheringBurst);
         registry.register(BotanyPlantStagePlayer.ROUTE_ID,       new BotanyPlantStagePlayer());
         LingtianPlotRunePlayer lingtianPlotRunes = new LingtianPlotRunePlayer();
         registry.register(LingtianPlotRunePlayer.TILL,           lingtianPlotRunes);

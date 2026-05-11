@@ -1,0 +1,21 @@
+{
+  "id": "dugu_signature",
+  "layers": [
+    {
+      "sound": "minecraft:entity.phantom.bite",
+      "volume": 0.2,
+      "pitch": 2.0,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.amethyst_cluster.hit",
+      "volume": 0.12,
+      "pitch": 2.0,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

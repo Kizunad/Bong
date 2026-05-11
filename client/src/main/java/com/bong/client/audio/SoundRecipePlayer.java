@@ -1,8 +1,11 @@
 package com.bong.client.audio;
 
+import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.environment.EnvironmentAudioLoopState;
+import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.lingtian.state.LingtianSessionStore;
+import com.bong.client.BongClient;
 import com.bong.client.network.AudioEventPayload;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -20,6 +23,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     private static final int MAX_ONE_SHOTS_PER_TICK = 3;
     private static final int PREEMPT_PRIORITY = 85;
     private static final int DUCK_TRANSITION_TICKS = 40;
+    private static final int UI_RESTORE_ON_DAMAGE_TICKS = 100;
     private static final float COMBAT_AMBIENT_VOLUME = 0.3f;
     private static final float AUDIO_PITCH_MIN = 0.1f;
     private static final float AUDIO_PITCH_MAX = 2.0f;
@@ -29,14 +33,29 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     private final SoundSink sink;
     private final Predicate<String> flagProvider;
+    private final AudioBusMixer mixer;
+    private final AudioTelemetry telemetry;
     private final Map<Long, ActiveLoop> loops = new LinkedHashMap<>();
     private final List<AudioEventPayload.PlaySoundRecipe> pending = new ArrayList<>();
     private float ambientVolumeFactor = 1.0f;
+    private boolean lastCombatActive;
+    private float lastCombatHpPercent = Float.NaN;
     private long tick;
 
     public SoundRecipePlayer(SoundSink sink, Predicate<String> flagProvider) {
+        this(sink, flagProvider, new AudioBusMixer(), new AudioTelemetry());
+    }
+
+    public SoundRecipePlayer(
+        SoundSink sink,
+        Predicate<String> flagProvider,
+        AudioBusMixer mixer,
+        AudioTelemetry telemetry
+    ) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.flagProvider = Objects.requireNonNull(flagProvider, "flagProvider");
+        this.mixer = Objects.requireNonNull(mixer, "mixer");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     public static SoundRecipePlayer instance() {
@@ -75,7 +94,11 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public void tick() {
         tick++;
-        updateAmbientDucking();
+        CombatHudState combat = CombatHudStateStore.snapshot();
+        mixer.setImmersiveMode(HudImmersionMode.immersiveActive());
+        restoreUiOnCombatEdge(combat);
+        mixer.tick();
+        updateAmbientDucking(combat);
         Iterator<Map.Entry<Long, ActiveLoop>> iterator = loops.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<Long, ActiveLoop> entry = iterator.next();
@@ -97,6 +120,18 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public int activeLoopCountForTests() {
         return loops.size();
+    }
+
+    public void setMusicState(MusicStateMachine.State state) {
+        mixer.setMusicState(state);
+    }
+
+    public AudioBusMixer mixerForTests() {
+        return mixer;
+    }
+
+    public AudioTelemetry telemetryForTests() {
+        return telemetry;
     }
 
     private void enqueue(AudioEventPayload.PlaySoundRecipe payload) {
@@ -155,6 +190,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             if (payload.recipe().category() == AudioCategory.AMBIENT) {
                 volume *= ambientVolumeFactor;
             }
+            volume *= mixer.effectiveVolume(payload.recipe().bus());
             float pitch = (float) clamp(layer.pitch() * Math.pow(2.0, payload.pitchShift()), AUDIO_PITCH_MIN, AUDIO_PITCH_MAX);
             anyPlayed |= sink.play(new AudioScheduledSound(
                 payload.instanceId(),
@@ -166,6 +202,10 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
                 pitch,
                 layer.delayTicks()
             ));
+        }
+        int count = telemetry.record(payload.recipeId(), System.currentTimeMillis());
+        if (count == 101 && telemetry.isOverThreshold(payload.recipeId(), System.currentTimeMillis())) {
+            BongClient.LOGGER.warn("[bong][audio] recipe {} played more than 100 times in 30 min", payload.recipeId());
         }
         return anyPlayed;
     }
@@ -185,8 +225,22 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         };
     }
 
-    private void updateAmbientDucking() {
-        float target = CombatHudStateStore.snapshot().active() ? COMBAT_AMBIENT_VOLUME : 1.0f;
+    private void restoreUiOnCombatEdge(CombatHudState combat) {
+        boolean active = combat.active();
+        float hpPercent = combat.hpPercent();
+        boolean hpDropped = active
+            && lastCombatActive
+            && Float.isFinite(lastCombatHpPercent)
+            && hpPercent < lastCombatHpPercent;
+        if (active && (!lastCombatActive || hpDropped)) {
+            mixer.restoreUiForTicks(UI_RESTORE_ON_DAMAGE_TICKS);
+        }
+        lastCombatActive = active;
+        lastCombatHpPercent = hpPercent;
+    }
+
+    private void updateAmbientDucking(CombatHudState combat) {
+        float target = combat.active() ? COMBAT_AMBIENT_VOLUME : 1.0f;
         float step = (1.0f - COMBAT_AMBIENT_VOLUME) / DUCK_TRANSITION_TICKS;
         if (ambientVolumeFactor < target) {
             ambientVolumeFactor = Math.min(target, ambientVolumeFactor + step);

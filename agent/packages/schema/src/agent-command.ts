@@ -37,7 +37,8 @@ export const Command = Type.Object(
         "despawn_npc: {}; " +
         "faction_event: {kind, faction_id, subject_id?, mission_id?, loyalty_delta?}; " +
         "modify_zone: {spirit_qi_delta, danger_level_delta?}; " +
-        "npc_behavior: {flee_threshold}",
+        "npc_behavior: {flee_threshold}; " +
+        "heartbeat_override: {action, event_type, target_zone?, duration_ticks?, intensity_override?}",
     }),
   },
   { additionalProperties: false },
@@ -81,6 +82,37 @@ export function validateAgentCommandV1Contract(data: unknown): ValidationResult 
           const fleeThreshold = command?.params?.flee_threshold;
           if (typeof fleeThreshold !== "number") {
             semanticErrors.push(`/commands/${index}/params/flee_threshold: Expected number`);
+          }
+        }
+        if (command?.type === "heartbeat_override") {
+          const action = command?.params?.action;
+          const eventType = command?.params?.event_type;
+          const targetZone = command?.params?.target_zone;
+          const durationTicks = command?.params?.duration_ticks;
+          const intensityOverride = command?.params?.intensity_override;
+          if (!isAllowedLiteral(["suppress", "accelerate", "force"], action)) {
+            semanticErrors.push(`/commands/${index}/params/action: Expected suppress|accelerate|force`);
+          }
+          if (!isAllowedLiteral(["pseudo_vein", "beast_tide", "realm_collapse", "karma_backlash"], eventType)) {
+            semanticErrors.push(`/commands/${index}/params/event_type: Expected supported heartbeat event type`);
+          }
+          if (
+            targetZone !== undefined
+            && (typeof targetZone !== "string" || targetZone.trim().length === 0)
+          ) {
+            semanticErrors.push(`/commands/${index}/params/target_zone: Expected non-empty string`);
+          }
+          if (
+            durationTicks !== undefined
+            && (typeof durationTicks !== "number" || !Number.isInteger(durationTicks) || durationTicks < 1)
+          ) {
+            semanticErrors.push(`/commands/${index}/params/duration_ticks: Expected positive integer`);
+          }
+          if (
+            intensityOverride !== undefined
+            && (typeof intensityOverride !== "number" || intensityOverride < 0 || intensityOverride > 1)
+          ) {
+            semanticErrors.push(`/commands/${index}/params/intensity_override: Expected number in [0, 1]`);
           }
         }
         continue;

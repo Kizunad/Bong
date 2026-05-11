@@ -1,0 +1,15 @@
+{
+  "id": "charge_start",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.activate",
+      "volume": 0.2,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 58,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

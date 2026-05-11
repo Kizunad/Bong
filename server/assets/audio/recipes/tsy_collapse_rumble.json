@@ -6,5 +6,6 @@
   ],
   "priority": 80,
   "attenuation": "zone_broadcast",
-  "category": "AMBIENT"
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
 }

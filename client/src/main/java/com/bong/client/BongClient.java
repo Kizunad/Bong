@@ -4,7 +4,9 @@ import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
+import com.bong.client.audio.NpcFootstepAudioController;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.block.BongBlocks;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
@@ -31,6 +33,9 @@ import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.npc.NpcNametagRenderer;
+import com.bong.client.npc.NpcDialogueBubbleRenderer;
+import com.bong.client.npc.NpcInteractionLogControls;
+import com.bong.client.npc.NpcMoodIcon;
 import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
 import com.bong.client.social.SparringInviteScreenBootstrap;
@@ -58,11 +63,15 @@ public class BongClient implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("Initializing Bong Client...");
 
+        BongBlocks.register();
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
+        NpcDialogueBubbleRenderer.register();
+        NpcMoodIcon.register();
         HudRenderCallback.EVENT.register(BongHud::render);
         ScreenTransitionController.register();
         InteractionKeybindings.register();
+        NpcInteractionLogControls.register();
         HudImmersionControls.register();
         MovementKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
@@ -90,6 +99,7 @@ public class BongClient implements ClientModInitializer {
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
         SoundRecipePlayer.bootstrap();
+        NpcFootstepAudioController.register();
         ZoneAtmosphereRenderer.bootstrap();
         EnvironmentEffectController.bootstrap();
         BongAnimCommand.register();

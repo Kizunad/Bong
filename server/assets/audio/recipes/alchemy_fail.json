@@ -1,0 +1,21 @@
+{
+  "id": "alchemy_fail",
+  "layers": [
+    {
+      "sound": "minecraft:block.fire.extinguish",
+      "volume": 0.5,
+      "pitch": 0.3,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.glass.break",
+      "volume": 0.35,
+      "pitch": 1.0,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 74,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

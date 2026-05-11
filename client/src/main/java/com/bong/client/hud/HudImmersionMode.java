@@ -38,6 +38,7 @@ public final class HudImmersionMode {
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.MINI_BODY,
         HudRenderLayer.PROCESSING_HUD,
+        HudRenderLayer.GATHERING,
         HudRenderLayer.MOVEMENT_HUD,
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.MERIDIAN_OPEN,
@@ -58,6 +59,7 @@ public final class HudImmersionMode {
         HudRenderLayer.QUICK_BAR,
         HudRenderLayer.BOTANY,
         HudRenderLayer.PROCESSING_HUD,
+        HudRenderLayer.GATHERING,
         HudRenderLayer.MOVEMENT_HUD,
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.TOAST,
@@ -144,6 +146,10 @@ public final class HudImmersionMode {
 
     public static boolean manualImmersive() {
         return manualImmersive;
+    }
+
+    public static boolean immersiveActive() {
+        return immersiveActive;
     }
 
     static void setAutoMeditationImmersiveForTests(boolean enabled) {

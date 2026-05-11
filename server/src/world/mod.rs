@@ -1,4 +1,5 @@
 pub mod block_break;
+pub mod bong_blocks;
 pub mod calamity;
 pub mod dimension;
 pub mod dimension_transfer;
@@ -6,6 +7,7 @@ pub mod entity_model;
 pub mod environment;
 pub mod events;
 pub mod extract_system;
+pub mod heartbeat;
 pub mod karma;
 pub mod loot_pool;
 pub mod mob_spawn;
@@ -120,6 +122,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(karma::KarmaWeightStore::default());
     app.insert_resource(karma::QiDensityHeatmap::default());
     events::register(app);
+    heartbeat::register(app);
     spawn_tutorial::register(app);
     terrain::register(app);
     // plan-tsy-zone-v1 §2.3 — drain tick 接到 combat::Physics set 内：

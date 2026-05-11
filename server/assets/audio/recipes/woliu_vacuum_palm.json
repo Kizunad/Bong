@@ -6,5 +6,6 @@
   ],
   "priority": 66,
   "attenuation": "world_3d",
-  "category": "AMBIENT"
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
 }

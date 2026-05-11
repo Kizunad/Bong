@@ -37,8 +37,10 @@ pub mod gameplay_vfx;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod npc_bubble;
 pub mod npc_event_bridge;
 pub mod npc_metadata;
+pub mod npc_mood;
 pub mod poi_novice_bridge;
 pub mod poison_trait_emit;
 pub mod qi_color_observed_emit;
@@ -59,6 +61,7 @@ pub mod tribulation_heart_demon_offer_emit;
 pub mod tribulation_state_emit;
 pub mod tsy_container_search_emit;
 pub mod tsy_event_bridge;
+pub mod tsy_polish;
 pub mod tuike_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
@@ -542,6 +545,7 @@ pub fn register(app: &mut App) {
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
+    app.add_systems(Update, audio_trigger::tick_audio_dedup_clock);
     app.add_systems(
         Update,
         (
@@ -564,7 +568,20 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_player_state_audio_triggers,
             npc_metadata::emit_npc_metadata_payloads,
         )
+            .after(audio_trigger::tick_audio_dedup_clock)
             .before(audio_event_emit::emit_audio_play_payloads),
+    );
+    app.add_systems(
+        Update,
+        (
+            npc_bubble::emit_npc_reaction_bubbles
+                .after(crate::combat::resolve::resolve_attack_intents),
+            npc_bubble::emit_npc_bubble_payloads,
+            npc_mood::emit_npc_mood_payloads,
+            tsy_polish::emit_tsy_boss_health_payloads,
+            tsy_polish::emit_tsy_death_vfx_payloads
+                .after(crate::combat::lifecycle::death_arbiter_tick),
+        ),
     );
     app.add_systems(
         Update,
@@ -650,7 +667,8 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::apply_defense_intents),
             // Run after attack resolve so damage interrupts are observed same tick.
             cast_emit::tick_casts_or_interrupt
-                .after(crate::combat::resolve::resolve_attack_intents),
+                .after(crate::combat::resolve::resolve_attack_intents)
+                .after(audio_trigger::tick_audio_dedup_clock),
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(crate::combat::yidao::complete_yidao_casts),
@@ -736,6 +754,9 @@ pub fn register(app: &mut App) {
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
     app.init_resource::<audio_trigger::AudioTriggerState>();
     app.init_resource::<npc_metadata::NpcMetadataSyncState>();
+    app.init_resource::<npc_bubble::NpcBubbleSyncState>();
+    app.init_resource::<npc_mood::NpcMoodSyncState>();
+    app.init_resource::<tsy_polish::TsyBossHealthSyncState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<qi_color_observed_emit::QiColorInspectRequest>();
@@ -2283,6 +2304,7 @@ fn command_type_to_wire_value(command_type: &CommandType) -> &'static str {
         CommandType::FactionEvent => "faction_event",
         CommandType::ModifyZone => "modify_zone",
         CommandType::NpcBehavior => "npc_behavior",
+        CommandType::HeartbeatOverride => "heartbeat_override",
     }
 }
 

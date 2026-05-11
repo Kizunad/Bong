@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Commands, Despawned, Entity, EventWriter,
-    Query, Res, ResMut, Resource, With, Without,
+    bevy_ecs, BlockPos, Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource,
+    With, Without,
 };
 
 use crate::cultivation::components::Realm;
+use crate::cultivation::tick::CultivationClock;
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::faction::{
     FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
@@ -26,6 +28,7 @@ use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::calamity::{CalamityArsenal, TiandaoPower};
 use crate::world::events::ActiveEventsResource;
+use crate::world::heartbeat::{apply_heartbeat_override_command, WorldHeartbeat};
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::pseudo_vein_runtime::PseudoVeinRuntime;
 use crate::world::season::{query_season, Season};
@@ -99,6 +102,16 @@ struct SpawnEventCommandResources<'a> {
     qi_heatmap: Option<&'a QiDensityHeatmap>,
 }
 
+/// 合并 agent command 执行上下文，避免 Bevy 0.14 顶层 SystemParam 16 上限。
+#[derive(SystemParam)]
+pub struct CommandExecutionParams<'w> {
+    heartbeat: Option<ResMut<'w, WorldHeartbeat>>,
+    karma_weights: Option<Res<'w, KarmaWeightStore>>,
+    qi_heatmap: Option<Res<'w, QiDensityHeatmap>>,
+    clock: Option<Res<'w, CultivationClock>>,
+    terrain_providers: Option<Res<'w, TerrainProviders>>,
+}
+
 impl CommandExecutorResource {
     pub fn enqueue_batch(&mut self, batch: AgentCommandV1) -> BatchEnqueueOutcome {
         let now_secs = current_unix_timestamp_secs();
@@ -163,10 +176,7 @@ pub fn execute_agent_commands(
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut faction_store: Option<ResMut<FactionStore>>,
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
-    karma_weights: Option<valence::prelude::Res<KarmaWeightStore>>,
-    qi_heatmap: Option<valence::prelude::Res<QiDensityHeatmap>>,
-    clock: Option<Res<crate::cultivation::tick::CultivationClock>>,
-    terrain_providers: Option<Res<TerrainProviders>>,
+    mut params: CommandExecutionParams,
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     layers: LayerQuery<'_, '_>,
@@ -174,7 +184,7 @@ pub fn execute_agent_commands(
 ) {
     let mut remaining_budget = MAX_COMMANDS_PER_TICK;
     let mut pending_despawn_targets = HashSet::new();
-    let terrain = terrain_providers.as_deref().map(|p| &p.overworld);
+    let terrain = params.terrain_providers.as_deref().map(|p| &p.overworld);
 
     while remaining_budget > 0 {
         let Some(mut batch) = executor.pending_batches.pop_front() else {
@@ -199,9 +209,10 @@ pub fn execute_agent_commands(
                 &mut skin_pool,
                 &mut faction_store,
                 &mut npc_behavior,
-                karma_weights.as_deref(),
-                qi_heatmap.as_deref(),
-                clock.as_deref().map(|clock| clock.tick),
+                &mut params.heartbeat,
+                params.karma_weights.as_deref(),
+                params.qi_heatmap.as_deref(),
+                params.clock.as_deref().map(|clock| clock.tick),
                 terrain,
                 &mut npc_spawn_notices,
                 &mut faction_notices,
@@ -241,6 +252,7 @@ fn execute_single_command(
     skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
+    heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
     tick: Option<u64>,
@@ -282,6 +294,7 @@ fn execute_single_command(
         CommandType::NpcBehavior => {
             execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
         }
+        CommandType::HeartbeatOverride => execute_heartbeat_override(command, heartbeat, tick),
         CommandType::SpawnEvent => execute_spawn_event(
             command,
             commands,
@@ -314,7 +327,33 @@ fn command_type_label(command_type: &CommandType) -> &'static str {
         CommandType::DespawnNpc => "despawn_npc",
         CommandType::FactionEvent => "faction_event",
         CommandType::NpcBehavior => "npc_behavior",
+        CommandType::HeartbeatOverride => "heartbeat_override",
         CommandType::SpawnEvent => "spawn_event",
+    }
+}
+
+fn execute_heartbeat_override(
+    command: &Command,
+    heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
+    tick: Option<u64>,
+) -> &'static str {
+    let current_tick = tick.unwrap_or_else(|| {
+        heartbeat
+            .as_deref()
+            .map(|heartbeat| {
+                heartbeat
+                    .last_eval_tick
+                    .saturating_add(heartbeat.eval_interval_ticks)
+            })
+            .unwrap_or_default()
+    });
+    match apply_heartbeat_override_command(
+        heartbeat.as_deref_mut().map(|heartbeat| &mut *heartbeat),
+        command,
+        current_tick,
+    ) {
+        Ok(()) => "ok",
+        Err(error) => error.result_label(),
     }
 }
 
@@ -1028,6 +1067,7 @@ mod command_executor_tests {
     use crate::world::events::{
         ActiveEventsResource, EVENT_KARMA_BACKLASH, EVENT_THUNDER_TRIBULATION,
     };
+    use crate::world::heartbeat::{HeartbeatEventKind, HeartbeatOverrideError};
     use crate::world::karma::{
         TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
     };
@@ -1145,6 +1185,68 @@ mod command_executor_tests {
         assert_eq!(
             details.get("effective_probability").and_then(Value::as_f64),
             Some(f64::from(TARGETED_CALAMITY_MAX_PROBABILITY))
+        );
+    }
+
+    #[test]
+    fn heartbeat_override_applies_via_executor_with_clock_fallback() {
+        let mut app = setup_executor_app();
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.last_eval_tick = 10_000;
+        heartbeat.eval_interval_ticks = 200;
+        app.world_mut().insert_resource(heartbeat);
+
+        let mut params = HashMap::new();
+        params.insert("action".to_string(), json!("accelerate"));
+        params.insert("event_type".to_string(), json!("beast_tide"));
+        params.insert("target_zone".to_string(), json!("spawn"));
+        params.insert("duration_ticks".to_string(), json!(600));
+        params.insert("intensity_override".to_string(), json!(0.25));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_heartbeat_override_ok",
+                vec![command(CommandType::HeartbeatOverride, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        let override_ = heartbeat
+            .override_for(HeartbeatEventKind::BeastTide, "spawn")
+            .expect("heartbeat override should be stored");
+        assert_eq!(
+            override_.expires_at_tick, 10_800,
+            "missing CultivationClock should fall back to last_eval_tick + eval_interval_ticks"
+        );
+        assert_eq!(
+            override_.intensity_override,
+            Some(0.25),
+            "accelerate override should preserve configured intensity"
+        );
+    }
+
+    #[test]
+    fn heartbeat_override_returns_missing_heartbeat_without_resource() {
+        let mut heartbeat = None;
+        let command = command(
+            CommandType::HeartbeatOverride,
+            "spawn",
+            HashMap::from([
+                ("action".to_string(), json!("accelerate")),
+                ("event_type".to_string(), json!("beast_tide")),
+            ]),
+        );
+
+        let result = execute_heartbeat_override(&command, &mut heartbeat, Some(1_000));
+        assert_eq!(
+            result,
+            HeartbeatOverrideError::MissingHeartbeat.result_label(),
+            "missing heartbeat resource should reject the command"
         );
     }
 

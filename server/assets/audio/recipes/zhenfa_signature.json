@@ -1,0 +1,21 @@
+{
+  "id": "zhenfa_signature",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.ambient",
+      "volume": 0.18,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.amethyst_block.resonate",
+      "volume": 0.18,
+      "pitch": 0.6,
+      "delay_ticks": 4
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

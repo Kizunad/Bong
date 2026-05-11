@@ -22,6 +22,7 @@ pub enum CommandType {
     FactionEvent,
     ModifyZone,
     NpcBehavior,
+    HeartbeatOverride,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

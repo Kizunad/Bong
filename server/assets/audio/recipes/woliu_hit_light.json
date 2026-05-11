@@ -1,0 +1,15 @@
+{
+  "id": "woliu_hit_light",
+  "layers": [
+    {
+      "sound": "minecraft:entity.enderman.teleport",
+      "volume": 0.18,
+      "pitch": 0.45,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 56,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -34,6 +34,7 @@ public final class MusicStateMachine {
             return false;
         }
 
+        player.setMusicState(update.state());
         stopActive(update.fadeTicks());
         long instanceId = ++nextInstanceId;
         update.recipe().loop().map(AudioLoopConfig::whileFlag).ifPresent(EnvironmentAudioLoopState::activate);
@@ -53,6 +54,7 @@ public final class MusicStateMachine {
     public void clear() {
         stopActive(0);
         active = null;
+        player.setMusicState(State.AMBIENT);
     }
 
     public State currentStateForTests() {

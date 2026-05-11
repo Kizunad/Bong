@@ -1,0 +1,15 @@
+{
+  "id": "npc_footstep_default",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.swim",
+      "volume": 0.1,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 28,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "ENVIRONMENT"
+}

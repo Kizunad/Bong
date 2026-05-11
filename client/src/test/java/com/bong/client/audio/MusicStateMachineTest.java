@@ -197,7 +197,8 @@ class MusicStateMachineTest {
             Optional.of(new AudioLoopConfig(80, flag)),
             priority,
             AudioAttenuation.PLAYER_LOCAL,
-            AudioCategory.AMBIENT
+            AudioCategory.AMBIENT,
+            AudioBus.ENVIRONMENT
         );
     }
 

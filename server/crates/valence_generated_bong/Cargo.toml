@@ -1,0 +1,24 @@
+[package]
+name = "valence_generated"
+description = "Generated code for valence and valence_protocol"
+readme = "README.md"
+version = "0.2.0-alpha.1+mc.1.20.1"
+edition = "2021"
+repository = "https://github.com/valence-rs/valence"
+documentation = "https://docs.rs/valence/"
+license = "MIT"
+build = "build/main.rs"
+
+[dependencies]
+valence_math = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+valence_ident = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+uuid = "1.10.0"
+
+[build-dependencies]
+anyhow = { version = "1.0.89", features = ["backtrace"] }
+heck = "0.5.0"
+proc-macro2 = "1.0.86"
+quote = "1.0.37"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+valence_build_utils = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }

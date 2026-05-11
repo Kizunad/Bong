@@ -1,0 +1,15 @@
+{
+  "id": "meridian_open",
+  "layers": [
+    {
+      "sound": "minecraft:block.amethyst_cluster.break",
+      "volume": 0.3,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 66,
+  "attenuation": "SELF",
+  "category": "VOICE",
+  "bus": "ENVIRONMENT"
+}

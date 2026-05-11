@@ -1,6 +1,7 @@
 //! SoundRecipe registry: JSON-defined vanilla sound layers for audio v1.
 
 pub mod ambient;
+pub mod implementation;
 
 use std::collections::HashMap;
 use std::fs;
@@ -161,6 +162,7 @@ pub fn register(app: &mut App) {
         DEFAULT_AUDIO_RECIPES_DIR
     );
     app.insert_resource(registry);
+    app.init_resource::<implementation::AudioImplementationDedup>();
     ambient::register(app);
 }
 
@@ -174,8 +176,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            106,
-            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2/v3, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, calamity arsenal cues, audio-world ambient/music loops, armor break cue, movement-v1 action cues, and coffin lifecycle cues"
+            190,
+            "audio registry should include audio-world and audio-implementation cues plus calamity arsenal, gathering UX, and coffin lifecycle cues"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
@@ -248,6 +250,29 @@ mod tests {
         assert!(registry.get("movement_dash").is_some());
         assert!(registry.get("movement_slide").is_some());
         assert!(registry.get("movement_double_jump").is_some());
+        assert!(registry.get("hit_light").is_some());
+        assert!(registry.get("parry_perfect").is_some());
+        assert!(registry.get("breakthrough_guyuan").is_some());
+        assert!(registry.get("forge_hammer_heavy").is_some());
+        assert!(registry.get("alchemy_bubble").is_some());
+        assert!(registry.get("lingtian_till").is_some());
+        assert!(registry.get("pact_bind").is_some());
+        assert!(registry.get("npc_footstep_water").is_some());
+        assert!(registry.get("ambient_detail_tsy_metal_echo").is_some());
+        assert!(registry.get("baomai_hit_critical").is_some());
+        assert!(registry.get("dugu_poison_signature").is_some());
+        for key in [
+            "gather_herb_tick",
+            "gather_mine_tick",
+            "gather_chop_tick",
+            "gather_complete",
+            "gather_perfect",
+        ] {
+            assert!(
+                registry.get(key).is_some(),
+                "expected audio registry to contain `{key}` because gathering-ux added a recipe JSON for that cue; actual lookup returned None"
+            );
+        }
     }
 
     #[test]

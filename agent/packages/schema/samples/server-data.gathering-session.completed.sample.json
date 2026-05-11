@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "gathering_session",
+  "session_id": "mining:10:64:10:FanTie",
+  "progress_ticks": 60,
+  "total_ticks": 60,
+  "target_name": "凡铁矿",
+  "target_type": "ore",
+  "quality_hint": "perfect",
+  "tool_used": "pickaxe_iron",
+  "interrupted": false,
+  "completed": true
+}

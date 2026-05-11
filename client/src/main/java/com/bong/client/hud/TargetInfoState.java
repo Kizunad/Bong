@@ -1,6 +1,8 @@
 package com.bong.client.hud;
 
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.npc.NpcMetadata;
+import com.bong.client.npc.NpcMetadataStore;
 import com.bong.client.util.RealmLabel;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
@@ -68,16 +70,20 @@ public final class TargetInfoState {
         if (!(entity instanceof LivingEntity living)) {
             return empty();
         }
-        Kind kind = living instanceof PlayerEntity ? Kind.PLAYER : Kind.MOB;
-        String name = living.getDisplayName() == null
-            ? living.getType().getName().getString()
-            : living.getDisplayName().getString();
+        NpcMetadata npcMetadata = NpcMetadataStore.get(living.getId());
+        Kind kind = npcMetadata != null ? Kind.NPC : living instanceof PlayerEntity ? Kind.PLAYER : Kind.MOB;
+        String name = npcMetadata != null
+            ? npcMetadata.displayName()
+            : living.getDisplayName() == null
+                ? living.getType().getName().getString()
+                : living.getDisplayName().getString();
+        String realm = npcMetadata != null ? npcMetadata.realm() : "";
         float maxHealth = Math.max(1.0f, living.getMaxHealth());
         return create(
             kind,
             "entity:" + living.getId(),
             name,
-            "",
+            realm,
             living.getHealth() / maxHealth,
             0.0,
             observedAtMillis
