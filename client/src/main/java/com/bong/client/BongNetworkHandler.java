@@ -73,6 +73,7 @@ public class BongNetworkHandler {
             (handler, client) -> client.execute(() -> {
                 RealmCollapseHudStateStore.clearOnDisconnect();
                 NpcMetadataStore.clearAll();
+                com.bong.client.hud.CoffinStateStore.clear();
                 ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
                 com.bong.client.audio.MusicStateMachine.instance().clear();
             })

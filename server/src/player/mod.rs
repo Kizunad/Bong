@@ -3,9 +3,11 @@ pub mod state;
 
 use self::state::{
     canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_lifespan_slice, save_player_skill_slice, save_player_slices,
-    save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_lifespan_slice_with_coffin, save_player_skill_slice,
+    save_player_slices_with_coffin, save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer,
+    PlayerStatePersistence,
 };
+use crate::coffin::CoffinComponent;
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
@@ -23,6 +25,7 @@ use crate::skill::components::SkillSet;
 use crate::skill::config::{SkillConfigSchemas, SkillConfigStore};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
+use valence::entity::entity::Flags;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
@@ -55,6 +58,7 @@ type JoinedClientsWithoutStateQueryItem<'a> = (
     &'a mut EntityLayerId,
     &'a mut VisibleChunkLayer,
     &'a mut VisibleEntityLayers,
+    Option<&'a mut Flags>,
 );
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
 type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
@@ -176,8 +180,14 @@ pub(crate) fn attach_player_state_to_joined_clients(
         JoinedClientsWithoutStateQueryFilter,
     >,
 ) {
-    for (entity, username, mut layer_id, mut visible_chunk_layer, mut visible_entity_layers) in
-        &mut joined_clients
+    for (
+        entity,
+        username,
+        mut layer_id,
+        mut visible_chunk_layer,
+        mut visible_entity_layers,
+        flags,
+    ) in &mut joined_clients
     {
         let persisted = load_player_slices(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();
@@ -230,6 +240,20 @@ pub(crate) fn attach_player_state_to_joined_clients(
         if let Some(lifespan) = persisted.lifespan {
             entity_commands.insert(lifespan);
         }
+        if persisted.in_coffin {
+            if let Some(mut flags) = flags {
+                flags.set_invisible(true);
+            }
+            let [x, y, z] = persisted.position;
+            entity_commands.insert(CoffinComponent {
+                entered_at_tick: 0,
+                coffin_lower: valence::prelude::BlockPos::new(
+                    x.floor() as i32,
+                    y.floor() as i32,
+                    z.floor() as i32,
+                ),
+            });
+        }
         entity_commands.insert(persisted.skill_set);
         tracing::info!(
             "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
@@ -276,6 +300,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&PlayerInventory>,
         Option<&LifespanComponent>,
         Option<&SkillSet>,
+        Option<&CoffinComponent>,
     )>,
     cultivation_bundle: Query<(
         &Cultivation,
@@ -303,6 +328,7 @@ pub(crate) fn despawn_disconnected_clients(
             player_inventory,
             lifespan,
             skill_set,
+            coffin,
         )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
@@ -351,7 +377,7 @@ pub(crate) fn despawn_disconnected_clients(
                     );
                 }
             }
-            match save_player_slices(
+            match save_player_slices_with_coffin(
                 &persistence,
                 username.0.as_str(),
                 player_state,
@@ -360,6 +386,7 @@ pub(crate) fn despawn_disconnected_clients(
                 player_inventory,
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
+                coffin.is_some(),
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -399,6 +426,7 @@ fn flush_connected_players_on_shutdown(
             Option<&PlayerInventory>,
             Option<&LifespanComponent>,
             Option<&SkillSet>,
+            Option<&CoffinComponent>,
         ),
         With<Client>,
     >,
@@ -432,6 +460,7 @@ fn flush_connected_players_on_shutdown(
         player_inventory,
         lifespan,
         skill_set,
+        coffin,
     ) in &players
     {
         let last_dimension = current_dimension
@@ -480,7 +509,7 @@ fn flush_connected_players_on_shutdown(
                 );
             }
         }
-        match save_player_slices(
+        match save_player_slices_with_coffin(
             &persistence,
             username.0.as_str(),
             player_state,
@@ -489,6 +518,7 @@ fn flush_connected_players_on_shutdown(
             player_inventory,
             lifespan,
             skill_set.unwrap_or(&SkillSet::default()),
+            coffin.is_some(),
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -630,7 +660,7 @@ fn autosave_player_cultivation_bundles(
 fn autosave_player_lifespan_slices(
     persistence: Res<PlayerStatePersistence>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &LifespanComponent), With<Client>>,
+    players: Query<(&Username, &LifespanComponent, Option<&CoffinComponent>), With<Client>>,
 ) {
     if !timer
         .ticks
@@ -641,8 +671,13 @@ fn autosave_player_lifespan_slices(
 
     let mut saved_count = 0usize;
 
-    for (username, lifespan) in &players {
-        match save_player_lifespan_slice(&persistence, username.0.as_str(), lifespan) {
+    for (username, lifespan, coffin) in &players {
+        match save_player_lifespan_slice_with_coffin(
+            &persistence,
+            username.0.as_str(),
+            lifespan,
+            coffin.is_some(),
+        ) {
             Ok(_) => saved_count += 1,
             Err(error) => tracing::warn!(
                 "[bong][player] 60s lifespan flush failed for `{}`: {error}",

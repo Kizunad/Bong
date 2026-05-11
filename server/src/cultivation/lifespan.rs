@@ -402,6 +402,7 @@ pub fn lifespan_aging_tick(
         Option<&Lifecycle>,
         Option<&LifeRecord>,
         Option<&crate::npc::lifecycle::NpcArchetype>,
+        Option<&crate::coffin::CoffinComponent>,
     )>,
 ) {
     let persistence = persistence.as_deref();
@@ -416,6 +417,7 @@ pub fn lifespan_aging_tick(
         lifecycle,
         life_record,
         npc_archetype,
+        coffin_component,
     ) in &mut actors
     {
         if npc_archetype.is_some_and(|archetype| !archetype.uses_lifespan_aging()) {
@@ -434,7 +436,8 @@ pub fn lifespan_aging_tick(
         lifespan.apply_cap(cap);
 
         let multiplier = lifespan_tick_rate_multiplier(position, zones)
-            * season_aging_modifier(lifespan_season(position, zones, clock.tick));
+            * season_aging_modifier(lifespan_season(position, zones, clock.tick))
+            * crate::coffin::coffin_lifespan_multiplier(coffin_component.is_some());
         let delta_years = lifespan_delta_years_for_ticks(1, multiplier);
         lifespan.years_lived =
             (lifespan.years_lived + delta_years).min(lifespan.cap_by_realm as f64);

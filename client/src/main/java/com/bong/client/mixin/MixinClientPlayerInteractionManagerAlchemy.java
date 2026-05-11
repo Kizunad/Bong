@@ -27,6 +27,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ClientPlayerInteractionManager.class)
 public abstract class MixinClientPlayerInteractionManagerAlchemy {
+    private static final String MUNDANE_COFFIN_ITEM_ID = "mundane_coffin";
+
     @Inject(method = "attackEntity", at = @At("TAIL"))
     @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
     private void bong$targetInfoAttack(PlayerEntity player, Entity target, CallbackInfo ci) {
@@ -67,6 +69,15 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
 
         InventoryItem mainHand = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
         if (mainHand != null
+            && MUNDANE_COFFIN_ITEM_ID.equals(mainHand.itemId())
+            && mainHand.instanceId() > 0) {
+            BlockPos placePos = hit.getBlockPos().offset(hit.getSide());
+            ClientRequestSender.sendCoffinPlace(placePos, mainHand.instanceId());
+            cir.setReturnValue(ActionResult.SUCCESS);
+            return;
+        }
+
+        if (mainHand != null
             && AlchemyFurnaceItems.isFurnaceItem(mainHand.itemId())
             && mainHand.instanceId() > 0) {
             BlockPos placePos = hit.getBlockPos().offset(hit.getSide());
@@ -77,6 +88,11 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
 
         if (client.world == null) return;
         BlockPos pos = hit.getBlockPos();
+        if (client.world.getBlockState(pos).isOf(Blocks.CHEST)) {
+            ClientRequestSender.sendCoffinEnter(pos);
+            cir.setReturnValue(ActionResult.SUCCESS);
+            return;
+        }
         if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
             && AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(pos, AlchemyFurnaceStore.snapshot())) {
             ClientRequestSender.sendAlchemyOpenFurnace(pos);
