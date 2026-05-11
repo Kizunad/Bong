@@ -4,6 +4,7 @@ pub const CH_PLAYER_CHAT: &str = "bong:player_chat";
 pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
 pub const CH_AGENT_WORLD_MODEL: &str = "bong:agent_world_model";
+pub const CH_CALAMITY_INTENT: &str = "bong:calamity_intent";
 pub const CH_SEASON_CHANGED: &str = "bong:season_changed";
 pub const CH_BONE_COIN_TICK: &str = "bong:bone_coin_tick";
 pub const CH_PRICE_INDEX: &str = "bong:price_index";
@@ -176,6 +177,7 @@ mod tests {
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
+        assert_eq!(CH_CALAMITY_INTENT, "bong:calamity_intent");
         assert_eq!(CH_SEASON_CHANGED, "bong:season_changed");
         assert_eq!(CH_BONE_COIN_TICK, "bong:bone_coin_tick");
         assert_eq!(CH_PRICE_INDEX, "bong:price_index");

@@ -25,6 +25,7 @@ import {
 import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
+import { CalamityIntentV1, CalamityKindV1 } from "./calamity.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
   ClientNarrationPayloadV1,
@@ -464,6 +465,8 @@ export const SCHEMA_REGISTRY = {
   agentCommandV1: AgentCommandV1,
   agentWorldModelEnvelopeV1: AgentWorldModelEnvelopeV1,
   agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
+  calamityKindV1: CalamityKindV1,
+  calamityIntentV1: CalamityIntentV1,
   narrationV1: NarrationV1,
   zonePressureLevelV1: ZonePressureLevelV1,
   zonePressureCrossedV1: ZonePressureCrossedV1,
@@ -865,6 +868,8 @@ export const GENERATED_SCHEMA_FILES = {
   "agent-command-v1.json": SCHEMA_REGISTRY.agentCommandV1,
   "agent-world-model-envelope-v1.json": SCHEMA_REGISTRY.agentWorldModelEnvelopeV1,
   "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
+  "calamity-kind-v1.json": SCHEMA_REGISTRY.calamityKindV1,
+  "calamity-intent-v1.json": SCHEMA_REGISTRY.calamityIntentV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
   "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,

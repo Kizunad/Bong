@@ -250,6 +250,30 @@
             {
               "const": "karma_backlash",
               "type": "string"
+            },
+            {
+              "const": "poison_miasma",
+              "type": "string"
+            },
+            {
+              "const": "meridian_seal",
+              "type": "string"
+            },
+            {
+              "const": "daoxiang_wave",
+              "type": "string"
+            },
+            {
+              "const": "heavenly_fire",
+              "type": "string"
+            },
+            {
+              "const": "pressure_invert",
+              "type": "string"
+            },
+            {
+              "const": "all_wither",
+              "type": "string"
             }
           ]
         },

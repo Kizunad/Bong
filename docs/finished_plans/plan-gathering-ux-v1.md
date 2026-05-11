@@ -250,7 +250,7 @@
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test --tests com.bong.client.network.ServerDataRouterTest --tests com.bong.client.inventory.ItemIconRegistryTest --tests com.bong.client.hud.GatheringProgressHudTest`：BUILD SUCCESSFUL
 - `cd agent && npm run build`
 - `cd agent && npm test -w @bong/tiandao`：348 passed
-- `cd agent && npm test -w @bong/schema`：372 passed
+- `cd agent && npm test -w @bong/schema`：374 passed
 - `cd agent && npm run generate -w @bong/schema`：generated schemas refreshed
 - `git diff --check`：clean
 
