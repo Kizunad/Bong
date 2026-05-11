@@ -1,4 +1,4 @@
-# Bong · plan-breakthrough-cinematic-v1 · 骨架
+# Bong · plan-breakthrough-cinematic-v1 · 完成
 
 突破/修炼电影化奇观——在 `plan-vfx-wiring-v1`（突破 VFX 接线）+ `plan-audio-world-v1`（修炼音效）+ `plan-hud-polish-v1`（全屏事件特效）✅ active 基础上拓展。vfx-wiring-v1 P0 已有 `BreakthroughPillarPlayer` 光柱 + 突破失败碎裂粒子 + 经脉打通光路；audio-world-v1 P1 已有修炼冥想音 + 经脉打通清音；hud-polish-v1 P2 已有突破成功金色边框 flash + 渡劫紫电纹路。但这些是**单次触发效果**——缺乏多阶段叙事编排。玩家静坐 3 分钟突破时只有一条 narration + 一个光柱。本 plan 把每个突破编排成**5 阶段电影化事件**（prelude→charge→catalyze→apex→aftermath），让突破变成全服可感知的灵气奇观。
 
@@ -48,11 +48,11 @@
 
 ## §0 设计轴心
 
-- [ ] **编排者不是实现者**：本 plan 不重写 VFX/audio/HUD——而是定义 5 阶段时序，在每个阶段调度已有系统
-- [ ] **每境不同视觉**：不同境界突破的粒子密度/光效强度/音效/时长各不相同（醒灵→引气 30s 轻盈 / 通灵→化虚 3min 天地异变）
-- [ ] **全服可见异象**：凝脉+ 突破在突破点生成天空光柱/灵压波动，5km 内可见——让修仙世界的事件有"社会影响"
-- [ ] **可打断 = 高张力**：突破中其他玩家/NPC 可攻击打断 → 突破方在 cinematic 最脆弱时被偷袭的叙事张力
-- [ ] **agent narration 与 cinematic 双轨同步**：天道旁白 + 视觉奇观同时推进——prelude 时天道轻描淡写，apex 时天道或沉默或嘲讽
+- [x] **编排者不是实现者**：本 plan 不重写 VFX/audio/HUD——而是定义 5 阶段时序，在每个阶段调度已有系统
+- [x] **每境不同视觉**：不同境界突破的粒子密度/光效强度/音效/时长各不相同（醒灵→引气 30s 轻盈 / 通灵→化虚 3min 天地异变）
+- [x] **全服可见异象**：凝脉+ 突破在突破点生成天空光柱/灵压波动，5km 内可见——让修仙世界的事件有"社会影响"
+- [x] **可打断 = 高张力**：突破中其他玩家/NPC 可攻击打断 → 突破方在 cinematic 最脆弱时被偷袭的叙事张力
+- [x] **agent narration 与 cinematic 双轨同步**：天道旁白 + 视觉奇观同时推进——prelude 时天道轻描淡写，apex 时天道或沉默或嘲讽
 
 ---
 
@@ -60,16 +60,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `BreakthroughCinematic` 状态机 + `BreakthroughSpectacleRenderer` 编排骨架 + 醒灵→引气完整 cinematic | ⬜ |
-| P1 | 引气→凝脉 + 凝脉→固元 cinematic | ⬜ |
-| P2 | 固元→通灵 + 通灵→化虚 cinematic + 全服异象 | ⬜ |
-| P3 | 打断/失败/成功 分支 visual | ⬜ |
-| P4 | 季节联动 + 动画联动 | ⬜ |
-| P5 | 饱和化测试 | ⬜ |
+| P0 | `BreakthroughCinematic` 状态机 + `BreakthroughSpectacleRenderer` 编排骨架 + 醒灵→引气完整 cinematic | ✅ 2026-05-12 |
+| P1 | 引气→凝脉 + 凝脉→固元 cinematic | ✅ 2026-05-12 |
+| P2 | 固元→通灵 + 通灵→化虚 cinematic + 全服异象 | ✅ 2026-05-12 |
+| P3 | 打断/失败/成功 分支 visual | ✅ 2026-05-12 |
+| P4 | 季节联动 + 动画联动 | ✅ 2026-05-12 |
+| P5 | 饱和化测试 | ✅ 2026-05-12 |
 
 ---
 
-## P0 — 状态机 + 骨架 + 醒灵→引气 ⬜
+## P0 — 状态机 + 骨架 + 醒灵→引气 ✅ 2026-05-12
 
 ### 交付物
 
@@ -112,7 +112,7 @@
 
 ---
 
-## P1 — 引气→凝脉 + 凝脉→固元 ⬜
+## P1 — 引气→凝脉 + 凝脉→固元 ✅ 2026-05-12
 
 ### 交付物
 
@@ -139,7 +139,7 @@
 
 ---
 
-## P2 — 固元→通灵 + 通灵→化虚 + 全服异象 ⬜
+## P2 — 固元→通灵 + 通灵→化虚 + 全服异象 ✅ 2026-05-12
 
 ### 交付物
 
@@ -175,7 +175,7 @@
 
 ---
 
-## P3 — 打断/失败/成功分支 ⬜
+## P3 — 打断/失败/成功分支 ✅ 2026-05-12
 
 ### 交付物
 
@@ -212,7 +212,7 @@
 
 ---
 
-## P4 — 季节联动 + 动画联动 ⬜
+## P4 — 季节联动 + 动画联动 ✅ 2026-05-12
 
 ### 交付物
 
@@ -246,7 +246,7 @@
 
 ---
 
-## P5 — 饱和化测试 ⬜
+## P5 — 饱和化测试 ✅ 2026-05-12
 
 ### 交付物
 
@@ -284,11 +284,11 @@
 - **测试结果**：
   - `cd server && cargo fmt --check`
   - `cd server && cargo clippy --all-targets -- -D warnings`
-  - `cd server && cargo test` -> 4431 passed
-  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon clean test build`
+  - `cd server && cargo test` -> 4480 passed
+  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` -> BUILD SUCCESSFUL
   - `cd agent && npm run build`
   - `cd agent && npm test -w @bong/schema` -> 377 passed
-  - `cd agent && npm test -w @bong/tiandao` -> 357 passed
+  - `cd agent && npm test -w @bong/tiandao` -> 358 passed
   - `scripts/breakthrough_cinematic_test.sh` -> server 4 passed, client targeted tests passed, schema 377 passed, tiandao cinematic 3 passed
 - **跨仓库核验**：
   - server：`BreakthroughCinematic` / `BreakthroughCinematicS2cV1` / `CH_BREAKTHROUGH_CINEMATIC` / `RedisOutbound::BreakthroughCinematic`
