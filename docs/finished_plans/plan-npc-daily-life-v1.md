@@ -438,11 +438,13 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `6cd80afb1`（2026-05-11）`feat(npc): 扩展日常生活 POI 契约`
   - `d18a042e4`（2026-05-11）`feat(npc): 加入日程阶段与 LOD 状态 tick`
   - `6cc5d076d`（2026-05-11）`feat(npc): 接入目的地漫游与回家休息行为`
+  - `3c7afd1ff`（2026-05-11）`fix(npc): 收紧日程 LOD 与回家休息语义`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ cargo test` ✅ 4297 passed
+  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4298 passed
   - `agent/ npm run build` ✅
+  - `agent/packages/schema/ npm run check` ✅ generated schema artifacts are fresh（352 files）
   - `agent/packages/schema/ npm test` ✅ 18 files / 366 tests passed
   - `agent/packages/tiandao/ npm test` ✅ 51 files / 352 tests passed
 - **跨仓库核验**：
