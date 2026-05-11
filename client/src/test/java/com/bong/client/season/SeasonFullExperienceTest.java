@@ -48,6 +48,29 @@ class SeasonFullExperienceTest {
     }
 
     @Test
+    void full_season_cycle_keeps_visual_signals_in_sync() {
+        SeasonState[] cycle = {
+            new SeasonState(SeasonState.Phase.SUMMER, 100L, 1000L, 0L),
+            new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 200L, 1000L, 0L),
+            new SeasonState(SeasonState.Phase.WINTER, 300L, 1000L, 0L),
+            new SeasonState(SeasonState.Phase.WINTER_TO_SUMMER, 400L, 1000L, 0L),
+            new SeasonState(SeasonState.Phase.SUMMER, 500L, 1000L, 1L)
+        };
+
+        int transitions = 0;
+        for (int i = 0; i < cycle.length; i++) {
+            SeasonVisualController.SeasonTickResult result = SeasonVisualController.tick(cycle[i], 100L + i);
+            transitions += result.transition() == null ? 0 : 1;
+            assertEquals(cycle[i].phase(), ZoneAtmosphereRenderer.currentSeasonOverrideForTests().phase());
+            assertEquals(cycle[i].phase(), MusicStateMachine.instance().seasonModifierForTests().phase());
+            assertFalse(SeasonHintHudPlanner.buildCommands(cycle[i], 320, 180, 100L + i).isEmpty());
+            assertFalse(SeasonParticleEmitter.plan(cycle[i], 120L).isEmpty());
+        }
+
+        assertEquals(4, transitions);
+    }
+
+    @Test
     void hud_icon_no_text() {
         List<HudRenderCommand> commands = SeasonHintHudPlanner.buildCommands(
             new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1000L, 0L),
