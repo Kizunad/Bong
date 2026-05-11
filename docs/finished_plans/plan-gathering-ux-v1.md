@@ -221,10 +221,14 @@
 - `578fec44e` 2026-05-11 `feat(gathering): 接入客户端采集 HUD 和协议`
 - `7903aa2ea` 2026-05-11 `fix(gathering): 接通采集进度反馈`
 - `7b1d9ac08` 2026-05-11 `fix(gathering): 收紧采集协议与完成事件`
+- `ba2703c8c` 2026-05-11 `fix(gathering): 收紧矿物采集边界与 Rust 协议枚举`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4268 passed
+- `cd server && cargo fmt --check`：pass
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：pass
+- `cd server && CARGO_BUILD_JOBS=1 cargo check --tests`：pass
 - `cd server && cargo test mineral::break_handler::tests`：12 passed
 - `cd server && cargo test spiritwood::tests`：8 passed
 - `cd server && cargo test craft::tests::register_gathering_tool_recipes_adds_six_tool_entries`：1 passed
