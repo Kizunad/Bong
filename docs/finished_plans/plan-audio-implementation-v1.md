@@ -293,8 +293,7 @@
   - `d5b0713d6` · 2026-05-11 · `plan-audio-implementation-v1: 接入客户端混音与 NPC 脚步`
 
 - **测试结果**
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
-  - `cd server && CARGO_BUILD_JOBS=1 cargo test`：`4261 passed; 0 failed; 0 ignored`。默认并发 `cargo test` 在本机测试二进制编译阶段曾被 SIGKILL，降并发后同一代码通过。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：`4261 passed; 0 failed; 0 ignored`。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`：`BUILD SUCCESSFUL`。
   - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：`tiandao 51 files / 348 tests passed`，`schema 18 files / 366 tests passed`。
 
