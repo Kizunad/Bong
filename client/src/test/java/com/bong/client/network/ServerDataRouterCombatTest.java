@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.combat.store.DamageFloaterStore;
+import com.bong.client.combat.juice.CombatJuiceSystem;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.WoundsStore;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +19,7 @@ class ServerDataRouterCombatTest {
 
     @AfterEach void tearDown() {
         DamageFloaterStore.resetForTests();
+        CombatJuiceSystem.resetForTests();
         StatusEffectStore.resetForTests();
         WoundsStore.resetForTests();
     }
@@ -37,12 +39,13 @@ class ServerDataRouterCombatTest {
         ServerDataRouter router = ServerDataRouter.createDefault();
         String json = """
             {"v":1,"type":"combat_event","events":[
-              {"kind":"hit","amount":10,"color":-65536}
+              {"kind":"hit","amount":10,"color":-65536,"target_uuid":"target"}
             ]}""";
         ServerDataRouter.RouteResult r = router.route(json, json.getBytes(StandardCharsets.UTF_8).length);
         assertFalse(r.isParseError());
         assertTrue(r.isHandled());
         assertEquals(1, DamageFloaterStore.snapshot(System.currentTimeMillis()).size());
+        assertEquals("target", CombatJuiceSystem.lastCommand().event().targetUuid());
     }
 
     @Test void routesStatusSnapshotEndToEnd() {
