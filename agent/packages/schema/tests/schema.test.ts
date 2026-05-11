@@ -26,6 +26,7 @@ import {
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
 import {
+  CalamityKindV1,
   CalamityIntentV1,
   validateCalamityIntentV1Contract,
 } from "../src/calamity.js";
@@ -41,6 +42,7 @@ import {
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
+  EventKind,
   MAX_COMMANDS_PER_TICK,
   MAX_NARRATION_LENGTH,
   NEWBIE_POWER_THRESHOLD,
@@ -158,6 +160,26 @@ function expectContractRejects(name: string, validator: ContractValidation, data
 
 type ContractValidation = (data: unknown) => { ok: boolean; errors: string[] };
 
+const CALAMITY_KIND_WIRES = [
+  "thunder",
+  "poison_miasma",
+  "meridian_seal",
+  "daoxiang_wave",
+  "heavenly_fire",
+  "pressure_invert",
+  "all_wither",
+  "realm_collapse",
+] as const;
+
+const CALAMITY_EVENT_KIND_WIRES = [
+  "poison_miasma",
+  "meridian_seal",
+  "daoxiang_wave",
+  "heavenly_fire",
+  "pressure_invert",
+  "all_wither",
+] as const;
+
 // ─── Sample validation ─────────────────────────────────
 
 describe("sample files pass schema validation", () => {
@@ -238,14 +260,17 @@ describe("sample files pass schema validation", () => {
   });
 
   it("validates calamity intent contracts including null no-action", () => {
-    expectContractAccepts("CalamityIntentV1", validateCalamityIntentV1Contract, {
-      v: 1,
-      calamity: "poison_miasma",
-      target_zone: "spawn",
-      target_player: null,
-      intensity: 0.6,
-      reason: "灵气连续下降，毒瘴清场。",
-    });
+    for (const calamity of CALAMITY_KIND_WIRES) {
+      expect(validate(CalamityKindV1, calamity).ok).toBe(true);
+      expectContractAccepts(`CalamityIntentV1 ${calamity}`, validateCalamityIntentV1Contract, {
+        v: 1,
+        calamity,
+        target_zone: "spawn",
+        target_player: null,
+        intensity: 0.6,
+        reason: "灵气连续下降，灾劫清场。",
+      });
+    }
     expectContractAccepts("CalamityIntentV1 null", validateCalamityIntentV1Contract, {
       v: 1,
       calamity: null,
@@ -259,6 +284,20 @@ describe("sample files pass schema validation", () => {
       intensity: 1.2,
       reason: "越界强度",
     });
+    expectContractRejects("CalamityIntentV1 missing reason", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "thunder",
+      intensity: 0.5,
+    });
+    expectContractRejects("CalamityIntentV1 invalid calamity", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "meteor",
+      intensity: 0.5,
+      reason: "未知灾劫",
+    });
+    for (const eventKind of CALAMITY_EVENT_KIND_WIRES) {
+      expect(validate(EventKind, eventKind).ok).toBe(true);
+    }
     expect(SchemaPackage.CalamityIntentV1).toBe(CalamityIntentV1);
   });
 
