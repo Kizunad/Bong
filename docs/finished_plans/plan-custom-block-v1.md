@@ -400,13 +400,15 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
   - `3545b85a7`（2026-05-11）`Merge remote-tracking branch 'origin/main' into auto/plan-custom-block-v1`
   - `73057439d`（2026-05-11）`fix(custom-block): 对齐阵法方块状态ID`
   - `5574e4346`（2026-05-11）`test(custom-block): 补齐自定义方块边界覆盖`
+  - `69dc52ad6`（2026-05-11）`fix(custom-block): 收紧自定义方块放置失败路径`
 - **测试结果**：
   - `server/crates/valence_generated_bong`: `cargo test` → 3 passed。
   - `server`: `cargo fmt --check` → passed。
   - `server`: `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` → passed。
-  - `server`: `CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1` → 4290 passed。
+  - `server`: `CARGO_BUILD_JOBS=1 cargo test zhenfa -- --test-threads=1` → 35 passed。
+  - `server`: `CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1` → 4291 passed。
   - `client`: `JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
-- **Review 修复**：Claude review 指出 `charged` boolean 属性顺序必须对齐 Minecraft `BooleanProperty` 的 `true,false` 状态顺序；已改 `bong_blocks.json`、server pinning test、client raw ID 校验与阵法 Trap 显式 `charged=false` 写块路径，并补 trigger / decay 拆块断言。CodeRabbit 后续建议已收敛 manifest collision shape / property value fail-fast 校验、`ChunkNotLoaded` error branch、`charged=true` 写块和 unloaded chunk 拒绝路径测试。
+- **Review 修复**：Claude review 指出 `charged` boolean 属性顺序必须对齐 Minecraft `BooleanProperty` 的 `true,false` 状态顺序；已改 `bong_blocks.json`、server pinning test、client raw ID 校验与阵法 Trap 显式 `charged=false` 写块路径，并补 trigger / decay 拆块断言。CodeRabbit 后续建议已收敛 manifest collision shape / property value fail-fast 校验、`ChunkNotLoaded` error branch、`charged=true` 写块和 unloaded chunk 拒绝路径测试；追加 actionable 已处理 `Block::min_state_id` / `max_state_id` 空 states 明确报错，以及 `OverworldLayer` 缺失时阵法放置不扣气、不写注册表的回归保护。
 - **跨仓库核验**：
   - server：`BlockState::BONG_ZHENFA_NODE`、`BlockKind::BongZhenfaNode`、`BONG_BLOCK_STATE_START = 24135`、`place_bong_block`、阵法 `ChunkLayer` 写块/移除路径。
   - client：`BongBlocks.register()`、`BongBlockIds.ZHENFA_*`、`bong:zhenfa_*` blockstate/model/texture 资源。
