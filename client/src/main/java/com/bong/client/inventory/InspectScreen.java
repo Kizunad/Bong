@@ -138,7 +138,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -1905,6 +1905,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (isSpiritNicheStone(item)) {
             actions.add(new PillMenuAction("放置灵龛", ActionKind.PLACE_SPIRIT_NICHE));
         }
+        if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
+            actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
+        }
         return actions;
     }
 
@@ -1956,6 +1959,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case PLACE_SPIRIT_NICHE -> {
                 pendingMeridianUse = null;
                 dispatchPlaceSpiritNiche(item);
+            }
+            case TECHNIQUE_SCROLL_USE -> {
+                pendingMeridianUse = null;
+                dispatchTechniqueScrollUse(item);
             }
         }
     }
@@ -2266,7 +2273,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private SkillScrollDropState skillScrollDropState(InventoryItem item) {
         if (item == null) return SkillScrollDropState.IDLE;
-        if (item.isSkillScroll() && isKnownSkillScroll(item) && !isConsumedSkillScroll(item)) {
+        if ((item.isSkillScroll() && isKnownSkillScroll(item) && !isConsumedSkillScroll(item))
+            || (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item))) {
             return SkillScrollDropState.VALID;
         }
         return SkillScrollDropState.INVALID;
@@ -2301,6 +2309,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             skillScrollDropFeedback = "残卷无效";
             return false;
         }
+        if (item.isTechniqueScroll()) {
+            return tryReadTechniqueScroll(item);
+        }
         if (!item.isSkillScroll()) {
             skillScrollDropFeedback = "此物非 skill，不可入";
             return false;
@@ -2318,8 +2329,44 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return true;
     }
 
+    private boolean tryReadTechniqueScroll(InventoryItem item) {
+        if (!isKnownTechniqueScroll(item)) {
+            skillScrollDropFeedback = "不识此法，暂不能悟";
+            return false;
+        }
+        if (isKnownTechnique(item)) {
+            skillScrollDropFeedback = "你已通晓此法";
+            return false;
+        }
+        skillScrollDropFeedback = "已送出研读请求";
+        dispatchTechniqueScrollUse(item);
+        return true;
+    }
+
+    boolean dispatchTechniqueScrollUse(InventoryItem item) {
+        if (item == null || item.instanceId() == 0L || !item.isTechniqueScroll() || !isKnownTechniqueScroll(item)) {
+            return false;
+        }
+        com.bong.client.cultivation.TechniqueScrollReadScreen.showReadRequested(
+            item.displayName(),
+            System.currentTimeMillis()
+        );
+        com.bong.client.network.ClientRequestSender.sendTechniqueScrollUse(item.instanceId());
+        return true;
+    }
+
     private boolean isKnownSkillScroll(InventoryItem item) {
         return com.bong.client.skill.SkillId.fromWire(item.scrollSkillId()) != null;
+    }
+
+    private boolean isKnownTechniqueScroll(InventoryItem item) {
+        return com.bong.client.cultivation.TechniqueScrollReadScreen.isWoliuTechniqueId(item.scrollSkillId());
+    }
+
+    private boolean isKnownTechnique(InventoryItem item) {
+        String techniqueId = item == null ? "" : item.scrollSkillId();
+        return com.bong.client.combat.inspect.TechniquesListPanel.snapshot().stream()
+            .anyMatch(technique -> technique.id().equals(techniqueId));
     }
 
     private boolean isConsumedSkillScroll(InventoryItem item) {

@@ -829,6 +829,16 @@ export const LearnSkillScrollRequestV1 = Type.Object(
 );
 export type LearnSkillScrollRequestV1 = Static<typeof LearnSkillScrollRequestV1>;
 
+export const TechniqueScrollUseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("technique_scroll_use"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type TechniqueScrollUseRequestV1 = Static<typeof TechniqueScrollUseRequestV1>;
+
 export const StartExtractRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1004,6 +1014,7 @@ export const ClientRequestV1 = Type.Union([
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,
   LearnSkillScrollRequestV1,
+  TechniqueScrollUseRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,
   StartSearchRequestV1,

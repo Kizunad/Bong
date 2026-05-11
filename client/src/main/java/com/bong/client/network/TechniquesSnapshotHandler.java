@@ -27,8 +27,41 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
             }
             entries.add(technique);
         }
+        publishTechniqueFeedback(TechniquesListPanel.snapshot(), entries);
         TechniquesListPanel.replace(entries);
         return ServerDataDispatch.handled(envelope.type(), "Applied techniques_snapshot (" + entries.size() + " entries)");
+    }
+
+    private static void publishTechniqueFeedback(
+        List<TechniquesListPanel.Technique> previous,
+        List<TechniquesListPanel.Technique> next
+    ) {
+        if (previous == null || previous.isEmpty() || next == null || next.isEmpty()) {
+            return;
+        }
+        long nowMillis = System.currentTimeMillis();
+        for (TechniquesListPanel.Technique technique : next) {
+            TechniquesListPanel.Technique old = find(previous, technique.id());
+            if (old == null) {
+                com.bong.client.cultivation.TechniqueScrollReadScreen.showLearned(technique.displayName(), nowMillis);
+                return;
+            }
+            if (technique.proficiency() > old.proficiency() + 0.0001f) {
+                com.bong.client.cultivation.TechniqueObserveHud.showProficiencyUp(
+                    technique.displayName(),
+                    technique.proficiency(),
+                    nowMillis
+                );
+                return;
+            }
+        }
+    }
+
+    private static TechniquesListPanel.Technique find(List<TechniquesListPanel.Technique> techniques, String id) {
+        for (TechniquesListPanel.Technique technique : techniques) {
+            if (technique.id().equals(id)) return technique;
+        }
+        return null;
     }
 
     private static TechniquesListPanel.Technique parseTechnique(JsonObject obj) {
