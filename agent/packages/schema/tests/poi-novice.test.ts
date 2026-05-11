@@ -10,7 +10,7 @@ import {
 import { validate } from "../src/validate.js";
 
 describe("plan-poi-novice-v1 — PoiNoviceKindV1", () => {
-  it("accepts all six novice POI types", () => {
+  it("accepts novice and NPC daily-life POI types", () => {
     for (const kind of [
       "forge_station",
       "alchemy_furnace",
@@ -18,6 +18,11 @@ describe("plan-poi-novice-v1 — PoiNoviceKindV1", () => {
       "mutant_nest",
       "scroll_hidden",
       "spirit_herb_valley",
+      "herb_patch",
+      "qi_spring",
+      "trade_spot",
+      "shelter_spot",
+      "water_source",
     ] as const) {
       expect(validate(PoiNoviceKindV1, kind).ok).toBe(true);
     }

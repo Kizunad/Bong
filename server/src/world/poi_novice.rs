@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{
-    bevy_ecs, App, Component, Entity, Event, EventReader, EventWriter, IntoSystemConfigs, Query,
-    Res, ResMut, Resource, Startup, Update,
+    bevy_ecs, App, Component, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs,
+    Query, Res, ResMut, Resource, Startup, Update,
 };
 
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
@@ -22,6 +22,11 @@ pub enum PoiNoviceKind {
     MutantNest,
     ScrollHidden,
     SpiritHerbValley,
+    HerbPatch,
+    QiSpring,
+    TradeSpot,
+    ShelterSpot,
+    WaterSource,
 }
 
 impl PoiNoviceKind {
@@ -33,6 +38,11 @@ impl PoiNoviceKind {
             Self::MutantNest => "mutant_nest",
             Self::ScrollHidden => "scroll_hidden",
             Self::SpiritHerbValley => "spirit_herb_valley",
+            Self::HerbPatch => "herb_patch",
+            Self::QiSpring => "qi_spring",
+            Self::TradeSpot => "trade_spot",
+            Self::ShelterSpot => "shelter_spot",
+            Self::WaterSource => "water_source",
         }
     }
 
@@ -44,6 +54,11 @@ impl PoiNoviceKind {
             Self::MutantNest => "第一次猎兽核",
             Self::ScrollHidden => "第一次拾取知识",
             Self::SpiritHerbValley => "第一次采集",
+            Self::HerbPatch => "第一次蹲守灵草",
+            Self::QiSpring => "第一次借泉修炼",
+            Self::TradeSpot => "第一次路口交易",
+            Self::ShelterSpot => "第一次归巢休息",
+            Self::WaterSource => "第一次取水",
         }
     }
 }
@@ -59,6 +74,11 @@ impl TryFrom<&str> for PoiNoviceKind {
             "mutant_nest" => Ok(Self::MutantNest),
             "scroll_hidden" => Ok(Self::ScrollHidden),
             "spirit_herb_valley" => Ok(Self::SpiritHerbValley),
+            "herb_patch" => Ok(Self::HerbPatch),
+            "qi_spring" => Ok(Self::QiSpring),
+            "trade_spot" => Ok(Self::TradeSpot),
+            "shelter_spot" => Ok(Self::ShelterSpot),
+            "water_source" => Ok(Self::WaterSource),
             other => Err(format!("unknown novice POI type `{other}`")),
         }
     }
@@ -75,6 +95,16 @@ pub struct PoiNoviceSite {
     pub qi_affinity: f32,
     pub danger_bias: i32,
     pub tags: Vec<String>,
+}
+
+impl PoiNoviceSite {
+    pub fn position_vec(&self) -> DVec3 {
+        DVec3::new(
+            f64::from(self.pos_xyz[0]),
+            f64::from(self.pos_xyz[1]),
+            f64::from(self.pos_xyz[2]),
+        )
+    }
 }
 
 #[derive(Debug, Default, Resource)]
@@ -97,6 +127,27 @@ impl PoiNoviceRegistry {
 
     pub fn by_id(&self, id: &str) -> Option<&PoiNoviceSite> {
         self.sites.iter().find(|site| site.id == id)
+    }
+
+    pub fn nearest_by_kinds(
+        &self,
+        origin: DVec3,
+        kinds: &[PoiNoviceKind],
+        radius: f64,
+    ) -> Option<&PoiNoviceSite> {
+        let radius_sq = radius.max(0.0) * radius.max(0.0);
+        self.sites
+            .iter()
+            .filter(|site| kinds.contains(&site.kind))
+            .filter_map(|site| {
+                let pos = site.position_vec();
+                let dx = pos.x - origin.x;
+                let dz = pos.z - origin.z;
+                let distance_sq = dx * dx + dz * dz;
+                (distance_sq <= radius_sq).then_some((site, distance_sq))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(site, _)| site)
     }
 }
 
@@ -326,7 +377,7 @@ pub fn parse_tags(tags: &[String]) -> HashMap<&str, &str> {
     parsed
 }
 
-fn novice_kinds() -> [PoiNoviceKind; 6] {
+fn novice_kinds() -> [PoiNoviceKind; 11] {
     [
         PoiNoviceKind::ForgeStation,
         PoiNoviceKind::AlchemyFurnace,
@@ -334,6 +385,11 @@ fn novice_kinds() -> [PoiNoviceKind; 6] {
         PoiNoviceKind::MutantNest,
         PoiNoviceKind::ScrollHidden,
         PoiNoviceKind::SpiritHerbValley,
+        PoiNoviceKind::HerbPatch,
+        PoiNoviceKind::QiSpring,
+        PoiNoviceKind::TradeSpot,
+        PoiNoviceKind::ShelterSpot,
+        PoiNoviceKind::WaterSource,
     ]
 }
 
@@ -374,6 +430,44 @@ mod tests {
         assert_eq!(site.kind, PoiNoviceKind::ForgeStation);
         assert_eq!(site.selection_strategy, "strict_radius_1500");
         assert_eq!(site.pos_xyz, [304.0, 71.0, 208.0]);
+    }
+
+    #[test]
+    fn daily_life_poi_kind_tags_parse_and_find_nearest() {
+        let mut registry = PoiNoviceRegistry::default();
+        registry.replace_all(vec![
+            PoiNoviceSite {
+                id: "spawn:far_herb".to_string(),
+                kind: PoiNoviceKind::HerbPatch,
+                zone: "spawn".to_string(),
+                name: "远处灵草".to_string(),
+                pos_xyz: [50.0, 66.0, 0.0],
+                selection_strategy: "test".to_string(),
+                qi_affinity: 0.2,
+                danger_bias: 0,
+                tags: Vec::new(),
+            },
+            PoiNoviceSite {
+                id: "spawn:near_herb".to_string(),
+                kind: PoiNoviceKind::HerbPatch,
+                zone: "spawn".to_string(),
+                name: "近处灵草".to_string(),
+                pos_xyz: [8.0, 66.0, 0.0],
+                selection_strategy: "test".to_string(),
+                qi_affinity: 0.2,
+                danger_bias: 0,
+                tags: Vec::new(),
+            },
+        ]);
+
+        let nearest = registry
+            .nearest_by_kinds(DVec3::ZERO, &[PoiNoviceKind::HerbPatch], 64.0)
+            .expect("nearest herb patch should be found");
+        assert_eq!(nearest.id, "spawn:near_herb");
+        assert_eq!(
+            PoiNoviceKind::try_from("qi_spring"),
+            Ok(PoiNoviceKind::QiSpring)
+        );
     }
 
     #[test]

@@ -66,6 +66,11 @@ fn kind_to_wire(kind: PoiNoviceKind) -> PoiNoviceKindV1 {
         PoiNoviceKind::MutantNest => PoiNoviceKindV1::MutantNest,
         PoiNoviceKind::ScrollHidden => PoiNoviceKindV1::ScrollHidden,
         PoiNoviceKind::SpiritHerbValley => PoiNoviceKindV1::SpiritHerbValley,
+        PoiNoviceKind::HerbPatch => PoiNoviceKindV1::HerbPatch,
+        PoiNoviceKind::QiSpring => PoiNoviceKindV1::QiSpring,
+        PoiNoviceKind::TradeSpot => PoiNoviceKindV1::TradeSpot,
+        PoiNoviceKind::ShelterSpot => PoiNoviceKindV1::ShelterSpot,
+        PoiNoviceKind::WaterSource => PoiNoviceKindV1::WaterSource,
     }
 }
 
