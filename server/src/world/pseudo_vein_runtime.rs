@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, Commands, Component, DVec3, EventWriter, Position, Query, Res, ResMut,
-    Resource, Update, With,
+    bevy_ecs, App, BlockPos, Commands, Component, DVec3, Entity, EventWriter, Position, Query, Res,
+    ResMut, Resource, Update, With,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -30,6 +30,7 @@ pub const PSEUDO_VEIN_CRITICAL_PLAYER_DENSITY: u32 = 4;
 pub const PSEUDO_VEIN_INFLUENCE_RADIUS_BLOCKS: f64 = 30.0;
 const PSEUDO_VEIN_VISUAL_PERIOD_TICKS: u64 = 100;
 const PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS: u64 = 12_000;
+const PSEUDO_VEIN_AFTERMATH_TICKS: u64 = 600;
 const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
 const ZONE_SPIRIT_QI_MAX: f64 = 1.0;
 pub const PSEUDO_VEIN_RISING_VFX_EVENT_ID: &str = "bong:pseudo_vein_rising";
@@ -58,6 +59,7 @@ pub struct PseudoVeinRuntime {
     pub phase: PseudoVeinPhase,
     pub cultivators_in_range: u32,
     pub season_at_spawn: PseudoVeinSeasonV1,
+    pub injected_qi: f64,
     phase_started_at_tick: u64,
     last_tick: u64,
     last_visual_tick: Option<u64>,
@@ -121,6 +123,7 @@ impl PseudoVeinRuntime {
             phase: PseudoVeinPhase::Rising,
             cultivators_in_range: 0,
             season_at_spawn,
+            injected_qi: 0.0,
             phase_started_at_tick: started_at_tick,
             last_tick: started_at_tick,
             last_visual_tick: None,
@@ -150,7 +153,11 @@ impl PseudoVeinRuntime {
                 >= PSEUDO_VEIN_DISSIPATING_TICKS
         {
             self.phase = PseudoVeinPhase::StormAftermath;
-            settlement = Some(settle_pseudo_vein_qi(self.zone_id.as_str(), self.max_qi));
+            self.phase_started_at_tick = current_tick;
+            settlement = Some(settle_pseudo_vein_qi(
+                self.zone_id.as_str(),
+                self.injected_qi,
+            ));
             let event = build_dissipate_event(
                 self.zone_id.as_str(),
                 [self.center_pos.x as f64, self.center_pos.z as f64],
@@ -222,20 +229,27 @@ pub fn register(app: &mut App) {
 
 pub fn pseudo_vein_runtime_tick_system(
     clock: Option<Res<CultivationClock>>,
-    mut runtimes: Query<&mut PseudoVeinRuntime>,
+    mut commands: Commands,
+    mut runtimes: Query<(Entity, &mut PseudoVeinRuntime)>,
     cultivators: Query<&Position, With<Cultivation>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
-    for mut runtime in &mut runtimes {
+    for (entity, mut runtime) in &mut runtimes {
         let previous_phase = runtime.phase;
         let cultivator_count =
             count_cultivators_near(runtime.center_pos, cultivators.iter().map(|pos| pos.get()));
         let outcome = runtime.advance(now, cultivator_count);
         if let Some(settlement) = outcome.settlement.as_ref() {
             apply_pseudo_vein_settlement(zones.as_deref_mut(), settlement, &mut qi_transfers);
+        }
+        if matches!(runtime.phase, PseudoVeinPhase::StormAftermath)
+            && now.saturating_sub(runtime.phase_started_at_tick) >= PSEUDO_VEIN_AFTERMATH_TICKS
+        {
+            commands.entity(entity).despawn();
+            continue;
         }
         if should_emit_visual(&mut runtime, previous_phase, now, outcome.warning_crossed) {
             vfx_events.send(pseudo_vein_vfx_request(&runtime, outcome.phase));
@@ -337,11 +351,15 @@ fn spawn_fallback_pseudo_vein(
     let Some(zone) = zones.find_zone_mut(intent.zone_id.as_str()) else {
         return;
     };
-    if let Some(transfer) = inject_zone_for_pseudo_vein(zone) {
+    let injected_qi = if let Some(transfer) = inject_zone_for_pseudo_vein(zone) {
+        let amount = transfer.amount;
         qi_transfers.send(transfer);
-    }
+        amount
+    } else {
+        0.0
+    };
     let center = zone.center();
-    commands.spawn(PseudoVeinRuntime::new(
+    let mut runtime = PseudoVeinRuntime::new(
         zone.name.clone(),
         BlockPos::new(
             center.x.round() as i32,
@@ -350,7 +368,9 @@ fn spawn_fallback_pseudo_vein(
         ),
         tick,
         season,
-    ));
+    );
+    runtime.injected_qi = injected_qi;
+    commands.spawn(runtime);
 }
 
 fn player_density_by_zone(
@@ -757,6 +777,7 @@ mod tests {
         runtime.phase = PseudoVeinPhase::Dissipating;
         runtime.phase_started_at_tick = 0;
         runtime.current_qi = 0.0;
+        runtime.injected_qi = PSEUDO_VEIN_MAX_QI;
         runtime.last_tick = 0;
         app.world_mut().spawn(runtime);
 
@@ -779,6 +800,30 @@ mod tests {
         assert_eq!(transfers[0].to, QiAccountId::tiandao());
         assert_eq!(transfers[0].amount, 0.18);
         assert_eq!(transfers[0].reason, QiTransferReason::EraDecay);
+    }
+
+    #[test]
+    fn aftermath_runtime_expires_after_ttl() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: PSEUDO_VEIN_AFTERMATH_TICKS,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("lingquan_marsh", 0.42, 0.0)],
+        });
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, pseudo_vein_runtime_tick_system);
+
+        let mut runtime = runtime(PseudoVeinSeasonV1::Summer);
+        runtime.phase = PseudoVeinPhase::StormAftermath;
+        runtime.phase_started_at_tick = 0;
+        app.world_mut().spawn(runtime);
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        assert_eq!(query.iter(app.world()).count(), 0);
     }
 
     #[test]
@@ -807,6 +852,7 @@ mod tests {
         let runtimes = query.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(runtimes.len(), 1);
         assert_eq!(runtimes[0].zone_id, "fast");
+        assert_eq!(runtimes[0].injected_qi, 0.5);
         assert_eq!(
             app.world()
                 .resource::<ZoneRegistry>()
