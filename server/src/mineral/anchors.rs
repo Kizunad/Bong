@@ -393,6 +393,31 @@ mod tests {
     }
 
     #[test]
+    fn mineral_gatherable_uses_stable_loot_table_and_display_name() {
+        let registry = build_default_registry();
+        let gatherable = mineral_gatherable(MineralId::FanTie, &registry);
+
+        assert_eq!(
+            gatherable.target,
+            GatheringTargetKind::Ore,
+            "mineral anchors must expose ore target metadata for gathering HUD and tool matching"
+        );
+        assert_eq!(
+            gatherable.base_time_ticks,
+            base_time_ticks(GatheringTargetKind::Ore),
+            "mineral gatherable base time should follow the shared ore timing"
+        );
+        assert_eq!(
+            gatherable.loot_table, "mineral:fan_tie",
+            "mineral loot table key must use stable snake_case mineral id, not Debug formatting"
+        );
+        assert_eq!(
+            gatherable.display_name, "凡铁",
+            "mineral gatherable display name should come from the mineral registry"
+        );
+    }
+
+    #[test]
     fn positions_are_limited_to_max_units_and_radius() {
         let anchor = MineralAnchor {
             zone: "spawn".into(),
@@ -530,6 +555,33 @@ mod tests {
         let index = app.world().resource::<MineralOreIndex>();
         assert_eq!(index.len(), 6);
         assert_eq!(index.lookup(DimensionKind::Overworld, exhausted_pos), None);
+        let mut query = app.world_mut().query::<&Gatherable>();
+        let gatherables = query.iter(app.world()).cloned().collect::<Vec<_>>();
+        assert_eq!(
+            gatherables.len(),
+            6,
+            "each spawned non-exhausted mineral node should carry Gatherable metadata"
+        );
+        for gatherable in &gatherables {
+            assert_eq!(
+                gatherable.target,
+                GatheringTargetKind::Ore,
+                "spawned mineral gatherable should be typed as ore"
+            );
+            assert_eq!(
+                gatherable.base_time_ticks,
+                base_time_ticks(GatheringTargetKind::Ore),
+                "spawned mineral gatherable should use shared ore gather timing"
+            );
+            assert_eq!(
+                gatherable.loot_table, "mineral:fan_tie",
+                "spawned mineral gatherable should keep stable snake_case loot key"
+            );
+            assert_eq!(
+                gatherable.display_name, "凡铁",
+                "spawned mineral gatherable should expose registry display name"
+            );
+        }
         let _ = fs::remove_file(path);
     }
 }

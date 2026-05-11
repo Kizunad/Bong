@@ -407,11 +407,17 @@ pub(super) fn handle_block_break_for_mineral(
 }
 
 pub fn equipped_pickaxe_tier(inventory: &PlayerInventory) -> Option<u8> {
-    inventory
-        .equipped
-        .get(EQUIP_SLOT_MAIN_HAND)
-        .or_else(|| inventory.equipped.get(EQUIP_SLOT_TWO_HAND))
-        .and_then(pickaxe_tier_from_item)
+    [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND]
+        .into_iter()
+        .filter_map(|slot| inventory.equipped.get(slot))
+        .find_map(pickaxe_tier_from_usable_item)
+}
+
+fn pickaxe_tier_from_usable_item(item: &ItemInstance) -> Option<u8> {
+    if !item.durability.is_finite() || item.durability <= 0.0 {
+        return None;
+    }
+    pickaxe_tier_from_item(item)
 }
 
 pub fn pickaxe_tier_from_item(item: &ItemInstance) -> Option<u8> {
@@ -505,6 +511,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn item(template_id: &str) -> ItemInstance {
+        item_with_durability(template_id, 1.0)
+    }
+
+    fn item_with_durability(template_id: &str, durability: f64) -> ItemInstance {
         ItemInstance {
             instance_id: 1,
             template_id: template_id.to_string(),
@@ -516,7 +526,7 @@ mod tests {
             description: String::new(),
             stack_count: 1,
             spirit_quality: 0.0,
-            durability: 1.0,
+            durability,
             freshness: None,
             mineral_id: None,
             charges: None,
@@ -602,6 +612,47 @@ mod tests {
         );
 
         assert_eq!(equipped_pickaxe_tier(&inv), Some(4));
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_reads_two_hand_when_main_hand_is_not_pickaxe() {
+        let mut inv = inventory_with_main_hand("minecraft:iron_sword");
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            item("minecraft:diamond_pickaxe"),
+        );
+
+        assert_eq!(
+            equipped_pickaxe_tier(&inv),
+            Some(4),
+            "two_hand pickaxe must count when main_hand holds a non-pickaxe item"
+        );
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_ignores_broken_pickaxes() {
+        let mut inv = inventory_with_main_hand("minecraft:iron_pickaxe");
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            item_with_durability("minecraft:iron_pickaxe", 0.0),
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            item("minecraft:diamond_pickaxe"),
+        );
+
+        assert_eq!(
+            equipped_pickaxe_tier(&inv),
+            Some(4),
+            "broken main_hand pickaxe must be ignored so a usable two_hand pickaxe can satisfy mining tier"
+        );
+
+        inv.equipped.remove(EQUIP_SLOT_TWO_HAND);
+        assert_eq!(
+            equipped_pickaxe_tier(&inv),
+            None,
+            "broken pickaxe must not satisfy mining tier checks"
+        );
     }
 
     #[test]

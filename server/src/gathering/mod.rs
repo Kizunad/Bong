@@ -67,13 +67,22 @@ fn emit_gathering_progress(
         let Ok(mut client) = clients.get_mut(frame.player) else {
             continue;
         };
+        let Some(quality_hint) = quality_hint_wire(frame.quality_hint.as_str()) else {
+            tracing::warn!(
+                target: "bong::gathering",
+                session_id = %frame.session_id,
+                quality_hint = %frame.quality_hint,
+                "skipping gathering progress frame with unknown quality_hint"
+            );
+            continue;
+        };
         let payload = ServerDataV1::new(ServerDataPayloadV1::GatheringSession {
             session_id: frame.session_id.clone(),
             progress_ticks: frame.progress_ticks,
             total_ticks: frame.total_ticks,
             target_name: frame.target_name.clone(),
             target_type: target_type_wire(frame.target_type),
-            quality_hint: quality_hint_wire(frame.quality_hint.as_str()),
+            quality_hint,
             tool_used: frame.tool_used.clone(),
             interrupted: frame.interrupted,
             completed: frame.completed,
@@ -94,13 +103,14 @@ pub fn target_type_wire(target: GatheringTargetKind) -> GatheringTargetTypeV1 {
     }
 }
 
-fn quality_hint_wire(hint: &str) -> GatheringQualityHintV1 {
+fn quality_hint_wire(hint: &str) -> Option<GatheringQualityHintV1> {
     match hint {
-        "fine_likely" => GatheringQualityHintV1::FineLikely,
-        "perfect_possible" => GatheringQualityHintV1::PerfectPossible,
-        "fine" => GatheringQualityHintV1::Fine,
-        "perfect" => GatheringQualityHintV1::Perfect,
-        _ => GatheringQualityHintV1::Normal,
+        "normal" => Some(GatheringQualityHintV1::Normal),
+        "fine_likely" => Some(GatheringQualityHintV1::FineLikely),
+        "perfect_possible" => Some(GatheringQualityHintV1::PerfectPossible),
+        "fine" => Some(GatheringQualityHintV1::Fine),
+        "perfect" => Some(GatheringQualityHintV1::Perfect),
+        _ => None,
     }
 }
 
@@ -139,20 +149,24 @@ mod tests {
         );
         assert_eq!(
             quality_hint_wire("fine_likely"),
-            GatheringQualityHintV1::FineLikely
+            Some(GatheringQualityHintV1::FineLikely)
         );
         assert_eq!(
             quality_hint_wire("perfect_possible"),
-            GatheringQualityHintV1::PerfectPossible
+            Some(GatheringQualityHintV1::PerfectPossible)
         );
-        assert_eq!(quality_hint_wire("fine"), GatheringQualityHintV1::Fine);
+        assert_eq!(
+            quality_hint_wire("normal"),
+            Some(GatheringQualityHintV1::Normal)
+        );
+        assert_eq!(
+            quality_hint_wire("fine"),
+            Some(GatheringQualityHintV1::Fine)
+        );
         assert_eq!(
             quality_hint_wire("perfect"),
-            GatheringQualityHintV1::Perfect
+            Some(GatheringQualityHintV1::Perfect)
         );
-        assert_eq!(
-            quality_hint_wire("unexpected"),
-            GatheringQualityHintV1::Normal
-        );
+        assert_eq!(quality_hint_wire("unexpected"), None);
     }
 }
