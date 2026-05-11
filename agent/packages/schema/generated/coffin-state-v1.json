@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "in_coffin",
+    "lifespan_rate_multiplier"
+  ],
+  "properties": {
+    "in_coffin": {
+      "type": "boolean"
+    },
+    "lifespan_rate_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

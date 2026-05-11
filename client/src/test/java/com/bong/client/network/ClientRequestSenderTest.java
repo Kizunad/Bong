@@ -216,6 +216,25 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendCoffinLifecycleUsesCorrectChannelAndJson() {
+        install();
+        BlockPos pos = new BlockPos(4, 65, -9);
+        ClientRequestSender.sendCoffinPlace(pos, 4242L);
+        ClientRequestSender.sendCoffinEnter(pos);
+        ClientRequestSender.sendCoffinLeave();
+        assertEquals(3, sent.size());
+        assertEquals(
+            "{\"type\":\"coffin_place\",\"v\":1,\"x\":4,\"y\":65,\"z\":-9,\"item_instance_id\":4242}",
+            sent.get(0).body()
+        );
+        assertEquals(
+            "{\"type\":\"coffin_enter\",\"v\":1,\"x\":4,\"y\":65,\"z\":-9}",
+            sent.get(1).body()
+        );
+        assertEquals("{\"type\":\"coffin_leave\",\"v\":1}", sent.get(2).body());
+    }
+
+    @Test
     void sendAlchemyFurnaceRequestsUseCorrectChannelAndBlockPosJson() {
         install();
         BlockPos pos = new BlockPos(-12, 64, 38);

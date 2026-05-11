@@ -1,0 +1,10 @@
+{
+  "id": "coffin_break",
+  "layers": [
+    { "sound": "minecraft:block.wood.break", "volume": 0.55, "pitch": 0.75, "delay_ticks": 0 },
+    { "sound": "minecraft:block.chest.close", "volume": 0.30, "pitch": 0.45, "delay_ticks": 1 }
+  ],
+  "priority": 52,
+  "attenuation": "world_3d",
+  "category": "VOICE"
+}
