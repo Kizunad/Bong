@@ -45,12 +45,12 @@
 
 ## §0 设计轴心
 
-- [ ] **历代累积，不是单次事件**：本 profile 不绑定 `plan-tribulation-v1` 的实时天劫渲染——它是"历代天劫已经劈过几百次"的地理结果，所以是固定 zone（不是 transient）
-- [ ] **雷雨真招雷**：在 zone 内玩家头顶若是开放天空 + 雨天，每分钟 1-3 次 lightning_strike 事件——不是装饰，是真实伤害；玩家戴金属护甲提高命中率；**暴烈色降低命中率（抗劈，详见 §2）**——这是反 worldview §六"阴雨/水域真元紊乱"副作用的 narrative 弥补：暴烈色无法消除阴雨副作用，但能引导外来雷电入经脉而非劈穿肉身
-- [ ] **修炼速度按 worldview §三 公式走**：本 profile **不改写** `cultivation 速度 ∝ zone.spirit_qi × (qi_current / qi_max)` 主公式（属 plan-cultivation-v1 范围）；染色亲和不进 cultivation 主公式——焦土对暴烈色的吸引力来自"敢站着不被劈穿"的生存优势，不来自双倍刷怪
-- [ ] **真元紊乱外缘**：焦土外缘 50-100 格内是低概率"游离风暴"区（天劫余压），所有玩家（含暴烈色）真元自然漏失 +30%——worldview §六 雷法明文"阴雨/水域真元紊乱"，**暴烈色不豁免**
-- [ ] **化虚渡劫遗迹（极稀有）**：每 zone 0-1 个 `tianjie_ascension_pit` **structure（非 DecorationSpec）**——上古化虚者渡虚劫死处，中心是巨型玄武岩坑 + 残破渡劫人形痕；可能爆出极稀有的"虚劫残屑"；用 zone.extras.ascension_pit_xz 强制单点定位
-- [ ] **季节响应**（worldview §十七）：焦地 qi_density 不参与 §十七 二季 / 汐转节律——`Season::*_modifier()` 在焦地 zone 内一律 short-circuit（与死域同源）；但**生态层**（flora_density / 微小生命 spawn）可缓慢恢复——首版固定速率（每 game-year ×1.05 衰回基线，10 game-year 后接近原野）；不与季节系统直接耦合，避免冬季加速 / 夏季加速等"快速治愈"反 worldview 语义
+- [x] **历代累积，不是单次事件**：本 profile 不绑定 `plan-tribulation-v1` 的实时天劫渲染——它是"历代天劫已经劈过几百次"的地理结果，所以是固定 zone（不是 transient）
+- [x] **雷雨真招雷**：在 zone 内玩家头顶若是开放天空 + 雨天，每分钟 1-3 次 lightning_strike 事件——不是装饰，是真实伤害；玩家戴金属护甲提高命中率；**暴烈色降低命中率（抗劈，详见 §2）**——这是反 worldview §六"阴雨/水域真元紊乱"副作用的 narrative 弥补：暴烈色无法消除阴雨副作用，但能引导外来雷电入经脉而非劈穿肉身
+- [x] **修炼速度按 worldview §三 公式走**：本 profile **不改写** `cultivation 速度 ∝ zone.spirit_qi × (qi_current / qi_max)` 主公式（属 plan-cultivation-v1 范围）；染色亲和不进 cultivation 主公式——焦土对暴烈色的吸引力来自"敢站着不被劈穿"的生存优势，不来自双倍刷怪
+- [x] **真元紊乱外缘**：焦土外缘 50-100 格内是低概率"游离风暴"区（天劫余压），所有玩家（含暴烈色）真元自然漏失 +30%——worldview §六 雷法明文"阴雨/水域真元紊乱"，**暴烈色不豁免**
+- [x] **化虚渡劫遗迹（极稀有）**：每 zone 0-1 个 `tianjie_ascension_pit` **structure（非 DecorationSpec）**——上古化虚者渡虚劫死处，中心是巨型玄武岩坑 + 残破渡劫人形痕；可能爆出极稀有的"虚劫残屑"；用 zone.extras.ascension_pit_xz 强制单点定位
+- [x] **季节响应**（worldview §十七）：焦地 qi_density 不参与 §十七 二季 / 汐转节律——`Season::*_modifier()` 在焦地 zone 内一律 short-circuit（与死域同源）；但**生态层**（flora_density / 微小生命 spawn）可缓慢恢复——首版固定速率（每 game-year ×1.05 衰回基线，10 game-year 后接近原野）；不与季节系统直接耦合，避免冬季加速 / 夏季加速等"快速治愈"反 worldview 语义
 
 ## §1 世界观推断逻辑（为何此地必然存在）
 
@@ -286,12 +286,12 @@ extra_layers = (
 ## §8 开放问题
 
 - [x] ~~zone-scoped 天气改写需立 plan-weather-zone-override~~ **2026-05-11 已解除**：`plan-zone-weather-v1` + `plan-zone-environment-v1` 已 finished；本 plan 只消费 `ZoneWeatherProfile`、`weather_to_environment_bundle`、`lightning_strike_at`、`style_modifier::for_zone_weather`，不新造平行天气系统。
-- [ ] 虚劫残屑的用途：plan-skill-v1（雷法残卷材料）vs plan-weapon-v1（雷霆器修高阶载体）vs plan-cultivation-v1（暴烈色染色催化）？后续 plan 决策；不阻塞本 plan 归档。
-- [ ] 雷击死亡的运数 / 寿元结算（worldview §十二）：本是天劫直接干预，是否应**算"突破反噬 / 天劫失败"**？倾向**否**——这是"环境天劫"，不是玩家主动渡劫，按正常死亡 Roll
-- [ ] 玩家在化虚遗迹周围"假装渡劫"（armor_stand + 雷云）是否触发天劫 narration 误判？建议 P3 阶段做 narration 检测白名单
-- [ ] 鞭炮 / TNT 等可触发 lightning_rod 的玩家行为是否破坏 immersion？倾向**禁止**主动招雷（仅天气 + lodestone_vortex 自然招雷）
-- [ ] 焦土与 ancient_battlefield 的"空间相对位置"——是否设计某 ancient_battlefield zone 同时被天劫劈过形成"古战场焦土带"复合 zone？倾向**首版不做**（profile 互斥简单实现）
-- [ ] 暴烈色 + 重铁甲 = ×0.7 × 1.5 ≈ baseline——这是设计意图（双方互相抵消，让"暴烈色穿 leather 抗劈最优"成为反直觉解）还是 bug（重甲玩家失去抗雷优势）？需要 plan-armor-v1 联动核对
+- 后续：虚劫残屑的用途由 plan-skill-v1（雷法残卷材料）/ plan-weapon-v1（雷霆器修高阶载体）/ plan-cultivation-v1（暴烈色染色催化）另案决策；不阻塞本 plan 归档。
+- 后续：雷击死亡的运数 / 寿元结算（worldview §十二）倾向按正常死亡 Roll，不算"突破反噬 / 天劫失败"；最终口径留给死亡/运数 plan。
+- 后续：玩家在化虚遗迹周围"假装渡劫"是否触发天劫 narration 误判，建议后续 narration 检测白名单处理。
+- 后续：鞭炮 / TNT 等主动招雷行为建议禁止，仅保留天气 + lodestone_vortex 自然招雷。
+- 后续：古战场焦土带复合 zone 首版不做，若需要与 ancient_battlefield 叠加另开地形 plan。
+- 后续：暴烈色 + 重铁甲 = ×0.7 × 1.5 约等于 baseline 的平衡语义，留给 plan-armor-v1 联动核对。
 
 ## §9 进度日志
 

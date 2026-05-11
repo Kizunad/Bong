@@ -166,7 +166,7 @@ let rejection = attenuated * QI_EXCRETION_BASE * (rejection_rate + resistance * 
 
 - [x] resistance 修正选方案 A（hard cap 0.95）— 2026-05-10 模拟对比后定,方案 B 防御层次感塌了
 - [x] 涡流既是攻击又是防御（`StyleAttack` + 负场 drain）,rejection_rate 0.30 是否合理? — 2026-05-11（Pacific/Auckland）采用默认裸真元排斥率 0.30，并由矩阵测试锁定涡流防御的高 drain_affinity 表现
-- [ ] 各流派 v2 上线后 rejection_rate 是否需要按招式细分(同流派不同招不同 ρ)?
+- 后续：各流派 v2 上线后再评估 rejection_rate 是否需要按招式细分（同流派不同招不同 ρ）；不阻塞本 plan 归档。
 
 ## §5 进度日志
 

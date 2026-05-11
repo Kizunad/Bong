@@ -340,7 +340,7 @@
 - **server**：tribulation P0 ✅ 部分；**缺**：截胡/失败 narration 链路(plan-tribulation-v1 余 ⏳)
 - **agent**：era_decree 渡劫广播 ✅；**确认**：全服在线玩家是否都收到 narration(集成测试)
 - **client**：渡劫广播 HUD ✅(`TribulationBroadcastHudPlanner` + `TribulationStateStore` + `TribulationBroadcastStore`，5 阶段 + 三视角 + 进度 + 方位 + 距离全实装；玩家自身 HP/真元走 plan-HUD-v1 标准 HUD 复用)
-- **worldgen**：渡劫场地建议是 `tribulation_scorch` 地形(plan-terrain-tribulation-scorch-v1 ⬜ skeleton 必须升 active)
+- **worldgen**：渡劫场地 `tribulation_scorch` 已落地（plan-terrain-tribulation-scorch-v1 ✅ finished，2026-05-11）
 - **schema**：tribulation announce/wave/succeed/failed 全 ✅
 
 ### 验收抓手
@@ -352,7 +352,7 @@
 ### P5 缺口
 
 - plan-tribulation-v1 ✅ finished；plan-void-quota-v1 ✅ finished（2026-05-08，世界灵气预算名额 + 绝壁劫）
-- plan-terrain-tribulation-scorch-v1 升 active（仍 skeleton）
+- plan-terrain-tribulation-scorch-v1 ✅ finished（2026-05-11，焦土地形 + 遗迹 + 雷击机制）
 - ~~渡劫第一视角 UI(派生 plan-tribulation-pov-ui-v1)~~ ❌ **不立**：已实装于 plan-tribulation-v1 + plan-HUD-v1 (`TribulationBroadcastHudPlanner` 5 阶段 + 三视角 + `TribulationStateStore` 已存在 + 测试通过；玩家自身 HP/真元走标准 HUD 复用)
 - plan-multi-life-v1 ⏳ active-design (~8%；LifespanCapTable 复用就绪，character_lifecycle::regenerate_or_terminate / per-life luck_pool 全未实装)
 - plan-tsy-raceout-v1 ⏳ active-design (~10%；CollapseStarted 事件已存在，3s 撤离 / 单裂口 1 人 / 允许 PVP 未闭环)
@@ -575,7 +575,7 @@ P3 必需:
 P4 必需:
   - plan-tribulation-v1 余        ⏳ → 推进       (渡劫闭环)
   - plan-jiezeq-v1              ✅ active (2026-05-04，10 决议闭环) — 节律基础设施 + 跨系统 hook + agent + client 间接表现（含原 plan-jiezeq-ui-v1 范围，已合并）
-  - plan-terrain-tribulation-scorch-v1 ⬜ → active(渡劫地形)
+  - plan-terrain-tribulation-scorch-v1 ✅ finished（渡劫地形，2026-05-11）
 
 P5 必需:
   - ~~plan-tribulation-pov-ui-v1~~ ❌ **不立** — 已实装于 plan-tribulation-v1 + plan-HUD-v1 (TribulationBroadcastHudPlanner 5 阶段 / 三视角 / 进度 / 方位 / 距离全 ✅)
@@ -1395,14 +1395,14 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | 33 | `plan-botany-v2` | ✅ finished (2026-05-04，PR #128 commit ed596f3b 归档；SeasonRequired/WaterPulse driver 归 lingtian-weather) | botany-v1 ✅ | §G |
 | 34 | `plan-botany-agent-v1` | ⏳ active-implementing (~15%；BOTANY_ECOLOGY 订阅 + 测试已落，WorldModel 字段/analyzer/决策层全缺) | botany-v2 ✅, narrative-v1 | §G |
 | 35 | `plan-economy-v1` | 🆕 skeleton | fauna-v1, social-v1 ✅ | §E + 骨币半衰 |
-| 36 | `plan-style-balance-v1` | 🆕 skeleton | 7 流派 plan(20-26 全), cross-system-patch-v1 | §P + O.9 PVP telemetry |
+| 36 | `plan-style-balance-v1` | ✅ finished (2026-05-11，PR #204；qi_collision + telemetry 校准落地) | 7 流派 plan(20-26 全), cross-system-patch-v1 | §P + O.9 PVP telemetry |
 
 #### 层 E：P4 通灵（Tier 4）
 
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
 | 37 | `plan-tribulation-v1` | ⏳(扩展) | narrative-v1, terrain-ash-deadzone-v1, terrain-tribulation-scorch-v1 | 既有 active 扩展(含 §M.2 避劫 + 渡虚劫 POV UI) |
-| 38 | `plan-terrain-tribulation-scorch-v1` | ⬜ | worldgen ✅ | §G P5 渡劫场 |
+| 38 | `plan-terrain-tribulation-scorch-v1` | ✅ finished (2026-05-11，PR #207；焦土 profile + 遗迹 + 雷击 hook) | worldgen ✅ | §G P5 渡劫场 |
 | 39 | `plan-tsy-raceout-v1` | ⏳ active-design (~10%；CollapseStarted 事件已存在 tsy_lifecycle.rs，tsy_raceout.rs / 3-5 裂口 / RaceoutCountdownHud 全未实装) | tsy-lifecycle-v1 ✅, tsy-extract-v1 ✅, tsy-hostile-v1 ✅, death-lifecycle-v1 ✅ | §M.1 race-out 3 秒撤离 |
 
 #### 层 F：P5 化虚（Tier 5）
@@ -1474,11 +1474,11 @@ graph TD
     botanyV2[33.botany-v2 ✅]
     botanyAg[34.botany-agent-v1]
     economy[35.economy-v1 🆕]:::derived
-    styleBal[36.style-balance-v1 🆕]:::derived
+    styleBal[36.style-balance-v1 ✅]:::derived
 
     %% Wave 4: P4 通灵
     tribul[37.tribulation-v1 ✅]
-    scorch[38.terrain-tribulation-scorch-v1]
+    scorch[38.terrain-tribulation-scorch-v1 ✅]
     raceout[39.tsy-raceout-v1 🆕]:::derived
 
     %% Wave 5: P5 化虚
@@ -1627,7 +1627,7 @@ graph TD
 
 > **2026-05-03 实际进度**：6 流派 plan 全部升 active+P0/P1 实装；baomai-v1 / zhenfa-v1 / woliu-v1 / spirit-eye-v1 已 ✅ finished 归档；anqi/dugu/zhenmai/tuike 仍 active；style-vector-integration-v1 active（取代撤销的 style-pick-v1）。
 >
-> **2026-05-04 实际进度**：dugu-v1 ✅ finished（PR #126 commit 44a6ff9b 归档）；multi-style-v1 ✅ finished（PR #129 commit 5eefe3a9 归档，废弃 UnlockedStyles 改 PracticeLog vector）。剩 style-balance-v1 未起 + E2E p2 脚本未跑。
+> **2026-05-11 实际进度**：dugu-v1 ✅ finished（PR #126 commit 44a6ff9b 归档）；multi-style-v1 ✅ finished（PR #129 commit 5eefe3a9 归档，废弃 UnlockedStyles 改 PracticeLog vector）；style-balance-v1 ✅ finished（PR #204，qi_collision + telemetry 校准落地）。E2E p2 脚本仍需按 acceptance 计划统一跑。
 
 #### 🟧 Wave 3 — P3 中阶生态（Month 8-10）
 
@@ -1639,7 +1639,7 @@ graph TD
 | 组 3-B(并行) | plan-alchemy-recycle-v1 + plan-botany-v2 ✅ finished |
 | 组 3-C(等 fauna+social) | plan-economy-v1 🆕 + plan-niche-defense-v1 ✅ finished |
 | 组 3-D(botany-v2 已 finished) | plan-botany-agent-v1 |
-| 组 3-E(等 Wave 2 完成) | **plan-style-balance-v1** 🆕（PVP telemetry，必须 7 流派齐） |
+| 组 3-E(等 Wave 2 完成) | **plan-style-balance-v1** ✅ finished（PVP telemetry 与 qi_collision 校准已落地） |
 
 **Wave 3 退出条件**：E2E `p3-solidify.sh` 全绿；流派克制 PVP 数据回填 §P.5 矩阵。
 
@@ -1649,7 +1649,7 @@ graph TD
 
 | 并行组 | Plan |
 |---|---|
-| 组 4-A | plan-terrain-tribulation-scorch-v1 + plan-tsy-raceout-v1 ⏳ active-design |
+| 组 4-A | plan-terrain-tribulation-scorch-v1 ✅ finished + plan-tsy-raceout-v1 ⏳ active-design |
 | 组 4-B(等 narrative+ash+scorch) | plan-tribulation-v1 ⏳ 收尾（含 §M.2 避劫 + 渡虚劫 POV UI） |
 
 **Wave 4 退出条件**：E2E `p4-spirit.sh` 全绿；3 客户端联机渡劫广播验收。
@@ -1704,7 +1704,7 @@ graph TD
 
 **优化建议**：
 1. **Wave 0 中**：persistence-v1 与 canonical-align-v1 互不依赖，并行可省 3 周
-2. **Wave 2 中**：7 流派并行后，style-balance-v1 是收口瓶颈——尽早起 telemetry 框架
+2. **Wave 2 中**：7 流派并行后的 style-balance-v1 已 finished；剩余收口以 E2E 数据回放和 acceptance 计划为准
 3. **niche-defense-v1** 同时依赖 fauna + zhenfa，是 P3-P4 链路上的关键节点
 4. **gameplay-acceptance-v1** 100h 实测无法压缩——必须真人跑
 
@@ -1729,7 +1729,7 @@ graph TD
 
 - [ ] `git mv docs/plans-skeleton/plan-gameplay-journey-v1.md docs/plan-gameplay-journey-v1.md`
 - [ ] 同步起新派生 plan 的 skeleton（Q.1 标 🆕 的）：
-  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / style-balance-v1 ⬜ / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / **void-quota-v1 ✅ finished** (05-08) / **void-actions-v1 ⏳ active-design** (05-08) / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
+  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / **style-balance-v1 ✅ finished** (05-11) / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / **void-quota-v1 ✅ finished** (05-08) / **void-actions-v1 ⏳ active-design** (05-08) / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
 - [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"

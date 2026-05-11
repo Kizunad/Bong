@@ -16,17 +16,19 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-05-11 · 共 106 份 plan_
 
 ```
-总进度  ██████████████████████████░░░░  86.5%
+总进度  ███████████████████████████░░░  88.9%
 ```
 
-**分布**：`merged` 43 · `wip` 4 · `design` 6 · `skeleton` 7 · `done` 46
+**分布**：`merged` 46 · `wip` 4 · `design` 3 · `skeleton` 7 · `done` 46
 
 ### 战斗 / HUD / 视觉
-_战斗 ECS、流派、HUD、粒子、动画、Iris · 12 份 · 组均 74%_
+_战斗 ECS、流派、HUD、粒子、动画、Iris · 12 份 · 组均 88%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
+| `merged` | **HUD 感知增强与沉浸布局** <br/><sub>`finished_plans/plan-hud-immersion-v2.md`</sub> | `████████████` 100% | #203 | 2026-05-11 |
 | `merged` | **G 键统一环境交互路由** <br/><sub>`finished_plans/plan-input-binding-v1.md`</sub> | `████████████` 100% | #101 | 2026-05-02 |
+| `merged` | **流派克制系数 config + telemetry 回填** <br/><sub>`finished_plans/plan-style-balance-v1.md`</sub> | `████████████` 100% | #204 | 2026-05-11 |
 | `merged` | **客户端全 HUD 布局与渲染系统** <br/><sub>`finished_plans/plan-HUD-v1.md`</sub> | `████████████`  97% | #98 | 2026-05-02 |
 | `merged` | **器修·暗器流** <br/><sub>`finished_plans/plan-anqi-v1.md`</sub> | `███████████░`  95% | #121 | 2026-05-04 |
 | `merged` | **毒蛊流：凝针 + 灌毒蛊 + 经脉永久损伤** <br/><sub>`finished_plans/plan-dugu-v1.md`</sub> | `███████████░`  95% | #126 | 2026-05-04 |
@@ -35,8 +37,6 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 12 份 · 组均 74%_
 | `merged` | **截脉·震爆流** <br/><sub>`finished_plans/plan-zhenmai-v1.md`</sub> | `███████████░`  95% | #122 | 2026-05-04 |
 | `merged` | **地师阵法流** <br/><sub>`finished_plans/plan-zhenfa-v1.md`</sub> | `███████████░`  92% | #110 | 2026-05-03 |
 | `merged` | **真元色向量链路（流派组合涌现）** <br/><sub>`finished_plans/plan-style-vector-integration-v1.md`</sub> | `███████████░`  90% | #123 | 2026-05-04 |
-| `design` | **流派克制系数 config + telemetry 回填** <br/><sub>`plan-style-balance-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-05-11 |
-| `design` | **HUD 感知增强与沉浸布局** <br/><sub>`plan-hud-immersion-v2.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-05-11 |
 | `design` | **Iris 光影集成** <br/><sub>`plan-iris-integration-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
 
 ### 修炼 / 经济
@@ -93,7 +93,7 @@ _IPC schema、持久化、工作流、内容、音效 · 6 份 · 组均 100%_
 | `merged` | **服务端 Brigadier 命令迁移** <br/><sub>`finished_plans/plan-server-cmd-system-v1.md`</sub> | `████████████` 100% | #72 #90 | 2026-05-01 |
 
 ### 地形 / 世界生成
-_末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 · 组均 71%_
+_末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 · 组均 85%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -101,7 +101,7 @@ _末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 ·
 | `merged` | **九宗故地废墟群** <br/><sub>`finished_plans/plan-terrain-jiuzong-ruin-v1.md`</sub> | `████████████` 100% | #118 | 2026-05-04 |
 | `merged` | **伪灵脉绿洲陷阱** <br/><sub>`finished_plans/plan-terrain-pseudo-vein-v1.md`</sub> | `████████████` 100% | #107 | 2026-05-02 |
 | `merged` | **渊口荒丘入口锚点** <br/><sub>`finished_plans/plan-terrain-rift-mouth-v1.md`</sub> | `████████████` 100% | #119 | 2026-05-04 |
-| `design` | **烬焰焦土地形** <br/><sub>`plan-terrain-tribulation-scorch-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-05-11 |
+| `merged` | **烬焰焦土地形** <br/><sub>`finished_plans/plan-terrain-tribulation-scorch-v1.md`</sub> | `████████████` 100% | #207 | 2026-05-11 |
 | `design` | **TerrainProvider 按层查询** <br/><sub>`plan-terrain-layer-query-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-29 |
 
 ### 骨架 plan
