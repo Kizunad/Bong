@@ -3,6 +3,8 @@ plugins {
     id 'maven-publish'
 }
 
+import groovy.json.JsonSlurper
+
 group = 'com.bong.client'
 version = '0.1.0'
 
@@ -81,8 +83,68 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+def bongBlockManifest = file('../bong_blocks.json')
+def generatedBongBlockDir = layout.buildDirectory.dir('generated/sources/bongBlocks/java')
+
+tasks.register('generateBongBlockIds') {
+    inputs.file(bongBlockManifest)
+    outputs.dir(generatedBongBlockDir)
+
+    doLast {
+        def manifest = new JsonSlurper().parse(bongBlockManifest)
+        def packageDir = generatedBongBlockDir.get().asFile.toPath()
+            .resolve('com')
+            .resolve('bong')
+            .resolve('client')
+            .resolve('block')
+        packageDir.toFile().mkdirs()
+
+        int nextBlockId = 1003
+        int nextStateId = 24135
+        def lines = [
+            'package com.bong.client.block;',
+            '',
+            'public final class BongBlockIds {',
+            '    public static final int BONG_BLOCK_ID_START = 1003;',
+            '    public static final int BONG_BLOCK_STATE_START = 24135;',
+            ''
+        ]
+
+        manifest.blocks.each { block ->
+            def constName = block.name.toUpperCase(Locale.ROOT).replaceAll('[^A-Z0-9]+', '_')
+            int blockId = nextBlockId
+            int stateId = nextStateId
+            int stateCount = 1
+            block.properties.each { property ->
+                stateCount *= property.values.size()
+            }
+
+            lines += "    public static final int ${constName}_BLOCK_ID = ${blockId};"
+            lines += "    public static final int ${constName}_STATE_ID = ${stateId};"
+            lines += "    public static final int ${constName}_STATE_COUNT = ${stateCount};"
+            lines += ''
+
+            nextBlockId += 1
+            nextStateId += stateCount
+        }
+
+        lines += '    private BongBlockIds() {}'
+        lines += '}'
+        packageDir.resolve('BongBlockIds.java').toFile().text = lines.join(System.lineSeparator()) + System.lineSeparator()
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir generatedBongBlockDir
+        }
+    }
+}
+
 tasks.withType(JavaCompile).configureEach {
     it.options.release = 17
+    it.dependsOn(tasks.named('generateBongBlockIds'))
 }
 
 tasks.withType(Test) {

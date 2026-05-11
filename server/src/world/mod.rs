@@ -1,4 +1,5 @@
 pub mod block_break;
+pub mod bong_blocks;
 pub mod calamity;
 pub mod dimension;
 pub mod dimension_transfer;
