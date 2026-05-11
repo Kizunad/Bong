@@ -91,6 +91,16 @@ public final class BongAnimations {
     public static final Identifier DASH_FORWARD = new Identifier(MOD_ID, "dash_forward");
     public static final Identifier SLIDE_LOW = new Identifier(MOD_ID, "slide_low");
     public static final Identifier DOUBLE_JUMP = new Identifier(MOD_ID, "double_jump");
+    public static final Identifier PILL_HUO_XUE = new Identifier(MOD_ID, "pill_huo_xue");
+    public static final Identifier PILL_XU_GU = new Identifier(MOD_ID, "pill_xu_gu");
+    public static final Identifier PILL_DUAN_XU = new Identifier(MOD_ID, "pill_duan_xu");
+    public static final Identifier PILL_TIE_BI = new Identifier(MOD_ID, "pill_tie_bi");
+    public static final Identifier PILL_JIN_ZHONG = new Identifier(MOD_ID, "pill_jin_zhong");
+    public static final Identifier PILL_NING_JIA = new Identifier(MOD_ID, "pill_ning_jia");
+    public static final Identifier PILL_JI_FENG = new Identifier(MOD_ID, "pill_ji_feng");
+    public static final Identifier PILL_SUO_DI = new Identifier(MOD_ID, "pill_suo_di");
+    public static final Identifier PILL_HUI_LI = new Identifier(MOD_ID, "pill_hui_li");
+    public static final Identifier PILL_HU_GU = new Identifier(MOD_ID, "pill_hu_gu");
 
     public static final List<Identifier> IMPLEMENTATION_V1_ANIMATIONS = List.of(
         SWORD_SWING_RIGHT,
@@ -142,6 +152,19 @@ public final class BongAnimations {
         DASH_FORWARD,
         SLIDE_LOW,
         DOUBLE_JUMP
+    );
+
+    public static final List<Identifier> ALCHEMY_COMBAT_PILL_ANIMATIONS = List.of(
+        PILL_HUO_XUE,
+        PILL_XU_GU,
+        PILL_DUAN_XU,
+        PILL_TIE_BI,
+        PILL_JIN_ZHONG,
+        PILL_NING_JIA,
+        PILL_JI_FENG,
+        PILL_SUO_DI,
+        PILL_HUI_LI,
+        PILL_HU_GU
     );
 
     private BongAnimations() {

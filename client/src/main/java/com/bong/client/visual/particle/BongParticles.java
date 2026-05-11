@@ -39,6 +39,16 @@ public final class BongParticles {
     public static final DefaultParticleType DUGU_TAINT_PULSE     = FabricParticleTypes.simple();
     public static final DefaultParticleType DUGU_REVERSE_BURST   = FabricParticleTypes.simple();
     public static final DefaultParticleType CLOUD_DUST           = FabricParticleTypes.simple();
+    public static final DefaultParticleType HUO_XUE_MIST         = FabricParticleTypes.simple();
+    public static final DefaultParticleType XU_GU_BAND           = FabricParticleTypes.simple();
+    public static final DefaultParticleType DUAN_XU_VORTEX       = FabricParticleTypes.simple();
+    public static final DefaultParticleType TIE_BI_METALLIC      = FabricParticleTypes.simple();
+    public static final DefaultParticleType JIN_ZHONG_BELL       = FabricParticleTypes.simple();
+    public static final DefaultParticleType NING_JIA_CRUST       = FabricParticleTypes.simple();
+    public static final DefaultParticleType JI_FENG_WIND         = FabricParticleTypes.simple();
+    public static final DefaultParticleType SUO_DI_ARC           = FabricParticleTypes.simple();
+    public static final DefaultParticleType HUI_LI_BREATH        = FabricParticleTypes.simple();
+    public static final DefaultParticleType HU_GU_STRIPE         = FabricParticleTypes.simple();
 
     // SpriteProvider 缓存，由 Factory 注册回调注入，VfxPlayer 通过它取 sprite。
     public static volatile SpriteProvider swordQiTrailSprites;
@@ -55,6 +65,16 @@ public final class BongParticles {
     public static volatile SpriteProvider duguTaintPulseSprites;
     public static volatile SpriteProvider duguReverseBurstSprites;
     public static volatile SpriteProvider cloudDustSprites;
+    public static volatile SpriteProvider huoXueMistSprites;
+    public static volatile SpriteProvider xuGuBandSprites;
+    public static volatile SpriteProvider duanXuVortexSprites;
+    public static volatile SpriteProvider tieBiMetallicSprites;
+    public static volatile SpriteProvider jinZhongBellSprites;
+    public static volatile SpriteProvider ningJiaCrustSprites;
+    public static volatile SpriteProvider jiFengWindSprites;
+    public static volatile SpriteProvider suoDiArcSprites;
+    public static volatile SpriteProvider huiLiBreathSprites;
+    public static volatile SpriteProvider huGuStripeSprites;
 
     private BongParticles() {
     }
@@ -75,6 +95,16 @@ public final class BongParticles {
         reg("dugu_taint_pulse",     DUGU_TAINT_PULSE);
         reg("dugu_reverse_burst",   DUGU_REVERSE_BURST);
         reg("cloud256_dust",        CLOUD_DUST);
+        reg("huo_xue_mist",         HUO_XUE_MIST);
+        reg("xu_gu_band",           XU_GU_BAND);
+        reg("duan_xu_vortex",       DUAN_XU_VORTEX);
+        reg("tie_bi_metallic",      TIE_BI_METALLIC);
+        reg("jin_zhong_bell",       JIN_ZHONG_BELL);
+        reg("ning_jia_crust",       NING_JIA_CRUST);
+        reg("ji_feng_wind",         JI_FENG_WIND);
+        reg("suo_di_arc",           SUO_DI_ARC);
+        reg("hui_li_breath",        HUI_LI_BREATH);
+        reg("hu_gu_stripe",         HU_GU_STRIPE);
     }
 
     /** Client 侧：注册 Factory，抓住 SpriteProvider 引用。 */
@@ -94,6 +124,16 @@ public final class BongParticles {
         pfr.register(DUGU_TAINT_PULSE,     provider -> { duguTaintPulseSprites    = provider; return groundDecalFactory(provider); });
         pfr.register(DUGU_REVERSE_BURST,   provider -> { duguReverseBurstSprites  = provider; return lineFactory(provider); });
         pfr.register(CLOUD_DUST,           provider -> { cloudDustSprites          = provider; return spriteFactory(provider); });
+        pfr.register(HUO_XUE_MIST,         provider -> { huoXueMistSprites        = provider; return spriteFactory(provider); });
+        pfr.register(XU_GU_BAND,           provider -> { xuGuBandSprites          = provider; return ribbonFactory(provider); });
+        pfr.register(DUAN_XU_VORTEX,       provider -> { duanXuVortexSprites      = provider; return spriteFactory(provider); });
+        pfr.register(TIE_BI_METALLIC,      provider -> { tieBiMetallicSprites     = provider; return spriteFactory(provider); });
+        pfr.register(JIN_ZHONG_BELL,       provider -> { jinZhongBellSprites      = provider; return spriteFactory(provider); });
+        pfr.register(NING_JIA_CRUST,       provider -> { ningJiaCrustSprites      = provider; return spriteFactory(provider); });
+        pfr.register(JI_FENG_WIND,         provider -> { jiFengWindSprites        = provider; return lineFactory(provider); });
+        pfr.register(SUO_DI_ARC,           provider -> { suoDiArcSprites          = provider; return lineFactory(provider); });
+        pfr.register(HUI_LI_BREATH,        provider -> { huiLiBreathSprites       = provider; return spriteFactory(provider); });
+        pfr.register(HU_GU_STRIPE,         provider -> { huGuStripeSprites        = provider; return ribbonFactory(provider); });
     }
 
     private static void reg(String id, DefaultParticleType type) {

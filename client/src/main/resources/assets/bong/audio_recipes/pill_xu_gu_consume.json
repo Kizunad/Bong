@@ -1,0 +1,27 @@
+{
+  "id": "pill_xu_gu_consume",
+  "layers": [
+    {
+      "sound": "minecraft:block.bone_block.place",
+      "volume": 0.6,
+      "pitch": 0.7,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.stone.place",
+      "volume": 0.3,
+      "pitch": 1.5,
+      "delay_ticks": 8
+    },
+    {
+      "sound": "minecraft:entity.skeleton.hurt",
+      "volume": 0.1,
+      "pitch": 0.5,
+      "delay_ticks": 20
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}
