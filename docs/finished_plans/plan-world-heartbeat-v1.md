@@ -471,10 +471,13 @@ WorldHeartbeat（自主）    天道 Agent（LLM 决策）
   - `090ecea37`（2026-05-11）`feat(schema): 增加 heartbeat_override 指令契约`
   - `cb8c60583`（2026-05-11）`feat(client): 渲染世界事件预兆`
   - `f37df60cc`（2026-05-11）`Merge remote-tracking branch 'origin/main' into auto/plan-world-heartbeat-v1`
+  - `a35bf15dc`（2026-05-11）`fix(world-heartbeat): 收敛 review 反馈`
 - **测试结果**：
   - `CARGO_BUILD_JOBS=1 cargo fmt --check`：通过。
   - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings`：通过。合并 `origin/main` 后普通 clippy 曾被 SIGKILL，低内存参数重跑无诊断通过。
-  - `CARGO_BUILD_JOBS=1 cargo test`：4288 passed / 0 failed。
+  - `CARGO_BUILD_JOBS=1 cargo test`：4292 passed / 0 failed。
+  - `CARGO_BUILD_JOBS=1 cargo test world::heartbeat`：8 passed / 0 failed（补齐 heartbeat override、suppression、intensity override 回归）。
+  - `CARGO_BUILD_JOBS=1 cargo test heartbeat_override`：4 passed / 0 failed（覆盖 command executor 的 heartbeat_override 执行链路）。
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build`：BUILD SUCCESSFUL。
   - `npm run build`（agent root）：通过。
   - `cd agent/packages/schema && npm test`：18 files / 367 tests passed。
