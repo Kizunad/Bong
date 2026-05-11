@@ -1,30 +1,49 @@
+pub mod clearinv;
+pub mod give;
 pub mod gm;
 pub mod health;
+pub mod kill;
+pub mod meridian;
 pub mod npc_scenario;
 pub mod preview_tp;
+pub mod qi;
 pub mod rat;
+pub mod realm;
+pub mod revive;
 pub mod season;
 pub mod shrine;
 pub mod spawn;
 pub mod stamina;
+pub mod technique;
+pub mod time;
 pub mod top;
 pub mod tptree;
 pub mod tpzone;
 pub mod tsy_spawn;
 pub mod whale;
 pub mod wound;
+pub mod zone_qi;
 pub mod zones;
 
 use valence::prelude::App;
 
 pub fn register(app: &mut App) {
+    clearinv::register(app);
+    give::register(app);
     spawn::register(app);
     top::register(app);
     zones::register(app);
     season::register(app);
     gm::register(app);
     health::register(app);
+    kill::register(app);
+    meridian::register(app);
+    qi::register(app);
+    realm::register(app);
+    revive::register(app);
     stamina::register(app);
+    technique::register(app);
+    time::register(app);
     tptree::register(app);
     tpzone::register(app);
     shrine::register(app);
@@ -34,6 +53,7 @@ pub fn register(app: &mut App) {
     preview_tp::register(app);
     rat::register(app);
     whale::register(app);
+    zone_qi::register(app);
 }
 
 #[cfg(test)]

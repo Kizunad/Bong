@@ -206,6 +206,8 @@ pub fn process_duo_she_requests(
                 host_life_record.push(BiographyEntry::InsightTaken {
                     trigger: DUO_SHE_TAG.to_string(),
                     choice: snapshot.target_id.clone(),
+                    alignment: None,
+                    cost_kind: None,
                     tick: clock.tick,
                 });
             }

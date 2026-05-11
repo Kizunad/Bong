@@ -143,7 +143,23 @@ bash scripts/smoke-test.sh
 
 ---
 
-## 八、注意事项
+## 八、快速搭测试场景
+
+进入本地 dev 服后，可以用 server brigadier dev 命令快速搭出高境界、高真元、全经脉、带资源的测试角色：
+
+```text
+/realm set void
+/qi max 1000
+/qi set 1000
+/meridian open_all
+/give bone_coin 1000
+```
+
+这些命令带 `[dev]` 反馈，会绕过自然修炼门槛和 qi_physics ledger 守恒，只用于本地测试场景。
+
+---
+
+## 九、注意事项
 
 - **WSL ↔ Windows 网络**: WSL2 的 `localhost` 默认映射到 Windows，MC 客户端连 `localhost:25565` 即可
 - **防火墙**: 如果连不上，检查 Windows 防火墙是否放行 25565

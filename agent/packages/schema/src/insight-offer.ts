@@ -18,6 +18,14 @@ export const InsightChoiceV1 = Type.Object(
     magnitude: Type.Number(),
     flavor_text: Type.String({ maxLength: 500 }),
     narrator_voice: Type.Optional(Type.String({ maxLength: 64 })),
+    alignment: Type.Optional(Type.Union([
+      Type.Literal("converge"),
+      Type.Literal("neutral"),
+      Type.Literal("diverge"),
+    ])),
+    cost_kind: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    cost_magnitude: Type.Optional(Type.Number()),
+    cost_flavor: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
   },
   { additionalProperties: false },
 );
@@ -28,7 +36,7 @@ export const InsightOfferV1 = Type.Object(
     offer_id: Type.String({ minLength: 1, maxLength: 128 }),
     trigger_id: Type.String({ minLength: 1, maxLength: 128 }),
     character_id: Type.String({ minLength: 1 }),
-    choices: Type.Array(InsightChoiceV1, { minItems: 1, maxItems: 4 }),
+    choices: Type.Array(InsightChoiceV1, { minItems: 1, maxItems: 3 }),
   },
   { additionalProperties: false },
 );

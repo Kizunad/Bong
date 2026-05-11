@@ -1055,6 +1055,7 @@ fn death_insight_category_from_cultivation_cause(
         | CultivationDeathCause::MeridianCollapse
         | CultivationDeathCause::NegativeZoneDrain
         | CultivationDeathCause::ContaminationOverflow
+        | CultivationDeathCause::DevCommand
         | CultivationDeathCause::SwarmQiDrain
         | CultivationDeathCause::VoidQuotaExceeded
         | CultivationDeathCause::VoidActionBacklash => DeathInsightCategoryV1::Cultivation,

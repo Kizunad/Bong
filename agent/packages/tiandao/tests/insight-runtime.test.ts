@@ -57,6 +57,20 @@ function makeLlm(content: string): LlmClient {
 
 const silent = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
+function choice(overrides: Record<string, unknown> = {}) {
+  return {
+    category: "Qi" as const,
+    effect_kind: "QiRegenFactor",
+    magnitude: 0.03,
+    flavor_text: "真元回流",
+    alignment: "neutral" as const,
+    cost_kind: "qi_volatility",
+    cost_magnitude: 0.015,
+    cost_flavor: "真元挥发加速",
+    ...overrides,
+  };
+}
+
 describe("applyInsightArbiter", () => {
   it("drops out-of-whitelist categories", () => {
     const req = sampleRequest();
@@ -65,8 +79,8 @@ describe("applyInsightArbiter", () => {
       trigger_id: req.trigger_id,
       character_id: req.character_id,
       choices: [
-        { category: "Meridian", effect_kind: "MeridianIntegrityBoost", magnitude: 0.1, flavor_text: "ok" },
-        { category: "Style", effect_kind: "StyleUnlock", magnitude: 1, flavor_text: "bad" },
+        choice({ category: "Meridian", effect_kind: "MeridianIntegrityBoost", magnitude: 0.1, cost_magnitude: 0.05, alignment: "converge" }),
+        choice({ category: "Style", effect_kind: "StyleUnlock", magnitude: 1, flavor_text: "bad", alignment: "diverge" }),
       ],
     });
     expect(filtered.choices.length).toBe(1);
@@ -80,21 +94,41 @@ describe("applyInsightArbiter", () => {
       trigger_id: req.trigger_id,
       character_id: req.character_id,
       choices: [
-        { category: "Qi", effect_kind: "QiMaxBoost", magnitude: 999, flavor_text: "over cap" },
-        { category: "Qi", effect_kind: "QiMaxBoost", magnitude: 8, flavor_text: "ok" },
+        choice({ category: "Qi", effect_kind: "QiMaxBoost", magnitude: 999, cost_magnitude: 500, flavor_text: "over cap" }),
+        choice({ category: "Qi", effect_kind: "QiMaxBoost", magnitude: 8, cost_magnitude: 4, flavor_text: "ok" }),
       ],
     });
     expect(filtered.choices.length).toBe(1);
     expect(filtered.choices[0].magnitude).toBe(8);
   });
 
-  it("caps at 4 choices", () => {
+  it("drops non-positive magnitude", () => {
+    const req = sampleRequest();
+    const filtered = applyInsightArbiter(req, {
+      offer_id: "o1",
+      trigger_id: req.trigger_id,
+      character_id: req.character_id,
+      choices: [
+        choice({ magnitude: 0, cost_magnitude: 0.1, alignment: "converge" }),
+        choice({ magnitude: -0.01, cost_magnitude: 0.1, alignment: "neutral" }),
+        choice({ magnitude: 0.03, cost_magnitude: 0.015, alignment: "diverge" }),
+      ],
+    });
+    expect(filtered.choices.length).toBe(1);
+    expect(filtered.choices[0].alignment).toBe("diverge");
+  });
+
+  it("caps at one choice per alignment", () => {
     const req = sampleRequest();
     const many = Array.from({ length: 6 }, (_, i) => ({
       category: "Composure" as const,
       effect_kind: "ComposureRestore",
       magnitude: 0.1 + i * 0.01,
       flavor_text: `#${i}`,
+      alignment: undefined,
+      cost_kind: "shock_sensitivity",
+      cost_magnitude: 0.2,
+      cost_flavor: "心境冲击敏感",
     }));
     const filtered = applyInsightArbiter(req, {
       offer_id: "o1",
@@ -102,7 +136,37 @@ describe("applyInsightArbiter", () => {
       character_id: req.character_id,
       choices: many,
     });
-    expect(filtered.choices.length).toBe(4);
+    expect(filtered.choices.length).toBe(3);
+  });
+
+  it("fills missing alignment by sequence", () => {
+    const req = sampleRequest();
+    const filtered = applyInsightArbiter(req, {
+      offer_id: "o1",
+      trigger_id: req.trigger_id,
+      character_id: req.character_id,
+      choices: [
+        choice({ category: "Meridian", alignment: undefined }),
+        choice({ category: "Qi", alignment: undefined }),
+        choice({ category: "Composure", alignment: undefined }),
+      ],
+    });
+    expect(filtered.choices.map((c) => c.alignment)).toEqual(["converge", "neutral", "diverge"]);
+  });
+
+  it("deduplicates repeated alignment", () => {
+    const req = sampleRequest();
+    const filtered = applyInsightArbiter(req, {
+      offer_id: "o1",
+      trigger_id: req.trigger_id,
+      character_id: req.character_id,
+      choices: [
+        choice({ category: "Meridian", alignment: "converge" }),
+        choice({ category: "Qi", alignment: "converge" }),
+        choice({ category: "Composure", alignment: "diverge" }),
+      ],
+    });
+    expect(filtered.choices.map((c) => c.alignment)).toEqual(["converge", "neutral", "diverge"]);
   });
 });
 
@@ -114,12 +178,36 @@ describe("InsightRuntime.handleRequestPayload", () => {
       offer_id: "ofr_test_1",
       trigger_id: "first_induce_breakthrough",
       choices: [
-        {
+        choice({
           category: "Meridian",
           effect_kind: "MeridianIntegrityBoost",
           magnitude: 0.15,
           flavor_text: "经脉微明",
-        },
+          alignment: "converge",
+          cost_kind: "opposite_color_penalty",
+          cost_magnitude: 0.08,
+          cost_flavor: "对立色效率下降",
+        }),
+        choice({
+          category: "Qi",
+          effect_kind: "QiRegenFactor",
+          magnitude: 0.03,
+          flavor_text: "真元回流",
+          alignment: "neutral",
+          cost_kind: "qi_volatility",
+          cost_magnitude: 0.015,
+          cost_flavor: "真元挥发加速",
+        }),
+        choice({
+          category: "Composure",
+          effect_kind: "ComposureRestore",
+          magnitude: 0.1,
+          flavor_text: "心湖回稳",
+          alignment: "diverge",
+          cost_kind: "shock_sensitivity",
+          cost_magnitude: 0.05,
+          cost_flavor: "心境冲击敏感",
+        }),
       ],
     });
     const rt = new InsightRuntime({
@@ -154,6 +242,39 @@ describe("InsightRuntime.handleRequestPayload", () => {
     expect(Array.isArray(offer.choices)).toBe(true);
   });
 
+  it("publishes fallback empty-offer when arbiter leaves fewer than three choices", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const llmContent = JSON.stringify({
+      offer_id: "ofr_short",
+      trigger_id: "first_induce_breakthrough",
+      choices: [
+        choice({
+          category: "Meridian",
+          effect_kind: "MeridianIntegrityBoost",
+          magnitude: 0.15,
+          alignment: "converge",
+          cost_kind: "opposite_color_penalty",
+          cost_magnitude: 0.08,
+        }),
+      ],
+    });
+    const rt = new InsightRuntime({
+      llm: makeLlm(llmContent),
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+    await rt.handleRequestPayload(JSON.stringify(sampleRequest()));
+    expect(pub.published.length).toBe(1);
+    const offer = JSON.parse(pub.published[0].message);
+    expect(offer.choices).toHaveLength(1);
+    expect(offer.choices[0].effect_kind).toBe("NoOp");
+    expect(rt.stats.rejectedArbiter).toBe(1);
+  });
+
   it("rejects non-JSON payload without publishing", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
@@ -179,8 +300,8 @@ describe("InsightRuntime.handleRequestPayload", () => {
         trigger_id: "first_induce_breakthrough",
         choices: [
           // all out of caps
-          { category: "Qi", effect_kind: "QiMaxBoost", magnitude: 999, flavor_text: "a" },
-          { category: "Style", effect_kind: "StyleUnlock", magnitude: 1, flavor_text: "b" },
+          choice({ category: "Qi", effect_kind: "QiMaxBoost", magnitude: 999, cost_magnitude: 500, flavor_text: "a" }),
+          choice({ category: "Style", effect_kind: "StyleUnlock", magnitude: 1, cost_magnitude: 1, flavor_text: "b" }),
         ],
       }),
     );
