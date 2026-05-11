@@ -53,6 +53,8 @@
 
 ## 阶段总览
 
+日期说明：本文件验收日期按执行环境 `Pacific/Auckland` 记录；`2026-05-11` 覆盖 GitHub 审查评论所处的 UTC 2026-05-10 晚间至 UTC 2026-05-11 凌晨。
+
 | 阶段 | 内容 | 状态 |
 |----|------|----|
 | P0 | server 6 套盔甲物品注册 + ArmorComponent 填充 + craft 配方注册 + 基础测试 | ✅ 2026-05-11 |
@@ -175,6 +177,7 @@
   - `152734511` · 2026-05-11 · `fix(plan-armor-visual-v1): 补齐盔甲破碎回归`
   - `ab1218dec` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐主线 craft 与 HUD 枚举`
 - **测试结果**：
+  - 重跑时间：2026-05-11 00:31-00:32 UTC（Pacific/Auckland 12:31-12:32）；PR e2e 2026-05-11 00:35-00:43 UTC。
   - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 4185 passed。
   - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）：通过，BUILD SUCCESSFUL。
   - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（346 files）。
