@@ -111,11 +111,12 @@ public class GridSlotComponent extends BaseComponent {
             drawSlotBorder(context, dx + 1, dy + 1, dw - 2, dh - 2, botanyBorder & 0x88FFFFFF);
         }
 
-        float ageTicks = 0.0f;
+        long worldTicks = 0L;
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.world != null) {
-            ageTicks = client.world.getTime();
+            worldTicks = client.world.getTime();
         }
+        float ageTicks = (float) worldTicks;
         RarityBorderRenderer.drawBorder(context, dx, dy, dw, dh, item, ageTicks);
         if (item.isAncientRelic()) {
             int alpha = RarityBorderRenderer.ancientInvertFlashAlpha(ageTicks);
@@ -124,7 +125,7 @@ public class GridSlotComponent extends BaseComponent {
             }
         }
 
-        int armorFlashAlpha = armorLowDurabilityFlashAlpha(item, (long) ageTicks);
+        int armorFlashAlpha = armorLowDurabilityFlashAlpha(item, worldTicks);
         if (armorFlashAlpha > 0) {
             context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, (armorFlashAlpha << 24) | 0xFF2020);
             drawSlotBorder(context, dx, dy, dw, dh, 0xFFFF3030);
