@@ -87,6 +87,7 @@ export function validateAgentCommandV1Contract(data: unknown): ValidationResult 
         if (command?.type === "heartbeat_override") {
           const action = command?.params?.action;
           const eventType = command?.params?.event_type;
+          const targetZone = command?.params?.target_zone;
           const durationTicks = command?.params?.duration_ticks;
           const intensityOverride = command?.params?.intensity_override;
           if (!isAllowedLiteral(["suppress", "accelerate", "force"], action)) {
@@ -94,6 +95,12 @@ export function validateAgentCommandV1Contract(data: unknown): ValidationResult 
           }
           if (!isAllowedLiteral(["pseudo_vein", "beast_tide", "realm_collapse", "karma_backlash"], eventType)) {
             semanticErrors.push(`/commands/${index}/params/event_type: Expected supported heartbeat event type`);
+          }
+          if (
+            targetZone !== undefined
+            && (typeof targetZone !== "string" || targetZone.trim().length === 0)
+          ) {
+            semanticErrors.push(`/commands/${index}/params/target_zone: Expected non-empty string`);
           }
           if (
             durationTicks !== undefined

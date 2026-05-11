@@ -332,10 +332,20 @@ fn execute_heartbeat_override(
     heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
     tick: Option<u64>,
 ) -> &'static str {
+    let current_tick = tick.unwrap_or_else(|| {
+        heartbeat
+            .as_deref()
+            .map(|heartbeat| {
+                heartbeat
+                    .last_eval_tick
+                    .saturating_add(heartbeat.eval_interval_ticks)
+            })
+            .unwrap_or_default()
+    });
     match apply_heartbeat_override_command(
         heartbeat.as_deref_mut().map(|heartbeat| &mut *heartbeat),
         command,
-        tick.unwrap_or_default(),
+        current_tick,
     ) {
         Ok(()) => "ok",
         Err(error) => error.result_label(),
@@ -995,6 +1005,7 @@ mod command_executor_tests {
     use crate::world::events::{
         ActiveEventsResource, EVENT_KARMA_BACKLASH, EVENT_THUNDER_TRIBULATION,
     };
+    use crate::world::heartbeat::{HeartbeatEventKind, HeartbeatOverrideError};
     use crate::world::karma::{
         TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
     };
@@ -1085,6 +1096,68 @@ mod command_executor_tests {
         assert_eq!(
             details.get("effective_probability").and_then(Value::as_f64),
             Some(f64::from(TARGETED_CALAMITY_MAX_PROBABILITY))
+        );
+    }
+
+    #[test]
+    fn heartbeat_override_applies_via_executor_with_clock_fallback() {
+        let mut app = setup_executor_app();
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.last_eval_tick = 10_000;
+        heartbeat.eval_interval_ticks = 200;
+        app.world_mut().insert_resource(heartbeat);
+
+        let mut params = HashMap::new();
+        params.insert("action".to_string(), json!("accelerate"));
+        params.insert("event_type".to_string(), json!("beast_tide"));
+        params.insert("target_zone".to_string(), json!("spawn"));
+        params.insert("duration_ticks".to_string(), json!(600));
+        params.insert("intensity_override".to_string(), json!(0.25));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_heartbeat_override_ok",
+                vec![command(CommandType::HeartbeatOverride, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        let override_ = heartbeat
+            .override_for(HeartbeatEventKind::BeastTide, "spawn")
+            .expect("heartbeat override should be stored");
+        assert_eq!(
+            override_.expires_at_tick, 10_800,
+            "missing CultivationClock should fall back to last_eval_tick + eval_interval_ticks"
+        );
+        assert_eq!(
+            override_.intensity_override,
+            Some(0.25),
+            "accelerate override should preserve configured intensity"
+        );
+    }
+
+    #[test]
+    fn heartbeat_override_returns_missing_heartbeat_without_resource() {
+        let mut heartbeat = None;
+        let command = command(
+            CommandType::HeartbeatOverride,
+            "spawn",
+            HashMap::from([
+                ("action".to_string(), json!("accelerate")),
+                ("event_type".to_string(), json!("beast_tide")),
+            ]),
+        );
+
+        let result = execute_heartbeat_override(&command, &mut heartbeat, Some(1_000));
+        assert_eq!(
+            result,
+            HeartbeatOverrideError::MissingHeartbeat.result_label(),
+            "missing heartbeat resource should reject the command"
         );
     }
 

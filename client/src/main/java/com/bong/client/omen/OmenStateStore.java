@@ -27,7 +27,13 @@ public final class OmenStateStore {
             if (origin.length != 3) {
                 throw new IllegalArgumentException("origin must be length 3");
             }
+            origin = origin.clone();
             strength = clamp01(strength);
+        }
+
+        @Override
+        public double[] origin() {
+            return origin.clone();
         }
 
         public boolean activeAt(long nowMillis) {

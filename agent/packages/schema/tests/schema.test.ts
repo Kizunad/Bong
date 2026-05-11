@@ -1643,6 +1643,7 @@ describe("schema rejects invalid data", () => {
         params: {
           action: "accelerate",
           event_type: "pseudo_vein",
+          target_zone: "lingquan_marsh",
           duration_ticks: 6000,
           intensity_override: 0.8,
         },
@@ -1686,6 +1687,20 @@ describe("schema rejects invalid data", () => {
       "AgentCommandV1 heartbeat_override action/event whitelist",
       validateAgentCommandV1Contract,
       badHeartbeat,
+    );
+
+    const badHeartbeatZone = loadObjectSample("agent-command.sample.json");
+    badHeartbeatZone.commands = [
+      {
+        type: "heartbeat_override",
+        target: "lingquan_marsh",
+        params: { action: "accelerate", event_type: "beast_tide", target_zone: "" },
+      },
+    ];
+    expectContractRejects(
+      "AgentCommandV1 heartbeat_override target_zone must be non-empty string",
+      validateAgentCommandV1Contract,
+      badHeartbeatZone,
     );
   });
 

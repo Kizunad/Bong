@@ -382,6 +382,22 @@ impl WorldHeartbeat {
         1.0
     }
 
+    fn override_intensity(
+        &self,
+        kind: HeartbeatEventKind,
+        target_zone: &str,
+        current_tick: u64,
+    ) -> Option<f64> {
+        self.overrides.iter().rev().find_map(|override_| {
+            (override_.action == HeartbeatOverrideAction::Accelerate
+                && override_.event_kind == kind
+                && override_.target_zone == target_zone
+                && current_tick <= override_.expires_at_tick)
+                .then_some(override_.intensity_override)
+                .flatten()
+        })
+    }
+
     fn is_suppressed(
         &self,
         kind: HeartbeatEventKind,
@@ -394,6 +410,18 @@ impl WorldHeartbeat {
                 && override_.target_zone == target_zone
                 && current_tick <= override_.expires_at_tick
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn override_for(
+        &self,
+        kind: HeartbeatEventKind,
+        target_zone: &str,
+    ) -> Option<&HeartbeatOverride> {
+        self.overrides
+            .iter()
+            .rev()
+            .find(|override_| override_.event_kind == kind && override_.target_zone == target_zone)
     }
 }
 
@@ -638,7 +666,11 @@ pub fn chain_reaction_tick(
     let Some(zone_registry) = zone_registry.as_deref_mut() else {
         return;
     };
-    let current_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let current_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_else(|| {
+        heartbeat
+            .last_eval_tick
+            .saturating_add(heartbeat.eval_interval_ticks)
+    });
     let season = season_state
         .as_deref()
         .map(|state| state.current.season)
@@ -656,6 +688,7 @@ pub fn chain_reaction_tick(
                 let Some(source) = zone_registry.find_zone_by_name(zone_name).cloned() else {
                     continue;
                 };
+                remove_runtime_pseudo_vein_zone(zone_registry, zone_name.as_str());
                 let neighbor_names = adjacent_zone_names(zone_registry, &source, 900.0);
                 for neighbor_name in neighbor_names {
                     let Some(neighbor) = zone_registry.find_zone_by_name(neighbor_name.as_str())
@@ -666,6 +699,13 @@ pub fn chain_reaction_tick(
                         .and_then(|counts| counts.get(neighbor.name.as_str()).copied())
                         .unwrap_or_default();
                     if neighbor.spirit_qi >= BEAST_TIDE_LOW_QI_THRESHOLD || npc_count <= 3 {
+                        continue;
+                    }
+                    if heartbeat.is_suppressed(
+                        HeartbeatEventKind::BeastTide,
+                        neighbor.name.as_str(),
+                        current_tick,
+                    ) {
                         continue;
                     }
                     let command = spawn_event_command(
@@ -713,7 +753,13 @@ pub fn chain_reaction_tick(
                     else {
                         continue;
                     };
-                    if active_events.contains(neighbor.name.as_str(), EVENT_BEAST_TIDE) {
+                    if active_events.contains(neighbor.name.as_str(), EVENT_BEAST_TIDE)
+                        || heartbeat.is_suppressed(
+                            HeartbeatEventKind::BeastTide,
+                            neighbor.name.as_str(),
+                            current_tick,
+                        )
+                    {
                         continue;
                     }
                     let command = spawn_event_command(
@@ -934,6 +980,13 @@ fn fire_due_omens(
             pending.push(omen);
             continue;
         }
+        if heartbeat.is_suppressed(
+            event_kind_for_omen(omen.kind),
+            omen.zone_name.as_str(),
+            current_tick,
+        ) {
+            continue;
+        }
         match omen.kind {
             OmenKind::PseudoVeinForming => {
                 if spawn_pseudo_vein_from_omen(
@@ -1056,7 +1109,13 @@ fn maybe_queue_pseudo_vein(
     {
         return;
     }
-    let strength = pseudo_vein_strength(modifiers, current_tick, anchor.name.as_str());
+    let strength = heartbeat
+        .override_intensity(
+            HeartbeatEventKind::PseudoVein,
+            anchor.name.as_str(),
+            current_tick,
+        )
+        .unwrap_or_else(|| pseudo_vein_strength(modifiers, current_tick, anchor.name.as_str()));
     if queue_omen(
         heartbeat,
         OmenKind::PseudoVeinForming,
@@ -1132,7 +1191,15 @@ fn maybe_queue_beast_tide(
         {
             continue;
         }
-        let intensity = (0.25 + npc_count as f64 * 0.04).min(1.0) * modifiers.beast_tide_scale;
+        let intensity = heartbeat
+            .override_intensity(
+                HeartbeatEventKind::BeastTide,
+                zone.name.as_str(),
+                current_tick,
+            )
+            .unwrap_or_else(|| {
+                (0.25 + npc_count as f64 * 0.04).min(1.0) * modifiers.beast_tide_scale
+            });
         if queue_omen(
             heartbeat,
             OmenKind::BeastTideApproaching,
@@ -1209,13 +1276,20 @@ fn maybe_queue_realm_collapse(
         {
             continue;
         }
+        let intensity = heartbeat
+            .override_intensity(
+                HeartbeatEventKind::RealmCollapse,
+                zone.name.as_str(),
+                current_tick,
+            )
+            .unwrap_or(1.0);
         if queue_omen(
             heartbeat,
             OmenKind::RealmCollapseImminent,
             zone.name.clone(),
             None,
             zone.center(),
-            1.0,
+            intensity,
             REALM_COLLAPSE_OMEN_LEAD_TICKS,
             current_tick,
             vfx_events.as_deref_mut(),
@@ -1267,13 +1341,16 @@ fn maybe_queue_karma_backlash(
         let Some(zone) = zone_registry.find_zone_by_name(zone_name) else {
             continue;
         };
+        let intensity = heartbeat
+            .override_intensity(HeartbeatEventKind::KarmaBacklash, zone_name, current_tick)
+            .unwrap_or(0.7);
         if queue_omen(
             heartbeat,
             OmenKind::KarmaBacklashTarget,
             zone.name.clone(),
             Some(sample.player_id.clone()),
             sample.position,
-            0.7,
+            intensity,
             KARMA_BACKLASH_OMEN_LEAD_TICKS,
             current_tick,
             vfx_events.as_deref_mut(),
@@ -1513,6 +1590,24 @@ fn omen_kind_for_event(kind: HeartbeatEventKind) -> OmenKind {
     }
 }
 
+fn event_kind_for_omen(kind: OmenKind) -> HeartbeatEventKind {
+    match kind {
+        OmenKind::PseudoVeinForming => HeartbeatEventKind::PseudoVein,
+        OmenKind::BeastTideApproaching => HeartbeatEventKind::BeastTide,
+        OmenKind::RealmCollapseImminent => HeartbeatEventKind::RealmCollapse,
+        OmenKind::KarmaBacklashTarget => HeartbeatEventKind::KarmaBacklash,
+    }
+}
+
+fn remove_runtime_pseudo_vein_zone(zone_registry: &mut ZoneRegistry, zone_name: &str) -> bool {
+    if !zone_name.starts_with("pseudo_vein_") {
+        return false;
+    }
+    let before = zone_registry.zones.len();
+    zone_registry.zones.retain(|zone| zone.name != zone_name);
+    before != zone_registry.zones.len()
+}
+
 fn adjacent_zone_names(
     zone_registry: &ZoneRegistry,
     source: &Zone,
@@ -1561,9 +1656,89 @@ fn deterministic_probability_hit<T: Hash>(seed: T, probability: f64) -> bool {
 }
 
 fn hash_seed<T: Hash>(value: &T) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = StableFnvHasher::default();
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+#[derive(Debug, Clone)]
+struct StableFnvHasher {
+    hash: u64,
+}
+
+impl Default for StableFnvHasher {
+    fn default() -> Self {
+        Self {
+            hash: 0xcbf29ce484222325,
+        }
+    }
+}
+
+impl StableFnvHasher {
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.hash ^= u64::from(*byte);
+            self.hash = self.hash.wrapping_mul(0x100000001b3);
+        }
+    }
+}
+
+impl Hasher for StableFnvHasher {
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.write_bytes(bytes);
+    }
+
+    fn write_u8(&mut self, i: u8) {
+        self.write_bytes(&[i]);
+    }
+
+    fn write_u16(&mut self, i: u16) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_u128(&mut self, i: u128) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.write_u64(i as u64);
+    }
+
+    fn write_i8(&mut self, i: i8) {
+        self.write_u8(i as u8);
+    }
+
+    fn write_i16(&mut self, i: i16) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_i32(&mut self, i: i32) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_i64(&mut self, i: i64) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_i128(&mut self, i: i128) {
+        self.write_bytes(&i.to_le_bytes());
+    }
+
+    fn write_isize(&mut self, i: isize) {
+        self.write_i64(i as i64);
+    }
 }
 
 fn value_to_u64(value: &Value) -> Option<u64> {
@@ -1776,6 +1951,91 @@ mod tests {
 
         let active = app.world().resource::<ActiveEventsResource>();
         assert!(active.contains("hungry", EVENT_BEAST_TIDE));
+    }
+
+    #[test]
+    fn chain_reaction_suppression_removes_runtime_zone_without_enqueuing() {
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.apply_override(
+            HeartbeatOverrideAction::Suppress,
+            HeartbeatEventKind::BeastTide,
+            "hungry".to_string(),
+            1_000,
+            None,
+            0,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(heartbeat);
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                zone("pseudo_vein_done", 0.0, 0.0, 0.0),
+                zone("hungry", 300.0, 0.0, 0.1),
+            ],
+        });
+        app.insert_resource(NpcRegistry {
+            counts_by_zone: HashMap::from([("hungry".to_string(), 4)]),
+            ..Default::default()
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(Update, chain_reaction_tick);
+        app.world_mut()
+            .send_event(EventChainTrigger::PseudoVeinDissipated {
+                zone_name: "pseudo_vein_done".to_string(),
+                redistributed_qi: 0.7,
+            });
+        app.update();
+
+        let active = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            !active.contains("hungry", EVENT_BEAST_TIDE),
+            "suppressed beast tide chain reaction should not enqueue an event"
+        );
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zones.find_zone_by_name("pseudo_vein_done").is_none(),
+            "dissipated runtime pseudo-vein zone should be unregistered"
+        );
+    }
+
+    #[test]
+    fn accelerate_intensity_override_controls_queued_omen_strength() {
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat
+            .low_qi_ticks_by_zone
+            .insert("hungry".to_string(), BEAST_TIDE_LOW_QI_REQUIRED_TICKS);
+        heartbeat.apply_override(
+            HeartbeatOverrideAction::Accelerate,
+            HeartbeatEventKind::BeastTide,
+            "hungry".to_string(),
+            50_000,
+            Some(0.42),
+            0,
+        );
+        let zones = ZoneRegistry {
+            zones: vec![zone("hungry", 0.0, 0.0, 0.1)],
+        };
+        let npc_registry = NpcRegistry {
+            counts_by_zone: HashMap::from([("hungry".to_string(), 6)]),
+            ..Default::default()
+        };
+
+        maybe_queue_beast_tide(
+            &mut heartbeat,
+            &zones,
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            season_event_modifiers(Season::Summer),
+            20_000,
+            None,
+        );
+
+        assert_eq!(heartbeat.pending_omens.len(), 1);
+        assert_eq!(
+            heartbeat.pending_omens[0].intensity, 0.42,
+            "accelerate intensity_override should drive queued beast tide strength"
+        );
     }
 
     #[test]
