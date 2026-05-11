@@ -1,6 +1,7 @@
 package com.bong.client.combat;
 
 import com.bong.client.combat.juice.CameraShakeController;
+import com.bong.client.combat.juice.CombatJuiceCalibration;
 import com.bong.client.combat.juice.CombatJuiceEvent;
 import com.bong.client.combat.juice.CombatJuiceProfile;
 import com.bong.client.combat.juice.CombatJuiceSystem;
@@ -331,5 +332,22 @@ class CombatJuiceTest {
         assertEquals(2, KillJuiceController.multiKill().count());
         assertEquals(1.2, KillJuiceController.multiKill().shakeMultiplier(), 0.0001);
         assertEquals(1.1, KillJuiceController.multiKill().pitchMultiplier(), 0.0001);
+    }
+
+    @Test
+    void pvp_calibration_matrix_covers_49_pairings() {
+        List<CombatJuiceCalibration.PvpPairing> pairings = CombatJuiceCalibration.pvpPairings();
+
+        assertEquals(49, pairings.size());
+        assertFalse(pairings.stream().anyMatch(CombatJuiceCalibration.PvpPairing::inputLagRisk));
+        assertTrue(pairings.stream().anyMatch(CombatJuiceCalibration.PvpPairing::sameQiColor));
+    }
+
+    @Test
+    void mixed_battle_budget_stays_above_30fps_floor() {
+        CombatJuiceCalibration.PerformanceBudget budget = CombatJuiceCalibration.mixedBattleBudget(5, 10);
+
+        assertEquals(20, budget.maxConcurrentJuiceEvents());
+        assertTrue(budget.passesPlanFloor());
     }
 }
