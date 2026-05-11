@@ -6,5 +6,6 @@
   ],
   "priority": 99,
   "attenuation": "world_3d",
-  "category": "BLOCKS"
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
 }

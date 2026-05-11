@@ -1,0 +1,21 @@
+{
+  "id": "zhenmai_signature",
+  "layers": [
+    {
+      "sound": "minecraft:block.bone_block.break",
+      "volume": 0.28,
+      "pitch": 1.1,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.anvil.use",
+      "volume": 0.18,
+      "pitch": 1.6,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -6,5 +6,6 @@
   ],
   "priority": 60,
   "attenuation": "player_local",
-  "category": "VOICE"
+  "category": "VOICE",
+  "bus": "UI"
 }

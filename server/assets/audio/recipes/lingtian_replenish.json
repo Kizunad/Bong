@@ -1,0 +1,21 @@
+{
+  "id": "lingtian_replenish",
+  "layers": [
+    {
+      "sound": "minecraft:block.amethyst_block.chime",
+      "volume": 0.22,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.grass.break",
+      "volume": 0.08,
+      "pitch": 0.7,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 50,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

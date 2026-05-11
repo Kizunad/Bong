@@ -1,0 +1,21 @@
+{
+  "id": "wound_inflict",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.hurt",
+      "volume": 0.35,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.bone_block.break",
+      "volume": 0.15,
+      "pitch": 1.2,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 62,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

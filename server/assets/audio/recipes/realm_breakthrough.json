@@ -8,5 +8,6 @@
   ],
   "priority": 90,
   "attenuation": "zone_broadcast",
-  "category": "VOICE"
+  "category": "VOICE",
+  "bus": "UI"
 }

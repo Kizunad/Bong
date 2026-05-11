@@ -1,0 +1,21 @@
+{
+  "id": "hit_heavy",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.strong",
+      "volume": 0.6,
+      "pitch": 0.7,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.anvil.land",
+      "volume": 0.15,
+      "pitch": 0.3,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 65,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

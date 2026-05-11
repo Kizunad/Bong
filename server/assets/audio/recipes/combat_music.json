@@ -7,5 +7,6 @@
   "loop": { "interval_ticks": 100, "while_flag": "audio_world" },
   "priority": 84,
   "attenuation": "player_local",
-  "category": "HOSTILE"
+  "category": "HOSTILE",
+  "bus": "COMBAT"
 }

@@ -6,5 +6,6 @@
   ],
   "priority": 70,
   "attenuation": "player_local",
-  "category": "HOSTILE"
+  "category": "HOSTILE",
+  "bus": "COMBAT"
 }

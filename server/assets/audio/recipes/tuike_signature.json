@@ -1,0 +1,21 @@
+{
+  "id": "tuike_signature",
+  "layers": [
+    {
+      "sound": "minecraft:entity.phantom.flap",
+      "volume": 0.22,
+      "pitch": 0.3,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.slime.squish",
+      "volume": 0.18,
+      "pitch": 0.45,
+      "delay_ticks": 4
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "niche_establish",
+  "layers": [
+    {
+      "sound": "minecraft:block.respawn_anchor.charge",
+      "volume": 0.4,
+      "pitch": 0.7,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 76,
+  "attenuation": "AREA",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

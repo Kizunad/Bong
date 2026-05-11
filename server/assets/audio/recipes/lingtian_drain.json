@@ -7,5 +7,6 @@
   "loop": { "interval_ticks": 18, "while_flag": "lingtian_drain_active" },
   "priority": 40,
   "attenuation": "world_3d",
-  "category": "BLOCKS"
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
 }

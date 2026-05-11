@@ -1,0 +1,21 @@
+{
+  "id": "alchemy_complete",
+  "layers": [
+    {
+      "sound": "minecraft:block.brewing_stand.brew",
+      "volume": 0.4,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.experience_orb.pickup",
+      "volume": 0.18,
+      "pitch": 1.2,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 70,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

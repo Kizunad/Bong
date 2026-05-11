@@ -1,0 +1,15 @@
+{
+  "id": "baomai_signature",
+  "layers": [
+    {
+      "sound": "minecraft:entity.warden.sonic_boom",
+      "volume": 0.25,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

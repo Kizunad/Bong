@@ -1,0 +1,21 @@
+{
+  "id": "dugu_poison_signature",
+  "layers": [
+    {
+      "sound": "minecraft:block.honey_block.break",
+      "volume": 0.24,
+      "pitch": 0.35,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.bee.loop_aggressive",
+      "volume": 0.12,
+      "pitch": 0.25,
+      "delay_ticks": 4
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

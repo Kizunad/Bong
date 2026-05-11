@@ -9,5 +9,6 @@
   "loop": { "interval_ticks": 20, "while_flag": "tsy_race_out" },
   "priority": 90,
   "attenuation": "zone_broadcast",
-  "category": "AMBIENT"
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
 }

@@ -1,0 +1,15 @@
+{
+  "id": "tuike_cast",
+  "layers": [
+    {
+      "sound": "minecraft:block.honey_block.step",
+      "volume": 0.2,
+      "pitch": 0.35,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

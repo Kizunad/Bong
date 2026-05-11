@@ -1,0 +1,21 @@
+{
+  "id": "pact_bind",
+  "layers": [
+    {
+      "sound": "minecraft:block.amethyst_block.chime",
+      "volume": 0.3,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.amethyst_block.chime",
+      "volume": 0.24,
+      "pitch": 1.2,
+      "delay_ticks": 5
+    }
+  ],
+  "priority": 72,
+  "attenuation": "AREA",
+  "category": "VOICE",
+  "bus": "ENVIRONMENT"
+}

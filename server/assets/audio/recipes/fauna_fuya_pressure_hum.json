@@ -20,5 +20,6 @@
   "loop": {
     "interval_ticks": 30,
     "while_flag": "fauna_fuya_pressure"
-  }
+  },
+  "bus": "ENVIRONMENT"
 }
