@@ -926,7 +926,20 @@ public void removed() {
 
 ### 视听
 
-**icon**：`spirit_treasure_jizhaojing.png`（gen.py --style item：青铜古镜，镜面泛青光，边缘刻有清风宗纹饰）
+### 3D 模型
+
+源文件：`local_models/tripo_generated/spirit_treasure/silent_mirror/silent_mirror_pbr.glb`（Tripo 生成，PBR GLB，2.2MB）
+
+模型特征：双龙盘绕浮雕背面、青铜古锈质感、边缘符文环。
+
+**转换流水线**（P3 实施时执行）：
+1. `silent_mirror_pbr.glb` → Blender 导出 OBJ + MTL + basecolor.png（1024×1024）
+2. OBJ 放入 `client/src/main/resources/assets/bong/models/item/spirit_treasure_jizhaojing/silent_mirror.obj`
+3. basecolor 放入 `client/src/main/resources/assets/bong/textures/item/spirit_treasure_jizhaojing/basecolor.png`
+4. 注册 `BongItemModelRegistry`，装备栏渲染时走 3D OBJ 路径（同武器渲染管线）
+5. GUI icon 仍用 gen.py 64×64 生成（或从 preview.webp 裁切缩放）
+
+**icon**：`spirit_treasure_jizhaojing.png`（可直接从 `silent_mirror_preview.webp` 转换裁切为 64×64 透明背景 PNG）
 
 **装备特效**：
 - 粒子：腰间持续散发极淡青色雾气（BongSpriteParticle，每 20 tick 1 个，lifetime 40 tick）
