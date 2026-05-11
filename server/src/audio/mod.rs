@@ -176,8 +176,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            184,
-            "audio registry should include audio-world and audio-implementation cues plus calamity arsenal and coffin lifecycle cues"
+            189,
+            "audio registry should include audio-world and audio-implementation cues plus calamity arsenal, gathering UX, and coffin lifecycle cues"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
@@ -260,6 +260,18 @@ mod tests {
         assert!(registry.get("ambient_detail_tsy_metal_echo").is_some());
         assert!(registry.get("baomai_hit_critical").is_some());
         assert!(registry.get("dugu_poison_signature").is_some());
+        for key in [
+            "gather_herb_tick",
+            "gather_mine_tick",
+            "gather_chop_tick",
+            "gather_complete",
+            "gather_perfect",
+        ] {
+            assert!(
+                registry.get(key).is_some(),
+                "expected audio registry to contain `{key}` because gathering-ux added a recipe JSON for that cue; actual lookup returned None"
+            );
+        }
     }
 
     #[test]

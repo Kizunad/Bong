@@ -11,6 +11,8 @@ use super::components::{MineralOreIndex, MineralOreNode};
 use super::persistence::ExhaustedMineralsLog;
 use super::registry::MineralRegistry;
 use super::types::MineralId;
+use crate::gathering::session::Gatherable;
+use crate::gathering::tools::{base_time_ticks, GatheringTargetKind};
 use crate::world::dimension::DimensionKind;
 use crate::world::terrain::{FossilBbox, TerrainProvider, TerrainProviders};
 
@@ -108,7 +110,10 @@ pub fn spawn_mineral_anchor_nodes(
                 continue;
             }
             let entity = commands
-                .spawn(MineralOreNode::new(anchor.mineral_id, pos))
+                .spawn((
+                    MineralOreNode::new(anchor.mineral_id, pos),
+                    mineral_gatherable(anchor.mineral_id, registry.as_ref()),
+                ))
                 .id();
             index.insert(DimensionKind::Overworld, pos, entity);
             spawned += 1;
@@ -119,6 +124,7 @@ pub fn spawn_mineral_anchor_nodes(
         &mut commands,
         &providers.overworld,
         &exhausted_positions,
+        registry.as_ref(),
         index.as_mut(),
     );
     spawned += fossil_spawned;
@@ -135,6 +141,7 @@ fn spawn_fossil_mineral_nodes(
     commands: &mut Commands,
     terrain: &TerrainProvider,
     exhausted_positions: &HashSet<(MineralId, BlockPos)>,
+    registry: &MineralRegistry,
     index: &mut MineralOreIndex,
 ) -> usize {
     let mut spawned = 0usize;
@@ -145,12 +152,31 @@ fn spawn_fossil_mineral_nodes(
             {
                 continue;
             }
-            let entity = commands.spawn(MineralOreNode::new(mineral_id, pos)).id();
+            let entity = commands
+                .spawn((
+                    MineralOreNode::new(mineral_id, pos),
+                    mineral_gatherable(mineral_id, registry),
+                ))
+                .id();
             index.insert(DimensionKind::Overworld, pos, entity);
             spawned += 1;
         }
     }
     spawned
+}
+
+fn mineral_gatherable(mineral_id: MineralId, registry: &MineralRegistry) -> Gatherable {
+    let mineral_key = mineral_id.as_str();
+    let display_name = registry
+        .get(mineral_id)
+        .map(|entry| entry.display_name_zh.to_string())
+        .unwrap_or_else(|| format!("{mineral_id:?}"));
+    Gatherable {
+        target: GatheringTargetKind::Ore,
+        base_time_ticks: base_time_ticks(GatheringTargetKind::Ore),
+        loot_table: format!("mineral:{mineral_key}"),
+        display_name,
+    }
 }
 
 fn fossil_mineral_positions(
@@ -367,6 +393,31 @@ mod tests {
     }
 
     #[test]
+    fn mineral_gatherable_uses_stable_loot_table_and_display_name() {
+        let registry = build_default_registry();
+        let gatherable = mineral_gatherable(MineralId::FanTie, &registry);
+
+        assert_eq!(
+            gatherable.target,
+            GatheringTargetKind::Ore,
+            "mineral anchors must expose ore target metadata for gathering HUD and tool matching"
+        );
+        assert_eq!(
+            gatherable.base_time_ticks,
+            base_time_ticks(GatheringTargetKind::Ore),
+            "mineral gatherable base time should follow the shared ore timing"
+        );
+        assert_eq!(
+            gatherable.loot_table, "mineral:fan_tie",
+            "mineral loot table key must use stable snake_case mineral id, not Debug formatting"
+        );
+        assert_eq!(
+            gatherable.display_name, "凡铁",
+            "mineral gatherable display name should come from the mineral registry"
+        );
+    }
+
+    #[test]
     fn positions_are_limited_to_max_units_and_radius() {
         let anchor = MineralAnchor {
             zone: "spawn".into(),
@@ -504,6 +555,33 @@ mod tests {
         let index = app.world().resource::<MineralOreIndex>();
         assert_eq!(index.len(), 6);
         assert_eq!(index.lookup(DimensionKind::Overworld, exhausted_pos), None);
+        let mut query = app.world_mut().query::<&Gatherable>();
+        let gatherables = query.iter(app.world()).cloned().collect::<Vec<_>>();
+        assert_eq!(
+            gatherables.len(),
+            6,
+            "each spawned non-exhausted mineral node should carry Gatherable metadata"
+        );
+        for gatherable in &gatherables {
+            assert_eq!(
+                gatherable.target,
+                GatheringTargetKind::Ore,
+                "spawned mineral gatherable should be typed as ore"
+            );
+            assert_eq!(
+                gatherable.base_time_ticks,
+                base_time_ticks(GatheringTargetKind::Ore),
+                "spawned mineral gatherable should use shared ore gather timing"
+            );
+            assert_eq!(
+                gatherable.loot_table, "mineral:fan_tie",
+                "spawned mineral gatherable should keep stable snake_case loot key"
+            );
+            assert_eq!(
+                gatherable.display_name, "凡铁",
+                "spawned mineral gatherable should expose registry display name"
+            );
+        }
         let _ = fs::remove_file(path);
     }
 }

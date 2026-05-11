@@ -1,0 +1,9 @@
+{
+  "id": "gather_chop_tick",
+  "layers": [
+    { "sound": "minecraft:block.wood.break", "volume": 0.2, "pitch": 1.0, "delay_ticks": 0 }
+  ],
+  "priority": 35,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

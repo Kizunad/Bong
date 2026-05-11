@@ -10969,6 +10969,100 @@
       "required": [
         "v",
         "type",
+        "session_id",
+        "progress_ticks",
+        "total_ticks",
+        "target_name",
+        "target_type",
+        "quality_hint",
+        "interrupted",
+        "completed"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "gathering_session",
+          "type": "string"
+        },
+        "session_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "progress_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_name": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "target_type": {
+          "anyOf": [
+            {
+              "const": "herb",
+              "type": "string"
+            },
+            {
+              "const": "ore",
+              "type": "string"
+            },
+            {
+              "const": "wood",
+              "type": "string"
+            }
+          ]
+        },
+        "quality_hint": {
+          "anyOf": [
+            {
+              "const": "normal",
+              "type": "string"
+            },
+            {
+              "const": "fine_likely",
+              "type": "string"
+            },
+            {
+              "const": "perfect_possible",
+              "type": "string"
+            },
+            {
+              "const": "fine",
+              "type": "string"
+            },
+            {
+              "const": "perfect",
+              "type": "string"
+            }
+          ]
+        },
+        "tool_used": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "completed": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "level",
         "xp",
         "xp_to_next_level",

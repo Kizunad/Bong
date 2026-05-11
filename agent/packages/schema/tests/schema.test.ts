@@ -636,6 +636,18 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  for (const sampleName of [
+    "server-data.gathering-session.active.sample.json",
+    "server-data.gathering-session.completed.sample.json",
+    "server-data.gathering-session.interrupted.sample.json",
+  ]) {
+    it(sampleName, () => {
+      const data = loadSample(sampleName);
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
   it("server-data.botany-skill.sample.json", () => {
     const data = loadSample("server-data.botany-skill.sample.json");
     const result = validate(ServerDataV1, data);
@@ -1362,6 +1374,12 @@ describe("negative sample files fail schema validation", () => {
 
   it("server-data.invalid-unknown-type.sample.json", () => {
     const data = loadSample("server-data.invalid-unknown-type.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("server-data.gathering-session.invalid-quality.sample.json", () => {
+    const data = loadSample("server-data.gathering-session.invalid-quality.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });

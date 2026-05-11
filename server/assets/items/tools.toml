@@ -76,3 +76,139 @@ base_weight = 0.7
 rarity = "uncommon"
 spirit_quality_initial = 0.0
 description = "凡铁薄片衬皮缝成的手套，用来处理寒系植物；护片裂开后不再防空手寒伤。寒兽皮材料待 fauna-v1 回填。"
+
+# plan-gathering-ux-v1 P0/P4 — 采集斧 / 镐三材质。
+
+[[item]]
+id = "axe_bone"
+name = "骨斧"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.2
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽骨拼刃的粗斧，砍枯木够用，遇上灵木就要磨很久。"
+
+[[item]]
+id = "axe_iron"
+name = "铁斧"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.6
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "贫铁打成的斧头，沉手但可靠，是散修砍木的标准凡器。"
+
+[[item]]
+id = "axe_copper"
+name = "铜斧"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.25
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "旧铜矿回炉的轻斧，挥得快，刃口也更容易卷。"
+
+[[item]]
+id = "pickaxe_bone"
+name = "骨镐"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.35
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "以硬骨嵌石尖的短镐，只适合撬松软矿壳。"
+
+[[item]]
+id = "pickaxe_iron"
+name = "铁镐"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "贫铁矿工镐，能稳稳敲开大多数凡矿。"
+
+[[item]]
+id = "pickaxe_copper"
+name = "铜镐"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.45
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "铜镐轻快省力，适合连敲浅矿，但耐久不如铁镐。"
+
+# craft unlock scrolls for plan-gathering-ux-v1 P4 tool recipes.
+
+[[item]]
+id = "scroll_gathering_axe_bone"
+name = "骨斧配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "记着兽骨拼刃与绑柄手法的残卷，可解锁骨斧配方。"
+
+[[item]]
+id = "scroll_gathering_axe_iron"
+name = "铁斧配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "炉灰熏黑的伐木斧图样，可解锁铁斧配方。"
+
+[[item]]
+id = "scroll_gathering_axe_copper"
+name = "铜斧配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "薄铜片压出的轻斧旧图，可解锁铜斧配方。"
+
+[[item]]
+id = "scroll_gathering_pickaxe_bone"
+name = "骨镐配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "残页画着硬骨嵌石尖的短镐，可解锁骨镐配方。"
+
+[[item]]
+id = "scroll_gathering_pickaxe_iron"
+name = "铁镐配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "矿洞里传下的贫铁镐图样，可解锁铁镐配方。"
+
+[[item]]
+id = "scroll_gathering_pickaxe_copper"
+name = "铜镐配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "旧铜矿工的轻镐残图，可解锁铜镐配方。"

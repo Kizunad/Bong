@@ -284,7 +284,7 @@
   - P2 3D 空间化 + ambient detail：`AudioAttenuation::{SELF,MELEE,AREA,WORLD}`、`AUDIO_MELEE_RADIUS=8`、`AUDIO_AREA_RADIUS=32`、`AUDIO_WORLD_RADIUS=128`；`server/src/audio/ambient.rs` 追加灵泉湿地蛙鸣、血谷岩崩、北荒狼嚎、TSY 金属残响；client `MinecraftSoundSink` 将 SELF / PLAYER_LOCAL 映射为无衰减。
   - P3 七流派专属音效：`baomai_*` / `dugu_*` / `dugu_poison_*` / `tuike_*` / `woliu_*` / `zhenfa_*` / `zhenmai_*` 共 35 条流派 recipe，`school_recipe_prefix` / `school_hit_recipe` 负责 hit/cast/signature 路由。
   - P4 bus / 沉浸 / telemetry：`AudioBus::{COMBAT,ENVIRONMENT,UI}` 跨 server schema、agent schema、client parser 对齐；`AudioBusMixer` 支持三 bus 独立 volume、沉浸模式 UI mute、COMBAT/TRIBULATION 环境 ducking；`SoundRecipePlayer` 在 combat active / HP 下降边沿恢复 UI bus 100 tick；`AudioTelemetry` 统计 30min recipe 播放次数并在超过 100 次时 warn；`NpcFootstepAudioController` 纯 client 本地 NPC 脚步声按材质选择 default/ash/water recipe，首帧只建状态不播放 phantom step。
-  - P5 饱和化测试：recipe registry 锁定 184 条 JSON，schema/generated artifacts、server routing、registry-sourced attenuation recipient、全路径 dedup、client mixer、NPC footstep、music-state ducking 均有回归测试；多人实机压测与可视化调参未纳入自动 CI。
+  - P5 饱和化测试：recipe registry 锁定 189 条 JSON，schema/generated artifacts、server routing、registry-sourced attenuation recipient、全路径 dedup、client mixer、NPC footstep、music-state ducking、gathering UX/calamity/coffin 主线音频 cue 均有回归测试；多人实机压测与可视化调参未纳入自动 CI。
 
 - **关键 commit**
   - `d94c11d2c` · 2026-05-11 · `plan-audio-implementation-v1: 扩展音频协议与 bus 契约`
@@ -292,11 +292,13 @@
   - `ba2b3a0b6` · 2026-05-11 · `plan-audio-implementation-v1: 接入音频事件路由与去重`
   - `d5b0713d6` · 2026-05-11 · `plan-audio-implementation-v1: 接入客户端混音与 NPC 脚步`
   - `c517e8c21` · 2026-05-11 · `fix(plan-audio-implementation-v1): 收紧音频路由与去重边界`
+  - `4ef3f250e` · 2026-05-11 · `docs(plan-audio-implementation-v1): 刷新 review 修复证据`
 
 - **测试结果**
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：`4314 passed; 0 failed; 0 ignored`。
+  - `cd server && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 cargo test`：`4345 passed; 0 failed; 0 ignored`；同轮 merge 后 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 已通过。
   - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`：`BUILD SUCCESSFUL`。
-  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：`tiandao 52 files / 354 tests passed`，`schema 19 files / 370 tests passed`。
+  - `cd agent && npm run build && (cd packages/tiandao && npm test)`：`tiandao 52 files / 354 tests passed`。
+  - `cd agent/packages/schema && npm test`：`schema 19 files / 374 tests passed`。
 
 - **跨仓库核验**
   - server：`SoundRecipeRegistry::load_default()` / `AudioAttenuation` / `AudioBus` / `PlaySoundRecipeRequest` / `recipient_for_attenuation` / `AudioImplementationDedup` / `AudioEmitWriter` / `emit_*_audio_triggers`。
