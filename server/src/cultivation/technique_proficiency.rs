@@ -1,7 +1,22 @@
-use valence::prelude::{bevy_ecs, Entity, Event};
+use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query};
 
+use crate::combat::woliu_v2::VortexCastEvent;
+use crate::cultivation::color::{record_style_practice, PracticeLog};
+use crate::cultivation::components::{ColorKind, MeridianSystem, QiColor};
 use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+
+type WoliuProficiencyPlayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut KnownTechniques,
+        Option<&'static QiColor>,
+        Option<&'static MeridianSystem>,
+        Option<&'static mut PracticeLog>,
+        Option<&'static mut LifeRecord>,
+    ),
+>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProficiencySource {
@@ -94,6 +109,78 @@ pub fn record_mastered_life_event(
     });
 }
 
+pub fn track_woliu_proficiency_from_casts(
+    mut casts: EventReader<VortexCastEvent>,
+    mut players: WoliuProficiencyPlayerQuery,
+    mut mastered_tx: EventWriter<TechniqueMasteredEvent>,
+) {
+    for cast in casts.read() {
+        let Ok((mut known, qi_color, meridians, practice_log, life_record)) =
+            players.get_mut(cast.caster)
+        else {
+            continue;
+        };
+        let technique_id = cast.skill.as_str();
+        let color_match = qi_color.is_some_and(is_woliu_aligned_color);
+        let gain = proficiency_gain(
+            known
+                .entries
+                .iter()
+                .find(|entry| entry.id == technique_id)
+                .map(|entry| entry.proficiency)
+                .unwrap_or_default(),
+            ProficiencySource::CombatCast,
+            color_match,
+            meridian_health(meridians),
+        );
+        let Some(transition) = apply_proficiency_gain(&mut known, technique_id, gain) else {
+            continue;
+        };
+        if let Some(mut practice_log) = practice_log {
+            record_style_practice(&mut practice_log, ColorKind::Intricate);
+        }
+        if transition.mastered_now {
+            if let Some(mut life_record) = life_record {
+                record_mastered_life_event(
+                    &mut life_record,
+                    technique_id,
+                    "woliu_combat_cast",
+                    cast.tick,
+                );
+            }
+            mastered_tx.send(TechniqueMasteredEvent {
+                player: cast.caster,
+                technique_id: technique_id.to_string(),
+            });
+        }
+    }
+}
+
+fn is_woliu_aligned_color(qi_color: &QiColor) -> bool {
+    qi_color.main == ColorKind::Intricate
+        || qi_color.main == ColorKind::Insidious
+        || qi_color.secondary == Some(ColorKind::Intricate)
+        || qi_color.secondary == Some(ColorKind::Insidious)
+}
+
+fn meridian_health(meridians: Option<&MeridianSystem>) -> f32 {
+    let Some(meridians) = meridians else {
+        return 1.0;
+    };
+    let mut count = 0usize;
+    let mut total = 0.0;
+    for meridian in meridians.iter() {
+        if meridian.opened {
+            count += 1;
+            total += meridian.integrity.clamp(0.0, 1.0);
+        }
+    }
+    if count == 0 {
+        return 1.0;
+    }
+    (total / count as f64) as f32
+}
+
 pub fn practice_session_gain(
     zone_qi: f64,
     current: f32,
@@ -126,7 +213,10 @@ pub fn should_exit_practice_session(moved: bool, attacked: bool, qi_ratio: f64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::woliu_v2::events::WoliuSkillVisual;
+    use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
     use crate::cultivation::known_techniques::KnownTechnique;
+    use valence::prelude::{App, DVec3, Events, Update};
 
     #[test]
     fn gain_formula_combat() {
@@ -207,5 +297,115 @@ mod tests {
         let transition = apply_proficiency_gain(&mut known, "woliu.vortex", 0.02).unwrap();
         assert_eq!(transition.after, 1.0);
         assert!(transition.mastered_now);
+    }
+
+    #[test]
+    fn cast_event_increases_known_woliu_proficiency() {
+        let mut app = proficiency_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "woliu.hold".to_string(),
+                        proficiency: 0.0,
+                        active: true,
+                    }],
+                },
+                QiColor {
+                    main: ColorKind::Intricate,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                PracticeLog::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<VortexCastEvent>>()
+            .send(vortex_cast(entity, WoliuSkillId::Hold, 42));
+
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(entity).unwrap();
+        let proficiency = known
+            .entries
+            .iter()
+            .find(|entry| entry.id == "woliu.hold")
+            .unwrap()
+            .proficiency;
+        assert!(
+            proficiency > 0.0,
+            "实战释放已学涡流招式后应增长 proficiency"
+        );
+        let practice = app.world().get::<PracticeLog>(entity).unwrap();
+        assert_eq!(
+            practice.weights.get(&ColorKind::Intricate).copied(),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn cast_event_emits_mastered_transition_once() {
+        let mut app = proficiency_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "woliu.hold".to_string(),
+                        proficiency: 0.999,
+                        active: true,
+                    }],
+                },
+                QiColor::default(),
+                MeridianSystem::default(),
+                LifeRecord::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<VortexCastEvent>>()
+            .send(vortex_cast(entity, WoliuSkillId::Hold, 77));
+
+        app.update();
+
+        let mastered_events = app.world().resource::<Events<TechniqueMasteredEvent>>();
+        assert!(mastered_events
+            .iter_current_update_events()
+            .any(|event| event.player == entity && event.technique_id == "woliu.hold"));
+        let life_record = app.world().get::<LifeRecord>(entity).unwrap();
+        assert!(life_record.biography.iter().any(
+            |entry| matches!(entry, BiographyEntry::InsightTaken { trigger, choice, tick, .. }
+                if trigger == "technique_mastered" && choice == "woliu.hold" && *tick == 77)
+        ));
+    }
+
+    fn proficiency_app() -> App {
+        let mut app = App::new();
+        app.add_event::<VortexCastEvent>();
+        app.add_event::<TechniqueMasteredEvent>();
+        app.add_systems(Update, track_woliu_proficiency_from_casts);
+        app
+    }
+
+    fn vortex_cast(caster: Entity, skill: WoliuSkillId, tick: u64) -> VortexCastEvent {
+        VortexCastEvent {
+            caster,
+            skill,
+            tick,
+            center: DVec3::ZERO,
+            lethal_radius: 0.0,
+            influence_radius: 0.0,
+            turbulence_radius: 0.0,
+            absorbed_qi: 0.0,
+            swirl_qi: 0.0,
+            backfire_level: None,
+            visual: WoliuSkillVisual {
+                animation_id: "test",
+                particle_id: "test",
+                sound_recipe_id: "test",
+                hud_hint: "test",
+                icon_texture: "test",
+            },
+        }
     }
 }
