@@ -204,6 +204,8 @@ pub fn scheduled_wander_score(
     let phase = schedule.phase(tick);
     if schedule.activity_for(tick, salt) == ScheduleActivity::Wander {
         Some(baseline * schedule.weight(phase, ScheduleActivity::Wander))
+    } else if baseline <= 0.0 {
+        Some(0.0)
     } else {
         Some(0.02)
     }
@@ -639,6 +641,26 @@ mod tests {
         assert!(
             score < 0.08,
             "Night wander score should be lower, got {score}"
+        );
+    }
+
+    #[test]
+    fn wander_score_preserves_zero_baseline_outside_wander_activity() {
+        let mut schedule = NpcDailySchedule::for_archetype(NpcArchetype::Commoner, 11);
+        schedule.phase_offset_ticks = 0;
+        schedule
+            .phase_weights
+            .insert(DayPhase::Day, vec![(ScheduleActivity::Forage, 1.0)]);
+
+        assert_eq!(
+            scheduled_wander_score(
+                Some(&schedule),
+                Some(&NpcLodTier::Near),
+                6_000,
+                schedule.seed,
+                0.0,
+            ),
+            Some(0.0)
         );
     }
 

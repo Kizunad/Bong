@@ -194,6 +194,7 @@ pub struct GoToPoiState {
     pub destination: Option<DVec3>,
     pub arrive_action: Option<ScheduleActivity>,
     pub elapsed_ticks: u32,
+    pub arrival_ticks: u32,
     pub fallback_wander: bool,
 }
 
@@ -210,6 +211,16 @@ pub struct StallState {
     pub elapsed_ticks: u32,
     pub facing_target: Option<DVec3>,
     pub destination: Option<DVec3>,
+}
+
+fn poi_arrival_required_ticks(activity: ScheduleActivity) -> u32 {
+    match activity {
+        ScheduleActivity::Forage => 1,
+        ScheduleActivity::Cultivate => CULTIVATE_MAX_TICKS,
+        ScheduleActivity::Trade => STALL_MIN_TICKS,
+        ScheduleActivity::Rest => REST_MAX_TICKS,
+        ScheduleActivity::Patrol | ScheduleActivity::Socialize | ScheduleActivity::Wander => 1,
+    }
 }
 
 /// 夜间、低真元或低饱食度时回家。
@@ -1757,6 +1768,7 @@ fn go_to_poi_action_system(
                 poi_state.destination = Some(destination);
                 poi_state.arrive_action = Some(activity);
                 poi_state.elapsed_ticks = 0;
+                poi_state.arrival_ticks = 0;
                 poi_state.fallback_wander = fallback_wander;
                 *state = ActionState::Executing;
             }
@@ -1766,19 +1778,34 @@ fn go_to_poi_action_system(
                     .destination
                     .map(|dest| position.get().distance(dest) <= GO_TO_POI_ARRIVAL_DISTANCE)
                     .unwrap_or(true);
-                if arrived || poi_state.elapsed_ticks >= action.timeout_ticks {
-                    if arrived && !poi_state.fallback_wander {
+
+                if arrived && !poi_state.fallback_wander {
+                    let activity = poi_state.arrive_action.unwrap_or(ScheduleActivity::Wander);
+                    if poi_state.arrival_ticks == 0 {
                         let mut hunger = hunger;
                         let mut cultivation = cultivation;
                         finish_poi_arrival(
-                            poi_state.arrive_action.unwrap_or(ScheduleActivity::Wander),
+                            activity,
                             hunger.as_deref_mut(),
                             cultivation.as_deref_mut(),
                         );
+                        navigator.stop();
+                        poi_state.destination = None;
+                        poi_state.target_poi = None;
                     }
+                    poi_state.arrival_ticks = poi_state.arrival_ticks.saturating_add(1);
+                    if poi_state.arrival_ticks >= poi_arrival_required_ticks(activity) {
+                        poi_state.arrival_ticks = 0;
+                        *state = ActionState::Success;
+                    }
+                    continue;
+                }
+
+                if arrived || poi_state.elapsed_ticks >= action.timeout_ticks {
                     navigator.stop();
                     poi_state.destination = None;
                     poi_state.target_poi = None;
+                    poi_state.arrival_ticks = 0;
                     *state = ActionState::Success;
                 }
             }
@@ -1786,6 +1813,7 @@ fn go_to_poi_action_system(
                 navigator.stop();
                 poi_state.destination = None;
                 poi_state.target_poi = None;
+                poi_state.arrival_ticks = 0;
                 *state = ActionState::Failure;
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
@@ -1820,12 +1848,12 @@ fn finish_poi_arrival(
 #[allow(clippy::type_complexity)]
 fn stall_action_system(
     players: Query<&Position, With<ClientMarker>>,
-    mut npcs: Query<(&Position, &NpcPatrol, &mut Navigator, &mut StallState), With<NpcMarker>>,
+    mut npcs: Query<(&Position, &mut Navigator, &mut StallState), With<NpcMarker>>,
     mut actions: Query<(&Actor, &mut ActionState), With<StallAction>>,
     pois: Option<Res<PoiNoviceRegistry>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, patrol, mut navigator, mut stall)) = npcs.get_mut(*actor) else {
+        let Ok((position, mut navigator, mut stall)) = npcs.get_mut(*actor) else {
             *state = ActionState::Failure;
             continue;
         };
@@ -1840,19 +1868,21 @@ fn stall_action_system(
                     ScheduleActivity::Trade,
                     DAILY_POI_SEARCH_RADIUS,
                 );
-                if let Some(destination) = trade_destination.filter(|destination| {
-                    current.distance(*destination) > GO_TO_POI_ARRIVAL_DISTANCE
-                }) {
+                let Some(destination) = trade_destination else {
+                    navigator.stop();
+                    stall.destination = None;
+                    stall.facing_target = None;
+                    *state = ActionState::Failure;
+                    continue;
+                };
+                if current.distance(destination) > GO_TO_POI_ARRIVAL_DISTANCE {
                     navigator.set_goal(destination, WANDER_SPEED_FACTOR);
                     stall.destination = Some(destination);
                     stall.facing_target = Some(stall_facing_target(current, destination));
                 } else {
                     navigator.stop();
                     stall.destination = None;
-                    stall.facing_target = Some(stall_facing_target(
-                        current,
-                        trade_destination.unwrap_or(patrol.current_target),
-                    ));
+                    stall.facing_target = Some(stall_facing_target(current, destination));
                 }
                 *state = ActionState::Executing;
             }
@@ -1866,7 +1896,7 @@ fn stall_action_system(
                     navigator.stop();
                     stall.destination = None;
                     stall.elapsed_ticks = 0;
-                    stall.facing_target = Some(stall_facing_target(current, patrol.current_target));
+                    stall.facing_target = Some(stall_facing_target(current, destination));
                 }
                 stall.elapsed_ticks = stall.elapsed_ticks.saturating_add(1);
                 let player_near = players
@@ -3611,7 +3641,11 @@ mod tests {
 
         assert_eq!(
             *app.world().get::<ActionState>(action).unwrap(),
-            ActionState::Success
+            ActionState::Executing
+        );
+        assert_eq!(
+            app.world().get::<GoToPoiState>(npc).unwrap().arrival_ticks,
+            1
         );
         assert!(
             app.world().get::<Cultivation>(npc).unwrap().qi_current > 0.0,
@@ -3689,6 +3723,34 @@ mod tests {
         let pos = DVec3::new(10.0, 66.0, 10.0);
         let path = DVec3::new(12.0, 70.0, 14.0);
         assert_eq!(stall_facing_target(pos, path), DVec3::new(12.0, 66.0, 14.0));
+    }
+
+    #[test]
+    fn stall_action_fails_without_trade_spot() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, stall_action_system.in_set(BigBrainSet::Actions));
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::ZERO),
+                Navigator::new(),
+                StallState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), StallAction, ActionState::Requested))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Failure
+        );
     }
 
     // -----------------------------------------------------------------------

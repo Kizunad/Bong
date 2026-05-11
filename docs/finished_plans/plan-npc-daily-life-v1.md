@@ -32,7 +32,7 @@ NPC 从"反应式机器人"变成"有生活节奏的人"。两个核心改动：
 - **进料**：`npc::NpcBlackboard`（大脑黑板）/ `npc::Navigator`（A* 寻路）/ `npc::Hunger`（饱食度）/ `npc::NpcLifespan`（寿元）/ `npc::NpcPatrol`（巡逻点）/ `cultivation::Cultivation`（真元/境界）/ `world::zone::ZoneRegistry`（区域灵气）/ `world::season::SeasonState`（季节）/ LOD 层级（`NpcLodLevel`）
 - **出料**：`NpcDailySchedule` component（时段日程）/ `NpcHomeBase` component（居住点）/ `PointOfInterest` 扩展（日程目的地类型）/ 修改 `WanderAction` → `GoToPoiAction`（目的地驱动）/ 新增 `RestAction` / `StallAction` / `ReturnHomeAction` / 时段切换 event
 - **共享类型 / event**：复用 `NpcArchetype`（不新建）/ 复用 `NpcBlackboard`（扩展字段）/ 新增 `DayPhase` enum / 新增 `NpcScheduleChangedEvent`
-- **跨仓库契约**：server + agent/schema（POI wire literal 扩展与 TypeBox pin），client 无改动——NPC 动作沿用既有渲染管线。
+- **跨仓库契约**：server only（NPC 日常行为纯 server 逻辑，client 无改动——NPC 动作已有的渲染管线自动覆盖）
 - **worldview 锚点**：§七 散修状态机 + §十四 世界的一天
 - **qi_physics 锚点**：不涉及（NPC 修炼吸收灵气已在 CultivateAction 中走 qi_physics）
 
@@ -225,13 +225,13 @@ fn far_npc_schedule_tick(schedule, cultivation, hunger, home, clock) {
 
 ### Dormant（>256 格）—— 最小推演
 
-每 **1200 tick（1 分钟）** tick 一次：
+每 **12000 tick（10 分钟）** tick 一次：
 
 ```rust
 fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
     hunger.value -= 0.1;  // 10 分钟饿了一些
     if hunger.value < 0.0 { hunger.value = 0.3; }  // 假设自己找到了食物
-    lifespan.advance(1200);   // 寿元推进
+    lifespan.advance(12000);  // 寿元推进
     // cultivation 不变（dormant 不修炼）
     // 位置不变（dormant 冻结位置）
 }
@@ -252,15 +252,15 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `DayPhase` + `NpcDailySchedule` component + 时段权重注入到现有 Scorer | ✅ 2026-05-11 |
-| P1 | `GoToPoiAction`（替换 WanderAction）+ POI 类型扩展（5 种新 POI） | ✅ 2026-05-11 |
-| P2 | `NpcHomeBase` + `ReturnHomeAction` + `RestAction` + `StallAction` | ✅ 2026-05-11 |
-| P3 | Far 层状态 tick + Dormant 层最小推演 + Hydrate 过渡逻辑 | ✅ 2026-05-11 |
-| P4 | 饱和化测试（4 时段 × 7 活动 × 3 LOD 层 × hydrate 过渡） | ✅ 2026-05-11 |
+| P0 | `DayPhase` + `NpcDailySchedule` component + 时段权重注入到现有 Scorer | ⬜ |
+| P1 | `GoToPoiAction`（替换 WanderAction）+ POI 类型扩展（5 种新 POI） | ⬜ |
+| P2 | `NpcHomeBase` + `ReturnHomeAction` + `RestAction` + `StallAction` | ⬜ |
+| P3 | Far 层状态 tick + Dormant 层最小推演 + Hydrate 过渡逻辑 | ⬜ |
+| P4 | 饱和化测试（4 时段 × 7 活动 × 3 LOD 层 × hydrate 过渡） | ⬜ |
 
 ---
 
-## P0 — 时段日程 ✅ 2026-05-11
+## P0 — 时段日程 ⬜
 
 ### 交付物
 
@@ -306,7 +306,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P1 — 目的地驱动漫游 ✅ 2026-05-11
+## P1 — 目的地驱动漫游 ⬜
 
 ### 交付物
 
@@ -346,7 +346,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P2 — HomeBase + 新 Action ✅ 2026-05-11
+## P2 — HomeBase + 新 Action ⬜
 
 ### 交付物
 
@@ -379,7 +379,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P3 — LOD 分层推演 ✅ 2026-05-11
+## P3 — LOD 分层推演 ⬜
 
 ### 交付物
 
@@ -389,7 +389,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 2. **Dormant 最小推演**（§4 Dormant 部分）
 
-   `dormant_npc_tick` system，每 1200 tick 一次。hunger 衰减 + 假设自养 + 寿元推进。
+   `dormant_npc_tick` system，每 12000 tick 一次。hunger 衰减 + 假设自养 + 寿元推进。
 
 3. **Hydrate 过渡**（§4 Hydrate 部分）
 
@@ -408,7 +408,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P4 — 饱和化测试 ✅ 2026-05-11
+## P4 — 饱和化测试 ⬜
 
 ### 交付物
 
@@ -418,7 +418,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 2. **LOD 层级一致性**
    - NPC 在 Near 运行 1000 tick → 切到 Far 运行 10 次 tick → 切回 Near → 状态（hunger/qi）偏差 < 5%
-   - Dormant 1 分钟推演 → hydrate 回 Near → 位置合理（在 home 或 POI 附近）
+   - Dormant 10 分钟推演 → hydrate 回 Near → 位置合理（在 home 或 POI 附近）
 
 3. **端到端**
    - 跟踪一个散修 NPC 一整天（24000 tick）：Dawn 出门采集 → Day 在灵草丛蹲 → Dusk 回家 → Night 在家打坐 → Dawn 再出门
