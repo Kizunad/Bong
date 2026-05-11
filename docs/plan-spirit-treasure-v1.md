@@ -1,6 +1,6 @@
-# plan-spirit-treasure-v1：灵宝系统（全服唯一 + 器灵对话 + Tab 面板）
+# plan-spirit-treasure-v1：灵宝系统（全服唯一 + 器灵聊天对话 + 附近可见）
 
-> 灵宝是坍缩渊产出的全服唯一装备，每件有自己的器灵——一个独立 LLM 人格。玩家通过专属 Tab 面板与器灵交互，器灵也会在关键时刻主动开口。首发一件稳定灵宝：**寂照镜**。
+> 灵宝是坍缩渊产出的全服唯一装备，每件有自己的器灵——一个独立 LLM 人格。玩家在聊天栏输入 `@灵宝名` 与器灵对话，器灵的回话**附近所有人都能看到**——你的灵宝暴露了你拥有它的事实。首发一件稳定灵宝：**寂照镜**。
 
 ## 阶段总览
 
@@ -8,9 +8,9 @@
 |------|------|------|
 | P0 | SpiritTreasure 核心组件 + 全服唯一注册表 + 装备/背包触发检测 | ⬜ |
 | P1 | 器灵对话 LLM runtime（schema + Redis channel + skill prompt + 模型配置） | ⬜ |
-| P2 | 灵宝 Tab 面板 UI（T 键打开，浏览器 tab 布局，每件灵宝一个 tab） | ⬜ |
+| P2 | 聊天栏 `@灵宝名` 路由 + 器灵回话 zone 广播 + 附近可见渲染 | ⬜ |
 | P3 | 首发灵宝「寂照镜」实装（server 效果 + 器灵人格 + 视听） | ⬜ |
-| P4 | 饱和测试（唯一性 + 对话 + UI + 装备/背包切换 + 多灵宝 tab） | ⬜ |
+| P4 | 饱和测试（唯一性 + 对话 + 聊天可见性 + 装备/背包切换） | ⬜ |
 
 ---
 
@@ -54,12 +54,12 @@
 | server | `spirit_treasure.rs` 模块（`server/src/inventory/spirit_treasure.rs`） |
 | server | `CH_SPIRIT_TREASURE_DIALOGUE_REQUEST` / `CH_SPIRIT_TREASURE_DIALOGUE` Redis 常量 |
 | server | `network/spirit_treasure_bridge.rs` — 器灵对话 Redis 桥 |
+| server | `network/chat_collector.rs` — 扩展 `@灵宝名` 路由（拦截 → 走器灵管线，不走天道 player_chat） |
 | agent | `SpiritTreasureDialogueRequestV1` / `SpiritTreasureDialogueV1` schema |
 | agent | `SpiritTreasureDialogueRuntime` — 器灵 LLM runtime |
 | agent | `skills/spirit-treasure-jizhaojing.md` — 寂照镜器灵 prompt |
-| client | `SpiritTreasureScreen` / `SpiritTreasureTabPanel` / `SpiritTreasureScreenBootstrap` |
-| client | `SpiritTreasureStateStore` / `SpiritTreasureDialogueStore` |
-| client | `SpiritTreasureHudPlanner` — 器灵气泡 HUD |
+| client | `SpiritTreasureChatRenderer` — 聊天栏器灵消息特殊渲染（颜色 + 名字格式） |
+| client | `SpiritTreasureStateStore` — 灵宝持有状态（被动效果 / 好感度 / 是否沉睡） |
 
 ### worldview 锚点
 
@@ -338,11 +338,14 @@ export class SpiritTreasureDialogueRuntime {
 
 ### 对话触发方式
 
-#### 1. 玩家主动对话
+#### 1. 玩家主动对话（`@灵宝名`）
 
-- 玩家在灵宝 Tab 面板输入文字 → C2S `bong:spirit_treasure_chat` → server 组装 request → Redis
-- 冷却：每件灵宝 `dialogue_cooldown_s`（寂照镜 = 60s）
-- 冷却期内再点 → 客户端本地拒绝，提示"器灵需要时间回应"
+- 玩家在聊天栏输入 `@寂照镜 你好` → chat_collector.rs 拦截 → 组装 request → Redis → agent → 回话
+- **玩家的 @消息先 zone 广播**（附近所有人看到你在跟灵宝说话）
+- **器灵的回话再 zone 广播**（附近所有人看到器灵说了什么）
+- 冷却：每件灵宝 `dialogue_cooldown_s`（寂照镜 = 30s）
+- 冷却期内再 @ → server 回 "§8[灵宝] §7器灵尚在回应中。"（仅本人可见）
+- 空消息（只写 `@寂照镜`）→ 器灵自行决定说什么（trigger=player, player_message=""）
 
 #### 2. 随机触发对话
 
@@ -350,12 +353,15 @@ export class SpiritTreasureDialogueRuntime {
 - 每 tick 检查所有 `ActiveSpiritTreasure`
 - 对每件灵宝：距上次对话 ≥ `random_dialogue_interval_s` 的随机值 → 组装 request（trigger=random）
 - 寂照镜：300-900s 随机间隔（5-15 分钟说一句话）
+- 器灵的话直接出现在聊天栏，**附近所有人可见**——旁人会看到一个修士腰间的青铜镜突然"说话"了
+- 器灵也可能返回 tone=silent → 不发消息（它选择了沉默）
 
 #### 3. 事件触发对话
 
 - 监听关键 event（`BreakthroughEvent` / `PlayerDeathEvent` / `TsyEnterEmit` / `CombatEvent` 等）
 - 事件发生时，检查玩家是否持有灵宝 → 组装 request（trigger=event, recent_events 含事件描述）
 - 不受冷却限制（紧急事件器灵会主动开口）
+- **事件触发的对话也 zone 广播**——你在渡劫时灵宝突然说"小心东北方"，旁观者都听得到
 
 ### 好感度系统
 
@@ -379,87 +385,156 @@ export class SpiritTreasureDialogueRuntime {
 
 ---
 
-## P2：灵宝 Tab 面板 UI
+## P2：聊天栏 `@灵宝名` 路由 + 附近可见
 
-### 快捷键
+### 交互方式
 
-**T 键**打开灵宝面板（`SpiritTreasureScreenBootstrap`）。
+**玩家在聊天栏输入 `@寂照镜 东北方向有什么？`**——不需要专属 UI，直接用 MC 原生聊天框。
 
-> T 键选择理由：I=inspect, K=cultivation, G=interact 已占用。T=Treasure，直觉映射。
+器灵的回话以特殊格式出现在聊天栏，**同 zone 内所有玩家都能看到**。
 
-### 屏幕布局（浏览器 Tab 风格）
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  [寂照镜] [×暂无] [×暂无] [×暂无]          灵宝·T 键   │  ← tab 栏
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌──────────┐  寂照镜                                    │
-│  │          │  "镜面如水，倒映的不是你的脸，              │
-│  │  灵宝图  │   而是你心中最深的执念。"                   │
-│  │  (大图)  │                                            │
-│  │          │  ───────────────────                        │
-│  └──────────┘  来源：清风宗遗迹坍缩渊                    │
-│                好感度：████████░░ 0.72                    │
-│                状态：亲近                                 │
-│                                                          │
-│  ── 被动效果 ──────────────────────────                  │
-│  ✦ 感知范围 +30%（×1.2 亲近加成）                        │
-│  ✦ 隐匿修士探测 +15%                                    │
-│                                                          │
-│  ── 器灵对话 ──────────────────────────                  │
-│  │ [镜灵] 此地灵压有异，东北方似有暗流。    5 分钟前 │   │
-│  │ [你]   东北？那边不是死域吗？             4 分钟前 │   │
-│  │ [镜灵] 死域之下，未必无生。               4 分钟前 │   │
-│  │                                                    │   │
-│  │ ┌──────────────────────────┐ [发送]                │   │
-│  │ │ 输入消息...              │                       │   │
-│  │ └──────────────────────────┘                       │   │
-│  └────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
-```
-
-### Tab 显示规则
-
-- **仅显示玩家当前身上（equipped + backpack）的灵宝**
-- 灵宝离手（丢弃/交易/死亡掉落）→ tab 立即消失
-- 拾取新灵宝 → tab 自动出现
-- 最多 4 个 tab（对应 TreasureBelt 4 槽）
-- 无灵宝时 T 键无反应（或显示空面板 "尚无灵宝"）
-
-### 客户端数据流
+### 聊天流程
 
 ```
-SpiritTreasureStateStore（全局单例）
+玩家输入：@寂照镜 东北方向有什么？
+  ↓
+client → C2S chat packet（原生 MC 聊天）
+  ↓
+server chat_collector.rs：
+  检测 "@" 前缀 → 解析灵宝名
+  ├── 匹配失败 → 当普通聊天处理（RPUSH bong:player_chat）
+  └── 匹配成功 → 拦截，不进 player_chat
+       ├── 检查玩家是否持有该灵宝（equipped 或 backpack）
+       │   └── 未持有 → 聊天栏回："你并未持有此物。"（仅本人可见）
+       ├── 检查冷却 → 冷却中 → "器灵尚在回应中。"（仅本人可见）
+       └── 通过 → 组装 SpiritTreasureDialogueRequestV1
+            ├── 玩家的 @消息 先广播给同 zone 玩家（所有人看到你在跟灵宝说话）
+            ├── Redis PUBLISH bong:spirit_treasure_dialogue_request
+            └── agent runtime 处理 → Redis PUBLISH bong:spirit_treasure_dialogue
+                 ↓
+            server spirit_treasure_bridge.rs 接收
+                 ↓
+            格式化为聊天消息，scope=zone 广播
+                 ↓
+            同 zone 所有玩家聊天栏看到器灵回话
+```
+
+### 聊天栏渲染格式
+
+**玩家对灵宝说话**（所有人可见）：
+```
+§7[散修] §f@寂照镜 §7东北方向有什么？
+```
+- 灰色玩家名 + 白色 @灵宝名 + 灰色消息内容
+- 与普通聊天区别：`@灵宝名` 部分高亮
+
+**器灵回话**（同 zone 所有人可见）：
+```
+§b[寂照镜] §3死域之下，未必无生。
+```
+- 青色 `§b` 灵宝名 + 深青 `§3` 消息内容
+- 与天道 narration（`§7` 灰色）、普通聊天（`§f` 白色）明确区分
+
+**器灵主动说话**（随机/事件触发，同 zone 所有人可见）：
+```
+§b[寂照镜] §3此地灵压有异。
+```
+- 与玩家触发的格式完全一样——旁人分不清是玩家问的还是器灵主动说的
+
+**仅本人可见的系统提示**（错误/冷却等）：
+```
+§8[灵宝] §7你并未持有此物。
+§8[灵宝] §7器灵尚在回应中，稍后再试。
+§8[灵宝] §7器灵沉睡中，未有回应。
+```
+
+### 信息暴露的战术含义
+
+> 这是**故意设计**——与灵宝对话暴露以下信息给附近所有人：
+>
+> 1. **你持有灵宝**——全服唯一物品，相当于告诉所有人"我身上有好东西"
+> 2. **灵宝名字**——暴露了灵宝类型和大致能力
+> 3. **对话内容**——器灵说的信息（坍缩渊线索、宗门秘史等）附近人也能听到
+>
+> 这与 worldview §十一 匿名系统和 §十五 #2 "信息比装备更值钱"完全一致——你要么冒着暴露的风险跟器灵交流获取信息，要么保持沉默让器灵好感度慢慢下降。
+>
+> **聪明的持有者会跑到荒野无人处才跟灵宝说话。**
+
+### `@` 路由实现
+
+```rust
+// server/src/network/chat_collector.rs — 扩展
+
+const SPIRIT_TREASURE_PREFIX: &str = "@";
+
+pub fn try_route_spirit_treasure_chat(
+    raw: &str,
+    sender: Entity,
+    registry: &SpiritTreasureRegistry,
+    active_treasures: &ActiveSpiritTreasures,
+) -> Option<SpiritTreasureChatRoute> {
+    // 1. trim + 检查 "@" 前缀
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('@') { return None; }
+    
+    // 2. 按第一个空格分割：灵宝名 + 消息内容
+    let after_at = &trimmed[1..];  // 去掉 @
+    let (treasure_name, message) = match after_at.find(' ') {
+        Some(idx) => (&after_at[..idx], after_at[idx+1..].trim()),
+        None => (after_at, ""),  // 只 @了名字没说话 → 空消息
+    };
+    
+    // 3. 在 registry.defs 中按 display_name 匹配
+    let def = registry.defs.values()
+        .find(|d| d.display_name == treasure_name)?;
+    
+    // 4. 检查玩家是否持有
+    let entry = active_treasures.treasures.iter()
+        .find(|t| t.template_id == def.template_id)?;
+    
+    Some(SpiritTreasureChatRoute {
+        treasure_template_id: def.template_id.clone(),
+        player_message: message.to_string(),
+        equipped: entry.equipped,
+    })
+}
+```
+
+### 客户端数据
+
+```
+SpiritTreasureStateStore（全局单例，无独立 UI）
   ├── treasures: Map<template_id, TreasureClientState>
-  │     ├── displayName, description, icon
-  │     ├── equipped (bool)
-  │     ├── affinity (0.0-1.0)
-  │     ├── passiveEffects: List<PassiveDesc>
-  │     └── sleeping (bool)
+  │     ├── displayName, equipped, affinity, sleeping
+  │     └── passiveEffects（在 inspect 装备栏 tooltip 内展示）
   └── 监听 S2C bong:spirit_treasure_state payload
 
-SpiritTreasureDialogueStore（全局单例）
-  ├── dialogues: Map<template_id, List<DialogueEntry>>
-  │     └── { speaker, content, timestamp, tone }
-  └── 监听 S2C bong:spirit_treasure_dialogue payload
+器灵对话直接走聊天栏，不需要 DialogueStore。
 ```
 
-### HUD 气泡（器灵主动说话时）
+### 灵宝信息查看
 
-器灵随机/事件触发对话时，不需要玩家打开 Tab 面板——直接在屏幕右下角弹出气泡：
+灵宝的详细信息（好感度、被动效果、来源等）不用专属面板——放在**现有 inspect 装备栏的 tooltip** 里：
 
 ```
-┌─────────────────────────────┐
-│ 🪞 寂照镜                    │
-│ "此地不宜久留。"             │
-│                    ▸ 回应(T) │
-└─────────────────────────────┘
-```
+长按装备栏中的灵宝 → ItemInspectScreen 展示：
 
-- 气泡停留 8 秒后自动消失
-- 点击"回应"或按 T 键 → 直接打开灵宝面板并聚焦该灵宝 tab + 输入框
-- 同时写入 EventStream："[寂照镜] 此地不宜久留。"
+  寂照镜  [上古]
+  "镜面如水，倒映的不是你的脸，
+   而是你心中最深的执念。"
+  ─────────────────
+  来源：清风宗遗迹
+  器灵：明虚（残存神识）
+  好感度：████████░░ 0.72（亲近）
+  ─────────────────
+  被动效果（装备时）：
+  ✦ 感知范围 +30%（×1.2 亲近加成）
+  ✦ 隐匿修士探测 +15%
+  ✦ 坍缩渊负压 -5%
+  ─────────────────
+  聊天栏输入 @寂照镜 与器灵交谈
+  附近修士可闻器灵之声
+```
 
 ---
 
@@ -572,12 +647,15 @@ SpiritTreasureDialogueStore（全局单例）
 11. **对话历史持久化** → 重启后对话记录仍在
 12. **LLM 超时/失败** → 器灵返回默认 "……"（不崩溃）
 
-### UI 测试
+### 聊天 / 可见性测试
 
-13. **Tab 动态增减** → 拾取灵宝 → tab 出现；丢弃 → tab 消失
-14. **背包 vs 装备** → 背包内有 tab 但被动效果不生效；装备后生效
-15. **气泡通知** → 随机对话时气泡弹出 → 点击跳转 Tab 面板
-16. **多灵宝 tab** → 同时持有 2+ 灵宝时 tab 切换正确
+13. **@ 路由解析** → `@寂照镜 你好` 正确拦截；`@不存在 你好` 当普通聊天处理；`@寂照镜`（空消息）正常触发
+14. **zone 广播** → 持有者 @灵宝 → 同 zone 另一玩家聊天栏看到玩家消息 + 器灵回话
+15. **跨 zone 不可见** → 不同 zone 的玩家看不到器灵对话
+16. **未持有拦截** → 玩家 @了别人持有的灵宝名 → 仅本人可见 "你并未持有此物"
+17. **随机触发 zone 广播** → 器灵主动说话时附近玩家均可见
+18. **渲染格式** → 器灵消息 §b[灵宝名] §3 与天道 narration / 普通聊天色调区分
+19. **inspect tooltip** → 装备栏长按灵宝 → 正确显示好感度/被动效果/使用说明
 
 ### 守恒断言
 
