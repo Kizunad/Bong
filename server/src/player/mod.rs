@@ -7,7 +7,7 @@ use self::state::{
     save_player_slices_with_coffin, save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer,
     PlayerStatePersistence,
 };
-use crate::coffin::CoffinComponent;
+use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
@@ -172,6 +172,7 @@ fn init_clients(
 pub(crate) fn attach_player_state_to_joined_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
+    mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut skill_config_store: Option<ResMut<SkillConfigStore>>,
     skill_config_schemas: Option<Res<SkillConfigSchemas>>,
@@ -244,14 +245,13 @@ pub(crate) fn attach_player_state_to_joined_clients(
             if let Some(mut flags) = flags {
                 flags.set_invisible(true);
             }
-            let [x, y, z] = persisted.position;
+            let coffin_lower = coffin_lower_from_player_position(persisted.position);
+            if let Some(registry) = coffin_registry.as_deref_mut() {
+                registry.reclaim_occupied(coffin_lower, entity, 0);
+            }
             entity_commands.insert(CoffinComponent {
                 entered_at_tick: 0,
-                coffin_lower: valence::prelude::BlockPos::new(
-                    x.floor() as i32,
-                    y.floor() as i32,
-                    z.floor() as i32,
-                ),
+                coffin_lower,
             });
         }
         entity_commands.insert(persisted.skill_set);
@@ -290,6 +290,7 @@ fn tick_player_persistence_timer(mut timer: ResMut<PlayerStateAutosaveTimer>) {
 pub(crate) fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
+    mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     mut disconnected_clients: RemovedComponents<Client>,
     settings: Res<PersistenceSettings>,
     core_players: Query<(
@@ -404,6 +405,9 @@ pub(crate) fn despawn_disconnected_clients(
             );
         }
 
+        if let Some(registry) = coffin_registry.as_deref_mut() {
+            registry.clear_player(entity);
+        }
         tracing::info!("[bong][player] cleaning up disconnected client entity {entity:?}");
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.insert(Despawned);

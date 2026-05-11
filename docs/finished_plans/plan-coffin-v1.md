@@ -34,11 +34,11 @@
 
 ## §0 设计轴心
 
-- [ ] **最小侵入**：棺材只改寿命流逝速率，不改修炼/战斗/背包等任何其他系统
-- [ ] **双箱即用**：用 Minecraft vanilla Double Chest model + blockstate 作为凡物棺材外观，暂不引入自定义模型
-- [ ] **挂机友好**：在线 ticking 走 `lifespan_tick_rate_multiplier` +0.9 因子；离线回算走 `LIFESPAN_OFFLINE_MULTIPLIER` ×0.9，上下线节奏一致
-- [ ] **HUD 明确**：进入棺材后屏幕边缘叠加半透明"卧棺"提示 + 寿命流逝速率变化 indicator
-- [ ] **音效氛围**：进入低沉空洞音 + 离开木板摩擦音 + 在棺中环境心跳/呼吸变慢 ambient loop
+- [x] **最小侵入**：棺材只改寿命流逝速率，不改修炼/战斗/背包等任何其他系统
+- [x] **双箱即用**：用 Minecraft vanilla Double Chest model + blockstate 作为凡物棺材外观，暂不引入自定义模型
+- [x] **挂机友好**：在线 ticking 走 `lifespan_tick_rate_multiplier` +0.9 因子；离线回算走 `LIFESPAN_OFFLINE_MULTIPLIER` ×0.9，上下线节奏一致
+- [x] **HUD 明确**：进入棺材后屏幕边缘叠加半透明"卧棺"提示 + 寿命流逝速率变化 indicator
+- [x] **音效氛围**：进入低沉空洞音 + 离开木板摩擦音 + 在棺中环境心跳/呼吸变慢 ambient loop
 
 ---
 
@@ -46,16 +46,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 棺材物品注册 + 双箱放置逻辑 + 内存实体追踪 | ⬜ |
-| P1 | 进入/离开棺材交互 + CoffinComponent | ⬜ |
-| P2 | 寿命流逝速率 ×0.9（online tick + offline 回算） | ⬜ |
-| P3 | HUD："卧棺"状态 + 寿命速率提示 | ⬜ |
-| P4 | 音效：进入/离开/环境低鸣 | ⬜ |
-| P5 | 全链路 E2E：放置→进入→挂机→寿命验证→离开 | ⬜ |
+| P0 | 棺材物品注册 + 双箱放置逻辑 + 内存实体追踪 | ✅ |
+| P1 | 进入/离开棺材交互 + CoffinComponent | ✅ |
+| P2 | 寿命流逝速率 ×0.9（online tick + offline 回算） | ✅ |
+| P3 | HUD："卧棺"状态 + 寿命速率提示 | ✅ |
+| P4 | 音效：进入/离开/环境低鸣 | ✅ |
+| P5 | 全链路 E2E：放置→进入→挂机→寿命验证→离开 | ✅ |
 
 ---
 
-## P0 — 棺材物品注册 + 双箱放置逻辑 ⬜
+## P0 — 棺材物品注册 + 双箱放置逻辑 ✅
 
 > **技术约束**：本项目无自定义 Block 类型注册先例。棺材实体用内存 `HashMap<BlockPos, CoffinEntity>` 追踪（`server/src/coffin/registry.rs`），不依赖 Valence BlockEntity。双箱 = 两个 `BlockState::CHEST` 并排，共享一个实体记录。
 
@@ -99,7 +99,7 @@
 
 ---
 
-## P1 — 进入/离开棺材交互 ⬜
+## P1 — 进入/离开棺材交互 ✅
 
 ### 交付物
 
@@ -141,7 +141,7 @@
 
 ---
 
-## P2 — 寿命流逝速率 ×0.9 ⬜
+## P2 — 寿命流逝速率 ×0.9 ✅
 
 ### 交付物
 
@@ -180,7 +180,7 @@
 
 ---
 
-## P3 — HUD ⬜
+## P3 — HUD ✅
 
 ### 交付物
 
@@ -206,7 +206,7 @@
 
 ---
 
-## P4 — 音效 ⬜
+## P4 — 音效 ✅
 
 ### 交付物
 
@@ -234,7 +234,7 @@
 
 ---
 
-## P5 — 全链路 E2E ⬜
+## P5 — 全链路 E2E ✅
 
 ### 交付物
 
@@ -272,12 +272,12 @@
   - `4319497f8`：`补充 coffin-v1 生命周期验证脚本`
   - `fd4207eac`：合入 `origin/main`，保持 plan 分支基线同步。
 - **验证**：
-  - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1`（4287 passed）
+  - `cd server && cargo fmt --check && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1`（4289 passed）
   - `cd agent && npm run generate:check -w @bong/schema`（357 generated artifacts fresh）
   - `cd agent && npm run build`
   - `cd agent && npm test -w @bong/schema`（19 files / 368 tests passed）
   - `cd agent && npm test -w @bong/tiandao`（51 files / 352 tests passed）
-  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`（BUILD SUCCESSFUL）
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew clean test build`（BUILD SUCCESSFUL）
   - `scripts/e2e/coffin-lifecycle.sh`（server/schema/client coffin lifecycle harness ok，Java 17）
   - `git diff --check`
 - **遗留 / 后续**：灵材棺材（×0.7 / ×0.5 / ×0.3，按灵材等级递增）/ 棺材符文（附加灵气微回复或梦境训练）/ 棺材视觉定制（七流派不同棺材外观）/ 双人棺材（道侣共享）。本 plan 只落凡物棺材，未新增自定义方块模型；当前视觉用双 chest 占位。

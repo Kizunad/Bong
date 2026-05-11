@@ -89,6 +89,22 @@ impl CoffinRegistry {
         true
     }
 
+    pub fn reclaim_occupied(&mut self, lower: BlockPos, player: Entity, placed_at_tick: u64) {
+        let mut coffin = self.lookup(lower).unwrap_or(CoffinEntity {
+            lower,
+            upper: coffin_upper_half(lower),
+            occupied_by: None,
+            placed_at_tick,
+        });
+        if let Some(previous_player) = coffin.occupied_by {
+            self.player_in_coffin.remove(&previous_player);
+        }
+
+        coffin.occupied_by = Some(player);
+        self.write_coffin(coffin);
+        self.player_in_coffin.insert(player, coffin.lower);
+    }
+
     pub fn clear_player(&mut self, player: Entity) -> Option<BlockPos> {
         let lower = self.player_in_coffin.remove(&player)?;
         if let Some(mut coffin) = self.lookup(lower) {
@@ -696,6 +712,14 @@ fn coffin_player_position(lower: BlockPos) -> [f64; 3] {
     ]
 }
 
+pub fn coffin_lower_from_player_position(position: [f64; 3]) -> BlockPos {
+    BlockPos::new(
+        position[0].floor() as i32,
+        position[1].floor() as i32,
+        position[2].floor() as i32,
+    )
+}
+
 fn coffin_exit_position(lower: BlockPos) -> [f64; 3] {
     [
         f64::from(lower.x) - 0.5,
@@ -743,6 +767,32 @@ mod tests {
         assert_eq!(registry.clear_player(player), Some(lower));
         assert!(!registry.player_in_coffin.contains_key(&player));
         assert_eq!(registry.lookup(lower).unwrap().occupied_by, None);
+    }
+
+    #[test]
+    fn registry_reclaim_replaces_stale_occupant() {
+        let mut registry = CoffinRegistry::default();
+        let lower = BlockPos::new(8, 64, 8);
+        let stale = Entity::from_raw(7);
+        let current = Entity::from_raw(8);
+
+        assert!(registry.insert(lower, 10));
+        assert!(registry.set_occupied(lower, stale));
+
+        registry.reclaim_occupied(lower, current, 20);
+
+        assert!(!registry.player_in_coffin.contains_key(&stale));
+        assert_eq!(registry.player_in_coffin.get(&current), Some(&lower));
+        assert_eq!(registry.lookup(lower).unwrap().occupied_by, Some(current));
+    }
+
+    #[test]
+    fn coffin_lower_restores_from_pinned_player_position() {
+        let lower = BlockPos::new(8, 64, 8);
+        assert_eq!(
+            coffin_lower_from_player_position(coffin_player_position(lower)),
+            lower
+        );
     }
 
     #[test]

@@ -90,7 +90,6 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         BlockPos pos = hit.getBlockPos();
         if (client.world.getBlockState(pos).isOf(Blocks.CHEST)) {
             ClientRequestSender.sendCoffinEnter(pos);
-            cir.setReturnValue(ActionResult.SUCCESS);
             return;
         }
         if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)

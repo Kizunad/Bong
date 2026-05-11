@@ -21,8 +21,8 @@ echo "[coffin-e2e] client coffin protocol, state, and HUD"
 (
   cd "$ROOT/client"
   JAVA17_HOME="${BONG_JAVA17_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"
-  JAVA_HOME="$JAVA17_HOME"
-  PATH="$JAVA17_HOME/bin:$PATH"
+  export JAVA_HOME="$JAVA17_HOME"
+  export PATH="$JAVA17_HOME/bin:$PATH"
   ./gradlew test \
     --tests "com.bong.client.network.ClientRequestProtocolTest.encodesCoffinLifecycleRequests" \
     --tests "com.bong.client.network.ClientRequestSenderTest.sendCoffinLifecycleUsesCorrectChannelAndJson" \
