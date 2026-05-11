@@ -54,6 +54,7 @@ pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
 #[cfg(test)]
 mod skillbar_config_emit_test;
+pub mod status_snapshot_emit;
 pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tribulation_broadcast_emit;
@@ -702,6 +703,7 @@ pub fn register(app: &mut App) {
             treasure_equipped_emit::emit_treasure_equipped_payloads,
         ),
     );
+    app.add_systems(Update, status_snapshot_emit::emit_status_snapshot_payloads);
     app.add_systems(
         Update,
         combat_event_emit::emit_combat_event_to_client
