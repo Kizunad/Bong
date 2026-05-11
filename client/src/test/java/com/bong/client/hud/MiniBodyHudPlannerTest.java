@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.DerivedAttrFlags;
+import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
@@ -9,6 +10,7 @@ import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
 import com.bong.client.state.SeasonState;
 import com.bong.client.visual.season.SeasonVisuals;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumMap;
@@ -19,6 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MiniBodyHudPlannerTest {
+    @AfterEach
+    void tearDown() {
+        StatusEffectStore.resetForTests();
+    }
 
     @Test
     void inactiveStateRendersNothing() {
@@ -60,6 +66,37 @@ class MiniBodyHudPlannerTest {
 
         assertEquals(noBodyCount + 2, withBodyCount,
             "two wounds should add exactly two rect commands");
+    }
+
+    @Test
+    void bodyPartResistStatusDrawsBlueFramesForMappedServerGroup() {
+        CombatHudState hud = CombatHudState.create(0.9f, 0.5f, 0.5f, DerivedAttrFlags.none());
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect("body_part_resist:leg_l", "左腿硬化", StatusEffectStore.Kind.BUFF, 1, 4_000, 0, "", 0)
+        ));
+
+        List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
+
+        long blueFrameRects = cmds.stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .count();
+        assertEquals(24L, blueFrameRects,
+            "server leg_l should map to thigh/calf/foot, each with a 2px frame");
+    }
+
+    @Test
+    void bodyPartWeakenStatusDrawsRedDashedFrame() {
+        CombatHudState hud = CombatHudState.create(0.9f, 0.5f, 0.5f, DerivedAttrFlags.none());
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect("body_part_weaken:chest", "胸部脆弱", StatusEffectStore.Kind.DEBUFF, 1, 4_000, 0, "", 0)
+        ));
+
+        List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
+
+        long redFrameRects = cmds.stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_WEAKEN_FRAME_COLOR)
+            .count();
+        assertEquals(8L, redFrameRects, "body_part_weaken should draw a dashed 1px frame");
     }
 
     @Test

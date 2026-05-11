@@ -99,6 +99,22 @@ pub enum StatusEffectKind {
     ParryRecovery,
     /// plan-niche-defense-v1 P1：高级灵龛阵法陷阱制造的短时迷乱。
     Disoriented,
+    /// plan-alchemy-combat-v1 P0：战场丹药即时伤口恢复的 HUD 标记。
+    WoundHeal,
+    /// plan-alchemy-combat-v1 P0：指定部位伤害减免；payload 记录目标部位。
+    BodyPartResist(BodyPart),
+    /// plan-alchemy-combat-v1 P0：指定部位脆弱；payload 记录目标部位。
+    BodyPartWeaken(BodyPart),
+    /// plan-alchemy-combat-v1 P0：凡物丹药提供的短时移速加成。
+    SpeedBoost,
+    /// plan-alchemy-combat-v1 P0：体力恢复加速或体力上限爆发窗口。
+    StaminaRecovBoost,
+    /// plan-alchemy-combat-v1 P0：药效结束后的体力虚脱。
+    StaminaCrash,
+    /// plan-alchemy-combat-v1 P0：用真元持续换取体力恢复。
+    QiDrainForStamina,
+    /// plan-alchemy-combat-v1 P0：缩地散透支双腿的即时应力伤 HUD 标记。
+    LegStrain,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;

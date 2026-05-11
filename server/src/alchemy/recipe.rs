@@ -523,6 +523,24 @@ mod tests {
         assert!(registry.get("hui_yuan_pill_v0").is_some());
         assert!(registry.get("du_ming_san_v0").is_some());
         assert!(registry.get("anti_spirit_pressure_pill_v1").is_some());
+        for pill_id in crate::alchemy::pill::COMBAT_PILL_IDS {
+            let recipe_id = format!("{pill_id}_v1");
+            let recipe = registry
+                .get(&recipe_id)
+                .unwrap_or_else(|| panic!("missing alchemy-combat recipe `{recipe_id}`"));
+            assert_eq!(
+                recipe
+                    .outcomes
+                    .perfect
+                    .as_ref()
+                    .map(|outcome| outcome.pill.as_str()),
+                Some(pill_id)
+            );
+            assert!(
+                crate::alchemy::pill::COMBAT_PILL_IDS.contains(&pill_id),
+                "combat pill outcome `{pill_id}` must stay in COMBAT_PILL_IDS"
+            );
+        }
     }
 
     #[test]

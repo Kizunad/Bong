@@ -16,6 +16,8 @@ public final class StatusEffectHudPlanner {
     public static final int TOP_MARGIN = 4;
     public static final int TRACK_BG = 0xC0101820;
     public static final int STACK_COLOR = 0xFFFFE080;
+    public static final int REMAINING_BAR_COLOR = 0xFFFFFFFF;
+    public static final int DEBUFF_REMAINING_BAR_COLOR = 0xFFFF4040;
 
     private StatusEffectHudPlanner() {}
 
@@ -50,8 +52,11 @@ public final class StatusEffectHudPlanner {
             float norm = remainingNorm(rem);
             int bar = Math.max(0, Math.round((SLOT_SIZE - 4) * norm));
             if (bar > 0) {
+                int barColor = e.kind() == StatusEffectStore.Kind.DEBUFF
+                    ? DEBUFF_REMAINING_BAR_COLOR
+                    : REMAINING_BAR_COLOR;
                 out.add(HudRenderCommand.rect(
-                    HudRenderLayer.STATUS_EFFECTS, x + 2, y + SLOT_SIZE - 3, bar, 1, 0xFFFFFFFF
+                    HudRenderLayer.STATUS_EFFECTS, x + 2, y + SLOT_SIZE - 3, bar, 1, barColor
                 ));
             }
             // Stack count

@@ -1,0 +1,21 @@
+{
+  "id": "pill_ning_jia_consume",
+  "layers": [
+    {
+      "sound": "minecraft:block.stone.place",
+      "volume": 0.5,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.dripstone_block.break",
+      "volume": 0.3,
+      "pitch": 1.2,
+      "delay_ticks": 5
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}
