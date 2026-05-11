@@ -160,6 +160,29 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_agent_command_sample_accepts_heartbeat_override_type() {
+        let mut value = sample_agent_command_value();
+        value["commands"] = json!([
+            {
+                "type": "heartbeat_override",
+                "target": "spawn",
+                "params": {
+                    "action": "accelerate",
+                    "event_type": "pseudo_vein",
+                    "duration_ticks": 600,
+                    "intensity_override": 0.75
+                }
+            }
+        ]);
+
+        let cmd: AgentCommandV1 =
+            serde_json::from_value(value).expect("heartbeat_override command type should parse");
+        assert_eq!(cmd.commands.len(), 1);
+        assert_eq!(cmd.commands[0].command_type, CommandType::HeartbeatOverride);
+        assert_eq!(cmd.commands[0].target, "spawn");
+    }
+
+    #[test]
     fn deserialize_agent_command_sample_rejects_non_object_params() {
         let mut value = sample_agent_command_value();
         value["commands"][0]["params"] = json!(["invalid"]);

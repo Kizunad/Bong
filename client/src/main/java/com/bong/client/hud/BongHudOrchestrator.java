@@ -190,6 +190,12 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(OmenHudPlanner.buildCommands(
+                com.bong.client.omen.OmenStateStore.snapshot(nowMillis),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
                 playerState.localNegPressure(),
                 screenWidth,

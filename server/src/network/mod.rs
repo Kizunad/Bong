@@ -2304,6 +2304,7 @@ fn command_type_to_wire_value(command_type: &CommandType) -> &'static str {
         CommandType::FactionEvent => "faction_event",
         CommandType::ModifyZone => "modify_zone",
         CommandType::NpcBehavior => "npc_behavior",
+        CommandType::HeartbeatOverride => "heartbeat_override",
     }
 }
 
