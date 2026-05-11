@@ -26,6 +26,10 @@ import {
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
 import {
+  CalamityIntentV1,
+  validateCalamityIntentV1Contract,
+} from "../src/calamity.js";
+import {
   AlchemyItemDataV1,
   InventoryEventV1,
   InventorySnapshotV1,
@@ -226,6 +230,36 @@ describe("sample files pass schema validation", () => {
   it("declares season changed Redis channel", () => {
     expect(CHANNELS.SEASON_CHANGED).toBe("bong:season_changed");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SEASON_CHANGED);
+  });
+
+  it("declares calamity intent Redis channel", () => {
+    expect(CHANNELS.CALAMITY_INTENT).toBe("bong:calamity_intent");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.CALAMITY_INTENT);
+  });
+
+  it("validates calamity intent contracts including null no-action", () => {
+    expectContractAccepts("CalamityIntentV1", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "poison_miasma",
+      target_zone: "spawn",
+      target_player: null,
+      intensity: 0.6,
+      reason: "灵气连续下降，毒瘴清场。",
+    });
+    expectContractAccepts("CalamityIntentV1 null", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: null,
+      intensity: 0,
+      reason: "权力不足，静观。",
+    });
+    expectContractRejects("CalamityIntentV1 intensity", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "heavenly_fire",
+      target_zone: "spawn",
+      intensity: 1.2,
+      reason: "越界强度",
+    });
+    expect(SchemaPackage.CalamityIntentV1).toBe(CalamityIntentV1);
   });
 
   it("declares economy Redis channels", () => {
