@@ -32,7 +32,7 @@
 **反向被依赖**：
 - `plan-anqi-v2` → 载体铭纹深度影响暗器五招效率（凝魂注射密度 ∝ 铭纹深度）
 - `plan-combat-gamefeel-v1` ⬜ skeleton → 法器共鸣视觉反馈（高共鸣 = 武器发光）
-- `plan-insight-alignment-v1` ⬜ active → CONVERGE(凝实) 顿悟可加速法器铭纹成长
+- `plan-insight-alignment-v1` ✅ → CONVERGE(凝实) 顿悟可加速法器铭纹成长
 
 ---
 
@@ -52,16 +52,16 @@
 
 ## §0 设计轴心
 
-- [ ] **法器 = 外挂经脉**：法器内部有铭纹（真元回路），与修士经脉的物理规律同构——打通要时间、加深要使用、损伤要修复、过载会撕裂
-- [ ] **铭纹深度 = 使用时间的物理沉淀**：不是经验值，是真元冲刷铭纹的自然结果。铭纹加深速度 ∝ `使用频率 × 单次真元流量 × 材质锁合度`
-- [ ] **法器染色 = 真元长期印染**：使用者的 QiColor 会慢慢"染"到法器上。法器有自己的 `ArtifactColor`，形成机制与修士 PracticeLog 同源
-- [ ] **共鸣 = 染色匹配度**：法器染色与使用者染色越匹配，伤害/效率越高。捡别人的法器 = 共鸣从零开始
-- [ ] **万物皆有代价**：
+- [x] **法器 = 外挂经脉**：法器内部有铭纹（真元回路），与修士经脉的物理规律同构——打通要时间、加深要使用、损伤要修复、过载会撕裂
+- [x] **铭纹深度 = 使用时间的物理沉淀**：不是经验值，是真元冲刷铭纹的自然结果。铭纹加深速度 ∝ `使用频率 × 单次真元流量 × 材质锁合度`
+- [x] **法器染色 = 真元长期印染**：使用者的 QiColor 会慢慢"染"到法器上。法器有自己的 `ArtifactColor`，形成机制与修士 PracticeLog 同源
+- [x] **共鸣 = 染色匹配度**：法器染色与使用者染色越匹配，伤害/效率越高。捡别人的法器 = 共鸣从零开始
+- [x] **万物皆有代价**：
   - 法器成长需要**时间**（铭纹加深是慢过程）
   - 换法器需要**割舍**（失去旧法器的共鸣积累）
   - 法器过载需要**修复**（铭纹龟裂后降效或碎裂）
   - 高品阶法器需要**养护**（铭纹越深，维护消耗越高）
-- [ ] **不搞"法器等级"**：法器没有 Lv.1→Lv.99。铭纹深度是连续值，品阶进化是铭纹深度到阈值后的自然结果（同修士经脉打通→境界突破）
+- [x] **不搞"法器等级"**：法器没有 Lv.1→Lv.99。铭纹深度是连续值，品阶进化是铭纹深度到阈值后的自然结果（同修士经脉打通→境界突破）
 
 ---
 
@@ -294,18 +294,18 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 凡器 MVP（骨剑+灵木剑）：TOML 注册 + GUI icon 生成 + vanilla 宿主手持渲染 | ⬜ |
-| P1 | `ArtifactMeridian` component + 铭纹数据结构 + 锻造→铭纹初始化桥接 | ⬜ |
-| P2 | 铭纹加深 tick 系统 + 使用→冲刷逻辑 + `material_lock_coefficient` 常数表 | ⬜ |
-| P3 | `ArtifactColor` component + 法器染色积累 + 共鸣度计算 + `Weapon::damage_multiplier` 接入 | ⬜ |
-| P4 | 铭纹过载判定 + 龟裂分级 + 修复机制 + `ArtifactMeridianCracked` event | ⬜ |
-| P5 | 法器品阶进化（凡→法→灵→道）+ 养护 tick 系统 + narration 联动 | ⬜ |
-| P6 | Client 法器铭纹可视化（InspectScreen 法器页 + 共鸣度 HUD 指示 + 龟裂警告） | ⬜ |
-| P7 | 饱和化测试（7 材质 × 4 品阶 × 10 染色 × 龟裂分级 × 共鸣度范围 + 进化阈值 pin） | ⬜ |
+| P0 | 凡器 MVP（骨剑+灵木剑）：TOML 注册 + GUI icon 生成 + vanilla 宿主手持渲染 | ✅ 2026-05-11 |
+| P1 | `ArtifactMeridian` component + 铭纹数据结构 + 锻造→铭纹初始化桥接 | ✅ 2026-05-11 |
+| P2 | 铭纹加深 tick 系统 + 使用→冲刷逻辑 + `material_lock_coefficient` 常数表 | ✅ 2026-05-11 |
+| P3 | `ArtifactColor` component + 法器染色积累 + 共鸣度计算 + `Weapon::damage_multiplier` 接入 | ✅ 2026-05-11 |
+| P4 | 铭纹过载判定 + 龟裂分级 + 修复机制 + `ArtifactMeridianCracked` event | ✅ 2026-05-11 |
+| P5 | 法器品阶进化（凡→法→灵→道）+ 养护 tick 系统 + narration 联动 | ✅ 2026-05-11 |
+| P6 | Client 法器铭纹可视化（InspectScreen 法器页 + 共鸣度 HUD 指示 + 龟裂警告） | ✅ 2026-05-11 |
+| P7 | 饱和化测试（7 材质 × 4 品阶 × 10 染色 × 龟裂分级 × 共鸣度范围 + 进化阈值 pin） | ✅ 2026-05-11 |
 
 ---
 
-## P0 — 凡器 MVP：骨剑 + 灵木剑 ⬜
+## P0 — 凡器 MVP：骨剑 + 灵木剑 ✅
 
 器修系统的第一批实物。两把凡器作为后续铭纹/染色/共鸣系统的载体。用 vanilla MC 物品做手持 3D 模型，gen.py 生成 GUI icon。
 
@@ -420,7 +420,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P1 — ArtifactMeridian component + 锻造桥接 ⬜
+## P1 — ArtifactMeridian component + 锻造桥接 ✅
 
 > 原 P0，因 P0 凡器 MVP 插入而顺延。
 
@@ -473,7 +473,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P2 — 铭纹加深 tick 系统 ⬜
+## P2 — 铭纹加深 tick 系统 ✅
 
 ### 交付物
 
@@ -506,7 +506,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P3 — 法器染色 + 共鸣度 ⬜
+## P3 — 法器染色 + 共鸣度 ✅
 
 ### 交付物
 
@@ -552,7 +552,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P4 — 铭纹过载与龟裂 ⬜
+## P4 — 铭纹过载与龟裂 ✅
 
 ### 交付物
 
@@ -587,7 +587,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P5 — 法器品阶进化 + 养护 ⬜
+## P5 — 法器品阶进化 + 养护 ✅
 
 ### 交付物
 
@@ -617,7 +617,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P6 — Client 法器铭纹可视化 ⬜
+## P6 — Client 法器铭纹可视化 ✅
 
 ### 交付物
 
@@ -649,7 +649,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P7 — 饱和化测试 ⬜
+## P7 — 饱和化测试 ✅
 
 ### 交付物
 
@@ -690,10 +690,30 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：骨剑 + 灵木剑凡器 MVP（TOML + BongWeaponModelRegistry + GUI icon）/ `ArtifactMeridian` component / `Groove` 数据结构 / `MaterialSpec` 常数表 / 铭纹加深 tick / 铭纹养护 tick / `ArtifactColor` component / 法器 PracticeLog / `compute_resonance` / `Weapon::damage_multiplier_with_resonance` / 暗器封存共鸣接入 / 过载判定 / 龟裂四级 / 修复机制 / 品阶进化（3 档）/ 进化 narration / 养护退化 / InspectScreen 法器页 / 共鸣度 HUD 微指示 / 龟裂警告 / 60+ 饱和化测试
-- **关键 commit**：P0-P7 各自 hash
+- **落地清单**：
+  - P0：`server/assets/items/weapons.toml` 注册 `bone_sword` / `lingmu_sword`；`client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java` 绑定 vanilla 宿主；生成 `bone_sword.png` / `lingmu_sword.png` GUI icon。
+  - P1/P2/P4/P5：`server/src/forge/artifact_meridian.rs` 落地 `ArtifactMeridian` / `Groove` / `MaterialSpec`、铭纹加深、过载龟裂、自愈/修复、养护退化、品阶进化；`server/src/forge/mod.rs` 注册 tick system 与事件。
+  - P3：`server/src/forge/artifact_color.rs` 复用 `PracticeLog` / `evolve_qi_color()`；`server/src/forge/resonance.rs` 落地共鸣公式；`server/src/combat/weapon.rs` / `server/src/combat/resolve.rs` / `server/src/combat/carrier.rs` 接入伤害与暗器封存效率。
+  - 锻造与持久化：`server/src/forge/inventory_bridge.rs` 将锻造成品写入 `artifact_state:` tag；`server/src/forge/events.rs` / `server/src/forge/session.rs` 传递开光真元；`server/src/inventory/mod.rs` 暴露实例查找给 forge 系统复用。
+  - P5 narration：`ArtifactTierEvolved` 新品阶达到灵器/道器时写入 `PendingGameplayNarrations` 广播。
+  - P6：`client/src/main/java/com/bong/client/artifact/ArtifactState.java` 解析 `artifact_state:`；`ItemInspectScreen` 显示铭纹/共鸣/龟裂；`MiniBodyHudPlanner` 显示 3×3 共鸣指示；tooltip 隐藏内部 JSON tag。
+  - P7：server 覆盖材质、染色、共鸣、龟裂、修复、养护、进化、叙事与状态 tag 回归；client 覆盖 inspect、HUD 指示与 vanilla host 注册。
+- **关键 commit**：
+  - `4aa79f38b`（2026-05-11）`feat(qixiu): 注册骨剑与灵木剑凡器`
+  - `299738dd9`（2026-05-11）`feat(qixiu): 接入法器铭纹染色与共鸣`
+  - `b7f5cb084`（2026-05-11）`feat(qixiu): 显示法器铭纹与共鸣状态`
+  - `7d9f767c9`（2026-05-11）`feat(qixiu): 补法器进化叙事广播`
+- **测试结果**：
+  - `cd server && cargo fmt --check` ✅
+  - `cd server && cargo clippy --all-targets -- -D warnings` ✅
+  - `cd server && cargo test` ✅ `4371 passed; 0 failed`
+  - `cd client && ./gradlew test build` ✅ `BUILD SUCCESSFUL`（JUnit XML 合计 1274 tests）
+- **跨仓库核验**：
+  - server：`ArtifactMeridian` / `ArtifactColor` / `compute_resonance` / `ArtifactTierEvolved` / `artifact_state:` / `damage_multiplier_with_resonance` / `carrier_seal_efficiency_multiplier`
+  - client：`ArtifactState.fromSideEffects` / `InventoryItem.artifactState()` / `ItemInspectScreen.detailLines` / `MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE` / `BongWeaponModelRegistry` 新模板
+  - agent：无改动；法器成长按本 plan 定义为修士自身物理路径，叙事通过 server gameplay narration 队列进入既有 narration 管线。
 - **遗留 / 后续**：
   - 御器术（远程真元操控法器——距离衰减制约操控精度，飘逸色天然优势）→ 独立 plan
   - 法器铭纹图案对流派的亲和差异（剑纹 → Sharp 亲和 +15%，锤纹 → Heavy 亲和 +15%）→ P1 扩展或独立 plan
