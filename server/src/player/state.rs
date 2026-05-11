@@ -2283,7 +2283,7 @@ mod player_state_tests {
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(loaded.in_coffin);
-        assert_eq!(offline_lifespan_multiplier(true), 0.09);
+        assert!((offline_lifespan_multiplier(true) - 0.09).abs() < 1e-9);
         assert!(
             (6.89..=6.91).contains(&loaded_lifespan.years_lived),
             "expected ten offline real hours in coffin at x0.09 to add about 0.9 years, got {}",

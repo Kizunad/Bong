@@ -1532,7 +1532,22 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
     if current_version < 23 {
         let transaction = connection.transaction()?;
         let columns = table_columns(&transaction, "player_lifespan")?;
-        if !columns.iter().any(|column| column == "in_coffin") {
+        if columns.is_empty() {
+            transaction.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS player_lifespan (
+                    username TEXT PRIMARY KEY,
+                    born_at_tick INTEGER NOT NULL CHECK (born_at_tick >= 0),
+                    years_lived REAL NOT NULL CHECK (years_lived >= 0),
+                    cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
+                    offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                    in_coffin INTEGER NOT NULL DEFAULT 0 CHECK (in_coffin IN (0, 1)),
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                ",
+            )?;
+        } else if !columns.iter().any(|column| column == "in_coffin") {
             transaction.execute_batch(
                 "
                 ALTER TABLE player_lifespan
@@ -6756,6 +6771,8 @@ mod persistence_tests {
     #[test]
     fn v23_migration_adds_in_coffin_to_legacy_player_lifespan_table() {
         let db_path = database_path("v23-player-lifespan-in-coffin");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
         let mut connection = Connection::open(&db_path).expect("db should open");
         connection
             .execute_batch(

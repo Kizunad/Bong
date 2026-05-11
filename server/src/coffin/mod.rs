@@ -391,6 +391,7 @@ fn handle_coffin_enter_requests(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn handle_coffin_leave_requests(
     mut events: EventReader<CoffinLeaveRequest>,
     mut commands: Commands,
@@ -450,7 +451,7 @@ fn handle_sneak_leave_requests(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn handle_coffin_breaks(
     mut digs: EventReader<DiggingEvent>,
     mut commands: Commands,
@@ -740,7 +741,7 @@ mod tests {
         assert_eq!(registry.lookup(lower).unwrap().occupied_by, Some(player));
 
         assert_eq!(registry.clear_player(player), Some(lower));
-        assert!(registry.player_in_coffin.get(&player).is_none());
+        assert!(!registry.player_in_coffin.contains_key(&player));
         assert_eq!(registry.lookup(lower).unwrap().occupied_by, None);
     }
 

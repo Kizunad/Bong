@@ -19,7 +19,7 @@ class CoffinStateHandlerTest {
     @Test
     void acceptsCoffinStatePayload() {
         String json = """
-            {"type":"coffin_state","v":1,"payload":{"in_coffin":true,"lifespan_rate_multiplier":0.9}}
+            {"type":"coffin_state","v":1,"in_coffin":true,"lifespan_rate_multiplier":0.9}
             """;
 
         ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
@@ -33,7 +33,7 @@ class CoffinStateHandlerTest {
     @Test
     void rejectsInvalidMultiplier() {
         String json = """
-            {"type":"coffin_state","v":1,"payload":{"in_coffin":true,"lifespan_rate_multiplier":0.0}}
+            {"type":"coffin_state","v":1,"in_coffin":true,"lifespan_rate_multiplier":0.0}
             """;
 
         ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
