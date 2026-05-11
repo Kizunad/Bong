@@ -223,7 +223,7 @@
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4226 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4265 passed
 - `cd server && cargo test gathering`：17 passed
 - `cd server && cargo test mineral::break_handler::tests`：12 passed
 - `cd server && cargo test spiritwood`：13 passed
