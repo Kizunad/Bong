@@ -226,6 +226,7 @@ pub fn resolve_flavor_template(
         .replace("{target_color_name}", color_kind_to_chinese(target_color))
         .replace("{gain_pct}", pct(magnitude).as_str())
         .replace("{cost_pct}", pct(magnitude).as_str())
+        .replace("{gain_val}", format!("{magnitude:.2}").as_str())
 }
 
 fn pct(value: f64) -> String {
@@ -286,6 +287,9 @@ fn stat_range(stat: &str, gain: bool) -> Option<(f64, f64)> {
             "color_cap" => Some((0.01, 0.05)),
             "chaotic_tolerance" => Some((0.01, 0.05)),
             "hunyuan_threshold" => Some((0.95, 0.99)),
+            "vortex_backfire_resist" => Some((0.50, 0.95)),
+            "vortex_delta" => Some((0.005, 0.05)),
+            "vortex_sustain_cost" => Some((0.80, 0.98)),
             _ => None,
         }
     } else {
@@ -300,6 +304,8 @@ fn stat_range(stat: &str, gain: bool) -> Option<(f64, f64)> {
             "sense_exposure" => Some((0.01, 0.05)),
             "reaction_window_shrink" => Some((0.90, 0.97)),
             "chaotic_tolerance_loss" => Some((0.01, 0.03)),
+            "meridian_overload_risk" => Some((0.01, 0.05)),
+            "vortex_burst_damage" => Some((0.80, 0.98)),
             _ => None,
         }
     }
@@ -338,6 +344,15 @@ fn effect_from_modifier(
         },
         "chaotic_tolerance" => InsightEffect::ChaoticTolerance { add: value },
         "hunyuan_threshold" => InsightEffect::HunyuanThreshold { mul: value },
+        "vortex_backfire_resist" => InsightEffect::VortexBackfireResist { mul: value },
+        "vortex_delta" => InsightEffect::VortexDeltaBonus { add: value },
+        "vortex_sustain_cost" => InsightEffect::VortexFlowSpeed {
+            mul: if value > f64::EPSILON {
+                1.0 / value
+            } else {
+                1.0
+            },
+        },
         other => return Err(format!("未知 gain stat: {other}")),
     })
 }
@@ -384,6 +399,12 @@ fn cost_from_modifier(stat: &StatModifier, main_color: ColorKind) -> Result<Insi
         "chaotic_tolerance_loss" => InsightCost::ChaoticToleranceLoss {
             sub: stat.base_value,
         },
+        "meridian_overload_risk" => InsightCost::OverloadFragility {
+            add: stat.base_value,
+        },
+        "vortex_burst_damage" => InsightCost::VortexBurstDamageMul {
+            mul: stat.base_value,
+        },
         other => return Err(format!("未知 cost stat: {other}")),
     })
 }
@@ -414,6 +435,9 @@ fn amplify_cost(cost: InsightCost, required: f64) -> InsightCost {
         InsightCost::ChaoticToleranceLoss { .. } => {
             InsightCost::ChaoticToleranceLoss { sub: required }
         }
+        InsightCost::VortexBurstDamageMul { .. } => InsightCost::VortexBurstDamageMul {
+            mul: (1.0 - required).clamp(0.80, 0.98),
+        },
     }
 }
 
@@ -490,6 +514,48 @@ mod tests {
         for color in ALL_COLORS {
             assert!(!registry.query(color, InsightAlignment::Neutral).is_empty());
         }
+    }
+
+    #[test]
+    fn vortex_generic_talents_map_to_woliu_effects() {
+        let registry = GenericTalentRegistry::builtin().unwrap();
+        let talents = registry.query(ColorKind::Intricate, InsightAlignment::Converge);
+
+        assert!(talents
+            .iter()
+            .any(|talent| talent.id == "vortex_intricate_affinity"));
+        assert!(talents
+            .iter()
+            .any(|talent| talent.id == "vortex_lung_heart_synergy"));
+        assert!(talents
+            .iter()
+            .any(|talent| talent.id == "vortex_flow_endurance"));
+
+        let effects = talents
+            .iter()
+            .filter(|talent| talent.id.starts_with("vortex_"))
+            .map(|talent| {
+                registry
+                    .to_insight_tradeoff(
+                        talent,
+                        InsightAlignment::Converge,
+                        ColorKind::Intricate,
+                        ColorKind::Heavy,
+                    )
+                    .unwrap()
+                    .gain
+            })
+            .collect::<Vec<_>>();
+
+        assert!(effects
+            .iter()
+            .any(|effect| matches!(effect, InsightEffect::VortexBackfireResist { .. })));
+        assert!(effects
+            .iter()
+            .any(|effect| matches!(effect, InsightEffect::VortexDeltaBonus { .. })));
+        assert!(effects
+            .iter()
+            .any(|effect| matches!(effect, InsightEffect::VortexFlowSpeed { .. })));
     }
 
     #[test]

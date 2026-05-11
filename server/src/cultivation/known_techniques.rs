@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(not(feature = "dev-techniques"), derive(Default))]
 pub struct KnownTechniques {
     pub entries: Vec<KnownTechnique>,
 }
@@ -13,8 +14,15 @@ pub struct KnownTechnique {
     pub active: bool,
 }
 
+#[cfg(feature = "dev-techniques")]
 impl Default for KnownTechniques {
     fn default() -> Self {
+        Self::dev_default()
+    }
+}
+
+impl KnownTechniques {
+    pub fn dev_default() -> Self {
         Self {
             entries: TECHNIQUE_IDS
                 .iter()
@@ -617,27 +625,52 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn technique_ids_match_definitions_and_default_entries() {
+    fn technique_ids_match_definitions_and_dev_entries() {
         let ids = TECHNIQUE_IDS.iter().copied().collect::<BTreeSet<_>>();
         let definitions = TECHNIQUE_DEFINITIONS
             .iter()
             .map(|definition| definition.id)
             .collect::<BTreeSet<_>>();
-        let default_techniques = KnownTechniques::default();
-        let default_entries = default_techniques
+        let dev_techniques = KnownTechniques::dev_default();
+        let dev_entries = dev_techniques
             .entries
             .iter()
             .map(|entry| entry.id.as_str())
             .collect::<BTreeSet<_>>();
 
         assert_eq!(ids, definitions);
-        assert_eq!(ids, default_entries);
+        assert_eq!(ids, dev_entries);
         for id in ids {
             assert!(
                 technique_definition(id).is_some(),
-                "default technique id must have a definition: {id}"
+                "dev technique id must have a definition: {id}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(not(feature = "dev-techniques"))]
+    fn default_is_empty_without_dev_feature() {
+        assert!(KnownTechniques::default().entries.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "dev-techniques")]
+    fn default_uses_dev_entries_with_dev_feature() {
+        assert_eq!(
+            KnownTechniques::default().entries,
+            KnownTechniques::dev_default().entries
+        );
+    }
+
+    #[test]
+    fn dev_default_has_all_33() {
+        let dev = KnownTechniques::dev_default();
+        assert_eq!(dev.entries.len(), 33);
+        assert!(dev
+            .entries
+            .iter()
+            .all(|entry| entry.active && (entry.proficiency - 0.5).abs() <= f32::EPSILON));
     }
 
     #[test]

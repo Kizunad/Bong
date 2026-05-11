@@ -111,5 +111,8 @@ fn amplify_cost(cost: InsightCost, required: f64) -> InsightCost {
         InsightCost::ChaoticToleranceLoss { .. } => {
             InsightCost::ChaoticToleranceLoss { sub: required }
         }
+        InsightCost::VortexBurstDamageMul { .. } => InsightCost::VortexBurstDamageMul {
+            mul: (1.0 - required).clamp(0.80, 0.98),
+        },
     }
 }

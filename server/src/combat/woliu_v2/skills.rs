@@ -9,10 +9,12 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
 };
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::cultivation::technique_proficiency::woliu_scalars_for_proficiency;
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -228,7 +230,8 @@ pub fn resolve_woliu_v2_skill(
         return rejected(CastRejectReason::QiInsufficient);
     };
 
-    let spec = skill_spec(skill, cultivation.realm);
+    let proficiency = known_woliu_proficiency(world, caster, skill);
+    let spec = scale_spec_for_proficiency(skill_spec(skill, cultivation.realm), proficiency);
     let dimension = world
         .get::<CurrentDimension>(caster)
         .map(|dimension| dimension.0)
@@ -277,8 +280,11 @@ pub fn resolve_woliu_v2_skill(
         dt_seconds: spec.duration_seconds().max(0.05),
     });
     let forced = forced_backfire(skill, dimension, 0.0);
-    let overflow_level = backfire_level_for_overflow(stir.overflow, cultivation.qi_max)
-        .map(|level| (level, BackfireCauseV2::MeridianOverflow));
+    let overflow_level = backfire_level_for_overflow(
+        stir.overflow * woliu_scalars_for_proficiency(proficiency).backfire_multiplier,
+        cultivation.qi_max,
+    )
+    .map(|level| (level, BackfireCauseV2::MeridianOverflow));
     let backfire = forced.or(overflow_level);
 
     {
@@ -1083,6 +1089,39 @@ pub fn skill_spec(skill: WoliuSkillId, realm: Realm) -> WoliuSkillSpec {
     }
 }
 
+pub fn scale_spec_for_proficiency(mut spec: WoliuSkillSpec, proficiency: f32) -> WoliuSkillSpec {
+    let scalars = woliu_scalars_for_proficiency(proficiency);
+    let delta_scale = (scalars.vortex_delta / 0.10) as f32;
+    spec.field_strength *= delta_scale;
+    spec.startup_qi *= scalars.qi_cost_multiplier;
+    spec.maintain_qi_per_sec *= scalars.qi_cost_multiplier;
+    spec.lethal_radius *= scalars.radius_multiplier;
+    spec.influence_radius *= scalars.radius_multiplier;
+    spec.turbulence_radius *= scalars.radius_multiplier;
+    spec.cast_ticks = ((spec.cast_ticks as f32) * scalars.cast_ticks_multiplier)
+        .ceil()
+        .max(1.0) as u32;
+    spec
+}
+
+fn known_woliu_proficiency(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill: WoliuSkillId,
+) -> f32 {
+    world
+        .get::<KnownTechniques>(caster)
+        .and_then(|known| {
+            known
+                .entries
+                .iter()
+                .find(|entry| entry.id == skill.as_str())
+        })
+        .map(|entry| entry.proficiency)
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0)
+}
+
 fn vacuum_palm_spec() -> WoliuSkillSpec {
     WoliuSkillSpec {
         skill: WoliuSkillId::VacuumPalm,
@@ -1384,5 +1423,32 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             hud_hint: "turbulence_burst",
             icon_texture: "bong:textures/gui/skill/woliu_burst.png",
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proficiency_scales_vortex_combat_knobs() {
+        let base = skill_spec(WoliuSkillId::Hold, Realm::Condense);
+        let novice = scale_spec_for_proficiency(base, 0.0);
+        let master = scale_spec_for_proficiency(base, 1.0);
+
+        assert!((novice.field_strength - base.field_strength * 0.8).abs() < 0.0001);
+        assert!((master.field_strength - base.field_strength * 1.2).abs() < 0.0001);
+        assert!((novice.startup_qi - base.startup_qi * 1.3).abs() < 0.0001);
+        assert!((master.startup_qi - base.startup_qi * 0.85).abs() < 0.0001);
+        assert!((novice.influence_radius - base.influence_radius * 0.8).abs() < 0.0001);
+        assert!((master.influence_radius - base.influence_radius * 1.1).abs() < 0.0001);
+        assert_eq!(
+            novice.cast_ticks,
+            ((base.cast_ticks as f32) * 1.2).ceil() as u32
+        );
+        assert_eq!(
+            master.cast_ticks,
+            ((base.cast_ticks as f32) * 0.9).ceil() as u32
+        );
     }
 }

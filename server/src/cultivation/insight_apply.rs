@@ -31,6 +31,14 @@ pub struct InsightModifiers {
     pub zhenfa_concealment: f64,
     pub zhenfa_disenchant: f64,
     #[serde(default)]
+    pub observe_chance_bonus: f64,
+    #[serde(default = "default_one")]
+    pub vortex_backfire_resist_mul: f64,
+    #[serde(default)]
+    pub vortex_delta_bonus_add: f64,
+    #[serde(default = "default_one")]
+    pub vortex_flow_speed_mul: f64,
+    #[serde(default)]
     pub opposite_color_efficiency_penalty: f64,
     #[serde(default)]
     pub qi_volatility_add: f64,
@@ -70,6 +78,10 @@ impl InsightModifiers {
             chaotic_tolerance_add: 0.0,
             zhenfa_concealment: 0.0,
             zhenfa_disenchant: 0.0,
+            observe_chance_bonus: 0.0,
+            vortex_backfire_resist_mul: 1.0,
+            vortex_delta_bonus_add: 0.0,
+            vortex_flow_speed_mul: 1.0,
             opposite_color_efficiency_penalty: 0.0,
             qi_volatility_add: 0.0,
             shock_sensitivity_add: 0.0,
@@ -162,6 +174,22 @@ pub fn apply_choice(
             modifiers.zhenfa_concealment = (modifiers.zhenfa_concealment - add * 0.5).max(0.0);
             modifiers.practices.insert("zhenfa:disenchant".into());
         }
+        VortexBackfireResist { mul } => {
+            modifiers.vortex_backfire_resist_mul *= mul;
+            modifiers
+                .practices
+                .insert("woliu:vortex_backfire_resist".into());
+        }
+        VortexDeltaBonus { add } => {
+            modifiers.vortex_delta_bonus_add += add;
+            modifiers
+                .practices
+                .insert("woliu:vortex_delta_bonus".into());
+        }
+        VortexFlowSpeed { mul } => {
+            modifiers.vortex_flow_speed_mul *= mul;
+            modifiers.practices.insert("woliu:vortex_flow_speed".into());
+        }
         UnlockPractice { name } => {
             modifiers.practices.insert(name.clone());
         }
@@ -217,6 +245,11 @@ fn apply_tradeoff_cost(cost: &InsightCost, modifiers: &mut InsightModifiers) {
             modifiers.reaction_window_penalty += 1.0 - mul;
         }
         InsightCost::ChaoticToleranceLoss { sub } => modifiers.chaotic_tolerance_loss += sub,
+        InsightCost::VortexBurstDamageMul { mul } => {
+            modifiers
+                .practices
+                .insert(format!("woliu:vortex_burst_damage_mul:{mul:.3}"));
+        }
     }
 }
 
