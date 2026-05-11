@@ -727,6 +727,9 @@ mod tests {
             detail: "done".to_string(),
             target_pos: Some([10.0, 64.0, 10.0]),
             spirit_quality: 0.95,
+            duration_ticks: 40,
+            gathering_quality: Some(crate::gathering::quality::GatheringQuality::Perfect),
+            tool_used: Some("bao_chu".to_string()),
         });
 
         app.update();

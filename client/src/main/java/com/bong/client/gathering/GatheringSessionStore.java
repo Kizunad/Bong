@@ -1,6 +1,9 @@
 package com.bong.client.gathering;
 
+import com.bong.client.BongClient;
+
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -16,9 +19,14 @@ public final class GatheringSessionStore {
     }
 
     public static void replace(GatheringSessionViewModel next) {
-        snapshot = next == null ? GatheringSessionViewModel.empty() : next;
+        GatheringSessionViewModel current = next == null ? GatheringSessionViewModel.empty() : next;
+        snapshot = current;
         for (Consumer<GatheringSessionViewModel> listener : listeners) {
-            listener.accept(snapshot);
+            try {
+                listener.accept(current);
+            } catch (RuntimeException error) {
+                BongClient.LOGGER.warn("Gathering session listener failed for {}", current.sessionId(), error);
+            }
         }
     }
 
@@ -27,7 +35,7 @@ public final class GatheringSessionStore {
     }
 
     public static void addListener(Consumer<GatheringSessionViewModel> listener) {
-        listeners.add(listener);
+        listeners.add(Objects.requireNonNull(listener, "listener"));
     }
 
     public static void removeListener(Consumer<GatheringSessionViewModel> listener) {

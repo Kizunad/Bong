@@ -10965,6 +10965,7 @@
         },
         "session_id": {
           "minLength": 1,
+          "maxLength": 128,
           "type": "string"
         },
         "progress_ticks": {
@@ -10977,6 +10978,7 @@
         },
         "target_name": {
           "minLength": 1,
+          "maxLength": 64,
           "type": "string"
         },
         "target_type": {
@@ -10996,7 +10998,28 @@
           ]
         },
         "quality_hint": {
-          "type": "string"
+          "anyOf": [
+            {
+              "const": "normal",
+              "type": "string"
+            },
+            {
+              "const": "fine_likely",
+              "type": "string"
+            },
+            {
+              "const": "perfect_possible",
+              "type": "string"
+            },
+            {
+              "const": "fine",
+              "type": "string"
+            },
+            {
+              "const": "perfect",
+              "type": "string"
+            }
+          ]
         },
         "tool_used": {
           "minLength": 1,

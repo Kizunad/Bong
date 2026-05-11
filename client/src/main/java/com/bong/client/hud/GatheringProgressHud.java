@@ -52,7 +52,7 @@ public final class GatheringProgressHud {
 
         double progress = session.completed() ? 1.0 : session.progressRatio();
         int color = session.completed()
-            ? ("极品".equals(session.qualityLabel()) ? PERFECT : NEAR_DONE)
+            ? (session.hasPerfectQualityHint() ? PERFECT : NEAR_DONE)
             : progress >= 0.85 ? NEAR_DONE : ACTIVE;
         appendProgress(out, cx, cy, progress, color);
 
@@ -64,7 +64,7 @@ public final class GatheringProgressHud {
 
         String quality = session.qualityLabel();
         if (!quality.isEmpty() && (session.completed() || progress >= 0.75)) {
-            int qColor = "极品".equals(quality) ? PERFECT : FINE;
+            int qColor = session.hasPerfectQualityHint() ? PERFECT : FINE;
             int x = cx - widthMeasurer.measure(quality) / 2;
             out.add(HudRenderCommand.text(HudRenderLayer.GATHERING, quality, x, cy + RADIUS + 6, qColor));
         }

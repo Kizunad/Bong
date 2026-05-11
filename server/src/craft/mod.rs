@@ -870,9 +870,68 @@ mod tests {
         register_gathering_tool_recipes(&mut registry).unwrap();
 
         let tools: Vec<_> = registry.by_category(CraftCategory::Tool).collect();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(
+            tools.len(),
+            6,
+            "gathering-ux-v1 must register exactly six axe/pickaxe tool recipes"
+        );
+        for recipe in &tools {
+            assert_eq!(
+                recipe.qi_cost, 0.0,
+                "{} should remain a mundane gathering tool recipe with zero qi_cost",
+                recipe.id
+            );
+            assert_eq!(
+                recipe.time_ticks, 800,
+                "{} should keep the 40s mundane tool craft time",
+                recipe.id
+            );
+        }
         assert!(tools.iter().any(|recipe| recipe.output.0 == "axe_copper"));
         assert!(tools.iter().any(|recipe| recipe.output.0 == "pickaxe_iron"));
+        let bone_axe = tools
+            .iter()
+            .find(|recipe| recipe.output.0 == "axe_bone")
+            .expect("gathering.tool.axe_bone recipe should exist");
+        assert!(
+            bone_axe
+                .materials
+                .iter()
+                .any(|(template, count)| template == "bone_coin_5" && *count == 3),
+            "axe_bone should consume three bone_coin_5 entries as the low-tier mundane currency"
+        );
+        assert!(
+            bone_axe
+                .materials
+                .iter()
+                .any(|(template, count)| template == "spirit_wood" && *count == 2),
+            "axe_bone should consume two spirit_wood entries as the handle material"
+        );
+        assert!(
+            bone_axe.unlock_sources.iter().any(|source| matches!(
+                source,
+                UnlockSource::Scroll { item_template } if item_template == "scroll_gathering_axe_bone"
+            )),
+            "axe_bone should unlock from scroll_gathering_axe_bone"
+        );
+    }
+
+    #[test]
+    fn gathering_tool_recipe_unlock_scrolls_exist_in_item_registry() {
+        let mut registry = CraftRegistry::new();
+        register_gathering_tool_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+
+        for recipe in registry.by_category(CraftCategory::Tool) {
+            let Some(UnlockSource::Scroll { item_template }) = recipe.unlock_sources.first() else {
+                panic!("{} should unlock from a recipe scroll", recipe.id);
+            };
+            assert!(
+                item_registry.get(item_template).is_some(),
+                "unlock scroll `{item_template}` for recipe `{}` must exist",
+                recipe.id
+            );
+        }
     }
 
     #[test]

@@ -3019,6 +3019,39 @@ mod tests {
                 tint_rgb_secondary: None,
                 model_overlay: super::super::botany::BotanyModelOverlayV1::Emissive,
             }]),
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "gathering:herb:offline-kiz".to_string(),
+                progress_ticks: 20,
+                total_ticks: 40,
+                target_name: "凝脉草".to_string(),
+                target_type: "herb".to_string(),
+                quality_hint: "fine_likely".to_string(),
+                tool_used: Some("hoe_iron".to_string()),
+                interrupted: false,
+                completed: false,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "mining:10:64:10:FanTie".to_string(),
+                progress_ticks: 60,
+                total_ticks: 60,
+                target_name: "凡铁矿".to_string(),
+                target_type: "ore".to_string(),
+                quality_hint: "perfect".to_string(),
+                tool_used: Some("pickaxe_iron".to_string()),
+                interrupted: false,
+                completed: true,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "lumber:offline-kiz:1".to_string(),
+                progress_ticks: 0,
+                total_ticks: 50,
+                target_name: "灵木".to_string(),
+                target_type: "wood".to_string(),
+                quality_hint: "normal".to_string(),
+                tool_used: None,
+                interrupted: true,
+                completed: false,
+            },
             ServerDataPayloadV1::RealmVisionParams(RealmVisionParamsV1 {
                 fog_start: 30.0,
                 fog_end: 60.0,
@@ -3291,6 +3324,15 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.gathering-session.active.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.gathering-session.completed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.gathering-session.interrupted.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"

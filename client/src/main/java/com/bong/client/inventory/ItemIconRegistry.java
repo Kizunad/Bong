@@ -18,6 +18,7 @@ public final class ItemIconRegistry {
     private static final Identifier FALLBACK_ITEM_TEXTURE = id(FALLBACK_ITEM_PATH);
     private static final Identifier FALLBACK_SCROLL_TEXTURE = id(FALLBACK_SCROLL_PATH);
     private static final Map<String, Identifier> TEXTURE_CACHE = new ConcurrentHashMap<>();
+    // 新增 tools.toml 采集工具时同步补这里；key 必须与 normalize(itemId) 后一致。
     private static final Map<String, String> GATHERING_TOOL_ICON_PATHS = Map.ofEntries(
         Map.entry("axe_bone", TOOL_TEXTURE_PREFIX + "axe_bone.png"),
         Map.entry("axe_iron", TOOL_TEXTURE_PREFIX + "axe_iron.png"),

@@ -11,6 +11,8 @@ use super::components::{MineralOreIndex, MineralOreNode};
 use super::persistence::ExhaustedMineralsLog;
 use super::registry::MineralRegistry;
 use super::types::MineralId;
+use crate::gathering::session::Gatherable;
+use crate::gathering::tools::{base_time_ticks, GatheringTargetKind};
 use crate::world::dimension::DimensionKind;
 use crate::world::terrain::{FossilBbox, TerrainProvider, TerrainProviders};
 
@@ -108,7 +110,10 @@ pub fn spawn_mineral_anchor_nodes(
                 continue;
             }
             let entity = commands
-                .spawn(MineralOreNode::new(anchor.mineral_id, pos))
+                .spawn((
+                    MineralOreNode::new(anchor.mineral_id, pos),
+                    mineral_gatherable(anchor.mineral_id, registry.as_ref()),
+                ))
                 .id();
             index.insert(DimensionKind::Overworld, pos, entity);
             spawned += 1;
@@ -119,6 +124,7 @@ pub fn spawn_mineral_anchor_nodes(
         &mut commands,
         &providers.overworld,
         &exhausted_positions,
+        registry.as_ref(),
         index.as_mut(),
     );
     spawned += fossil_spawned;
@@ -135,6 +141,7 @@ fn spawn_fossil_mineral_nodes(
     commands: &mut Commands,
     terrain: &TerrainProvider,
     exhausted_positions: &HashSet<(MineralId, BlockPos)>,
+    registry: &MineralRegistry,
     index: &mut MineralOreIndex,
 ) -> usize {
     let mut spawned = 0usize;
@@ -145,12 +152,30 @@ fn spawn_fossil_mineral_nodes(
             {
                 continue;
             }
-            let entity = commands.spawn(MineralOreNode::new(mineral_id, pos)).id();
+            let entity = commands
+                .spawn((
+                    MineralOreNode::new(mineral_id, pos),
+                    mineral_gatherable(mineral_id, registry),
+                ))
+                .id();
             index.insert(DimensionKind::Overworld, pos, entity);
             spawned += 1;
         }
     }
     spawned
+}
+
+fn mineral_gatherable(mineral_id: MineralId, registry: &MineralRegistry) -> Gatherable {
+    let display_name = registry
+        .get(mineral_id)
+        .map(|entry| entry.display_name_zh.to_string())
+        .unwrap_or_else(|| format!("{mineral_id:?}"));
+    Gatherable {
+        target: GatheringTargetKind::Ore,
+        base_time_ticks: base_time_ticks(GatheringTargetKind::Ore),
+        loot_table: format!("mineral:{mineral_id:?}"),
+        display_name,
+    }
 }
 
 fn fossil_mineral_positions(

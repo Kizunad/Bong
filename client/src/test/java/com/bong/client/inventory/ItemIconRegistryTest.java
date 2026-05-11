@@ -22,6 +22,18 @@ class ItemIconRegistryTest {
             "bong-client:textures/gui/items/tools/axe_copper.png",
             ItemIconRegistry.itemTexturePath("Axe_Copper")
         );
+        assertEquals(
+            "bong-client:textures/gui/items/tools/pickaxe_bone.png",
+            ItemIconRegistry.itemTexturePath("pickaxe_bone")
+        );
+        assertEquals(
+            "bong-client:textures/gui/items/tools/axe_iron.png",
+            ItemIconRegistry.itemTexturePath("AXE_IRON")
+        );
+        assertEquals(
+            "bong-client:textures/gui/items/unknown_tool.png",
+            ItemIconRegistry.itemTexturePath("unknown_tool")
+        );
     }
 
     @Test

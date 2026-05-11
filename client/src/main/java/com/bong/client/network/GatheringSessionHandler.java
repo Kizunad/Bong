@@ -50,7 +50,11 @@ public final class GatheringSessionHandler implements ServerDataHandler {
         if (primitive == null || !primitive.isNumber()) {
             return fallback;
         }
-        return Math.max(0L, primitive.getAsLong());
+        try {
+            return Math.max(0L, primitive.getAsLong());
+        } catch (NumberFormatException error) {
+            return fallback;
+        }
     }
 
     private static Boolean readOptionalBoolean(JsonObject object, String fieldName) {

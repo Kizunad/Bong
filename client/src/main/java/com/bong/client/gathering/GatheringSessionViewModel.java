@@ -33,6 +33,8 @@ public record GatheringSessionViewModel(
         totalTicks = Math.max(0L, totalTicks);
         if (progressTicks > totalTicks && totalTicks > 0L) {
             progressTicks = totalTicks;
+        } else if (totalTicks == 0L) {
+            progressTicks = 0L;
         }
         targetName = normalize(targetName);
         targetType = normalize(targetType).toLowerCase(Locale.ROOT);
@@ -107,6 +109,10 @@ public record GatheringSessionViewModel(
             case "normal" -> "";
             default -> "";
         };
+    }
+
+    public boolean hasPerfectQualityHint() {
+        return "perfect".equals(qualityHint) || "perfect_possible".equals(qualityHint);
     }
 
     private static String normalize(String value) {

@@ -223,6 +223,18 @@ public class ServerDataRouterTest {
     }
 
     @Test
+    void routesGatheringSessionIntoStoreHandler() {
+        String json = """
+            {"v":1,"type":"gathering_session","session_id":"mine-1","progress_ticks":30,"total_ticks":60,"target_name":"凡铁矿","target_type":"ore","quality_hint":"fine_likely","tool_used":"pickaxe_iron","interrupted":false,"completed":false}
+            """;
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("gathering_session", result.envelope().type());
+    }
+
+    @Test
     void routesBurstMeridianEventWithoutNoOp() {
         String json = """
             {"v":1,"type":"burst_meridian_event","skill":"thunder_step","caster":"offline:Azure","target":"npc_1v1","tick":84000,"overload_ratio":0.75,"integrity_snapshot":0.4}

@@ -15,7 +15,7 @@ use crate::cultivation::components::Realm;
 use crate::inventory::{InventoryDurabilityChangedEvent, PlayerInventory};
 use crate::player::gameplay::GameplayTick;
 
-pub const MOVEMENT_BREAK_DISTANCE_SQ: f64 = 0.3 * 0.3;
+pub const MOVEMENT_BREAK_DISTANCE_SQ: f64 = 0.5 * 0.5;
 pub const PROGRESS_SYNC_INTERVAL_TICKS: u64 = 10;
 
 #[derive(Debug, Clone, Component, PartialEq, Eq)]
@@ -37,6 +37,7 @@ pub struct GatheringSession {
     pub origin_position: [f64; 3],
     pub tool: Option<GatheringToolSpec>,
     pub realm: Realm,
+    pub auto_complete: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +50,7 @@ pub struct GatheringSessionStart {
     pub origin_position: [f64; 3],
     pub tool: Option<GatheringToolSpec>,
     pub realm: Realm,
+    pub auto_complete: bool,
 }
 
 #[derive(Debug, Default)]
@@ -96,6 +98,7 @@ impl GatheringSession {
             origin_position: start.origin_position,
             tool: start.tool,
             realm: start.realm,
+            auto_complete: start.auto_complete,
         }
     }
 
@@ -128,6 +131,8 @@ impl GatheringSession {
             origin_position: self.origin_position,
             progress_ticks: if interrupted {
                 0
+            } else if completed {
+                self.total_ticks
             } else {
                 self.progress_ticks_at(now_tick)
             },
@@ -253,7 +258,7 @@ pub fn tick_gathering_sessions(
     let now_tick = gameplay_tick.map(|tick| tick.current_tick()).unwrap_or(0);
     let completed = store
         .iter()
-        .filter(|session| session.completed_at(now_tick))
+        .filter(|session| session.auto_complete && session.completed_at(now_tick))
         .map(|session| session.player)
         .collect::<Vec<_>>();
 
@@ -293,6 +298,7 @@ mod tests {
             origin_position: [0.0, 64.0, 0.0],
             tool: tool_id.and_then(spec_for_item_id),
             realm,
+            auto_complete: true,
         })
     }
 
@@ -351,7 +357,7 @@ mod tests {
             Realm::Awaken,
         );
 
-        assert!(!session.moved_too_far(&Position::new([0.1, 64.0, 0.1])));
-        assert!(session.moved_too_far(&Position::new([0.4, 64.0, 0.0])));
+        assert!(!session.moved_too_far(&Position::new([0.3, 64.0, 0.3])));
+        assert!(session.moved_too_far(&Position::new([0.6, 64.0, 0.0])));
     }
 }

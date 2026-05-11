@@ -38,7 +38,7 @@ pub struct GatheringToolSpec {
 }
 
 impl GatheringMaterial {
-    pub fn speed_multiplier(self) -> f32 {
+    pub const fn speed_multiplier(self) -> f32 {
         match self {
             Self::Bone => 1.2,
             Self::Iron => 1.0,
@@ -46,7 +46,7 @@ impl GatheringMaterial {
         }
     }
 
-    pub fn durability_uses(self) -> u32 {
+    pub const fn durability_uses(self) -> u32 {
         match self {
             Self::Bone => 60,
             Self::Iron => 120,
@@ -98,16 +98,8 @@ impl GatheringToolSpec {
             display_name,
             kind,
             material,
-            speed_multiplier: match material {
-                GatheringMaterial::Bone => 1.2,
-                GatheringMaterial::Iron => 1.0,
-                GatheringMaterial::Copper => 0.8,
-            },
-            durability_uses: match material {
-                GatheringMaterial::Bone => 60,
-                GatheringMaterial::Iron => 120,
-                GatheringMaterial::Copper => 90,
-            },
+            speed_multiplier: material.speed_multiplier(),
+            durability_uses: material.durability_uses(),
             target,
         }
     }
@@ -215,8 +207,13 @@ pub fn equipped_gathering_tool(inventory: &PlayerInventory) -> Option<GatheringT
     inventory
         .equipped
         .get(EQUIP_SLOT_MAIN_HAND)
-        .or_else(|| inventory.equipped.get(EQUIP_SLOT_TWO_HAND))
         .and_then(item_to_spec)
+        .or_else(|| {
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_TWO_HAND)
+                .and_then(item_to_spec)
+        })
 }
 
 fn equipped_gathering_tool_instance(
@@ -402,6 +399,22 @@ mod tests {
             .expect("main hand")
             .durability = 0.0;
         assert_eq!(equipped_gathering_tool(&inventory), None);
+    }
+
+    #[test]
+    fn equipped_tool_falls_back_to_two_hand_when_main_hand_is_not_gathering_tool() {
+        let mut inventory = inventory_with_main("iron_sword");
+        inventory
+            .equipped
+            .insert(EQUIP_SLOT_TWO_HAND.to_string(), item("pickaxe_iron", 1.0));
+
+        let actual = equipped_gathering_tool(&inventory).map(|spec| spec.kind);
+
+        assert_eq!(
+            actual,
+            Some(GatheringToolKind::Pickaxe),
+            "expected equipped_gathering_tool to inspect two-hand when main-hand is not a gathering tool, got {actual:?}"
+        );
     }
 
     #[test]

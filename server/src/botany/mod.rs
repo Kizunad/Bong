@@ -28,8 +28,12 @@ use valence::prelude::{
     With,
 };
 
-use crate::gathering::session::{GatheringProgressFrame, PROGRESS_SYNC_INTERVAL_TICKS};
-use crate::gathering::tools::GatheringTargetKind;
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::gathering::quality::{quality_hint, GatheringQuality};
+use crate::gathering::session::{
+    GatheringCompleteEvent, GatheringProgressFrame, PROGRESS_SYNC_INTERVAL_TICKS,
+};
+use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::botany::{BotanyModelOverlayV1, BotanyPlantV2RenderProfileV1};
@@ -91,7 +95,7 @@ pub fn register(app: &mut App) {
             spawn_attracted_mobs_from_harvest,
             emit_botany_inventory_snapshots,
             emit_botany_v2_render_profiles,
-            emit_botany_harvest_progress,
+            emit_botany_harvest_progress.in_set(crate::gathering::GatheringSystemSet::Produce),
             emit_botany_skill,
             emit_botany_ecology_snapshot,
         )
@@ -209,8 +213,11 @@ fn emit_botany_harvest_progress(
     kind_registry: Res<BotanyKindRegistry>,
     mut terminal_events: EventReader<HarvestTerminalEvent>,
     mut gathering_frames: EventWriter<GatheringProgressFrame>,
+    mut gathering_completions: EventWriter<GatheringCompleteEvent>,
     mut clients: Query<&mut valence::prelude::Client, With<valence::prelude::Client>>,
     positions: Query<&Position, With<valence::prelude::Client>>,
+    inventories: Query<&PlayerInventory, With<valence::prelude::Client>>,
+    cultivations: Query<&Cultivation, With<valence::prelude::Client>>,
     plants: Query<&Plant, With<Plant>>,
 ) {
     use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
@@ -228,6 +235,15 @@ fn emit_botany_harvest_progress(
             .and_then(|entity| plants.get(entity).ok().map(|plant| plant.position));
         if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
             let origin_position = target_pos.unwrap_or(session.origin_position);
+            let active_tool = inventories
+                .get(session.client_entity)
+                .ok()
+                .and_then(equipped_gathering_tool)
+                .filter(|tool| tool.matches_target(GatheringTargetKind::Herb));
+            let active_realm = cultivations
+                .get(session.client_entity)
+                .map(|cultivation| cultivation.realm)
+                .unwrap_or(Realm::Awaken);
             gathering_frames.send(GatheringProgressFrame {
                 player: session.client_entity,
                 session_id: session.player_id.clone(),
@@ -237,8 +253,9 @@ fn emit_botany_harvest_progress(
                 total_ticks: session.duration_ticks,
                 target_name: session.target_plant.as_str().to_string(),
                 target_type: GatheringTargetKind::Herb,
-                quality_hint: "normal".to_string(),
-                tool_used: None,
+                quality_hint: quality_hint(active_tool.map(|tool| tool.material), active_realm)
+                    .to_string(),
+                tool_used: active_tool.map(|tool| tool.item_id.to_string()),
                 interrupted: false,
                 completed: false,
             });
@@ -281,21 +298,30 @@ fn emit_botany_harvest_progress(
             player: frame.client_entity,
             session_id: frame.session_id.clone(),
             origin_position,
-            progress_ticks: if frame.completed { 1 } else { 0 },
-            total_ticks: 1,
+            progress_ticks: if frame.completed {
+                frame.duration_ticks
+            } else {
+                0
+            },
+            total_ticks: frame.duration_ticks.max(1),
             target_name: frame.target_name.clone(),
             target_type: GatheringTargetKind::Herb,
-            quality_hint: if frame.spirit_quality >= 0.95 {
-                "perfect".to_string()
-            } else if frame.spirit_quality >= 0.60 {
-                "fine".to_string()
-            } else {
-                "normal".to_string()
-            },
-            tool_used: None,
+            quality_hint: terminal_quality_hint(frame),
+            tool_used: frame.tool_used.clone(),
             interrupted: frame.interrupted,
             completed: frame.completed,
         });
+        if frame.completed {
+            gathering_completions.send(GatheringCompleteEvent {
+                player: frame.client_entity,
+                session_id: frame.session_id.clone(),
+                origin_position,
+                target_name: frame.target_name.clone(),
+                target_type: GatheringTargetKind::Herb,
+                quality: frame.gathering_quality.unwrap_or(GatheringQuality::Normal),
+                tool_used: frame.tool_used.clone(),
+            });
+        }
         let payload = ServerDataV1::new(ServerDataPayloadV1::BotanyHarvestProgress {
             session_id: frame.session_id.clone(),
             target_id: frame.target_id.clone(),
@@ -319,6 +345,21 @@ fn emit_botany_harvest_progress(
             Err(error) => log_payload_build_error(payload_type, &error),
         }
     }
+}
+
+fn terminal_quality_hint(frame: &HarvestTerminalEvent) -> String {
+    frame
+        .gathering_quality
+        .map(|quality| quality.as_wire().to_string())
+        .unwrap_or_else(|| {
+            if frame.spirit_quality >= 0.95 {
+                "perfect".to_string()
+            } else if frame.spirit_quality >= 0.60 {
+                "fine".to_string()
+            } else {
+                "normal".to_string()
+            }
+        })
 }
 
 fn position_xyz(position: &Position) -> [f64; 3] {

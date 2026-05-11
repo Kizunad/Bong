@@ -5,7 +5,10 @@ pub mod quality;
 pub mod session;
 pub mod tools;
 
-use valence::prelude::{App, EventReader, IntoSystemConfigs, Query, Update, With};
+use valence::prelude::{
+    bevy_ecs, App, EventReader, IntoSystemConfigs, IntoSystemSetConfigs, Query, SystemSet, Update,
+    With,
+};
 
 use feedback::emit_gathering_feedback;
 use session::{
@@ -17,20 +20,38 @@ use tools::GatheringTargetKind;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub enum GatheringSystemSet {
+    Produce,
+    Emit,
+}
+
 pub fn register(app: &mut App) {
     app.insert_resource(GatheringSessionStore::default());
     app.add_event::<GatheringProgressFrame>();
     app.add_event::<GatheringCompleteEvent>();
+    app.configure_sets(
+        Update,
+        (GatheringSystemSet::Produce, GatheringSystemSet::Emit).chain(),
+    );
     app.add_systems(
         Update,
         (
             enforce_gathering_session_constraints,
             tick_gathering_sessions,
+        )
+            .chain()
+            .in_set(GatheringSystemSet::Produce),
+    );
+    app.add_systems(
+        Update,
+        (
             apply_gathering_tool_durability,
             emit_gathering_feedback,
             emit_gathering_progress,
         )
-            .chain(),
+            .chain()
+            .in_set(GatheringSystemSet::Emit),
     );
 }
 

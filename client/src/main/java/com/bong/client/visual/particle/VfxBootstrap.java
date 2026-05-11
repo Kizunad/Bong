@@ -52,6 +52,7 @@ public final class VfxBootstrap {
         registry.register(TsySearchFeedbackPlayer.DUST,           tsySearch);
         registry.register(TsySearchFeedbackPlayer.LOOT_POP,       tsySearch);
         registry.register(BotanyAuraPlayer.EVENT_ID,             new BotanyAuraPlayer());
+        // BotanyHarvestBurstPlayer is stateless, so one instance intentionally serves all gathering burst routes.
         BotanyHarvestBurstPlayer gatheringBurst = new BotanyHarvestBurstPlayer();
         registry.register(BotanyHarvestBurstPlayer.EVENT_ID,     gatheringBurst);
         registry.register(BotanyHarvestBurstPlayer.GATHER_HERB_TICK, gatheringBurst);
