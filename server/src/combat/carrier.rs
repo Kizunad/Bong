@@ -21,6 +21,8 @@ use crate::cultivation::components::{
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::forge::artifact_meridian::artifact_resonance_for_inventory;
+use crate::forge::resonance::carrier_seal_efficiency_multiplier;
 use crate::inventory::{
     bump_revision, ItemInstance, ItemRegistry, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     EQUIP_SLOT_OFF_HAND,
@@ -486,11 +488,13 @@ fn finish_charge(
     progress_ratio: f32,
     events: &mut EventWriter<CarrierChargedEvent>,
 ) {
-    let qi_amount = if full_charge {
+    let base_qi_amount = if full_charge {
         charging.qi_target
     } else {
         charging.qi_target * progress_ratio * 0.5
     };
+    let resonance = artifact_resonance_for_inventory(inventory, charging.instance_id, qi_color);
+    let qi_amount = carrier_sealed_qi_amount(base_qi_amount, resonance);
     if qi_amount <= f32::EPSILON {
         commands.entity(entity).remove::<CarrierCharging>();
         return;
@@ -537,6 +541,13 @@ fn finish_charge(
         });
     }
     commands.entity(entity).remove::<CarrierCharging>();
+}
+
+fn carrier_sealed_qi_amount(base_qi_amount: f32, resonance: Option<f64>) -> f32 {
+    base_qi_amount
+        * resonance
+            .map(carrier_seal_efficiency_multiplier)
+            .unwrap_or(1.0)
 }
 
 fn transform_equipped_item(
@@ -1052,5 +1063,12 @@ mod tests {
         let profile = anqi_carrier_profile(CarrierKind::YibianShougu);
         assert_eq!(profile.wound_ratio, 0.5);
         assert_eq!(profile.contam_ratio, 0.5);
+    }
+
+    #[test]
+    fn carrier_charge_qi_uses_artifact_resonance_efficiency() {
+        assert_eq!(carrier_sealed_qi_amount(50.0, None), 50.0);
+        assert!((carrier_sealed_qi_amount(50.0, Some(0.0)) - 40.0).abs() <= 0.001);
+        assert!((carrier_sealed_qi_amount(50.0, Some(1.0)) - 60.0).abs() <= 0.001);
     }
 }

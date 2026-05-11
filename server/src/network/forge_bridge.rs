@@ -146,6 +146,7 @@ mod tests {
             color: None,
             side_effects: vec!["brittle_edge".to_string()],
             achieved_tier: 1,
+            consecration_qi_amount: 0.0,
         });
 
         app.update();

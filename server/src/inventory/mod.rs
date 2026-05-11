@@ -3253,7 +3253,7 @@ fn clone_item_at(inventory: &PlayerInventory, instance_id: u64) -> Option<ItemIn
     None
 }
 
-fn inventory_item_by_instance_mut(
+pub(crate) fn inventory_item_by_instance_mut(
     inventory: &mut PlayerInventory,
     instance_id: u64,
 ) -> Option<&mut ItemInstance> {

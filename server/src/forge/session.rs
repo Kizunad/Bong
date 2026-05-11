@@ -103,6 +103,8 @@ pub struct ForgeSession {
     pub tempering_result: Option<TemperingResult>,
     pub inscription_result: Option<InscriptionResult>,
     pub consecration_result: Option<ConsecrationResult>,
+    /// 开光阶段累计注入真元。ForgeOutcomeEvent 需要它初始化法器铭纹深度。
+    pub consecration_qi_injected: f64,
 }
 
 impl ForgeSession {
@@ -129,6 +131,7 @@ impl ForgeSession {
             tempering_result: None,
             inscription_result: None,
             consecration_result: None,
+            consecration_qi_injected: 0.0,
         }
     }
 
