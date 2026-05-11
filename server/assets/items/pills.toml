@@ -218,6 +218,146 @@ spirit_quality_initial = 0.80
 description = "腐心玄龟丹研成的墨黑粉末，重毒可伤经脉。"
 
 [[item]]
+id = "huo_xue_dan"
+name = "活血丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "凡草炼成的战场急救丹，能回稳浅伤，也会催得血流更急。"
+effect = { kind = "combat_pill", magnitude = 0, target = "huo_xue_dan" }
+cast_duration_ms = 1500
+cooldown_ms = 30000
+
+[[item]]
+id = "xu_gu_gao"
+name = "续骨膏"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "uncommon"
+spirit_quality_initial = 0.50
+description = "白骨粉熬出的外敷膏，能压住重伤，修复期里筋骨反而脆。"
+effect = { kind = "combat_pill", magnitude = 0, target = "xu_gu_gao" }
+cast_duration_ms = 3000
+cooldown_ms = 120000
+
+[[item]]
+id = "duan_xu_san"
+name = "断续散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.30
+rarity = "epic"
+spirit_quality_initial = 0.65
+description = "以命本换残肢续接的浊散，断处可回，真元上限要永远少一截。"
+effect = { kind = "combat_pill", magnitude = 0, target = "duan_xu_san" }
+cast_duration_ms = 5000
+cooldown_ms = 600000
+
+[[item]]
+id = "tie_bi_san"
+name = "铁壁散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.20
+rarity = "uncommon"
+spirit_quality_initial = 0.48
+description = "铁砂草研成的护躯散，胸腹如铁，四肢却被药性抽空。"
+effect = { kind = "combat_pill", magnitude = 0, target = "tie_bi_san" }
+cast_duration_ms = 2000
+cooldown_ms = 120000
+
+[[item]]
+id = "jin_zhong_dan"
+name = "金钟丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.20
+rarity = "rare"
+spirit_quality_initial = 0.55
+description = "短时护住全身的金色圆丹，钟声散后真元回流也跟着停滞。"
+effect = { kind = "combat_pill", magnitude = 0, target = "jin_zhong_dan" }
+cast_duration_ms = 1000
+cooldown_ms = 300000
+
+[[item]]
+id = "ning_jia_san"
+name = "凝甲散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.16
+rarity = "common"
+spirit_quality_initial = 0.42
+description = "青灰粉末贴住肢体成硬甲，护住一处，也钝住一处。"
+effect = { kind = "combat_pill", magnitude = 0, target = "ning_jia_san" }
+cast_duration_ms = 2000
+cooldown_ms = 60000
+
+[[item]]
+id = "ji_feng_dan"
+name = "疾风丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.14
+rarity = "uncommon"
+spirit_quality_initial = 0.46
+description = "风行草炼出的轻丹，脚下生风，体力也被风一起卷走。"
+effect = { kind = "combat_pill", magnitude = 0, target = "ji_feng_dan" }
+cast_duration_ms = 1000
+cooldown_ms = 90000
+
+[[item]]
+id = "suo_di_san"
+name = "缩地散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.12
+rarity = "rare"
+spirit_quality_initial = 0.52
+description = "烈风根和缩骨藤压出的急散，十息疾走，双腿替你付账。"
+effect = { kind = "combat_pill", magnitude = 0, target = "suo_di_san" }
+cast_duration_ms = 500
+cooldown_ms = 180000
+
+[[item]]
+id = "hui_li_dan"
+name = "回力丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.44
+description = "参须和活血草合炼的黄丹，拿真元换凡人体力。"
+effect = { kind = "combat_pill", magnitude = 0, target = "hui_li_dan" }
+cast_duration_ms = 1500
+cooldown_ms = 60000
+
+[[item]]
+id = "hu_gu_san"
+name = "虎骨散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.22
+rarity = "uncommon"
+spirit_quality_initial = 0.50
+description = "虎骨粉入体，体力暴涨；药性散后，虚脱像债一样追上来。"
+effect = { kind = "combat_pill", magnitude = 0, target = "hu_gu_san" }
+cast_duration_ms = 2000
+cooldown_ms = 180000
+
+[[item]]
 id = "alchemy_recipe_fragment"
 name = "丹方残卷"
 category = "recipe_fragment"

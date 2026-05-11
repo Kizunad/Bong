@@ -1,0 +1,85 @@
+{
+  "id": "hu_gu_san_v1",
+  "name": "虎骨散·战场凡丹",
+  "furnace_tier_min": 2,
+  "stages": [
+    {
+      "at_tick": 0,
+      "required": [
+        {
+          "material": "yi_shou_gu",
+          "count": 1
+        },
+        {
+          "material": "jing_sui",
+          "count": 1
+        }
+      ],
+      "window": 0
+    },
+    {
+      "at_tick": 80,
+      "required": [
+        {
+          "material": "mao_xin_wei",
+          "count": 1
+        }
+      ],
+      "window": 20
+    }
+  ],
+  "fire_profile": {
+    "target_temp": 0.55,
+    "target_duration_ticks": 160,
+    "qi_cost": 15.0,
+    "tolerance": {
+      "temp_band": 0.1,
+      "duration_band": 18
+    }
+  },
+  "outcomes": {
+    "perfect": {
+      "pill": "hu_gu_san",
+      "quality": 1.0,
+      "toxin_amount": 0.3,
+      "toxin_color": "Heavy",
+      "qi_gain": 0.0
+    },
+    "good": {
+      "pill": "hu_gu_san",
+      "quality": 0.72,
+      "toxin_amount": 0.405,
+      "toxin_color": "Heavy",
+      "qi_gain": 0.0
+    },
+    "flawed": {
+      "pill": "hu_gu_san",
+      "quality": 0.42,
+      "toxin_amount": 0.6,
+      "toxin_color": "Turbid",
+      "qi_gain": 0.0
+    },
+    "waste": null,
+    "explode": {
+      "damage": 14.0,
+      "meridian_crack": 0.06
+    }
+  },
+  "flawed_fallback": {
+    "pill": "hu_gu_san",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.6,
+    "side_effect_pool": [
+      {
+        "tag": "contam_boost",
+        "duration_s": 45,
+        "weight": 2
+      },
+      {
+        "tag": "minor_qi_regen_boost",
+        "duration_s": 20,
+        "weight": 1
+      }
+    ]
+  }
+}

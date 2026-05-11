@@ -1,0 +1,21 @@
+{
+  "id": "pill_ji_feng_consume",
+  "layers": [
+    {
+      "sound": "minecraft:entity.phantom.flap",
+      "volume": 0.5,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:item.elytra.flying",
+      "volume": 0.3,
+      "pitch": 1.8,
+      "delay_ticks": 3
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

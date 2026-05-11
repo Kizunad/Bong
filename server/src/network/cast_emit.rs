@@ -464,6 +464,11 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] PoisonPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by take_pill path"
             );
         }
+        ItemEffect::CombatPill { pill_item_id } => {
+            tracing::info!(
+                "[bong][network][cast] CombatPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by take_pill path"
+            );
+        }
     }
 }
 
@@ -520,6 +525,13 @@ fn apply_cast_item_effect(
             });
             tracing::info!(
                 "[bong][network][cast] PoisonPill `{pill_item_id}` for `{}` ({:?}) → PoisonToxicity intent",
+                context.username,
+                context.entity
+            );
+        }
+        ItemEffect::CombatPill { .. } => {
+            tracing::debug!(
+                "[bong][network][cast] CombatPill for `{}` ({:?}) ignored on generic cast path",
                 context.username,
                 context.entity
             );

@@ -1,0 +1,85 @@
+{
+  "id": "jin_zhong_dan_v1",
+  "name": "金钟丹·战场凡丹",
+  "furnace_tier_min": 2,
+  "stages": [
+    {
+      "at_tick": 0,
+      "required": [
+        {
+          "material": "zhen_shi_zhong",
+          "count": 1
+        },
+        {
+          "material": "ying_yuan_gu",
+          "count": 1
+        }
+      ],
+      "window": 0
+    },
+    {
+      "at_tick": 85,
+      "required": [
+        {
+          "material": "ling_shui",
+          "count": 1
+        }
+      ],
+      "window": 20
+    }
+  ],
+  "fire_profile": {
+    "target_temp": 0.6,
+    "target_duration_ticks": 170,
+    "qi_cost": 18.0,
+    "tolerance": {
+      "temp_band": 0.1,
+      "duration_band": 18
+    }
+  },
+  "outcomes": {
+    "perfect": {
+      "pill": "jin_zhong_dan",
+      "quality": 1.0,
+      "toxin_amount": 0.45,
+      "toxin_color": "Heavy",
+      "qi_gain": 0.0
+    },
+    "good": {
+      "pill": "jin_zhong_dan",
+      "quality": 0.72,
+      "toxin_amount": 0.608,
+      "toxin_color": "Heavy",
+      "qi_gain": 0.0
+    },
+    "flawed": {
+      "pill": "jin_zhong_dan",
+      "quality": 0.42,
+      "toxin_amount": 0.9,
+      "toxin_color": "Turbid",
+      "qi_gain": 0.0
+    },
+    "waste": null,
+    "explode": {
+      "damage": 14.0,
+      "meridian_crack": 0.06
+    }
+  },
+  "flawed_fallback": {
+    "pill": "jin_zhong_dan",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.6,
+    "side_effect_pool": [
+      {
+        "tag": "contam_boost",
+        "duration_s": 45,
+        "weight": 2
+      },
+      {
+        "tag": "minor_qi_regen_boost",
+        "duration_s": 20,
+        "weight": 1
+      }
+    ]
+  }
+}
