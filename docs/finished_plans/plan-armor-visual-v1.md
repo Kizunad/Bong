@@ -167,17 +167,19 @@
   - P1/P2 client：`client/src/main/java/com/bong/client/armor/ArmorTintRegistry.java`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityArmor.java` 将 Bong armor 映射为染色 leather armor；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_*.png` 提供 6 张图标；`ItemIconRegistry` / `ItemTooltipPanel` 显示 armor icon、材质、防御、损坏与修复提示。
   - P3/P4 反馈与测试：`ArmorBreakParticles`、`InventoryEventHandler`、`VisualEffectState/Profile/Planner`、`GridSlotComponent` 接入装备 flash、低耐久红闪、toast、破碎粒子与 `server/assets/audio/recipes/armor_break.json`（`PLAYERS` 音频分类）；client/server/schema 测试覆盖 tint、装备规则、tooltip、icon、craft、视觉事件、音频 recipe 与 armor 注册。
 - **关键 commit**：
-  - `096c2d84d` · 2026-05-11 · `plan-armor-visual-v1: 注册凡物盔甲与手搓配方`
-  - `85b61a167` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
-  - `088c27245` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐盔甲破碎音频分类`
-  - `c90e47ea3` · 2026-05-11 · `fix(plan-armor-visual-v1): 收敛 review 边界反馈`
-  - `b78d0f296` · 2026-05-11 · `fix(plan-armor-visual-v1): 补齐盔甲配方预览分类`
+  - `386196982` · 2026-05-11 · `plan-armor-visual-v1: 注册凡物盔甲与手搓配方`
+  - `a24a56caa` · 2026-05-11 · `plan-armor-visual-v1: 接入盔甲客户端视觉`
+  - `724fcc655` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐盔甲破碎音频分类`
+  - `5d0ddf4d9` · 2026-05-11 · `fix(plan-armor-visual-v1): 收敛 review 边界反馈`
+  - `21c56abd7` · 2026-05-11 · `fix(plan-armor-visual-v1): 补齐盔甲配方预览分类`
+  - `152734511` · 2026-05-11 · `fix(plan-armor-visual-v1): 补齐盔甲破碎回归`
+  - `ab1218dec` · 2026-05-11 · `fix(plan-armor-visual-v1): 对齐主线 craft 与 HUD 枚举`
 - **测试结果**：
-  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 4049 passed。
+  - `cargo fmt --check && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy -j 1 --all-targets -- -D warnings && CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -j 1`（server）：通过，`cargo test` 4185 passed。
   - `JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`（client）：通过，BUILD SUCCESSFUL。
-  - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（338 files）。
+  - `npm run generate:check`（agent/packages/schema）：通过，generated schema artifacts fresh（346 files）。
   - `npm run build`（agent）：通过。
-  - `npm test`（agent/packages/schema）：通过，17 files / 360 tests。
+  - `npm test`（agent/packages/schema）：通过，18 files / 364 tests。
   - `git diff --check`：通过。
 - **跨仓库核验**：
   - server：`register_mundane_armors` / `register_mundane_armor_recipes` / `CraftCategory::ArmorCraft` / `AudioSoundCategory::Players` / `armor_break`。
