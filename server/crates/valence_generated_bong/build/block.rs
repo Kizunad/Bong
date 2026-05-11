@@ -30,11 +30,21 @@ struct Block {
 
 impl Block {
     pub(crate) fn min_state_id(&self) -> u16 {
-        self.states.iter().map(|s| s.id).min().unwrap()
+        self.states.iter().map(|s| s.id).min().unwrap_or_else(|| {
+            panic!(
+                "Block {} ({}) has empty states",
+                self.id, self.translation_key
+            )
+        })
     }
 
     pub(crate) fn max_state_id(&self) -> u16 {
-        self.states.iter().map(|s| s.id).max().unwrap()
+        self.states.iter().map(|s| s.id).max().unwrap_or_else(|| {
+            panic!(
+                "Block {} ({}) has empty states",
+                self.id, self.translation_key
+            )
+        })
     }
 }
 

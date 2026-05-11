@@ -869,12 +869,15 @@ fn handle_zhenfa_place_requests(
             continue;
         }
 
-        let placed_world_block = match place_zhenfa_anchor_block(
-            &mut layers,
-            req.pos,
-            zhenfa_anchor_block_state(req.kind),
-        ) {
-            Ok(placed) => placed,
+        match place_zhenfa_anchor_block(&mut layers, req.pos, zhenfa_anchor_block_state(req.kind)) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    "[bong][zhenfa] place rejected: no overworld layer for custom block at {:?}",
+                    req.pos
+                );
+                continue;
+            }
             Err(error) => {
                 tracing::warn!(
                     "[bong][zhenfa] place rejected: failed to write custom block at {:?}: {error}",
@@ -882,7 +885,7 @@ fn handle_zhenfa_place_requests(
                 );
                 continue;
             }
-        };
+        }
 
         cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
         let realm_at_cast = cultivation.realm;
@@ -956,9 +959,7 @@ fn handle_zhenfa_place_requests(
                 );
             }
             Err(error) => {
-                if placed_world_block {
-                    remove_zhenfa_anchor_block(&mut layers, req.pos);
-                }
+                remove_zhenfa_anchor_block(&mut layers, req.pos);
                 tracing::warn!("[bong][zhenfa] place failed after qi debit: {error}");
             }
         }
@@ -2130,6 +2131,11 @@ mod tests {
         (app, scenario.layer)
     }
 
+    fn app_with_loaded_zhenfa() -> App {
+        let (app, _) = app_with_zhenfa_layer();
+        app
+    }
+
     fn app_with_zhenfa_unloaded_layer() -> (App, Entity) {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
@@ -2342,7 +2348,7 @@ mod tests {
 
     #[test]
     fn placement_clamps_to_carrier_cap_and_debits_qi() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -2460,8 +2466,31 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_same_block_is_rejected_without_second_qi_debit() {
+    fn placement_rejects_missing_overworld_layer_without_qi_debit_or_registry_entry() {
         let mut app = app_with_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            100.0
+        );
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+    }
+
+    #[test]
+    fn duplicate_same_block_is_rejected_without_second_qi_debit() {
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
 
         for tick in [1, 2] {
@@ -2618,7 +2647,7 @@ mod tests {
 
     #[test]
     fn chain_trigger_waits_six_ticks_and_does_not_loop() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let _intruder = spawn_player(&mut app, "Bob", [5.5, 64.0, 5.5]);
         for (idx, pos) in [[5, 64, 5], [6, 64, 5], [7, 64, 5]].into_iter().enumerate() {
@@ -2685,7 +2714,7 @@ mod tests {
 
     #[test]
     fn ward_alert_fires_on_entry_for_position_only_entities() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let intruder = app.world_mut().spawn(Position::new([4.5, 64.0, 0.5])).id();
         app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -2748,7 +2777,7 @@ mod tests {
 
     #[test]
     fn force_break_applies_backlash_and_removes_eye() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let breaker = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
         app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -2802,7 +2831,7 @@ mod tests {
 
     #[test]
     fn expert_disarm_grants_scattered_qi_pearl() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         app.insert_resource(pearl_registry());
         app.insert_resource(InventoryInstanceIdAllocator::default());
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
@@ -2875,7 +2904,7 @@ mod tests {
 
     #[test]
     fn shrine_ward_deploy_emits_event_and_burns_intruder() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let intruder = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
         app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -2906,7 +2935,7 @@ mod tests {
 
     #[test]
     fn shrine_ward_lethal_pressure_emits_death_event() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let intruder = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
         app.world_mut()
@@ -2946,7 +2975,7 @@ mod tests {
 
     #[test]
     fn shrine_ward_allows_trusted_allies() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let ally = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
         app.world_mut().entity_mut(ally).insert((
@@ -3006,7 +3035,7 @@ mod tests {
 
     #[test]
     fn deceive_heaven_exposure_emits_dedicated_event() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         app.world_mut().entity_mut(owner).insert(Cultivation {
             realm: Realm::Solidify,
@@ -3081,7 +3110,7 @@ mod tests {
 
     #[test]
     fn array_mastery_grows_on_cast_and_trigger() {
-        let mut app = app_with_zhenfa();
+        let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         app.world_mut()
             .entity_mut(owner)
