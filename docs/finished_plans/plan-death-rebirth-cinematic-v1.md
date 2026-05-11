@@ -1,4 +1,4 @@
-# Bong · plan-death-rebirth-cinematic-v1 · 骨架
+# Bong · plan-death-rebirth-cinematic-v1 · 完成
 
 死亡与重生电影化体验——在 `plan-vfx-wiring-v1`（死亡 VFX）+ `plan-hud-polish-v1`（死亡全屏特效）+ `plan-audio-world-v1`（低 HP 心跳）✅ active 基础上拓展。vfx-wiring-v1 P2 已有 `DeathSoulDissipatePlayer` 魂散粒子 + 灰化 overlay + 遗念文字粒子；hud-polish-v1 P2 已有死亡灰化全屏 1s + 遗念文字渐出；audio-world-v1 P1 已有低 HP 心跳 + 真元耗尽警告。但死亡瞬间到重生在灵龛的完整流程是**零散的碎片效果——不是连贯的叙事**。本 plan 把这些碎片编排成 **6 阶段电影化死亡流程**（predeath→death_moment→roll→insight_overlay→darkness→rebirth），让死亡从"状态跳变"变成"可感知的末法残土学费"。
 
@@ -63,16 +63,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `DeathCinematic` 状态机 + `DeathCinematicRenderer` 编排骨架 + 通用死亡→重生全流程 | ⬜ |
-| P1 | 濒死三层崩解 + 画框碎裂 | ⬜ |
-| P2 | 运数/劫数 Roll UI | ⬜ |
-| P3 | 遗念 overlay 重构（毛笔字书写） | ⬜ |
-| P4 | 重生流 cinematic + 坍缩渊死亡特殊处理 | ⬜ |
-| P5 | 终焉之言 + 饱和化测试 | ⬜ |
+| P0 | `DeathCinematic` 状态机 + `DeathCinematicRenderer` 编排骨架 + 通用死亡→重生全流程 | ✅ 2026-05-12 |
+| P1 | 濒死三层崩解 + 画框碎裂 | ✅ 2026-05-12 |
+| P2 | 运数/劫数 Roll UI | ✅ 2026-05-12 |
+| P3 | 遗念 overlay 重构（毛笔字书写） | ✅ 2026-05-12 |
+| P4 | 重生流 cinematic + 坍缩渊死亡特殊处理 | ✅ 2026-05-12 |
+| P5 | 终焉之言 + 饱和化测试 | ✅ 2026-05-12 |
 
 ---
 
-## P0 — 状态机 + 骨架 + 通用死亡流 ⬜
+## P0 — 状态机 + 骨架 + 通用死亡流 ✅ 2026-05-12
 
 ### 交付物
 
@@ -108,7 +108,7 @@
 
 ---
 
-## P1 — 濒死三层崩解 ⬜
+## P1 — 濒死三层崩解 ✅ 2026-05-12
 
 ### 交付物
 
@@ -137,7 +137,7 @@
 
 ---
 
-## P2 — 运数/劫数 Roll UI ⬜
+## P2 — 运数/劫数 Roll UI ✅ 2026-05-12
 
 ### 交付物
 
@@ -173,7 +173,7 @@
 
 ---
 
-## P3 — 遗念 overlay（毛笔字） ⬜
+## P3 — 遗念 overlay（毛笔字） ✅ 2026-05-12
 
 ### 交付物
 
@@ -209,7 +209,7 @@
 
 ---
 
-## P4 — 重生流 + 坍缩渊死亡 ⬜
+## P4 — 重生流 + 坍缩渊死亡 ✅ 2026-05-12
 
 ### 交付物
 
@@ -244,7 +244,7 @@
 
 ---
 
-## P5 — 终焉之言 + 饱和化测试 ⬜
+## P5 — 终焉之言 + 饱和化测试 ✅ 2026-05-12
 
 ### 交付物
 
@@ -281,8 +281,29 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`DeathCinematic` server component / `DeathCinematicRenderer` / `ScreenShatterEffect` / 濒死三层崩解 / `DeathRollUI` / `InsightOverlayRenderer` / `FinalWordsRenderer` / 重生 cinematic / TSY 干尸化
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：亡者博物馆链接（library-web 角色生平卷直接链接）/ 观战模式（死亡后看自己的尸体 5s 再进 roll——需独立 plan）
+- **落地清单**：
+  - P0 server 契约与状态机：`server/src/schema/death_cinematic.rs`、`server/src/death_lifecycle/cinematic.rs`、`server/src/schema/server_data.rs`，`DeathCinematicS2cV1` 挂入 `death_screen.cinematic`。
+  - P0/P2/P3/P4/P5 client 编排：`client/src/main/java/com/bong/client/death/DeathCinematicState.java`、`DeathCinematicPayloadParser.java`、`DeathCinematicRenderer.java`、`DeathRollUI.java`、`InsightOverlayRenderer.java`、`FinalWordsRenderer.java`、`RebirthCinematicRenderer.java`，并由 `DeathScreen` 渲染 cinematic commands。
+  - P1 client 视觉骨架：`NearDeathCollapsePlanner.java`、`ScreenShatterEffect.java` 覆盖濒死崩解密度、经脉闪红、体表裂纹、死亡前冻结和 16 片画框碎裂 command。
+  - P4 坍缩渊/多周目参数：server `build_death_cinematic(...)` 写入 `zone_kind`、`tsy_death`、`death_number`、`rebirth_weakened_ticks`；client 根据 `tsyDeath`、`deathNumber`、`skipPredeath` 调整重生提示与阶段时长。
+  - agent/schema 订阅：`agent/packages/schema/src/death-cinematic.ts`、`agent/packages/schema/src/channels.ts`、`agent/packages/tiandao/src/redis-ipc.ts`，新增 `bong:death_cinematic` 校验与 cross-system event buffer。
+- **关键 commit**：
+  - `4a5ae3ab7` 2026-05-12 `docs(plan-death-rebirth-cinematic-v1): 升级为 active plan`
+  - `72a1a1506` 2026-05-12 `feat(death-cinematic): 接入死亡电影化状态契约`
+  - `a8f122d25` 2026-05-12 `feat(client): 渲染死亡重生电影化流程`
+  - `ad1b7d7bc` 2026-05-12 `feat(agent): 订阅死亡电影化事件`
+- **测试结果**：
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 4480 passed。
+  - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过，schema 378 passed，tiandao 355 passed。
+  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL。
+  - `git diff --check`：通过。
+- **跨仓库核验**：
+  - server：`DeathCinematicS2cV1`、`DeathCinematic`、`DeathCinematicPublished`、`CH_DEATH_CINEMATIC`、`DeathScreenS2cV1.cinematic`。
+  - agent/schema：`DeathCinematicS2cV1`、`validateDeathCinematicS2cV1Contract`、`CHANNELS.DEATH_CINEMATIC`、`death-cinematic-s2c-v1.json`。
+  - agent/tiandao：`RedisIpc` 订阅 `DEATH_CINEMATIC` 并记录 cross-system event。
+  - client：`DeathCinematicPayloadParser`、`DeathCinematicState`、`DeathCinematicRenderer`、`DeathRollUI`、`InsightOverlayRenderer`、`FinalWordsRenderer`、`RebirthCinematicRenderer`。
+- **遗留 / 后续**：
+  - 无阻塞遗留；本 plan 已固定 server→agent→client cinematic contract、阶段机、HUD command 编排和回归测试。
+  - 真实 framebuffer shader、独立音效 asset、player animation asset、亡者博物馆链接与观战模式仍由后续 visual/audio/library plans 扩展，不在本 PR 内扩大范围。
