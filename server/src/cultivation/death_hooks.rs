@@ -32,6 +32,7 @@ pub enum CultivationDeathCause {
     NegativeZoneDrain,
     ContaminationOverflow,
     NaturalAging,
+    DevCommand,
     SwarmQiDrain,
     VoidQuotaExceeded,
     VoidActionBacklash,

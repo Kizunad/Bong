@@ -155,8 +155,10 @@ mod tests {
 
     fn parser_label(parser: &Parser) -> String {
         match parser {
+            Parser::Bool => "bool".to_string(),
             Parser::Float { .. } => "float".to_string(),
             Parser::Double { .. } => "double".to_string(),
+            Parser::Integer { .. } => "integer".to_string(),
             Parser::String(StringArg::SingleWord) => "string".to_string(),
             Parser::String(StringArg::QuotablePhrase) => "phrase".to_string(),
             Parser::String(StringArg::GreedyPhrase) => "greedy".to_string(),

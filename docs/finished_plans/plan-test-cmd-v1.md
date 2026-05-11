@@ -6,15 +6,15 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `/meridian` — open / open_all / list（强制打通经脉，绕开 zone_qi/qi 阈值） | ⬜ |
-| P1 | `/realm set <id>` + `/qi set <v>` + `/qi max <v>`（境界 + 真元直写） | ⬜ |
-| P2 | `/technique` — list / add / remove / proficiency / active / reset_all | ⬜ |
-| P3 | `/give <template_id> [count]` + `/clearinv [pack\|all\|naked]` | ⬜ |
-| P4 | `/zone_qi set <name> <value>`（区域灵气浓度直写） | ⬜ |
-| P5 | `/kill self` + `/revive self`（PlayerTerminated / PlayerRevived event 触发） | ⬜ |
-| P6 | `/time advance <ticks>`（CultivationClock + shelflife + cooldown 同步推） | ⬜ |
-| P7 | 测试饱和 + brigadier 命令树 fixture 更新（`registry_pin::COMMAND_NAMES`） | ⬜ |
-| P8 | 文档同步（CLAUDE.md / 测试章节 / 命令清单） | ⬜ |
+| P0 | `/meridian` — open / open_all / list（强制打通经脉，绕开 zone_qi/qi 阈值） | ✅ 2026-05-11 |
+| P1 | `/realm set <id>` + `/qi set <v>` + `/qi max <v>`（境界 + 真元直写） | ✅ 2026-05-11 |
+| P2 | `/technique` — list / add / remove / proficiency / active / reset_all | ✅ 2026-05-11 |
+| P3 | `/give <template_id> [count]` + `/clearinv [pack\|all\|naked]` | ✅ 2026-05-11 |
+| P4 | `/zone_qi set <name> <value>`（区域灵气浓度直写） | ✅ 2026-05-11 |
+| P5 | `/kill self` + `/revive self`（PlayerTerminated / PlayerRevived event 触发） | ✅ 2026-05-11 |
+| P6 | `/time advance <ticks>`（只推进 `CultivationClock.tick`；不推进 Bevy `Time`） | ✅ 2026-05-11 |
+| P7 | 测试饱和 + brigadier 命令树 fixture 更新（`registry_pin::COMMAND_NAMES`） | ✅ 2026-05-11 |
+| P8 | 文档同步（CLAUDE.md / 测试章节 / 命令清单） | ✅ 2026-05-11 |
 
 ---
 
@@ -391,4 +391,47 @@ zone_qi set <name:string> <value:double>
 
 ## Finish Evidence
 
-（待 P0-P8 完成后填写：落地清单 / 关键 commit / 测试结果 / 跨仓库核验 / 遗留）
+### 落地清单
+
+- P0 `/meridian`：`server/src/cmd/dev/meridian.rs`，注册到 `server/src/cmd/dev/mod.rs`，覆盖 20 条经脉解析、强制 open、open_all、list、LifeRecord / spirit_root_first 写入。
+- P1 `/realm` + `/qi`：`server/src/cmd/dev/realm.rs`、`server/src/cmd/dev/qi.rs`，直接 mutation `Cultivation.realm` / `qi_current` / `qi_max`，并 pin 不发 `BreakthroughEvent` / `QiTransfer`。
+- P2 `/technique`：`server/src/cmd/dev/technique.rs`，覆盖 list / add / remove / proficiency / active / reset_all，unknown add/proficiency/active 拒绝，reset 回 `KnownTechniques::default()`。
+- P3 `/give` + `/clearinv`：`server/src/cmd/dev/give.rs`、`server/src/cmd/dev/clearinv.rs`、`server/src/inventory/mod.rs`，新增 `ClearScope` 与 `clear_player_inventory()` helper。
+- P4 `/zone_qi set`：`server/src/cmd/dev/zone_qi.rs`，直写 `ZoneRegistry` 中的 `Zone.spirit_qi`，允许负值并 pin 不发 `QiTransfer`。
+- P5 `/kill self` + `/revive self`：`server/src/cmd/dev/kill.rs`、`server/src/cmd/dev/revive.rs`，接入 `PlayerTerminated` / `PlayerRevived`，并在 `server/src/combat/lifecycle.rs`、`server/src/cultivation/death_hooks.rs` 支持 `CultivationDeathCause::DevCommand`。
+- P6 `/time advance`：`server/src/cmd/dev/time.rs`，只推进 `CultivationClock.tick`，不推进 Bevy `Time` resource。
+- P7 registry pin：`server/src/cmd/registry_pin.rs`、`server/src/cmd/mod.rs`，同步 10 个根命令与 20 条 executable paths。
+- P8 文档：`CLAUDE.md` 增加 "Dev test commands"，`docs/local-test-env.md` 增加快速搭测试场景示例（P8 明确要求，且执行中经用户明确授权后提交；不是默认 `/consume-plan` docs 白名单写入）。
+
+### 关键 commit
+
+- `a403217c7`（2026-05-10）`feat(dev-cmd): 增加测试场景命令`
+- `2fe3848f3`（2026-05-11）`fix(dev-cmd): 跟随默认功法数量校验 technique 测试`
+- `4c2771e80`（2026-05-11）`docs(dev-cmd): 补测试场景命令说明`
+- `5809b1b7`（2026-05-11）`fix(dev-cmd): 采纳 review 补死亡原因与 pin 测试`
+- `dec87a94`（2026-05-11）`fix(dev-cmd): 收紧 review 指出的边界输入测试`
+- `61f1ac01`（2026-05-11）`fix(dev-cmd): 补 dev kill 终结持久化`
+- `767575ef`（2026-05-11）`fix(dev-cmd): 拒绝缺持久化上下文的 dev kill`
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：通过。
+- `cd server && cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && cargo test`：`4249 passed; 0 failed; 0 ignored`。
+- `cd server && cargo test cmd::dev`：`96 passed; 0 failed`。
+- `cd server && cargo test inventory::tests::clear_player_inventory`：`3 passed; 0 failed`。
+- `cd server && cargo test cmd::dev::technique`：`6 passed; 0 failed`（rebase 后默认功法数量漂移回归；review 后补 non-finite proficiency 回归）。
+- `cd server && cargo test cmd::dev::kill`：`4 passed; 0 failed`（review 后补 LifeRecord / terminated snapshot 持久化回归；缺持久化上下文拒绝）。
+- `cd server && cargo test cmd::tests::command_registry && cargo test cmd::tests::command_tree_packet_contains_pinned_root_literals`：`4 passed; 0 failed`（确认可选 persistence resource 不破坏命令树 fixture）。
+
+### 跨仓库核验
+
+- server：命中 `server/src/cmd/dev/{meridian,realm,qi,technique,give,clearinv,zone_qi,kill,revive,time}.rs`、`CommandTreePath`、`ClearScope`、`clear_player_inventory()`、`CultivationDeathCause::DevCommand`。
+- agent：无改动；dev 命令不通过 Redis IPC。
+- client：无改动；命令树通过 Valence brigadier 协议下发，`KnownTechniques` snapshot 沿用现有 `network::techniques_snapshot_emit`。
+- worldgen：无改动。
+
+### 遗留 / 后续
+
+- `/time advance` 按本 plan 范围只推进 `CultivationClock`；如未来需要推进 Bevy `Time`、SeasonClock 或全局 cooldown，应另起 plan 定义 `advance_all` 类命令。
+- dev 命令沿用现有 dev 命令权限面；生产服 op/permission gate 不在本 plan 范围。
