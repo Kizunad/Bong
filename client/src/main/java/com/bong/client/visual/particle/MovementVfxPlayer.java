@@ -5,6 +5,8 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
+import java.util.Objects;
+
 public final class MovementVfxPlayer implements VfxPlayer {
     public static final Identifier DASH = new Identifier("bong", "movement_dash");
     public static final Identifier SLIDE = new Identifier("bong", "movement_slide");
@@ -13,7 +15,7 @@ public final class MovementVfxPlayer implements VfxPlayer {
     private final Kind kind;
 
     public MovementVfxPlayer(Kind kind) {
-        this.kind = kind;
+        this.kind = Objects.requireNonNull(kind, "kind");
     }
 
     public enum Kind {

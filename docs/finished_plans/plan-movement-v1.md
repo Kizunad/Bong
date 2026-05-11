@@ -217,7 +217,7 @@
   - `agent/packages/tiandao npm test` ✅ 51 files / 348 tests
   - `agent/packages/schema npm test` ✅ 18 files / 366 tests
   - `agent npm run build` ✅
-  - `client/ JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ 1221 tests, 0 failures, 0 errors
+  - `client/ JAVA_HOME=<Java 17 home> PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` ✅ 1222 tests, 0 failures, 0 errors（本地使用 JDK 17）
   - `client/ ./gradlew test --tests com.bong.client.hud.HudLayoutPresetTest --tests com.bong.client.hud.MovementHudPlannerTest --tests com.bong.client.hud.HudImmersionModeTest` ✅
 - **跨仓库核验**：server `movement_state`/`MovementActionIntent`/audio recipes，agent `movement.ts`/generated artifacts，client `MovementStateStore`/`MovementHudPlanner`/`MOVEMENT_HUD`/VFX registry 均有测试或 build 覆盖。
 - **遗留 / 后续**：轻功、御风、墙跑、真实 runClient 手感调参仍留给 `plan-movement-v2`；本 plan 未在当前 headless 流水线里跑图形化 `runClient` 手动流程。

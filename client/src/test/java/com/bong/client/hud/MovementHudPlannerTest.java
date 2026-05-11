@@ -124,7 +124,7 @@ class MovementHudPlannerTest {
             100,
             lowStamina,
             hudActivityAtMs > 0 ? 10L : null,
-            rejectedAtMs > 0 ? "stamina_insufficient" : "",
+            rejectedAtMs > 0 ? "dash" : "",
             hudActivityAtMs,
             hudActivityAtMs,
             rejectedAtMs
