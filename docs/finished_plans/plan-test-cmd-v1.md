@@ -409,15 +409,16 @@ zone_qi set <name:string> <value:double>
 - `2fe3848f3`（2026-05-11）`fix(dev-cmd): 跟随默认功法数量校验 technique 测试`
 - `4c2771e80`（2026-05-11）`docs(dev-cmd): 补测试场景命令说明`
 - `5809b1b7`（2026-05-11）`fix(dev-cmd): 采纳 review 补死亡原因与 pin 测试`
+- `dec87a94`（2026-05-11）`fix(dev-cmd): 收紧 review 指出的边界输入测试`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check`：通过。
 - `cd server && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：`4245 passed; 0 failed; 0 ignored`。
-- `cd server && cargo test cmd::dev`：`94 passed; 0 failed`。
+- `cd server && cargo test`：`4247 passed; 0 failed; 0 ignored`。
+- `cd server && cargo test cmd::dev`：`96 passed; 0 failed`。
 - `cd server && cargo test inventory::tests::clear_player_inventory`：`3 passed; 0 failed`。
-- `cd server && cargo test cmd::dev::technique`：`5 passed; 0 failed`（rebase 后默认功法数量漂移回归）。
+- `cd server && cargo test cmd::dev::technique`：`6 passed; 0 failed`（rebase 后默认功法数量漂移回归；review 后补 non-finite proficiency 回归）。
 
 ### 跨仓库核验
 
