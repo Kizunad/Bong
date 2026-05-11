@@ -182,6 +182,10 @@
                           {
                             "const": "npc_behavior",
                             "type": "string"
+                          },
+                          {
+                            "const": "heartbeat_override",
+                            "type": "string"
                           }
                         ]
                       },
@@ -190,7 +194,7 @@
                         "type": "string"
                       },
                       "params": {
-                        "description": "指令参数。spawn_event: {event, intensity, duration_ticks, target_player?}; spawn_npc: {archetype, initial_age_ticks?, count?, reason?}; despawn_npc: {}; faction_event: {kind, faction_id, subject_id?, mission_id?, loyalty_delta?}; modify_zone: {spirit_qi_delta, danger_level_delta?}; npc_behavior: {flee_threshold}",
+                        "description": "指令参数。spawn_event: {event, intensity, duration_ticks, target_player?}; spawn_npc: {archetype, initial_age_ticks?, count?, reason?}; despawn_npc: {}; faction_event: {kind, faction_id, subject_id?, mission_id?, loyalty_delta?}; modify_zone: {spirit_qi_delta, danger_level_delta?}; npc_behavior: {flee_threshold}; heartbeat_override: {action, event_type, target_zone?, duration_ticks?, intensity_override?}",
                         "type": "object",
                         "patternProperties": {
                           "^(.*)$": {}

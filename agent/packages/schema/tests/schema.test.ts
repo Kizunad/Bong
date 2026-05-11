@@ -1634,7 +1634,28 @@ describe("schema rejects invalid data", () => {
     );
   });
 
-  it("rejects unsupported npc behavior and faction params", () => {
+  it("accepts heartbeat_override command rows", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    data.commands = [
+      {
+        type: "heartbeat_override",
+        target: "lingquan_marsh",
+        params: {
+          action: "accelerate",
+          event_type: "pseudo_vein",
+          duration_ticks: 6000,
+          intensity_override: 0.8,
+        },
+      },
+    ];
+    expectContractAccepts(
+      "AgentCommandV1 heartbeat_override parity gate",
+      validateAgentCommandV1Contract,
+      data,
+    );
+  });
+
+  it("rejects unsupported npc behavior, faction, and heartbeat params", () => {
     const badBehavior = loadObjectSample("agent-command.sample.json");
     badBehavior.commands = [{ type: "npc_behavior", target: "npc_1v1", params: {} }];
     expectContractRejects(
@@ -1651,6 +1672,20 @@ describe("schema rejects invalid data", () => {
       "AgentCommandV1 faction_event kind/faction whitelist",
       validateAgentCommandV1Contract,
       badFaction,
+    );
+
+    const badHeartbeat = loadObjectSample("agent-command.sample.json");
+    badHeartbeat.commands = [
+      {
+        type: "heartbeat_override",
+        target: "lingquan_marsh",
+        params: { action: "pause", event_type: "unknown", duration_ticks: 0 },
+      },
+    ];
+    expectContractRejects(
+      "AgentCommandV1 heartbeat_override action/event whitelist",
+      validateAgentCommandV1Contract,
+      badHeartbeat,
     );
   });
 
