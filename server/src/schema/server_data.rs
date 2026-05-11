@@ -3086,6 +3086,28 @@ mod tests {
                 interrupted: true,
                 completed: false,
             },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "gathering:herb:fine".to_string(),
+                progress_ticks: 40,
+                total_ticks: 40,
+                target_name: "优良凝脉草".to_string(),
+                target_type: GatheringTargetTypeV1::Herb,
+                quality_hint: GatheringQualityHintV1::Fine,
+                tool_used: Some("hoe_copper".to_string()),
+                interrupted: false,
+                completed: true,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "lumber:perfect-possible".to_string(),
+                progress_ticks: 45,
+                total_ticks: 50,
+                target_name: "灵木".to_string(),
+                target_type: GatheringTargetTypeV1::Wood,
+                quality_hint: GatheringQualityHintV1::PerfectPossible,
+                tool_used: Some("axe_copper".to_string()),
+                interrupted: false,
+                completed: false,
+            },
             ServerDataPayloadV1::RealmVisionParams(RealmVisionParamsV1 {
                 fog_start: 30.0,
                 fog_end: 60.0,
@@ -3525,6 +3547,33 @@ mod tests {
                 "roundtrip must preserve typed payload content"
             );
         }
+    }
+
+    #[test]
+    fn gathering_session_rejects_invalid_enum_values() {
+        let invalid_quality =
+            include_str!("../../../agent/packages/schema/samples/server-data.gathering-session.invalid-quality.sample.json");
+        assert!(
+            serde_json::from_str::<ServerDataV1>(invalid_quality).is_err(),
+            "invalid gathering_session quality_hint sample should fail to deserialize"
+        );
+
+        let invalid_target = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "gathering_session",
+            "session_id": "gathering:bad-target",
+            "progress_ticks": 10,
+            "total_ticks": 40,
+            "target_name": "测试采集物",
+            "target_type": "invalid_type",
+            "quality_hint": "normal",
+            "interrupted": false,
+            "completed": false
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(invalid_target).is_err(),
+            "invalid gathering_session target_type should fail to deserialize"
+        );
     }
 
     #[test]

@@ -890,8 +890,20 @@ mod tests {
                 recipe.id
             );
         }
-        assert!(tools.iter().any(|recipe| recipe.output.0 == "axe_copper"));
-        assert!(tools.iter().any(|recipe| recipe.output.0 == "pickaxe_iron"));
+        let outputs = tools
+            .iter()
+            .map(|recipe| recipe.output.0.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            outputs.contains(&"axe_copper"),
+            "expected recipe output `axe_copper` because copper axe is one of the six gathering tools; actual outputs: {:?}",
+            outputs
+        );
+        assert!(
+            outputs.contains(&"pickaxe_iron"),
+            "expected recipe output `pickaxe_iron` because iron pickaxe is one of the six gathering tools; actual outputs: {:?}",
+            outputs
+        );
         let bone_axe = tools
             .iter()
             .find(|recipe| recipe.output.0 == "axe_bone")
@@ -916,6 +928,19 @@ mod tests {
                 UnlockSource::Scroll { item_template } if item_template == "scroll_gathering_axe_bone"
             )),
             "axe_bone should unlock from scroll_gathering_axe_bone"
+        );
+    }
+
+    #[test]
+    fn register_gathering_tool_recipes_rejects_duplicate_registration() {
+        let mut registry = CraftRegistry::new();
+        register_gathering_tool_recipes(&mut registry).unwrap();
+
+        let duplicate = register_gathering_tool_recipes(&mut registry);
+        assert!(
+            matches!(duplicate, Err(RegistryError::DuplicateId(_))),
+            "registering gathering tool recipes twice should fail with DuplicateId; actual result: {:?}",
+            duplicate
         );
     }
 

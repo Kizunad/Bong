@@ -239,11 +239,18 @@ mod tests {
         assert!(registry.get("movement_dash").is_some());
         assert!(registry.get("movement_slide").is_some());
         assert!(registry.get("movement_double_jump").is_some());
-        assert!(registry.get("gather_herb_tick").is_some());
-        assert!(registry.get("gather_mine_tick").is_some());
-        assert!(registry.get("gather_chop_tick").is_some());
-        assert!(registry.get("gather_complete").is_some());
-        assert!(registry.get("gather_perfect").is_some());
+        for key in [
+            "gather_herb_tick",
+            "gather_mine_tick",
+            "gather_chop_tick",
+            "gather_complete",
+            "gather_perfect",
+        ] {
+            assert!(
+                registry.get(key).is_some(),
+                "expected audio registry to contain `{key}` because gathering-ux added a recipe JSON for that cue; actual lookup returned None"
+            );
+        }
     }
 
     #[test]
