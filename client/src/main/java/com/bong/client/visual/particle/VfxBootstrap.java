@@ -25,6 +25,11 @@ public final class VfxBootstrap {
         registry.register(CalamityVfxPlayer.HEAVENLY_FIRE,       calamity);
         registry.register(CalamityVfxPlayer.PRESSURE_INVERT,     calamity);
         registry.register(CalamityVfxPlayer.ALL_WITHER,          calamity);
+        OmenParticlePlayer omen = new OmenParticlePlayer();
+        registry.register(OmenParticlePlayer.PSEUDO_VEIN,        omen);
+        registry.register(OmenParticlePlayer.BEAST_TIDE,         omen);
+        registry.register(OmenParticlePlayer.REALM_COLLAPSE,     omen);
+        registry.register(OmenParticlePlayer.KARMA_BACKLASH,     omen);
         JueBiTribulationPlayer jueBi = new JueBiTribulationPlayer();
         registry.register(JueBiTribulationPlayer.BOUNDARY,        jueBi);
         registry.register(JueBiTribulationPlayer.FISSURE,         jueBi);
