@@ -281,6 +281,7 @@
   - `e64716c94` `plan-season-full-experience-v1: 补季节循环验证脚本`
   - `99d7662b3` `plan-season-full-experience-v1: 补 review 实运行接线`
   - `787d343ff` `plan-season-full-experience-v1: 收敛季节视觉边界`
+  - `ed72fdf1d` `plan-season-full-experience-v1: 防止季节进度NaN`
 - P0：
   - `SeasonVisualController` 统一读取 `SeasonStateStore`，同步 `ZoneAtmosphereRenderer` / `MusicStateMachine` / `SeasonParticleEmitter`，phase 切换时产出 `SeasonTransitionEvent`。
   - `SeasonHintHudPlanner` 与 `LingtianOverlayHudPlanner` 仅绘制低 alpha 图标/色块，不写显式季节文字。
