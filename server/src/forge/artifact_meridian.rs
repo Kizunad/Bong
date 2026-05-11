@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Query, Res,
+    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Query, Res, ResMut,
 };
 
 use super::artifact_color::ArtifactColor;
@@ -18,6 +18,8 @@ use crate::inventory::{
     bump_revision, inventory_item_by_instance_mut, move_equipped_item_to_first_container_slot,
     set_item_instance_durability, ItemInstance, PlayerInventory,
 };
+use crate::player::gameplay::PendingGameplayNarrations;
+use crate::schema::common::NarrationStyle;
 
 pub const ARTIFACT_STATE_PREFIX: &str = "artifact_state:";
 const MICRO_CRACK_LIMIT: f64 = 0.15;
@@ -700,6 +702,31 @@ pub fn artifact_meridian_maintenance_tick(
     }
 }
 
+pub fn artifact_tier_evolved_narration(
+    mut events: EventReader<ArtifactTierEvolved>,
+    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+) {
+    let Some(pending_narrations) = pending_narrations.as_deref_mut() else {
+        return;
+    };
+    for event in events.read() {
+        if event.new_tier >= 2 {
+            pending_narrations.push_broadcast(
+                artifact_tier_narration(event.new_tier),
+                NarrationStyle::Narration,
+            );
+        }
+    }
+}
+
+fn artifact_tier_narration(new_tier: u8) -> &'static str {
+    if new_tier >= 3 {
+        "某处有法器道纹重开，灵光一闪而没。"
+    } else {
+        "某处有法器通灵之兆，寒光在天地间微微一亮。"
+    }
+}
+
 fn for_each_artifact_item_mut(
     inventory: &mut PlayerInventory,
     mut f: impl FnMut(&mut ItemInstance) -> bool,
@@ -755,6 +782,7 @@ mod tests {
     use super::*;
     use crate::combat::carrier::CarrierKind;
     use crate::inventory::ItemRarity;
+    use valence::prelude::{App, Update};
 
     fn meridian(spec: MaterialSpec) -> ArtifactMeridian {
         ArtifactMeridian::new_from_spec(spec, 100.0, 0.8, 0, 0)
@@ -970,6 +998,29 @@ mod tests {
 
         assert_eq!(cost, 30.0);
         assert_eq!(cultivation.qi_current, 70.0);
+    }
+
+    #[test]
+    fn evolution_to_lingqi_emits_broadcast_narration() {
+        let mut app = App::new();
+        app.add_event::<ArtifactTierEvolved>();
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_systems(Update, artifact_tier_evolved_narration);
+        let owner = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(ArtifactTierEvolved {
+            owner,
+            instance_id: 7,
+            old_tier: 1,
+            new_tier: 2,
+        });
+        app.update();
+
+        let mut narrations = app.world_mut().resource_mut::<PendingGameplayNarrations>();
+        let drained = narrations.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].style, NarrationStyle::Narration);
+        assert!(drained[0].text.contains("法器通灵"));
     }
 
     #[test]

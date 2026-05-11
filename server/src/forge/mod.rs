@@ -118,6 +118,9 @@ pub fn register(app: &mut App) {
             artifact_meridian::artifact_meridian_deepen_on_use
                 .in_set(crate::combat::CombatSystemSet::Emit)
                 .after(crate::combat::resolve::resolve_attack_intents),
+            artifact_meridian::artifact_tier_evolved_narration
+                .in_set(crate::combat::CombatSystemSet::Emit)
+                .after(artifact_meridian::artifact_meridian_deepen_on_use),
             artifact_meridian::artifact_color_evolve_tick
                 .in_set(crate::combat::CombatSystemSet::Emit),
             artifact_meridian::artifact_meridian_maintenance_tick
