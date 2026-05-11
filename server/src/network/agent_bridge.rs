@@ -60,6 +60,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
         ServerDataType::MiningProgress => "mining_progress",
         ServerDataType::LumberProgress => "lumber_progress",
+        ServerDataType::GatheringSession => "gathering_session",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
         ServerDataType::AlchemySession => "alchemy_session",

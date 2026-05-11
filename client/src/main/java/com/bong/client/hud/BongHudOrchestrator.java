@@ -373,6 +373,12 @@ public final class BongHudOrchestrator {
                 botanyAnchor
             ));
         }
+        commands.addAll(GatheringProgressHud.buildCommands(
+            widthMeasurer,
+            screenWidth,
+            screenHeight,
+            nowMillis
+        ));
         commands.addAll(ForgeProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight));
         commands.addAll(CoffinHudPlanner.buildCommands(screenWidth, screenHeight));

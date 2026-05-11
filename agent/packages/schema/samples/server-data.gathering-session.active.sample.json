@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "gathering_session",
+  "session_id": "gathering:herb:offline-kiz",
+  "progress_ticks": 20,
+  "total_ticks": 40,
+  "target_name": "凝脉草",
+  "target_type": "herb",
+  "quality_hint": "fine_likely",
+  "tool_used": "hoe_iron",
+  "interrupted": false,
+  "completed": false
+}

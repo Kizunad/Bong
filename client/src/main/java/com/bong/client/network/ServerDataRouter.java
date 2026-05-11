@@ -25,6 +25,7 @@ public final class ServerDataRouter {
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
+        GatheringSessionHandler gatheringSessionHandler = new GatheringSessionHandler();
         BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
@@ -110,6 +111,7 @@ public final class ServerDataRouter {
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);
         handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
+        handlers.put("gathering_session", gatheringSessionHandler);
         handlers.put("botany_plant_v2_render_profiles", botanyPlantRenderProfileHandler);
         handlers.put("botany_skill", botanySkillHandler);
         handlers.put("alchemy_furnace", alchemyFurnaceHandler);

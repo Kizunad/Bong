@@ -174,8 +174,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            105,
-            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2/v3, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, calamity arsenal cues, audio-world ambient/music loops, armor break cue, movement-v1 action cues, and coffin lifecycle cues"
+            110,
+            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2/v3, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, calamity arsenal cues, audio-world ambient/music loops, armor break cue, movement-v1 action cues, gathering-ux cues, and coffin lifecycle cues"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
@@ -247,6 +247,18 @@ mod tests {
         assert!(registry.get("movement_dash").is_some());
         assert!(registry.get("movement_slide").is_some());
         assert!(registry.get("movement_double_jump").is_some());
+        for key in [
+            "gather_herb_tick",
+            "gather_mine_tick",
+            "gather_chop_tick",
+            "gather_complete",
+            "gather_perfect",
+        ] {
+            assert!(
+                registry.get(key).is_some(),
+                "expected audio registry to contain `{key}` because gathering-ux added a recipe JSON for that cue; actual lookup returned None"
+            );
+        }
     }
 
     #[test]

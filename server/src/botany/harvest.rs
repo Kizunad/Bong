@@ -5,7 +5,9 @@ use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, R
 use crate::combat::components::Wounds;
 use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::skill_cap_for_realm;
-use crate::cultivation::components::{Contamination, Cultivation};
+use crate::cultivation::components::{Contamination, Cultivation, Realm};
+use crate::gathering::quality::roll_quality;
+use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
     add_customized_item_to_player_inventory, add_item_to_player_inventory,
     InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
@@ -136,13 +138,31 @@ pub fn complete_harvest_for_player(
         })?;
 
     let actual_tool = crate::tools::main_hand_tool_in_inventory(&inventory);
+    let gathering_tool = equipped_gathering_tool(&inventory)
+        .filter(|tool| tool.matches_target(GatheringTargetKind::Herb));
     let mut herbalism_quality_bonus = 0.0;
+    let mut player_realm = Realm::Awaken;
     if let Ok((cultivation, skill_set, _, _)) = harvest_hazards.get_mut(session.client_entity) {
+        player_realm = cultivation
+            .as_deref()
+            .map(|cultivation| cultivation.realm)
+            .unwrap_or(Realm::Awaken);
         herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
             cultivation.as_deref(),
             skill_set,
         ));
     }
+    let gathering_quality_seed = now_tick
+        ^ session
+            .client_entity
+            .to_bits()
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ session.duration_ticks.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let gathering_quality = roll_quality(
+        gathering_quality_seed,
+        gathering_tool.map(|tool| tool.material),
+        player_realm,
+    );
 
     let harvest_spirit_quality = item_registry
         .get(kind.item_id)
@@ -166,7 +186,7 @@ pub fn complete_harvest_for_player(
     };
 
     if let Some(required_tool) = required_tool_for(session.target_plant, kind_registry) {
-        if actual_tool == Some(required_tool) {
+        if actual_tool == Some(required_tool) && gathering_tool.is_none() {
             crate::tools::damage_main_hand_tool(
                 session.client_entity,
                 &mut inventory,
@@ -255,6 +275,9 @@ pub fn complete_harvest_for_player(
         detail: format!("采得 1 株 · 灵气流出 {:.3}", kind.growth_cost),
         target_pos,
         spirit_quality: harvest_spirit_quality,
+        duration_ticks: session.duration_ticks,
+        gathering_quality: Some(gathering_quality),
+        tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
     });
     Ok(())
 }
@@ -327,6 +350,7 @@ pub fn enforce_harvest_session_constraints(
         target_entity: Option<Entity>,
         target_plant: BotanyPlantId,
         mode: BotanyHarvestMode,
+        duration_ticks: u64,
         reason: &'static str,
         trampled: bool,
     }
@@ -372,6 +396,7 @@ pub fn enforce_harvest_session_constraints(
             target_entity: session.target_entity,
             target_plant: session.target_plant,
             mode: session.mode,
+            duration_ticks: session.duration_ticks,
             reason,
             trampled: trampled || dispersed,
         });
@@ -405,6 +430,9 @@ pub fn enforce_harvest_session_constraints(
             detail,
             target_pos,
             spirit_quality: 0.0,
+            duration_ticks: target.duration_ticks,
+            gathering_quality: None,
+            tool_used: None,
         });
     }
 }
