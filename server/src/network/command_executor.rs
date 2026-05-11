@@ -1134,6 +1134,33 @@ mod command_executor_tests {
     }
 
     #[test]
+    fn spawn_event_pseudo_vein_rejects_unknown_zone() {
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+        params.insert("intensity".to_string(), json!(0.7));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_unknown_zone",
+                vec![command(CommandType::SpawnEvent, "missing_zone", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert!(
+            runtimes.is_empty(),
+            "pseudo_vein spawn_event should not create runtime for unknown zone"
+        );
+    }
+
+    #[test]
     fn spawn_event_applies_hidden_karma_probability_weighting() {
         let mut app = setup_executor_app();
         app.world_mut()

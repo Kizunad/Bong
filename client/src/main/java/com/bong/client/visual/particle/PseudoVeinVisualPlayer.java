@@ -16,7 +16,6 @@ public final class PseudoVeinVisualPlayer implements VfxPlayer {
     private static final int GOLD = 0xFFD36A;
     private static final int WARNING_GOLD = 0xCFA84A;
     private static final int ASH = 0x8C8C82;
-    private static final int NEGATIVE = 0x4D4A55;
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {

@@ -141,8 +141,12 @@ public class VfxRegistryTest {
             "bootstrap should register fauna_spawn_dust");
         assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.RISING),
             "bootstrap should register pseudo vein rising VFX");
+        assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.ACTIVE),
+            "bootstrap should register pseudo vein active VFX");
         assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.WARNING),
             "bootstrap should register pseudo vein warning VFX");
+        assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.DISSIPATING),
+            "bootstrap should register pseudo vein dissipating VFX");
         assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.AFTERMATH),
             "bootstrap should register pseudo vein aftermath VFX");
         assertTrue(VfxRegistry.instance().contains(FaunaBoneShatterPlayer.EVENT_ID),
