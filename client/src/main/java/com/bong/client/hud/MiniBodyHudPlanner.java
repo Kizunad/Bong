@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.ArmorProfileStore;
+import com.bong.client.artifact.ArtifactState;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.BodyPartState;
@@ -49,6 +50,8 @@ public final class MiniBodyHudPlanner {
     static final int STAMINA_FILL_COLOR = 0xCCE0C040;
     static final int BAR_FLASH_BORDER_COLOR = 0xFFFF6060;
     static final float LOW_THRESHOLD = 0.15f;
+    static final int ARTIFACT_INDICATOR_SIZE = 3;
+    static final int ARTIFACT_INDICATOR_COLOR_FALLBACK = 0xFF808080;
 
     // plan-armor-v1 §5：破损护甲裂纹提示（同 layer，靠命令顺序实现 wound dot 覆盖）。
     static final int BROKEN_ARMOR_CRACK_COLOR = 0xFFB0B0B0;
@@ -99,6 +102,7 @@ public final class MiniBodyHudPlanner {
 
         appendSilhouette(out, anchorX, anchorY);
         appendBrokenArmorCracks(out, anchorX, anchorY, equipped);
+        appendArtifactIndicator(out, anchorX, anchorY, equipped);
         appendWoundDots(out, anchorX, anchorY, body);
         appendBars(out, anchorX, anchorY, hud, nowMillis, seasonState);
 
@@ -206,6 +210,42 @@ public final class MiniBodyHudPlanner {
             int[] pos = locatePart(bx, by, part);
             appendCrackGlyph(out, pos[0], pos[1]);
         }
+    }
+
+    private static void appendArtifactIndicator(
+        List<HudRenderCommand> out,
+        int anchorX,
+        int anchorY,
+        Map<EquipSlotType, InventoryItem> equipped
+    ) {
+        if (equipped == null || equipped.isEmpty()) return;
+
+        InventoryItem item = equipped.get(EquipSlotType.MAIN_HAND);
+        if (item == null || item.isEmpty()) {
+            item = equipped.get(EquipSlotType.TWO_HAND);
+        }
+        if (item == null || item.isEmpty()) {
+            item = equipped.get(EquipSlotType.OFF_HAND);
+        }
+        if (item == null || item.isEmpty()) {
+            return;
+        }
+
+        ArtifactState artifact = item.artifactState().orElse(null);
+        if (artifact == null) {
+            return;
+        }
+
+        int x = anchorX + BODY_X_OFFSET + BODY_W + 1;
+        int y = anchorY + BODY_Y_OFFSET + 1;
+        out.add(HudRenderCommand.rect(
+            HudRenderLayer.MINI_BODY,
+            x,
+            y,
+            ARTIFACT_INDICATOR_SIZE,
+            ARTIFACT_INDICATOR_SIZE,
+            artifact.indicatorColor() == 0 ? ARTIFACT_INDICATOR_COLOR_FALLBACK : artifact.indicatorColor()
+        ));
     }
 
     private static boolean isBrokenArmor(InventoryItem item) {
