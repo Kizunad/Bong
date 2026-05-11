@@ -1221,8 +1221,7 @@ impl ActiveEventsResource {
                     }
                 }
                 EVENT_DAOXIANG_WAVE => {
-                    if event.elapsed_ticks == 0 && event.calamity_state.spawned_entities.is_empty()
-                    {
+                    if event.calamity_state.spawned_entities.is_empty() {
                         let Some(layer_entity) = layer_entity else {
                             tracing::warn!(
                                 "[bong][world] daoxiang_wave runtime for zone `{}` skipped: missing entity layer",
@@ -1721,11 +1720,10 @@ fn tick_active_events(
             }
             reserved_by_zone.insert(event.zone_name.clone(), reserved);
         }
-        for event in active_events
-            .active_events
-            .iter()
-            .filter(|event| event.event_name == EVENT_DAOXIANG_WAVE && event.elapsed_ticks == 0)
-        {
+        for event in active_events.active_events.iter().filter(|event| {
+            event.event_name == EVENT_DAOXIANG_WAVE
+                && event.calamity_state.spawned_entities.is_empty()
+        }) {
             let desired = daoxiang_count_for_intensity(event.intensity);
             let reserved = registry.reserve_zone_batch(event.zone_name.as_str(), desired);
             if reserved < desired {
@@ -2785,14 +2783,15 @@ mod events_tests {
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        beast_kind_from_command, persist_zone_collapsed_overlays,
+        beast_kind_from_command, daoxiang_count_for_intensity, persist_zone_collapsed_overlays,
         redistribute_zone_qi_before_collapse, tick_active_events, ActiveEventsResource,
         CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
-        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_POISON_MIASMA,
-        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, LOCUST_SWARM_DISBAND_THRESHOLD,
-        REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID, REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS,
-        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS,
-        REALM_COLLAPSE_LOW_QI_THRESHOLD, TARGETED_LIGHTNING_VFX_EVENT_ID,
+        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE, EVENT_KARMA_BACKLASH,
+        EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+        LOCUST_SWARM_DISBAND_THRESHOLD, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
+        REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
+        REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
+        TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
     use crate::combat::rat_bite::RatBiteEvent;
@@ -3442,6 +3441,69 @@ mod events_tests {
                 "beast_tide-spawned NPCs should be despawned after expiry"
             );
         }
+    }
+
+    #[test]
+    fn daoxiang_wave_retries_spawn_after_budget_recovers() {
+        let (mut app, _layer) = setup_events_app();
+        app.insert_resource(NpcRegistry {
+            max_npc_count: 0,
+            resume_npc_count: 0,
+            ..NpcRegistry::default()
+        });
+
+        {
+            let world = app.world_mut();
+            let command =
+                spawn_event_command_with_params("spawn", EVENT_DAOXIANG_WAVE, 6, 0.2, None);
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let accepted = world
+                    .resource_mut::<ActiveEventsResource>()
+                    .enqueue_from_spawn_command(&command, Some(&mut zones));
+                assert!(accepted, "daoxiang_wave should enter the scheduler");
+            });
+        }
+
+        app.update();
+        assert_eq!(
+            {
+                let world = app.world_mut();
+                query_npc_entities(world).len()
+            },
+            0,
+            "first tick should not spawn daoxiang while NPC budget is exhausted"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ActiveEventsResource>()
+                .elapsed_for_first("spawn", EVENT_DAOXIANG_WAVE),
+            Some(1),
+            "exhausted first tick should advance time but keep event retryable"
+        );
+
+        {
+            let mut registry = app.world_mut().resource_mut::<NpcRegistry>();
+            registry.max_npc_count = 10;
+            registry.resume_npc_count = 8;
+            registry.live_npc_count = 0;
+            registry.spawn_paused = false;
+        }
+
+        app.update();
+        let spawned_count = {
+            let world = app.world_mut();
+            query_npc_entities(world).len()
+        };
+        assert_eq!(
+            spawned_count,
+            daoxiang_count_for_intensity(0.2),
+            "daoxiang_wave should retry and spawn after budget recovers"
+        );
+        assert_eq!(
+            app.world().resource::<NpcRegistry>().live_npc_count,
+            spawned_count,
+            "retry spawn must be backed by NpcRegistry reservation"
+        );
     }
 
     #[test]
