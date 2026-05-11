@@ -135,8 +135,8 @@ pub fn emit_tsy_boss_health_payloads(
             .unwrap_or_else(build_inactive_tsy_boss_health_payload);
 
         let snapshot = TsyBossHealthSnapshot::from_payload(&payload);
-        active_clients.insert(client_entity, snapshot.clone());
         if state.last_sent.get(&client_entity) == Some(&snapshot) {
+            active_clients.insert(client_entity, snapshot);
             continue;
         }
         let bytes = match payload.to_json_bytes_checked() {
@@ -147,6 +147,7 @@ pub fn emit_tsy_boss_health_payloads(
             }
         };
         client.send_custom_payload(ident!("bong:tsy_boss_health"), &bytes);
+        active_clients.insert(client_entity, snapshot);
     }
     state.last_sent = active_clients;
 }

@@ -130,8 +130,8 @@ pub fn emit_npc_mood_payloads(
             );
             let snapshot = MoodSyncSnapshot::from_payload(&payload);
             let pair = (client_entity, npc_entity);
-            active_pairs.insert(pair, snapshot.clone());
             if state.last_sent.get(&pair) == Some(&snapshot) {
+                active_pairs.insert(pair, snapshot);
                 continue;
             }
 
@@ -146,6 +146,7 @@ pub fn emit_npc_mood_payloads(
                 }
             };
             client.send_custom_payload(ident!("bong:npc_mood"), &bytes);
+            active_pairs.insert(pair, snapshot);
         }
     }
 
