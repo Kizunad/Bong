@@ -51,7 +51,7 @@ class MovementHudPlannerTest {
 
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 1_100L);
 
-        assertTrue(commands.stream().anyMatch(c -> c.isRect() && c.color() == 0xFFFFD060));
+        assertTrue(commands.stream().anyMatch(c -> isMovementRect(c) && c.color() == 0xFFFFD060));
     }
 
     @Test
@@ -70,7 +70,7 @@ class MovementHudPlannerTest {
 
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 1_100L);
 
-        assertTrue(commands.stream().anyMatch(c -> c.isRect() && c.color() == 0xC0FF3030));
+        assertTrue(commands.stream().anyMatch(c -> isMovementRect(c) && c.color() == 0xC0FF3030));
     }
 
     @Test
@@ -98,9 +98,13 @@ class MovementHudPlannerTest {
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 1_100L);
 
         long dotRects = commands.stream()
-            .filter(c -> c.isRect() && c.width() == 6 && c.height() == 6)
+            .filter(c -> isMovementRect(c) && c.width() == 6 && c.height() == 6)
             .count();
         assertEquals(2, dotRects);
+    }
+
+    private static boolean isMovementRect(HudRenderCommand command) {
+        return command.layer() == HudRenderLayer.MOVEMENT_HUD && command.isRect();
     }
 
     private static MovementState state(
