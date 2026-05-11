@@ -85,6 +85,35 @@
           "narrator_voice": {
             "maxLength": 64,
             "type": "string"
+          },
+          "alignment": {
+            "anyOf": [
+              {
+                "const": "converge",
+                "type": "string"
+              },
+              {
+                "const": "neutral",
+                "type": "string"
+              },
+              {
+                "const": "diverge",
+                "type": "string"
+              }
+            ]
+          },
+          "cost_kind": {
+            "minLength": 1,
+            "maxLength": 64,
+            "type": "string"
+          },
+          "cost_magnitude": {
+            "type": "number"
+          },
+          "cost_flavor": {
+            "minLength": 1,
+            "maxLength": 500,
+            "type": "string"
           }
         }
       }

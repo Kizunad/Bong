@@ -18,6 +18,14 @@ export const InsightChoiceV1 = Type.Object(
     magnitude: Type.Number(),
     flavor_text: Type.String({ maxLength: 500 }),
     narrator_voice: Type.Optional(Type.String({ maxLength: 64 })),
+    alignment: Type.Optional(Type.Union([
+      Type.Literal("converge"),
+      Type.Literal("neutral"),
+      Type.Literal("diverge"),
+    ])),
+    cost_kind: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    cost_magnitude: Type.Optional(Type.Number()),
+    cost_flavor: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
   },
   { additionalProperties: false },
 );
