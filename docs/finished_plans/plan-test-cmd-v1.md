@@ -12,7 +12,7 @@
 | P3 | `/give <template_id> [count]` + `/clearinv [pack\|all\|naked]` | ✅ 2026-05-11 |
 | P4 | `/zone_qi set <name> <value>`（区域灵气浓度直写） | ✅ 2026-05-11 |
 | P5 | `/kill self` + `/revive self`（PlayerTerminated / PlayerRevived event 触发） | ✅ 2026-05-11 |
-| P6 | `/time advance <ticks>`（CultivationClock + shelflife + cooldown 同步推） | ✅ 2026-05-11 |
+| P6 | `/time advance <ticks>`（只推进 `CultivationClock.tick`；不推进 Bevy `Time`） | ✅ 2026-05-11 |
 | P7 | 测试饱和 + brigadier 命令树 fixture 更新（`registry_pin::COMMAND_NAMES`） | ✅ 2026-05-11 |
 | P8 | 文档同步（CLAUDE.md / 测试章节 / 命令清单） | ✅ 2026-05-11 |
 
@@ -401,7 +401,7 @@ zone_qi set <name:string> <value:double>
 - P5 `/kill self` + `/revive self`：`server/src/cmd/dev/kill.rs`、`server/src/cmd/dev/revive.rs`，接入 `PlayerTerminated` / `PlayerRevived`，并在 `server/src/combat/lifecycle.rs`、`server/src/cultivation/death_hooks.rs` 支持 `CultivationDeathCause::DevCommand`。
 - P6 `/time advance`：`server/src/cmd/dev/time.rs`，只推进 `CultivationClock.tick`，不推进 Bevy `Time` resource。
 - P7 registry pin：`server/src/cmd/registry_pin.rs`、`server/src/cmd/mod.rs`，同步 10 个根命令与 20 条 executable paths。
-- P8 文档：`CLAUDE.md` 增加 "Dev test commands"，`docs/local-test-env.md` 增加快速搭测试场景示例。
+- P8 文档：`CLAUDE.md` 增加 "Dev test commands"，`docs/local-test-env.md` 增加快速搭测试场景示例（P8 明确要求，且执行中经用户明确授权后提交；不是默认 `/consume-plan` docs 白名单写入）。
 
 ### 关键 commit
 
@@ -411,16 +411,17 @@ zone_qi set <name:string> <value:double>
 - `5809b1b7`（2026-05-11）`fix(dev-cmd): 采纳 review 补死亡原因与 pin 测试`
 - `dec87a94`（2026-05-11）`fix(dev-cmd): 收紧 review 指出的边界输入测试`
 - `61f1ac01`（2026-05-11）`fix(dev-cmd): 补 dev kill 终结持久化`
+- `767575ef`（2026-05-11）`fix(dev-cmd): 拒绝缺持久化上下文的 dev kill`
 
 ### 测试结果
 
 - `cd server && cargo fmt --check`：通过。
 - `cd server && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：`4247 passed; 0 failed; 0 ignored`。
+- `cd server && cargo test`：`4249 passed; 0 failed; 0 ignored`。
 - `cd server && cargo test cmd::dev`：`96 passed; 0 failed`。
 - `cd server && cargo test inventory::tests::clear_player_inventory`：`3 passed; 0 failed`。
 - `cd server && cargo test cmd::dev::technique`：`6 passed; 0 failed`（rebase 后默认功法数量漂移回归；review 后补 non-finite proficiency 回归）。
-- `cd server && cargo test cmd::dev::kill`：`2 passed; 0 failed`（review 后补 LifeRecord / terminated snapshot 持久化回归）。
+- `cd server && cargo test cmd::dev::kill`：`4 passed; 0 failed`（review 后补 LifeRecord / terminated snapshot 持久化回归；缺持久化上下文拒绝）。
 - `cd server && cargo test cmd::tests::command_registry && cargo test cmd::tests::command_tree_packet_contains_pinned_root_literals`：`4 passed; 0 failed`（确认可选 persistence resource 不破坏命令树 fixture）。
 
 ### 跨仓库核验
