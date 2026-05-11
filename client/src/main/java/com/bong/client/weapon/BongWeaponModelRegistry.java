@@ -30,6 +30,8 @@ public final class BongWeaponModelRegistry {
         "wooden_staff",
         "bone_dagger",
         "hand_wrap",
+        "bone_sword",
+        "lingmu_sword",
         "spirit_sword",
         "flying_sword_feixuan"
     );
@@ -69,6 +71,18 @@ public final class BongWeaponModelRegistry {
             "item/leather",
             "bong:models/item/hand_wrap/hand_wrap.obj"
         ));
+        entries.put("bone_sword", new Entry(
+            "bone_sword",
+            () -> Items.STONE_SWORD,
+            "item/stone_sword",
+            null
+        ));
+        entries.put("lingmu_sword", new Entry(
+            "lingmu_sword",
+            () -> Items.WOODEN_SWORD,
+            "item/wooden_sword",
+            null
+        ));
         entries.put("wooden_staff", new Entry(
             "wooden_staff",
             () -> Items.TOTEM_OF_UNDYING,
@@ -89,6 +103,7 @@ public final class BongWeaponModelRegistry {
         ));
         ENTRIES = Collections.unmodifiableMap(entries);
         VANILLA_MODEL_PATHS = ENTRIES.values().stream()
+            .filter(entry -> entry.bongObjModelPath() != null)
             .map(Entry::vanillaModelPath)
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }

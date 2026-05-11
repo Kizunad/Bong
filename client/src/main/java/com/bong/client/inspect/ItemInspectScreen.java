@@ -1,5 +1,6 @@
 package com.bong.client.inspect;
 
+import com.bong.client.artifact.ArtifactState;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryItem;
 import net.minecraft.client.MinecraftClient;
@@ -52,8 +53,10 @@ public final class ItemInspectScreen extends Screen {
         if (item.forgeQuality() != null || item.forgeAchievedTier() != null) {
             lines.add("法器: 灵核 T" + (item.forgeAchievedTier() == null ? "?" : item.forgeAchievedTier()));
             lines.add("铭文槽: " + (item.hasInscription() ? item.inscriptionId() : "空"));
-            lines.add("当前附着: " + (item.forgeSideEffects().isEmpty() ? "无" : String.join(", ", item.forgeSideEffects())));
+            List<String> visibleSideEffects = item.visibleForgeSideEffects();
+            lines.add("当前附着: " + (visibleSideEffects.isEmpty() ? "无" : String.join(", ", visibleSideEffects)));
         }
+        item.artifactState().ifPresent(artifact -> appendArtifactLines(lines, artifact));
         if (!item.alchemyLines().isEmpty()) {
             lines.addAll(item.alchemyLines());
         }
@@ -97,6 +100,14 @@ public final class ItemInspectScreen extends Screen {
             return String.valueOf(Math.max(1, item.forgeAchievedTier()));
         }
         return "-";
+    }
+
+    private static void appendArtifactLines(List<String> lines, ArtifactState artifact) {
+        lines.add("铭纹: " + artifact.grooveCount() + "槽 / 深度 "
+            + String.format(Locale.ROOT, "%.1f", artifact.averageDepth()) + " / "
+            + String.format(Locale.ROOT, "%.0f", artifact.depthCap()));
+        lines.add("共鸣提示: " + percent(artifact.resonancePreview()) + " / 器色 " + artifact.mainColorLabel());
+        lines.add("龟裂: " + artifact.crackLabel() + " / 过载 " + artifact.overloadCracks());
     }
 
     private static boolean isSpiritualMaterial(InventoryItem item) {

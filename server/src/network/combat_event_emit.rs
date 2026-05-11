@@ -161,6 +161,7 @@ mod tests {
             body_part: BodyPart::Chest,
             wound_kind: WoundKind::Cut,
             source: AttackSource::Melee,
+            debug_command: false,
             damage: 10.0,
             contam_delta: 0.0,
             description: String::new(),

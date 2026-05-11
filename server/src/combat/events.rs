@@ -119,6 +119,8 @@ pub struct CombatEvent {
     pub wound_kind: WoundKind,
     #[serde(default)]
     pub source: AttackSource,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub debug_command: bool,
     pub damage: f32,
     pub contam_delta: f64,
     pub description: String,
@@ -126,6 +128,10 @@ pub struct CombatEvent {
     pub defense_effectiveness: Option<f32>,
     pub defense_contam_reduced: Option<f64>,
     pub defense_wound_severity: Option<f32>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// plan-tsy-loot-v1 §6 — 死亡事件，附带攻击者链路（Option，因为环境死亡 / 修炼自爆没有"凶手"）。

@@ -14,6 +14,8 @@
 //! `ForgeSessions`（在炉进度）、`BlueprintRegistry`（图谱定义版本/校验）、
 //! `LearnedBlueprints`（玩家已学图谱）与 `WeaponForgeStation`（砧方块实体）。
 
+pub mod artifact_color;
+pub mod artifact_meridian;
 pub mod blueprint;
 pub mod events;
 pub mod fallback;
@@ -21,6 +23,7 @@ pub mod history;
 pub mod inventory_bridge;
 pub mod learned;
 pub mod processing_mode;
+pub mod resonance;
 pub mod session;
 pub mod skill_hook;
 pub mod station;
@@ -85,6 +88,9 @@ pub fn register(app: &mut App) {
     app.add_event::<StepAdvance>();
     app.add_event::<ForgeStartAccepted>();
     app.add_event::<ForgeOutcomeEvent>();
+    app.add_event::<artifact_meridian::ArtifactMeridianDepthChanged>();
+    app.add_event::<artifact_meridian::ArtifactMeridianCracked>();
+    app.add_event::<artifact_meridian::ArtifactTierEvolved>();
     app.add_event::<station::PlaceForgeStationRequest>();
     app.add_event::<processing_mode::StartForgeProcessingRequest>();
     app.add_event::<processing_mode::ForgeProcessingAccepted>();
@@ -103,6 +109,22 @@ pub fn register(app: &mut App) {
             inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
             crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
             processing_mode::forge_processing_mode_handler,
+        ),
+    );
+
+    app.add_systems(
+        Update,
+        (
+            artifact_meridian::artifact_meridian_deepen_on_use
+                .in_set(crate::combat::CombatSystemSet::Emit)
+                .after(crate::combat::resolve::resolve_attack_intents),
+            artifact_meridian::artifact_tier_evolved_narration
+                .in_set(crate::combat::CombatSystemSet::Emit)
+                .after(artifact_meridian::artifact_meridian_deepen_on_use),
+            artifact_meridian::artifact_color_evolve_tick
+                .in_set(crate::combat::CombatSystemSet::Emit),
+            artifact_meridian::artifact_meridian_maintenance_tick
+                .in_set(crate::combat::CombatSystemSet::Emit),
         ),
     );
 }
@@ -215,6 +237,7 @@ fn handle_start_forge_requests(
                     color: None,
                     side_effects: vec![],
                     achieved_tier: 0,
+                    consecration_qi_amount: 0.0,
                 });
                 continue;
             }
@@ -474,6 +497,7 @@ fn handle_step_advance(
                     (cultivation.realm, qi_color.main, forging_lv)
                 });
         // 对当前步骤做结算。
+        let mut consecration_qi_injected = None;
         let (step_flawed, step_waste) =
             match (&session.step_state, bp.steps.get(session.step_index)) {
                 (StepState::Tempering(state), Some(blueprint::StepSpec::Tempering { profile })) => {
@@ -510,6 +534,7 @@ fn handle_step_advance(
                     StepState::Consecration(state),
                     Some(blueprint::StepSpec::Consecration { profile }),
                 ) => {
+                    consecration_qi_injected = Some(state.qi_injected);
                     let result = caster_info
                         .map(|(realm, color, _)| resolve_consecration(profile, state, color, realm))
                         .unwrap_or(ConsecrationResult::Failed);
@@ -524,6 +549,9 @@ fn handle_step_advance(
                 }
                 _ => (false, false),
             };
+        if let Some(qi_injected) = consecration_qi_injected {
+            session.consecration_qi_injected = qi_injected;
+        }
         if step_waste {
             finalize_outcome(
                 session,
@@ -744,6 +772,11 @@ fn finalize_outcome(
         color,
         side_effects,
         achieved_tier,
+        consecration_qi_amount: if bp.has_step(StepKind::Consecration) {
+            session.consecration_qi_injected
+        } else {
+            0.0
+        },
     });
 }
 

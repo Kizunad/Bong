@@ -89,6 +89,38 @@ base_attack = 3.0
 quality_tier = 0
 durability_max = 300.0
 
+[[item]]
+id = "bone_sword"
+name = "骨剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 0.9
+rarity = "common"
+spirit_quality_initial = 0.8
+description = "异变兽肋骨磨制的短剑。骨质疏松但轻便，比凡铁更适合封存少量真元。"
+[item.weapon]
+kind = "sword"
+base_attack = 10.0
+quality_tier = 0
+durability_max = 150.0
+
+[[item]]
+id = "lingmu_sword"
+name = "灵木剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 0.7
+rarity = "common"
+spirit_quality_initial = 0.9
+description = "灵木削制的窄剑。木纹中隐约可见灵脉走向，是灵器的前身。"
+[item.weapon]
+kind = "sword"
+base_attack = 11.0
+quality_tier = 0
+durability_max = 180.0
+
 # ─── 灵器级 tier 1 ────────────────────────────────────────────────────────
 [[item]]
 id = "spirit_sword"

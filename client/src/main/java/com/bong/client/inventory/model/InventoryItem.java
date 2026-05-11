@@ -1,9 +1,11 @@
 package com.bong.client.inventory.model;
 
+import com.bong.client.artifact.ArtifactState;
 import com.bong.client.inventory.RarityVisuals;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class InventoryItem {
     private final long instanceId;
@@ -406,6 +408,16 @@ public final class InventoryItem {
 
     public List<String> forgeSideEffects() {
         return forgeSideEffects;
+    }
+
+    public List<String> visibleForgeSideEffects() {
+        return forgeSideEffects.stream()
+            .filter(sideEffect -> !ArtifactState.isArtifactTag(sideEffect))
+            .toList();
+    }
+
+    public Optional<ArtifactState> artifactState() {
+        return ArtifactState.fromSideEffects(forgeSideEffects);
     }
 
     public Integer forgeAchievedTier() {

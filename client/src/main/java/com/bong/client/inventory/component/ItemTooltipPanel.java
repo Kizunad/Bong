@@ -73,7 +73,7 @@ public class ItemTooltipPanel extends BaseComponent {
         if (item.forgeQuality() != null) {
             needed += lineBlock;
         }
-        if (!item.forgeSideEffects().isEmpty()) {
+        if (!item.visibleForgeSideEffects().isEmpty()) {
             needed += lineBlock;
         }
         if (!item.alchemyLines().isEmpty()) {
@@ -184,8 +184,8 @@ public class ItemTooltipPanel extends BaseComponent {
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
-        if (!hoveredItem.forgeSideEffects().isEmpty()) {
-            String sideEffects = "瑕疵 " + String.join("/", hoveredItem.forgeSideEffects());
+        if (!hoveredItem.visibleForgeSideEffects().isEmpty()) {
+            String sideEffects = "瑕疵 " + String.join("/", hoveredItem.visibleForgeSideEffects());
             context.drawTextWithShadow(textRenderer, Text.literal(sideEffects), cx, cy, 0xFFDDAA66);
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }

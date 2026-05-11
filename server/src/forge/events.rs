@@ -74,4 +74,6 @@ pub struct ForgeOutcomeEvent {
     pub color: Option<ColorKind>,
     pub side_effects: Vec<String>,
     pub achieved_tier: u8,
+    /// plan-qixiu-depth-v1：开光阶段累计注入真元，用于法器初始铭纹深度。
+    pub consecration_qi_amount: f64,
 }

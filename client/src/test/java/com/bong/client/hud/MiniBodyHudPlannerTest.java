@@ -141,4 +141,45 @@ class MiniBodyHudPlannerTest {
 
         assertEquals(base, withNonArmor);
     }
+
+    @Test
+    void artifactIndicatorRendersNearMiniBody() {
+        CombatHudState hud = CombatHudState.create(1.0f, 0.8f, 0.6f, DerivedAttrFlags.none());
+
+        var equipped = new EnumMap<EquipSlotType, InventoryItem>(EquipSlotType.class);
+        equipped.put(
+            EquipSlotType.MAIN_HAND,
+            InventoryItem.createFullWithForgeMeta(
+                7L,
+                "lingmu_sword",
+                "灵木剑",
+                1,
+                2,
+                0.7,
+                "common",
+                "",
+                1,
+                0.9,
+                1.0,
+                "",
+                "",
+                0,
+                0.9,
+                "solid",
+                List.of("artifact_state:{\"meridian\":{\"grooves\":[{\"depth\":80.0,\"depth_cap\":100.0,\"crack_severity\":0.0}],\"total_depth\":80.0,\"depth_cap\":100.0,\"quality_tier\":1,\"overload_cracks\":0},\"color\":{\"practice_log\":{\"weights\":{\"Solid\":10.0}},\"main\":\"Solid\",\"secondary\":null,\"is_chaotic\":false}}"),
+                1
+            )
+        );
+
+        int base = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).size();
+        List<HudRenderCommand> withArtifact = MiniBodyHudPlanner.buildCommands(hud, null, equipped, 0L, 1920, 1080);
+
+        assertEquals(base + 1, withArtifact.size());
+        assertTrue(withArtifact.stream().anyMatch(cmd ->
+            cmd.isRect()
+                && cmd.width() == MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE
+                && cmd.height() == MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE
+                && cmd.color() != MiniBodyHudPlanner.ARTIFACT_INDICATOR_COLOR_FALLBACK
+        ));
+    }
 }

@@ -35,6 +35,7 @@ use crate::combat::{
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem,
+    QiColor,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::tribulation::JueBiLawDisruption;
@@ -218,6 +219,7 @@ pub fn resolve_attack_intents(
         EventWriter<WeaponBroken>,
         Commands,
         Query<&mut PlayerInventory>,
+        Query<&QiColor>,
         Option<ResMut<DroppedLootRegistry>>,
         Option<ResMut<Events<SkillXpGain>>>,
         Option<ResMut<Events<ShedEvent>>>,
@@ -228,6 +230,7 @@ pub fn resolve_attack_intents(
         mut weapon_broken_events,
         mut commands,
         mut inventories,
+        qi_colors,
         mut dropped_loot_registry,
         mut skill_xp_events,
         mut shed_events,
@@ -397,7 +400,18 @@ pub fn resolve_attack_intents(
         // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
         let mut hit_tool: Option<crate::tools::ToolKind> = None;
         let weapon_multiplier: f32 = match weapons.get(intent.attacker) {
-            Ok(weapon) => weapon.damage_multiplier(),
+            Ok(weapon) => {
+                let resonance = inventories.get(intent.attacker).ok().and_then(|inventory| {
+                    crate::forge::artifact_meridian::artifact_resonance_for_inventory(
+                        inventory,
+                        weapon.instance_id,
+                        qi_colors.get(intent.attacker).ok(),
+                    )
+                });
+                resonance
+                    .map(|value| weapon.damage_multiplier_with_resonance(value))
+                    .unwrap_or_else(|| weapon.damage_multiplier())
+            }
             Err(_) => {
                 hit_tool = inventories
                     .get(intent.attacker)
@@ -933,6 +947,7 @@ pub fn resolve_attack_intents(
             body_part: hit_probe.body_part,
             wound_kind: intent.wound_kind,
             source: intent.source,
+            debug_command: intent.debug_command.is_some(),
             damage: wound_severity,
             contam_delta: emitted_contam_delta,
             description,

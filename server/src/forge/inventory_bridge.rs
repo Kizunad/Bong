@@ -2,6 +2,7 @@
 
 use valence::prelude::{EventReader, Query, Res, ResMut};
 
+use super::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use super::events::{ForgeBucket, ForgeOutcomeEvent};
 use crate::inventory::{
     bump_revision, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlacedItemState,
@@ -101,7 +102,7 @@ pub fn forge_outcome_to_inventory(
             }
         };
 
-        let instance = ItemInstance {
+        let mut instance = ItemInstance {
             instance_id,
             template_id: template.id.clone(),
             display_name: template.display_name.clone(),
@@ -123,6 +124,20 @@ pub fn forge_outcome_to_inventory(
             alchemy: None,
             lingering_owner_qi: None,
         };
+
+        if template.weapon_spec.is_some()
+            || crate::combat::carrier::CarrierKind::from_template_id(template_id).is_some()
+        {
+            let state = artifact_state_for_outcome(
+                template_id,
+                achieved_tier,
+                event.quality,
+                event.color,
+                event.consecration_qi_amount,
+                0,
+            );
+            write_artifact_state_to_item(&mut instance, &state);
+        }
 
         inventory.containers[main_pack_index]
             .items
@@ -239,6 +254,7 @@ mod tests {
             color: None,
             side_effects: Vec::new(),
             achieved_tier: 2,
+            consecration_qi_amount: 100.0,
         }
     }
 
@@ -283,7 +299,14 @@ mod tests {
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         let item = &inventory.containers[0].items[0].instance;
         assert_eq!(item.template_id, "iron_sword");
-        assert_eq!(item.forge_side_effects, vec!["brittle_edge".to_string()]);
+        assert!(item
+            .forge_side_effects
+            .iter()
+            .any(|tag| tag == "brittle_edge"));
+        assert!(item
+            .forge_side_effects
+            .iter()
+            .any(|tag| tag.starts_with(crate::forge::artifact_meridian::ARTIFACT_STATE_PREFIX)));
     }
 
     #[test]
@@ -345,6 +368,28 @@ mod tests {
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         let item = &inventory.containers[0].items[0].instance;
         assert_eq!(item.forge_color, Some(ColorKind::Sharp));
+    }
+
+    #[test]
+    fn forged_weapon_includes_artifact_state_tag() {
+        let mut templates = HashMap::new();
+        templates.insert("bone_sword".to_string(), weapon_template("bone_sword"));
+        let mut app = app_with_templates(templates);
+        let caster = app.world_mut().spawn(empty_inventory()).id();
+        let mut event = outcome(caster, ForgeBucket::Good, Some("bone_sword"));
+        event.color = Some(ColorKind::Solid);
+
+        app.world_mut().send_event(event);
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        let item = &inventory.containers[0].items[0].instance;
+        assert!(
+            item.forge_side_effects
+                .iter()
+                .any(|tag| tag.starts_with(crate::forge::artifact_meridian::ARTIFACT_STATE_PREFIX)),
+            "forged weapon should carry serialized artifact state"
+        );
     }
 
     #[test]
