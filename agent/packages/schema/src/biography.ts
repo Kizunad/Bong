@@ -223,6 +223,35 @@ const TradeCompleted = Type.Object(
   { additionalProperties: false },
 );
 
+const PvpEncounter = Type.Object(
+  {
+    PvpEncounter: Type.Object({
+      counterparty_id: Type.String({ minLength: 1, maxLength: 128 }),
+      outcome: Type.String({ minLength: 1, maxLength: 64 }),
+      zone: Type.String({ minLength: 1, maxLength: 128 }),
+      context: Type.String({ minLength: 1, maxLength: 64 }),
+      observed_style: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()])),
+      appearance_hint: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()])),
+      qi_color_hint: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()])),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+const PvpBetrayal = Type.Object(
+  {
+    PvpBetrayal: Type.Object({
+      betrayer_id: Type.String({ minLength: 1, maxLength: 128 }),
+      victim_id: Type.String({ minLength: 1, maxLength: 128 }),
+      scene: Type.String({ minLength: 1, maxLength: 64 }),
+      npc_witnessed: Type.Optional(Type.Boolean()),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 const FalseSkinShed = Type.Object(
   {
     FalseSkinShed: Type.Object({
@@ -270,6 +299,8 @@ export const BiographyEntryV1 = Type.Union([
   JueBiSurvived,
   JueBiKilled,
   TradeCompleted,
+  PvpEncounter,
+  PvpBetrayal,
   FalseSkinShed,
   SpawnTutorialCompleted,
 ]);
