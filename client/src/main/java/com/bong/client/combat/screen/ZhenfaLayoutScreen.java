@@ -21,14 +21,29 @@ public final class ZhenfaLayoutScreen extends Screen {
     private String trigger = "proximity"; // proximity | contact | timed
     private double qiInvest = 0.1;
     private final BlockPos targetPos;
+    private final ClientRequestProtocol.ZhenfaKind kind;
+    private final long itemInstanceId;
+    private final ClientRequestProtocol.ZhenfaTargetFace targetFace;
 
     public ZhenfaLayoutScreen() {
         this(new BlockPos(0, 64, 0));
     }
 
     public ZhenfaLayoutScreen(BlockPos targetPos) {
+        this(targetPos, ClientRequestProtocol.ZhenfaKind.TRAP, 0L, null);
+    }
+
+    public ZhenfaLayoutScreen(
+        BlockPos targetPos,
+        ClientRequestProtocol.ZhenfaKind kind,
+        long itemInstanceId,
+        ClientRequestProtocol.ZhenfaTargetFace targetFace
+    ) {
         super(Text.literal("\u9635\u6cd5\u5e03\u7f6e"));
         this.targetPos = targetPos == null ? new BlockPos(0, 64, 0) : targetPos;
+        this.kind = kind == null ? ClientRequestProtocol.ZhenfaKind.TRAP : kind;
+        this.itemInstanceId = itemInstanceId;
+        this.targetFace = targetFace;
     }
 
     @Override public boolean shouldPause() { return true; }
@@ -49,10 +64,12 @@ public final class ZhenfaLayoutScreen extends Screen {
             b -> {
                 ClientRequestSender.sendZhenfaPlace(
                     targetPos,
-                    ClientRequestProtocol.ZhenfaKind.TRAP,
+                    kind,
                     ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
                     qiInvest,
-                    trigger
+                    trigger,
+                    itemInstanceId > 0 ? itemInstanceId : null,
+                    targetFace
                 );
                 this.close();
             }

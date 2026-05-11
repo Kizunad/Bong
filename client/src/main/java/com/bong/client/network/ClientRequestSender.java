@@ -176,6 +176,26 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeZhenfaPlace(pos, kind, carrier, qiInvestRatio, trigger));
     }
 
+    public static void sendZhenfaPlace(
+        BlockPos pos,
+        ClientRequestProtocol.ZhenfaKind kind,
+        ClientRequestProtocol.ZhenfaCarrierKind carrier,
+        double qiInvestRatio,
+        String trigger,
+        Long itemInstanceId,
+        ClientRequestProtocol.ZhenfaTargetFace targetFace
+    ) {
+        dispatch(ClientRequestProtocol.encodeZhenfaPlace(
+            pos,
+            kind,
+            carrier,
+            qiInvestRatio,
+            trigger,
+            itemInstanceId,
+            targetFace
+        ));
+    }
+
     public static void sendZhenfaTrigger(Long instanceId) {
         dispatch(ClientRequestProtocol.encodeZhenfaTrigger(instanceId));
     }
