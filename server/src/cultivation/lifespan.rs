@@ -607,6 +607,8 @@ pub fn process_lifespan_extension_intents(
                         choice: "LifespanExtensionEnlightenment".to_string(),
                         magnitude: 0.0,
                         flavor: "悟道延寿已用，悟境天花永久下调。".to_string(),
+                        alignment: None,
+                        cost_kind: None,
                         taken_at: clock.tick,
                         realm_at_time,
                     });

@@ -8,8 +8,9 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
+use super::color::PracticeLog;
 use super::components::{Cultivation, MeridianSystem, QiColor};
-use super::insight::{InsightChoice, InsightEffect};
+use super::insight::{InsightAlignment, InsightChoice, InsightCost, InsightEffect};
 use super::life_record::{BiographyEntry, LifeRecord, TakenInsight};
 
 /// 玩家解锁的感知能力集合（InsightEffect::UnlockPerception 写入）。
@@ -29,8 +30,32 @@ pub struct InsightModifiers {
     /// 地师·阵法流：藏阵 / 破阵对立路径的累计等级。
     pub zhenfa_concealment: f64,
     pub zhenfa_disenchant: f64,
+    #[serde(default)]
+    pub opposite_color_efficiency_penalty: f64,
+    #[serde(default)]
+    pub qi_volatility_add: f64,
+    #[serde(default)]
+    pub shock_sensitivity_add: f64,
+    #[serde(default)]
+    pub main_color_efficiency_penalty: f64,
+    #[serde(default)]
+    pub reaction_window_penalty: f64,
+    #[serde(default = "default_one")]
+    pub breakthrough_failure_penalty_mul: f64,
+    #[serde(default)]
+    pub sense_exposure_add: f64,
+    #[serde(default)]
+    pub overload_fragility_add: f64,
+    #[serde(default = "default_one")]
+    pub meridian_heal_slowdown_mul: f64,
+    #[serde(default)]
+    pub chaotic_tolerance_loss: f64,
     /// 解锁的实践/流派
     pub practices: HashSet<String>,
+}
+
+fn default_one() -> f64 {
+    1.0
 }
 
 impl InsightModifiers {
@@ -43,6 +68,16 @@ impl InsightModifiers {
             chaotic_tolerance_add: 0.0,
             zhenfa_concealment: 0.0,
             zhenfa_disenchant: 0.0,
+            opposite_color_efficiency_penalty: 0.0,
+            qi_volatility_add: 0.0,
+            shock_sensitivity_add: 0.0,
+            main_color_efficiency_penalty: 0.0,
+            reaction_window_penalty: 0.0,
+            breakthrough_failure_penalty_mul: 1.0,
+            sense_exposure_add: 0.0,
+            overload_fragility_add: 0.0,
+            meridian_heal_slowdown_mul: 1.0,
+            chaotic_tolerance_loss: 0.0,
             practices: HashSet::new(),
         }
     }
@@ -53,7 +88,8 @@ pub fn apply_choice(
     choice: &InsightChoice,
     cultivation: &mut Cultivation,
     meridians: &mut MeridianSystem,
-    _qi_color: &mut QiColor,
+    qi_color: &mut QiColor,
+    practice_log: Option<&mut PracticeLog>,
     perceptions: &mut UnlockedPerceptions,
     modifiers: &mut InsightModifiers,
     life_record: &mut LifeRecord,
@@ -136,6 +172,8 @@ pub fn apply_choice(
                 .insert("lifespan_extension:enlightenment_used".into());
         }
     }
+    apply_tradeoff_cost(&choice.cost, modifiers);
+    apply_alignment_side_effects(choice, qi_color, practice_log, life_record, tick_now);
 
     // 写生平
     life_record.insights_taken.push(TakenInsight {
@@ -143,14 +181,68 @@ pub fn apply_choice(
         choice: format!("{:?}", choice.effect),
         magnitude: choice.effect.magnitude(),
         flavor: choice.flavor.clone(),
+        alignment: Some(choice.alignment.code().to_string()),
+        cost_kind: Some(choice.cost.kind().to_string()),
         taken_at: tick_now,
         realm_at_time: cultivation.realm,
     });
     life_record.biography.push(BiographyEntry::InsightTaken {
         trigger: trigger_id.to_string(),
         choice: format!("{:?}", choice.effect),
+        alignment: Some(choice.alignment.code().to_string()),
+        cost_kind: Some(choice.cost.kind().to_string()),
         tick: tick_now,
     });
+}
+
+fn apply_tradeoff_cost(cost: &InsightCost, modifiers: &mut InsightModifiers) {
+    match cost {
+        InsightCost::OppositeColorPenalty { penalty, .. } => {
+            modifiers.opposite_color_efficiency_penalty += penalty;
+        }
+        InsightCost::QiVolatility { add } => modifiers.qi_volatility_add += add,
+        InsightCost::ShockSensitivity { add } => modifiers.shock_sensitivity_add += add,
+        InsightCost::MainColorPenalty { penalty, .. } => {
+            modifiers.main_color_efficiency_penalty += penalty;
+        }
+        InsightCost::OverloadFragility { add } => modifiers.overload_fragility_add += add,
+        InsightCost::MeridianHealSlowdown { mul } => modifiers.meridian_heal_slowdown_mul *= mul,
+        InsightCost::BreakthroughFailurePenalty { mul } => {
+            modifiers.breakthrough_failure_penalty_mul *= mul;
+        }
+        InsightCost::SenseExposure { add } => modifiers.sense_exposure_add += add,
+        InsightCost::ReactionWindowShrink { mul } => {
+            modifiers.reaction_window_penalty += 1.0 - mul;
+        }
+        InsightCost::ChaoticToleranceLoss { sub } => modifiers.chaotic_tolerance_loss += sub,
+    }
+}
+
+fn apply_alignment_side_effects(
+    choice: &InsightChoice,
+    qi_color: &QiColor,
+    practice_log: Option<&mut PracticeLog>,
+    life_record: &mut LifeRecord,
+    tick_now: u64,
+) {
+    let Some(log) = practice_log else {
+        return;
+    };
+    match (choice.alignment, choice.target_color) {
+        (InsightAlignment::Diverge, Some(target)) => {
+            let amount = if qi_color.is_hunyuan { 5.0 } else { 2.0 };
+            log.add(target, amount);
+            life_record.push(BiographyEntry::InsightDiverge {
+                from_color: qi_color.main,
+                to_color: target,
+                tick: tick_now,
+            });
+        }
+        (InsightAlignment::Converge, Some(target)) if qi_color.is_chaotic => {
+            log.add(target, 2.0);
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -167,17 +259,17 @@ mod tests {
         let mut perc = UnlockedPerceptions::default();
         let mut mods = InsightModifiers::new();
         let mut lr = LifeRecord::default();
-        let choice = InsightChoice {
-            category: InsightCategory::Meridian,
-            effect: InsightEffect::MeridianRate {
+        let choice = InsightChoice::neutral(
+            InsightCategory::Meridian,
+            InsightEffect::MeridianRate {
                 id: MeridianId::Lung,
                 mul: 1.05,
             },
-            flavor: "x".into(),
-        };
+            "x",
+        );
         let before = ms.get(MeridianId::Lung).flow_rate;
         apply_choice(
-            &choice, &mut c, &mut ms, &mut qc, &mut perc, &mut mods, &mut lr, "t", 100,
+            &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 100,
         );
         assert!((ms.get(MeridianId::Lung).flow_rate - before * 1.05).abs() < 1e-9);
         assert_eq!(lr.insights_taken.len(), 1);
@@ -192,15 +284,15 @@ mod tests {
         let mut perc = UnlockedPerceptions::default();
         let mut mods = InsightModifiers::new();
         let mut lr = LifeRecord::default();
-        let choice = InsightChoice {
-            category: InsightCategory::Perception,
-            effect: InsightEffect::UnlockPerception {
+        let choice = InsightChoice::neutral(
+            crate::cultivation::insight::InsightCategory::Perception,
+            InsightEffect::UnlockPerception {
                 kind: "zone_qi_density".into(),
             },
-            flavor: "".into(),
-        };
+            "",
+        );
         apply_choice(
-            &choice, &mut c, &mut ms, &mut qc, &mut perc, &mut mods, &mut lr, "t", 0,
+            &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 0,
         );
         assert!(perc.set.contains("zone_qi_density"));
     }
@@ -213,13 +305,13 @@ mod tests {
         let mut perc = UnlockedPerceptions::default();
         let mut mods = InsightModifiers::new();
         let mut lr = LifeRecord::default();
-        let choice = InsightChoice {
-            category: InsightCategory::Qi,
-            effect: InsightEffect::QiRegenFactor { mul: 1.05 },
-            flavor: "".into(),
-        };
+        let choice = InsightChoice::neutral(
+            InsightCategory::Qi,
+            InsightEffect::QiRegenFactor { mul: 1.05 },
+            "",
+        );
         apply_choice(
-            &choice, &mut c, &mut ms, &mut qc, &mut perc, &mut mods, &mut lr, "t", 0,
+            &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 0,
         );
         assert!((mods.qi_regen_mul - 1.05).abs() < 1e-9);
     }
@@ -232,16 +324,68 @@ mod tests {
         let mut perc = UnlockedPerceptions::default();
         let mut mods = InsightModifiers::new();
         let mut lr = LifeRecord::default();
-        let choice = InsightChoice {
-            category: crate::cultivation::insight::InsightCategory::Perception,
-            effect: crate::cultivation::insight::InsightEffect::LifespanExtensionEnlightenment,
-            flavor: "".into(),
-        };
+        let choice = InsightChoice::neutral(
+            crate::cultivation::insight::InsightCategory::Perception,
+            crate::cultivation::insight::InsightEffect::LifespanExtensionEnlightenment,
+            "",
+        );
         apply_choice(
-            &choice, &mut c, &mut ms, &mut qc, &mut perc, &mut mods, &mut lr, "t", 0,
+            &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 0,
         );
         assert!(mods
             .practices
             .contains("lifespan_extension:enlightenment_used"));
+    }
+
+    #[test]
+    fn diverge_choice_injects_practice_log_and_cost() {
+        let mut c = Cultivation::default();
+        let mut ms = MeridianSystem::default();
+        let mut qc = QiColor {
+            main: crate::cultivation::components::ColorKind::Sharp,
+            ..QiColor::default()
+        };
+        let mut log = PracticeLog::default();
+        let mut perc = UnlockedPerceptions::default();
+        let mut mods = InsightModifiers::new();
+        let mut lr = LifeRecord::default();
+        let mut choice = InsightChoice::neutral(
+            InsightCategory::Coloring,
+            InsightEffect::ColorCapAdd {
+                color: crate::cultivation::components::ColorKind::Light,
+                add: 0.03,
+            },
+            "转向飘逸",
+        );
+        choice.alignment = InsightAlignment::Diverge;
+        choice.target_color = Some(crate::cultivation::components::ColorKind::Light);
+        choice.cost = InsightCost::MainColorPenalty {
+            color: crate::cultivation::components::ColorKind::Sharp,
+            penalty: 0.10,
+        };
+        choice.cost_magnitude = 0.10;
+        apply_choice(
+            &choice,
+            &mut c,
+            &mut ms,
+            &mut qc,
+            Some(&mut log),
+            &mut perc,
+            &mut mods,
+            &mut lr,
+            "t",
+            0,
+        );
+        assert_eq!(
+            log.weights
+                .get(&crate::cultivation::components::ColorKind::Light)
+                .copied(),
+            Some(2.0)
+        );
+        assert!((mods.main_color_efficiency_penalty - 0.10).abs() < 1e-9);
+        assert!(lr
+            .biography
+            .iter()
+            .any(|entry| matches!(entry, BiographyEntry::InsightDiverge { .. })));
     }
 }

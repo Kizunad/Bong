@@ -4531,6 +4531,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::ForgedCapacity { .. } => "forged_capacity",
         BiographyEntry::ColorShift { .. } => "color_shift",
         BiographyEntry::InsightTaken { .. } => "insight_taken",
+        BiographyEntry::InsightDiverge { .. } => "insight_diverge",
         BiographyEntry::Rebirth { .. } => "rebirth",
         BiographyEntry::CombatHit { .. } => "combat_hit",
         BiographyEntry::DuguPoisonInflicted { .. } => "dugu_poison_inflicted",
@@ -4618,6 +4619,7 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::ForgedCapacity { tick, .. }
         | BiographyEntry::ColorShift { tick, .. }
         | BiographyEntry::InsightTaken { tick, .. }
+        | BiographyEntry::InsightDiverge { tick, .. }
         | BiographyEntry::Rebirth { tick, .. }
         | BiographyEntry::CombatHit { tick, .. }
         | BiographyEntry::DuguPoisonInflicted { tick, .. }

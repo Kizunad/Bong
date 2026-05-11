@@ -13,6 +13,7 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
 use super::breakthrough::{BreakthroughError, BreakthroughOutcome};
+use super::color::PracticeLog;
 use super::components::{Cultivation, MeridianSystem, QiColor, Realm};
 use super::forging::{ForgeAxis, ForgeOutcome, P1_MAX_TIER};
 use super::insight::{
@@ -20,7 +21,7 @@ use super::insight::{
     InsightRequest,
 };
 use super::insight_apply::{apply_choice, InsightModifiers, UnlockedPerceptions};
-use super::insight_fallback::fallback_for;
+use super::insight_fallback::{fallback_for, fallback_for_context};
 use super::life_record::LifeRecord;
 use super::lifespan::{LifespanComponent, LifespanExtensionIntent};
 use super::tick::CultivationClock;
@@ -179,9 +180,21 @@ pub fn process_insight_request(
     mut commands: Commands,
     mut reqs: EventReader<InsightRequest>,
     mut offers: EventWriter<InsightOffer>,
+    players: Query<(&QiColor, &PracticeLog, &InsightQuota)>,
 ) {
     for req in reqs.read() {
-        let choices = fallback_for(&req.trigger_id);
+        let (fallback_color, fallback_log, fallback_quota);
+        let (qi_color, practice_log, quota) =
+            if let Ok((qi_color, practice_log, quota)) = players.get(req.entity) {
+                (qi_color, practice_log, quota)
+            } else {
+                fallback_color = QiColor::default();
+                fallback_log = PracticeLog::default();
+                fallback_quota = InsightQuota::default();
+                (&fallback_color, &fallback_log, &fallback_quota)
+            };
+        let choices =
+            fallback_for_context(&req.trigger_id, qi_color, practice_log, quota, req.realm);
         if choices.is_empty() {
             tracing::warn!(
                 "[bong][cultivation] no fallback for trigger {:?}; skipping offer",
@@ -216,6 +229,7 @@ pub fn apply_insight_chosen(
         &mut Cultivation,
         &mut MeridianSystem,
         &mut QiColor,
+        &mut PracticeLog,
         &mut UnlockedPerceptions,
         &mut InsightModifiers,
         &mut LifeRecord,
@@ -229,6 +243,7 @@ pub fn apply_insight_chosen(
             mut cultivation,
             mut meridians,
             mut qi_color,
+            mut practice_log,
             mut perc,
             mut mods,
             mut life,
@@ -289,6 +304,7 @@ pub fn apply_insight_chosen(
             &mut cultivation,
             &mut meridians,
             &mut qi_color,
+            Some(&mut practice_log),
             &mut perc,
             &mut mods,
             &mut life,
