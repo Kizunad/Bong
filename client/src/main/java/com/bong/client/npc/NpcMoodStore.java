@@ -1,7 +1,7 @@
 package com.bong.client.npc;
 
 import java.util.Collection;
-import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,10 +24,11 @@ public final class NpcMoodStore {
         return MOOD_BY_ENTITY_ID.get(entityId);
     }
 
+    /**
+     * Returns an unsorted shallow copy; render callers should impose ordering only when needed.
+     */
     public static Collection<NpcMoodState> snapshot() {
-        return MOOD_BY_ENTITY_ID.values().stream()
-            .sorted(Comparator.comparingInt(NpcMoodState::entityId))
-            .toList();
+        return new ArrayList<>(MOOD_BY_ENTITY_ID.values());
     }
 
     public static void clearAll() {

@@ -208,17 +208,14 @@ pub fn threat_level_for(
     let realm_delta = realm_rank(npc_realm) - realm_rank(player_realm);
     let realm_pressure = (realm_delta as f32 * 0.12).clamp(-0.24, 0.30);
     let archetype_floor = match archetype {
-        NpcArchetype::Daoxiang => 0.86,
+        NpcArchetype::Daoxiang => {
+            crate::npc::tsy_hostile::dao_chang_threat_level_for_realm(player_realm)
+        }
         NpcArchetype::Zhinian => 0.74,
         NpcArchetype::Fuya => 0.80,
         NpcArchetype::GuardianRelic => 0.58,
         NpcArchetype::Beast | NpcArchetype::Zombie => 0.48,
         _ => 0.0,
-    };
-    let archetype_floor = if archetype == NpcArchetype::Daoxiang {
-        crate::npc::tsy_hostile::dao_chang_threat_level_for_realm(player_realm)
-    } else {
-        archetype_floor
     };
     (reputation_pressure + realm_pressure)
         .max(archetype_floor)
