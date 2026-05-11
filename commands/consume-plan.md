@@ -1,11 +1,11 @@
 ---
-description: 开 worktree → 实施 docs/plan-<name>.md → PR → 查 merge conflict → 等 CI+codex+claude review → 自行判定 → 自动 merge → 清理。全自动；测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断采纳，仅严重设计问题/反复修不过才交人工。
+description: 开 worktree → 实施 docs/plan-<name>.md → PR → 查 merge conflict → 等 CI+codex review → 自行判定 → 自动 merge → 清理。全自动；测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断采纳，仅严重设计问题/反复修不过才交人工。
 argument-hint: <plan-name>
 ---
 
 # consume-plan $ARGUMENTS
 
-线性消费 `docs/plan-$ARGUMENTS.md`。**全自动到 merge**——PR 创建后**独立发 comment** mention `@codex` + `@claude` 触发 review（写在 PR body 里不生效，bot 只捕获 issue comment / review comment），step 6 等两边都给评论后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
+线性消费 `docs/plan-$ARGUMENTS.md`。**全自动到 merge**——PR 创建后**独立发 comment** mention `@codex` 触发 review（写在 PR body 里不生效，bot 只捕获 issue comment / review comment），step 6 等 Codex 给评论后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
 
 实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；review 意见自行判断采纳；merge conflict 先尝试 rebase（≤2 轮），拿不准交人工。不自动跳过失败 TODO。
 
@@ -140,13 +140,13 @@ PR_URL=$(gh pr create \
 <details>
 <summary>📜 自动 merge 协议（点击展开）</summary>
 
-本 PR 由 \`/consume-plan\` 全自动消费产出。CI 全绿 + 两位 reviewer 各至少 1 条评论后，主流程会**自行判定**意见严重性并自动 squash merge：
+本 PR 由 \`/consume-plan\` 全自动消费产出。CI 全绿 + Codex reviewer 至少 1 条评论后，主流程会**自行判定**意见严重性并自动 squash merge：
 
 - **严重**（bug / 安全 / 与 plan 目标矛盾 / 违反 \`CLAUDE.md\` / \`worldview.md\` / 命中 \`BLOCKING:\` 或 \`CHANGES_REQUESTED\`）→ 必修，CI 重绿后再 merge
 - **中等**（明确质量问题但不影响功能：错误处理缺失、命名误导、文档与代码不符）→ 自行决定修或不修，不修会在 PR 内回复理由
 - **轻微**（nit / style / 主观偏好 / "可以考虑"语气）→ 默认不采纳，merge 前统一回一条说明
 
-reviewer 缺席（30 min 内无反馈）会在最终输出标注；两边都缺席则停交人工不自动 merge。
+reviewer 缺席（30 min 内无反馈）会在最终输出标注；Codex 缺席则停交人工不自动 merge。
 
 </details>
 
@@ -156,11 +156,10 @@ EOF
 PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
 echo "PR: $PR_URL (#$PR_NUM)"
 
-# 独立 comment 触发 codex / claude review
+# 独立 comment 触发 codex review
 # —— 写在 PR body 里 bot 不会捕获，必须以独立 issue comment 形式 mention 才生效。
-# 分两条发，避免一条里互相干扰；正文极简，让 bot 抓 mention 即可。
+# 正文极简，让 bot 抓 mention 即可。
 gh pr comment "$PR_NUM" --body "@codex 请 review 这个 PR。"
-gh pr comment "$PR_NUM" --body "@claude 请 review 这个 PR。"
 ```
 
 **不加 `--auto`**——主流程要先看 review 评论再 merge（step 6 → 7 → 8 顺序），不能让 GitHub auto-merge 抢跑过 review 判定。
@@ -249,47 +248,44 @@ gh pr checks "$PR_NUM" --watch --fail-fast
    - 修复范围同 step 3：限于引起 CI 失败的 patch 本身
 4. 本地不能复现 / infra 问题 / 2 轮仍红 → **停**，输出失败 check 名 + 日志摘要 + PR URL + `$WT_ABS`，交人工
 
-## 6. 等 codex + claude review 评论
+## 6. 等 codex review 评论
 
-step 4 已通过独立 comment mention `@codex` 和 `@claude`，两位 bot 会被触发上来 review。轮询直到**两边都至少有 1 条评论或 review** 才放行——单边过审就 merge 等于丢了一半保险。
+step 4 已通过独立 comment mention `@codex`，review bot 会被触发上来 review。轮询直到**Codex 至少有 1 条评论或 review** 才放行——没拿到 Codex 反馈就不 merge。
 
 ```bash
 cd "$WT_ABS"
 
-TIMEOUT_SEC=1800   # 30 min（codex 平均 5–15 min，留 buffer；claude 通常更快）
+TIMEOUT_SEC=1800   # 30 min（codex 平均 5–15 min，留 buffer）
 INTERVAL=60
 START=$(date +%s)
 SEEN_CODEX=0
-SEEN_CLAUDE=0
 
 while :; do
   ELAPSED=$(( $(date +%s) - START ))
 
-  # 拉所有 review + issue 评论的 author，按小写匹配（账号名各种变体：codex / chatgpt-codex-connector / claude / claude-bot / anthropic-claude）
+  # 拉所有 review + issue 评论的 author，按小写匹配（账号名各种变体：codex / chatgpt-codex-connector）
   AUTHORS=$(gh pr view "$PR_NUM" --json comments,reviews \
     --jq '[.comments[].author.login, .reviews[].author.login] | .[]' 2>/dev/null \
     | tr '[:upper:]' '[:lower:]' | sort -u)
 
   echo "$AUTHORS" | grep -qE 'codex'  && SEEN_CODEX=1
-  echo "$AUTHORS" | grep -qE 'claude' && SEEN_CLAUDE=1
 
-  echo "[wait-review] elapsed=${ELAPSED}s codex=$SEEN_CODEX claude=$SEEN_CLAUDE"
+  echo "[wait-review] elapsed=${ELAPSED}s codex=$SEEN_CODEX"
 
-  [ "$SEEN_CODEX" = "1" ] && [ "$SEEN_CLAUDE" = "1" ] && break
+  [ "$SEEN_CODEX" = "1" ] && break
   [ "$ELAPSED" -ge "$TIMEOUT_SEC" ] && break
   sleep "$INTERVAL"
 done
 
-echo "[review-status] codex=$SEEN_CODEX claude=$SEEN_CLAUDE elapsed=${ELAPSED}s"
+echo "[review-status] codex=$SEEN_CODEX elapsed=${ELAPSED}s"
 ```
 
-放行条件分三种：
+放行条件分两种：
 
-- **两边都到** (`codex=1 claude=1`) → 拉评论原文进 step 7
-- **只到一边** → 仍进 step 7，但在 step 7.4 最终输出里写明"reviewer 缺席：codex/claude 未在 30 min 内反馈"，按已收到那边的评论判定
-- **两边都没到**（30 min 仍 0/0）→ **停，不 merge**。这种通常是 mention 没被 bot 捕获或 bot 离线，输出 PR URL + `$WT_ABS` 交人工
+- **Codex 到** (`codex=1`) → 拉评论原文进 step 7
+- **Codex 没到**（30 min 仍 0）→ **停，不 merge**。这种通常是 mention 没被 bot 捕获或 bot 离线，输出 PR URL + `$WT_ABS` 交人工
 
-拉评论原文（无论两边到没到，只要至少一边到就拉）：
+拉评论原文（Codex 到后拉）：
 
 ```bash
 cd "$WT_ABS"
