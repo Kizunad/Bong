@@ -128,7 +128,14 @@ class CombatHandlersTest {
              "can_reincarnate":true,"can_terminate":true,"stage":"tribulation",
              "death_number":4,"zone_kind":"negative",
              "lifespan":{"years_lived":78.5,"cap_by_realm":80,"remaining_years":1.5,
-                         "death_penalty_years":4,"tick_rate_multiplier":2.0,"is_wind_candle":true}}
+                         "death_penalty_years":4,"tick_rate_multiplier":2.0,"is_wind_candle":true},
+             "cinematic":{"v":1,"character_id":"offline:Azure","phase":"roll",
+                          "phase_tick":0,"phase_duration_ticks":80,
+                          "total_elapsed_ticks":80,"total_duration_ticks":380,
+                          "roll":{"probability":0.65,"threshold":0.65,"luck_value":0.42,"result":"pending"},
+                          "insight_text":["坍缩渊，概不赊欠。"],"is_final":false,
+                          "death_number":4,"zone_kind":"negative","tsy_death":true,
+                          "rebirth_weakened_ticks":3600,"skip_predeath":false}}
             """;
 
         new DeathScreenHandler().handle(parse(json));
@@ -142,6 +149,10 @@ class CombatHandlersTest {
         assertEquals(80, s.lifespanCapByRealm());
         assertEquals(2.0, s.lifespanTickRateMultiplier(), 1e-9);
         assertTrue(s.windCandle());
+        assertTrue(s.cinematic().active());
+        assertEquals("offline:Azure", s.cinematic().characterId());
+        assertEquals("negative", s.cinematic().zoneKind());
+        assertTrue(s.cinematic().tsyDeath());
     }
 
     @Test

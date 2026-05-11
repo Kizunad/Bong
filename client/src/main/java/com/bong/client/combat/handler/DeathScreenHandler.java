@@ -1,6 +1,8 @@
 package com.bong.client.combat.handler;
 
 import com.bong.client.combat.store.DeathStateStore;
+import com.bong.client.death.DeathCinematicPayloadParser;
+import com.bong.client.death.DeathCinematicState;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataHandler;
@@ -67,6 +69,8 @@ public final class DeathScreenHandler implements ServerDataHandler {
             windCandle = readBoolean(lifespan, "is_wind_candle", false);
         }
 
+        DeathCinematicState cinematic = DeathCinematicPayloadParser.parse(readObject(payload, "cinematic"));
+
         List<String> finals = new ArrayList<>();
         JsonElement wordsEl = payload.get("final_words");
         if (wordsEl != null && wordsEl.isJsonArray()) {
@@ -81,7 +85,8 @@ public final class DeathScreenHandler implements ServerDataHandler {
         DeathStateStore.replace(new DeathStateStore.State(
             true, cause, luck, finals, deadline, canRein, canTerm,
             stage, deathNumber, zoneKind, yearsLived, lifespanCapByRealm,
-            remainingYears, deathPenaltyYears, tickRateMultiplier, windCandle
+            remainingYears, deathPenaltyYears, tickRateMultiplier, windCandle,
+            cinematic
         ));
         return ServerDataDispatch.handled(
             envelope.type(),
