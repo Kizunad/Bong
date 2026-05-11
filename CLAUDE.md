@@ -41,6 +41,24 @@ bash scripts/dev-reload.sh --skip-validate         # 跳过 raster 校验
 bash scripts/smoke-test.sh
 ```
 
+## Dev test commands
+
+这些命令只用于本地 / dev 测试场景快速搭建，全部挂在 server brigadier 命令树下；client 通过原版命令树自动获得 Tab 补全，agent 不参与。
+
+> **dev-only**：这些入口会显式绕过 worldview 自然修炼规则和 qi_physics ledger 守恒，不允许复用到生产 gameplay 路径。
+
+| 命令 | 用途 |
+|------|------|
+| `/meridian open <id>` / `/meridian open_all` / `/meridian list` | 强制打通经脉或查看经脉状态 |
+| `/realm set <id>` | 直写玩家境界 |
+| `/qi set <value>` / `/qi max <value>` | 直写真元当前值或上限 |
+| `/technique list` / `/technique add <id>` / `/technique remove <id>` / `/technique proficiency <id> <value>` / `/technique active <id> <bool>` / `/technique reset_all` | 查看、增删、调熟练度或重置功法 |
+| `/give <template_id> [count]` | 给予物品 |
+| `/clearinv [pack\|all\|naked]` | 清背包 / hotbar / 装备槽 |
+| `/zone_qi set <name> <value>` | 直写区域灵气浓度 |
+| `/kill self` / `/revive self` | 触发玩家死亡 / 复活事件链路 |
+| `/time advance <ticks>` | 快进 `CultivationClock` |
+
 ## Key dependencies & versions
 
 - Valence: git rev `2b705351`（pinned in Cargo.toml）
