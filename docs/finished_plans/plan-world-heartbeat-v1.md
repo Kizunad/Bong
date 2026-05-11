@@ -6,12 +6,12 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | WorldHeartbeat 调度器（server Resource，周期评估 + 事件投放） | ⬜ |
-| P1 | 事件链式反应（伪灵脉→聚集→兽潮→域崩→道伥外溢的因果链） | ⬜ |
-| P2 | 环境预兆系统（事件前 N 分钟的可感知信号：天象/生态/NPC 行为） | ⬜ |
-| P3 | 季节×事件耦合（夏冬二季显著改变事件类型/频率/强度） | ⬜ |
-| P4 | 天道 agent 协调（agent 可 override/加速/抑制心跳，但心跳不依赖 agent） | ⬜ |
-| P5 | 饱和测试（48 小时无人值守世界仿真 + 事件链完整性 + 资源守恒） | ⬜ |
+| P0 | WorldHeartbeat 调度器（server Resource，周期评估 + 事件投放） | ✅ 2026-05-11 |
+| P1 | 事件链式反应（伪灵脉→聚集→兽潮→域崩→道伥外溢的因果链） | ✅ 2026-05-11 |
+| P2 | 环境预兆系统（事件前 N 分钟的可感知信号：天象/生态/NPC 行为） | ✅ 2026-05-11 |
+| P3 | 季节×事件耦合（夏冬二季显著改变事件类型/频率/强度） | ✅ 2026-05-11 |
+| P4 | 天道 agent 协调（agent 可 override/加速/抑制心跳，但心跳不依赖 agent） | ✅ 2026-05-11 |
+| P5 | 饱和测试（48 小时无人值守世界仿真 + 事件链完整性 + 资源守恒） | ✅ 2026-05-11 |
 
 ---
 
@@ -467,21 +467,22 @@ WorldHeartbeat（自主）    天道 Agent（LLM 决策）
   - P4：`heartbeat_override` 扩展到 `AgentCommandV1`、Rust `CommandType`、Redis validator 与 `execute_agent_commands()`，支持 `suppress` / `accelerate` / `force`。
   - P5：`world::heartbeat::tests::*` 覆盖季节表、override、伪灵脉运行时 zone、链式兽潮、48h 无人值守仿真；schema / client planner 侧补正反契约测试。
 - **关键 commit**：
-  - `f5e38ced4`（2026-05-11）`feat(world): 接入自主世界心跳调度`
-  - `090ecea37`（2026-05-11）`feat(schema): 增加 heartbeat_override 指令契约`
-  - `cb8c60583`（2026-05-11）`feat(client): 渲染世界事件预兆`
-  - `f37df60cc`（2026-05-11）`Merge remote-tracking branch 'origin/main' into auto/plan-world-heartbeat-v1`
-  - `a35bf15dc`（2026-05-11）`fix(world-heartbeat): 收敛 review 反馈`
+  - `0ac3854eb`（2026-05-11）`feat(world): 接入自主世界心跳调度`
+  - `2339409ad`（2026-05-11）`feat(schema): 增加 heartbeat_override 指令契约`
+  - `a631f4961`（2026-05-11）`feat(client): 渲染世界事件预兆`
+  - `4f5ff725d`（2026-05-11）`fix(world-heartbeat): 收敛 review 反馈`
+  - `d65b822f7`（2026-05-11）`fix(world-heartbeat): 收敛二轮 review 反馈`
 - **测试结果**：
   - `CARGO_BUILD_JOBS=1 cargo fmt --check`：通过。
   - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings`：通过。合并 `origin/main` 后普通 clippy 曾被 SIGKILL，低内存参数重跑无诊断通过。
-  - `CARGO_BUILD_JOBS=1 cargo test`：4292 passed / 0 failed。
-  - `CARGO_BUILD_JOBS=1 cargo test world::heartbeat`：8 passed / 0 failed（补齐 heartbeat override、suppression、intensity override 回归）。
+  - `CARGO_BUILD_JOBS=1 cargo test`：4307 passed / 0 failed。
+  - `CARGO_BUILD_JOBS=1 cargo test world::heartbeat`：10 passed / 0 failed（补齐 heartbeat override、suppression、intensity override、forced omen replace 与真实 Bevy App 路径回归）。
   - `CARGO_BUILD_JOBS=1 cargo test heartbeat_override`：4 passed / 0 failed（覆盖 command executor 的 heartbeat_override 执行链路）。
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build`：BUILD SUCCESSFUL。
   - `npm run build`（agent root）：通过。
-  - `cd agent/packages/schema && npm test`：18 files / 367 tests passed。
-  - `cd agent/packages/tiandao && npm test`：51 files / 352 tests passed。
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test --tests com.bong.client.omen.OmenStateStoreTest`：BUILD SUCCESSFUL（二轮 review 后定向回归）。
+  - `cd agent/packages/schema && npm test`：19 files / 369 tests passed。
+  - `cd agent/packages/tiandao && npm test`：52 files / 354 tests passed。
 - **跨仓库核验**：
   - server：`WorldHeartbeat`、`WorldEventOmen`、`EventChainTrigger`、`heartbeat_tick()`、`chain_reaction_tick()`、`CommandType::HeartbeatOverride`。
   - agent/schema：`CommandType` 包含 `heartbeat_override`，`validateAgentCommandV1Contract()` 校验 action / event_type / duration / intensity。
