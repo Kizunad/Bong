@@ -7,15 +7,27 @@ use valence::prelude::{bevy_ecs, Entity, Resource};
 use crate::cultivation::components::Realm;
 
 pub const AUDIO_DEDUP_WINDOW_TICKS: u64 = 2;
+const AUDIO_DEDUP_GC_TICKS: u64 = 600;
 
 #[derive(Debug, Default, Resource)]
 pub struct AudioImplementationDedup {
-    last_emit_tick: HashMap<(Entity, &'static str), u64>,
+    logical_tick: u64,
+    last_emit_tick: HashMap<(Entity, String), u64>,
 }
 
 impl AudioImplementationDedup {
-    pub fn should_emit(&mut self, entity: Entity, recipe_id: &'static str, tick: u64) -> bool {
-        let key = (entity, recipe_id);
+    pub fn advance_tick(&mut self) -> u64 {
+        self.logical_tick = self.logical_tick.saturating_add(1);
+        self.logical_tick
+    }
+
+    pub fn current_tick(&self) -> u64 {
+        self.logical_tick
+    }
+
+    pub fn should_emit(&mut self, entity: Entity, recipe_id: &str, tick: u64) -> bool {
+        self.gc(tick);
+        let key = (entity, recipe_id.to_string());
         if self
             .last_emit_tick
             .get(&key)
@@ -25,6 +37,16 @@ impl AudioImplementationDedup {
         }
         self.last_emit_tick.insert(key, tick);
         true
+    }
+
+    fn gc(&mut self, tick: u64) {
+        self.last_emit_tick
+            .retain(|_, last| tick.saturating_sub(*last) <= AUDIO_DEDUP_GC_TICKS);
+    }
+
+    #[cfg(test)]
+    fn tracked_len(&self) -> usize {
+        self.last_emit_tick.len()
     }
 }
 
@@ -158,5 +180,19 @@ mod tests {
         assert!(!dedup.should_emit(entity, "hit_light", 11));
         assert!(dedup.should_emit(entity, "hit_light", 12));
         assert!(dedup.should_emit(Entity::from_raw(2), "hit_light", 11));
+    }
+
+    #[test]
+    fn dedup_gc_drops_stale_entries() {
+        let mut dedup = AudioImplementationDedup::default();
+        let first = Entity::from_raw(1);
+        let second = Entity::from_raw(2);
+
+        assert!(dedup.should_emit(first, "hit_light", 10));
+        assert_eq!(dedup.tracked_len(), 1);
+        assert!(dedup.should_emit(second, "hit_light", 700));
+        assert_eq!(dedup.tracked_len(), 1);
+        assert!(dedup.should_emit(first, "hit_light", 700));
+        assert_eq!(dedup.tracked_len(), 2);
     }
 }

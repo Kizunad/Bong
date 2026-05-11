@@ -72,10 +72,9 @@ public final class NpcFootstepAudioController {
             double x = entity.getX();
             double y = entity.getY();
             double z = entity.getZ();
-            if (previous != null
-                && tick < previous.nextTick
-                || previous != null && horizontalDistanceSq(previous, x, z) < MIN_MOVE_SQ) {
-                STATES.put(metadata.entityId(), new StepState(x, y, z, previous == null ? tick + STEP_INTERVAL_TICKS : previous.nextTick));
+            StepDecision decision = planStep(previous, tick, x, y, z);
+            STATES.put(metadata.entityId(), decision.next());
+            if (!decision.play()) {
                 continue;
             }
             BlockPos blockPos = entity.getBlockPos().down();
@@ -90,8 +89,17 @@ public final class NpcFootstepAudioController {
                 0.0f,
                 recipe
             ));
-            STATES.put(metadata.entityId(), new StepState(x, y, z, tick + STEP_INTERVAL_TICKS));
         }
+    }
+
+    static StepDecision planStep(StepState previous, long tick, double x, double y, double z) {
+        if (previous == null) {
+            return new StepDecision(false, new StepState(x, y, z, tick + STEP_INTERVAL_TICKS));
+        }
+        if (tick < previous.nextTick || horizontalDistanceSq(previous, x, z) < MIN_MOVE_SQ) {
+            return new StepDecision(false, new StepState(x, y, z, previous.nextTick));
+        }
+        return new StepDecision(true, new StepState(x, y, z, tick + STEP_INTERVAL_TICKS));
     }
 
     private static String materialFor(BlockState state) {
@@ -113,6 +121,9 @@ public final class NpcFootstepAudioController {
         return dx * dx + dz * dz;
     }
 
-    private record StepState(double x, double y, double z, long nextTick) {
+    record StepDecision(boolean play, StepState next) {
+    }
+
+    record StepState(double x, double y, double z, long nextTick) {
     }
 }

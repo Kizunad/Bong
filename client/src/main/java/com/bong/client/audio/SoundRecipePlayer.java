@@ -1,5 +1,6 @@
 package com.bong.client.audio;
 
+import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.hud.HudImmersionMode;
@@ -22,6 +23,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     private static final int MAX_ONE_SHOTS_PER_TICK = 3;
     private static final int PREEMPT_PRIORITY = 85;
     private static final int DUCK_TRANSITION_TICKS = 40;
+    private static final int UI_RESTORE_ON_DAMAGE_TICKS = 100;
     private static final float COMBAT_AMBIENT_VOLUME = 0.3f;
     private static final float AUDIO_PITCH_MIN = 0.1f;
     private static final float AUDIO_PITCH_MAX = 2.0f;
@@ -36,6 +38,8 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     private final Map<Long, ActiveLoop> loops = new LinkedHashMap<>();
     private final List<AudioEventPayload.PlaySoundRecipe> pending = new ArrayList<>();
     private float ambientVolumeFactor = 1.0f;
+    private boolean lastCombatActive;
+    private float lastCombatHpPercent = Float.NaN;
     private long tick;
 
     public SoundRecipePlayer(SoundSink sink, Predicate<String> flagProvider) {
@@ -90,9 +94,11 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public void tick() {
         tick++;
+        CombatHudState combat = CombatHudStateStore.snapshot();
         mixer.setImmersiveMode(HudImmersionMode.immersiveActive());
+        restoreUiOnCombatEdge(combat);
         mixer.tick();
-        updateAmbientDucking();
+        updateAmbientDucking(combat);
         Iterator<Map.Entry<Long, ActiveLoop>> iterator = loops.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<Long, ActiveLoop> entry = iterator.next();
@@ -219,8 +225,22 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         };
     }
 
-    private void updateAmbientDucking() {
-        float target = CombatHudStateStore.snapshot().active() ? COMBAT_AMBIENT_VOLUME : 1.0f;
+    private void restoreUiOnCombatEdge(CombatHudState combat) {
+        boolean active = combat.active();
+        float hpPercent = combat.hpPercent();
+        boolean hpDropped = active
+            && lastCombatActive
+            && Float.isFinite(lastCombatHpPercent)
+            && hpPercent < lastCombatHpPercent;
+        if (active && (!lastCombatActive || hpDropped)) {
+            mixer.restoreUiForTicks(UI_RESTORE_ON_DAMAGE_TICKS);
+        }
+        lastCombatActive = active;
+        lastCombatHpPercent = hpPercent;
+    }
+
+    private void updateAmbientDucking(CombatHudState combat) {
+        float target = combat.active() ? COMBAT_AMBIENT_VOLUME : 1.0f;
         float step = (1.0f - COMBAT_AMBIENT_VOLUME) / DUCK_TRANSITION_TICKS;
         if (ambientVolumeFactor < target) {
             ambientVolumeFactor = Math.min(target, ambientVolumeFactor + step);

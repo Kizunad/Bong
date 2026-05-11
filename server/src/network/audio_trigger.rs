@@ -2,8 +2,10 @@
 
 use std::collections::HashMap;
 
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    Client, DVec3, Entity, EventReader, EventWriter, Position, Query, ResMut, Resource, With,
+    bevy_ecs, Client, DVec3, Entity, EventReader, EventWriter, Position, Query, Res, ResMut,
+    Resource, With,
 };
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome, StartAlchemyRequest};
@@ -11,6 +13,7 @@ use crate::audio::implementation::{
     breakthrough_recipe, combat_hit_recipe, forge_hammer_recipe, parry_recipe, school_hit_recipe,
     AudioImplementationDedup,
 };
+use crate::audio::SoundRecipeRegistry;
 use crate::botany::components::HarvestTerminalEvent;
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::{Lifecycle, Wounds};
@@ -39,7 +42,6 @@ use crate::network::audio_event_emit::{
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
-use crate::schema::audio::AudioAttenuation;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{SocialPactEvent, SocialRenownDeltaEvent};
 
@@ -65,8 +67,9 @@ type PlayerAudioStateFilter = With<Client>;
 pub fn emit_player_state_audio_triggers(
     mut state: ResMut<AudioTriggerState>,
     players: Query<PlayerAudioStateItem<'_>, PlayerAudioStateFilter>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for (entity, position, wounds, cultivation) in &players {
         if let Some(wounds) = wounds {
             let hp_ratio = wounds.health_current / wounds.health_max.max(1.0);
@@ -108,9 +111,9 @@ pub fn emit_combat_audio_triggers(
     mut combat_events: EventReader<CombatEvent>,
     positions: Query<&Position>,
     npc_markers: Query<(), With<NpcMarker>>,
-    mut dedup: Option<ResMut<AudioImplementationDedup>>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in combat_events.read() {
         let Ok(position) = positions.get(event.target) else {
             continue;
@@ -136,11 +139,6 @@ pub fn emit_combat_audio_triggers(
         } else {
             continue;
         };
-        if dedup.as_deref_mut().is_some_and(|dedup| {
-            !dedup.should_emit(event.target, recipe_id, event.resolved_at_tick)
-        }) {
-            continue;
-        }
         emit_play(&mut audio, recipe_id, event.target, origin, None, 1.0, 0.0);
         if event.damage >= 8.0 {
             emit_play(
@@ -160,8 +158,9 @@ pub fn emit_npc_death_audio_triggers(
     mut death_events: EventReader<DeathEvent>,
     positions: Query<&Position>,
     npc_markers: Query<(), With<NpcMarker>>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in death_events.read() {
         if npc_markers.get(event.target).is_err() {
             continue;
@@ -198,8 +197,9 @@ pub fn emit_cultivation_audio_triggers(
     mut regressions: EventReader<RealmRegressed>,
     mut overloads: EventReader<MeridianOverloadEvent>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in meridian_opened.read() {
         emit_play(
             &mut audio,
@@ -262,8 +262,9 @@ pub fn emit_tribulation_audio_triggers(
     mut failures: EventReader<TribulationFailed>,
     positions: Query<&Position>,
     states: Query<&TribulationState>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in announces.read() {
         let Ok(position) = positions.get(event.entity) else {
             continue;
@@ -341,8 +342,9 @@ pub fn emit_alchemy_audio_triggers(
     mut starts: EventReader<StartAlchemyRequest>,
     mut outcomes: EventReader<AlchemyOutcomeEvent>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in starts.read() {
         let origin = positions
             .get(event.furnace)
@@ -387,8 +389,9 @@ pub fn emit_forge_audio_triggers(
     mut outcomes: EventReader<ForgeOutcomeEvent>,
     sessions: Option<valence::prelude::Res<ForgeSessions>>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in starts.read() {
         if let Ok(position) = positions.get(event.station) {
             emit_play(
@@ -454,8 +457,9 @@ pub fn emit_forge_audio_triggers(
 pub fn emit_botany_audio_triggers(
     mut terminal: EventReader<HarvestTerminalEvent>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in terminal.read() {
         if !event.completed || event.interrupted {
             continue;
@@ -483,8 +487,9 @@ pub fn emit_lingtian_audio_triggers(
     mut harvests: EventReader<HarvestCompleted>,
     mut replenishes: EventReader<ReplenishCompleted>,
     mut drains: EventReader<DrainQiCompleted>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in tills.read() {
         emit_play_at_block(&mut audio, "lingtian_till", event.player, event.pos, 1.0);
     }
@@ -517,8 +522,9 @@ pub fn emit_lingtian_audio_triggers(
 pub fn emit_woliu_v2_audio_triggers(
     mut casts: EventReader<VortexCastEvent>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in casts.read() {
         let origin = positions
             .get(event.caster)
@@ -539,8 +545,9 @@ pub fn emit_woliu_v2_audio_triggers(
 pub fn emit_baomai_v3_audio_triggers(
     mut events: EventReader<BaomaiSkillEvent>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in events.read() {
         let Ok(position) = positions.get(event.caster) else {
             continue;
@@ -573,8 +580,9 @@ pub fn emit_tuike_v2_audio_triggers(
     mut shed_events: EventReader<FalseSkinSheddedEvent>,
     mut transfer_events: EventReader<ContamTransferredEvent>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in don_events.read() {
         let origin = positions
             .get(event.caster)
@@ -635,8 +643,9 @@ pub fn emit_skill_audio_triggers(
     mut lv_up: EventReader<SkillLvUp>,
     mut scrolls: EventReader<SkillScrollUsed>,
     positions: Query<&Position>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in xp.read() {
         if !matches!(
             &event.source,
@@ -700,8 +709,9 @@ pub fn emit_social_audio_triggers(
     mut renown: EventReader<SocialRenownDeltaEvent>,
     mut duo_she_warnings: EventReader<DuoSheWarningEvent>,
     targets: Query<(Entity, &Position, Option<&LifeRecord>, Option<&Lifecycle>)>,
-    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    mut audio: AudioEmitWriter,
 ) {
+    let mut audio = audio.context();
     for event in pacts.read() {
         if event.broken {
             continue;
@@ -742,27 +752,81 @@ pub fn emit_social_audio_triggers(
     }
 }
 
-pub fn emit_player_local_audio(
-    audio: &mut EventWriter<PlaySoundRecipeRequest>,
-    recipe_id: impl Into<String>,
-    entity: Entity,
-    origin: DVec3,
-    flag: Option<String>,
-    volume_mul: f32,
-) {
-    audio.send(PlaySoundRecipeRequest {
-        recipe_id: recipe_id.into(),
-        instance_id: 0,
-        pos: Some(block_pos(origin)),
-        flag,
-        volume_mul,
-        pitch_shift: 0.0,
-        recipient: AudioRecipient::Single(entity),
-    });
+pub fn tick_audio_dedup_clock(dedup: Option<ResMut<AudioImplementationDedup>>) {
+    if let Some(mut dedup) = dedup {
+        dedup.advance_tick();
+    }
 }
 
-pub fn emit_recipe_audio(
-    audio: &mut EventWriter<PlaySoundRecipeRequest>,
+#[derive(SystemParam)]
+pub(crate) struct AudioEmitWriter<'w> {
+    audio: EventWriter<'w, PlaySoundRecipeRequest>,
+    registry: Option<Res<'w, SoundRecipeRegistry>>,
+    dedup: Option<ResMut<'w, AudioImplementationDedup>>,
+}
+
+impl<'w> AudioEmitWriter<'w> {
+    pub(crate) fn context(&mut self) -> AudioEmitContext<'_, 'w> {
+        AudioEmitContext::new(
+            &mut self.audio,
+            self.registry.as_deref(),
+            self.dedup.as_deref_mut(),
+        )
+    }
+}
+
+pub(crate) struct AudioEmitContext<'a, 'w> {
+    audio: &'a mut EventWriter<'w, PlaySoundRecipeRequest>,
+    registry: Option<&'a SoundRecipeRegistry>,
+    dedup: Option<&'a mut AudioImplementationDedup>,
+    tick: u64,
+}
+
+impl<'a, 'w> AudioEmitContext<'a, 'w> {
+    pub(crate) fn new(
+        audio: &'a mut EventWriter<'w, PlaySoundRecipeRequest>,
+        registry: Option<&'a SoundRecipeRegistry>,
+        dedup: Option<&'a mut AudioImplementationDedup>,
+    ) -> Self {
+        let tick = dedup.as_ref().map_or(0, |dedup| dedup.current_tick());
+        Self {
+            audio,
+            registry,
+            dedup,
+            tick,
+        }
+    }
+
+    fn should_emit(&mut self, entity: Entity, recipe_id: &str) -> bool {
+        match self.dedup.as_deref_mut() {
+            Some(dedup) => dedup.should_emit(entity, recipe_id, self.tick),
+            None => true,
+        }
+    }
+
+    fn recipient(&self, recipe_id: &str, entity: Entity, origin: DVec3) -> AudioRecipient {
+        let Some(registry) = self.registry else {
+            tracing::warn!(
+                "[bong][audio] recipe registry missing while routing recipe `{recipe_id}`"
+            );
+            return AudioRecipient::Single(entity);
+        };
+        let Some(recipe) = registry.get(recipe_id) else {
+            tracing::warn!(
+                "[bong][audio] unknown sound recipe `{recipe_id}` while routing trigger"
+            );
+            return AudioRecipient::Single(entity);
+        };
+        recipient_for_attenuation(recipe.attenuation, entity, origin)
+    }
+
+    fn send(&mut self, request: PlaySoundRecipeRequest) {
+        self.audio.send(request);
+    }
+}
+
+pub(crate) fn emit_recipe_audio_with_context(
+    audio: &mut AudioEmitContext<'_, '_>,
     recipe_id: impl Into<String>,
     entity: Entity,
     origin: DVec3,
@@ -773,7 +837,7 @@ pub fn emit_recipe_audio(
 }
 
 fn emit_play(
-    audio: &mut EventWriter<PlaySoundRecipeRequest>,
+    audio: &mut AudioEmitContext<'_, '_>,
     recipe_id: impl Into<String>,
     entity: Entity,
     origin: DVec3,
@@ -782,7 +846,10 @@ fn emit_play(
     pitch_shift: f32,
 ) {
     let recipe_id = recipe_id.into();
-    let attenuation = attenuation_for_recipe(&recipe_id);
+    if !audio.should_emit(entity, &recipe_id) {
+        return;
+    }
+    let recipient = audio.recipient(&recipe_id, entity, origin);
     audio.send(PlaySoundRecipeRequest {
         recipe_id,
         instance_id: 0,
@@ -790,12 +857,12 @@ fn emit_play(
         flag,
         volume_mul,
         pitch_shift,
-        recipient: recipient_for_attenuation(attenuation, entity, origin),
+        recipient,
     });
 }
 
 fn emit_play_at_block(
-    audio: &mut EventWriter<PlaySoundRecipeRequest>,
+    audio: &mut AudioEmitContext<'_, '_>,
     recipe_id: impl Into<String>,
     entity: Entity,
     pos: valence::prelude::BlockPos,
@@ -803,99 +870,19 @@ fn emit_play_at_block(
 ) {
     let origin = DVec3::new(f64::from(pos.x), f64::from(pos.y), f64::from(pos.z));
     let recipe_id = recipe_id.into();
+    if !audio.should_emit(entity, &recipe_id) {
+        return;
+    }
+    let recipient = audio.recipient(&recipe_id, entity, origin);
     audio.send(PlaySoundRecipeRequest {
-        recipe_id: recipe_id.clone(),
+        recipe_id,
         instance_id: 0,
         pos: Some([pos.x, pos.y, pos.z]),
         flag: None,
         volume_mul,
         pitch_shift: 0.0,
-        recipient: recipient_for_attenuation(attenuation_for_recipe(&recipe_id), entity, origin),
+        recipient,
     });
-}
-
-fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
-    if matches!(
-        recipe_id,
-        "hit_light"
-            | "hit_heavy"
-            | "hit_critical"
-            | "parry_success"
-            | "parry_perfect"
-            | "wound_inflict"
-            | "charge_release"
-            | "forge_hammer_light"
-            | "forge_hammer_heavy"
-            | "alchemy_bubble"
-            | "alchemy_overheat"
-            | "alchemy_complete"
-            | "alchemy_fail"
-            | "lingtian_till"
-            | "lingtian_replenish"
-            | "lingtian_harvest"
-    ) || recipe_id.contains("_hit_")
-        || recipe_id.ends_with("_signature")
-    {
-        return AudioAttenuation::Melee;
-    }
-    if matches!(
-        recipe_id,
-        "dodge_success"
-            | "charge_start"
-            | "overload_tear"
-            | "kill_confirm"
-            | "meridian_open"
-            | "breakthrough_fail"
-            | "enlightenment_flash"
-            | "renown_gain"
-            | "renown_loss"
-            | "death_insight"
-            | "inventory_open"
-            | "inventory_close"
-    ) || recipe_id.ends_with("_cast")
-    {
-        return AudioAttenuation::SelfOnly;
-    }
-    if matches!(
-        recipe_id,
-        "qi_collision"
-            | "breakthrough_yinqi"
-            | "breakthrough_ningmai"
-            | "breakthrough_guyuan"
-            | "forge_inscribe"
-            | "forge_consecrate"
-            | "forge_complete"
-            | "niche_establish"
-            | "pact_bind"
-            | "ambient_detail_lingquan_frog"
-            | "ambient_detail_blood_valley_rockfall"
-            | "ambient_detail_tsy_metal_echo"
-    ) {
-        return AudioAttenuation::Area;
-    }
-    if matches!(recipe_id, "ambient_detail_north_wastes_wolf") {
-        return AudioAttenuation::World;
-    }
-    match recipe_id {
-        "heartbeat_low_hp"
-        | "qi_depleted_warning"
-        | "realm_regression"
-        | "meridian_crack"
-        | "meridian_open_chime"
-        | "pill_consume"
-        | "niche_breach"
-        | "exposure_name"
-        | "narration_cue"
-        | "skill_lv_up"
-        | "stance_switch"
-        | "npc_refuse"
-        | "npc_greeting_cultivator"
-        | "npc_greeting_commoner"
-        | "blood_burn_sizzle" => AudioAttenuation::PlayerLocal,
-        "tribulation_thunder_distant" => AudioAttenuation::GlobalHint,
-        "realm_breakthrough" => AudioAttenuation::ZoneBroadcast,
-        _ => AudioAttenuation::World3d,
-    }
 }
 
 fn block_pos(origin: DVec3) -> [i32; 3] {
@@ -1077,15 +1064,22 @@ mod tests {
 
     #[test]
     fn blood_burn_audio_is_player_local() {
+        use crate::schema::audio::AudioAttenuation;
+
+        let registry = SoundRecipeRegistry::load_default().expect("default recipes should load");
         assert_eq!(
-            attenuation_for_recipe("blood_burn_sizzle"),
-            AudioAttenuation::PlayerLocal
+            registry
+                .get("blood_burn_sizzle")
+                .expect("blood burn recipe exists")
+                .attenuation,
+            AudioAttenuation::PlayerLocal,
         );
     }
 
     #[test]
     fn lingtian_actions_emit_dedicated_recipes() {
         let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
         app.add_event::<TillCompleted>();
         app.add_event::<PlantingCompleted>();
         app.add_event::<HarvestCompleted>();
@@ -1101,6 +1095,12 @@ mod tests {
             pos,
             hoe: crate::lingtian::hoe::HoeKind::Iron,
             hoe_instance_id: 1,
+        });
+        app.world_mut().send_event(TillCompleted {
+            player,
+            pos,
+            hoe: crate::lingtian::hoe::HoeKind::Iron,
+            hoe_instance_id: 2,
         });
         app.world_mut().send_event(PlantingCompleted {
             player,
@@ -1356,6 +1356,7 @@ mod tests {
     #[test]
     fn social_pact_and_renown_emit_audio() {
         let mut app = App::new();
+        app.insert_resource(SoundRecipeRegistry::load_default().expect("default recipes load"));
         app.add_event::<SocialPactEvent>();
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_event::<DuoSheWarningEvent>();

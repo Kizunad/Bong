@@ -216,6 +216,35 @@ public class SoundRecipePlayerTest {
     }
 
     @Test
+    void combatEdgesRestoreUiBusTemporarilyInImmersiveMode() {
+        RecordingSink sink = new RecordingSink();
+        AudioBusMixer mixer = new AudioBusMixer();
+        HudImmersionMode.setManualImmersive(true, 0L);
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false, mixer, new AudioTelemetry());
+
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(0.0f, sink.played.get(0).volume(), 0.0001f);
+
+        CombatHudStateStore.replace(CombatHudState.create(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(0.4f, sink.played.get(2).volume(), 0.0001f);
+
+        for (int i = 0; i < 100; i++) {
+            player.tick();
+        }
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(0.0f, sink.played.get(4).volume(), 0.0001f);
+
+        CombatHudStateStore.replace(CombatHudState.create(0.8f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(0.4f, sink.played.get(6).volume(), 0.0001f);
+    }
+
+    @Test
     void telemetryFlagsRecipeOverplayWindow() {
         AudioTelemetry telemetry = new AudioTelemetry(1_000L, 2);
 

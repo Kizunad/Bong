@@ -33,8 +33,9 @@ use crate::inventory::{ItemEffect, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-use crate::network::audio_trigger::{emit_player_local_audio, emit_recipe_audio};
+use crate::network::audio_trigger::{
+    emit_recipe_audio_with_context, AudioEmitContext, AudioEmitWriter,
+};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
@@ -80,7 +81,7 @@ pub fn tick_casts_or_interrupt(
     clock: Res<CombatClock>,
     mut commands: Commands,
     item_registry: Res<ItemRegistry>,
-    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut audio_events: AudioEmitWriter,
     mut yidao_complete_events: EventWriter<YidaoCastCompleteEvent>,
     mut effect_intents: ParamSet<(
         EventWriter<ApplyStatusEffectIntent>,
@@ -89,6 +90,7 @@ pub fn tick_casts_or_interrupt(
     )>,
     mut clients: Query<CastTickQueryItem<'_>>,
 ) {
+    let mut audio_events = audio_events.context();
     for (
         entity,
         mut client,
@@ -287,7 +289,7 @@ pub fn tick_casts_or_interrupt(
                     cultivation,
                     "cast_complete_consume",
                 );
-                emit_player_local_audio(
+                emit_recipe_audio_with_context(
                     &mut audio_events,
                     "pill_consume",
                     entity,
@@ -301,7 +303,7 @@ pub fn tick_casts_or_interrupt(
                 .as_deref()
                 .is_some_and(|skill_id| skill_id.contains("xue_beng_bu"))
             {
-                emit_recipe_audio(
+                emit_recipe_audio_with_context(
                     &mut audio_events,
                     "phase_shift_in",
                     entity,
@@ -315,13 +317,13 @@ pub fn tick_casts_or_interrupt(
 }
 
 fn emit_cast_interrupt_audio(
-    audio_events: &mut EventWriter<PlaySoundRecipeRequest>,
+    audio_events: &mut AudioEmitContext<'_, '_>,
     entity: Entity,
     origin: valence::prelude::DVec3,
     casting: &Casting,
 ) {
     if casting.source == CastSource::SkillBar {
-        emit_recipe_audio(audio_events, "cast_interrupt", entity, origin, None, 1.0);
+        emit_recipe_audio_with_context(audio_events, "cast_interrupt", entity, origin, None, 1.0);
     }
 }
 
@@ -603,7 +605,7 @@ mod tests {
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
     };
-    use crate::network::audio_event_emit::AudioRecipient;
+    use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
     use std::collections::HashMap;
     use valence::prelude::{App, DVec3, Events, Position, Query, Update, With};
 
@@ -891,10 +893,8 @@ mod tests {
 
     #[test]
     fn cast_interrupt_audio_uses_recipe_attenuation() {
-        fn emit_for_test(
-            targets: Query<Entity, With<Position>>,
-            mut audio: EventWriter<PlaySoundRecipeRequest>,
-        ) {
+        fn emit_for_test(targets: Query<Entity, With<Position>>, mut audio: AudioEmitWriter) {
+            let mut audio = audio.context();
             let entity = targets.single();
             let casting = Casting {
                 source: CastSource::SkillBar,
@@ -913,6 +913,10 @@ mod tests {
         }
 
         let mut app = App::new();
+        app.insert_resource(
+            crate::audio::SoundRecipeRegistry::load_default().expect("default recipes load"),
+        );
+        app.init_resource::<crate::audio::implementation::AudioImplementationDedup>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_for_test);
         app.world_mut().spawn(Position::new([1.0, 64.0, 1.0]));
