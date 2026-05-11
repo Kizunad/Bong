@@ -6,11 +6,15 @@ use valence::prelude::{
     Client, DVec3, Entity, EventReader, EventWriter, Position, Query, ResMut, Resource, With,
 };
 
-use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
+use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome, StartAlchemyRequest};
+use crate::audio::implementation::{
+    breakthrough_recipe, combat_hit_recipe, forge_hammer_recipe, parry_recipe, school_hit_recipe,
+    AudioImplementationDedup,
+};
 use crate::botany::components::HarvestTerminalEvent;
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::{Lifecycle, Wounds};
-use crate::combat::events::{CombatEvent, DeathEvent};
+use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
@@ -37,6 +41,7 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::schema::audio::AudioAttenuation;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
+use crate::social::events::{SocialPactEvent, SocialRenownDeltaEvent};
 
 #[derive(Debug, Default)]
 pub struct AudioTriggerState {
@@ -103,6 +108,7 @@ pub fn emit_combat_audio_triggers(
     mut combat_events: EventReader<CombatEvent>,
     positions: Query<&Position>,
     npc_markers: Query<(), With<NpcMarker>>,
+    mut dedup: Option<ResMut<AudioImplementationDedup>>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in combat_events.read() {
@@ -110,10 +116,19 @@ pub fn emit_combat_audio_triggers(
             continue;
         };
         let origin = position.get();
-        let recipe_id = if event.description.contains("jiemai=true") {
-            "parry_clang"
+        let recipe_id = if event.defense_kind == Some(DefenseKind::JieMai) {
+            parry_recipe(event.defense_effectiveness.unwrap_or(0.6))
+        } else if let Some(effectiveness) = event.defense_effectiveness {
+            parry_recipe(effectiveness)
         } else if event.damage >= 0.5 {
-            "meridian_crack"
+            let critical = matches!(event.body_part, crate::combat::components::BodyPart::Head);
+            match event.source {
+                AttackSource::BurstMeridian | AttackSource::FullPower => {
+                    school_hit_recipe("baomai", event.damage, critical)
+                }
+                AttackSource::QiNeedle => school_hit_recipe("dugu", event.damage, critical),
+                AttackSource::Melee => combat_hit_recipe(event.damage, critical),
+            }
         } else if npc_markers.get(event.target).is_ok() && event.damage > 0.0 {
             "npc_hurt"
         } else if npc_markers.get(event.attacker).is_ok() && event.damage > 0.0 {
@@ -121,7 +136,23 @@ pub fn emit_combat_audio_triggers(
         } else {
             continue;
         };
+        if dedup.as_deref_mut().is_some_and(|dedup| {
+            !dedup.should_emit(event.target, recipe_id, event.resolved_at_tick)
+        }) {
+            continue;
+        }
         emit_play(&mut audio, recipe_id, event.target, origin, None, 1.0, 0.0);
+        if event.damage >= 8.0 {
+            emit_play(
+                &mut audio,
+                "wound_inflict",
+                event.target,
+                origin,
+                None,
+                0.85,
+                0.0,
+            );
+        }
     }
 }
 
@@ -147,6 +178,17 @@ pub fn emit_npc_death_audio_triggers(
             1.0,
             0.0,
         );
+        if let Some(attacker) = event.attacker {
+            emit_play(
+                &mut audio,
+                "kill_confirm",
+                attacker,
+                position.get(),
+                None,
+                1.0,
+                0.0,
+            );
+        }
     }
 }
 
@@ -161,7 +203,7 @@ pub fn emit_cultivation_audio_triggers(
     for event in meridian_opened.read() {
         emit_play(
             &mut audio,
-            "meridian_open_chime",
+            "meridian_open",
             event.entity,
             event.origin,
             None,
@@ -175,10 +217,9 @@ pub fn emit_cultivation_audio_triggers(
             continue;
         };
         let origin = position.get();
-        let recipe_id = if event.result.is_ok() {
-            "realm_breakthrough"
-        } else {
-            "meridian_crack"
+        let recipe_id = match &event.result {
+            Ok(success) => breakthrough_recipe(success.to),
+            Err(_) => "breakthrough_fail",
         };
         emit_play(&mut audio, recipe_id, event.entity, origin, None, 1.0, 0.0);
     }
@@ -204,7 +245,7 @@ pub fn emit_cultivation_audio_triggers(
         };
         emit_play(
             &mut audio,
-            "meridian_crack",
+            "overload_tear",
             event.entity,
             position.get(),
             None,
@@ -297,18 +338,35 @@ pub fn emit_tribulation_audio_triggers(
 }
 
 pub fn emit_alchemy_audio_triggers(
+    mut starts: EventReader<StartAlchemyRequest>,
     mut outcomes: EventReader<AlchemyOutcomeEvent>,
     positions: Query<&Position>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
+    for event in starts.read() {
+        let origin = positions
+            .get(event.furnace)
+            .map(|position| position.get())
+            .unwrap_or(DVec3::ZERO);
+        emit_play(
+            &mut audio,
+            "alchemy_bubble",
+            event.furnace,
+            origin,
+            Some("alchemy_brewing".to_string()),
+            0.8,
+            0.0,
+        );
+    }
+
     for event in outcomes.read() {
         let origin = positions
             .get(event.furnace)
             .map(|position| position.get())
             .unwrap_or(DVec3::ZERO);
         let (recipe_id, volume_mul) = match event.outcome {
-            ResolvedOutcome::Pill { .. } => ("pill_consume", 0.75),
-            ResolvedOutcome::Explode { .. } => ("furnace_boom", 1.0),
+            ResolvedOutcome::Pill { .. } => ("alchemy_complete", 0.9),
+            ResolvedOutcome::Explode { .. } => ("alchemy_fail", 1.0),
             ResolvedOutcome::Waste { .. } | ResolvedOutcome::Mismatch => continue,
         };
         emit_play(
@@ -335,7 +393,7 @@ pub fn emit_forge_audio_triggers(
         if let Ok(position) = positions.get(event.station) {
             emit_play(
                 &mut audio,
-                "stance_switch",
+                "forge_consecrate",
                 event.caster,
                 position.get(),
                 None,
@@ -355,11 +413,7 @@ pub fn emit_forge_audio_triggers(
         if session.current_step != ForgeStep::Tempering {
             continue;
         }
-        let recipe_id = match event.beat {
-            TemperBeat::Light => "hammer_strike_light",
-            TemperBeat::Heavy => "hammer_strike_heavy",
-            TemperBeat::Fold => "hammer_strike_fold",
-        };
+        let recipe_id = forge_hammer_recipe(matches!(event.beat, TemperBeat::Heavy));
         let origin = positions
             .get(session.station)
             .map(|position| position.get())
@@ -378,8 +432,8 @@ pub fn emit_forge_audio_triggers(
 
     for event in outcomes.read() {
         let recipe_id = match event.bucket {
-            ForgeBucket::Explode => "furnace_boom",
-            ForgeBucket::Perfect | ForgeBucket::Good | ForgeBucket::Flawed => "skill_lv_up",
+            ForgeBucket::Explode => "alchemy_fail",
+            ForgeBucket::Perfect | ForgeBucket::Good | ForgeBucket::Flawed => "forge_complete",
             ForgeBucket::Waste => continue,
         };
         let Ok(position) = positions.get(event.caster) else {
@@ -432,7 +486,7 @@ pub fn emit_lingtian_audio_triggers(
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in tills.read() {
-        emit_play_at_block(&mut audio, "till_soil", event.player, event.pos, 1.0);
+        emit_play_at_block(&mut audio, "lingtian_till", event.player, event.pos, 1.0);
     }
     for event in plantings.read() {
         emit_play_at_block(
@@ -444,10 +498,16 @@ pub fn emit_lingtian_audio_triggers(
         );
     }
     for event in harvests.read() {
-        emit_play_at_block(&mut audio, "harvest_pluck", event.player, event.pos, 1.0);
+        emit_play_at_block(&mut audio, "lingtian_harvest", event.player, event.pos, 1.0);
     }
     for event in replenishes.read() {
-        emit_play_at_block(&mut audio, "plot_replenish", event.player, event.pos, 1.0);
+        emit_play_at_block(
+            &mut audio,
+            "lingtian_replenish",
+            event.player,
+            event.pos,
+            1.0,
+        );
     }
     for event in drains.read() {
         emit_play_at_block(&mut audio, "lingtian_drain", event.player, event.pos, 0.85);
@@ -499,11 +559,12 @@ pub fn emit_baomai_v3_audio_triggers(
 
 fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
     match skill {
-        BaomaiSkillId::BengQuan | BaomaiSkillId::FullPowerRelease => "meridian_crack",
-        BaomaiSkillId::FullPowerCharge => "stance_switch",
-        BaomaiSkillId::MountainShake => "mountain_shake_rumble",
-        BaomaiSkillId::BloodBurn => "blood_burn_sizzle",
-        BaomaiSkillId::Disperse => "transcendence_thunder",
+        BaomaiSkillId::BengQuan => "baomai_hit_heavy",
+        BaomaiSkillId::FullPowerCharge => "baomai_cast",
+        BaomaiSkillId::FullPowerRelease => "baomai_signature",
+        BaomaiSkillId::MountainShake => "baomai_hit_critical",
+        BaomaiSkillId::BloodBurn => "baomai_hit_light",
+        BaomaiSkillId::Disperse => "baomai_signature",
     }
 }
 
@@ -635,10 +696,35 @@ pub fn emit_skill_audio_triggers(
 }
 
 pub fn emit_social_audio_triggers(
+    mut pacts: EventReader<SocialPactEvent>,
+    mut renown: EventReader<SocialRenownDeltaEvent>,
     mut duo_she_warnings: EventReader<DuoSheWarningEvent>,
     targets: Query<(Entity, &Position, Option<&LifeRecord>, Option<&Lifecycle>)>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
+    for event in pacts.read() {
+        if event.broken {
+            continue;
+        }
+        let Some((entity, position)) = resolve_audio_target(event.left.as_str(), &targets) else {
+            continue;
+        };
+        emit_play(&mut audio, "pact_bind", entity, position, None, 1.0, 0.0);
+    }
+
+    for event in renown.read() {
+        let Some((entity, position)) = resolve_audio_target(event.char_id.as_str(), &targets)
+        else {
+            continue;
+        };
+        let recipe_id = if event.fame_delta + event.notoriety_delta >= 0 {
+            "renown_gain"
+        } else {
+            "renown_loss"
+        };
+        emit_play(&mut audio, recipe_id, entity, position, None, 1.0, 0.0);
+    }
+
     for warning in duo_she_warnings.read() {
         let Some((entity, position)) = resolve_audio_target(warning.target_id.as_str(), &targets)
         else {
@@ -729,6 +815,67 @@ fn emit_play_at_block(
 }
 
 fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
+    if matches!(
+        recipe_id,
+        "hit_light"
+            | "hit_heavy"
+            | "hit_critical"
+            | "parry_success"
+            | "parry_perfect"
+            | "wound_inflict"
+            | "charge_release"
+            | "forge_hammer_light"
+            | "forge_hammer_heavy"
+            | "alchemy_bubble"
+            | "alchemy_overheat"
+            | "alchemy_complete"
+            | "alchemy_fail"
+            | "lingtian_till"
+            | "lingtian_replenish"
+            | "lingtian_harvest"
+    ) || recipe_id.contains("_hit_")
+        || recipe_id.ends_with("_signature")
+    {
+        return AudioAttenuation::Melee;
+    }
+    if matches!(
+        recipe_id,
+        "dodge_success"
+            | "charge_start"
+            | "overload_tear"
+            | "kill_confirm"
+            | "meridian_open"
+            | "breakthrough_fail"
+            | "enlightenment_flash"
+            | "renown_gain"
+            | "renown_loss"
+            | "death_insight"
+            | "inventory_open"
+            | "inventory_close"
+    ) || recipe_id.ends_with("_cast")
+    {
+        return AudioAttenuation::SelfOnly;
+    }
+    if matches!(
+        recipe_id,
+        "qi_collision"
+            | "breakthrough_yinqi"
+            | "breakthrough_ningmai"
+            | "breakthrough_guyuan"
+            | "forge_inscribe"
+            | "forge_consecrate"
+            | "forge_complete"
+            | "niche_establish"
+            | "pact_bind"
+            | "ambient_detail_lingquan_frog"
+            | "ambient_detail_blood_valley_rockfall"
+            | "ambient_detail_tsy_metal_echo"
+    ) {
+        return AudioAttenuation::Area;
+    }
+    if matches!(recipe_id, "ambient_detail_north_wastes_wolf") {
+        return AudioAttenuation::World;
+    }
     match recipe_id {
         "heartbeat_low_hp"
         | "qi_depleted_warning"
@@ -795,6 +942,7 @@ mod tests {
     use super::*;
     use crate::combat::components::{BodyPart, WoundKind, Wounds};
     use crate::combat::events::{CombatEvent, DeathEvent};
+    use crate::forge::session::{ForgeSession, ForgeSessionId};
     use valence::prelude::{App, Events, Update};
     use valence::testing::create_mock_client;
 
@@ -816,8 +964,8 @@ mod tests {
             damage: 0.4,
             contam_delta: 0.0,
             description: "test jiemai=true".to_string(),
-            defense_kind: None,
-            defense_effectiveness: None,
+            defense_kind: Some(DefenseKind::JieMai),
+            defense_effectiveness: Some(0.9),
             defense_contam_reduced: None,
             defense_wound_severity: None,
         });
@@ -830,7 +978,45 @@ mod tests {
             .drain()
             .collect();
         assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].recipe_id, "parry_clang");
+        assert_eq!(emitted[0].recipe_id, "parry_perfect");
+    }
+
+    #[test]
+    fn combat_hit_event_emits_tiered_recipe_and_wound() {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_combat_audio_triggers);
+        let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+        for _ in 0..2 {
+            app.world_mut().send_event(CombatEvent {
+                attacker,
+                target,
+                resolved_at_tick: 5,
+                body_part: BodyPart::Chest,
+                wound_kind: WoundKind::Blunt,
+                source: crate::combat::events::AttackSource::Melee,
+                damage: 12.0,
+                contam_delta: 0.0,
+                description: "test hit tier".to_string(),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+        }
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
+        assert_eq!(recipes, vec!["hit_heavy", "wound_inflict"]);
     }
 
     #[test]
@@ -953,12 +1139,114 @@ mod tests {
         assert_eq!(
             recipes,
             vec![
-                "till_soil",
+                "lingtian_till",
                 "lingtian_plant_seed",
-                "harvest_pluck",
-                "plot_replenish",
+                "lingtian_harvest",
+                "lingtian_replenish",
                 "lingtian_drain"
             ]
+        );
+    }
+
+    #[test]
+    fn alchemy_events_emit_dedicated_recipes() {
+        let mut app = App::new();
+        app.add_event::<StartAlchemyRequest>();
+        app.add_event::<AlchemyOutcomeEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_alchemy_audio_triggers);
+        let furnace = app.world_mut().spawn(Position::new([3.0, 64.0, -2.0])).id();
+
+        app.world_mut().send_event(StartAlchemyRequest {
+            furnace,
+            recipe_id: "hui_yuan_pill_v0".to_string(),
+            caster_id: "offline:Azure".to_string(),
+        });
+        app.world_mut().send_event(AlchemyOutcomeEvent {
+            furnace,
+            caster_id: "offline:Azure".to_string(),
+            recipe_id: Some("hui_yuan_pill_v0".to_string()),
+            bucket: crate::alchemy::outcome::OutcomeBucket::Perfect,
+            outcome: ResolvedOutcome::Pill {
+                recipe_id: "hui_yuan_pill_v0".to_string(),
+                pill: "hui_yuan_pill".to_string(),
+                quality: 1.0,
+                toxin_amount: 0.0,
+                toxin_color: crate::cultivation::components::ColorKind::Mellow,
+                qi_gain: Some(24.0),
+                quality_tier: 3,
+                effect_multiplier: 1.0,
+                consecrated: true,
+                side_effect: None,
+                flawed_path: false,
+            },
+            elapsed_ticks: 120,
+        });
+
+        app.update();
+
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|request| request.recipe_id)
+            .collect();
+        assert_eq!(recipes, vec!["alchemy_bubble", "alchemy_complete"]);
+    }
+
+    #[test]
+    fn forge_events_emit_dedicated_recipes() {
+        let mut app = App::new();
+        app.add_event::<ForgeStartAccepted>();
+        app.add_event::<TemperingHit>();
+        app.add_event::<ForgeOutcomeEvent>();
+        app.init_resource::<ForgeSessions>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_forge_audio_triggers);
+        let station = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let caster = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+        let session_id = ForgeSessionId(1);
+        let mut session = ForgeSession::new(session_id, "forge_test".to_string(), station, caster);
+        session.current_step = ForgeStep::Tempering;
+        app.world_mut()
+            .resource_mut::<ForgeSessions>()
+            .insert(session);
+
+        app.world_mut().send_event(ForgeStartAccepted {
+            session: session_id,
+            station,
+            caster,
+            blueprint: "forge_test".to_string(),
+            materials: vec![],
+        });
+        app.world_mut().send_event(TemperingHit {
+            session: session_id,
+            beat: TemperBeat::Heavy,
+            ticks_remaining: 2,
+        });
+        app.world_mut().send_event(ForgeOutcomeEvent {
+            session: session_id,
+            caster,
+            blueprint: "forge_test".to_string(),
+            bucket: ForgeBucket::Perfect,
+            weapon_item: None,
+            quality: 1.0,
+            color: None,
+            side_effects: vec![],
+            achieved_tier: 3,
+        });
+
+        app.update();
+
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|request| request.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec!["forge_consecrate", "forge_hammer_heavy", "forge_complete"]
         );
     }
 
@@ -1028,13 +1316,15 @@ mod tests {
             .drain()
             .collect();
         assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].recipe_id, "meridian_open_chime");
+        assert_eq!(emitted[0].recipe_id, "meridian_open");
         assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == player));
     }
 
     #[test]
     fn duo_she_warning_matches_life_record_target() {
         let mut app = App::new();
+        app.add_event::<SocialPactEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
         app.add_event::<DuoSheWarningEvent>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_social_audio_triggers);
@@ -1061,5 +1351,61 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "exposure_name");
         assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == target));
+    }
+
+    #[test]
+    fn social_pact_and_renown_emit_audio() {
+        let mut app = App::new();
+        app.add_event::<SocialPactEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_event::<DuoSheWarningEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_social_audio_triggers);
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([3.0, 64.0, 3.0]),
+                LifeRecord::new("offline:Azure"),
+            ))
+            .id();
+
+        app.world_mut().send_event(SocialPactEvent {
+            left: "offline:Azure".to_string(),
+            right: "offline:Night".to_string(),
+            terms: "teach me the bind".to_string(),
+            tick: 1,
+            broken: false,
+            breaker: None,
+            witnesses: vec![],
+        });
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "offline:Azure".to_string(),
+            fame_delta: 2,
+            notoriety_delta: 0,
+            tags_added: vec![],
+            tick: 2,
+            reason: "test".to_string(),
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted
+            .iter()
+            .map(|request| request.recipe_id.as_str())
+            .collect();
+        assert_eq!(recipes, vec!["pact_bind", "renown_gain"]);
+        assert!(matches!(
+            emitted[0].recipient,
+            AudioRecipient::Radius { origin, .. } if origin == Position::new([3.0, 64.0, 3.0]).get()
+        ));
+        assert!(matches!(
+            emitted[1].recipient,
+            AudioRecipient::Single(entity) if entity == target
+        ));
     }
 }
