@@ -1867,13 +1867,16 @@ fn return_home_action_system(
             &NpcHomeBase,
             Option<&mut Hunger>,
             Option<&mut Cultivation>,
+            &mut RestState,
         ),
         With<NpcMarker>,
     >,
     mut actions: Query<(&Actor, &mut ActionState), With<ReturnHomeAction>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, mut navigator, home, hunger, cultivation)) = npcs.get_mut(*actor) else {
+        let Ok((position, mut navigator, home, hunger, cultivation, mut rest)) =
+            npcs.get_mut(*actor)
+        else {
             *state = ActionState::Failure;
             continue;
         };
@@ -1881,12 +1884,14 @@ fn return_home_action_system(
 
         match *state {
             ActionState::Requested => {
+                rest.elapsed_ticks = 0;
                 navigator.set_goal(home_pos, WANDER_SPEED_FACTOR);
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
                 if position.get().distance(home_pos) <= RETURN_HOME_ARRIVAL_DISTANCE {
                     navigator.stop();
+                    rest.elapsed_ticks = rest.elapsed_ticks.saturating_add(1);
                     let mut hunger = hunger;
                     let mut cultivation = cultivation;
                     rest_tick(
@@ -1895,13 +1900,16 @@ fn return_home_action_system(
                         home.quality,
                         1.0 / 120.0,
                     );
-                    *state = ActionState::Success;
+                    if rest.elapsed_ticks >= REST_MAX_TICKS {
+                        *state = ActionState::Success;
+                    }
                 } else {
                     navigator.set_goal(home_pos, WANDER_SPEED_FACTOR);
                 }
             }
             ActionState::Cancelled => {
                 navigator.stop();
+                rest.elapsed_ticks = 0;
                 *state = ActionState::Failure;
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
@@ -2567,7 +2575,7 @@ mod tests {
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
     use bevy_transform::components::Transform;
     use big_brain::prelude::{FirstToScore, Thinker};
-    use valence::prelude::{App, EventReader, IntoSystemConfigs, Position, Update};
+    use valence::prelude::{App, BlockPos, EventReader, IntoSystemConfigs, Position, Update};
 
     #[derive(Default)]
     struct CapturedAttackIntents(Vec<AttackIntent>);
@@ -3586,6 +3594,44 @@ mod tests {
         assert!(
             score >= 0.36,
             "night Rest weight should drive return-home, got {score}"
+        );
+    }
+
+    #[test]
+    fn return_home_keeps_resting_until_rest_window_finishes() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            return_home_action_system.in_set(BigBrainSet::Actions),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.5, 66.0, 10.5]),
+                Navigator::new(),
+                NpcHomeBase::new(BlockPos::new(10, 66, 10), 0.5),
+                Hunger::new(0.2),
+                RestState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), ReturnHomeAction, ActionState::Requested))
+            .id();
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Executing,
+            "return-home should keep the NPC resting instead of completing after one recovery tick"
+        );
+        assert!(
+            app.world().get::<Hunger>(npc).unwrap().value > 0.2,
+            "home rest should recover hunger while ReturnHomeAction remains active"
         );
     }
 

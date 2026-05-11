@@ -309,14 +309,26 @@ pub fn hydrate_position_for(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn schedule_phase_event_system(
     mut commands: Commands,
     clock: Option<Res<CultivationClock>>,
     mut events: EventWriter<NpcScheduleChangedEvent>,
-    mut npcs: Query<(Entity, &NpcDailySchedule, Option<&mut NpcScheduleState>), With<NpcMarker>>,
+    mut npcs: Query<
+        (
+            Entity,
+            &NpcDailySchedule,
+            Option<&NpcLodTier>,
+            Option<&mut NpcScheduleState>,
+        ),
+        With<NpcMarker>,
+    >,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
-    for (entity, schedule, state) in &mut npcs {
+    for (entity, schedule, tier, state) in &mut npcs {
+        if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near) {
+            continue;
+        }
         let next_phase = schedule.phase(tick);
         let activity = schedule.activity_for(tick, u64::from(entity.index()));
         match state {
