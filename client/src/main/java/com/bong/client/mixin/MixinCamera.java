@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.combat.juice.CameraShakeController;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.visual.CameraPushbackOffset;
@@ -53,14 +54,15 @@ public abstract class MixinCamera {
         VisualEffectState state = BongHudStateStore.snapshot().visualEffectState();
         long nowMillis = System.currentTimeMillis();
         CameraShakeOffsets.Offsets shake = CameraShakeOffsets.compute(state, nowMillis);
+        CameraShakeController.Offsets combatShake = CameraShakeController.activeOffsets(nowMillis);
         float tiltPitch = CameraTiltOffset.computePitchDegrees(state, nowMillis);
-        if (shake.isZero() && tiltPitch == 0f) {
+        if (shake.isZero() && combatShake.isZero() && tiltPitch == 0f) {
             return;
         }
         float yaw = args.get(0);
         float pitch = args.get(1);
-        args.set(0, yaw + shake.yawDegrees());
-        args.set(1, pitch + shake.pitchDegrees() + tiltPitch);
+        args.set(0, yaw + shake.yawDegrees() + combatShake.yawDegrees());
+        args.set(1, pitch + shake.pitchDegrees() + combatShake.pitchDegrees() + tiltPitch);
     }
 
     @Inject(

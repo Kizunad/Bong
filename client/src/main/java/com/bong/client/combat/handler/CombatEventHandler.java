@@ -1,5 +1,9 @@
 package com.bong.client.combat.handler;
 
+import com.bong.client.combat.juice.CombatJuiceEvent;
+import com.bong.client.combat.juice.CombatJuiceSystem;
+import com.bong.client.combat.juice.CombatJuiceTier;
+import com.bong.client.combat.juice.CombatSchool;
 import com.bong.client.combat.store.DamageFloaterStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
@@ -46,19 +50,26 @@ public final class CombatEventHandler implements ServerDataHandler {
             if (el == null || !el.isJsonObject()) continue;
             JsonObject obj = el.getAsJsonObject();
             String kindWire = readString(obj, "kind");
+            double amount = readDouble(obj, "amount", 0d);
             double x = readDouble(obj, "x", 0d);
             double y = readDouble(obj, "y", 0d);
             double z = readDouble(obj, "z", 0d);
             String text = readString(obj, "text");
+            if (text != null) {
+                text = text.trim();
+            }
             int color = (int) Math.round(readDouble(obj, "color", defaultColorFor(kindWire)));
             DamageFloaterStore.Kind kind = parseKind(kindWire);
-            if (text == null || text.isEmpty()) {
-                double amount = readDouble(obj, "amount", 0d);
-                text = amount > 0 ? formatAmount(amount) : kindWire;
+            if (text == null || text.isBlank()) {
+                text = amount > 0 ? formatAmount(amount) : kindFallback(kindWire);
+            }
+            if (text.isBlank()) {
+                continue;
             }
             DamageFloaterStore.publish(
                 new DamageFloaterStore.Floater(x, y, z, text, color, kind, now)
             );
+            CombatJuiceSystem.accept(toJuiceEvent(obj, kindWire, amount, now));
             accepted++;
         }
 
@@ -83,6 +94,10 @@ public final class CombatEventHandler implements ServerDataHandler {
             case "qi_damage" -> DamageFloaterStore.Kind.QI_DAMAGE;
             default -> DamageFloaterStore.Kind.HIT;
         };
+    }
+
+    private static String kindFallback(String wire) {
+        return wire == null ? "" : wire.trim();
     }
 
     private static int defaultColorFor(String wire) {
@@ -116,5 +131,91 @@ public final class CombatEventHandler implements ServerDataHandler {
         if (!p.isNumber()) return fallback;
         double v = p.getAsDouble();
         return Double.isFinite(v) ? v : fallback;
+    }
+
+    private static CombatJuiceEvent toJuiceEvent(JsonObject obj, String kindWire, double amount, long now) {
+        CombatJuiceEvent.Kind juiceKind = juiceKind(obj, kindWire);
+        CombatSchool school = CombatSchool.fromWire(firstString(obj, "school", "style", "skill_school"));
+        CombatJuiceTier tier = CombatJuiceTier.fromCombatEvent(kindWire, amount, readString(obj, "tier"));
+        return new CombatJuiceEvent(
+            juiceKind,
+            school,
+            tier,
+            firstString(obj, "attacker_uuid", "source_uuid", "caster_uuid"),
+            firstString(obj, "target_uuid", "defender_uuid", "victim_uuid", "entity_uuid"),
+            firstString(obj, "local_player_uuid"),
+            firstString(obj, "victim_name", "target_name", "entity_name"),
+            firstDouble(obj, 0.0, "direction_x", "dir_x", "dx"),
+            firstDouble(obj, 1.0, "direction_z", "dir_z", "dz"),
+            readBoolean(obj, "rare_drop") || readBoolean(obj, "is_rare_drop"),
+            now
+        );
+    }
+
+    private static CombatJuiceEvent.Kind juiceKind(JsonObject obj, String kindWire) {
+        String normalized = kindWire == null ? "" : kindWire.trim().toLowerCase(java.util.Locale.ROOT);
+        if (readBoolean(obj, "kill") || readBoolean(obj, "is_kill")) {
+            return CombatJuiceEvent.Kind.KILL;
+        }
+        if (readBoolean(obj, "perfect") || readBoolean(obj, "perfect_parry")) {
+            return CombatJuiceEvent.Kind.PERFECT_PARRY;
+        }
+        return switch (normalized) {
+            case "qi_collision", "qi_collision_event" -> CombatJuiceEvent.Kind.QI_COLLISION;
+            case "full_power_release", "full_charge", "charge_release", "release" -> CombatJuiceEvent.Kind.FULL_CHARGE;
+            case "overload", "overload_tear", "meridian_overload" -> CombatJuiceEvent.Kind.OVERLOAD;
+            case "parry", "block" -> CombatJuiceEvent.Kind.PARRY;
+            case "perfect_parry" -> CombatJuiceEvent.Kind.PERFECT_PARRY;
+            case "dodge" -> CombatJuiceEvent.Kind.DODGE;
+            case "kill", "death" -> CombatJuiceEvent.Kind.KILL;
+            case "wound", "wounds" -> CombatJuiceEvent.Kind.WOUND;
+            default -> CombatJuiceEvent.Kind.HIT;
+        };
+    }
+
+    private static String firstString(JsonObject obj, String... fields) {
+        for (String field : fields) {
+            String value = readString(obj, field);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static double firstDouble(JsonObject obj, double fallback, String... fields) {
+        for (String field : fields) {
+            JsonElement el = obj.get(field);
+            if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) {
+                continue;
+            }
+            JsonPrimitive p = el.getAsJsonPrimitive();
+            if (!p.isNumber()) {
+                continue;
+            }
+            double v = p.getAsDouble();
+            if (Double.isFinite(v)) {
+                return v;
+            }
+        }
+        return fallback;
+    }
+
+    private static boolean readBoolean(JsonObject obj, String field) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) {
+            return false;
+        }
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        if (p.isBoolean()) {
+            return p.getAsBoolean();
+        }
+        if (p.isNumber()) {
+            return p.getAsInt() != 0;
+        }
+        if (p.isString()) {
+            return Boolean.parseBoolean(p.getAsString());
+        }
+        return false;
     }
 }
