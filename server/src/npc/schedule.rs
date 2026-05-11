@@ -338,7 +338,9 @@ fn schedule_phase_event_system(
         With<NpcMarker>,
     >,
 ) {
-    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let Some(tick) = clock.as_deref().map(|clock| clock.tick) else {
+        return;
+    };
     for (entity, schedule, tier, state) in &mut npcs {
         if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near) {
             continue;
@@ -386,7 +388,9 @@ fn far_npc_schedule_tick_system(
         With<NpcMarker>,
     >,
 ) {
-    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let Some(tick) = clock.as_deref().map(|clock| clock.tick) else {
+        return;
+    };
     if tick % FAR_SCHEDULE_TICK_INTERVAL != 0 {
         return;
     }
