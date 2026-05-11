@@ -68,6 +68,8 @@ pub enum StatusEffectKind {
     Bleeding,
     Slowed,
     Stunned,
+    /// plan-zhenfa-content-v1：缓阵短暂停止真元回复。
+    QiRegenPaused,
     DamageAmp,
     DamageReduction,
     /// plan-cultivation-v1 §3.1：服用突破辅助丹药后附加的临时 buff。

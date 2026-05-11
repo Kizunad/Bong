@@ -175,6 +175,7 @@ pub fn qi_regen_and_zone_drain_tick(
             1.0
         };
         let humility_multiplier = statuses.map(humility_qi_recovery_multiplier).unwrap_or(1.0);
+        let qi_regen_pause_multiplier = statuses.map(qi_regen_pause_multiplier).unwrap_or(1.0);
         let exhausted_multiplier = exhausted
             .map(|state| state.qi_recovery_modifier)
             .unwrap_or(1.0)
@@ -190,6 +191,7 @@ pub fn qi_regen_and_zone_drain_tick(
             zone.spirit_qi,
             rate * wind_candle_multiplier
                 * humility_multiplier
+                * qi_regen_pause_multiplier
                 * exhausted_multiplier
                 * turbulence_multiplier
                 * juebi_aftershock_multiplier,
@@ -284,6 +286,18 @@ fn humility_qi_recovery_multiplier(status_effects: &StatusEffects) -> f64 {
             acc * (1.0 - f64::from(effect.magnitude).clamp(0.0, 0.95))
         })
         .clamp(0.05, 1.0)
+}
+
+fn qi_regen_pause_multiplier(status_effects: &StatusEffects) -> f64 {
+    if status_effects
+        .active
+        .iter()
+        .any(|effect| effect.kind == StatusEffectKind::QiRegenPaused && effect.remaining_ticks > 0)
+    {
+        0.0
+    } else {
+        1.0
+    }
 }
 
 pub fn frailty_qi_recovery_multiplier_for_realm(realm: Realm) -> f64 {

@@ -20,6 +20,20 @@ describe("zhenfa-v2 schema", () => {
     });
 
     expect(result.ok).toBe(true);
+
+    const contentResult = validate(ClientRequestV1, {
+      v: 1,
+      type: "zhenfa_place",
+      x: 2,
+      y: 64,
+      z: -3,
+      kind: "slow_trap",
+      qi_invest_ratio: 0,
+      item_instance_id: 9002,
+      target_face: "top",
+    });
+
+    expect(contentResult.ok).toBe(true);
   });
 
   it("validates zhenfa-v2 deploy and exposure events", () => {

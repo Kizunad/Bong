@@ -81,6 +81,9 @@ pub fn register(app: &mut App) {
     register_zhenfa_v2_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register zhenfa-v2 recipes: {err}");
     });
+    register_zhenfa_content_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register zhenfa-content-v1 recipes: {err}");
+    });
     register_tuike_v2_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register tuike-v2 recipes: {err}");
     });
@@ -550,6 +553,74 @@ pub fn register_zhenfa_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Re
     Ok(())
 }
 
+/// plan-zhenfa-content-v1：三种低阶凡阵符，走通用 ZhenfaTrap 手搓类别。
+pub fn register_zhenfa_content_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    let scroll = |template: &str| {
+        vec![UnlockSource::Scroll {
+            item_template: template.to_string(),
+        }]
+    };
+
+    let specs = [
+        (
+            "zhenfa.content.warning_trap",
+            "警示符",
+            vec![
+                ("copper_ore".to_string(), 1),
+                ("ancient_soil_shard".to_string(), 2),
+            ],
+            2.0,
+            30 * 20,
+            ("warning_trap".to_string(), 3),
+            vec![UnlockSource::Mentor {
+                npc_archetype: "default_known".to_string(),
+            }],
+        ),
+        (
+            "zhenfa.content.blast_trap",
+            "爆阵符",
+            vec![
+                ("ancient_bone_shard".to_string(), 1),
+                ("zhen_shi_chu".to_string(), 1),
+                ("copper_ore".to_string(), 2),
+            ],
+            15.0,
+            60 * 20,
+            ("blast_trap".to_string(), 1),
+            scroll("scroll_blast_trap_talisman"),
+        ),
+        (
+            "zhenfa.content.slow_trap",
+            "缓阵符",
+            vec![
+                ("spirit_grass".to_string(), 1),
+                ("copper_ore".to_string(), 1),
+                ("ancient_soil_shard".to_string(), 1),
+            ],
+            8.0,
+            45 * 20,
+            ("slow_trap".to_string(), 2),
+            scroll("scroll_slow_trap_talisman"),
+        ),
+    ];
+
+    for (id, display_name, materials, qi_cost, time_ticks, output, unlock_sources) in specs {
+        registry.register(CraftRecipe {
+            id: RecipeId::new(id),
+            category: CraftCategory::ZhenfaTrap,
+            display_name: display_name.into(),
+            materials,
+            qi_cost,
+            time_ticks,
+            output,
+            requirements: CraftRequirements::default(),
+            unlock_sources,
+        })?;
+    }
+
+    Ok(())
+}
+
 /// plan-tuike-v2：4 档伪皮制作走通用手搓 TuikeSkin 类目。
 pub fn register_tuike_v2_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     use crate::combat::tuike_v2::state::{
@@ -843,6 +914,30 @@ mod tests {
                 recipe.id
             );
         }
+    }
+
+    #[test]
+    fn register_zhenfa_content_recipes_adds_three_ordinary_traps() {
+        let mut registry = CraftRegistry::new();
+        register_zhenfa_content_recipes(&mut registry).unwrap();
+
+        let warning = registry
+            .get(&RecipeId::new("zhenfa.content.warning_trap"))
+            .expect("warning trap recipe should be registered");
+        assert_eq!(warning.category, CraftCategory::ZhenfaTrap);
+        assert_eq!(warning.output, ("warning_trap".to_string(), 3));
+
+        let blast = registry
+            .get(&RecipeId::new("zhenfa.content.blast_trap"))
+            .expect("blast trap recipe should be registered");
+        assert_eq!(blast.time_ticks, 60 * 20);
+        assert_eq!(blast.output, ("blast_trap".to_string(), 1));
+
+        let slow = registry
+            .get(&RecipeId::new("zhenfa.content.slow_trap"))
+            .expect("slow trap recipe should be registered");
+        assert_eq!(slow.qi_cost, 8.0);
+        assert_eq!(slow.output, ("slow_trap".to_string(), 2));
     }
 
     #[test]
