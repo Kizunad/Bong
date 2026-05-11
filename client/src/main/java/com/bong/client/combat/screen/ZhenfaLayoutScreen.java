@@ -69,8 +69,8 @@ public final class ZhenfaLayoutScreen extends Screen {
                     kind,
                     ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
                     qiInvest,
-                    usesFixedTrapTrigger() ? null : trigger,
-                    itemInstanceId > 0 ? itemInstanceId : null,
+                    placementTrigger(),
+                    placementItemInstanceId(),
                     targetFace
                 );
                 this.close();
@@ -92,6 +92,26 @@ public final class ZhenfaLayoutScreen extends Screen {
         return kind == ClientRequestProtocol.ZhenfaKind.WARNING_TRAP
             || kind == ClientRequestProtocol.ZhenfaKind.BLAST_TRAP
             || kind == ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
+    }
+
+    private String placementTrigger() {
+        return usesFixedTrapTrigger() ? null : trigger;
+    }
+
+    private Long placementItemInstanceId() {
+        return itemInstanceId > 0 ? itemInstanceId : null;
+    }
+
+    String encodePlacementRequestForTests() {
+        return ClientRequestProtocol.encodeZhenfaPlace(
+            targetPos,
+            kind,
+            ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+            qiInvest,
+            placementTrigger(),
+            placementItemInstanceId(),
+            targetFace
+        );
     }
 
     @Override
