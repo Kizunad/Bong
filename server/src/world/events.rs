@@ -1,7 +1,7 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
@@ -10,6 +10,13 @@ use valence::prelude::{
     Resource, Update, Username, With, Without,
 };
 
+use super::calamity::{
+    attention_from_params, reason_from_params, target_key, AttentionTier, CalamityArsenal,
+    CalamityKind, CalamityRejectReason, TiandaoPower, CALAMITY_TARGET_WINDOW_LIMIT,
+    CALAMITY_TARGET_WINDOW_TICKS, CALAMITY_ZONE_CONCURRENCY_LIMIT, EVENT_ALL_WITHER,
+    EVENT_DAOXIANG_WAVE, EVENT_HEAVENLY_FIRE, EVENT_MERIDIAN_SEAL, EVENT_POISON_MIASMA,
+    EVENT_PRESSURE_INVERT,
+};
 use super::zone::ZoneRegistry;
 use crate::combat::events::DeathEvent;
 use crate::combat::rat_bite::RatBiteEvent;
@@ -17,6 +24,9 @@ use crate::cultivation::components::Cultivation;
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn, BeastKind, FaunaTag};
 use crate::fauna::rat_phase::{chunk_pos_from_world, LocustSwarmCooldownStore, RatPhase};
 use crate::inventory::DroppedLootRegistry;
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
@@ -45,10 +55,9 @@ use crate::world::karma::{
 use crate::world::season::Season;
 use crate::world::zone::Zone;
 
-pub const EVENT_THUNDER_TRIBULATION: &str = "thunder_tribulation";
-pub const EVENT_BEAST_TIDE: &str = "beast_tide";
-pub const EVENT_REALM_COLLAPSE: &str = "realm_collapse";
-pub const EVENT_KARMA_BACKLASH: &str = "karma_backlash";
+pub use super::calamity::{
+    EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+};
 
 const DEFAULT_EVENT_DURATION_TICKS: u64 = 200;
 const MIN_EVENT_DURATION_TICKS: u64 = 1;
@@ -95,9 +104,11 @@ pub struct ActiveEvent {
     pub duration_ticks: u64,
     intensity: f64,
     target_player: Option<String>,
+    calamity: Option<CalamityKind>,
     thunder: ThunderRuntimeState,
     beast_tide: BeastTideRuntimeState,
     collapse: RealmCollapseRuntimeState,
+    calamity_state: CalamityRuntimeState,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -245,6 +256,13 @@ struct RealmCollapseRuntimeState {
     evacuee_entities: HashSet<Entity>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+struct CalamityRuntimeState {
+    initialized: bool,
+    spawned_entities: Vec<Entity>,
+    last_pulse_tick: u64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct TargetedDaoxiangSpawn {
     zone_name: String,
@@ -276,19 +294,21 @@ pub struct MajorEventAlert {
 
 impl ActiveEvent {
     fn from_spawn_command(command: &Command) -> Option<Self> {
-        let event_name = command.params.get("event")?.as_str()?;
-        if !matches!(
-            event_name,
-            EVENT_THUNDER_TRIBULATION
-                | EVENT_BEAST_TIDE
-                | EVENT_REALM_COLLAPSE
-                | EVENT_KARMA_BACKLASH
-        ) {
+        let requested_event_name = command.params.get("event")?.as_str()?;
+        let calamity = CalamityKind::from_event_name(requested_event_name);
+        let event_name = calamity
+            .map(CalamityKind::event_name)
+            .unwrap_or(requested_event_name);
+        if calamity.is_none() && !matches!(event_name, EVENT_BEAST_TIDE | EVENT_KARMA_BACKLASH) {
             return None;
         }
 
         let duration_ticks = value_to_u64(command.params.get("duration_ticks"))
-            .unwrap_or(DEFAULT_EVENT_DURATION_TICKS)
+            .unwrap_or_else(|| {
+                calamity
+                    .map(CalamityKind::base_duration_ticks)
+                    .unwrap_or(DEFAULT_EVENT_DURATION_TICKS)
+            })
             .max(MIN_EVENT_DURATION_TICKS);
 
         Some(Self {
@@ -306,9 +326,11 @@ impl ActiveEvent {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
+            calamity,
             thunder: ThunderRuntimeState::default(),
             beast_tide: BeastTideRuntimeState::from_command(command, event_name),
             collapse: RealmCollapseRuntimeState::default(),
+            calamity_state: CalamityRuntimeState::default(),
         })
     }
 
@@ -323,10 +345,18 @@ pub struct ActiveEventsResource {
     pending_major_alerts: Vec<MajorEventAlert>,
     pending_tribulation_events: Vec<TribulationEventV1>,
     pending_vfx_events: Vec<VfxEventRequest>,
+    pending_audio_events: Vec<PlaySoundRecipeRequest>,
     pending_lightning_strikes: Vec<DVec3>,
     pending_daoxiang_spawns: Vec<TargetedDaoxiangSpawn>,
     recent_game_events: Vec<GameEvent>,
     locust_cooldown: LocustSwarmCooldownStore,
+    calamity_target_log: VecDeque<CalamityTargetRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CalamityTargetRecord {
+    tick: u64,
+    target_key: String,
 }
 
 #[derive(Default)]
@@ -455,7 +485,31 @@ impl ActiveEventsResource {
         season: Season,
         tick: u64,
     ) -> bool {
-        let Some(event) = ActiveEvent::from_spawn_command(command) else {
+        self.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+            command,
+            zone_registry,
+            karma_weights,
+            qi_heatmap,
+            season,
+            tick,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+        &mut self,
+        command: &Command,
+        zone_registry: Option<&mut ZoneRegistry>,
+        karma_weights: Option<&KarmaWeightStore>,
+        qi_heatmap: Option<&QiDensityHeatmap>,
+        season: Season,
+        tick: u64,
+        tiandao_power: Option<&mut TiandaoPower>,
+        calamity_arsenal: Option<&CalamityArsenal>,
+    ) -> bool {
+        let Some(mut event) = ActiveEvent::from_spawn_command(command) else {
             let event_name = command
                 .params
                 .get("event")
@@ -467,6 +521,12 @@ impl ActiveEventsResource {
             );
             return false;
         };
+
+        if let Some(kind) = event.calamity {
+            if !command.params.contains_key("duration_ticks") {
+                event.duration_ticks = kind.duration_ticks(season).max(MIN_EVENT_DURATION_TICKS);
+            }
+        }
 
         let Some(zone_registry) = zone_registry else {
             tracing::warn!(
@@ -489,6 +549,30 @@ impl ActiveEventsResource {
             return false;
         }
 
+        if let Some(kind) = event.calamity {
+            let attention =
+                attention_from_params(&command.params).unwrap_or(AttentionTier::Annihilate);
+            if let Some(arsenal) = calamity_arsenal {
+                if let Err(reason) = arsenal.allows(kind, attention, season) {
+                    tracing::info!(
+                        "[bong][world] rejected calamity {:?} for zone `{}`: {:?}",
+                        kind,
+                        event.zone_name,
+                        reason
+                    );
+                    return false;
+                }
+            } else if !kind.allowed_in_season(season) {
+                tracing::info!(
+                    "[bong][world] rejected calamity {:?} for zone `{}`: season {:?} is not allowed",
+                    kind,
+                    event.zone_name,
+                    season
+                );
+                return false;
+            }
+        }
+
         if event.beast_tide.kind() == BeastTideKind::LocustSwarm
             && !self
                 .locust_cooldown
@@ -508,6 +592,69 @@ impl ActiveEventsResource {
                 event.zone_name
             );
             return false;
+        }
+
+        if let Some(kind) = event.calamity {
+            let active_calamities = self.calamity_count_for_zone(event.zone_name.as_str());
+            if active_calamities >= CALAMITY_ZONE_CONCURRENCY_LIMIT {
+                tracing::info!(
+                    "[bong][world] rejected calamity {:?} for zone `{}`: {} active calamities already scheduled",
+                    kind,
+                    event.zone_name,
+                    active_calamities
+                );
+                return false;
+            }
+
+            self.prune_calamity_target_log(tick);
+            let target = target_key(event.zone_name.as_str(), event.target_player.as_deref());
+            let target_count = self
+                .calamity_target_log
+                .iter()
+                .filter(|record| record.target_key == target)
+                .count();
+            if target_count >= CALAMITY_TARGET_WINDOW_LIMIT {
+                tracing::info!(
+                    "[bong][world] rejected calamity {:?} for `{}`: target hit {} times in {} ticks",
+                    kind,
+                    target,
+                    target_count,
+                    CALAMITY_TARGET_WINDOW_TICKS
+                );
+                return false;
+            }
+
+            if let Some(power) = tiandao_power {
+                let average_zone_qi = average_zone_qi(zone_registry);
+                power.regen_to_tick(tick, average_zone_qi, 0, season);
+                let cost = calamity_arsenal
+                    .and_then(|arsenal| arsenal.spec(kind))
+                    .map(|spec| spec.cost)
+                    .unwrap_or_else(|| kind.power_cost());
+                if let Err(CalamityRejectReason::PowerInsufficient { current, required }) = power
+                    .try_spend(
+                        kind,
+                        cost,
+                        target.clone(),
+                        reason_from_params(&command.params),
+                        tick,
+                    )
+                {
+                    tracing::info!(
+                        "[bong][world] rejected calamity {:?} for `{}`: tiandao power {:.2}/{:.2}",
+                        kind,
+                        target,
+                        current,
+                        required
+                    );
+                    return false;
+                }
+            }
+
+            self.calamity_target_log.push_back(CalamityTargetRecord {
+                tick,
+                target_key: target,
+            });
         }
 
         if event.event_name == EVENT_KARMA_BACKLASH {
@@ -707,6 +854,15 @@ impl ActiveEventsResource {
                 "灵蝗潮逼近区域 {}，噬元鼠群将沿灵气压差推进，预计持续 {} tick。",
                 event.zone_name, event.duration_ticks
             ))
+        } else if let Some(kind) = event
+            .calamity
+            .filter(|kind| *kind != CalamityKind::RealmCollapse)
+        {
+            Some(calamity_alert_message(
+                kind,
+                event.zone_name.as_str(),
+                event.duration_ticks,
+            ))
         } else {
             None
         };
@@ -736,6 +892,32 @@ impl ActiveEventsResource {
             ));
         }
 
+        if let Some(kind) = event.calamity {
+            if kind != CalamityKind::RealmCollapse {
+                self.pending_vfx_events.push(calamity_vfx(
+                    zone,
+                    kind,
+                    event.intensity,
+                    event.duration_ticks,
+                ));
+            }
+            self.pending_audio_events
+                .push(calamity_audio_request(zone, kind));
+            self.record_recent_event(GameEvent {
+                event_type: GameEventType::EventTriggered,
+                tick,
+                player: event.target_player.clone(),
+                target: Some(kind.schema_kind().to_string()),
+                zone: Some(event.zone_name.clone()),
+                details: Some(HashMap::from([
+                    ("calamity".to_string(), json!(kind.schema_kind())),
+                    ("power_cost".to_string(), json!(kind.power_cost())),
+                    ("intensity".to_string(), json!(event.intensity)),
+                    ("duration_ticks".to_string(), json!(event.duration_ticks)),
+                ])),
+            });
+        }
+
         self.active_events.push(event);
         true
     }
@@ -750,6 +932,10 @@ impl ActiveEventsResource {
 
     pub fn drain_vfx_events(&mut self) -> Vec<VfxEventRequest> {
         std::mem::take(&mut self.pending_vfx_events)
+    }
+
+    pub fn drain_audio_events(&mut self) -> Vec<PlaySoundRecipeRequest> {
+        std::mem::take(&mut self.pending_audio_events)
     }
 
     pub fn record_recent_event(&mut self, event: GameEvent) {
@@ -998,6 +1184,173 @@ impl ActiveEventsResource {
                         }
                     }
                 }
+                EVENT_POISON_MIASMA => {
+                    let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    if next_elapsed.is_multiple_of(100) {
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::EventTriggered,
+                            tick: next_elapsed,
+                            player: None,
+                            target: Some("poison_miasma_contamination".to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([
+                                ("per_meridian_contamination".to_string(), json!(0.02)),
+                                ("meridian_count".to_string(), json!(20)),
+                                ("intensity".to_string(), json!(event.intensity)),
+                            ])),
+                        });
+                    }
+                }
+                EVENT_MERIDIAN_SEAL => {
+                    if !event.calamity_state.initialized {
+                        event.calamity_state.initialized = true;
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::EventTriggered,
+                            tick: event.elapsed_ticks,
+                            player: event.target_player.clone(),
+                            target: Some("meridian_seal_cast_lock".to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([
+                                (
+                                    "radius_blocks".to_string(),
+                                    json!(CalamityKind::MeridianSeal.radius_blocks()),
+                                ),
+                                ("flow_locked".to_string(), json!(true)),
+                            ])),
+                        });
+                    }
+                }
+                EVENT_DAOXIANG_WAVE => {
+                    if event.elapsed_ticks == 0 && event.calamity_state.spawned_entities.is_empty()
+                    {
+                        let Some(layer_entity) = layer_entity else {
+                            tracing::warn!(
+                                "[bong][world] daoxiang_wave runtime for zone `{}` skipped: missing entity layer",
+                                event.zone_name
+                            );
+                            continue;
+                        };
+
+                        let Some(commands) = commands.as_deref_mut() else {
+                            tracing::warn!(
+                                "[bong][world] daoxiang_wave runtime for zone `{}` skipped: missing Commands",
+                                event.zone_name
+                            );
+                            continue;
+                        };
+
+                        let desired_count = daoxiang_count_for_intensity(event.intensity);
+                        let spawn_count = npc_spawn_budget_by_zone
+                            .as_ref()
+                            .and_then(|budget| budget.get(event.zone_name.as_str()).copied())
+                            .map(|budget| desired_count.min(budget))
+                            .unwrap_or(desired_count);
+                        if spawn_count == 0 {
+                            tracing::info!(
+                                "[bong][world] daoxiang_wave runtime for zone `{}` skipped: npc registry budget exhausted",
+                                event.zone_name
+                            );
+                            continue;
+                        }
+                        if let Some(budget_by_zone) = npc_spawn_budget_by_zone.as_mut() {
+                            if let Some(budget) = budget_by_zone.get_mut(event.zone_name.as_str()) {
+                                *budget = budget.saturating_sub(spawn_count);
+                            }
+                        }
+                        for spawn_index in 0..spawn_count {
+                            let spawn_position =
+                                beast_spawn_position_on_zone_edge(&zone, spawn_index, spawn_count);
+                            let entity = spawn_targeted_daoxiang(
+                                commands,
+                                layer_entity,
+                                event.zone_name.as_str(),
+                                spawn_position,
+                            );
+                            event.calamity_state.spawned_entities.push(entity);
+                        }
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::EventTriggered,
+                            tick: event.elapsed_ticks,
+                            player: event.target_player.clone(),
+                            target: Some("daoxiang_wave_spawned".to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([
+                                ("spawned".to_string(), json!(spawn_count)),
+                                ("requested".to_string(), json!(desired_count)),
+                            ])),
+                        });
+                    }
+                }
+                EVENT_HEAVENLY_FIRE => {
+                    let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    if next_elapsed >= event.duration_ticks && !event.calamity_state.initialized {
+                        let redistributed = redistribute_zone_qi_before_collapse(
+                            zone_registry,
+                            event.zone_name.as_str(),
+                        );
+                        if let Some(active_zone) =
+                            zone_registry.find_zone_mut(event.zone_name.as_str())
+                        {
+                            active_zone.spirit_qi = 0.0;
+                            active_zone.danger_level = active_zone.danger_level.max(4);
+                            if !active_zone
+                                .active_events
+                                .iter()
+                                .any(|name| name == "tribulation_scorch")
+                            {
+                                active_zone
+                                    .active_events
+                                    .push("tribulation_scorch".to_string());
+                            }
+                        }
+                        event.calamity_state.initialized = true;
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::ZoneQiChange,
+                            tick: next_elapsed,
+                            player: None,
+                            target: Some("heavenly_fire_scorch".to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([
+                                ("spirit_qi".to_string(), json!(0.0)),
+                                ("redistributed_spirit_qi".to_string(), json!(redistributed)),
+                                ("terrain_profile".to_string(), json!("tribulation_scorch")),
+                            ])),
+                        });
+                    }
+                }
+                EVENT_PRESSURE_INVERT => {
+                    let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    if next_elapsed.is_multiple_of(60) {
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::ZoneQiChange,
+                            tick: next_elapsed,
+                            player: event.target_player.clone(),
+                            target: Some("pressure_invert_qi_transfer".to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([
+                                ("transfer".to_string(), json!("player_to_zone")),
+                                ("realm_bias".to_string(), json!("solidify_plus")),
+                                ("intensity".to_string(), json!(event.intensity)),
+                            ])),
+                        });
+                    }
+                }
+                EVENT_ALL_WITHER => {
+                    if !event.calamity_state.initialized {
+                        event.calamity_state.initialized = true;
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::EventTriggered,
+                            tick: event.elapsed_ticks,
+                            player: None,
+                            target: Some("all_wither_zone".to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([
+                                ("botany_state".to_string(), json!("withered")),
+                                ("lingtian_state".to_string(), json!("withered")),
+                            ])),
+                        });
+                    }
+                }
                 EVENT_REALM_COLLAPSE => {
                     let next_elapsed = event.elapsed_ticks.saturating_add(1);
                     if !event.collapse.completed && next_elapsed < event.duration_ticks {
@@ -1108,6 +1461,7 @@ impl ActiveEventsResource {
         }
 
         let mut expired_beasts = Vec::new();
+        let mut expired_calamity_spawns = Vec::new();
         self.active_events.retain(|event| {
             if !event.is_expired() {
                 return true;
@@ -1121,6 +1475,10 @@ impl ActiveEventsResource {
 
             if event.event_name == EVENT_BEAST_TIDE {
                 expired_beasts.extend(event.beast_tide.spawned_entities().iter().copied());
+            }
+            if event.event_name == EVENT_DAOXIANG_WAVE {
+                expired_calamity_spawns
+                    .extend(event.calamity_state.spawned_entities.iter().copied());
             }
 
             tracing::info!(
@@ -1136,6 +1494,11 @@ impl ActiveEventsResource {
         if let Some(commands) = commands {
             for beast in expired_beasts {
                 if let Some(mut entity_commands) = commands.get_entity(beast) {
+                    entity_commands.insert(Despawned);
+                }
+            }
+            for spawned in expired_calamity_spawns {
+                if let Some(mut entity_commands) = commands.get_entity(spawned) {
                     entity_commands.insert(Despawned);
                 }
             }
@@ -1156,6 +1519,23 @@ impl ActiveEventsResource {
             .iter()
             .filter(|event| event.zone_name == zone_name && event.event_name == event_name)
             .count()
+    }
+
+    fn calamity_count_for_zone(&self, zone_name: &str) -> usize {
+        self.active_events
+            .iter()
+            .filter(|event| event.zone_name == zone_name && event.calamity.is_some())
+            .count()
+    }
+
+    fn prune_calamity_target_log(&mut self, tick: u64) {
+        while self
+            .calamity_target_log
+            .front()
+            .is_some_and(|record| tick.saturating_sub(record.tick) > CALAMITY_TARGET_WINDOW_TICKS)
+        {
+            self.calamity_target_log.pop_front();
+        }
     }
 
     #[cfg(test)]
@@ -1279,6 +1659,7 @@ fn tick_active_events(
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     redis: Option<Res<crate::network::RedisBridgeResource>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     mut qi_heatmap: Option<ResMut<QiDensityHeatmap>>,
     mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
     mut rat_bites: EventWriter<RatBiteEvent>,
@@ -1339,6 +1720,25 @@ fn tick_active_events(
             }
             reserved_by_zone.insert(event.zone_name.clone(), reserved);
         }
+        for event in active_events
+            .active_events
+            .iter()
+            .filter(|event| event.event_name == EVENT_DAOXIANG_WAVE && event.elapsed_ticks == 0)
+        {
+            let desired = daoxiang_count_for_intensity(event.intensity);
+            let reserved = registry.reserve_zone_batch(event.zone_name.as_str(), desired);
+            if reserved < desired {
+                tracing::info!(
+                    "[bong][world] daoxiang_wave spawn clamped by npc registry: zone={} desired={} reserved={} live_npc_count={} max_npc_count={}",
+                    event.zone_name,
+                    desired,
+                    reserved,
+                    registry.live_npc_count,
+                    registry.max_npc_count
+                );
+            }
+            *reserved_by_zone.entry(event.zone_name.clone()).or_insert(0) += reserved;
+        }
         for spawn in &active_events.pending_daoxiang_spawns {
             let reserved = registry.reserve_zone_batch(spawn.zone_name.as_str(), 1);
             *reserved_by_zone.entry(spawn.zone_name.clone()).or_insert(0) += reserved;
@@ -1376,6 +1776,13 @@ fn tick_active_events(
     if let Some(vfx_events) = vfx_events.as_deref_mut() {
         for event in pending_vfx_events {
             vfx_events.send(event);
+        }
+    }
+
+    let pending_audio_events = active_events.drain_audio_events();
+    if let Some(audio_events) = audio_events.as_deref_mut() {
+        for event in pending_audio_events {
+            audio_events.send(event);
         }
     }
 
@@ -1657,6 +2064,91 @@ fn targeted_lightning_vfx(position: DVec3, effective_probability: f32) -> VfxEve
     )
 }
 
+fn average_zone_qi(zone_registry: &ZoneRegistry) -> f64 {
+    if zone_registry.zones.is_empty() {
+        return 0.4;
+    }
+    zone_registry
+        .zones
+        .iter()
+        .map(|zone| zone.spirit_qi)
+        .sum::<f64>()
+        / zone_registry.zones.len() as f64
+}
+
+fn calamity_alert_message(kind: CalamityKind, zone_name: &str, duration_ticks: u64) -> String {
+    let label = match kind {
+        CalamityKind::Thunder => "天劫",
+        CalamityKind::PoisonMiasma => "毒瘴",
+        CalamityKind::MeridianSeal => "封脉阵",
+        CalamityKind::DaoxiangWave => "道伥潮",
+        CalamityKind::HeavenlyFire => "天火",
+        CalamityKind::PressureInvert => "灵压倒转",
+        CalamityKind::AllWither => "万物凋零",
+        CalamityKind::RealmCollapse => "域崩",
+    };
+    format!("{label}已在区域 {zone_name} 触发，预计持续 {duration_ticks} tick。")
+}
+
+fn calamity_vfx(
+    zone: &Zone,
+    kind: CalamityKind,
+    intensity: f64,
+    duration_ticks: u64,
+) -> VfxEventRequest {
+    let center = zone.center();
+    let origin = [center.x, center.y, center.z];
+    let radius = kind.radius_blocks();
+    let count = calamity_vfx_count(kind, intensity);
+    VfxEventRequest::new(
+        center,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: kind.vfx_event_id().to_string(),
+            origin,
+            direction: Some([radius, 0.0, radius]),
+            color: Some(kind.vfx_color().to_string()),
+            strength: Some(intensity.clamp(0.0, 1.0) as f32),
+            count: Some(count),
+            duration_ticks: Some(duration_ticks.min(200) as u16),
+        },
+    )
+}
+
+fn calamity_vfx_count(kind: CalamityKind, intensity: f64) -> u16 {
+    let normalized = intensity.clamp(0.0, 1.0);
+    match kind {
+        CalamityKind::Thunder => (2.0 + normalized * 3.0).round() as u16,
+        CalamityKind::DaoxiangWave => daoxiang_count_for_intensity(normalized) as u16,
+        CalamityKind::PoisonMiasma => 18,
+        CalamityKind::MeridianSeal => 16,
+        CalamityKind::HeavenlyFire => 32,
+        CalamityKind::PressureInvert => 20,
+        CalamityKind::AllWither => 24,
+        CalamityKind::RealmCollapse => REALM_COLLAPSE_BOUNDARY_VFX_COUNT,
+    }
+    .clamp(1, 64)
+}
+
+fn calamity_audio_request(zone: &Zone, kind: CalamityKind) -> PlaySoundRecipeRequest {
+    let center = zone.center();
+    PlaySoundRecipeRequest {
+        recipe_id: kind.audio_recipe_id().to_string(),
+        instance_id: 0,
+        pos: Some([
+            center.x.floor() as i32,
+            center.y.floor() as i32,
+            center.z.floor() as i32,
+        ]),
+        flag: Some(format!("calamity:{}", kind.schema_kind())),
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin: center,
+            radius: kind.radius_blocks().max(AUDIO_BROADCAST_RADIUS),
+        },
+    }
+}
+
 fn realm_collapse_evacuation_alert_message(zone_name: &str, remaining_ticks: u64) -> String {
     format!("域崩撤离窗口已在区域 {zone_name} 开启，剩余 {remaining_ticks} tick；未撤者横死。")
 }
@@ -1871,6 +2363,11 @@ fn beast_count_for_intensity(intensity: f64) -> usize {
         .mul_add(BEAST_TIDE_BEASTS_PER_INTENSITY, 1.0)
         .round() as usize)
         .max(1)
+}
+
+fn daoxiang_count_for_intensity(intensity: f64) -> usize {
+    let normalized = intensity.clamp(0.0, 1.0);
+    (normalized.mul_add(8.0, 2.0).round() as usize).clamp(3, 10)
 }
 
 fn thunder_strike_position(
@@ -2289,9 +2786,9 @@ mod events_tests {
     use super::{
         beast_kind_from_command, persist_zone_collapsed_overlays,
         redistribute_zone_qi_before_collapse, tick_active_events, ActiveEventsResource,
-        RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
-        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
-        EVENT_THUNDER_TRIBULATION, LOCUST_SWARM_DISBAND_THRESHOLD,
+        CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_POISON_MIASMA,
+        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, LOCUST_SWARM_DISBAND_THRESHOLD,
         REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID, REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS,
         REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS,
         REALM_COLLAPSE_LOW_QI_THRESHOLD, TARGETED_LIGHTNING_VFX_EVENT_ID,
@@ -2312,8 +2809,13 @@ mod events_tests {
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
     use crate::schema::vfx_event::VfxEventPayloadV1;
+    use crate::world::calamity::{
+        AttentionTier, CalamityArsenal, CalamityKind, TiandaoPower, EVENT_HEAVENLY_FIRE,
+        EVENT_MERIDIAN_SEAL,
+    };
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
+    use crate::world::season::Season;
     use crate::world::zone::Zone;
     use crate::world::zone::ZoneRegistry;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
@@ -2381,6 +2883,178 @@ mod events_tests {
             target: target.to_string(),
             params,
         }
+    }
+
+    fn calamity_command(target: &str, event: &str, attention: AttentionTier) -> Command {
+        let mut command = spawn_event_command_with_params(target, event, 100, 0.7, None);
+        command.params.insert(
+            "attention_level".to_string(),
+            json!(attention_wire(attention)),
+        );
+        command
+            .params
+            .insert("reason".to_string(), json!("unit-test calamity"));
+        command
+    }
+
+    fn attention_wire(attention: AttentionTier) -> &'static str {
+        match attention {
+            AttentionTier::Watch => "watch",
+            AttentionTier::Pressure => "pressure",
+            AttentionTier::Tribulation => "tribulation",
+            AttentionTier::Annihilate => "annihilate",
+        }
+    }
+
+    #[test]
+    fn calamity_arsenal_spends_power_and_emits_vfx_audio() {
+        let mut events = ActiveEventsResource::default();
+        let mut zones = ZoneRegistry::fallback();
+        let arsenal = CalamityArsenal::default();
+        let mut power = TiandaoPower::default();
+        power.current = 20.0;
+
+        let command = calamity_command("spawn", EVENT_THUNDER_TRIBULATION, AttentionTier::Watch);
+        assert!(
+            events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &command,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Summer,
+                1,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
+        assert!((power.current - 5.004).abs() < 1e-9);
+        assert_eq!(power.spend_log.len(), 1);
+
+        let vfx = events.drain_vfx_events();
+        assert_eq!(vfx.len(), 1);
+        match &vfx[0].payload {
+            VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, CalamityKind::Thunder.vfx_event_id());
+            }
+            other => panic!("unexpected calamity vfx payload: {other:?}"),
+        }
+        let audio = events.drain_audio_events();
+        assert_eq!(audio.len(), 1);
+        assert_eq!(audio[0].recipe_id, CalamityKind::Thunder.audio_recipe_id());
+
+        let expensive = calamity_command("spawn", EVENT_POISON_MIASMA, AttentionTier::Pressure);
+        assert!(
+            !events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &expensive,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Summer,
+                2,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
+    }
+
+    #[test]
+    fn calamity_arsenal_rejects_season_and_concurrency_overflow() {
+        let mut events = ActiveEventsResource::default();
+        let mut zones = ZoneRegistry::fallback();
+        let arsenal = CalamityArsenal::default();
+        let mut power = TiandaoPower::default();
+
+        let heavenly_fire =
+            calamity_command("spawn", EVENT_HEAVENLY_FIRE, AttentionTier::Tribulation);
+        assert!(
+            !events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &heavenly_fire,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Winter,
+                1,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
+        assert_eq!(power.current, 100.0);
+
+        let thunder = calamity_command("spawn", EVENT_THUNDER_TRIBULATION, AttentionTier::Watch);
+        let miasma = calamity_command("spawn", EVENT_POISON_MIASMA, AttentionTier::Pressure);
+        let seal = calamity_command("spawn", EVENT_MERIDIAN_SEAL, AttentionTier::Pressure);
+        assert!(
+            events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &thunder,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Summer,
+                2,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
+        assert!(
+            events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &miasma,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Summer,
+                3,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
+        assert!(
+            !events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &seal,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Summer,
+                4,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
+        assert_eq!(events.calamity_count_for_zone("spawn"), 2);
+    }
+
+    #[test]
+    fn calamity_target_window_caps_to_three_recent_hits() {
+        let mut events = ActiveEventsResource::default();
+        let mut zones = ZoneRegistry::fallback();
+        let arsenal = CalamityArsenal::default();
+        let mut power = TiandaoPower::default();
+
+        events.calamity_target_log.push_back(CalamityTargetRecord {
+            tick: 1,
+            target_key: "zone:spawn".to_string(),
+        });
+        events.calamity_target_log.push_back(CalamityTargetRecord {
+            tick: 2,
+            target_key: "zone:spawn".to_string(),
+        });
+        events.calamity_target_log.push_back(CalamityTargetRecord {
+            tick: 3,
+            target_key: "zone:spawn".to_string(),
+        });
+
+        let command = calamity_command("spawn", EVENT_THUNDER_TRIBULATION, AttentionTier::Watch);
+        assert!(
+            !events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
+                &command,
+                Some(&mut zones),
+                None,
+                None,
+                Season::Summer,
+                4,
+                Some(&mut power),
+                Some(&arsenal),
+            )
+        );
     }
 
     fn setup_events_app() -> (App, Entity) {

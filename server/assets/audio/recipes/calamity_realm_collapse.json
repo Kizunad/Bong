@@ -1,0 +1,11 @@
+{
+  "id": "calamity_realm_collapse",
+  "layers": [
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.55, "pitch": 0.12, "delay_ticks": 0 },
+    { "sound": "minecraft:block.portal.trigger", "volume": 0.3, "pitch": 0.35, "delay_ticks": 8 },
+    { "sound": "minecraft:entity.ender_dragon.growl", "volume": 0.2, "pitch": 0.35, "delay_ticks": 30 }
+  ],
+  "priority": 98,
+  "attenuation": "global_hint",
+  "category": "AMBIENT"
+}

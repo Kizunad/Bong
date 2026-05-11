@@ -1,0 +1,12 @@
+{
+  "id": "calamity_heavenly_fire",
+  "layers": [
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.5, "pitch": 0.15, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.blaze.shoot", "volume": 0.6, "pitch": 0.3, "delay_ticks": 8 },
+    { "sound": "minecraft:block.fire.ambient", "volume": 0.4, "pitch": 0.5, "delay_ticks": 20 },
+    { "sound": "minecraft:item.firecharge.use", "volume": 0.3, "pitch": 0.2, "delay_ticks": 40 }
+  ],
+  "priority": 92,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}
