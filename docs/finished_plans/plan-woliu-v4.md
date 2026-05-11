@@ -4,10 +4,10 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **P0** | 涡流残卷获取闭环（item + 掉落 + 研读 + 学招） | ⬜ |
-| **P1** | 观摩领悟 + NPC 传功路径 | ⬜ |
-| **P2** | 垂死大能事件 + 熟练度成长 | ⬜ |
-| **P3** | 涡流天赋路线 + 全流程验收 | ⬜ |
+| **P0** | 涡流残卷获取闭环（item + 掉落 + 研读 + 学招） | ✅ 2026-05-12 |
+| **P1** | 观摩领悟 + NPC 传功路径 | ✅ 2026-05-12 |
+| **P2** | 垂死大能事件 + 熟练度成长 | ✅ 2026-05-12 |
+| **P3** | 涡流天赋路线 + 全流程验收 | ✅ 2026-05-12 |
 
 **世界观锚点**：
 - `worldview.md §五:442-455` 涡流核心原理（掌心负灵域 / 真空吸扯 / 反噬致残）
@@ -692,3 +692,36 @@ worldview §五:546-548 锚定的完整公式：
 5. ~~prof=0 可用性~~ → **能放但很烂**。反噬 ×2 / 消耗 ×1.3 / Δ 仅 0.08。worldview "你用得不好" 而非 "不让你用"。
 6. ~~残卷占位~~ → **generic 占位卷**。其他 6 流派暂出 `tattered_scroll_generic`（10 骨币卖价），等各流派 plan 替换。
 7. ~~combat_style_tags~~ → **Entity component**。per-instance，散修 NPC 生成时随机分配 1-2 个流派标签。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 残卷获取闭环**：`KnownTechniques::default()` 生产空招式列表与 `dev-techniques` 特性在 `server/src/cultivation/known_techniques.rs`；11 张涡流残卷模板在 `server/assets/items/woliu_scrolls.toml`；残卷属性进入 `inventory::ItemTemplate` / inventory snapshot；研读入口由 `server/src/network/client_request_handler.rs` 路由到 `server/src/cultivation/technique_scroll.rs`；道伥与 TSY 残卷掉落在 `server/src/npc/loot.rs`、`server/src/npc/tsy_hostile.rs`、`server/loot_pools.json`。
+- **P1 观摩与传功**：观摩概率、品阶限制、冷却与前置校验在 `server/src/cultivation/technique_observe.rs`；NPC 传功条件、骨币/好感代价、拒绝分支在 `server/src/cultivation/technique_mentor.rs`；通用 `LearnSource` / `TechniqueLearnedEvent` 由 `technique_scroll.rs` 统一承载。
+- **P2 垂死大能与熟练度**：垂死大能 encounter、30s 自然死亡、给丹 50/50 分流与战斗触发在 `server/src/npc/dying_master.rs`；熟练度公式、combat cast 增长、练满事件、`LifeRecord` 写入在 `server/src/cultivation/technique_proficiency.rs`；熟练度缩放已接入 `server/src/combat/woliu_v2/skills.rs` 与相关回归测试。
+- **P3 天赋路线与跨端呈现**：涡流顿悟 variant 在 `server/src/cultivation/insight.rs` / `insight_apply.rs`；三条 generic talent 写入 `server/assets/insight/generic_talents.json` 并由 `generic_talent.rs` 校验；schema channel / request / inventory surface 在 `agent/packages/schema/src/{channels,client-request,inventory}.ts` 及 generated schema；client 研读/观摩 UI 在 `TechniqueScrollReadScreen.java`、`TechniqueObserveHud.java`、`InspectScreen.java`、`TechniquesSnapshotHandler.java`。
+
+### 关键 commit
+
+- `36d425d15` · 2026-05-12 · `docs(plan-woliu-v4): 导入 active plan`
+- `d1f43bf3e` · 2026-05-12 · `feat(woliu-v4): 建立涡流功法修习核心`
+- `f4f4c04e7` · 2026-05-12 · `feat(woliu-v4): 接入残卷研读与掉落链路`
+- `c581d33b0` · 2026-05-12 · `feat(woliu-v4): 同步客户端与 schema 契约`
+- `f02c2107e` · 2026-05-12 · `fix(woliu-v4): 接入涡流熟练度运行时增长`
+
+### 测试结果
+
+- `server/`：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo test technique_proficiency` ✅ 15 passed；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test` ✅ 4528 passed。
+- `client/`：`JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew --no-daemon test build` ✅。
+- `agent/`：`npm run build` ✅；`cd packages/schema && npm test` ✅ 377 passed；`npm run check` ✅ 361 schemas fresh；`cd packages/tiandao && npm test` ✅ 358 passed。
+
+### 跨仓库核验
+
+- **server**：`TechniqueScrollReadEvent`、`TechniqueLearnedEvent`、`TechniqueMasteredEvent`、`LearnSource::{Scroll, Observe, Mentor, DyingMaster, DevCommand}`、`CH_TECHNIQUE_*`、`ClientRequestPayloadV1::TechniqueScrollUse`、`KnownTechnique.proficiency`、`VortexCastEvent` → proficiency runtime 增长。
+- **agent/schema**：`CH_TECHNIQUE_SCROLL_READ` / `CH_TECHNIQUE_LEARNED` / `CH_TECHNIQUE_MASTERED` / `CH_TECHNIQUE_PROFICIENCY_UP`，`technique_scroll_use` client request，inventory snapshot 中的 `scroll_kind` / `scroll_skill_id`。
+- **client**：`InspectScreen` 识别 combat technique scroll 并发送研读请求；`TechniqueScrollReadScreen` 显示研读结果；`TechniqueObserveHud` 显示观摩习得与熟练度提升；`TechniquesSnapshotHandler` 路由 proficiency up 通知。
+
+### 遗留 / 后续
+
+- 无本 plan 阻塞项。其他 6 流派仍使用 generic 残卷占位，按各自 vN+1 plan 替换为专属残卷池。
