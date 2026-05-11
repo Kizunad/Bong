@@ -71,6 +71,12 @@ public final class VfxBootstrap {
         registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
         registry.register(MigrationVisualPlayer.EVENT_ID,        new MigrationVisualPlayer());
+        PseudoVeinVisualPlayer pseudoVein = new PseudoVeinVisualPlayer();
+        registry.register(PseudoVeinVisualPlayer.RISING,         pseudoVein);
+        registry.register(PseudoVeinVisualPlayer.ACTIVE,         pseudoVein);
+        registry.register(PseudoVeinVisualPlayer.WARNING,        pseudoVein);
+        registry.register(PseudoVeinVisualPlayer.DISSIPATING,    pseudoVein);
+        registry.register(PseudoVeinVisualPlayer.AFTERMATH,      pseudoVein);
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         registry.register(TuikeFalseSkinParticlePlayer.DON_DUST,

@@ -139,6 +139,12 @@ public class VfxRegistryTest {
             "bootstrap should register rat_swarm_aura");
         assertTrue(VfxRegistry.instance().contains(FaunaSpawnDustPlayer.EVENT_ID),
             "bootstrap should register fauna_spawn_dust");
+        assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.RISING),
+            "bootstrap should register pseudo vein rising VFX");
+        assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.WARNING),
+            "bootstrap should register pseudo vein warning VFX");
+        assertTrue(VfxRegistry.instance().contains(PseudoVeinVisualPlayer.AFTERMATH),
+            "bootstrap should register pseudo vein aftermath VFX");
         assertTrue(VfxRegistry.instance().contains(FaunaBoneShatterPlayer.EVENT_ID),
             "bootstrap should register fauna_bone_shatter");
         assertTrue(VfxRegistry.instance().contains(SpiderShimmerPlayer.EVENT_ID),

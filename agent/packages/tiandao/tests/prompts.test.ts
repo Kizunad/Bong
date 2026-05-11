@@ -48,6 +48,18 @@ describe("tiandao skill prompts", () => {
     expect(era).toContain("默认无工具");
   });
 
+  it("documents ecology pseudo vein decision rules", () => {
+    const ecology = readFileSync(resolve(skillsDir, "ecology.md"), "utf-8");
+    const calamity = readFileSync(resolve(skillsDir, "calamity.md"), "utf-8");
+
+    expect(ecology).toContain('params.event = "pseudo_vein"');
+    expect(ecology).toContain("玩家密度 > 3");
+    expect(ecology).toContain("灵气消耗率 > 0.02/tick");
+    expect(ecology).toContain("汐转期");
+    expect(calamity).toContain("伪灵脉(pseudo_vein)");
+    expect(calamity).toContain("引导分流和加速生态反馈");
+  });
+
   it("loads political jianghu prompt with anonymity and blacklist rules", () => {
     const political = readFileSync(resolve(skillsDir, "political.md"), "utf-8");
 
