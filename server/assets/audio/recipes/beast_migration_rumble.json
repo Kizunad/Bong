@@ -1,0 +1,11 @@
+{
+  "id": "beast_migration_rumble",
+  "layers": [
+    { "sound": "minecraft:entity.horse.gallop", "volume": 0.42, "pitch": 0.55, "delay_ticks": 0 },
+    { "sound": "minecraft:block.deepslate.break", "volume": 0.36, "pitch": 0.50, "delay_ticks": 4 },
+    { "sound": "minecraft:entity.generic.explode", "volume": 0.18, "pitch": 0.45, "delay_ticks": 10 }
+  ],
+  "priority": 88,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

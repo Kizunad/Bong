@@ -4,7 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource, With, Without,
+    bevy_ecs, BlockPos, Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource,
+    With, Without,
 };
 
 use crate::cultivation::components::Realm;
@@ -21,14 +22,17 @@ use crate::npc::spawn::{
     NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::qi_physics::ledger::QiTransfer;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
+use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::calamity::{CalamityArsenal, TiandaoPower};
 use crate::world::events::ActiveEventsResource;
 use crate::world::heartbeat::{apply_heartbeat_override_command, WorldHeartbeat};
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
-use crate::world::season::query_season;
+use crate::world::pseudo_vein_runtime::{inject_zone_for_pseudo_vein, PseudoVeinRuntime};
+use crate::world::season::{query_season, Season};
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
 use crate::world::zone::ZoneRegistry;
 
@@ -38,6 +42,7 @@ const ZONE_DANGER_LEVEL_MIN: i64 = 0;
 const ZONE_DANGER_LEVEL_MAX: i64 = 5;
 const COMMAND_BATCH_DEDUPE_WINDOW_SECS: u64 = 30;
 const COMMAND_BATCH_DEDUPE_CAPACITY: usize = 256;
+const EVENT_PSEUDO_VEIN: &str = "pseudo_vein";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchEnqueueOutcome {
@@ -175,11 +180,14 @@ pub fn execute_agent_commands(
     mut params: CommandExecutionParams,
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
+    mut qi_transfers: EventWriter<QiTransfer>,
     layers: LayerQuery<'_, '_>,
     npc_entities: LiveNpcQuery<'_, '_>,
+    pseudo_vein_runtimes: Query<&PseudoVeinRuntime>,
 ) {
     let mut remaining_budget = MAX_COMMANDS_PER_TICK;
     let mut pending_despawn_targets = HashSet::new();
+    let mut pending_pseudo_vein_zones = HashSet::new();
     let terrain = params.terrain_providers.as_deref().map(|p| &p.overworld);
 
     while remaining_budget > 0 {
@@ -212,8 +220,11 @@ pub fn execute_agent_commands(
                 terrain,
                 &mut npc_spawn_notices,
                 &mut faction_notices,
+                &mut qi_transfers,
                 &layers,
                 &npc_entities,
+                &pseudo_vein_runtimes,
+                &mut pending_pseudo_vein_zones,
                 &mut pending_despawn_targets,
             );
             consumed += 1;
@@ -255,8 +266,11 @@ fn execute_single_command(
     terrain: Option<&TerrainProvider>,
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
     layers: &LayerQuery<'_, '_>,
     npc_entities: &LiveNpcQuery<'_, '_>,
+    pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
+    pending_pseudo_vein_zones: &mut HashSet<String>,
     pending_despawn_targets: &mut HashSet<String>,
 ) {
     let command_type = command_type_label(&command.command_type);
@@ -293,6 +307,7 @@ fn execute_single_command(
         CommandType::HeartbeatOverride => execute_heartbeat_override(command, heartbeat, tick),
         CommandType::SpawnEvent => execute_spawn_event(
             command,
+            commands,
             SpawnEventCommandResources {
                 zone_registry: zone_registry.as_deref_mut(),
                 active_events: active_events.as_deref_mut(),
@@ -302,6 +317,9 @@ fn execute_single_command(
                 qi_heatmap,
             },
             tick,
+            pseudo_vein_runtimes,
+            qi_transfers,
+            pending_pseudo_vein_zones,
         ),
     };
 
@@ -689,8 +707,12 @@ fn execute_spawn_npc(
 
 fn execute_spawn_event(
     command: &Command,
+    commands: &mut Commands,
     resources: SpawnEventCommandResources<'_>,
     tick: Option<u64>,
+    pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    pending_pseudo_vein_zones: &mut HashSet<String>,
 ) -> &'static str {
     let SpawnEventCommandResources {
         zone_registry,
@@ -700,6 +722,18 @@ fn execute_spawn_event(
         karma_weights,
         qi_heatmap,
     } = resources;
+
+    if event_name(command) == Some(EVENT_PSEUDO_VEIN) {
+        return execute_spawn_pseudo_vein(
+            command,
+            commands,
+            zone_registry,
+            tick,
+            pseudo_vein_runtimes,
+            qi_transfers,
+            pending_pseudo_vein_zones,
+        );
+    }
 
     let Some(active_events) = active_events else {
         tracing::warn!(
@@ -724,6 +758,82 @@ fn execute_spawn_event(
         "ok"
     } else {
         "rejected_spawn_event"
+    }
+}
+
+fn execute_spawn_pseudo_vein(
+    command: &Command,
+    commands: &mut Commands,
+    zone_registry: Option<&mut ZoneRegistry>,
+    tick: Option<u64>,
+    pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    pending_pseudo_vein_zones: &mut HashSet<String>,
+) -> &'static str {
+    let Some(zone_registry) = zone_registry else {
+        tracing::warn!(
+            "[bong][network] cannot spawn pseudo_vein for `{}` because ZoneRegistry is missing",
+            command.target
+        );
+        return "rejected_missing_zone_registry";
+    };
+    let Some(zone) = zone_registry.find_zone_mut(command.target.as_str()) else {
+        tracing::warn!(
+            "[bong][network] pseudo_vein target zone `{}` was not found",
+            command.target
+        );
+        return "rejected_unknown_zone";
+    };
+    if pending_pseudo_vein_zones.contains(zone.name.as_str())
+        || pseudo_vein_runtimes
+            .iter()
+            .any(|runtime| runtime.zone_id == zone.name)
+    {
+        tracing::info!(
+            "[bong][network] pseudo_vein target zone `{}` already has active runtime",
+            zone.name
+        );
+        return "rejected_duplicate_pseudo_vein";
+    }
+
+    let now = tick.unwrap_or_default();
+    let center = zone.center();
+    let injected_qi = if let Some(transfer) = inject_zone_for_pseudo_vein(zone) {
+        let amount = transfer.amount;
+        qi_transfers.send(transfer);
+        amount
+    } else {
+        0.0
+    };
+    pending_pseudo_vein_zones.insert(zone.name.clone());
+    let mut runtime = PseudoVeinRuntime::new(
+        zone.name.clone(),
+        BlockPos::new(
+            center.x.round() as i32,
+            center.y.round() as i32,
+            center.z.round() as i32,
+        ),
+        now,
+        pseudo_vein_season_from_world(query_season(command.target.as_str(), now).season),
+    );
+    runtime.injected_qi = injected_qi;
+    commands.spawn(runtime);
+    "ok"
+}
+
+fn event_name(command: &Command) -> Option<&str> {
+    command
+        .params
+        .get("event")
+        .and_then(serde_json::Value::as_str)
+}
+
+fn pseudo_vein_season_from_world(season: Season) -> PseudoVeinSeasonV1 {
+    match season {
+        Season::Summer => PseudoVeinSeasonV1::Summer,
+        Season::SummerToWinter => PseudoVeinSeasonV1::SummerToWinter,
+        Season::Winter => PseudoVeinSeasonV1::Winter,
+        Season::WinterToSummer => PseudoVeinSeasonV1::WinterToSummer,
     }
 }
 
@@ -996,11 +1106,12 @@ mod command_executor_tests {
     use std::collections::HashMap;
 
     use serde_json::json;
-    use valence::prelude::{App, BlockPos, DVec3, EntityKind, Position, Update};
+    use valence::prelude::{App, BlockPos, DVec3, EntityKind, Events, Position, Update};
     use valence::testing::ScenarioSingleClient;
 
     use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
     use crate::npc::faction::FactionStore;
+    use crate::qi_physics::ledger::{QiAccountId, QiTransferReason};
     use crate::schema::agent_command::Command;
     use crate::world::events::{
         ActiveEventsResource, EVENT_KARMA_BACKLASH, EVENT_THUNDER_TRIBULATION,
@@ -1009,6 +1120,7 @@ mod command_executor_tests {
     use crate::world::karma::{
         TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
     };
+    use crate::world::pseudo_vein_runtime::{PseudoVeinPhase, PseudoVeinRuntime};
 
     fn command(command_type: CommandType, target: &str, params: HashMap<String, Value>) -> Command {
         Command {
@@ -1040,8 +1152,184 @@ mod command_executor_tests {
         app.insert_resource(QiDensityHeatmap::default());
         app.add_event::<NpcSpawnNotice>();
         app.add_event::<FactionEventNotice>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, execute_agent_commands);
         app
+    }
+
+    #[test]
+    fn spawn_event_pseudo_vein_creates_runtime_component() {
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+        params.insert("intensity".to_string(), json!(0.7));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_runtime",
+                vec![command(CommandType::SpawnEvent, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(runtimes[0].zone_id, "spawn");
+        assert_eq!(runtimes[0].phase, PseudoVeinPhase::Rising);
+    }
+
+    #[test]
+    fn spawn_event_pseudo_vein_rejects_unknown_zone() {
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+        params.insert("intensity".to_string(), json!(0.7));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_unknown_zone",
+                vec![command(CommandType::SpawnEvent, "missing_zone", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert!(
+            runtimes.is_empty(),
+            "pseudo_vein spawn_event should not create runtime for unknown zone"
+        );
+    }
+
+    #[test]
+    fn spawn_event_pseudo_vein_injects_zone_qi_transfer() {
+        let mut app = setup_executor_app();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("fallback registry should contain spawn")
+            .spirit_qi = 0.1;
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_injects_qi",
+                vec![command(CommandType::SpawnEvent, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone should remain registered")
+            .spirit_qi;
+        assert_eq!(zone_qi, 0.6);
+        let transfers = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].from, QiAccountId::tiandao());
+        assert_eq!(transfers[0].to, QiAccountId::zone("spawn"));
+        assert_eq!(transfers[0].amount, 0.5);
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+    }
+
+    #[test]
+    fn spawn_event_pseudo_vein_is_idempotent_for_active_zone() {
+        let mut app = setup_executor_app();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("fallback registry should contain spawn")
+            .spirit_qi = 0.1;
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_once",
+                vec![command(CommandType::SpawnEvent, "spawn", params.clone())],
+            ));
+            assert!(outcome.accepted);
+        }
+        app.update();
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_retry",
+                vec![command(CommandType::SpawnEvent, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(runtimes[0].zone_id, "spawn");
+        assert_eq!(runtimes[0].injected_qi, 0.5);
+    }
+
+    #[test]
+    fn spawn_event_pseudo_vein_rejects_same_batch_duplicate() {
+        let mut app = setup_executor_app();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("fallback registry should contain spawn")
+            .spirit_qi = 0.1;
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_same_batch_duplicate",
+                vec![
+                    command(CommandType::SpawnEvent, "spawn", params.clone()),
+                    command(CommandType::SpawnEvent, "spawn", params),
+                ],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(runtimes[0].zone_id, "spawn");
+        assert_eq!(runtimes[0].injected_qi, 0.5);
+        let transfers = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "same-batch duplicate should not emit a second pseudo vein injection"
+        );
     }
 
     #[test]

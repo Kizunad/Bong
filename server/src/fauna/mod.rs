@@ -13,6 +13,7 @@ pub fn register(app: &mut App) {
     app.add_event::<butcher::ButcherRequest>();
     app.add_event::<bone_coin::BoneCoinCraftRequest>();
     app.add_event::<bone_coin::BoneCoinCrafted>();
+    app.add_event::<migration::ZoneQiCriticalEvent>();
     app.add_event::<migration::MigrationEvent>();
     app.insert_resource(migration::FaunaMigrationState::default());
     app.add_event::<rat_phase::RatPhaseChangeEvent>();
@@ -33,6 +34,9 @@ pub fn register(app: &mut App) {
             experience::emit_fauna_death_vfx_audio_system.before(drop::fauna_drop_system),
             experience::emit_rat_bite_audio_system,
             migration::fauna_migration_system,
+            migration::migration_trigger_system.after(migration::fauna_migration_system),
+            migration::migration_move_system.after(migration::migration_trigger_system),
+            migration::migration_to_beast_tide_system.after(migration::migration_move_system),
             butcher::handle_butcher_requests,
             bone_coin::handle_bone_coin_craft_requests,
             drop::fauna_drop_system,

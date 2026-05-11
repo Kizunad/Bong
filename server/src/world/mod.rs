@@ -14,6 +14,7 @@ pub mod mob_spawn;
 pub mod poi_mutant_nest;
 pub mod poi_novice;
 pub mod poi_respawn_tick;
+pub mod pseudo_vein_runtime;
 pub mod rift_portal;
 pub mod season;
 pub mod spawn_tutorial;
@@ -115,6 +116,7 @@ pub fn register(app: &mut App) {
     weather_physics::register(app);
     season::register(app);
     calamity::register(app);
+    pseudo_vein_runtime::register(app);
     spirit_eye::register(app);
     entity_model::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());

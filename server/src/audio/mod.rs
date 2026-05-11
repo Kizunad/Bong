@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            189,
+            190,
             "audio registry should include audio-world and audio-implementation cues plus calamity arsenal, gathering UX, and coffin lifecycle cues"
         );
         assert!(registry.get("coffin_enter").is_some());
@@ -200,6 +200,7 @@ mod tests {
         assert!(registry.get("shed_skin_burst").is_some());
         assert!(registry.get("contam_transfer_hum").is_some());
         assert!(registry.get("ground_crack_rumble").is_some());
+        assert!(registry.get("beast_migration_rumble").is_some());
         assert!(registry.get("pillar_eruption_boom").is_some());
         assert!(registry.get("pressure_collapse_whoosh").is_some());
         assert!(registry.get("aftershock_wind").is_some());
