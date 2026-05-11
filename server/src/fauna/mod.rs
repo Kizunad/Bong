@@ -3,6 +3,7 @@ pub mod butcher;
 pub mod components;
 pub mod drop;
 pub mod experience;
+pub mod migration;
 pub mod rat_phase;
 pub mod visual;
 
@@ -12,6 +13,8 @@ pub fn register(app: &mut App) {
     app.add_event::<butcher::ButcherRequest>();
     app.add_event::<bone_coin::BoneCoinCraftRequest>();
     app.add_event::<bone_coin::BoneCoinCrafted>();
+    app.add_event::<migration::MigrationEvent>();
+    app.insert_resource(migration::FaunaMigrationState::default());
     app.add_event::<rat_phase::RatPhaseChangeEvent>();
     app.add_systems(
         valence::prelude::Update,
@@ -29,6 +32,7 @@ pub fn register(app: &mut App) {
             experience::emit_fauna_attack_audio_system,
             experience::emit_fauna_death_vfx_audio_system.before(drop::fauna_drop_system),
             experience::emit_rat_bite_audio_system,
+            migration::fauna_migration_system,
             butcher::handle_butcher_requests,
             bone_coin::handle_bone_coin_craft_requests,
             drop::fauna_drop_system,

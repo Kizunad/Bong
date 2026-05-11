@@ -4,6 +4,7 @@ use valence::prelude::{
 };
 
 use crate::npc::navigator::Navigator;
+use crate::npc::seasonal_behavior::NpcSeasonRuntime;
 use crate::npc::spawn::NpcMarker;
 use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -12,6 +13,14 @@ const PATROL_TARGET_EPSILON: f64 = 2.0;
 
 /// Speed factor for patrol movement (slower than chase).
 const PATROL_SPEED_FACTOR: f64 = 0.6;
+
+type PatrolNpcItem<'a> = (
+    Entity,
+    &'a Position,
+    &'a mut NpcPatrol,
+    &'a mut Navigator,
+    Option<&'a NpcSeasonRuntime>,
+);
 
 // ---------------------------------------------------------------------------
 // NpcPatrol component
@@ -65,7 +74,7 @@ pub fn register(app: &mut App) {
 fn patrol_npcs(
     zone_registry: Option<Res<ZoneRegistry>>,
     mut patrol_warnings: ResMut<PatrolWarningsResource>,
-    mut npcs: Query<(Entity, &Position, &mut NpcPatrol, &mut Navigator), With<NpcMarker>>,
+    mut npcs: Query<PatrolNpcItem<'_>, With<NpcMarker>>,
 ) {
     if zone_registry.is_none() && !patrol_warnings.warned_missing_registry {
         tracing::warn!(
@@ -78,7 +87,7 @@ fn patrol_npcs(
 
     let zone_registry = zone_registry.as_deref();
 
-    for (_entity, position, mut patrol, mut navigator) in &mut npcs {
+    for (_entity, position, mut patrol, mut navigator, season_runtime) in &mut npcs {
         // If the navigator already has a goal (chase/flee), don't override it.
         if !navigator.is_idle() {
             continue;
@@ -86,7 +95,7 @@ fn patrol_npcs(
 
         let zone = resolve_patrol_zone(zone_registry, patrol.as_mut(), position.get());
         let current_pos = zone.clamp_position(position.get());
-        let target = zone.clamp_position(patrol.current_target);
+        let target = seasonal_target(&zone, patrol.current_target, season_runtime);
 
         // Check if we've reached the current target.
         let dx = current_pos.x - target.x;
@@ -99,9 +108,25 @@ fn patrol_npcs(
         }
 
         // Set the navigator goal to the current patrol target.
-        let clamped_target = zone.clamp_position(patrol.current_target);
-        navigator.set_goal(clamped_target, PATROL_SPEED_FACTOR);
+        let clamped_target = seasonal_target(&zone, patrol.current_target, season_runtime);
+        navigator.set_goal(clamped_target, seasonal_speed_factor(season_runtime));
     }
+}
+
+fn seasonal_speed_factor(season_runtime: Option<&NpcSeasonRuntime>) -> f64 {
+    let multiplier = season_runtime
+        .map(|runtime| runtime.behavior.speed_multiplier as f64)
+        .unwrap_or(1.0);
+    (PATROL_SPEED_FACTOR * multiplier).clamp(0.1, 2.0)
+}
+
+fn seasonal_target(zone: &Zone, target: DVec3, season_runtime: Option<&NpcSeasonRuntime>) -> DVec3 {
+    let radius_multiplier = season_runtime
+        .map(|runtime| runtime.behavior.movement_radius_multiplier as f64)
+        .unwrap_or(1.0);
+    let center = zone.center();
+    let scaled = center + (target - center) * radius_multiplier.clamp(0.1, 2.0);
+    zone.clamp_position(scaled)
 }
 
 fn resolve_patrol_zone(
