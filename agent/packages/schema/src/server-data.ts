@@ -236,6 +236,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
   Type.Literal("movement_state"),
+  Type.Literal("coffin_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -1024,6 +1025,25 @@ export const ServerDataMovementStateV1 = Type.Object(
 );
 export type ServerDataMovementStateV1 = Static<typeof ServerDataMovementStateV1>;
 
+export const CoffinStateV1 = Type.Object(
+  {
+    in_coffin: Type.Boolean(),
+    lifespan_rate_multiplier: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type CoffinStateV1 = Static<typeof CoffinStateV1>;
+
+export const ServerDataCoffinStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_state"),
+    ...CoffinStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataCoffinStateV1 = Static<typeof ServerDataCoffinStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1501,6 +1521,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataHealerNpcAiStateV1,
   ServerDataYidaoHudStateV1,
   ServerDataMovementStateV1,
+  ServerDataCoffinStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

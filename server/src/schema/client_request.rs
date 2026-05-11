@@ -131,6 +131,25 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
     },
+    /// plan-coffin-v1 — 手持凡物棺材右键地面，放置两个 CHEST 占位方块。
+    CoffinPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
+    /// plan-coffin-v1 — 右键凡物棺材任一半，进入卧棺状态。
+    CoffinEnter {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    /// plan-coffin-v1 — 主动离开卧棺状态。
+    CoffinLeave {
+        v: u8,
+    },
     /// plan-social-v1 §2.1 — 消耗龛石，在目标坐标放置/替换当前角色唯一灵龛。
     SpiritNichePlace {
         v: u8,
@@ -633,6 +652,42 @@ mod tests {
             }
             other => panic!("expected CoffinOpen, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn coffin_lifecycle_requests_roundtrip() {
+        let place = r#"{"type":"coffin_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(place).unwrap();
+        match req {
+            ClientRequestV1::CoffinPlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (8, 64, 8));
+                assert_eq!(item_instance_id, 4242);
+            }
+            other => panic!("expected CoffinPlace, got {other:?}"),
+        }
+
+        let enter = r#"{"type":"coffin_enter","v":1,"x":8,"y":64,"z":8}"#;
+        let req: ClientRequestV1 = serde_json::from_str(enter).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::CoffinEnter {
+                v: 1,
+                x: 8,
+                y: 64,
+                z: 8
+            }
+        ));
+
+        let leave = r#"{"type":"coffin_leave","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(leave).unwrap();
+        assert!(matches!(req, ClientRequestV1::CoffinLeave { v: 1 }));
     }
 
     #[test]

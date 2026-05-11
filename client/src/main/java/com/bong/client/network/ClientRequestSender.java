@@ -348,6 +348,18 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeCoffinOpen(pos));
     }
 
+    public static void sendCoffinPlace(BlockPos pos, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeCoffinPlace(pos, itemInstanceId));
+    }
+
+    public static void sendCoffinEnter(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeCoffinEnter(pos));
+    }
+
+    public static void sendCoffinLeave() {
+        dispatch(ClientRequestProtocol.encodeCoffinLeave());
+    }
+
     public static void sendAlchemyTakePill(String pillItemId) {
         dispatch(ClientRequestProtocol.encodeAlchemyTakePill(pillItemId));
     }
