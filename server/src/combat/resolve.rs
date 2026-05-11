@@ -11,7 +11,7 @@ use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::jiemai::{
     jiemai_apply_effects, jiemai_effectiveness, jiemai_fov_check, jiemai_prep_window,
 };
-use crate::combat::status::has_active_status;
+use crate::combat::status::{body_part_damage_multiplier, has_active_status};
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
 use crate::combat::tuike_v2::StackedFalseSkins;
@@ -799,6 +799,14 @@ pub fn resolve_attack_intents(
                     }
                 }
             }
+        }
+        let defender_status_effects = statuses.get(target_entity).ok();
+        let pill_part_multiplier =
+            body_part_damage_multiplier(defender_status_effects, hit_probe.body_part);
+        if (pill_part_multiplier - 1.0).abs() > f32::EPSILON {
+            wound.severity *= pill_part_multiplier;
+            wound.bleeding_per_sec *= pill_part_multiplier;
+            emitted_contam_delta *= f64::from(pill_part_multiplier);
         }
 
         let false_skin_kind_before = false_skin.as_ref().map(|skin| skin.kind);

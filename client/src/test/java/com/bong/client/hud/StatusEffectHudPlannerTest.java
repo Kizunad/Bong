@@ -30,4 +30,19 @@ class StatusEffectHudPlannerTest {
         // Second effect has stacks=3 → one text entry for ×3
         assertEquals(1L, stackText);
     }
+
+    @Test void debuffRemainingBarUsesRedCountdown() {
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect("stamina_crash", "体力虚脱", StatusEffectStore.Kind.DEBUFF, 1, 5_000, 0xFFFF8030, "", 0)
+        ));
+
+        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
+
+        assertTrue(cmds.stream().anyMatch(cmd ->
+            cmd.isRect()
+                && cmd.width() > 0
+                && cmd.height() == 1
+                && cmd.color() == StatusEffectHudPlanner.DEBUFF_REMAINING_BAR_COLOR
+        ), "debuff countdown bar should be red");
+    }
 }

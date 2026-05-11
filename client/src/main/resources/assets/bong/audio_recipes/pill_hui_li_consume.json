@@ -1,0 +1,27 @@
+{
+  "id": "pill_hui_li_consume",
+  "layers": [
+    {
+      "sound": "minecraft:entity.witch.drink",
+      "volume": 0.4,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.player.breath",
+      "volume": 0.3,
+      "pitch": 0.9,
+      "delay_ticks": 8
+    },
+    {
+      "sound": "minecraft:block.beacon.activate",
+      "volume": 0.1,
+      "pitch": 2.0,
+      "delay_ticks": 15
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

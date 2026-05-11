@@ -1,0 +1,76 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "pill_ning_jia",
+  "description": "plan-alchemy-combat-v1 pill_ning_jia combat pill consume pose.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 40,
+    "stopTick": 43,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "torso": {
+          "roll": 0.1
+        },
+        "rightArm": {
+          "pitch": -0.95,
+          "yaw": -0.4,
+          "bend": 1.0,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": -0.55,
+          "yaw": 0.22,
+          "bend": 0.7,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 26,
+        "easing": "INOUTSINE",
+        "torso": {
+          "roll": -0.12
+        },
+        "rightArm": {
+          "pitch": -1.2,
+          "roll": -0.25,
+          "bend": 1.2,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 40,
+        "easing": "INOUTSINE",
+        "torso": {
+          "roll": 0.0
+        },
+        "rightArm": {
+          "pitch": 0.0,
+          "yaw": 0.0,
+          "roll": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": 0.0,
+          "yaw": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "pill_xu_gu",
+  "description": "plan-alchemy-combat-v1 pill_xu_gu combat pill consume pose.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 60,
+    "stopTick": 63,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        }
+      },
+      {
+        "tick": 15,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": -0.1
+        },
+        "torso": {
+          "pitch": 0.28
+        },
+        "rightArm": {
+          "pitch": -1.25,
+          "yaw": -0.34,
+          "bend": 1.1,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": -1.0,
+          "yaw": 0.25,
+          "bend": 1.0,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 40,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": -0.12
+        },
+        "torso": {
+          "pitch": 0.34
+        },
+        "rightArm": {
+          "pitch": -1.45,
+          "roll": -0.15,
+          "bend": 1.25,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 60,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        },
+        "torso": {
+          "pitch": 0.0
+        },
+        "rightArm": {
+          "pitch": 0.0,
+          "yaw": 0.0,
+          "roll": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": 0.0,
+          "yaw": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        }
+      }
+    ]
+  }
+}

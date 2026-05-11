@@ -1,13 +1,16 @@
 use valence::prelude::{EventReader, Query, Res};
 
 use crate::combat::components::{
-    ActiveStatusEffect, BodyRefiningMarker, DerivedAttrs, StatusEffects,
-    STATUS_EFFECT_TICK_INTERVAL_TICKS,
+    ActiveStatusEffect, BodyPart, BodyRefiningMarker, DerivedAttrs, Stamina, StaminaState,
+    StatusEffects, STATUS_EFFECT_TICK_INTERVAL_TICKS,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::CombatClock;
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::full_power_strike::Exhausted;
-use crate::qi_physics::constants::QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER};
+use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
 pub fn status_effect_apply_tick(
     mut intents: EventReader<ApplyStatusEffectIntent>,
@@ -99,6 +102,8 @@ pub fn status_effect_tick(clock: Res<CombatClock>, mut statuses: Query<&mut Stat
 }
 
 const BODY_REFINING_DEFENSE_MULTIPLIER: f32 = 1.0 / 1.3;
+const DEFAULT_STAMINA_MAX_FOR_STATUS: f32 = 100.0;
+const DEFAULT_STAMINA_RECOVER_FOR_STATUS: f32 = 5.0;
 
 pub fn attribute_aggregate_tick(
     mut q: Query<(
@@ -146,9 +151,33 @@ pub fn attribute_aggregate_tick(
             .fold(1.0, |acc, effect| {
                 acc * (1.0 - effect.magnitude.clamp(0.0, 0.95))
             });
+        let speed_boost_multiplier = status_effects
+            .active
+            .iter()
+            .filter(|effect| effect.kind == StatusEffectKind::SpeedBoost)
+            .fold(1.0, |acc, effect| acc * (1.0 + effect.magnitude.max(0.0)));
+        let stamina_crash_slow = status_effects
+            .active
+            .iter()
+            .filter(|effect| effect.kind == StatusEffectKind::StaminaCrash)
+            .fold(1.0, |acc, effect| {
+                acc * (1.0 - (effect.magnitude * 0.5).clamp(0.0, 0.75))
+            });
+        let leg_strain_slow = status_effects
+            .active
+            .iter()
+            .filter(|effect| effect.kind == StatusEffectKind::LegStrain)
+            .fold(1.0, |acc, effect| {
+                acc * (1.0 - (effect.magnitude * 0.15).clamp(0.0, 0.6))
+            });
 
-        attrs.move_speed_multiplier =
-            (slow_multiplier * vortex_multiplier * parry_recovery_multiplier).clamp(0.05, 1.0);
+        attrs.move_speed_multiplier = (slow_multiplier
+            * vortex_multiplier
+            * parry_recovery_multiplier
+            * speed_boost_multiplier
+            * stamina_crash_slow
+            * leg_strain_slow)
+            .clamp(0.05, 2.5);
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
 
@@ -162,6 +191,150 @@ pub fn attribute_aggregate_tick(
         if let Some(exhausted) = exhausted {
             attrs.defense_power =
                 (attrs.defense_power * exhausted.defense_modifier).clamp(0.05, 1.0);
+        }
+    }
+}
+
+pub fn body_part_damage_multiplier(status_effects: Option<&StatusEffects>, part: BodyPart) -> f32 {
+    let Some(status_effects) = status_effects else {
+        return 1.0;
+    };
+    status_effects
+        .active
+        .iter()
+        .filter(|effect| effect.remaining_ticks > 0)
+        .fold(1.0, |acc, effect| {
+            let next = match effect.kind {
+                StatusEffectKind::BodyPartResist(target) if target == part => {
+                    1.0 - effect.magnitude.clamp(0.0, 0.95)
+                }
+                StatusEffectKind::BodyPartWeaken(target) if target == part => {
+                    1.0 + effect.magnitude.max(0.0)
+                }
+                _ => 1.0,
+            };
+            acc * next
+        })
+}
+
+pub fn combat_pill_stamina_status_tick(
+    clock: Res<CombatClock>,
+    mut actors: Query<(
+        valence::prelude::Entity,
+        &StatusEffects,
+        &mut Stamina,
+        Option<&mut Cultivation>,
+    )>,
+    mut qi_transfers: Option<valence::prelude::ResMut<valence::prelude::Events<QiTransfer>>>,
+) {
+    if !clock.tick.is_multiple_of(STATUS_EFFECT_TICK_INTERVAL_TICKS) {
+        return;
+    }
+
+    let dt = STATUS_EFFECT_TICK_INTERVAL_TICKS as f32
+        / crate::combat::components::TICKS_PER_SECOND as f32;
+    for (entity, status_effects, mut stamina, cultivation) in &mut actors {
+        let has_relevant_status = status_effects.active.iter().any(|effect| {
+            matches!(
+                effect.kind,
+                StatusEffectKind::StaminaRecovBoost
+                    | StatusEffectKind::StaminaCrash
+                    | StatusEffectKind::QiDrainForStamina
+            ) && effect.remaining_ticks > 0
+        });
+        if !has_relevant_status {
+            if (stamina.max - DEFAULT_STAMINA_MAX_FOR_STATUS).abs() > f32::EPSILON {
+                stamina.max = DEFAULT_STAMINA_MAX_FOR_STATUS;
+                stamina.current = stamina.current.clamp(0.0, stamina.max);
+            }
+            if (stamina.recover_per_sec - DEFAULT_STAMINA_RECOVER_FOR_STATUS).abs() > f32::EPSILON {
+                stamina.recover_per_sec = DEFAULT_STAMINA_RECOVER_FOR_STATUS;
+            }
+            continue;
+        }
+
+        let max_bonus = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.remaining_ticks > 0
+                    && effect.kind == StatusEffectKind::StaminaRecovBoost
+                    && effect.magnitude < 1.0
+            })
+            .fold(0.0_f32, |acc, effect| acc.max(effect.magnitude.max(0.0)));
+        let crash_penalty = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.remaining_ticks > 0 && effect.kind == StatusEffectKind::StaminaCrash
+            })
+            .fold(0.0_f32, |acc, effect| {
+                acc.max(effect.magnitude.clamp(0.0, 0.95))
+            });
+        let effective_max =
+            (DEFAULT_STAMINA_MAX_FOR_STATUS * (1.0 + max_bonus) * (1.0 - crash_penalty)).max(1.0);
+        stamina.max = effective_max;
+        stamina.current = stamina.current.clamp(0.0, stamina.max);
+
+        let recov_multiplier = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.remaining_ticks > 0
+                    && effect.kind == StatusEffectKind::StaminaRecovBoost
+                    && effect.magnitude >= 1.0
+            })
+            .fold(1.0, |acc, effect| acc * effect.magnitude.max(1.0));
+        let crash_recov_multiplier = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.remaining_ticks > 0 && effect.kind == StatusEffectKind::StaminaCrash
+            })
+            .fold(1.0, |acc, effect| {
+                acc * (1.0 - (effect.magnitude * 2.0).clamp(0.0, 0.9))
+            });
+        stamina.recover_per_sec =
+            (DEFAULT_STAMINA_RECOVER_FOR_STATUS * recov_multiplier * crash_recov_multiplier)
+                .max(0.0);
+
+        if has_active_status(status_effects, StatusEffectKind::StaminaCrash)
+            && stamina.state != StaminaState::Exhausted
+            && stamina.current <= stamina.max * 0.05
+        {
+            stamina.state = StaminaState::Exhausted;
+        }
+
+        let drain_per_sec = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.remaining_ticks > 0 && effect.kind == StatusEffectKind::QiDrainForStamina
+            })
+            .map(|effect| effect.magnitude.max(0.0))
+            .sum::<f32>();
+        if drain_per_sec <= f32::EPSILON {
+            continue;
+        }
+        let amount = f64::from(drain_per_sec * dt);
+        let Some(mut cultivation) = cultivation else {
+            continue;
+        };
+        let drained = cultivation.qi_current.min(amount);
+        if drained <= QI_EPSILON {
+            cultivation.qi_current = 0.0;
+            continue;
+        }
+        cultivation.qi_current = (cultivation.qi_current - drained).max(0.0);
+        if let Some(qi_transfers) = qi_transfers.as_deref_mut() {
+            if let Ok(transfer) = QiTransfer::new(
+                QiAccountId::player(format!("entity:{}", entity.to_bits())),
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                drained,
+                QiTransferReason::ReleaseToZone,
+            ) {
+                qi_transfers.send(transfer);
+            }
         }
     }
 }
@@ -552,5 +725,131 @@ mod tests {
 
         let status_effects = app.world().entity(entity).get::<StatusEffects>().unwrap();
         assert!(status_effects.active.is_empty());
+    }
+
+    #[test]
+    fn body_part_damage_multiplier_combines_active_resist_and_weaken() {
+        let status_effects = StatusEffects {
+            active: vec![
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BodyPartResist(BodyPart::Chest),
+                    magnitude: 0.40,
+                    remaining_ticks: 20,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BodyPartWeaken(BodyPart::Chest),
+                    magnitude: 0.25,
+                    remaining_ticks: 20,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BodyPartWeaken(BodyPart::Chest),
+                    magnitude: 0.50,
+                    remaining_ticks: 0,
+                },
+            ],
+        };
+
+        assert!(
+            (body_part_damage_multiplier(Some(&status_effects), BodyPart::Chest) - 0.75).abs()
+                < 1e-6
+        );
+        assert_eq!(
+            body_part_damage_multiplier(Some(&status_effects), BodyPart::ArmL),
+            1.0
+        );
+    }
+
+    #[test]
+    fn combat_pill_stamina_status_tick_applies_recovery_and_qi_drain() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+        });
+        app.add_event::<crate::qi_physics::QiTransfer>();
+        app.add_systems(Update, combat_pill_stamina_status_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::StaminaRecovBoost,
+                            magnitude: 3.0,
+                            remaining_ticks: 20,
+                        },
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::QiDrainForStamina,
+                            magnitude: 2.0,
+                            remaining_ticks: 20,
+                        },
+                    ],
+                },
+                Stamina {
+                    current: 40.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    last_drain_tick: None,
+                    state: StaminaState::Idle,
+                },
+                Cultivation {
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert_eq!(stamina.max, 100.0);
+        assert_eq!(stamina.recover_per_sec, 15.0);
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!((cultivation.qi_current - 9.6).abs() < 1e-6);
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<valence::prelude::Events<crate::qi_physics::QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert_eq!(transfers.len(), 1);
+        assert!((transfers[0].amount - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn combat_pill_stamina_status_tick_resets_expired_pill_adjustments() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, combat_pill_stamina_status_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::StaminaRecovBoost,
+                        magnitude: 0.5,
+                        remaining_ticks: 0,
+                    }],
+                },
+                Stamina {
+                    current: 140.0,
+                    max: 150.0,
+                    recover_per_sec: 15.0,
+                    last_drain_tick: None,
+                    state: StaminaState::Idle,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert_eq!(stamina.max, 100.0);
+        assert_eq!(stamina.current, 100.0);
+        assert_eq!(stamina.recover_per_sec, 5.0);
     }
 }
