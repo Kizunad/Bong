@@ -294,17 +294,135 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `ArtifactMeridian` component + 铭纹数据结构 + 锻造→铭纹初始化桥接 | ⬜ |
-| P1 | 铭纹加深 tick 系统 + 使用→冲刷逻辑 + `material_lock_coefficient` 常数表 | ⬜ |
-| P2 | `ArtifactColor` component + 法器染色积累 + 共鸣度计算 + `Weapon::damage_multiplier` 接入 | ⬜ |
-| P3 | 铭纹过载判定 + 龟裂分级 + 修复机制 + `ArtifactMeridianCracked` event | ⬜ |
-| P4 | 法器品阶进化（凡→法→灵→道）+ 养护 tick 系统 + narration 联动 | ⬜ |
-| P5 | Client 法器铭纹可视化（InspectScreen 法器页 + 共鸣度 HUD 指示 + 龟裂警告） | ⬜ |
-| P6 | 饱和化测试（7 材质 × 4 品阶 × 10 染色 × 龟裂分级 × 共鸣度范围 + 进化阈值 pin） | ⬜ |
+| P0 | 凡器 MVP（骨剑+灵木剑）：TOML 注册 + GUI icon 生成 + vanilla 宿主手持渲染 | ⬜ |
+| P1 | `ArtifactMeridian` component + 铭纹数据结构 + 锻造→铭纹初始化桥接 | ⬜ |
+| P2 | 铭纹加深 tick 系统 + 使用→冲刷逻辑 + `material_lock_coefficient` 常数表 | ⬜ |
+| P3 | `ArtifactColor` component + 法器染色积累 + 共鸣度计算 + `Weapon::damage_multiplier` 接入 | ⬜ |
+| P4 | 铭纹过载判定 + 龟裂分级 + 修复机制 + `ArtifactMeridianCracked` event | ⬜ |
+| P5 | 法器品阶进化（凡→法→灵→道）+ 养护 tick 系统 + narration 联动 | ⬜ |
+| P6 | Client 法器铭纹可视化（InspectScreen 法器页 + 共鸣度 HUD 指示 + 龟裂警告） | ⬜ |
+| P7 | 饱和化测试（7 材质 × 4 品阶 × 10 染色 × 龟裂分级 × 共鸣度范围 + 进化阈值 pin） | ⬜ |
 
 ---
 
-## P0 — ArtifactMeridian component + 锻造桥接 ⬜
+## P0 — 凡器 MVP：骨剑 + 灵木剑 ⬜
+
+器修系统的第一批实物。两把凡器作为后续铭纹/染色/共鸣系统的载体。用 vanilla MC 物品做手持 3D 模型，gen.py 生成 GUI icon。
+
+### 交付物
+
+1. **Server 物品定义**（`server/assets/items/weapons.toml` 追加）
+
+   ```toml
+   [[item]]
+   id = "bone_sword"
+   name = "骨剑"
+   category = "weapon"
+   grid_w = 1
+   grid_h = 2
+   base_weight = 0.9
+   rarity = "common"
+   spirit_quality_initial = 0.8
+   description = "异变兽肋骨磨制的短剑。骨质疏松但轻便，比凡铁更适合封存少量真元。"
+
+   [item.weapon]
+   kind = "sword"
+   base_attack = 10.0
+   quality_tier = 0
+   durability_max = 150.0
+
+   [[item]]
+   id = "lingmu_sword"
+   name = "灵木剑"
+   category = "weapon"
+   grid_w = 1
+   grid_h = 2
+   base_weight = 0.7
+   rarity = "common"
+   spirit_quality_initial = 0.9
+   description = "灵木削制的窄剑。木纹中隐约可见灵脉走向，是灵器的前身。"
+
+   [item.weapon]
+   kind = "sword"
+   base_attack = 11.0
+   quality_tier = 0
+   durability_max = 180.0
+   ```
+
+   数值设计：bone_sword 攻击 10（比 iron_sword 的 12 低，凡器中偏弱但轻便）/ lingmu_sword 攻击 11（灵木比骨好一档，spirit_quality 更高为后续铭纹系统预留亲和空间）/ 两者都是 `quality_tier=0`（凡器）。
+
+2. **Client 武器映射注册**（`client/.../weapon/BongWeaponModelRegistry.java`）
+
+   Vanilla 宿主选择（当前未占用的 vanilla 剑）：
+
+   | 新武器 | vanilla 宿主 | 理由 |
+   |--------|-------------|------|
+   | `bone_sword` | `Items.STONE_SWORD` | 灰色粗糙质感像骨 |
+   | `lingmu_sword` | `Items.WOODEN_SWORD` | 木色调符合灵木 |
+
+   修改点：
+   - `V1_WEAPON_TEMPLATE_IDS` Set 加入 `"bone_sword"`, `"lingmu_sword"`
+   - `ENTRIES` map 加入两条 Entry，`bongObjModelPath = null`（无自定义 OBJ，用 vanilla 模型）
+   - `Entry` record 的 `bongObjModelPath` 字段从 `String` 改为 `@Nullable String`
+   - `vanillaModelPaths()` 方法加 `.filter(e -> e.bongObjModelPath() != null)`，排除无 OBJ 的条目（防止 SML 拦截 vanilla 原生模型加载）
+
+3. **GUI icon 生成**（`scripts/images/gen.py`）
+
+   ```bash
+   python scripts/images/gen.py \
+     "a crude sword carved from beast bone, white-yellow bone blade with visible grain, crude leather handle wrapping, xianxia style" \
+     --name bone_sword --style item --transparent \
+     --out client/src/main/resources/assets/bong-client/textures/gui/items/
+
+   python scripts/images/gen.py \
+     "a slender sword carved from spirit wood, pale green blade with faint glowing spiritual veins, living wood grain texture, xianxia style" \
+     --name lingmu_sword --style item --transparent \
+     --out client/src/main/resources/assets/bong-client/textures/gui/items/
+   ```
+
+   产出 `bone_sword.png` + `lingmu_sword.png`。`ItemIconRegistry` 按 item_id 命名约定自动发现，无需改代码。
+
+4. **不需要改的文件**（已有通用逻辑自动覆盖）
+
+   - `WeaponVanillaIconMap.java` — `createStackFor()` 调 `BongWeaponModelRegistry.get()` 已覆盖
+   - `MixinHeldItemRenderer.java` — 已有 Mixin 自动注入 fake ItemStack
+   - `WeaponRenderBootstrap.java` — `vanillaModelPaths()` 过滤后不会拦截新凡器的 vanilla 模型
+   - `ItemIconRegistry.java` — 自动发现 `bong-client:textures/gui/items/{itemId}.png`
+   - `weapon_equipped_emit.rs` — 自动从 ItemRegistry 读新武器推送 client
+   - `combat/weapon.rs` — `Weapon::from_item_and_spec()` 通用
+   - `combat/resolve.rs` — 伤害计算通用
+   - 无需自定义 OBJ 模型 / model JSON override / MTL / 3D 贴图
+
+### 渲染链路
+
+```
+装备 bone_sword
+  → server: Weapon component (kind=Sword, attack=10, tier=0)
+  → server: emit WeaponEquippedV1 { template_id: "bone_sword" }
+  → client: WeaponEquippedStore 存储
+  → client: MixinHeldItemRenderer → createStackFor("bone_sword")
+    → BongWeaponModelRegistry.get("bone_sword") → Entry { host=STONE_SWORD, obj=null }
+    → new ItemStack(Items.STONE_SWORD)
+  → vanilla: 渲染 stone_sword 模型（第一人称 + 第三人称）✅
+
+背包显示 bone_sword
+  → ItemIconRegistry.textureIdForItemId("bone_sword")
+  → 查找 bong-client:textures/gui/items/bone_sword.png ✅（gen.py 产物）
+```
+
+### 验收抓手
+
+- `cargo test inventory::tests` — TOML 解析 bone_sword + lingmu_sword 成功
+- `./gradlew build` — Java 编译通过（BongWeaponModelRegistry 改动）
+- 手动：启动 server+client → `/give bone_sword` → 装备主手 → 第一人称看到石剑模型 → 第三人称看到手持 → 背包看到 gen.py icon
+- 手动：`/give lingmu_sword` → 同上验证木剑模型
+- 手动：攻击测试 → bone_sword damage = 10 × 1.0 × 1.0 = 10 / lingmu_sword = 11
+
+---
+
+## P1 — ArtifactMeridian component + 锻造桥接 ⬜
+
+> 原 P0，因 P0 凡器 MVP 插入而顺延。
 
 ### 交付物
 
@@ -355,7 +473,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P1 — 铭纹加深 tick 系统 ⬜
+## P2 — 铭纹加深 tick 系统 ⬜
 
 ### 交付物
 
@@ -388,7 +506,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P2 — 法器染色 + 共鸣度 ⬜
+## P3 — 法器染色 + 共鸣度 ⬜
 
 ### 交付物
 
@@ -434,7 +552,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P3 — 铭纹过载与龟裂 ⬜
+## P4 — 铭纹过载与龟裂 ⬜
 
 ### 交付物
 
@@ -469,7 +587,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P4 — 法器品阶进化 + 养护 ⬜
+## P5 — 法器品阶进化 + 养护 ⬜
 
 ### 交付物
 
@@ -499,7 +617,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P5 — Client 法器铭纹可视化 ⬜
+## P6 — Client 法器铭纹可视化 ⬜
 
 ### 交付物
 
@@ -531,7 +649,7 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ---
 
-## P6 — 饱和化测试 ⬜
+## P7 — 饱和化测试 ⬜
 
 ### 交付物
 
@@ -574,8 +692,8 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
 
 ## Finish Evidence（待填）
 
-- **落地清单**：`ArtifactMeridian` component / `Groove` 数据结构 / `MaterialSpec` 常数表 / 铭纹加深 tick / 铭纹养护 tick / `ArtifactColor` component / 法器 PracticeLog / `compute_resonance` / `Weapon::damage_multiplier_with_resonance` / 暗器封存共鸣接入 / 过载判定 / 龟裂四级 / 修复机制 / 品阶进化（3 档）/ 进化 narration / 养护退化 / InspectScreen 法器页 / 共鸣度 HUD 微指示 / 龟裂警告 / 60+ 饱和化测试
-- **关键 commit**：P0-P6 各自 hash
+- **落地清单**：骨剑 + 灵木剑凡器 MVP（TOML + BongWeaponModelRegistry + GUI icon）/ `ArtifactMeridian` component / `Groove` 数据结构 / `MaterialSpec` 常数表 / 铭纹加深 tick / 铭纹养护 tick / `ArtifactColor` component / 法器 PracticeLog / `compute_resonance` / `Weapon::damage_multiplier_with_resonance` / 暗器封存共鸣接入 / 过载判定 / 龟裂四级 / 修复机制 / 品阶进化（3 档）/ 进化 narration / 养护退化 / InspectScreen 法器页 / 共鸣度 HUD 微指示 / 龟裂警告 / 60+ 饱和化测试
+- **关键 commit**：P0-P7 各自 hash
 - **遗留 / 后续**：
   - 御器术（远程真元操控法器——距离衰减制约操控精度，飘逸色天然优势）→ 独立 plan
   - 法器铭纹图案对流派的亲和差异（剑纹 → Sharp 亲和 +15%，锤纹 → Heavy 亲和 +15%）→ P1 扩展或独立 plan
