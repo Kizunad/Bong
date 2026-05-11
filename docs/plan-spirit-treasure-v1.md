@@ -8,7 +8,8 @@
 |------|------|------|
 | P0 | SpiritTreasure 核心组件 + 全服唯一注册表 + 装备/背包触发检测 | ⬜ |
 | P1 | 器灵对话 LLM runtime（schema + Redis channel + skill prompt + 模型配置） | ⬜ |
-| P2 | 聊天栏 `@灵宝名` 路由 + 器灵回话 zone 广播 + 附近可见渲染 | ⬜ |
+| P2a | 聊天栏 `@灵宝名` 路由 + 器灵回话 zone 广播 + 附近可见渲染 | ⬜ |
+| P2b | 灵宝专属面板 UI（T 键，owo-lib Tab 页，每件灵宝独立 tab 设计） | ⬜ |
 | P3 | 首发灵宝「寂照镜」实装（server 效果 + 器灵人格 + 视听） | ⬜ |
 | P4 | 饱和测试（唯一性 + 对话 + 聊天可见性 + 装备/背包切换） | ⬜ |
 
@@ -59,7 +60,10 @@
 | agent | `SpiritTreasureDialogueRuntime` — 器灵 LLM runtime |
 | agent | `skills/spirit-treasure-jizhaojing.md` — 寂照镜器灵 prompt |
 | client | `SpiritTreasureChatRenderer` — 聊天栏器灵消息特殊渲染（颜色 + 名字格式） |
-| client | `SpiritTreasureStateStore` — 灵宝持有状态（被动效果 / 好感度 / 是否沉睡） |
+| client | `SpiritTreasureScreen` / `SpiritTreasureScreenBootstrap` — T 键打开，owo-lib Tab 面板 |
+| client | `SpiritTreasureTabPanel`（抽象类）→ `JiZhaoJingTabPanel` 子类 |
+| client | `JiZhaoJingMirrorRenderer` — 64×64 镜面动态渲染组件（涟漪 + 好感度渐变） |
+| client | `SpiritTreasureStateStore` / `SpiritTreasureDialogueStore` — 灵宝状态 + 对话记忆 |
 
 ### worldview 锚点
 
@@ -512,28 +516,269 @@ SpiritTreasureStateStore（全局单例，无独立 UI）
 器灵对话直接走聊天栏，不需要 DialogueStore。
 ```
 
-### 灵宝信息查看
+---
 
-灵宝的详细信息（好感度、被动效果、来源等）不用专属面板——放在**现有 inspect 装备栏的 tooltip** 里：
+## P2b：灵宝专属面板 UI
+
+### 架构
+
+**T 键**打开灵宝面板（`SpiritTreasureScreenBootstrap`）。面板是纯**查看 + 状态展示**用途，**对话仍走聊天栏 @**。
+
+- 每件灵宝一个 tab，tab 设计**因灵宝而异**（不同灵宝有不同布局/视觉主题）
+- 无灵宝时 T 键弹出空面板："天地间无灵宝与你相伴。"
+- 灵宝离手 → tab 消失；拾取 → tab 出现
+
+### 通用面板框架
+
+```java
+// client/src/main/java/com/bong/client/spirittreasure/SpiritTreasureScreen.java
+public class SpiritTreasureScreen extends BaseOwoScreen<FlowLayout> {
+
+    private static final int PANEL_W = 280;
+    private static final int PANEL_H = 220;
+    private static final int TAB_ACTIVE = 0xFFD4C8A0;   // 暖金（灵宝通用）
+    private static final int TAB_INACTIVE = 0xFF555555;
+    private static final int BG_OUTER = 0xFF0E0E12;     // 深墨底
+    private static final int BG_INNER = 0xFF1A1820;     // 内容区
+    private static final int BORDER = 0xFF3A3540;       // 淡紫灰边框
+
+    private int activeTab = 0;
+    private final List<SpiritTreasureTabPanel> tabPanels = new ArrayList<>();
+
+    @Override
+    protected OwoUIAdapter<FlowLayout> createAdapter() {
+        return OwoUIAdapter.create(this, Containers::verticalFlow);
+    }
+
+    @Override
+    protected void build(FlowLayout root) {
+        root.surface(Surface.VANILLA_TRANSLUCENT);
+        root.horizontalAlignment(HorizontalAlignment.CENTER);
+        root.verticalAlignment(VerticalAlignment.CENTER);
+
+        FlowLayout outer = Containers.verticalFlow(Sizing.fixed(PANEL_W), Sizing.fixed(PANEL_H));
+        outer.surface(Surface.flat(BG_OUTER).and(Surface.outline(BORDER)));
+        outer.padding(Insets.of(2));
+
+        // ── tab 栏 ──
+        FlowLayout tabBar = buildTabBar();
+        outer.child(tabBar);
+
+        // ── 内容区（每个 tab 是一个 SpiritTreasureTabPanel 子类）──
+        for (SpiritTreasureTabPanel panel : tabPanels) {
+            outer.child(panel.root());
+        }
+
+        root.child(outer);
+        switchTab(0);
+    }
+
+    private void switchTab(int idx) {
+        activeTab = idx;
+        for (int i = 0; i < tabPanels.size(); i++) {
+            tabPanels.get(i).root().positioning(
+                i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999)
+            );
+        }
+    }
+}
+```
+
+每件灵宝实现自己的 `SpiritTreasureTabPanel` 子类，决定内部布局、色调、动态渲染。
+
+### 寂照镜 Tab 设计
+
+**视觉主题**：冷青铜色调 + 镜面反射意象。与 inspect 的暖绿色、cultivation 的暗金色形成区分。
+
+**配色常量**：
+```java
+// JiZhaoJingTabPanel.java
+static final int MIRROR_SURFACE = 0xFF1C2830;    // 镜面深青（内容底色）
+static final int MIRROR_BORDER = 0xFF3A6878;     // 青铜边框
+static final int MIRROR_TEXT = 0xFFA0C8D0;        // 青白文字
+static final int MIRROR_DIM = 0xFF506068;         // 暗青文字（次要信息）
+static final int MIRROR_ACCENT = 0xFF70B8C8;      // 亮青强调
+static final int AFFINITY_FILL = 0xFF4090A0;      // 好感度条填充
+static final int AFFINITY_TRACK = 0xFF202828;     // 好感度条轨道
+```
+
+**布局**（280×200 内容区）：
 
 ```
-长按装备栏中的灵宝 → ItemInspectScreen 展示：
+┌─────────────────────────────────────────────────┐
+│ [寂照镜]                          灵宝 · T 键   │  tab 栏（暖金文字）
+├─────────────────────────────────────────────────┤
+│ ┌──────────────────────────────────────────────┐│
+│ │                 MIRROR_SURFACE               ││
+│ │  ┌────────┐                                  ││
+│ │  │ 镜面   │  寂照镜              §ACCENT     ││
+│ │  │ 动态   │  清风宗末代掌教遗器   §DIM       ││
+│ │  │ 渲染   │                                  ││
+│ │  │ 64×64  │  器灵：明虚           §TEXT      ││
+│ │  │        │  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄              ││
+│ │  └────────┘  好感 ███████░░░ 0.72  §ACCENT   ││
+│ │              亲近                  §DIM       ││
+│ │                                              ││
+│ │  ─── 镜中所映 ───────────── §MIRROR_BORDER   ││
+│ │  ✦ 感知 +30%  (×1.2)              §TEXT      ││
+│ │  ✦ 匿探 +15%  (×1.2)              §TEXT      ││
+│ │  ✦ 负压 -5%   (×1.2)              §TEXT      ││
+│ │                                              ││
+│ │  ─── 镜语 ─────────────── §MIRROR_BORDER     ││
+│ │  "此地灵压有异。"         2 分钟前  §DIM      ││
+│ │  "……"                    15 分钟前  §DIM      ││
+│ │                                              ││
+│ │  §DIM 聊天栏 @寂照镜 交谈 · 附近可闻         ││
+│ └──────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────┘
+```
 
-  寂照镜  [上古]
-  "镜面如水，倒映的不是你的脸，
-   而是你心中最深的执念。"
-  ─────────────────
-  来源：清风宗遗迹
-  器灵：明虚（残存神识）
-  好感度：████████░░ 0.72（亲近）
-  ─────────────────
-  被动效果（装备时）：
-  ✦ 感知范围 +30%（×1.2 亲近加成）
-  ✦ 隐匿修士探测 +15%
-  ✦ 坍缩渊负压 -5%
-  ─────────────────
-  聊天栏输入 @寂照镜 与器灵交谈
-  附近修士可闻器灵之声
+### 寂照镜 Tab 各区块详解
+
+#### 1. 镜面动态渲染（左上 64×64）
+
+不是静态图标——是一个 **DrawContext 自绘区域**，模拟镜面效果：
+
+```java
+// JiZhaoJingMirrorRenderer.java（自定义 owo Component）
+public class JiZhaoJingMirrorRenderer extends BaseComponent {
+
+    @Override
+    public void draw(OwoUIDrawContext ctx, int mouseX, int mouseY,
+                     float partialTicks, float delta) {
+        int x = this.x, y = this.y;
+
+        // 1. 镜框：青铜色 2px 边框
+        ctx.fill(x, y, x+64, y+64, MIRROR_BORDER);
+        ctx.fill(x+2, y+2, x+62, y+62, MIRROR_SURFACE);
+
+        // 2. 镜面底纹：根据 affinity 渐变
+        //    低好感 = 深灰混沌；高好感 = 浅青清明
+        int innerColor = lerpColor(0xFF151A1E, 0xFF2A4550, affinity);
+        ctx.fill(x+3, y+3, x+61, y+61, innerColor);
+
+        // 3. 灵气涟漪：从中心向外扩散的同心圆
+        //    半径随 tick 脉动（2s 周期），颜色 MIRROR_ACCENT 半透明
+        float phase = (System.currentTimeMillis() % 2000) / 2000f;
+        float radius = 8f + phase * 20f;
+        int rippleAlpha = (int)(60 * (1f - phase));  // 越远越淡
+        drawRipple(ctx, x+32, y+32, radius, withAlpha(MIRROR_ACCENT, rippleAlpha));
+
+        // 4. 器灵沉睡时：镜面覆盖灰色半透明遮罩 + "zzz" 文字
+        if (sleeping) {
+            ctx.fill(x+3, y+3, x+61, y+61, 0x80000000);
+            ctx.drawTextWithShadow(tr, Text.literal("沉"), x+25, y+26, 0xFF404040);
+        }
+
+        // 5. 镜框角落：4 个青铜铆钉小方块（3×3）
+        for (int[] corner : new int[][]{{x+1,y+1},{x+60,y+1},{x+1,y+60},{x+60,y+60}}) {
+            ctx.fill(corner[0], corner[1], corner[0]+3, corner[1]+3, 0xFF5A8898);
+        }
+    }
+}
+```
+
+**关键**：镜面不是贴图——是**每帧实时渲染的动态 canvas**。涟漪脉动节奏随好感度变化（高好感 = 平稳慢波；低好感 = 急促碎波）。这让每个玩家的寂照镜看起来都不一样。
+
+#### 2. 好感度条
+
+```java
+// 水平条 120×6px，位于灵宝名下方
+FlowLayout affinityBar = Containers.horizontalFlow(Sizing.fixed(120), Sizing.fixed(6));
+// 轨道底色
+affinityBar.surface(Surface.flat(AFFINITY_TRACK));
+// 填充色叠加（宽度 = 120 * affinity）
+FlowLayout fill = Containers.horizontalFlow(Sizing.fixed((int)(120 * affinity)), Sizing.fixed(6));
+fill.surface(Surface.flat(AFFINITY_FILL));
+affinityBar.child(fill);
+```
+
+右侧文字 `0.72` 用 `MIRROR_ACCENT` 色，下方小字"亲近"用 `MIRROR_DIM` 色。
+
+好感度分档文字：
+| 范围 | 文字 | 颜色 |
+|------|------|------|
+| 0.0-0.2 | 沉睡 | 0xFF404040（灰） |
+| 0.2-0.4 | 冷淡 | 0xFF607080 |
+| 0.4-0.6 | 中性 | MIRROR_DIM |
+| 0.6-0.8 | 亲近 | MIRROR_ACCENT |
+| 0.8-1.0 | 共鸣 | 0xFFB0E8F0（亮青白） |
+
+#### 3. "镜中所映"——被动效果区
+
+```java
+// 分隔线：1px MIRROR_BORDER + 左侧"镜中所映"文字
+FlowLayout effectSection = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+effectSection.child(Components.label(Text.literal("─── 镜中所映 ───")).color(Color.ofArgb(MIRROR_BORDER)));
+
+for (PassiveEffect e : passiveEffects) {
+    String line = "✦ " + e.name + " " + formatPercent(e.value)
+        + "  (" + formatScale(affinityScale) + ")";
+    effectSection.child(Components.label(Text.literal(line)).color(Color.ofArgb(MIRROR_TEXT)));
+}
+```
+
+亲近加成倍率用**小字括号**标注。倍率 < 1.0 时颜色变橙色（0xFFD09030），提示好感度不够。
+
+#### 4. "镜语"——最近对话摘要
+
+显示器灵最近 3 条发言（从 `SpiritTreasureDialogueStore` 读取）：
+
+```java
+FlowLayout dialogueSection = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+dialogueSection.child(Components.label(Text.literal("─── 镜语 ───")).color(Color.ofArgb(MIRROR_BORDER)));
+
+for (DialogueEntry d : recentDialogues.subList(0, Math.min(3, recentDialogues.size()))) {
+    String timeAgo = formatTimeAgo(d.ticksAgo);
+    FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+    row.child(Components.label(Text.literal(""" + d.text + """))
+        .color(Color.ofArgb(MIRROR_TEXT))
+        .sizing(Sizing.fill(70)));
+    row.child(Components.label(Text.literal(timeAgo))
+        .color(Color.ofArgb(MIRROR_DIM))
+        .sizing(Sizing.fill(30)));
+    dialogueSection.child(row);
+}
+```
+
+#### 5. 底部提示
+
+一行 `MIRROR_DIM` 色小字：`聊天栏 @寂照镜 交谈 · 附近可闻`——提醒玩家对话走聊天栏。
+
+### 未来灵宝的 Tab 差异化
+
+每件灵宝的 Tab **视觉主题完全不同**——寂照镜是冷青铜，下一件可能是：
+- 火焰主题（红橙色调 + 火焰粒子渲染）
+- 骨刻主题（骨白灰 + 裂纹纹理）
+- 水墨主题（黑白 + 墨滴扩散动画）
+
+通过 `SpiritTreasureTabPanel` 抽象类统一接口，每件灵宝继承后自定义 `buildContent()` + `getColorScheme()`。
+
+### 数据刷新
+
+```java
+// build() 内注册 listener
+stateListener = (state) -> {
+    // 好感度条 / 被动效果倍率 / 沉睡状态刷新
+    updateAffinityBar(state.affinity);
+    updatePassiveEffects(state);
+    mirrorRenderer.setAffinity(state.affinity);
+    mirrorRenderer.setSleeping(state.sleeping);
+};
+SpiritTreasureStateStore.addListener(stateListener);
+
+dialogueListener = (dialogues) -> {
+    updateRecentDialogues(dialogues);
+};
+SpiritTreasureDialogueStore.addListener(dialogueListener);
+
+// removed() 内清理
+@Override
+public void removed() {
+    SpiritTreasureStateStore.removeListener(stateListener);
+    SpiritTreasureDialogueStore.removeListener(dialogueListener);
+    super.removed();
+}
 ```
 
 ---
@@ -656,6 +901,17 @@ SpiritTreasureStateStore（全局单例，无独立 UI）
 17. **随机触发 zone 广播** → 器灵主动说话时附近玩家均可见
 18. **渲染格式** → 器灵消息 §b[灵宝名] §3 与天道 narration / 普通聊天色调区分
 19. **inspect tooltip** → 装备栏长按灵宝 → 正确显示好感度/被动效果/使用说明
+
+### 面板 UI 测试
+
+20. **T 键打开** → 持有灵宝时 T 键打开面板；无灵宝时显示空态文字
+21. **Tab 动态增减** → 拾取灵宝 → tab 出现；丢弃 → tab 消失；多件灵宝多 tab
+22. **镜面渲染** → 涟漪动画每帧刷新无闪烁；好感度变化时镜面颜色平滑过渡
+23. **好感度条** → 实时反映 affinity 变化；分档文字（沉睡/冷淡/中性/亲近/共鸣）正确切换
+24. **被动效果倍率** → 好感度变化后括号内倍率实时更新；< 1.0 时变橙色
+25. **镜语区** → 最近 3 条对话正确显示 + 时间戳
+26. **沉睡遮罩** → 好感度 < 0.2 时镜面覆盖灰色遮罩 + "沉"字
+27. **Store 清理** → 关闭面板后 listener 正确 remove，无内存泄漏
 
 ### 守恒断言
 
