@@ -269,8 +269,29 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`BreakthroughCinematic` server component / `BreakthroughSpectacleRenderer` client 编排器 / `BreakthroughCinematicS2c` packet / `DistantBreakthroughRenderer` / 5 境 cinematic profile / 打断+成功+失败分支 / 季节联动 / 动画联动 / agent narration 同步
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：跨玩家同时突破叠加效果（两人同地突破的光柱合并？还是干扰？）/ 化虚渡虚劫双重 spectacle 与 tribulation-v2 的编排优先级
+- **落地清单**：
+  - P0/P1/P2/P3/P4：`server/src/cultivation/breakthrough_cinematic.rs` 落地 `BreakthroughCinematic` component、5 阶段状态机、5 境 transition profile、打断跳转、`BreakthroughCinematicS2cV1` 下发、`bong:breakthrough_cinematic` agent event、以及 `bong:vfx_event` 复用触发。
+  - P0/P1/P2/P3/P4：`client/src/main/java/com/bong/client/cultivation/BreakthroughCinematicPayload.java` / `BreakthroughSpectacleRenderer.java` / `DistantBreakthroughRenderer.java` 与 `client/src/main/java/com/bong/client/network/BreakthroughCinematicHandler.java` 落地 client 编排、远距 billboard 计划、成功/失败/打断分支、季节强度叠加与动画/audio recipe id 输出。
+  - P4：`agent/packages/schema/src/breakthrough-cinematic.ts`、`agent/packages/tiandao/src/breakthrough-cinematic-narration.ts`、`agent/packages/tiandao/src/main.ts` 落地 TypeBox schema、Redis channel `bong:breakthrough_cinematic`、天道旁白 runtime 与 fallback narration。
+  - P5：`scripts/breakthrough_cinematic_test.sh` 串起 server/client/agent cinematic contract 验证；`agent/packages/schema/generated/breakthrough-cinematic-event-v1.json` 与 `server-data-v1.json` 已刷新。
+- **关键 commit**：
+  - `7565ec60f` · 2026-05-12 · `实现突破 cinematic 阶段协议`
+  - `5edb14877` · 2026-05-12 · `接入突破 cinematic 客户端编排`
+  - `bd8ee878c` · 2026-05-12 · `同步突破 cinematic 天道旁白`
+  - `f795b6f88` · 2026-05-12 · `补充突破 cinematic 验证脚本`
+- **测试结果**：
+  - `cd server && cargo fmt --check`
+  - `cd server && cargo clippy --all-targets -- -D warnings`
+  - `cd server && cargo test` -> 4431 passed
+  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --no-daemon clean test build`
+  - `cd agent && npm run build`
+  - `cd agent && npm test -w @bong/schema` -> 377 passed
+  - `cd agent && npm test -w @bong/tiandao` -> 357 passed
+  - `scripts/breakthrough_cinematic_test.sh` -> server 4 passed, client targeted tests passed, schema 377 passed, tiandao cinematic 3 passed
+- **跨仓库核验**：
+  - server：`BreakthroughCinematic` / `BreakthroughCinematicS2cV1` / `CH_BREAKTHROUGH_CINEMATIC` / `RedisOutbound::BreakthroughCinematic`
+  - client：`BreakthroughCinematicPayload` / `BreakthroughSpectacleRenderer` / `DistantBreakthroughRenderer` / `BreakthroughCinematicHandler`
+  - agent：`BreakthroughCinematicEventV1` / `BreakthroughCinematicNarrationRuntime` / `CHANNELS.BREAKTHROUGH_CINEMATIC`
+- **遗留 / 后续**：跨玩家同时突破的光柱合并/干扰策略、化虚渡虚劫与 `plan-tribulation-v2` 的优先级仲裁、真实多人截图/帧率日志仍留给后续联调场景；本 plan 已锁定 server-authoritative cinematic contract 与三栈消费路径。
