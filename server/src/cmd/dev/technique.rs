@@ -169,7 +169,7 @@ pub fn handle_technique(
                 client.send_chat_message(format!("[dev] technique `{id}` active={value}"));
             }
             TechniqueCmd::ResetAll => {
-                *techniques = KnownTechniques::default();
+                *techniques = KnownTechniques::dev_default();
                 client.send_chat_message(format!(
                     "[dev] technique reset_all; entries={}",
                     techniques.entries.len()
@@ -203,7 +203,7 @@ mod tests {
     }
 
     fn default_technique_count() -> usize {
-        KnownTechniques::default().entries.len()
+        KnownTechniques::dev_default().entries.len()
     }
 
     fn send(app: &mut App, player: valence::prelude::Entity, result: TechniqueCmd) {
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn technique_list_keeps_default_entries() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::default());
+        let player = spawn_known(&mut app, KnownTechniques::dev_default());
 
         send(&mut app, player, TechniqueCmd::List);
         run_update(&mut app);
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn technique_add_is_idempotent_and_rejects_unknown_ids() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::default());
+        let player = spawn_known(&mut app, KnownTechniques::dev_default());
 
         send(
             &mut app,
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn technique_remove_allows_unknown_but_removes_existing() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::default());
+        let player = spawn_known(&mut app, KnownTechniques::dev_default());
 
         send(
             &mut app,
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn technique_proficiency_clamps_and_active_flag_mutates() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::default());
+        let player = spawn_known(&mut app, KnownTechniques::dev_default());
 
         send(
             &mut app,
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn technique_proficiency_rejects_non_finite_values() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::default());
+        let player = spawn_known(&mut app, KnownTechniques::dev_default());
         let before = app
             .world()
             .get::<KnownTechniques>(player)
@@ -382,5 +382,27 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.id == BENG_QUAN && entry.active));
+    }
+
+    #[test]
+    fn technique_add_woliu_works_from_empty_default() {
+        let mut app = setup_app();
+        let player = spawn_known(&mut app, KnownTechniques::default());
+
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Add {
+                id: "woliu.vortex".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        let techniques = app.world().get::<KnownTechniques>(player).unwrap();
+        assert_eq!(techniques.entries.len(), 1);
+        assert!(techniques
+            .entries
+            .iter()
+            .any(|entry| entry.id == "woliu.vortex" && entry.active));
     }
 }

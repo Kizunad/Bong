@@ -38,16 +38,23 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation};
+use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
-use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
+use crate::cultivation::known_techniques::{
+    technique_definition, KnownTechniques, TechniqueDefinition,
+};
 use crate::cultivation::lifespan::LifespanExtensionIntent;
+use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::poison_trait::{ConsumePoisonPillIntent, PoisonPillKind};
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
+use crate::cultivation::technique_scroll::{
+    can_learn_technique, learn_technique_if_allowed, LearnSource, ScrollReadOutcome,
+    TechniqueLearnedEvent, TechniqueScrollReadEvent,
+};
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::cultivation::void::actions::VoidActionIntent;
 use crate::forge::blueprint::TemperBeat;
@@ -62,7 +69,7 @@ use crate::inventory::{
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
-    InventoryMoveOutcome, ItemInstance, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID,
+    InventoryMoveOutcome, ItemInstance, ItemTemplate, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID,
     MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
 };
 use crate::inventory::{
@@ -101,6 +108,7 @@ use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
+use crate::network::techniques_snapshot_emit::send_techniques_snapshot_to_client;
 use crate::network::{
     gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
 };
@@ -278,14 +286,19 @@ pub struct ClientRequestDispatchParams<'w> {
 pub struct SkillScrollRequestParams<'w, 's> {
     pub skill_xp_tx: Option<ResMut<'w, Events<SkillXpGain>>>,
     pub skill_scroll_used_tx: Option<ResMut<'w, Events<SkillScrollUsed>>>,
+    pub technique_scroll_read_tx: Option<ResMut<'w, Events<TechniqueScrollReadEvent>>>,
+    pub technique_learned_tx: Option<ResMut<'w, Events<TechniqueLearnedEvent>>>,
     pub mineral_probe_tx: Option<ResMut<'w, Events<MineralProbeIntent>>>,
     pub skill_sets: Query<'w, 's, &'static mut SkillSet>,
+    pub known_techniques: Query<'w, 's, &'static mut KnownTechniques>,
     pub learned_blueprints: Query<'w, 's, &'static mut LearnedBlueprints>,
     pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub severed_meridians: Query<'w, 's, Option<&'static MeridianSeveredPermanent>>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
     pub inscription_scroll_tx: Option<ResMut<'w, Events<InscriptionScrollSubmit>>>,
     pub forge_sessions: Option<Res<'w, ForgeSessions>>,
+    pub item_registry: Res<'w, ItemRegistry>,
 }
 
 type NpcEngagementItem = (
@@ -409,6 +422,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ZhenfaTrigger { v, .. }
             | ClientRequestV1::ZhenfaDisarm { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
+            | ClientRequestV1::TechniqueScrollUse { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::EquipFalseSkin { v, .. }
             | ClientRequestV1::ForgeFalseSkin { v, .. }
@@ -1221,6 +1235,18 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &player_states,
                     &mut skill_scroll_params,
+                    &mut combat_params.meridians,
+                );
+            }
+            ClientRequestV1::TechniqueScrollUse { instance_id, .. } => {
+                handle_learn_skill_scroll(
+                    ev.client,
+                    instance_id,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &mut skill_scroll_params,
+                    &mut combat_params.meridians,
                 );
             }
             ClientRequestV1::AlchemyIgnite {
@@ -1966,18 +1992,41 @@ fn handle_learn_skill_scroll(
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     skill_scroll_params: &mut SkillScrollRequestParams,
+    meridians_q: &mut Query<&mut MeridianSystem>,
 ) {
-    let Some((skill, scroll_id, xp_grant)) = ({
+    let Some(template_id) = ({
         let inventory = match inventories.get(entity) {
             Ok(inv) => inv,
             Err(_) => return,
         };
-        let instance = match inventory_item_by_instance_borrow(inventory, instance_id) {
-            Some(instance) => instance,
-            None => return,
-        };
-        skill_scroll_spec(instance.template_id.as_str())
-            .map(|(skill, xp_grant)| (skill, ScrollId::new(instance.template_id.clone()), xp_grant))
+        inventory_item_by_instance_borrow(inventory, instance_id)
+            .map(|instance| instance.template_id.clone())
+    }) else {
+        return;
+    };
+
+    if let Some(template) = skill_scroll_params
+        .item_registry
+        .get(template_id.as_str())
+        .cloned()
+        .filter(|template| template.technique_scroll_spec.is_some())
+    {
+        handle_learn_technique_scroll(
+            entity,
+            instance_id,
+            inventories,
+            clients,
+            player_states,
+            skill_scroll_params,
+            meridians_q,
+            &template,
+        );
+        return;
+    }
+
+    let Some((skill, scroll_id, xp_grant)) = ({
+        skill_scroll_spec(template_id.as_str())
+            .map(|(skill, xp_grant)| (skill, ScrollId::new(template_id.clone()), xp_grant))
     }) else {
         tracing::warn!(
             "[bong][network][skill] learn_skill_scroll rejected: instance_id={} is not a known skill scroll",
@@ -2094,6 +2143,154 @@ fn handle_learn_skill_scroll(
                 "skill_scroll_consumed",
             );
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_learn_technique_scroll(
+    entity: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    skill_scroll_params: &mut SkillScrollRequestParams,
+    meridians_q: &mut Query<&mut MeridianSystem>,
+    template: &ItemTemplate,
+) {
+    let Some(spec) = template.technique_scroll_spec.as_ref() else {
+        return;
+    };
+    let technique_id = spec.skill_id.clone();
+    let outcome = {
+        let Ok(known) = skill_scroll_params.known_techniques.get(entity) else {
+            return;
+        };
+        let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
+            return;
+        };
+        let Ok(meridians) = meridians_q.get_mut(entity) else {
+            return;
+        };
+        let severed = skill_scroll_params
+            .severed_meridians
+            .get(entity)
+            .ok()
+            .flatten();
+        can_learn_technique(
+            known,
+            cultivation,
+            &meridians,
+            severed,
+            technique_id.as_str(),
+        )
+    };
+
+    if matches!(outcome, ScrollReadOutcome::Learned) {
+        {
+            let Ok(mut inventory) = inventories.get_mut(entity) else {
+                return;
+            };
+            if consume_item_instance_once(&mut inventory, instance_id).is_err() {
+                return;
+            }
+        }
+
+        let learned = {
+            let Ok(mut known) = skill_scroll_params.known_techniques.get_mut(entity) else {
+                return;
+            };
+            let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
+                return;
+            };
+            let Ok(meridians) = meridians_q.get_mut(entity) else {
+                return;
+            };
+            let severed = skill_scroll_params
+                .severed_meridians
+                .get(entity)
+                .ok()
+                .flatten();
+            matches!(
+                learn_technique_if_allowed(
+                    &mut known,
+                    cultivation,
+                    &meridians,
+                    severed,
+                    technique_id.as_str(),
+                    0.0,
+                ),
+                ScrollReadOutcome::Learned
+            )
+        };
+        if learned {
+            if let Some(tx) = skill_scroll_params.technique_learned_tx.as_deref_mut() {
+                tx.send(TechniqueLearnedEvent {
+                    player: entity,
+                    technique_id: technique_id.clone(),
+                    source: LearnSource::Scroll {
+                        item_id: template.id.clone(),
+                    },
+                });
+            }
+        }
+    }
+
+    if let Some(tx) = skill_scroll_params.technique_scroll_read_tx.as_deref_mut() {
+        tx.send(TechniqueScrollReadEvent {
+            player: entity,
+            technique_id: technique_id.clone(),
+            source_item: template.id.clone(),
+            outcome: outcome.clone(),
+        });
+    }
+
+    resync_technique_scroll_use(
+        entity,
+        inventories,
+        clients,
+        player_states,
+        skill_scroll_params,
+        match outcome {
+            ScrollReadOutcome::Learned => "technique_scroll_learned",
+            ScrollReadOutcome::AlreadyKnown => "technique_scroll_already_known",
+            ScrollReadOutcome::RealmTooLow { .. } => "technique_scroll_realm_too_low",
+            ScrollReadOutcome::MeridianSevered { .. } => "technique_scroll_meridian_severed",
+            ScrollReadOutcome::MeridianMissing { .. } => "technique_scroll_meridian_missing",
+            ScrollReadOutcome::InvalidScroll => "technique_scroll_invalid",
+        },
+    );
+}
+
+fn resync_technique_scroll_use(
+    entity: Entity,
+    inventories: &Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    skill_scroll_params: &SkillScrollRequestParams,
+    reason: &str,
+) {
+    let Ok(player_state) = player_states.get(entity) else {
+        return;
+    };
+    let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
+        return;
+    };
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    if let Ok(inventory) = inventories.get(entity) {
+        send_inventory_snapshot_to_client(
+            entity,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            cultivation,
+            reason,
+        );
+    }
+    if let Ok(known) = skill_scroll_params.known_techniques.get(entity) {
+        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
     }
 }
 
@@ -2693,6 +2890,7 @@ mod tests {
                         blueprint_id: "ling_feng_v0".to_string(),
                     }),
                     inscription_scroll_spec: None,
+                    technique_scroll_spec: None,
                 },
             ),
             (
@@ -2717,6 +2915,7 @@ mod tests {
                     inscription_scroll_spec: Some(InscriptionScrollSpec {
                         inscription_id: "sharp_v0".to_string(),
                     }),
+                    technique_scroll_spec: None,
                 },
             ),
         ]))
@@ -3505,6 +3704,7 @@ mod tests {
                 forge_station_spec: None,
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
+                technique_scroll_spec: None,
             },
         )])));
         let mut karma = KarmaWeightStore::default();
@@ -3598,6 +3798,7 @@ mod tests {
                 forge_station_spec: None,
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
+                technique_scroll_spec: None,
             },
         )])));
 

@@ -325,6 +325,7 @@ mod tests {
                     forge_station_spec: None,
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
+                    technique_scroll_spec: None,
                 },
             );
         }
@@ -364,6 +365,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tsy_ruin_woliu_scroll_tiers_are_registered() {
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let shallow = pools.get("dry_corpse_shallow_common").unwrap();
+        let mid = pools.get("stone_casket_mid").unwrap();
+        let deep = pools.get("relic_core_deep").unwrap();
+
+        assert!(shallow
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "scroll_woliu_burst"));
+        assert!(!shallow
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "scroll_woliu_heart"));
+        assert!(mid
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "scroll_woliu_vortex_resonance"));
+        assert!(deep
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "scroll_woliu_heart"));
     }
 
     #[test]

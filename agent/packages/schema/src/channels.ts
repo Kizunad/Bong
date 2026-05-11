@@ -254,6 +254,18 @@ export const CHANNELS = {
   /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
   SKILL_SCROLL_USED: "bong:skill/scroll_used",
 
+  /** Server → Agent/Client: 战斗功法残卷研读事件 */
+  TECHNIQUE_SCROLL_READ: "bong:technique/scroll_read",
+
+  /** Server → Agent/Client: 战斗功法习得事件 */
+  TECHNIQUE_LEARNED: "bong:technique/learned",
+
+  /** Server → Agent/Client: 战斗功法练满事件 */
+  TECHNIQUE_MASTERED: "bong:technique/mastered",
+
+  /** Server → Client: 战斗功法熟练度提升事件 */
+  TECHNIQUE_PROFICIENCY_UP: "bong:technique/proficiency_up",
+
   /** Server → Agent: 灵眼迁移观测（plan-spirit-eye-v1 §6） */
   SPIRIT_EYE_MIGRATE: "bong:spirit_eye/migrate",
 

@@ -657,6 +657,20 @@
               "maxLength": 64,
               "type": "string"
             },
+            "scroll_kind": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "scroll_skill_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "scroll_xp_grant": {
+              "minimum": 0,
+              "type": "integer"
+            },
             "charges": {
               "minimum": 0,
               "maximum": 5,

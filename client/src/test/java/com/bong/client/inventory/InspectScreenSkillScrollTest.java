@@ -1,6 +1,7 @@
 package com.bong.client.inventory;
 
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.combat.inspect.TechniquesListPanel;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetSnapshot;
 import com.bong.client.skill.SkillSetStore;
@@ -26,6 +27,7 @@ class InspectScreenSkillScrollTest {
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
         SkillSetStore.resetForTests();
+        TechniquesListPanel.resetForTests();
     }
 
     private void install() {
@@ -85,6 +87,28 @@ class InspectScreenSkillScrollTest {
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":1003}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendsTechniqueScrollUseForCombatTechniqueScroll() {
+        install();
+        InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
+        var item = com.bong.client.inventory.model.InventoryItem.createFullWithScrollMeta(
+            1005L,
+            "scroll_woliu_vortex",
+            "涡流残卷·绝灵涡流",
+            1, 2, 0.05, "uncommon", "泛黄残页", 1, 1.0, 1.0,
+            "combat_technique", "woliu.vortex", 0
+        );
+
+        assertTrue(screen.tryLearnSkillScroll(item));
+        assertEquals("已送出研读请求", screen.debugSkillScrollDropFeedback());
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"technique_scroll_use\",\"v\":1,\"instance_id\":1005}",
             sent.get(0).body()
         );
     }

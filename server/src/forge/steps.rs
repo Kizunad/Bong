@@ -565,6 +565,7 @@ mod tests {
                     inscription_scroll_spec: Some(InscriptionScrollSpec {
                         inscription_id: "sharp_v0".to_string(),
                     }),
+                    technique_scroll_spec: None,
                 },
             ),
             (
@@ -587,6 +588,7 @@ mod tests {
                     forge_station_spec: None,
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
+                    technique_scroll_spec: None,
                 },
             ),
         ]));

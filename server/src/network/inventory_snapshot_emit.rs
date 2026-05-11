@@ -299,6 +299,14 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
 }
 
 fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, Option<u32>) {
+    if let Some(skill_id) = woliu_scroll_skill_id(template_id) {
+        return (
+            Some("combat_technique".to_string()),
+            Some(skill_id.to_string()),
+            None,
+        );
+    }
+
     match template_id {
         "skill_scroll_herbalism_baicao_can" => (
             Some("skill_scroll".to_string()),
@@ -320,6 +328,23 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
             (Some("blueprint_scroll".to_string()), None, None)
         }
         _ => (None, None, None),
+    }
+}
+
+fn woliu_scroll_skill_id(template_id: &str) -> Option<&'static str> {
+    match template_id {
+        "scroll_woliu_vortex" => Some("woliu.vortex"),
+        "scroll_woliu_hold" => Some("woliu.hold"),
+        "scroll_woliu_burst" => Some("woliu.burst"),
+        "scroll_woliu_mouth" => Some("woliu.mouth"),
+        "scroll_woliu_pull" => Some("woliu.pull"),
+        "scroll_woliu_heart" => Some("woliu.heart"),
+        "scroll_woliu_vacuum_palm" => Some("woliu.vacuum_palm"),
+        "scroll_woliu_vortex_shield" => Some("woliu.vortex_shield"),
+        "scroll_woliu_vacuum_lock" => Some("woliu.vacuum_lock"),
+        "scroll_woliu_vortex_resonance" => Some("woliu.vortex_resonance"),
+        "scroll_woliu_turbulence_burst" => Some("woliu.turbulence_burst"),
+        _ => None,
     }
 }
 

@@ -3,6 +3,9 @@ name = "bong-server"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+dev-techniques = []
+
 [dependencies]
 valence = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
 valence_command = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }

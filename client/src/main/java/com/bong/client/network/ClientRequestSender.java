@@ -384,6 +384,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeLearnSkillScroll(instanceId));
     }
 
+    public static void sendTechniqueScrollUse(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeTechniqueScrollUse(instanceId));
+    }
+
     // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
 
     public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {

@@ -68,6 +68,10 @@ pub mod skill_registry;
 pub mod special_talent;
 pub mod spiritual_sense;
 pub mod style_modifier;
+pub mod technique_mentor;
+pub mod technique_observe;
+pub mod technique_proficiency;
+pub mod technique_scroll;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;
@@ -149,6 +153,8 @@ use self::realm_vision::view_distance_ramp::view_distance_ramp_system;
 use self::spiritual_sense::push::{
     cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
 };
+use self::technique_proficiency::{track_woliu_proficiency_from_casts, TechniqueMasteredEvent};
+use self::technique_scroll::{TechniqueLearnedEvent, TechniqueScrollReadEvent};
 use self::tick::{
     prune_cultivation_session_practice_accumulator, qi_regen_and_zone_drain_tick, CultivationClock,
     CultivationSessionPracticeAccumulator,
@@ -231,6 +237,9 @@ pub fn register(app: &mut App) {
     app.add_event::<DuoSheEventEmitted>();
     app.add_event::<DuoSheWarningEvent>();
     app.add_event::<UseLifeCoreEvent>();
+    app.add_event::<TechniqueScrollReadEvent>();
+    app.add_event::<TechniqueLearnedEvent>();
+    app.add_event::<TechniqueMasteredEvent>();
     app.add_event::<InitiateXuhuaTribulation>();
     app.add_event::<StartDuXuRequest>();
     app.add_event::<TribulationAnnounce>();
@@ -332,6 +341,7 @@ pub fn register(app: &mut App) {
             .after(qi_regen_and_zone_drain_tick)
             .before(qi_color_evolution_tick),
     );
+    app.add_systems(Update, track_woliu_proficiency_from_casts);
     app.add_systems(
         Update,
         prune_cultivation_session_practice_accumulator.after(qi_regen_and_zone_drain_tick),

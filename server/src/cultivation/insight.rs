@@ -133,6 +133,15 @@ pub enum InsightEffect {
     ZhenfaDisenchant {
         add: f64,
     },
+    VortexBackfireResist {
+        mul: f64,
+    },
+    VortexDeltaBonus {
+        add: f64,
+    },
+    VortexFlowSpeed {
+        mul: f64,
+    },
     UnlockPractice {
         name: String,
     },
@@ -166,6 +175,9 @@ impl InsightEffect {
             | ColorMaterialAffinity { .. }
             | ZhenfaConcealment { .. }
             | ZhenfaDisenchant { .. }
+            | VortexBackfireResist { .. }
+            | VortexDeltaBonus { .. }
+            | VortexFlowSpeed { .. }
             | UnlockPractice { .. } => InsightCategory::Style,
             UnlockPerception { .. } | LifespanExtensionEnlightenment => InsightCategory::Perception,
         }
@@ -180,7 +192,9 @@ impl InsightEffect {
             | PurgeEfficiency { mul, .. }
             | HunyuanThreshold { mul }
             | ComposureRecover { mul }
-            | DualForgeDiscount { mul, .. } => (mul - 1.0).abs(),
+            | DualForgeDiscount { mul, .. }
+            | VortexBackfireResist { mul }
+            | VortexFlowSpeed { mul } => (mul - 1.0).abs(),
             MeridianForgeDiscount { discount, .. } => *discount,
             MeridianOverloadTolerance { add, .. }
             | ChaoticTolerance { add }
@@ -188,7 +202,8 @@ impl InsightEffect {
             | ColorCapAdd { add, .. }
             | ColorMaterialAffinity { add, .. }
             | ZhenfaConcealment { add }
-            | ZhenfaDisenchant { add } => *add,
+            | ZhenfaDisenchant { add }
+            | VortexDeltaBonus { add } => *add,
             UnfreezeQiMax { mul } => (1.0 - mul).abs(),
             ComposureShockDiscount { mul, .. } => (1.0 - mul).abs(),
             ComposureImmuneDuringBreakthrough
@@ -245,6 +260,7 @@ pub enum InsightCost {
     SenseExposure { add: f64 },
     ReactionWindowShrink { mul: f64 },
     ChaoticToleranceLoss { sub: f64 },
+    VortexBurstDamageMul { mul: f64 },
 }
 
 impl InsightCost {
@@ -260,6 +276,7 @@ impl InsightCost {
             Self::SenseExposure { .. } => "sense_exposure",
             Self::ReactionWindowShrink { .. } => "reaction_window_shrink",
             Self::ChaoticToleranceLoss { .. } => "chaotic_tolerance_loss",
+            Self::VortexBurstDamageMul { .. } => "vortex_burst_damage",
         }
     }
 
@@ -272,9 +289,9 @@ impl InsightCost {
             | Self::ShockSensitivity { add }
             | Self::OverloadFragility { add }
             | Self::SenseExposure { add } => *add,
-            Self::MeridianHealSlowdown { mul } | Self::ReactionWindowShrink { mul } => {
-                (1.0 - *mul).abs()
-            }
+            Self::MeridianHealSlowdown { mul }
+            | Self::ReactionWindowShrink { mul }
+            | Self::VortexBurstDamageMul { mul } => (1.0 - *mul).abs(),
             Self::BreakthroughFailurePenalty { mul } => (*mul - 1.0).abs(),
             Self::ChaoticToleranceLoss { sub } => *sub,
         }

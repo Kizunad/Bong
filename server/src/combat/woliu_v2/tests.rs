@@ -1067,7 +1067,7 @@ fn resolve_pull_emits_displacement_for_target() {
     app.world_mut()
         .get_mut::<Position>(target)
         .unwrap()
-        .set([13.0, 66.0, 8.0]);
+        .set([12.0, 66.0, 8.0]);
     let result =
         resolve_woliu_v2_skill(app.world_mut(), actor, 1, Some(target), WoliuSkillId::Pull);
     assert!(matches!(result, CastResult::Started { .. }));

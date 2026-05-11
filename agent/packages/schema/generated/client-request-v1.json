@@ -2989,6 +2989,30 @@
       "required": [
         "v",
         "type",
+        "instance_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "technique_scroll_use",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "portal_entity_id"
       ],
       "properties": {
