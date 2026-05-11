@@ -22,6 +22,7 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
+use crate::coffin::{CoffinEnterRequest, CoffinLeaveRequest, CoffinPlaceRequest};
 use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
@@ -255,6 +256,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub spirit_niche_activate_guardian_tx:
         Option<ResMut<'w, Events<SpiritNicheActivateGuardianRequest>>>,
     pub coffin_open_tx: Option<ResMut<'w, Events<CoffinOpenRequest>>>,
+    pub coffin_place_tx: Option<ResMut<'w, Events<CoffinPlaceRequest>>>,
+    pub coffin_enter_tx: Option<ResMut<'w, Events<CoffinEnterRequest>>>,
+    pub coffin_leave_tx: Option<ResMut<'w, Events<CoffinLeaveRequest>>>,
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
@@ -386,6 +390,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
             | ClientRequestV1::CoffinOpen { v, .. }
+            | ClientRequestV1::CoffinPlace { v, .. }
+            | ClientRequestV1::CoffinEnter { v, .. }
+            | ClientRequestV1::CoffinLeave { v }
             | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
@@ -695,6 +702,57 @@ pub fn handle_client_request_payloads(
                     pos: [x, y, z],
                     tick: combat_clock.tick,
                 });
+            }
+            ClientRequestV1::CoffinPlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][coffin] place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                let Some(coffin_place_tx) = dispatch.coffin_place_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_place because CoffinPlaceRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_place_tx.send(CoffinPlaceRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    item_instance_id,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::CoffinEnter { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][coffin] enter entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(coffin_enter_tx) = dispatch.coffin_enter_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_enter because CoffinEnterRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_enter_tx.send(CoffinEnterRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::CoffinLeave { .. } => {
+                tracing::info!("[bong][network][coffin] leave entity={:?}", ev.client);
+                let Some(coffin_leave_tx) = dispatch.coffin_leave_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_leave because CoffinLeaveRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_leave_tx.send(CoffinLeaveRequest { player: ev.client });
             }
             ClientRequestV1::SpiritNichePlace {
                 x,

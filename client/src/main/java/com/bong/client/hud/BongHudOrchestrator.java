@@ -184,6 +184,12 @@ public final class BongHudOrchestrator {
             if (seasonTint != 0) {
                 commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
             }
+            commands.addAll(com.bong.client.season.SeasonBreakthroughOverlayHud.buildCommands(nowMillis));
+            commands.addAll(com.bong.client.season.SeasonHintHudPlanner.buildCommands(
+                com.bong.client.state.SeasonStateStore.snapshot(),
+                screenWidth,
+                screenHeight
+            ));
             commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
                 playerState.localNegPressure(),
                 screenWidth,
@@ -388,12 +394,20 @@ public final class BongHudOrchestrator {
                 botanyAnchor
             ));
         }
+        commands.addAll(GatheringProgressHud.buildCommands(
+            widthMeasurer,
+            screenWidth,
+            screenHeight,
+            nowMillis
+        ));
         commands.addAll(ForgeProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight));
+        commands.addAll(CoffinHudPlanner.buildCommands(screenWidth, screenHeight));
         commands.addAll(LingtianOverlayHudPlanner.buildCommands(
             com.bong.client.lingtian.state.LingtianSessionStore.snapshot(),
             screenWidth,
-            screenHeight
+            screenHeight,
+            com.bong.client.state.SeasonStateStore.snapshot()
         ));
         commands.addAll(ExtractProgressHudPlanner.buildCommands(
             com.bong.client.tsy.ExtractStateStore.snapshot(),

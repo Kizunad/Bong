@@ -148,6 +148,7 @@ pub struct LoadedPlayerSlices {
     pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
     pub lifespan: Option<LifespanComponent>,
+    pub in_coffin: bool,
     pub skill_set: SkillSet,
     pub(crate) ui_prefs: PlayerUiPrefs,
 }
@@ -411,6 +412,7 @@ pub fn load_player_slices(
                 last_dimension: DimensionKind::default(),
                 inventory: None,
                 lifespan: None,
+                in_coffin: false,
                 skill_set: SkillSet::default(),
                 ui_prefs: PlayerUiPrefs::default(),
             };
@@ -440,15 +442,16 @@ pub fn load_player_slices(
             None
         }
     };
-    let lifespan = match load_player_lifespan_from_sqlite(&connection, username) {
-        Ok(lifespan) => lifespan,
+    let (lifespan, in_coffin) = match load_player_lifespan_from_sqlite(&connection, username) {
+        Ok(Some((lifespan, in_coffin))) => (Some(lifespan), in_coffin),
+        Ok(None) => (None, false),
         Err(error) => {
             tracing::warn!(
                 "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
                 username,
                 persistence.db_path().display()
             );
-            None
+            (None, false)
         }
     };
     let skill_set = match load_player_skill_set_from_sqlite(&connection, username) {
@@ -480,6 +483,7 @@ pub fn load_player_slices(
         last_dimension,
         inventory,
         lifespan,
+        in_coffin,
         skill_set,
         ui_prefs,
     }
@@ -541,6 +545,34 @@ pub fn save_player_slices(
         inventory,
         lifespan,
         skill_set,
+        None,
+    )?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn save_player_slices_with_coffin(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    state: &PlayerState,
+    position: [f64; 3],
+    last_dimension: DimensionKind,
+    inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
+    skill_set: &SkillSet,
+    in_coffin: bool,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_slices_in_sqlite(
+        &mut connection,
+        username,
+        state,
+        position,
+        last_dimension,
+        inventory,
+        lifespan,
+        skill_set,
+        Some(in_coffin),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -551,7 +583,24 @@ pub fn save_player_lifespan_slice(
     lifespan: &LifespanComponent,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_lifespan_slice_in_sqlite(&mut connection, username, lifespan, None)?;
+    persist_player_lifespan_slice_in_sqlite(&mut connection, username, lifespan, None, None)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_lifespan_slice_with_coffin(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    lifespan: &LifespanComponent,
+    in_coffin: bool,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_lifespan_slice_in_sqlite(
+        &mut connection,
+        username,
+        lifespan,
+        None,
+        Some(in_coffin),
+    )?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -1024,23 +1073,32 @@ fn persist_player_ui_prefs_slice_in_sqlite(
 fn load_player_lifespan_from_sqlite(
     connection: &Connection,
     username: &str,
-) -> io::Result<Option<LifespanComponent>> {
-    let row: Option<(u64, f64, u32, i64)> = connection
+) -> io::Result<Option<(LifespanComponent, bool)>> {
+    let row: Option<(u64, f64, u32, i64, i64)> = connection
         .query_row(
             "
-            SELECT born_at_tick, years_lived, cap_by_realm, offline_pause_wall
+            SELECT born_at_tick, years_lived, cap_by_realm, offline_pause_wall, in_coffin
             FROM player_lifespan
             WHERE username = ?1
             ",
             params![username],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    let Some((born_at_tick, years_lived, cap_by_realm, offline_pause_wall)) = row else {
+    let Some((born_at_tick, years_lived, cap_by_realm, offline_pause_wall, in_coffin)) = row else {
         return Ok(None);
     };
+    let in_coffin = in_coffin != 0;
     let now_wall = current_unix_seconds();
     let offline_seconds = if offline_pause_wall > 0 {
         u64::try_from(now_wall.saturating_sub(offline_pause_wall)).unwrap_or(0)
@@ -1048,7 +1106,10 @@ fn load_player_lifespan_from_sqlite(
         0
     };
     let years_lived = years_lived
-        + lifespan_delta_years_for_real_seconds(offline_seconds, LIFESPAN_OFFLINE_MULTIPLIER);
+        + lifespan_delta_years_for_real_seconds(
+            offline_seconds,
+            offline_lifespan_multiplier(in_coffin),
+        );
     let mut lifespan = LifespanComponent {
         born_at_tick,
         years_lived: years_lived.min(cap_by_realm as f64),
@@ -1056,7 +1117,15 @@ fn load_player_lifespan_from_sqlite(
         offline_pause_tick: None,
     };
     lifespan.apply_cap(cap_by_realm.max(1));
-    Ok(Some(lifespan))
+    Ok(Some((lifespan, in_coffin)))
+}
+
+pub(crate) fn offline_lifespan_multiplier(in_coffin: bool) -> f64 {
+    if in_coffin {
+        LIFESPAN_OFFLINE_MULTIPLIER * crate::coffin::COFFIN_LIFESPAN_FACTOR
+    } else {
+        LIFESPAN_OFFLINE_MULTIPLIER
+    }
 }
 
 fn load_player_shrine_anchor_from_sqlite(
@@ -1134,9 +1203,11 @@ fn persist_player_lifespan_slice_in_sqlite(
     username: &str,
     lifespan: &LifespanComponent,
     offline_pause_wall: Option<i64>,
+    in_coffin: Option<bool>,
 ) -> io::Result<()> {
     let last_updated_wall = current_unix_seconds();
     let offline_pause_wall = offline_pause_wall.unwrap_or(last_updated_wall).max(0);
+    let in_coffin = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
     connection
         .execute(
             "
@@ -1146,14 +1217,16 @@ fn persist_player_lifespan_slice_in_sqlite(
                 years_lived,
                 cap_by_realm,
                 offline_pause_wall,
+                in_coffin,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(username) DO UPDATE SET
                 born_at_tick = excluded.born_at_tick,
                 years_lived = excluded.years_lived,
                 cap_by_realm = excluded.cap_by_realm,
                 offline_pause_wall = excluded.offline_pause_wall,
+                in_coffin = excluded.in_coffin,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -1163,12 +1236,32 @@ fn persist_player_lifespan_slice_in_sqlite(
                 lifespan.years_lived.min(lifespan.cap_by_realm as f64),
                 lifespan.cap_by_realm,
                 offline_pause_wall,
+                i64::from(in_coffin),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
         )
         .map_err(io::Error::other)?;
     Ok(())
+}
+
+fn resolve_in_coffin_for_persist(
+    connection: &Connection,
+    username: &str,
+    explicit: Option<bool>,
+) -> io::Result<bool> {
+    if let Some(value) = explicit {
+        return Ok(value);
+    }
+    let stored: Option<i64> = connection
+        .query_row(
+            "SELECT in_coffin FROM player_lifespan WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    Ok(stored.unwrap_or(0) != 0)
 }
 
 fn load_player_skill_set_from_sqlite(
@@ -1233,6 +1326,7 @@ fn persist_player_core_slice_in_sqlite(
             None,
             None,
             &SkillSet::default(),
+            None,
         )?;
     }
 
@@ -1391,6 +1485,7 @@ fn persist_player_slices_in_sqlite(
     inventory: Option<&PlayerInventory>,
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
+    in_coffin: Option<bool>,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let karma = normalized.karma;
@@ -1400,6 +1495,7 @@ fn persist_player_slices_in_sqlite(
     let skill_set_json = serialize_skill_set_json(skill_set)?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
+    let in_coffin_value = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
 
     let transaction = connection.transaction().map_err(io::Error::other)?;
     let current_char_id: Option<String> = transaction
@@ -1545,14 +1641,16 @@ fn persist_player_slices_in_sqlite(
                     years_lived,
                     cap_by_realm,
                     offline_pause_wall,
+                    in_coffin,
                     schema_version,
                     last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(username) DO UPDATE SET
                     born_at_tick = excluded.born_at_tick,
                     years_lived = excluded.years_lived,
                     cap_by_realm = excluded.cap_by_realm,
                     offline_pause_wall = excluded.offline_pause_wall,
+                    in_coffin = excluded.in_coffin,
                     schema_version = excluded.schema_version,
                     last_updated_wall = excluded.last_updated_wall
                 ",
@@ -1562,6 +1660,7 @@ fn persist_player_slices_in_sqlite(
                     lifespan.years_lived.min(lifespan.cap_by_realm as f64),
                     lifespan.cap_by_realm,
                     offline_pause_wall,
+                    i64::from(in_coffin_value),
                     PLAYER_ROW_SCHEMA_VERSION,
                     last_updated_wall
                 ],
@@ -1688,6 +1787,7 @@ fn migrate_legacy_player_json_to_sqlite(
         None,
         None,
         &SkillSet::default(),
+        None,
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
     Ok(Some(state))
@@ -2113,9 +2213,10 @@ mod player_state_tests {
                     years_lived,
                     cap_by_realm,
                     offline_pause_wall,
+                    in_coffin,
                     schema_version,
                     last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ",
                 params![
                     "Azure",
@@ -2123,6 +2224,7 @@ mod player_state_tests {
                     6.0_f64,
                     LifespanCapTable::AWAKEN,
                     offline_pause_wall,
+                    0_i64,
                     PLAYER_ROW_SCHEMA_VERSION,
                     offline_pause_wall,
                 ],
@@ -2135,6 +2237,56 @@ mod player_state_tests {
         assert!(
             (6.99..=7.01).contains(&loaded_lifespan.years_lived),
             "expected ten offline real hours at x0.1 to add about one year, got {}",
+            loaded_lifespan.years_lived
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifespan_load_applies_coffin_offline_multiplier() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-coffin-offline-delta");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let offline_pause_wall = current_unix_seconds()
+            - (crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10);
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    in_coffin,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                ",
+                params![
+                    "Azure",
+                    0_u64,
+                    6.0_f64,
+                    LifespanCapTable::AWAKEN,
+                    offline_pause_wall,
+                    1_i64,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    offline_pause_wall,
+                ],
+            )
+            .expect("lifespan fixture should insert");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert!(loaded.in_coffin);
+        assert!((offline_lifespan_multiplier(true) - 0.09).abs() < 1e-9);
+        assert!(
+            (6.89..=6.91).contains(&loaded_lifespan.years_lived),
+            "expected ten offline real hours in coffin at x0.09 to add about 0.9 years, got {}",
             loaded_lifespan.years_lived
         );
 
@@ -2157,15 +2309,17 @@ mod player_state_tests {
                     years_lived,
                     cap_by_realm,
                     offline_pause_wall,
+                    in_coffin,
                     schema_version,
                     last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ",
                 params![
                     "Azure",
                     0_u64,
                     12.0_f64,
                     LifespanCapTable::AWAKEN,
+                    0_i64,
                     0_i64,
                     PLAYER_ROW_SCHEMA_VERSION,
                     0_i64,

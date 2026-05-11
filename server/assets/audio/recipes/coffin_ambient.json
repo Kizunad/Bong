@@ -1,0 +1,10 @@
+{
+  "id": "coffin_ambient",
+  "layers": [
+    { "sound": "minecraft:block.wood.hit", "volume": 0.12, "pitch": 0.45, "delay_ticks": 0 },
+    { "sound": "minecraft:block.wood.creak", "volume": 0.10, "pitch": 0.55, "delay_ticks": 8 }
+  ],
+  "priority": 18,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

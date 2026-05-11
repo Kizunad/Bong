@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.lingtian.state.LingtianSessionStore;
+import com.bong.client.state.SeasonState;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +20,15 @@ public final class LingtianOverlayHudPlanner {
     }
 
     public static List<HudRenderCommand> buildCommands(LingtianSessionStore.Snapshot snapshot, int screenWidth, int screenHeight) {
+        return buildCommands(snapshot, screenWidth, screenHeight, null);
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        LingtianSessionStore.Snapshot snapshot,
+        int screenWidth,
+        int screenHeight,
+        SeasonState seasonState
+    ) {
         LingtianSessionStore.Snapshot safeSnapshot = snapshot == null ? LingtianSessionStore.Snapshot.empty() : snapshot;
         if (!safeSnapshot.active() || screenWidth <= 0 || screenHeight <= 0) {
             return List.of();
@@ -38,6 +48,7 @@ public final class LingtianOverlayHudPlanner {
             safeSnapshot.dyeContaminationWarning() ? WARNING : TEXT
         ));
         out.add(HudRenderCommand.rect(HudRenderLayer.LINGTIAN_OVERLAY, x + 6, y + 20, PANEL_WIDTH - 12, 4, TRACK));
+        appendSeasonIcon(out, seasonState, x + PANEL_WIDTH - 14, y + 19);
         int trackWidth = PANEL_WIDTH - 12;
         int progressWidth = Math.max(0, Math.min(trackWidth, Math.round(trackWidth * clampedProgress)));
         out.add(HudRenderCommand.rect(
@@ -57,6 +68,24 @@ public final class LingtianOverlayHudPlanner {
             safeSnapshot.dyeContaminationWarning() ? WARNING : 0xFFB8C8B0
         ));
         return List.copyOf(out);
+    }
+
+    static int seasonIconColor(SeasonState seasonState) {
+        if (seasonState == null) {
+            return 0;
+        }
+        return switch (seasonState.phase()) {
+            case SUMMER -> 0x99FFB040;
+            case WINTER -> 0x99E8F4FF;
+            case SUMMER_TO_WINTER, WINTER_TO_SUMMER -> 0x999966CC;
+        };
+    }
+
+    private static void appendSeasonIcon(List<HudRenderCommand> out, SeasonState seasonState, int x, int y) {
+        int color = seasonIconColor(seasonState);
+        if (color != 0) {
+            out.add(HudRenderCommand.rect(HudRenderLayer.LINGTIAN_OVERLAY, x, y, 5, 5, color));
+        }
     }
 
     private static String icon(LingtianSessionStore.Snapshot snapshot) {

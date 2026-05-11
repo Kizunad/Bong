@@ -6,11 +6,11 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | CalamityArsenal 灾劫注册表 + TiandaoPower 权力预算系统 | ⬜ |
-| P1 | 8 类灾劫实装（server 效果 + 视听规格内联，每种灾劫完整到可直接实现） | ⬜ |
-| P2 | agent 灾劫选型 prompt + 权力分配决策 | ⬜ |
-| P3 | 灾劫组合技（天道可同时/连续释放多重灾劫） | ⬜ |
-| P4 | 饱和测试 | ⬜ |
+| P0 | CalamityArsenal 灾劫注册表 + TiandaoPower 权力预算系统 | ✅ 2026-05-11 |
+| P1 | 8 类灾劫实装（server 效果 + 视听规格内联，每种灾劫完整到可直接实现） | ✅ 2026-05-11 |
+| P2 | agent 灾劫选型 prompt + 权力分配决策 | ✅ 2026-05-11 |
+| P3 | 灾劫组合技（天道可同时/连续释放多重灾劫） | ✅ 2026-05-11 |
+| P4 | 饱和测试 | ✅ 2026-05-11 |
 
 ---
 
@@ -576,3 +576,21 @@ export const CalamityIntentV1 = Type.Object({
 18. **灵气抽空**走 `QiTransfer` → zone qi 减少量 = world pool 增加量
 19. **天火焦土** qi 归零走域崩路径 → 不凭空消灭
 20. **道伥 spawn** 走 NpcRegistry 预算 → 不超额
+
+## Finish Evidence
+
+- **server**
+  - `server/src/world/calamity.rs` 新增 `CalamityArsenal` / `TiandaoPower` / `CalamityKind`，注册到 `world::register`。
+  - `server/src/world/events.rs` 复用 `spawn_event` 管线落地 8 类灾劫，包含权力扣除、注意力门槛、季节门、同 zone 最多 2 灾劫、同目标 10 分钟最多 3 次、major alert、VFX、audio、recent event 与关键 runtime 效果。
+  - `server/src/network/command_executor.rs` 接入灾劫执行资源；`server/src/schema/calamity.rs` / `server/src/schema/channels.rs` / `server/src/schema/common.rs` 对齐 Rust schema 和 Redis channel。
+- **agent**
+  - `agent/packages/schema/src/calamity.ts` 新增 `CalamityKindV1` / `CalamityIntentV1`，生成 `calamity-kind-v1.json` / `calamity-intent-v1.json`。
+  - `agent/packages/tiandao/src/skills/calamity-selector.md` 新增灾劫选型 prompt；`context.ts` 注入灾劫武器库上下文。
+- **client/audio**
+  - `CalamityVfxPlayer` 和 `VfxBootstrap` 注册灾劫粒子入口。
+  - `server/assets/audio/recipes/calamity_*.json` 新增 8 份灾劫音效配方，`server/src/audio/mod.rs` registry 覆盖到 101 份 recipe。
+- **验证**
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅ 4287 passed
+  - `cd agent && npm run check -w @bong/schema && npm run build -w @bong/schema && npm test -w @bong/schema` ✅ 18 files / 368 tests passed
+  - `cd agent && npm test -w @bong/tiandao` ✅ 51 files / 352 tests passed
+  - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build` ✅

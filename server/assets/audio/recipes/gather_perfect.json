@@ -1,0 +1,10 @@
+{
+  "id": "gather_perfect",
+  "layers": [
+    { "sound": "minecraft:entity.item.pickup", "volume": 0.25, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.player.levelup", "volume": 0.15, "pitch": 2.0, "delay_ticks": 1 }
+  ],
+  "priority": 60,
+  "attenuation": "world_3d",
+  "category": "PLAYERS"
+}

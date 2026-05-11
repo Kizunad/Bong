@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use valence::prelude::{bevy_ecs, Component, Entity, Event, Resource};
 
 use super::registry::{BotanyPlantId, FaunaKind, PlantVariant};
+use crate::gathering::quality::GatheringQuality;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotanyHarvestMode {
@@ -259,6 +260,9 @@ pub struct HarvestTerminalEvent {
     pub detail: String,
     pub target_pos: Option<[f64; 3]>,
     pub spirit_quality: f32,
+    pub duration_ticks: u64,
+    pub gathering_quality: Option<GatheringQuality>,
+    pub tool_used: Option<String>,
 }
 
 /// botany-v2 `AttractsMobs` 真 spawn 请求。

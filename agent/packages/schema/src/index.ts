@@ -12,6 +12,7 @@ export * from "./armor-event.js";
 export * from "./audio-event.js";
 export * from "./baomai-v3.js";
 export * from "./botany.js";
+export * from "./calamity.js";
 export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";

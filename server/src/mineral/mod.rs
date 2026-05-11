@@ -92,7 +92,7 @@ pub fn register(app: &mut App) {
         (
             tick_mineral_clock,
             resolve_mineral_probe_intents,
-            handle_block_break_for_mineral,
+            handle_block_break_for_mineral.in_set(crate::gathering::GatheringSystemSet::Produce),
             emit_mineral_feedback_chat,
             // plan-mineral-v1 §2.2 — drop 事件由 inventory_grant 在同一 Update 内消费；
             // Bevy 的 Events 支持单 tick 内 writer → reader 管道（EventReader 扫整帧的 events）。

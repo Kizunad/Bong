@@ -31,6 +31,12 @@ pub enum EventKind {
     BeastTide,
     RealmCollapse,
     KarmaBacklash,
+    PoisonMiasma,
+    MeridianSeal,
+    DaoxiangWave,
+    HeavenlyFire,
+    PressureInvert,
+    AllWither,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
