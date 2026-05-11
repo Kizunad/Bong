@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, Component, DVec3, EventWriter, Position, Query, Res, Update, With,
+    bevy_ecs, App, BlockPos, Commands, Component, DVec3, EventWriter, Position, Query, Res, ResMut,
+    Resource, Update, With,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -10,7 +11,9 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
-use crate::world::zone::ZoneRegistry;
+use crate::world::dimension::DimensionKind;
+use crate::world::season::{query_season, Season};
+use crate::world::zone::{Zone, ZoneRegistry};
 use crate::worldgen::pseudo_vein::{
     build_dissipate_event, storm_hotspots_from_event, PseudoVeinStormHotspot,
 };
@@ -26,6 +29,9 @@ pub const PSEUDO_VEIN_CRITICAL_DRAIN_RATE: f64 = 0.02;
 pub const PSEUDO_VEIN_CRITICAL_PLAYER_DENSITY: u32 = 4;
 pub const PSEUDO_VEIN_INFLUENCE_RADIUS_BLOCKS: f64 = 30.0;
 const PSEUDO_VEIN_VISUAL_PERIOD_TICKS: u64 = 100;
+const PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS: u64 = 12_000;
+const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
+const ZONE_SPIRIT_QI_MAX: f64 = 1.0;
 pub const PSEUDO_VEIN_RISING_VFX_EVENT_ID: &str = "bong:pseudo_vein_rising";
 pub const PSEUDO_VEIN_ACTIVE_VFX_EVENT_ID: &str = "bong:pseudo_vein_active";
 pub const PSEUDO_VEIN_WARNING_VFX_EVENT_ID: &str = "bong:pseudo_vein_warning";
@@ -82,6 +88,12 @@ pub struct PseudoVeinSpawnIntent {
     pub max_qi: f64,
     pub duration_ticks: u64,
     pub reason: PseudoVeinSpawnReason,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct PseudoVeinFallbackState {
+    last_eval_tick: Option<u64>,
+    last_qi_by_zone: HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,14 +211,22 @@ impl PseudoVeinRuntime {
 }
 
 pub fn register(app: &mut App) {
-    app.add_systems(Update, pseudo_vein_runtime_tick_system);
+    app.init_resource::<PseudoVeinFallbackState>().add_systems(
+        Update,
+        (
+            pseudo_vein_fallback_spawn_system,
+            pseudo_vein_runtime_tick_system,
+        ),
+    );
 }
 
 pub fn pseudo_vein_runtime_tick_system(
     clock: Option<Res<CultivationClock>>,
     mut runtimes: Query<&mut PseudoVeinRuntime>,
     cultivators: Query<&Position, With<Cultivation>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     for mut runtime in &mut runtimes {
@@ -214,9 +234,179 @@ pub fn pseudo_vein_runtime_tick_system(
         let cultivator_count =
             count_cultivators_near(runtime.center_pos, cultivators.iter().map(|pos| pos.get()));
         let outcome = runtime.advance(now, cultivator_count);
+        if let Some(settlement) = outcome.settlement.as_ref() {
+            apply_pseudo_vein_settlement(zones.as_deref_mut(), settlement, &mut qi_transfers);
+        }
         if should_emit_visual(&mut runtime, previous_phase, now, outcome.warning_crossed) {
             vfx_events.send(pseudo_vein_vfx_request(&runtime, outcome.phase));
         }
+    }
+}
+
+pub fn pseudo_vein_fallback_spawn_system(
+    clock: Option<Res<CultivationClock>>,
+    mut state: ResMut<PseudoVeinFallbackState>,
+    mut commands: Commands,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    cultivators: Query<&Position, With<Cultivation>>,
+    runtimes: Query<&PseudoVeinRuntime>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+) {
+    let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let Some(zones) = zones.as_deref_mut() else {
+        return;
+    };
+
+    let Some(previous_tick) = state.last_eval_tick else {
+        state.record_baseline(now, zones);
+        return;
+    };
+
+    let elapsed_ticks = now.saturating_sub(previous_tick);
+    if elapsed_ticks < PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS {
+        return;
+    }
+
+    let drain_by_zone = state.drain_rate_by_zone(zones, elapsed_ticks);
+    let density_by_zone =
+        player_density_by_zone(zones, cultivators.iter().map(|position| position.get()));
+    let season = pseudo_vein_season_from_world(query_season("", now).season);
+    let intent = fallback_auto_spawn_on_high_drain(zones, &drain_by_zone, &density_by_zone, season);
+
+    if let Some(intent) = intent {
+        spawn_fallback_pseudo_vein(
+            &mut commands,
+            zones,
+            &runtimes,
+            &mut qi_transfers,
+            intent,
+            now,
+            season,
+        );
+    }
+
+    state.record_baseline(now, zones);
+}
+
+impl PseudoVeinFallbackState {
+    fn record_baseline(&mut self, tick: u64, zones: &ZoneRegistry) {
+        self.last_eval_tick = Some(tick);
+        self.last_qi_by_zone = zones
+            .zones
+            .iter()
+            .map(|zone| (zone.name.clone(), zone.spirit_qi))
+            .collect();
+    }
+
+    fn drain_rate_by_zone(&self, zones: &ZoneRegistry, elapsed_ticks: u64) -> HashMap<String, f64> {
+        if elapsed_ticks == 0 {
+            return HashMap::new();
+        }
+        zones
+            .zones
+            .iter()
+            .map(|zone| {
+                let previous_qi = self
+                    .last_qi_by_zone
+                    .get(zone.name.as_str())
+                    .copied()
+                    .unwrap_or(zone.spirit_qi);
+                let drained = (previous_qi - zone.spirit_qi).max(0.0);
+                (zone.name.clone(), drained / elapsed_ticks as f64)
+            })
+            .collect()
+    }
+}
+
+fn spawn_fallback_pseudo_vein(
+    commands: &mut Commands,
+    zones: &mut ZoneRegistry,
+    runtimes: &Query<&PseudoVeinRuntime>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    intent: PseudoVeinSpawnIntent,
+    tick: u64,
+    season: PseudoVeinSeasonV1,
+) {
+    if runtimes
+        .iter()
+        .any(|runtime| runtime.zone_id == intent.zone_id)
+    {
+        return;
+    }
+
+    let Some(zone) = zones.find_zone_mut(intent.zone_id.as_str()) else {
+        return;
+    };
+    if let Some(transfer) = inject_zone_for_pseudo_vein(zone) {
+        qi_transfers.send(transfer);
+    }
+    let center = zone.center();
+    commands.spawn(PseudoVeinRuntime::new(
+        zone.name.clone(),
+        BlockPos::new(
+            center.x.round() as i32,
+            center.y.round() as i32,
+            center.z.round() as i32,
+        ),
+        tick,
+        season,
+    ));
+}
+
+fn player_density_by_zone(
+    zones: &ZoneRegistry,
+    positions: impl IntoIterator<Item = DVec3>,
+) -> HashMap<String, u32> {
+    let mut density_by_zone = HashMap::new();
+    for position in positions {
+        let Some(zone) = zones.find_zone(DimensionKind::Overworld, position) else {
+            continue;
+        };
+        let count = density_by_zone.entry(zone.name.clone()).or_insert(0u32);
+        *count = count.saturating_add(1);
+    }
+    density_by_zone
+}
+
+pub fn inject_zone_for_pseudo_vein(zone: &mut Zone) -> Option<QiTransfer> {
+    let before = zone.spirit_qi;
+    zone.spirit_qi = zone
+        .spirit_qi
+        .max(PSEUDO_VEIN_MAX_QI)
+        .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    let injected = round3((zone.spirit_qi - before).max(0.0));
+    if injected <= f64::EPSILON {
+        return None;
+    }
+    QiTransfer::new(
+        QiAccountId::tiandao(),
+        QiAccountId::zone(zone.name.as_str()),
+        injected,
+        QiTransferReason::ReleaseToZone,
+    )
+    .ok()
+}
+
+fn apply_pseudo_vein_settlement(
+    zones: Option<&mut ZoneRegistry>,
+    settlement: &PseudoVeinQiSettlement,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+) {
+    if let Some(zones) = zones {
+        if let Some(zone) = zones.find_zone_mut(settlement.collection_transfer.from.id.as_str()) {
+            zone.spirit_qi = (zone.spirit_qi - settlement.collected_by_tiandao)
+                .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+        }
+    }
+    qi_transfers.send(settlement.collection_transfer.clone());
+}
+
+fn pseudo_vein_season_from_world(season: Season) -> PseudoVeinSeasonV1 {
+    match season {
+        Season::Summer => PseudoVeinSeasonV1::Summer,
+        Season::SummerToWinter => PseudoVeinSeasonV1::SummerToWinter,
+        Season::Winter => PseudoVeinSeasonV1::Winter,
+        Season::WinterToSummer => PseudoVeinSeasonV1::WinterToSummer,
     }
 }
 
@@ -432,7 +622,7 @@ mod tests {
     use super::*;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::Zone;
-    use valence::prelude::DVec3;
+    use valence::prelude::{DVec3, Events};
 
     #[test]
     fn rising_reaches_0_6_in_600_ticks() {
@@ -534,6 +724,97 @@ mod tests {
         assert_eq!(intent.zone_id, "fast");
         assert_eq!(intent.reason, PseudoVeinSpawnReason::TideTurnHighDrain);
         assert_eq!(intent.duration_ticks, PSEUDO_VEIN_BASE_DURATION_TICKS * 2);
+    }
+
+    #[test]
+    fn inject_zone_for_pseudo_vein_records_actual_zone_delta() {
+        let mut zone = zone("fast", 0.1, 0.0);
+
+        let transfer = super::inject_zone_for_pseudo_vein(&mut zone)
+            .expect("low-qi zone should receive tiandao injection");
+
+        assert_eq!(zone.spirit_qi, PSEUDO_VEIN_MAX_QI);
+        assert_eq!(transfer.from, QiAccountId::tiandao());
+        assert_eq!(transfer.to, QiAccountId::zone("fast"));
+        assert_eq!(transfer.amount, 0.5);
+        assert_eq!(transfer.reason, QiTransferReason::ReleaseToZone);
+    }
+
+    #[test]
+    fn runtime_tick_emits_collection_transfer_on_settlement() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: PSEUDO_VEIN_DISSIPATING_TICKS,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("lingquan_marsh", PSEUDO_VEIN_MAX_QI, 0.0)],
+        });
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, pseudo_vein_runtime_tick_system);
+
+        let mut runtime = runtime(PseudoVeinSeasonV1::Summer);
+        runtime.phase = PseudoVeinPhase::Dissipating;
+        runtime.phase_started_at_tick = 0;
+        runtime.current_qi = 0.0;
+        runtime.last_tick = 0;
+        app.world_mut().spawn(runtime);
+
+        app.update();
+
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("lingquan_marsh")
+            .expect("test zone should exist")
+            .spirit_qi;
+        assert_eq!(zone_qi, 0.42);
+        let transfers = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].from, QiAccountId::zone("lingquan_marsh"));
+        assert_eq!(transfers[0].to, QiAccountId::tiandao());
+        assert_eq!(transfers[0].amount, 0.18);
+        assert_eq!(transfers[0].reason, QiTransferReason::EraDecay);
+    }
+
+    #[test]
+    fn fallback_system_spawns_runtime_on_high_density() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("fast", 0.1, 0.0)],
+        });
+        app.insert_resource(PseudoVeinFallbackState {
+            last_eval_tick: Some(0),
+            last_qi_by_zone: HashMap::from([("fast".to_string(), 0.1)]),
+        });
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, pseudo_vein_fallback_spawn_system);
+        for _ in 0..PSEUDO_VEIN_CRITICAL_PLAYER_DENSITY {
+            app.world_mut()
+                .spawn((Cultivation::default(), Position::new([8.0, 66.0, 8.0])));
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(runtimes[0].zone_id, "fast");
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("fast")
+                .expect("test zone should exist")
+                .spirit_qi,
+            PSEUDO_VEIN_MAX_QI
+        );
     }
 
     #[test]
