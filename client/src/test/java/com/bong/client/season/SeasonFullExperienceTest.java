@@ -40,6 +40,18 @@ class SeasonFullExperienceTest {
     }
 
     @Test
+    void controller_progress_handles_zero_phase_total() {
+        SeasonVisualController.SeasonTickResult result = SeasonVisualController.tick(
+            new SeasonState(SeasonState.Phase.SUMMER, 0L, 0L, 0L),
+            42L
+        );
+
+        assertEquals(0.0, result.progress(), 1e-6);
+        assertEquals(0.0, ZoneAtmosphereRenderer.currentSeasonOverrideForTests().progress(), 1e-6);
+        assertEquals(0.0, MusicStateMachine.instance().seasonModifierForTests().progress(), 1e-6);
+    }
+
+    @Test
     void controller_emits_transition_event_on_phase_change() {
         SeasonState summer = new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L);
         SeasonState tide = new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 10L, 1000L, 0L);

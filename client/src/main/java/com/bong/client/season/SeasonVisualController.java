@@ -81,7 +81,8 @@ public final class SeasonVisualController {
     }
 
     private static double progress(SeasonState state) {
-        return Math.max(0.0, Math.min(1.0, (double) state.tickIntoPhase() / (double) state.phaseTotalTicks()));
+        long total = Math.max(1L, state.phaseTotalTicks());
+        return Math.max(0.0, Math.min(1.0, (double) state.tickIntoPhase() / (double) total));
     }
 
     public record SeasonTickResult(
