@@ -275,10 +275,10 @@
 ## Finish Evidence
 
 - 实现提交：
-  - `e09572aad` `plan-season-full-experience-v1: 接入客户端季节体验`
-  - `c61aa664c` `plan-season-full-experience-v1: 落地兽潮与NPC季节契约`
-  - `42dfca48b` `plan-season-full-experience-v1: 增加天道季节旁白`
-  - `ab32e8130` `plan-season-full-experience-v1: 补季节循环验证脚本`
+  - `e3fb8dc07` `plan-season-full-experience-v1: 接入客户端季节体验`
+  - `efb1c22dc` `plan-season-full-experience-v1: 落地兽潮与NPC季节契约`
+  - `0c2970853` `plan-season-full-experience-v1: 增加天道季节旁白`
+  - `f31147f43` `plan-season-full-experience-v1: 补季节循环验证脚本`
 - P0：
   - `SeasonVisualController` 统一读取 `SeasonStateStore`，同步 `ZoneAtmosphereRenderer` / `MusicStateMachine` / `SeasonParticleEmitter`，phase 切换时产出 `SeasonTransitionEvent`。
   - `SeasonHintHudPlanner` 与 `LingtianOverlayHudPlanner` 仅绘制低 alpha 图标/色块，不写显式季节文字。
