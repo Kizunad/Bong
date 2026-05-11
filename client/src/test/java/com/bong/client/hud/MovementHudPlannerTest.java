@@ -28,6 +28,33 @@ class MovementHudPlannerTest {
     }
 
     @Test
+    void recentStaminaCostUsesYellowHighlight() {
+        MovementState state = new MovementState(
+            0.75,
+            true,
+            MovementState.Action.DASHING,
+            MovementState.ZoneKind.NORMAL,
+            20,
+            0,
+            1,
+            1,
+            1.8,
+            70,
+            100,
+            false,
+            12L,
+            "",
+            1_000L,
+            1_000L,
+            0L
+        );
+
+        List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 1_100L);
+
+        assertTrue(commands.stream().anyMatch(c -> c.isRect() && c.color() == 0xFFFFD060));
+    }
+
+    @Test
     void deadZoneAddsVignetteEvenWithoutRecentAction() {
         MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.DEAD, false, 0L, 0L);
 

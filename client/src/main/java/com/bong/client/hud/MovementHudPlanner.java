@@ -145,7 +145,7 @@ public final class MovementHudPlanner {
             return;
         }
         boolean recentCost = state.staminaCostActive() && nowMs - state.hudActivityAtMs() <= REJECT_FLASH_MS;
-        int color = state.lowStamina() ? STAMINA_LOW_COLOR : (recentCost ? STAMINA_COLOR : 0xFFFFD060);
+        int color = state.lowStamina() ? STAMINA_LOW_COLOR : (recentCost ? 0xFFFFD060 : STAMINA_COLOR);
         out.add(HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, x, y, fill, 3, withAlpha(color, alpha)));
     }
 

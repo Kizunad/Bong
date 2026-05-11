@@ -25,11 +25,14 @@ public final class MovementVfxPlayer implements VfxPlayer {
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
         ClientWorld world = GameplayVfxUtil.world(client);
-        if (world == null || payload == null || payload.origin().length < 3) {
+        if (world == null || payload == null) {
             return;
         }
 
         double[] origin = payload.origin();
+        if (origin == null || origin.length < 3) {
+            return;
+        }
         double ox = origin[0];
         double oy = origin[1];
         double oz = origin[2];

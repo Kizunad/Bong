@@ -219,6 +219,8 @@ type MovementSpeedQueryItem<'a> = (
 fn apply_movement_speed_system(
     clock: Res<CombatClock>,
     zones: Option<Res<ZoneRegistry>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    layers: Query<&ChunkLayer>,
     mut players: Query<MovementSpeedQueryItem<'_>, With<Client>>,
 ) {
     for (
@@ -235,7 +237,13 @@ fn apply_movement_speed_system(
         let realm = cultivation
             .map(|cultivation| cultivation.realm)
             .unwrap_or(Realm::Awaken);
-        let zone_kind = runtime_zone_kind(position, dimension, zones.as_deref());
+        let zone_kind = runtime_zone_kind(
+            position,
+            dimension,
+            zones.as_deref(),
+            dimension_layers.as_deref(),
+            &layers,
+        );
         let stamina_current = stamina.map(|stamina| stamina.current).unwrap_or(100.0);
         let multiplier = speed_multiplier(realm, zone_kind, clock.tick, stamina_current);
         let max_charges = double_jump_charges_by_realm(realm);
@@ -414,15 +422,7 @@ fn handle_movement_action_intents(
             }
         }
 
-        emit_action_feedback(
-            action,
-            origin,
-            dir,
-            dimension_kind,
-            unique_id,
-            &mut vfx,
-            &mut audio,
-        );
+        emit_action_feedback(action, origin, dir, unique_id, &mut vfx, &mut audio);
     }
 }
 
@@ -446,7 +446,11 @@ fn apply_slide_contact_damage_system(
 
         let mut hit_any = false;
         for (target, target_pos, mut wounds) in &mut targets {
-            if horizontal_distance_squared(player_pos.get(), target_pos.get()) > 1.44 {
+            if !slide_contact_in_range(
+                player_pos.get(),
+                target_pos.get(),
+                movement.hitbox_height_blocks,
+            ) {
                 continue;
             }
             hit_any = true;
@@ -630,7 +634,6 @@ fn emit_action_feedback(
     action: MovementAction,
     origin: DVec3,
     dir: DVec3,
-    dimension: DimensionKind,
     unique_id: Option<&UniqueId>,
     vfx: &mut EventWriter<VfxEventRequest>,
     audio: &mut EventWriter<PlaySoundRecipeRequest>,
@@ -699,8 +702,6 @@ fn emit_action_feedback(
             radius: AUDIO_BROADCAST_RADIUS,
         },
     });
-
-    let _ = dimension;
 }
 
 fn spend_stamina(stamina: &mut Stamina, cost: f32, now: u64) {
@@ -902,10 +903,16 @@ fn player_collides_with_world(
     layers: &Query<&ChunkLayer>,
 ) -> bool {
     let Some(dimension_layers) = dimension_layers else {
-        return false;
+        tracing::debug!(
+            "[bong][movement] blocked displacement because DimensionLayers is unavailable"
+        );
+        return true;
     };
     let Ok(layer) = layers.get(dimension_layers.entity_for(dimension)) else {
-        return false;
+        tracing::debug!(
+            "[bong][movement] blocked displacement because ChunkLayer is unavailable for dimension={dimension:?}"
+        );
+        return true;
     };
     let player_aabb = player_collision_aabb(position, hitbox_height_blocks);
     player_aabb_intersects_blocks(layer, player_aabb)
@@ -1005,13 +1012,19 @@ fn runtime_zone_kind(
     position: Option<&Position>,
     dimension: Option<&CurrentDimension>,
     zones: Option<&ZoneRegistry>,
+    dimension_layers: Option<&DimensionLayers>,
+    layers: &Query<&ChunkLayer>,
 ) -> MovementZoneKind {
     let (Some(position), Some(zones)) = (position, zones) else {
         return MovementZoneKind::Normal;
     };
     let dimension = dimension.map(|dimension| dimension.0).unwrap_or_default();
     let zone = zones.find_zone(dimension, position.get());
-    movement_zone_kind(zone, false)
+    let on_residue_ash = zone.is_some_and(|zone| {
+        zone_allows_residue_ash_surface(zone)
+            && on_residue_ash_surface(position.get(), dimension, dimension_layers, layers)
+    });
+    movement_zone_kind(zone, on_residue_ash)
 }
 
 fn horizontal_direction(look: Look) -> DVec3 {
@@ -1032,6 +1045,51 @@ fn horizontal_distance_squared(a: DVec3, b: DVec3) -> f64 {
     let dx = a.x - b.x;
     let dz = a.z - b.z;
     dx * dx + dz * dz
+}
+
+fn slide_contact_in_range(player_pos: DVec3, target_pos: DVec3, hitbox_height_blocks: f32) -> bool {
+    let delta = target_pos - player_pos;
+    if delta.y.abs() > f64::from(hitbox_height_blocks.max(0.1)) {
+        return false;
+    }
+    horizontal_distance_squared(player_pos, target_pos) <= 1.44
+}
+
+fn zone_allows_residue_ash_surface(zone: &Zone) -> bool {
+    zone.name.contains("ash")
+        || zone
+            .active_events
+            .iter()
+            .any(|event| event == "no_cadence" || event == "tribulation_scorch")
+}
+
+fn on_residue_ash_surface(
+    position: DVec3,
+    dimension: DimensionKind,
+    dimension_layers: Option<&DimensionLayers>,
+    layers: &Query<&ChunkLayer>,
+) -> bool {
+    let Some(dimension_layers) = dimension_layers else {
+        return false;
+    };
+    let Ok(layer) = layers.get(dimension_layers.entity_for(dimension)) else {
+        return false;
+    };
+    let foot_y = (position.y - 0.05).floor() as i32;
+    let below_y = (position.y - 1.0).floor() as i32;
+    [foot_y, below_y].into_iter().any(|y| {
+        let pos = BlockPos::new(position.x.floor() as i32, y, position.z.floor() as i32);
+        layer
+            .block(pos)
+            .is_some_and(|block| is_residue_ash_block(block.state))
+    })
+}
+
+fn is_residue_ash_block(block: BlockState) -> bool {
+    matches!(
+        block,
+        BlockState::COARSE_DIRT | BlockState::GRAVEL | BlockState::SAND | BlockState::SMOOTH_STONE
+    )
 }
 
 #[cfg(test)]
@@ -1124,6 +1182,22 @@ mod tests {
     }
 
     #[test]
+    fn slide_contact_requires_vertical_overlap() {
+        let player = DVec3::new(0.0, 64.0, 0.0);
+
+        assert!(slide_contact_in_range(
+            player,
+            DVec3::new(0.9, 64.4, 0.0),
+            SLIDE_HITBOX_HEIGHT_BLOCKS,
+        ));
+        assert!(!slide_contact_in_range(
+            player,
+            DVec3::new(0.9, 66.0, 0.0),
+            SLIDE_HITBOX_HEIGHT_BLOCKS,
+        ));
+    }
+
+    #[test]
     fn slide_requires_running() {
         assert!(super::slide_requires_running(StaminaState::Sprinting));
         assert!(!super::slide_requires_running(StaminaState::Walking));
@@ -1196,6 +1270,37 @@ mod tests {
         assert!(
             end.x > 1.5,
             "movement should advance to the last safe sample: {end:?}"
+        );
+    }
+
+    #[test]
+    fn residue_ash_speed_modifier_requires_zone_gate_and_surface_block() {
+        let mut ash_zone = Zone {
+            name: "south_ash_dead_zone".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+            spirit_qi: 0.0,
+            danger_level: 5,
+            active_events: vec!["no_cadence".to_string()],
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+
+        assert!(zone_allows_residue_ash_surface(&ash_zone));
+        assert!(is_residue_ash_block(BlockState::COARSE_DIRT));
+        assert_eq!(
+            movement_zone_kind(Some(&ash_zone), true),
+            MovementZoneKind::ResidueAsh
+        );
+
+        ash_zone.name = "spawn".to_string();
+        ash_zone.active_events.clear();
+        ash_zone.spirit_qi = 0.5;
+        ash_zone.danger_level = 1;
+        assert!(!zone_allows_residue_ash_surface(&ash_zone));
+        assert_eq!(
+            movement_zone_kind(Some(&ash_zone), false),
+            MovementZoneKind::Normal
         );
     }
 

@@ -3345,6 +3345,60 @@ mod tests {
     }
 
     #[test]
+    fn movement_action_request_emits_intent_when_event_resource_exists() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<MovementActionIntent>();
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"movement_action","v":1,"action":"dash"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<MovementActionIntent>>();
+        let intents: Vec<_> = events.iter_current_update_events().collect();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].entity, entity);
+        assert_eq!(intents[0].action, MovementAction::Dashing);
+    }
+
+    #[test]
+    fn movement_action_request_without_event_resource_is_dropped() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"movement_action","v":1,"action":"slide"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .get_resource::<valence::prelude::Events<MovementActionIntent>>()
+            .is_none());
+    }
+
+    #[test]
     fn inventory_move_applies_hidden_targeted_wear_to_spiritual_item() {
         let mut app = App::new();
         register_request_app(&mut app);

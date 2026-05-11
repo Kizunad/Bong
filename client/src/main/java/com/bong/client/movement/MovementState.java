@@ -94,10 +94,16 @@ public record MovementState(
     public boolean isEmpty() {
         return action == Action.NONE
             && zoneKind == ZoneKind.NORMAL
+            && currentSpeedMultiplier == 0.0
+            && !staminaCostActive
             && dashCooldownRemainingTicks == 0L
             && slideCooldownRemainingTicks == 0L
+            && doubleJumpChargesRemaining == 0
             && doubleJumpChargesMax == 0
+            && staminaCurrent == 0.0
+            && staminaMax == 1.0
             && !lowStamina
+            && lastActionTick == null
             && rejectedAction.isEmpty();
     }
 

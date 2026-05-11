@@ -35,7 +35,7 @@ export const MovementStateV1 = Type.Object(
     double_jump_charges_max: Type.Integer({ minimum: 0 }),
     hitbox_height_blocks: Type.Number({ minimum: 0 }),
     stamina_current: Type.Number({ minimum: 0 }),
-    stamina_max: Type.Number({ minimum: 0 }),
+    stamina_max: Type.Number({ exclusiveMinimum: 0 }),
     low_stamina: Type.Boolean(),
     last_action_tick: Type.Optional(Type.Integer({ minimum: 0 })),
     rejected_action: Type.Optional(MovementActionRequestV1),

@@ -112,14 +112,6 @@ public final class MovementStateHandler implements ServerDataHandler {
         return p.isString() ? p.getAsString() : null;
     }
 
-    private static String readOptionalString(JsonObject obj, String field) {
-        JsonElement el = obj.get(field);
-        if (el == null || el.isJsonNull()) return "";
-        if (!el.isJsonPrimitive()) return "";
-        JsonPrimitive p = el.getAsJsonPrimitive();
-        return p.isString() ? p.getAsString() : "";
-    }
-
     private static Boolean readBoolean(JsonObject obj, String field) {
         JsonElement el = obj.get(field);
         if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return null;

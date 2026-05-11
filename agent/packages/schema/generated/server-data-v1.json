@@ -13531,7 +13531,7 @@
           "type": "number"
         },
         "stamina_max": {
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "low_stamina": {
