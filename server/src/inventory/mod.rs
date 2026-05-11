@@ -372,6 +372,7 @@ pub fn clear_player_inventory(inventory: &mut PlayerInventory, scope: ClearScope
             }
         }
         ClearScope::PackAndHotbar => {
+            // `clearinv all`: clear every carried container plus hotbar, but keep equipment.
             for container in &mut inventory.containers {
                 container.items.clear();
             }

@@ -146,11 +146,13 @@ mod tests {
     }
 
     #[test]
-    fn qi_set_rejects_negative_values() {
+    fn qi_set_rejects_negative_and_non_finite_values() {
         let mut app = setup_app();
         let player = spawn_cultivator(&mut app, 25.0, 100.0);
 
-        send(&mut app, player, QiCmd::Set { value: -10.0 });
+        for value in [-10.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            send(&mut app, player, QiCmd::Set { value });
+        }
         run_update(&mut app);
 
         assert_eq!(

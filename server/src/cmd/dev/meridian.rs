@@ -338,6 +338,33 @@ mod tests {
     }
 
     #[test]
+    fn meridian_open_does_not_overwrite_existing_spirit_root_first() {
+        let mut app = setup_app();
+        let player = spawn_cultivator(&mut app);
+
+        send(
+            &mut app,
+            player,
+            MeridianCmd::Open {
+                id: MeridianId::Lung,
+            },
+        );
+        run_update(&mut app);
+        send(
+            &mut app,
+            player,
+            MeridianCmd::Open {
+                id: MeridianId::Heart,
+            },
+        );
+        run_update(&mut app);
+
+        let life = app.world().get::<LifeRecord>(player).unwrap();
+        assert_eq!(life.biography.len(), 2);
+        assert_eq!(life.spirit_root_first, Some(MeridianId::Lung));
+    }
+
+    #[test]
     fn meridian_list_does_not_mutate_state() {
         let mut app = setup_app();
         let player = spawn_cultivator(&mut app);

@@ -84,6 +84,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::cultivation::life_record::LifeRecord;
+    use crate::qi_physics::QiTransfer;
     use valence::prelude::Events;
 
     #[test]
@@ -111,6 +112,7 @@ mod tests {
     fn realm_set_mutates_realm_without_life_record_side_effect() {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<RealmCmd>>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, handle_realm);
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
         app.world_mut()
@@ -137,6 +139,11 @@ mod tests {
                 .biography
                 .is_empty(),
             "/realm set is dev-only state mutation, not a real breakthrough"
+        );
+        assert_eq!(
+            app.world().resource::<Events<QiTransfer>>().len(),
+            0,
+            "/realm set directly mutates realm and must not enter qi_physics ledger"
         );
     }
 }

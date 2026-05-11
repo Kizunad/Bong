@@ -5,7 +5,9 @@ use valence::message::SendMessage;
 use valence::prelude::{App, Client, EventReader, EventWriter, Query, Res, Update};
 
 use crate::combat::components::{Lifecycle, LifecycleState};
-use crate::cultivation::death_hooks::{CultivationDeathCause, PlayerTerminated};
+use crate::cultivation::death_hooks::{
+    CultivationDeathCause, CultivationDeathTrigger, PlayerTerminated,
+};
 use crate::cultivation::tick::CultivationClock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,7 @@ impl Command for KillCmd {
 
 pub fn register(app: &mut App) {
     app.add_event::<PlayerTerminated>()
+        .add_event::<CultivationDeathTrigger>()
         .add_command::<KillCmd>()
         .add_systems(Update, handle_kill);
 }
@@ -33,6 +36,7 @@ pub fn handle_kill(
     mut events: EventReader<CommandResultEvent<KillCmd>>,
     clock: Option<Res<CultivationClock>>,
     mut terminated: EventWriter<PlayerTerminated>,
+    mut cultivation_deaths: EventWriter<CultivationDeathTrigger>,
     mut players: Query<(&mut Lifecycle, &mut Client)>,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
@@ -51,6 +55,15 @@ pub fn handle_kill(
         lifecycle.terminate(tick);
         terminated.send(PlayerTerminated {
             entity: event.executor,
+        });
+        cultivation_deaths.send(CultivationDeathTrigger {
+            entity: event.executor,
+            cause: CultivationDeathCause::DevCommand,
+            context: serde_json::json!({
+                "source": "dev_command",
+                "command": "kill self",
+                "tick": tick,
+            }),
         });
         tracing::warn!(
             "[dev-cmd] bypass combat damage: kill self with {:?}",
@@ -71,6 +84,7 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 77 });
         app.add_event::<CommandResultEvent<KillCmd>>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<CultivationDeathTrigger>();
         app.add_systems(Update, handle_kill);
         app
     }
@@ -111,10 +125,16 @@ mod tests {
             Some(77)
         );
         assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 1);
-        assert_eq!(
-            CultivationDeathCause::DevCommand,
-            CultivationDeathCause::DevCommand
-        );
+        let deaths = app.world().resource::<Events<CultivationDeathTrigger>>();
+        let collected = deaths
+            .get_reader()
+            .read(deaths)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].entity, player);
+        assert_eq!(collected[0].cause, CultivationDeathCause::DevCommand);
+        assert_eq!(collected[0].context["command"], "kill self");
     }
 
     #[test]
@@ -128,6 +148,12 @@ mod tests {
         run_update(&mut app);
 
         assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 0);
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
+        );
         assert_eq!(
             app.world()
                 .get::<Lifecycle>(player)
