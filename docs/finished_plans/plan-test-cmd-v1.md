@@ -410,6 +410,7 @@ zone_qi set <name:string> <value:double>
 - `4c2771e80`（2026-05-11）`docs(dev-cmd): 补测试场景命令说明`
 - `5809b1b7`（2026-05-11）`fix(dev-cmd): 采纳 review 补死亡原因与 pin 测试`
 - `dec87a94`（2026-05-11）`fix(dev-cmd): 收紧 review 指出的边界输入测试`
+- `61f1ac01`（2026-05-11）`fix(dev-cmd): 补 dev kill 终结持久化`
 
 ### 测试结果
 
@@ -419,6 +420,8 @@ zone_qi set <name:string> <value:double>
 - `cd server && cargo test cmd::dev`：`96 passed; 0 failed`。
 - `cd server && cargo test inventory::tests::clear_player_inventory`：`3 passed; 0 failed`。
 - `cd server && cargo test cmd::dev::technique`：`6 passed; 0 failed`（rebase 后默认功法数量漂移回归；review 后补 non-finite proficiency 回归）。
+- `cd server && cargo test cmd::dev::kill`：`2 passed; 0 failed`（review 后补 LifeRecord / terminated snapshot 持久化回归）。
+- `cd server && cargo test cmd::tests::command_registry && cargo test cmd::tests::command_tree_packet_contains_pinned_root_literals`：`4 passed; 0 failed`（确认可选 persistence resource 不破坏命令树 fixture）。
 
 ### 跨仓库核验
 
