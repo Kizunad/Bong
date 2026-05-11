@@ -30,11 +30,11 @@
 
 ## §0 设计轴心
 
-- [ ] **采集 ≠ 瞬间获得**：长按右键 → 进度环填充（1-3s 按材质/工具/境界决定）→ 完成后获得
-- [ ] **工具提升效率**：无工具可采但慢 ×3 / 有对应工具正常速度 / 高材质工具 +速度 +品质
-- [ ] **品质 roll**：采集完成时 roll 品质（普通/优良/极品），工具材质+境界影响概率
-- [ ] **修复贴图优先**：P0 先修锄头贴图 + 重复植物 icon，再做新功能
-- [ ] **HUD auto-hide**：进度环仅在采集时显示，完成后 1s fade out
+- [x] **采集 ≠ 瞬间获得**：长按右键 → 进度环填充（1-3s 按材质/工具/境界决定）→ 完成后获得
+- [x] **工具提升效率**：无工具可采但慢 ×3 / 有对应工具正常速度 / 高材质工具 +速度 +品质
+- [x] **品质 roll**：采集完成时 roll 品质（普通/优良/极品），工具材质+境界影响概率
+- [x] **修复贴图优先**：P0 先修锄头贴图 + 重复植物 icon，再做新功能
+- [x] **HUD auto-hide**：进度环仅在采集时显示，完成后 1s fade out
 
 ---
 
@@ -42,15 +42,15 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 修复锄头贴图 + 修复重复植物 icon + 补全斧头/镐物品注册 + 工具 icon 生成 | ⬜ |
-| P1 | 采集进度系统 server（GatheringSession + 进度 tick + 工具效率修正） | ⬜ |
-| P2 | 品质 roll 系统 + client 进度环 HUD + 品质结果 UI | ⬜ |
-| P3 | 采集动画 + 粒子 + 音效全流程 | ⬜ |
-| P4 | 工具 craft 配方 + 全工具×全植物×全品质饱和化测试 | ⬜ |
+| P0 | 修复锄头贴图 + 修复重复植物 icon + 补全斧头/镐物品注册 + 工具 icon 生成 | ✅ |
+| P1 | 采集进度系统 server（GatheringSession + 进度 tick + 工具效率修正） | ✅ |
+| P2 | 品质 roll 系统 + client 进度环 HUD + 品质结果 UI | ✅ |
+| P3 | 采集动画 + 粒子 + 音效全流程 | ✅ |
+| P4 | 工具 craft 配方 + 全工具×全植物×全品质饱和化测试 | ✅ |
 
 ---
 
-## P0 — 贴图修复 + 工具补全 ⬜
+## P0 — 贴图修复 + 工具补全 ✅
 
 ### 交付物
 
@@ -83,7 +83,7 @@
 
 ---
 
-## P1 — 采集进度系统 ⬜
+## P1 — 采集进度系统 ✅
 
 ### 交付物
 
@@ -113,7 +113,7 @@
 
 ---
 
-## P2 — 品质 roll + client 进度环 ⬜
+## P2 — 品质 roll + client 进度环 ✅
 
 ### 交付物
 
@@ -142,7 +142,7 @@
 
 ---
 
-## P3 — 动画 + 粒子 + 音效 ⬜
+## P3 — 动画 + 粒子 + 音效 ✅
 
 ### 交付物
 
@@ -175,7 +175,7 @@
 
 ---
 
-## P4 — 工具 craft + 饱和化测试 ⬜
+## P4 — 工具 craft + 饱和化测试 ✅
 
 ### 交付物
 
@@ -220,19 +220,20 @@
 - `cf54c97a1` 2026-05-11 `feat(gathering): 补采集工具和服务端进度流程`
 - `578fec44e` 2026-05-11 `feat(gathering): 接入客户端采集 HUD 和协议`
 - `7903aa2ea` 2026-05-11 `fix(gathering): 接通采集进度反馈`
+- `7b1d9ac08` 2026-05-11 `fix(gathering): 收紧采集协议与完成事件`
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4265 passed
-- `cd server && cargo test gathering`：17 passed
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4268 passed
 - `cd server && cargo test mineral::break_handler::tests`：12 passed
-- `cd server && cargo test spiritwood`：13 passed
-- `cd agent && npm run build`
-- `cd agent/packages/tiandao && npm test`：348 passed
-- `cd agent/packages/schema && npm test`：366 passed
+- `cd server && cargo test spiritwood::tests`：8 passed
+- `cd server && cargo test craft::tests::register_gathering_tool_recipes_adds_six_tool_entries`：1 passed
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL
-- `find client/src/main/resources/assets/bong-client/textures/gui/botany -type f -name "*.png" -print0 | xargs -0 md5sum | sort | uniq -w 32 -d`：0 duplicate hash；botany PNG count = 100
-- `find client/src/main/resources/assets/bong-client/textures/gui/items/tools -type f -name "*.png" | wc -l`：6
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test --tests com.bong.client.network.ServerDataRouterTest --tests com.bong.client.inventory.ItemIconRegistryTest --tests com.bong.client.hud.GatheringProgressHudTest`：BUILD SUCCESSFUL
+- `cd agent && npm run build`
+- `cd agent && npm test -w @bong/tiandao`：348 passed
+- `cd agent && npm test -w @bong/schema`：370 passed
+- `cd agent && npm run generate -w @bong/schema`：generated schemas refreshed
 - `git diff --check`：clean
 
 ### 跨仓库核验
