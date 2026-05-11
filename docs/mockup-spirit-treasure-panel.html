@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>灵宝面板 — 寂照镜 Mockup</title>
+<style>
+  /* ── MC / owo-lib 基底 ── */
+  @font-face {
+    font-family: 'MC';
+    src: local('Unifont'), local('Microsoft YaHei'), local('SimSun');
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #2C2C2C;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'MC', 'Microsoft YaHei', monospace;
+    image-rendering: pixelated;
+  }
+
+  /* ── VANILLA_TRANSLUCENT 背景层 ── */
+  .screen-root {
+    position: relative;
+    width: 700px;
+    height: 540px;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* ── 外框 Surface.flat(BG_OUTER).and(Surface.outline(BORDER)) ── */
+  .outer-panel {
+    width: 560px;
+    height: 440px;
+    background: #0E0E12;
+    border: 2px solid #3A3540;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Tab 栏 ── */
+  .tab-bar {
+    display: flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 8px;
+    background: #0E0E12;
+    border-bottom: 1px solid #3A3540;
+    gap: 4px;
+  }
+  .tab-item {
+    font-size: 13px;
+    padding: 4px 12px;
+    cursor: pointer;
+    user-select: none;
+    letter-spacing: 1px;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s;
+  }
+  .tab-item.active {
+    color: #D4C8A0;
+    border-bottom-color: #D4C8A0;
+  }
+  .tab-item.inactive {
+    color: #555555;
+  }
+  .tab-item.inactive:hover {
+    color: #888888;
+  }
+  .tab-spacer { flex: 1; }
+  .tab-hint {
+    font-size: 11px;
+    color: #3A3540;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── 内容区（寂照镜主题 MIRROR_SURFACE）── */
+  .tab-content {
+    flex: 1;
+    background: #1C2830;
+    margin: 4px;
+    border: 1px solid #3A6878;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+  }
+  .tab-content.hidden { display: none; }
+
+  /* ── 顶部区：镜面 + 信息 ── */
+  .top-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  /* ── 镜面动态渲染 64×64 (放大2x = 128×128) ── */
+  .mirror-frame {
+    width: 128px;
+    height: 128px;
+    background: #3A6878;
+    padding: 4px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .mirror-inner {
+    width: 120px;
+    height: 120px;
+    background: #1C2830;
+    position: relative;
+    overflow: hidden;
+  }
+  .mirror-surface {
+    position: absolute;
+    inset: 2px;
+    background: radial-gradient(ellipse at center, #2A4550 0%, #1A2A30 60%, #151A1E 100%);
+    overflow: hidden;
+  }
+  /* 涟漪动画 */
+  .ripple {
+    position: absolute;
+    border: 1px solid rgba(112, 184, 200, 0.25);
+    border-radius: 50%;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation: ripple-expand 3s ease-out infinite;
+  }
+  .ripple:nth-child(2) { animation-delay: 1s; }
+  .ripple:nth-child(3) { animation-delay: 2s; }
+  @keyframes ripple-expand {
+    0%   { width: 16px; height: 16px; opacity: 0.4; border-color: rgba(112,184,200,0.35); }
+    100% { width: 100px; height: 100px; opacity: 0; border-color: rgba(112,184,200,0); }
+  }
+  /* 中心微光 */
+  .mirror-glow {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 20px; height: 20px;
+    background: radial-gradient(circle, rgba(112,184,200,0.3) 0%, transparent 70%);
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+  @keyframes glow-pulse {
+    0%, 100% { opacity: 0.6; transform: translate(-50%,-50%) scale(1); }
+    50%      { opacity: 1;   transform: translate(-50%,-50%) scale(1.3); }
+  }
+  /* 铆钉 */
+  .rivet {
+    position: absolute;
+    width: 6px; height: 6px;
+    background: #5A8898;
+  }
+  .rivet.tl { top: 0; left: 0; }
+  .rivet.tr { top: 0; right: 0; }
+  .rivet.bl { bottom: 0; left: 0; }
+  .rivet.br { bottom: 0; right: 0; }
+
+  /* ── 右侧信息 ── */
+  .info-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 2px;
+  }
+  .treasure-name {
+    font-size: 16px;
+    color: #70B8C8;
+    letter-spacing: 2px;
+    text-shadow: 0 0 8px rgba(112,184,200,0.3);
+  }
+  .treasure-subtitle {
+    font-size: 11px;
+    color: #506068;
+  }
+  .spirit-name {
+    font-size: 12px;
+    color: #A0C8D0;
+    margin-top: 4px;
+  }
+
+  /* ── 好感度条 ── */
+  .affinity-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .affinity-label {
+    font-size: 11px;
+    color: #506068;
+    width: 28px;
+  }
+  .affinity-track {
+    width: 140px;
+    height: 6px;
+    background: #202828;
+    position: relative;
+    border-radius: 1px;
+  }
+  .affinity-fill {
+    height: 100%;
+    background: #4090A0;
+    border-radius: 1px;
+    transition: width 0.5s ease;
+    box-shadow: 0 0 4px rgba(64,144,160,0.4);
+  }
+  .affinity-value {
+    font-size: 11px;
+    color: #70B8C8;
+    min-width: 30px;
+  }
+  .affinity-tier {
+    font-size: 10px;
+    color: #70B8C8;
+    margin-left: 2px;
+  }
+
+  /* ── 分隔线 ── */
+  .section-divider {
+    font-size: 11px;
+    color: #3A6878;
+    letter-spacing: 1px;
+    padding: 2px 0;
+    border-bottom: 1px solid #2A3A40;
+    margin-top: 2px;
+  }
+
+  /* ── 被动效果区 ── */
+  .effect-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .effect-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .effect-icon {
+    color: #70B8C8;
+    font-size: 10px;
+  }
+  .effect-name {
+    color: #A0C8D0;
+  }
+  .effect-value {
+    color: #A0C8D0;
+  }
+  .effect-scale {
+    color: #506068;
+    font-size: 10px;
+  }
+  .effect-scale.low {
+    color: #D09030;
+  }
+
+  /* ── 能力行样式 ── */
+  .ability-row {
+    padding: 3px 4px;
+    border-radius: 2px;
+    gap: 8px;
+  }
+  .ability-row:hover {
+    background: rgba(58, 104, 120, 0.15);
+  }
+  .ability-icon {
+    color: #70B8C8 !important;
+    font-size: 12px !important;
+  }
+  .ability-name {
+    color: #B0D8E0 !important;
+    font-weight: bold;
+    min-width: 48px;
+  }
+  .ability-desc {
+    color: #6A8A94;
+    font-size: 10px;
+    flex: 1;
+  }
+  .ability-desc.dim {
+    color: #4A6068;
+    font-style: italic;
+  }
+  .ability-cd {
+    font-size: 10px;
+    color: #4090A0;
+    min-width: 36px;
+    text-align: right;
+  }
+  .ability-cd.cooling {
+    color: #806040;
+  }
+  .passive-row {
+    opacity: 0.8;
+  }
+  .passive-icon {
+    color: #506878 !important;
+    font-size: 11px !important;
+  }
+  .passive-name {
+    color: #7A9AA4 !important;
+    font-weight: normal !important;
+  }
+
+  /* ── 镜语区 ── */
+  .dialogue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .dialogue-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    font-size: 11px;
+  }
+  .dialogue-text {
+    color: #A0C8D0;
+    flex: 1;
+    line-height: 1.4;
+  }
+  .dialogue-time {
+    color: #506068;
+    font-size: 10px;
+    white-space: nowrap;
+    margin-left: 12px;
+    padding-top: 1px;
+  }
+
+  /* ── 底部提示 ── */
+  .bottom-hint {
+    font-size: 10px;
+    color: #3A4A50;
+    text-align: center;
+    margin-top: auto;
+    padding-top: 4px;
+    border-top: 1px solid #1A2228;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── 空态 Tab ── */
+  .empty-tab {
+    flex: 1;
+    background: #121418;
+    margin: 4px;
+    border: 1px solid #2A2A30;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 13px;
+    color: #333340;
+    font-style: italic;
+  }
+
+  /* ── 第二灵宝 tab 占位（演示多 tab）── */
+  .tab-content.huoyan {
+    background: #2A1818;
+    border-color: #6A3030;
+  }
+  .huoyan-placeholder {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #5A3030;
+    font-size: 13px;
+    font-style: italic;
+  }
+
+  /* ── 交互控件 ── */
+  .controls {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    background: rgba(0,0,0,0.7);
+    padding: 8px 16px;
+    border-radius: 4px;
+  }
+  .controls label {
+    color: #999;
+    font-size: 12px;
+    font-family: sans-serif;
+  }
+  .controls input[type="range"] {
+    width: 120px;
+    accent-color: #4090A0;
+  }
+  .controls .val {
+    color: #70B8C8;
+    font-size: 12px;
+    font-family: monospace;
+    min-width: 35px;
+  }
+  .controls button {
+    background: #2A3540;
+    border: 1px solid #4A5A60;
+    color: #A0C8D0;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: sans-serif;
+  }
+  .controls button:hover { background: #3A4550; }
+</style>
+</head>
+<body>
+
+<div class="screen-root">
+  <div class="outer-panel">
+
+    <!-- ══ Tab 栏 ══ -->
+    <div class="tab-bar">
+      <div class="tab-item active" id="tab0" onclick="switchTab(0)">寂照镜</div>
+      <div class="tab-item inactive" id="tab1" onclick="switchTab(1)">焚天壶</div>
+      <div class="tab-spacer"></div>
+      <div class="tab-hint">灵宝 · T</div>
+    </div>
+
+    <!-- ══ Tab 0：寂照镜 ══ -->
+    <div class="tab-content" id="content0">
+      <!-- 顶部：镜面 + 信息 -->
+      <div class="top-row">
+        <!-- 镜面动态渲染 -->
+        <div class="mirror-frame">
+          <div class="mirror-inner">
+            <div class="mirror-surface" id="mirrorSurface">
+              <div class="ripple"></div>
+              <div class="ripple"></div>
+              <div class="ripple"></div>
+              <div class="mirror-glow"></div>
+            </div>
+            <div class="rivet tl"></div>
+            <div class="rivet tr"></div>
+            <div class="rivet bl"></div>
+            <div class="rivet br"></div>
+          </div>
+        </div>
+
+        <!-- 右侧信息 -->
+        <div class="info-col">
+          <div class="treasure-name">寂照镜</div>
+          <div class="treasure-subtitle">清风宗末代掌教遗器</div>
+          <div class="spirit-name">器灵：明虚</div>
+
+          <div class="affinity-row">
+            <span class="affinity-label">好感</span>
+            <div class="affinity-track">
+              <div class="affinity-fill" id="affinityFill" style="width: 72%"></div>
+            </div>
+            <span class="affinity-value" id="affinityValue">0.72</span>
+          </div>
+          <div style="padding-left: 36px;">
+            <span class="affinity-tier" id="affinityTier">亲近</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 灵宝能力 -->
+      <div class="section-divider">─── 镜中所映 ───</div>
+      <div class="effect-list">
+        <div class="effect-row ability-row">
+          <span class="effect-icon ability-icon">◈</span>
+          <span class="effect-name ability-name">照破</span>
+          <span class="ability-desc">无视匿名，窥破三层</span>
+          <span class="ability-cd" id="cd0">就绪</span>
+        </div>
+        <div class="effect-row ability-row">
+          <span class="effect-icon ability-icon">◈</span>
+          <span class="effect-name ability-name">镜隐</span>
+          <span class="ability-desc">气息消隐，天地间无你此人</span>
+          <span class="ability-cd" id="cd1">就绪</span>
+        </div>
+        <div class="effect-row ability-row passive-row">
+          <span class="effect-icon passive-icon">◇</span>
+          <span class="effect-name passive-name">明虚残识</span>
+          <span class="ability-desc dim">器灵自主触发 · 阵法/道伥/伪脉</span>
+        </div>
+      </div>
+
+      <!-- 镜语 -->
+      <div class="section-divider">─── 镜语 ───</div>
+      <div class="dialogue-list">
+        <div class="dialogue-row">
+          <span class="dialogue-text">"此地灵压有异，东北方似有暗流。"</span>
+          <span class="dialogue-time">2 分钟前</span>
+        </div>
+        <div class="dialogue-row">
+          <span class="dialogue-text">"死域之下，未必无生。"</span>
+          <span class="dialogue-time">4 分钟前</span>
+        </div>
+        <div class="dialogue-row">
+          <span class="dialogue-text">"……"</span>
+          <span class="dialogue-time">18 分钟前</span>
+        </div>
+      </div>
+
+      <!-- 底部提示 -->
+      <div class="bottom-hint">聊天栏 @寂照镜 交谈 · 附近可闻</div>
+    </div>
+
+    <!-- ══ Tab 1：焚天壶（演示多 tab 差异化）══ -->
+    <div class="tab-content huoyan hidden" id="content1">
+      <div class="huoyan-placeholder">焚天壶 — 另一件灵宝，完全不同的视觉主题</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── 交互控件 ── -->
+<div class="controls">
+  <label>好感度</label>
+  <input type="range" id="affinitySlider" min="0" max="100" value="72" oninput="updateAffinity(this.value)">
+  <span class="val" id="sliderVal">0.72</span>
+  <button onclick="toggleSleep()">切换沉睡</button>
+</div>
+
+<script>
+const TIERS = [
+  { max: 0.2, text: '沉睡', color: '#404040' },
+  { max: 0.4, text: '冷淡', color: '#607080' },
+  { max: 0.6, text: '中性', color: '#506068' },
+  { max: 0.8, text: '亲近', color: '#70B8C8' },
+  { max: 1.0, text: '共鸣', color: '#B0E8F0' },
+];
+
+let sleeping = false;
+
+function updateAffinity(v) {
+  const a = v / 100;
+  document.getElementById('affinityFill').style.width = v + '%';
+  document.getElementById('affinityValue').textContent = a.toFixed(2);
+  document.getElementById('sliderVal').textContent = a.toFixed(2);
+
+  // tier text
+  const tier = TIERS.find(t => a <= t.max) || TIERS[4];
+  const tierEl = document.getElementById('affinityTier');
+  tierEl.textContent = tier.text;
+  tierEl.style.color = tier.color;
+
+  // 好感度影响能力可用性
+  const cd0 = document.getElementById('cd0');
+  const cd1 = document.getElementById('cd1');
+  if (a < 0.4) {
+    cd0.textContent = '拒绝';
+    cd0.className = 'ability-cd cooling';
+    cd1.textContent = '模糊';
+    cd1.className = 'ability-cd cooling';
+  } else {
+    cd0.textContent = '就绪';
+    cd0.className = 'ability-cd';
+    cd1.textContent = '就绪';
+    cd1.className = 'ability-cd';
+  }
+
+  // mirror surface gradient
+  const r1 = Math.round(0x15 + (0x2A - 0x15) * a);
+  const g1 = Math.round(0x1A + (0x45 - 0x1A) * a);
+  const b1 = Math.round(0x1E + (0x50 - 0x1E) * a);
+  const surface = document.getElementById('mirrorSurface');
+  surface.style.background = `radial-gradient(ellipse at center,
+    rgb(${r1},${g1},${b1}) 0%,
+    rgb(${Math.round(r1*0.7)},${Math.round(g1*0.7)},${Math.round(b1*0.7)}) 60%,
+    #151A1E 100%)`;
+
+  // ripple speed: high affinity = slow (3s), low = fast (1.2s)
+  const dur = (1.2 + 1.8 * a).toFixed(1) + 's';
+  document.querySelectorAll('.ripple').forEach(r => {
+    r.style.animationDuration = dur;
+  });
+}
+
+function toggleSleep() {
+  sleeping = !sleeping;
+  const overlay = document.getElementById('sleepOverlay');
+  if (sleeping) {
+    if (!overlay) {
+      const surface = document.getElementById('mirrorSurface');
+      const div = document.createElement('div');
+      div.id = 'sleepOverlay';
+      div.style.cssText = `
+        position: absolute; inset: 0;
+        background: rgba(0,0,0,0.55);
+        display: flex; justify-content: center; align-items: center;
+        font-size: 28px; color: #404040;
+        text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        z-index: 10;
+      `;
+      div.textContent = '沉';
+      surface.appendChild(div);
+    }
+  } else {
+    if (overlay) overlay.remove();
+  }
+}
+
+function switchTab(idx) {
+  document.querySelectorAll('.tab-item').forEach((el, i) => {
+    el.className = 'tab-item ' + (i === idx ? 'active' : 'inactive');
+  });
+  document.querySelectorAll('.tab-content').forEach((el, i) => {
+    el.classList.toggle('hidden', i !== idx);
+  });
+}
+
+// init
+updateAffinity(72);
+</script>
+</body>
+</html>
