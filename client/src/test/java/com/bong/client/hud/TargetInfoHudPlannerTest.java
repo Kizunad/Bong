@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.npc.NpcMoodStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,6 +17,7 @@ class TargetInfoHudPlannerTest {
     @AfterEach
     void reset() {
         PlayerStateStore.resetForTests();
+        NpcMoodStore.clearAll();
     }
 
     @Test

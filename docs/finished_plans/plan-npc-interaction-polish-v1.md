@@ -1,13 +1,13 @@
-# Bong · plan-npc-interaction-polish-v1 · 骨架
+# Bong · plan-npc-interaction-polish-v1 · 完成
 
-NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓展。npc-engagement-v1 已覆盖 **P0 名牌+inspect / P1 交易UI+信誉定价 / P2 对话框架+NPC音效**，建立了 `NpcMetadataS2c`/`NpcTradeScreen`/`NpcDialogueScreen` 完整管道。本 plan **不重复**这些基础，而是在其之上做 4 件事：① 世界内对话气泡（代替 Screen 弹窗，更沉浸）② NPC 威胁评估条（境界限制可见性）③ NPC 情绪与记忆可视化 ④ 坍缩渊 NPC 特殊交互规则。
+NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ finished 基础上拓展。npc-engagement-v1 已覆盖 **P0 名牌+inspect / P1 交易UI+信誉定价 / P2 对话框架+NPC音效**，建立了 `NpcMetadataS2c`/`NpcTradeScreen`/`NpcDialogueScreen` 完整管道。本 plan **不重复**这些基础，而是在其之上做 4 件事：① 世界内对话气泡（代替 Screen 弹窗，更沉浸）② NPC 威胁评估条（境界限制可见性）③ NPC 情绪与记忆可视化 ④ 坍缩渊 NPC 特殊交互规则。
 
 **世界观锚点**：`worldview.md §七` 散修评估威胁度（"你气息绵长 → 恭敬交易 / 真元见底 → 拔刀爆装备"）视觉化 · `§九` 面对面以物易物 → 交易 UI 保持"不安全"的紧张感 · `§十一` NPC 信誉度反应分级（高=主动给情报 / 极低=通缉）→ 信誉条可视化 · `§十六` 坍缩渊内道伥/执念行为（假示好/伏击）→ 需要用 NPC 行为暗示而不是 UI 文字
 
 **library 锚点**：`peoples-0007 散修百态`（拾荒/游荡/占山/假死四路 NPC 行为模式）
 
 **前置依赖**：
-- `plan-npc-engagement-v1` 🆕 active → **硬依赖**（本 plan 全部 P 在其 P0-P2 完成后才有意义）
+- `plan-npc-engagement-v1` ✅ finished → **硬依赖**（本 plan 全部 P 在其 P0-P2 完成后才有意义）
 - `plan-npc-ai-v1` ✅ → NPC 状态机 + big-brain AI
 - `plan-social-v1` ✅ → NPC 信誉度 / 交易
 - `plan-identity-v1` ✅ → NPC 对身份的差异化反应
@@ -44,11 +44,11 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ## §0 设计轴心
 
-- [ ] **气泡 ≠ 对话系统**：气泡用于 NPC 主动喊话（路过时 "…"、受伤时 "你找死！"、交易成功后 "…还算公道"）——不替代 `NpcDialogueScreen` 的选项对话
-- [ ] **威胁可见但隐晦**：NPC 头顶不显示数字 HP bar，但可通过 ThreatAssessmentBar + MoodIcon + stance/距离推断态度
-- [ ] **道伥假示好**：坍缩渊内道伥可能模仿 NPC 示好（蹲伏 + 挥手气泡 "…"）——UI 不区分真假，玩家靠经验辨别
-- [ ] **境界门槛**：ThreatAssessmentBar 仅凝脉+ 可见（低境看不到威胁评估——worldview §三 感知力进阶）
-- [ ] **记忆真实感**：NPC 记忆不是 tooltip——是 NPC"主动提起"的气泡（"上次你给的灵草是假的"），有 AI 驱动的时机选择（不是一见面就说）
+- [x] **气泡 ≠ 对话系统**：气泡用于 NPC 主动喊话（路过时 "…"、受伤时 "你找死！"、交易成功后 "…还算公道"）——不替代 `NpcDialogueScreen` 的选项对话
+- [x] **威胁可见但隐晦**：NPC 头顶不显示数字 HP bar，但可通过 ThreatAssessmentBar + MoodIcon + stance/距离推断态度
+- [x] **道伥假示好**：坍缩渊内道伥可能模仿 NPC 示好（蹲伏 + 挥手气泡 "…"）——UI 不区分真假，玩家靠经验辨别
+- [x] **境界门槛**：ThreatAssessmentBar 仅凝脉+ 可见（低境看不到威胁评估——worldview §三 感知力进阶）
+- [x] **记忆真实感**：NPC 记忆不是 tooltip——是 NPC"主动提起"的气泡（"上次你给的灵草是假的"），有 AI 驱动的时机选择（不是一见面就说）
 
 ---
 
@@ -56,16 +56,16 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 世界内对话气泡系统 | ⬜ |
-| P1 | NPC 情绪图标 + 情绪转换动画 | ⬜ |
-| P2 | 威胁评估条 + 信誉指示器 | ⬜ |
-| P3 | NPC 记忆气泡 + 行为暗示 | ⬜ |
-| P4 | 坍缩渊 NPC 特殊交互 | ⬜ |
-| P5 | 多 NPC 交互压测 + 全 archetype 矩阵验证 | ⬜ |
+| P0 | 世界内对话气泡系统 | ✅ 2026-05-11 |
+| P1 | NPC 情绪图标 + 情绪转换动画 | ✅ 2026-05-11 |
+| P2 | 威胁评估条 + 信誉指示器 | ✅ 2026-05-11 |
+| P3 | NPC 记忆气泡 + 行为暗示 | ✅ 2026-05-11 |
+| P4 | 坍缩渊 NPC 特殊交互 | ✅ 2026-05-11 |
+| P5 | 多 NPC 交互压测 + 全 archetype 矩阵验证 | ✅ 2026-05-11 |
 
 ---
 
-## P0 — 世界内对话气泡 ⬜
+## P0 — 世界内对话气泡 ✅ 2026-05-11
 
 ### 交付物
 
@@ -94,7 +94,7 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ---
 
-## P1 — NPC 情绪图标 + 转换动画 ⬜
+## P1 — NPC 情绪图标 + 转换动画 ✅ 2026-05-11
 
 ### 交付物
 
@@ -125,7 +125,7 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ---
 
-## P2 — 威胁评估条 + 信誉指示器 ⬜
+## P2 — 威胁评估条 + 信誉指示器 ✅ 2026-05-11
 
 ### 交付物
 
@@ -154,7 +154,7 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ---
 
-## P3 — NPC 记忆气泡 + 行为暗示 ⬜
+## P3 — NPC 记忆气泡 + 行为暗示 ✅ 2026-05-11
 
 ### 交付物
 
@@ -186,7 +186,7 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ---
 
-## P4 — 坍缩渊 NPC 特殊交互 ⬜
+## P4 — 坍缩渊 NPC 特殊交互 ✅ 2026-05-11
 
 ### 交付物
 
@@ -223,7 +223,7 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ---
 
-## P5 — 多 NPC 压测 + 全 archetype 矩阵 ⬜
+## P5 — 多 NPC 压测 + 全 archetype 矩阵 ✅ 2026-05-11
 
 ### 交付物
 
@@ -246,8 +246,41 @@ NPC 交互深度打磨——在 `plan-npc-engagement-v1` ✅ active 基础上拓
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`NpcDialogueBubbleRenderer` / `NpcMoodIcon` / `ThreatAssessmentBar` / `NpcReputationIndicator` / `NpcMemoryBubble` / `NpcInteractionLogHudPlanner` / 坍缩渊道伥+执念+Boss+干尸化
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：NPC voice 音效（不同 archetype 有不同喉音——需等 `plan-audio-world-v1` 铺完 NPC 音效 recipe 后联动）/ NPC 表情动画（需等 `plan-player-animation-implementation-v1`）
+- **落地清单**
+  - P0 世界内气泡：`server/src/network/npc_bubble.rs` 新增 `NpcBubbleS2c` / `NpcBubbleType` / `emit_npc_bubble_payloads` / `emit_npc_reaction_bubbles`；`client/src/main/java/com/bong/client/npc/NpcDialogueBubbleRenderer.java` + `NpcBubbleHandler.java` 接 `bong:npc_bubble`，支持距离 alpha、3 行换行、DialogueScreen 抑制和同 NPC 单气泡替换。
+  - P1 情绪图标：`server/src/network/npc_mood.rs` 新增 `NpcMoodS2c` / `NpcMood` / 20 tick sync；`client/src/main/java/com/bong/client/npc/NpcMoodIcon.java` / `NpcMoodStore.java` / `NpcMoodHandler.java` 接 mood icon、fade/抖动命令和 threat 缓存。
+  - P2 威胁与信誉：`ThreatAssessmentBar.java` 接 `TargetInfoHudPlanner`，凝脉+ 可见、固元+ 真元水位、通灵+ inner monologue；`NpcReputationIndicator.java` 接入 `NpcInspectScreen`。
+  - P3 记忆和交互历史：`server/src/npc/interaction_memory.rs` 新增 `NpcMemoryComponent` / `NpcMemoryEntry` FIFO 8 和 50% 稳定概率；`client/src/main/java/com/bong/client/npc/NpcInteractionLogStore.java` / `NpcInteractionLogHudPlanner.java` / `NpcInteractionLogControls.java` 提供 F7 最近 10 NPC 交互列表。
+  - P4 坍缩渊 polish：`server/src/npc/tsy_hostile.rs` 增加道伥假示好翻脸 delay、执念高价值引诱窗口 helper；`server/src/network/tsy_polish.rs` 发 `bong:tsy_boss_health` / `bong:tsy_death_vfx`；`client/src/main/java/com/bong/client/tsy/` 新增 Boss 血条、阶段闪白、干尸化死亡 VFX HUD 层。
+  - P5 压测入口：`scripts/npc_interaction_stress.sh` 固定 JDK 17，串行运行 NPC bubble/mood/memory/TSY server contract 测试和 client NPC/TSY HUD 矩阵测试。
+
+- **关键 commit**
+  - `baf264ea0`（2026-05-11）`plan-npc-interaction-polish-v1: 接入 NPC 交互事件协议`
+  - `ac9032675`（2026-05-11）`plan-npc-interaction-polish-v1: 客户端渲染 NPC 交互 HUD`
+  - `74f32e6d5`（2026-05-11）`plan-npc-interaction-polish-v1: 补 NPC 交互压测脚本`
+  - `56933ba83`（2026-05-11）`plan-npc-interaction-polish-v1: 修复 NPC 同步失败重试`
+  - `88a8dd19a`（2026-05-11）`plan-npc-interaction-polish-v1: 收紧客户端状态清理`
+  - `9f930393d`（2026-05-11）`plan-npc-interaction-polish-v1: 收敛 review 性能与威胁判定`
+
+- **测试结果**
+  - `cargo fmt --check` ✅
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -j1 -- --test-threads=1` ✅ `4349 passed; 0 failed`
+  - `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo clippy --all-targets -j1 -- -D warnings` ✅
+  - `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` ✅ `BUILD SUCCESSFUL`
+  - `bash scripts/npc_interaction_stress.sh` ✅ server 定向 `17 passed` + client NPC/TSY HUD targeted Gradle `BUILD SUCCESSFUL`
+  - `git diff --check` ✅
+  - review follow-up: `cargo fmt --check` ✅，`cargo test network::npc_mood -j1 -- --test-threads=1` ✅ `4 passed`，`./gradlew test --tests "com.bong.client.npc.NpcMoodStoreTest"` ✅
+
+- **跨仓库核验**
+  - server：`NpcBubbleS2c` / `NpcMoodS2c` / `TsyBossHealthS2c` / `TsyDeathVfxS2c` payload JSON 均有 contract 测试；`network::mod` 已注册 bubble、mood、TSY polish systems/resources；NPC 成功交易路径已调用 `record_player_npc_interaction` 写入 memory。
+  - review follow-up：`npc_mood` / `tsy_boss_health` 仅在 payload 成功发送后刷新 `last_sent`，序列化失败不会封口后续重试；`NpcMoodStore.upsert` 已按 `updatedAtMillis` 拒绝旧包覆盖，并补 `NpcMoodStoreTest`。
+  - review follow-up 2：`NpcMoodStore.snapshot()` 改为无排序浅拷贝，渲染方自行决定是否排序；`threat_level_for` 里 Daoxiang 的 floor 统一在 match 内计算，避免重复覆盖。
+  - client：`BongNetworkHandler` 注册 `bong:npc_bubble`、`bong:npc_mood`、`bong:tsy_boss_health`、`bong:tsy_death_vfx`；`BongHudOrchestrator` 统一渲染 bubble、mood、ThreatBar、交互日志、TSY Boss/死亡 VFX。
+  - agent/worldgen：本 plan 不改 agent schema 或 worldgen 产物。
+
+- **遗留 / 后续**
+  - NPC voice 音效仍等待 `plan-audio-world-v1` 的 NPC 音效 recipe，再接不同 archetype 喉音 / 威胁声。
+  - NPC 表情/骨骼动画仍等待 `plan-player-animation-implementation-v1`；本 plan 只落客户端 HUD/renderer 命令层，不改模型骨骼。
+  - 云端未执行真实 `./gradlew runClient` 视觉验收，也未跑真实 MC bot session；`scripts/npc_interaction_stress.sh` 是确定性 contract/harness 压测入口，不伪装为 10 NPC + 1 bot 的 live 场景录像。
