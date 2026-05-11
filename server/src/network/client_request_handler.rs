@@ -104,6 +104,9 @@ use crate::network::{
     gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
 };
 use crate::npc::faction::FactionMembership;
+use crate::npc::interaction_memory::{
+    record_player_npc_interaction, NpcInteractionOutcome, NpcInteractionType,
+};
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
@@ -290,6 +293,13 @@ type NpcEngagementItem = (
 #[derive(SystemParam)]
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
+    pub lifecycles: Query<'w, 's, &'static Lifecycle>,
+    pub memories: Query<
+        'w,
+        's,
+        &'static mut crate::npc::interaction_memory::NpcMemoryComponent,
+        With<NpcMarker>,
+    >,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
     pub identities: Query<'w, 's, &'static PlayerIdentities, With<Client>>,
@@ -1064,6 +1074,15 @@ pub fn handle_client_request_payloads(
                     "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {}。",
                     target.display_name, template_id
                 ));
+                record_player_npc_interaction(
+                    &mut npc_engagement_params.memories,
+                    &npc_engagement_params.lifecycles,
+                    target.entity,
+                    ev.client,
+                    NpcInteractionType::Trade,
+                    NpcInteractionOutcome::Friendly,
+                    combat_clock.tick,
+                );
                 if let (Ok(player_state), Ok(cultivation)) = (
                     player_states.get(ev.client),
                     skill_scroll_params.cultivations.get(ev.client),
@@ -5797,6 +5816,7 @@ fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) ->
 
 #[derive(Debug, Clone)]
 struct NpcEngagementTarget {
+    entity: Entity,
     archetype: NpcArchetype,
     reputation_to_player: i32,
     display_name: String,
@@ -5843,6 +5863,7 @@ fn resolve_npc_engagement_target(
         .map(|cultivation| cultivation.realm)
         .unwrap_or(crate::cultivation::components::Realm::Awaken);
     Some(NpcEngagementTarget {
+        entity: npc,
         archetype: *archetype,
         reputation_to_player: reputation_to_player_score_for_client(membership, player_identities),
         display_name: npc_display_name(*archetype, realm, membership),

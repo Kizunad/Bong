@@ -20,7 +20,7 @@ use valence::prelude::{
 use crate::combat::components::Wounds;
 use crate::combat::events::{AttackIntent, AttackSource};
 use crate::combat::CombatClock;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::fauna::experience::play_audio;
 use crate::fauna::visual::{
     FaunaVisualKind, DAOXIANG_ENTITY_KIND, FUYA_ENTITY_KIND, TSY_SENTINEL_ENTITY_KIND,
@@ -61,6 +61,9 @@ const FUYA_DEFAULT_DRAIN_MULTIPLIER: f64 = 1.5;
 const TSY_FUYA_AURA_VFX: &str = "bong:tsy_fuya_aura";
 const FUYA_AURA_VFX_INTERVAL_TICKS: u64 = 20;
 const FUYA_PRESSURE_AUDIO_FLAG_PREFIX: &str = "fauna_fuya_pressure";
+pub const DAOXIANG_FAKE_FRIENDLY_FLIP_DELAY_TICKS: u32 = 6;
+pub const DAOXIANG_FAKE_FRIENDLY_RANGE_BLOCKS: f32 = 8.0;
+pub const OBSESSION_LURE_RELEASE_SECONDS: u32 = 5;
 
 type AddedFuyaAuraQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Position), (With<FuyaAura>, Added<FuyaAura>)>;
@@ -204,6 +207,47 @@ pub struct FuyaEnrageAction;
 
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TsyNpcDropIssued;
+
+pub fn dao_chang_lure_flip_delay(distance_blocks: f32) -> Option<u32> {
+    if distance_blocks.is_finite()
+        && (0.0..=DAOXIANG_FAKE_FRIENDLY_RANGE_BLOCKS).contains(&distance_blocks)
+    {
+        Some(DAOXIANG_FAKE_FRIENDLY_FLIP_DELAY_TICKS)
+    } else {
+        None
+    }
+}
+
+pub fn dao_chang_fake_friendly_bubble() -> &'static str {
+    "..."
+}
+
+pub fn dao_chang_threat_level_for_realm(viewer_realm: Realm) -> f32 {
+    if realm_rank(viewer_realm) >= realm_rank(Realm::Spirit) {
+        0.86
+    } else {
+        0.0
+    }
+}
+
+pub fn obsession_lure_release_window_seconds(item_value_rank: u8) -> Option<u32> {
+    if item_value_rank >= 3 {
+        Some(OBSESSION_LURE_RELEASE_SECONDS)
+    } else {
+        None
+    }
+}
+
+fn realm_rank(realm: Realm) -> i32 {
+    match realm {
+        Realm::Awaken => 0,
+        Realm::Induce => 1,
+        Realm::Condense => 2,
+        Realm::Solidify => 3,
+        Realm::Spirit => 4,
+        Realm::Void => 5,
+    }
+}
 
 macro_rules! impl_builder {
     ($ty:ty, $trait_name:ident, $label:literal) => {
@@ -2144,6 +2188,21 @@ mod tests {
         let empty: [(&Position, &FuyaAura); 0] = [];
         let multiplier = compute_fuya_aura_drain_multiplier(DVec3::ZERO, empty);
         assert!((multiplier - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dao_chang_lure_flip_timing() {
+        assert_eq!(dao_chang_lure_flip_delay(8.0), Some(6));
+        assert_eq!(dao_chang_lure_flip_delay(8.01), None);
+        assert_eq!(dao_chang_fake_friendly_bubble(), "...");
+        assert!(dao_chang_threat_level_for_realm(Realm::Spirit) > 0.80);
+        assert_eq!(dao_chang_threat_level_for_realm(Realm::Condense), 0.0);
+    }
+
+    #[test]
+    fn obsession_high_value_lure_opens_short_release_window() {
+        assert_eq!(obsession_lure_release_window_seconds(1), None);
+        assert_eq!(obsession_lure_release_window_seconds(3), Some(5));
     }
 
     #[test]

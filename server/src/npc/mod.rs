@@ -6,6 +6,7 @@ pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
 pub mod hydrate;
+pub mod interaction_memory;
 pub mod intrusion_npc;
 pub mod lifecycle;
 pub mod lingtian_pressure;
@@ -64,6 +65,7 @@ pub fn register(app: &mut App) {
     scattered_cultivator::register(app);
     social::register(app);
     intrusion_npc::register(app);
+    interaction_memory::register(app);
     relic::register(app);
     lod::register(app);
     zong_keeper::register(app);

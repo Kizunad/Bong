@@ -37,8 +37,10 @@ pub mod gameplay_vfx;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod npc_bubble;
 pub mod npc_event_bridge;
 pub mod npc_metadata;
+pub mod npc_mood;
 pub mod poi_novice_bridge;
 pub mod poison_trait_emit;
 pub mod qi_color_observed_emit;
@@ -59,6 +61,7 @@ pub mod tribulation_heart_demon_offer_emit;
 pub mod tribulation_state_emit;
 pub mod tsy_container_search_emit;
 pub mod tsy_event_bridge;
+pub mod tsy_polish;
 pub mod tuike_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
@@ -568,6 +571,18 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        (
+            npc_bubble::emit_npc_reaction_bubbles
+                .after(crate::combat::resolve::resolve_attack_intents),
+            npc_bubble::emit_npc_bubble_payloads,
+            npc_mood::emit_npc_mood_payloads,
+            tsy_polish::emit_tsy_boss_health_payloads,
+            tsy_polish::emit_tsy_death_vfx_payloads
+                .after(crate::combat::lifecycle::death_arbiter_tick),
+        ),
+    );
+    app.add_systems(
+        Update,
         crate::cultivation::tribulation::publish_heart_demon_pregen_requests
             .after(crate::cultivation::tribulation::start_tribulation_system),
     );
@@ -736,6 +751,9 @@ pub fn register(app: &mut App) {
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
     app.init_resource::<audio_trigger::AudioTriggerState>();
     app.init_resource::<npc_metadata::NpcMetadataSyncState>();
+    app.init_resource::<npc_bubble::NpcBubbleSyncState>();
+    app.init_resource::<npc_mood::NpcMoodSyncState>();
+    app.init_resource::<tsy_polish::TsyBossHealthSyncState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<qi_color_observed_emit::QiColorInspectRequest>();
