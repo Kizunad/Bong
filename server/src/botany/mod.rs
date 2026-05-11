@@ -24,9 +24,12 @@ pub use plant_kind::{GrowthCost, PlantId, PlantKind, PlantRarity};
 pub use registry::{load_plant_kind_registry, PlantKindRegistry};
 
 use valence::prelude::{
-    Added, App, EventReader, IntoSystemConfigs, Query, Res, Startup, Update, With,
+    Added, App, EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, Startup, Update,
+    With,
 };
 
+use crate::gathering::session::{GatheringProgressFrame, PROGRESS_SYNC_INTERVAL_TICKS};
+use crate::gathering::tools::GatheringTargetKind;
 use crate::inventory::{InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::botany::{BotanyModelOverlayV1, BotanyPlantV2RenderProfileV1};
@@ -199,12 +202,15 @@ fn emit_botany_inventory_snapshots(
 
 /// 每 tick 把 active session 进度发给 owning client；enforce / tick 阶段入队的终结帧在同 tick 同通道送出。
 /// plan §1.3 channel = `bong:botany/harvest_progress`。
+#[allow(clippy::too_many_arguments)]
 fn emit_botany_harvest_progress(
     gameplay_tick: Option<Res<crate::player::gameplay::GameplayTick>>,
     store: Res<HarvestSessionStore>,
     kind_registry: Res<BotanyKindRegistry>,
     mut terminal_events: EventReader<HarvestTerminalEvent>,
+    mut gathering_frames: EventWriter<GatheringProgressFrame>,
     mut clients: Query<&mut valence::prelude::Client, With<valence::prelude::Client>>,
+    positions: Query<&Position, With<valence::prelude::Client>>,
     plants: Query<&Plant, With<Plant>>,
 ) {
     use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
@@ -220,6 +226,23 @@ fn emit_botany_harvest_progress(
         let target_pos = session
             .target_entity
             .and_then(|entity| plants.get(entity).ok().map(|plant| plant.position));
+        if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
+            let origin_position = target_pos.unwrap_or(session.origin_position);
+            gathering_frames.send(GatheringProgressFrame {
+                player: session.client_entity,
+                session_id: session.player_id.clone(),
+                origin_position,
+                progress_ticks: (f64::from(progress) * session.duration_ticks as f64).round()
+                    as u64,
+                total_ticks: session.duration_ticks,
+                target_name: session.target_plant.as_str().to_string(),
+                target_type: GatheringTargetKind::Herb,
+                quality_hint: "normal".to_string(),
+                tool_used: None,
+                interrupted: false,
+                completed: false,
+            });
+        }
         let payload = ServerDataV1::new(ServerDataPayloadV1::BotanyHarvestProgress {
             session_id: session.player_id.clone(),
             target_id: session
@@ -250,6 +273,29 @@ fn emit_botany_harvest_progress(
         let Ok(mut client) = clients.get_mut(frame.client_entity) else {
             continue;
         };
+        let origin_position = frame
+            .target_pos
+            .or_else(|| positions.get(frame.client_entity).ok().map(position_xyz))
+            .unwrap_or([0.0, 0.0, 0.0]);
+        gathering_frames.send(GatheringProgressFrame {
+            player: frame.client_entity,
+            session_id: frame.session_id.clone(),
+            origin_position,
+            progress_ticks: if frame.completed { 1 } else { 0 },
+            total_ticks: 1,
+            target_name: frame.target_name.clone(),
+            target_type: GatheringTargetKind::Herb,
+            quality_hint: if frame.spirit_quality >= 0.95 {
+                "perfect".to_string()
+            } else if frame.spirit_quality >= 0.60 {
+                "fine".to_string()
+            } else {
+                "normal".to_string()
+            },
+            tool_used: None,
+            interrupted: frame.interrupted,
+            completed: frame.completed,
+        });
         let payload = ServerDataV1::new(ServerDataPayloadV1::BotanyHarvestProgress {
             session_id: frame.session_id.clone(),
             target_id: frame.target_id.clone(),
@@ -273,6 +319,11 @@ fn emit_botany_harvest_progress(
             Err(error) => log_payload_build_error(payload_type, &error),
         }
     }
+}
+
+fn position_xyz(position: &Position) -> [f64; 3] {
+    let pos = position.get();
+    [pos.x, pos.y, pos.z]
 }
 
 /// 采药技能变化后推送 BotanySkill snapshot；仅在 add_skill_xp 路径 send 事件，避免每 tick 冗发。

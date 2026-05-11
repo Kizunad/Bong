@@ -24,6 +24,8 @@ use super::events::{
 use super::registry::MineralRegistry;
 use super::types::MineralRarity;
 use crate::combat::components::Lifecycle;
+use crate::gathering::session::GatheringProgressFrame;
+use crate::gathering::tools::GatheringTargetKind;
 use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -79,6 +81,7 @@ pub fn handle_block_break_for_mineral(
     mut exhausted_events: EventWriter<MineralExhaustedEvent>,
     mut karma_events: EventWriter<KarmaFlagIntent>,
     mut feedback_events: EventWriter<MineralFeedbackEvent>,
+    mut gathering_frames: EventWriter<GatheringProgressFrame>,
     registry: Res<MineralRegistry>,
     mut clients: Query<&mut Client>,
     inventories: Query<&PlayerInventory>,
@@ -189,6 +192,26 @@ pub fn handle_block_break_for_mineral(
                     true,
                 );
             }
+            gathering_frames.send(GatheringProgressFrame {
+                player: event.client,
+                session_id: format!(
+                    "mining:{}:{}:{}:{:?}",
+                    event.position.x, event.position.y, event.position.z, mineral_id
+                ),
+                origin_position: [
+                    event.position.x as f64 + 0.5,
+                    event.position.y as f64 + 0.5,
+                    event.position.z as f64 + 0.5,
+                ],
+                progress_ticks: 1,
+                total_ticks: 1,
+                target_name: entry.display_name_zh.to_string(),
+                target_type: GatheringTargetKind::Ore,
+                quality_hint: "normal".to_string(),
+                tool_used: None,
+                interrupted: false,
+                completed: true,
+            });
 
             let probability = karma_probability(mineral_id.rarity());
             if probability > 0.0 {
@@ -481,6 +504,7 @@ mod tests {
         app.add_event::<MineralExhaustedEvent>();
         app.add_event::<KarmaFlagIntent>();
         app.add_event::<MineralFeedbackEvent>();
+        app.add_event::<GatheringProgressFrame>();
         app.insert_resource(crate::mineral::registry::build_default_registry());
         app.insert_resource(MineralOreIndex::default());
         app.add_systems(Update, handle_block_break_for_mineral.into_configs());
@@ -551,6 +575,7 @@ mod tests {
         app.add_event::<MineralExhaustedEvent>();
         app.add_event::<KarmaFlagIntent>();
         app.add_event::<MineralFeedbackEvent>();
+        app.add_event::<GatheringProgressFrame>();
         app.insert_resource(crate::mineral::registry::build_default_registry());
         app.insert_resource(MineralOreIndex::default());
         app.add_systems(Update, handle_block_break_for_mineral.into_configs());
@@ -610,6 +635,7 @@ mod tests {
         app.add_event::<MineralExhaustedEvent>();
         app.add_event::<KarmaFlagIntent>();
         app.add_event::<MineralFeedbackEvent>();
+        app.add_event::<GatheringProgressFrame>();
         app.insert_resource(crate::mineral::registry::build_default_registry());
         app.insert_resource(MineralOreIndex::default());
         app.add_systems(Update, handle_block_break_for_mineral.into_configs());

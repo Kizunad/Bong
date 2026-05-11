@@ -10,6 +10,8 @@ use valence::prelude::{
 };
 
 use crate::combat::events::CombatEvent;
+use crate::gathering::session::{GatheringProgressFrame, PROGRESS_SYNC_INTERVAL_TICKS};
+use crate::gathering::tools::GatheringTargetKind;
 use crate::inventory::{
     bump_revision, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlacedItemState,
     PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND, MAIN_PACK_CONTAINER_ID,
@@ -305,6 +307,7 @@ fn complete_spiritwood_sessions(
 fn emit_active_lumber_progress(
     gameplay_tick: Option<Res<GameplayTick>>,
     store: Res<WoodSessionStore>,
+    mut gathering_frames: EventWriter<GatheringProgressFrame>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     let now_tick = gameplay_tick.map(|tick| tick.current_tick()).unwrap_or(0);
@@ -312,11 +315,27 @@ fn emit_active_lumber_progress(
         let Ok(mut client) = clients.get_mut(session.player) else {
             continue;
         };
+        let progress = session.progress_at(now_tick);
+        if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
+            gathering_frames.send(GatheringProgressFrame {
+                player: session.player,
+                session_id: session.player_id.clone(),
+                origin_position: block_origin(session.log_pos),
+                progress_ticks: (progress * session.ticks_total as f64).round() as u64,
+                total_ticks: session.ticks_total,
+                target_name: "灵木".to_string(),
+                target_type: GatheringTargetKind::Wood,
+                quality_hint: "normal".to_string(),
+                tool_used: None,
+                interrupted: false,
+                completed: false,
+            });
+        }
         send_lumber_progress_to_client(
             &mut client,
             session.player_id.clone(),
             session.log_pos,
-            session.progress_at(now_tick),
+            progress,
             false,
             false,
             String::new(),
@@ -326,12 +345,26 @@ fn emit_active_lumber_progress(
 
 fn emit_terminal_lumber_progress(
     mut events: EventReader<LumberTerminalEvent>,
+    mut gathering_frames: EventWriter<GatheringProgressFrame>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for event in events.read() {
         let Ok(mut client) = clients.get_mut(event.client_entity) else {
             continue;
         };
+        gathering_frames.send(GatheringProgressFrame {
+            player: event.client_entity,
+            session_id: event.session_id.clone(),
+            origin_position: block_origin(event.log_pos),
+            progress_ticks: if event.completed { 1 } else { 0 },
+            total_ticks: 1,
+            target_name: "灵木".to_string(),
+            target_type: GatheringTargetKind::Wood,
+            quality_hint: "normal".to_string(),
+            tool_used: None,
+            interrupted: event.interrupted,
+            completed: event.completed,
+        });
         send_lumber_progress_to_client(
             &mut client,
             event.session_id.clone(),
@@ -365,6 +398,10 @@ fn send_lumber_progress_to_client(
         return;
     };
     send_server_data_payload(client, bytes.as_slice());
+}
+
+fn block_origin(pos: BlockPos) -> [f64; 3] {
+    [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5]
 }
 
 fn is_spiritwood_log_target(

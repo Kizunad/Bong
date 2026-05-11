@@ -1,4 +1,4 @@
-use valence::prelude::{DVec3, EventReader, EventWriter};
+use valence::prelude::{Client, DVec3, Entity, EventReader, EventWriter, Query, UniqueId, With};
 
 use super::quality::GatheringQuality;
 use super::session::{GatheringCompleteEvent, GatheringProgressFrame};
@@ -13,6 +13,7 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 pub struct GatheringFeedbackCue {
     pub sound_recipe: &'static str,
     pub particle_event_id: &'static str,
+    pub animation_id: &'static str,
     pub color: &'static str,
     pub count: u16,
     pub duration_ticks: u16,
@@ -23,6 +24,7 @@ pub fn tick_feedback_cue(target: GatheringTargetKind) -> GatheringFeedbackCue {
         GatheringTargetKind::Herb => GatheringFeedbackCue {
             sound_recipe: "gather_herb_tick",
             particle_event_id: "bong:gather_herb_tick",
+            animation_id: "bong:harvest_crouch",
             color: "#6FAF55",
             count: 2,
             duration_ticks: 24,
@@ -30,6 +32,7 @@ pub fn tick_feedback_cue(target: GatheringTargetKind) -> GatheringFeedbackCue {
         GatheringTargetKind::Ore => GatheringFeedbackCue {
             sound_recipe: "gather_mine_tick",
             particle_event_id: "bong:gather_mine_tick",
+            animation_id: "bong:npc_mine",
             color: "#8A8A8A",
             count: 3,
             duration_ticks: 18,
@@ -37,6 +40,7 @@ pub fn tick_feedback_cue(target: GatheringTargetKind) -> GatheringFeedbackCue {
         GatheringTargetKind::Wood => GatheringFeedbackCue {
             sound_recipe: "gather_chop_tick",
             particle_event_id: "bong:gather_chop_tick",
+            animation_id: "bong:npc_chop_tree",
             color: "#A06A3C",
             count: 2,
             duration_ticks: 20,
@@ -49,6 +53,7 @@ pub fn completion_feedback_cue(quality: GatheringQuality) -> GatheringFeedbackCu
         GatheringQuality::Perfect => GatheringFeedbackCue {
             sound_recipe: "gather_perfect",
             particle_event_id: "bong:gather_perfect",
+            animation_id: "bong:release_burst",
             color: "#FFD35A",
             count: 12,
             duration_ticks: 28,
@@ -56,6 +61,7 @@ pub fn completion_feedback_cue(quality: GatheringQuality) -> GatheringFeedbackCu
         GatheringQuality::Fine | GatheringQuality::Normal => GatheringFeedbackCue {
             sound_recipe: "gather_complete",
             particle_event_id: "bong:gather_complete",
+            animation_id: "bong:loot_bend",
             color: if quality == GatheringQuality::Fine {
                 "#62E67A"
             } else {
@@ -70,6 +76,7 @@ pub fn completion_feedback_cue(quality: GatheringQuality) -> GatheringFeedbackCu
 pub fn emit_gathering_feedback(
     mut frames: EventReader<GatheringProgressFrame>,
     mut completions: EventReader<GatheringCompleteEvent>,
+    players: Query<&UniqueId, With<Client>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
@@ -77,22 +84,62 @@ pub fn emit_gathering_feedback(
         if frame.completed || frame.interrupted {
             continue;
         }
+        let cue = tick_feedback_cue(frame.target_type);
+        emit_animation(
+            frame.player,
+            frame.origin_position,
+            cue.animation_id,
+            1450,
+            &players,
+            &mut vfx_events,
+        );
         emit_cue(
             frame.origin_position,
-            tick_feedback_cue(frame.target_type),
+            cue,
             &mut vfx_events,
             &mut audio_events,
         );
     }
 
     for completion in completions.read() {
+        let cue = completion_feedback_cue(completion.quality);
+        emit_animation(
+            completion.player,
+            completion.origin_position,
+            cue.animation_id,
+            1550,
+            &players,
+            &mut vfx_events,
+        );
         emit_cue(
             completion.origin_position,
-            completion_feedback_cue(completion.quality),
+            cue,
             &mut vfx_events,
             &mut audio_events,
         );
     }
+}
+
+fn emit_animation(
+    player: Entity,
+    origin: [f64; 3],
+    animation_id: &str,
+    priority: u16,
+    players: &Query<&UniqueId, With<Client>>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok(unique_id) = players.get(player) else {
+        return;
+    };
+    vfx_events.send(VfxEventRequest::new(
+        DVec3::new(origin[0], origin[1], origin[2]),
+        VfxEventPayloadV1::PlayAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: animation_id.to_string(),
+            priority,
+            fade_in_ticks: Some(2),
+        },
+    ));
 }
 
 fn emit_cue(
@@ -141,6 +188,10 @@ mod tests {
         assert_eq!(
             tick_feedback_cue(GatheringTargetKind::Herb).sound_recipe,
             "gather_herb_tick"
+        );
+        assert_eq!(
+            tick_feedback_cue(GatheringTargetKind::Herb).animation_id,
+            "bong:harvest_crouch"
         );
         assert_eq!(
             tick_feedback_cue(GatheringTargetKind::Ore).particle_event_id,
