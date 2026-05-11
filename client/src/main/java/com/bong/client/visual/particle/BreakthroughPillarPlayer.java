@@ -24,6 +24,21 @@ public final class BreakthroughPillarPlayer implements VfxPlayer {
     private static final int FALLBACK_RGB = 0xFFE8A0; // 金白
     private static final double SPEED = 1.4;
     private static final double SCATTER = 0.25;
+    private float intensityMultiplier = 1.0f;
+    private Integer overrideColorRgb;
+    private float heightMultiplier = 1.0f;
+
+    public void setIntensity(float intensityMultiplier) {
+        this.intensityMultiplier = Math.max(0.1f, Math.min(2.0f, intensityMultiplier));
+    }
+
+    public void setColor(int rgb) {
+        this.overrideColorRgb = rgb & 0xFFFFFF;
+    }
+
+    public void setHeight(float heightMultiplier) {
+        this.heightMultiplier = Math.max(0.25f, Math.min(4.0f, heightMultiplier));
+    }
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
@@ -37,11 +52,13 @@ public final class BreakthroughPillarPlayer implements VfxPlayer {
         SeasonBreakthroughOverlay.BreakthroughProfile seasonProfile =
             SeasonBreakthroughOverlay.breakthroughProfile(SeasonStateStore.snapshot(), true, world.getTime());
         SeasonBreakthroughOverlayHud.trigger(seasonProfile, System.currentTimeMillis());
-        int rgb = payload.colorRgb().orElse(seasonProfile.pillarTintRgb() == 0 ? FALLBACK_RGB : seasonProfile.pillarTintRgb());
+        int rgb = payload.colorRgb().orElse(
+            overrideColorRgb != null ? overrideColorRgb : seasonProfile.pillarTintRgb() == 0 ? FALLBACK_RGB : seasonProfile.pillarTintRgb()
+        );
         float r = ((rgb >> 16) & 0xFF) / 255f;
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
-        float alpha = (float) Math.max(0.4, Math.min(1.0, payload.strength().orElse(1.0)));
+        float alpha = (float) Math.max(0.4, Math.min(1.0, payload.strength().orElse(1.0) * intensityMultiplier));
 
         int count = clamp(
             (int) Math.round(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()) * seasonProfile.lightningMultiplier()),
@@ -58,9 +75,9 @@ public final class BreakthroughPillarPlayer implements VfxPlayer {
             BongLineParticle p = new BongLineParticle(
                 world,
                 ox + jitterX, oy + yOffset, oz + jitterZ,
-                0.0, SPEED + world.random.nextDouble() * 0.4, 0.0
+                0.0, (SPEED + world.random.nextDouble() * 0.4) * heightMultiplier, 0.0
             );
-            p.setLineShape(0.8, 1.5, 0.18);
+            p.setLineShape(0.8, 1.5 * heightMultiplier, 0.18);
             p.setColor(r, g, b);
             p.setAlphaPublic(alpha);
             p.setMaxAgePublic(maxAge);

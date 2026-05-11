@@ -125,6 +125,7 @@ import {
 import { SpiritualSenseTargetsV1 } from "../src/spiritual-sense.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
+import { BreakthroughCinematicEventV1 } from "../src/breakthrough-cinematic.js";
 import {
   WorldStateV1,
   validateWorldStateV1Contract,
@@ -1254,6 +1255,12 @@ describe("sample files pass schema validation", () => {
   it("vfx-event.spawn-particle.sample.json", () => {
     const data = loadSample("vfx-event.spawn-particle.sample.json");
     const result = validate(VfxEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("breakthrough-cinematic-event.sample.json", () => {
+    const data = loadSample("breakthrough-cinematic-event.sample.json");
+    const result = validate(BreakthroughCinematicEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

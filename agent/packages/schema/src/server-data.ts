@@ -22,7 +22,7 @@ import {
   PoisonOverdoseEventV1,
   PoisonTraitStateV1,
 } from "./poison-trait.js";
-import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
+import { ColorKind, InsightCategory, Realm, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
   InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
@@ -185,6 +185,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
   Type.Literal("burst_meridian_event"),
+  Type.Literal("breakthrough_cinematic"),
   Type.Literal("full_power_charging_state"),
   Type.Literal("full_power_release"),
   Type.Literal("full_power_exhausted_state"),
@@ -895,6 +896,45 @@ export const BurstMeridianEventV1 = Type.Object(
 );
 export type BurstMeridianEventV1 = Static<typeof BurstMeridianEventV1>;
 
+export const ServerDataBreakthroughCinematicV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("breakthrough_cinematic"),
+    actor_id: Type.String({ minLength: 1, maxLength: 128 }),
+    phase: Type.Union([
+      Type.Literal("prelude"),
+      Type.Literal("charge"),
+      Type.Literal("catalyze"),
+      Type.Literal("apex"),
+      Type.Literal("aftermath"),
+    ]),
+    phase_tick: Type.Integer({ minimum: 0, maximum: 10000 }),
+    phase_duration_ticks: Type.Integer({ minimum: 1, maximum: 10000 }),
+    realm_from: Realm,
+    realm_to: Realm,
+    result: Type.Union([
+      Type.Literal("pending"),
+      Type.Literal("success"),
+      Type.Literal("failure"),
+      Type.Literal("interrupted"),
+    ]),
+    interrupted: Type.Boolean(),
+    world_pos: Vec3,
+    visible_radius_blocks: Type.Number({ minimum: 1, maximum: 10000 }),
+    global: Type.Boolean(),
+    distant_billboard: Type.Boolean(),
+    particle_density: Type.Number({ minimum: 0, maximum: 8 }),
+    intensity: Type.Number({ minimum: 0, maximum: 1 }),
+    season_overlay: Type.String({ minLength: 1, maxLength: 64 }),
+    style: Type.String({ minLength: 1, maxLength: 64 }),
+    at_tick: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBreakthroughCinematicV1 = Static<
+  typeof ServerDataBreakthroughCinematicV1
+>;
+
 export const ServerDataFullPowerChargingStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1537,6 +1577,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
   BurstMeridianEventV1,
+  ServerDataBreakthroughCinematicV1,
   ServerDataFullPowerChargingStateV1,
   ServerDataFullPowerReleaseV1,
   ServerDataFullPowerExhaustedStateV1,

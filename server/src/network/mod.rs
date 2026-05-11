@@ -420,6 +420,10 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
+    app.add_systems(
+        Update,
+        cultivation_bridge::publish_breakthrough_cinematic_events,
+    );
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
     app.add_systems(
         Update,
