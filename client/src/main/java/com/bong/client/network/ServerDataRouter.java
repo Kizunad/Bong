@@ -96,6 +96,10 @@ public final class ServerDataRouter {
             new com.bong.client.yidao.YidaoServerDataHandler();
         MovementStateHandler movementStateHandler = new MovementStateHandler();
         CoffinStateHandler coffinStateHandler = new CoffinStateHandler();
+        com.bong.client.spirittreasure.SpiritTreasureStateHandler spiritTreasureStateHandler =
+            new com.bong.client.spirittreasure.SpiritTreasureStateHandler();
+        com.bong.client.spirittreasure.SpiritTreasureDialogueHandler spiritTreasureDialogueHandler =
+            new com.bong.client.spirittreasure.SpiritTreasureDialogueHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -175,6 +179,8 @@ public final class ServerDataRouter {
         handlers.put("healer_npc_ai_state", yidaoServerDataHandler);
         handlers.put("yidao_hud_state", yidaoServerDataHandler);
         handlers.put("movement_state", movementStateHandler);
+        handlers.put("spirit_treasure_state", spiritTreasureStateHandler);
+        handlers.put("spirit_treasure_dialogue", spiritTreasureDialogueHandler);
         handlers.put("coffin_state", coffinStateHandler);
         // plan-forge-v1 §4 — 炼器（武器）
         com.bong.client.network.forge.ForgeStationHandler forgeStationHandler =
