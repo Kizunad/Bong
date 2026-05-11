@@ -536,6 +536,30 @@ export type ServerDataLumberProgressV1 = Static<
   typeof ServerDataLumberProgressV1
 >;
 
+export const ServerDataGatheringSessionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("gathering_session"),
+    session_id: Type.String({ minLength: 1 }),
+    progress_ticks: Type.Integer({ minimum: 0 }),
+    total_ticks: Type.Integer({ minimum: 0 }),
+    target_name: Type.String({ minLength: 1 }),
+    target_type: Type.Union([
+      Type.Literal("herb"),
+      Type.Literal("ore"),
+      Type.Literal("wood"),
+    ]),
+    quality_hint: Type.String(),
+    tool_used: Type.Optional(Type.String({ minLength: 1 })),
+    interrupted: Type.Boolean(),
+    completed: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataGatheringSessionV1 = Static<
+  typeof ServerDataGatheringSessionV1
+>;
+
 export const ServerDataBotanySkillV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1467,6 +1491,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,
+  ServerDataGatheringSessionV1,
   ServerDataBotanySkillV1,
   ServerDataProcessingSessionV1,
   ServerDataFreshnessUpdateV1,

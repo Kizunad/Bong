@@ -11,12 +11,21 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ItemIconRegistry {
     public static final String ITEM_TEXTURE_PREFIX = "bong-client:textures/gui/items/";
+    public static final String TOOL_TEXTURE_PREFIX = ITEM_TEXTURE_PREFIX + "tools/";
     public static final String FALLBACK_ITEM_PATH = ITEM_TEXTURE_PREFIX + "broken_artifact.png";
     public static final String FALLBACK_SCROLL_PATH = ITEM_TEXTURE_PREFIX + "broken_artifact_scroll.png";
 
     private static final Identifier FALLBACK_ITEM_TEXTURE = id(FALLBACK_ITEM_PATH);
     private static final Identifier FALLBACK_SCROLL_TEXTURE = id(FALLBACK_SCROLL_PATH);
     private static final Map<String, Identifier> TEXTURE_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, String> GATHERING_TOOL_ICON_PATHS = Map.ofEntries(
+        Map.entry("axe_bone", TOOL_TEXTURE_PREFIX + "axe_bone.png"),
+        Map.entry("axe_iron", TOOL_TEXTURE_PREFIX + "axe_iron.png"),
+        Map.entry("axe_copper", TOOL_TEXTURE_PREFIX + "axe_copper.png"),
+        Map.entry("pickaxe_bone", TOOL_TEXTURE_PREFIX + "pickaxe_bone.png"),
+        Map.entry("pickaxe_iron", TOOL_TEXTURE_PREFIX + "pickaxe_iron.png"),
+        Map.entry("pickaxe_copper", TOOL_TEXTURE_PREFIX + "pickaxe_copper.png")
+    );
 
     public static final Map<String, String> PLANT_ICON_PATHS = Map.ofEntries(
         Map.entry("ci_she_hao", "bong-client:textures/gui/botany/ci_she_hao.png"),
@@ -68,7 +77,8 @@ public final class ItemIconRegistry {
     }
 
     public static String itemTexturePath(String itemId) {
-        return ITEM_TEXTURE_PREFIX + normalize(itemId) + ".png";
+        String normalized = normalize(itemId);
+        return GATHERING_TOOL_ICON_PATHS.getOrDefault(normalized, ITEM_TEXTURE_PREFIX + normalized + ".png");
     }
 
     public static String plantIconPath(String plantKindId) {

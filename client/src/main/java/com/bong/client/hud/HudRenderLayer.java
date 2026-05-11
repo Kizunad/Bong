@@ -17,6 +17,7 @@ public enum HudRenderLayer {
     CARRIER,
     YIDAO,
     BOTANY,
+    GATHERING,
     DERIVED_ATTR,
     TOAST,
     VISUAL,

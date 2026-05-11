@@ -17,6 +17,14 @@ class ItemIconRegistryTest {
     }
 
     @Test
+    void gatheringToolsUseToolIconSubdirectory() {
+        assertEquals(
+            "bong-client:textures/gui/items/tools/axe_copper.png",
+            ItemIconRegistry.itemTexturePath("Axe_Copper")
+        );
+    }
+
+    @Test
     void exposesBotanyThumbnailsThroughCentralRegistry() {
         assertEquals(
             "bong-client:textures/gui/botany/ci_she_hao.png",

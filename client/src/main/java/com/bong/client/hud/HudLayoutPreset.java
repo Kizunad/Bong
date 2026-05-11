@@ -123,7 +123,7 @@ public enum HudLayoutPreset {
             case EVENT_STREAM, TOAST -> Widget.EVENT_STREAM;
             case BOTANY -> Widget.BOTANY;
             case LINGTIAN_OVERLAY -> Widget.LINGTIAN;
-            case PROCESSING_HUD, SEARCH_PROGRESS, TSY_EXTRACT, REALM_COLLAPSE -> Widget.PROCESSING;
+            case PROCESSING_HUD, SEARCH_PROGRESS, TSY_EXTRACT, REALM_COLLAPSE, GATHERING -> Widget.PROCESSING;
             case MERIDIAN_OPEN -> Widget.MERIDIAN;
             case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD, CONNECTION_STATUS -> Widget.CRITICAL;
             case YIDAO -> Widget.CRITICAL;
