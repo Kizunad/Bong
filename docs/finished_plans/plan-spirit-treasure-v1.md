@@ -1004,3 +1004,45 @@ public void removed() {
 17. **灵宝被动效果不生成/消耗真元** → 纯属性修正
 18. **registry 一致性** → 全服灵宝总数 ≤ max_concurrent
 19. **instance_id 全局唯一** → 跨坍缩渊不冲突
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 核心组件：`server/src/inventory/spirit_treasure.rs` 定义 `SpiritTreasureRegistry`、`ActiveSpiritTreasures`、唯一持有者状态和被动效果同步；`server/src/inventory/mod.rs` 注册 sync system；`server/assets/items/core.toml` 增加 `spirit_treasure_jizhaojing` ancient treasure 资产；`server/src/persistence/mod.rs` 升到 user version 24 并创建 `spirit_treasure_world` / `spirit_treasure_dialogue_log`。
+- P1 器灵 runtime：`agent/packages/schema/src/spirit-treasure.ts`、`agent/packages/schema/src/channels.ts`、`agent/packages/schema/src/server-data.ts` 和 generated schema/samples 接入 request/dialogue/state contract；`agent/packages/tiandao/src/spirit-treasure-dialogue-runtime.ts` 订阅 `bong:spirit_treasure_dialogue_request` 并发布 `bong:spirit_treasure_dialogue`；`agent/packages/tiandao/src/skills/spirit-treasure-jizhaojing.md` 固定寂照镜器灵人格。
+- P2 聊天与广播：`server/src/network/chat_collector.rs` 拦截 `@寂照镜`，未持有/沉睡/冷却只回本人，持有时向同 zone 广播玩家 @ 消息并发 Redis request；`server/src/network/redis_bridge.rs` 验证灵宝 request/dialogue channel；`server/src/network/spirit_treasure_emit.rs` 把器灵回话转成 `server_data.spirit_treasure_dialogue`。
+- P2b 客户端面板：`client/src/main/java/com/bong/client/spirittreasure/` 增加状态 store、dialogue store、server_data handlers、T 键面板 bootstrap、Tab panel、寂照镜镜面渲染；`ServerDataRouter` 注册 `spirit_treasure_state` / `spirit_treasure_dialogue`。
+- P3 首发寂照镜：`server/src/world/tsy_container_search.rs` 在 SectRuins 深层 relic core 搜刮中按唯一性守卫生成寂照镜；`server/src/combat/events.rs` 增加 `SpiritTreasurePerception` / `MirrorConcealment` / `MirrorExposed` 状态语义；`server/src/inventory/ancient_relics.rs` 增加 `SpiritTreasure` 来源标签。
+- P4 自动化覆盖：新增 schema、tiandao runtime、client store/router/screen、server chat/redis/server_data/migration/item-registry 回归；full server test 覆盖 registry、loot pool、inventory、persistence、network 等资产连锁校验。
+
+### 关键 commits
+
+- `cad0dfcb0` 2026-05-12 `plan-spirit-treasure-v1: 接入器灵对话契约`
+- `82c000a54` 2026-05-12 `plan-spirit-treasure-v1: 落地寂照镜服务端闭环`
+- `9b3718e86` 2026-05-12 `plan-spirit-treasure-v1: 增加寂照镜客户端界面`
+- `1ad5c89bd` 2026-05-12 `plan-spirit-treasure-v1: 收紧服务端 clippy 复杂度`
+- `fff010d60` 2026-05-12 `plan-spirit-treasure-v1: 支持 ancient 稀有度资产`
+- `42cdbc154` 2026-05-12 合并 `origin/main` 的 breakthrough cinematic 基线，并保留两边 Redis channel。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：通过。
+- `cd server && cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && cargo test`：4487 passed，0 failed。
+- `cd agent && npm run generate -w @bong/schema`：367 schemas exported，生成物无 git diff。
+- `cd agent && npm run build`：通过。
+- `cd agent/packages/tiandao && npm test`：54 test files passed，362 tests passed。
+- `cd agent/packages/schema && npm test`：20 test files passed，381 tests passed。
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build`：BUILD SUCCESSFUL，8 actionable tasks。
+
+### 跨栈核验
+
+- Server symbols：`SpiritTreasureRegistry`、`ActiveSpiritTreasures`、`sync_spirit_treasures`、`emit_spirit_treasure_state_payloads`、`process_spirit_treasure_dialogue`、`CH_SPIRIT_TREASURE_DIALOGUE_REQUEST`、`CH_SPIRIT_TREASURE_DIALOGUE`。
+- Agent symbols：`SpiritTreasureDialogueRequestV1`、`SpiritTreasureDialogueV1`、`SpiritTreasureStatePayloadV1`、`SpiritTreasureDialogueRuntime`、`SPIRIT_TREASURE_DIALOGUE_REQUEST`、`SPIRIT_TREASURE_DIALOGUE`。
+- Client symbols：`SpiritTreasureStateStore`、`SpiritTreasureDialogueStore`、`SpiritTreasureStateHandler`、`SpiritTreasureDialogueHandler`、`SpiritTreasureScreenBootstrap`、`JiZhaoJingTabPanel`。
+
+### 遗留 / 后续
+
+- 本次按首发闭环交付一件灵宝「寂照镜」和 server-agent-client 最小可验证链路；P3 里的 GLB/OBJ 3D 模型导入、专属粒子、专属音效仍留给后续视觉/资源计划。
+- 随机触发、突破/死亡事件触发、离线/死亡掉落的完整剧情广播和对话历史深度回放已有 schema/SQLite 表预留，但本次只锁住玩家主动 `@寂照镜` 对话链路和状态同步。
