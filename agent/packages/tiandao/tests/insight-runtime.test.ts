@@ -102,6 +102,22 @@ describe("applyInsightArbiter", () => {
     expect(filtered.choices[0].magnitude).toBe(8);
   });
 
+  it("drops non-positive magnitude", () => {
+    const req = sampleRequest();
+    const filtered = applyInsightArbiter(req, {
+      offer_id: "o1",
+      trigger_id: req.trigger_id,
+      character_id: req.character_id,
+      choices: [
+        choice({ magnitude: 0, cost_magnitude: 0.1, alignment: "converge" }),
+        choice({ magnitude: -0.01, cost_magnitude: 0.1, alignment: "neutral" }),
+        choice({ magnitude: 0.03, cost_magnitude: 0.015, alignment: "diverge" }),
+      ],
+    });
+    expect(filtered.choices.length).toBe(1);
+    expect(filtered.choices[0].alignment).toBe("diverge");
+  });
+
   it("caps at one choice per alignment", () => {
     const req = sampleRequest();
     const many = Array.from({ length: 6 }, (_, i) => ({
@@ -162,7 +178,7 @@ describe("InsightRuntime.handleRequestPayload", () => {
       offer_id: "ofr_test_1",
       trigger_id: "first_induce_breakthrough",
       choices: [
-        {
+        choice({
           category: "Meridian",
           effect_kind: "MeridianIntegrityBoost",
           magnitude: 0.15,
@@ -171,7 +187,27 @@ describe("InsightRuntime.handleRequestPayload", () => {
           cost_kind: "opposite_color_penalty",
           cost_magnitude: 0.08,
           cost_flavor: "对立色效率下降",
-        },
+        }),
+        choice({
+          category: "Qi",
+          effect_kind: "QiRegenFactor",
+          magnitude: 0.03,
+          flavor_text: "真元回流",
+          alignment: "neutral",
+          cost_kind: "qi_volatility",
+          cost_magnitude: 0.015,
+          cost_flavor: "真元挥发加速",
+        }),
+        choice({
+          category: "Composure",
+          effect_kind: "ComposureRestore",
+          magnitude: 0.1,
+          flavor_text: "心湖回稳",
+          alignment: "diverge",
+          cost_kind: "shock_sensitivity",
+          cost_magnitude: 0.05,
+          cost_flavor: "心境冲击敏感",
+        }),
       ],
     });
     const rt = new InsightRuntime({
@@ -204,6 +240,39 @@ describe("InsightRuntime.handleRequestPayload", () => {
     const offer = JSON.parse(pub.published[0].message);
     expect(offer.trigger_id).toBe("first_induce_breakthrough");
     expect(Array.isArray(offer.choices)).toBe(true);
+  });
+
+  it("publishes fallback empty-offer when arbiter leaves fewer than three choices", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const llmContent = JSON.stringify({
+      offer_id: "ofr_short",
+      trigger_id: "first_induce_breakthrough",
+      choices: [
+        choice({
+          category: "Meridian",
+          effect_kind: "MeridianIntegrityBoost",
+          magnitude: 0.15,
+          alignment: "converge",
+          cost_kind: "opposite_color_penalty",
+          cost_magnitude: 0.08,
+        }),
+      ],
+    });
+    const rt = new InsightRuntime({
+      llm: makeLlm(llmContent),
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+    await rt.handleRequestPayload(JSON.stringify(sampleRequest()));
+    expect(pub.published.length).toBe(1);
+    const offer = JSON.parse(pub.published[0].message);
+    expect(offer.choices).toHaveLength(1);
+    expect(offer.choices[0].effect_kind).toBe("NoOp");
+    expect(rt.stats.rejectedArbiter).toBe(1);
   });
 
   it("rejects non-JSON payload without publishing", async () => {

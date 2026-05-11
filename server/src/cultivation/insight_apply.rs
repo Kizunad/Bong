@@ -223,17 +223,16 @@ fn apply_tradeoff_cost(cost: &InsightCost, modifiers: &mut InsightModifiers) {
 fn apply_alignment_side_effects(
     choice: &InsightChoice,
     qi_color: &QiColor,
-    practice_log: Option<&mut PracticeLog>,
+    mut practice_log: Option<&mut PracticeLog>,
     life_record: &mut LifeRecord,
     tick_now: u64,
 ) {
-    let Some(log) = practice_log else {
-        return;
-    };
     match (choice.alignment, choice.target_color) {
         (InsightAlignment::Diverge, Some(target)) => {
             let amount = if qi_color.is_hunyuan { 5.0 } else { 2.0 };
-            log.add(target, amount);
+            if let Some(log) = practice_log.as_mut() {
+                log.add(target, amount);
+            }
             life_record.push(BiographyEntry::InsightDiverge {
                 from_color: qi_color.main,
                 to_color: target,
@@ -241,7 +240,9 @@ fn apply_alignment_side_effects(
             });
         }
         (InsightAlignment::Converge, Some(target)) if qi_color.is_chaotic => {
-            log.add(target, 2.0);
+            if let Some(log) = practice_log.as_mut() {
+                log.add(target, 2.0);
+            }
         }
         _ => {}
     }
@@ -250,7 +251,7 @@ fn apply_alignment_side_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cultivation::components::MeridianId;
+    use crate::cultivation::components::{ColorKind, MeridianId};
     use crate::cultivation::insight::InsightCategory;
 
     #[test]
@@ -368,7 +369,7 @@ mod tests {
         let mut c = Cultivation::default();
         let mut ms = MeridianSystem::default();
         let mut qc = QiColor {
-            main: crate::cultivation::components::ColorKind::Sharp,
+            main: ColorKind::Sharp,
             ..QiColor::default()
         };
         let mut log = PracticeLog::default();
@@ -378,15 +379,15 @@ mod tests {
         let mut choice = InsightChoice::neutral(
             InsightCategory::Coloring,
             InsightEffect::ColorCapAdd {
-                color: crate::cultivation::components::ColorKind::Light,
+                color: ColorKind::Light,
                 add: 0.03,
             },
             "转向飘逸",
         );
         choice.alignment = InsightAlignment::Diverge;
-        choice.target_color = Some(crate::cultivation::components::ColorKind::Light);
+        choice.target_color = Some(ColorKind::Light);
         choice.cost = InsightCost::MainColorPenalty {
-            color: crate::cultivation::components::ColorKind::Sharp,
+            color: ColorKind::Sharp,
             penalty: 0.10,
         };
         choice.cost_magnitude = 0.10;
@@ -402,16 +403,52 @@ mod tests {
             "t",
             0,
         );
-        assert_eq!(
-            log.weights
-                .get(&crate::cultivation::components::ColorKind::Light)
-                .copied(),
-            Some(2.0)
-        );
+        assert_eq!(log.weights.get(&ColorKind::Light).copied(), Some(2.0));
         assert!((mods.main_color_efficiency_penalty - 0.10).abs() < 1e-9);
         assert!(lr
             .biography
             .iter()
             .any(|entry| matches!(entry, BiographyEntry::InsightDiverge { .. })));
+    }
+
+    #[test]
+    fn diverge_choice_audits_without_practice_log() {
+        let mut c = Cultivation::default();
+        let mut ms = MeridianSystem::default();
+        let mut qc = QiColor {
+            main: ColorKind::Sharp,
+            ..QiColor::default()
+        };
+        let mut perc = UnlockedPerceptions::default();
+        let mut mods = InsightModifiers::new();
+        let mut lr = LifeRecord::default();
+        let mut choice = InsightChoice::neutral(
+            InsightCategory::Coloring,
+            InsightEffect::ColorCapAdd {
+                color: ColorKind::Light,
+                add: 0.03,
+            },
+            "转向飘逸",
+        );
+        choice.alignment = InsightAlignment::Diverge;
+        choice.target_color = Some(ColorKind::Light);
+        choice.cost = InsightCost::MainColorPenalty {
+            color: ColorKind::Sharp,
+            penalty: 0.10,
+        };
+        choice.cost_magnitude = 0.10;
+        apply_choice(
+            &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 7,
+        );
+        assert!(lr.biography.iter().any(|entry| {
+            matches!(
+                entry,
+                BiographyEntry::InsightDiverge {
+                    from_color: ColorKind::Sharp,
+                    to_color: ColorKind::Light,
+                    tick: 7,
+                }
+            )
+        }));
     }
 }

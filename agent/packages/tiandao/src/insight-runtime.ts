@@ -81,6 +81,7 @@ export function applyInsightArbiter(
 
   const filtered = offer.choices.flatMap((choice, index) => {
     if (!allowed.has(choice.category)) return [];
+    if (typeof choice.magnitude !== "number" || choice.magnitude <= 0) return [];
     const cap = caps[choice.category];
     if (typeof cap === "number" && choice.magnitude > cap) return [];
     if (
@@ -302,7 +303,7 @@ export class InsightRuntime {
     }
 
     const filtered = applyInsightArbiter(request, offer);
-    if (filtered.choices.length === 0) {
+    if (filtered.choices.length !== 3) {
       this.stats.rejectedArbiter += 1;
       if (!this.publishEmptyOnFailure) return null;
       return emptyOffer(request);
