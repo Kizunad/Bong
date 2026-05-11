@@ -986,6 +986,7 @@ mod tests {
                 body_part: BodyPart::Chest,
                 wound_kind: WoundKind::Blunt,
                 source: crate::combat::events::AttackSource::Melee,
+                debug_command: false,
                 damage: 12.0,
                 contam_delta: 0.0,
                 description: "test hit tier".to_string(),
@@ -1235,6 +1236,7 @@ mod tests {
             color: None,
             side_effects: vec![],
             achieved_tier: 3,
+            consecration_qi_amount: 0.0,
         });
 
         app.update();
