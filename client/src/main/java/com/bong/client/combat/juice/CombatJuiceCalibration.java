@@ -6,6 +6,7 @@ import java.util.List;
 public final class CombatJuiceCalibration {
     private static final int INPUT_LAG_RISK_THRESHOLD_TICKS = 10;
     private static final int EVENTS_PER_PLAYER_BUDGET = 4;
+    private static final int MIN_5V5_PLAYERS = 10;
 
     private CombatJuiceCalibration() {
     }
@@ -49,7 +50,7 @@ public final class CombatJuiceCalibration {
         int estimatedFpsFloor
     ) {
         public boolean passesPlanFloor() {
-            return players >= 5 && minutes >= 10 && estimatedFpsFloor >= 30;
+            return players >= MIN_5V5_PLAYERS && minutes >= 10 && estimatedFpsFloor >= 30;
         }
     }
 }

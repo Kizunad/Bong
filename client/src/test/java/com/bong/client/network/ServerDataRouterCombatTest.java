@@ -70,7 +70,11 @@ class ServerDataRouterCombatTest {
         assertFalse(r.isParseError(), "expected blank-text combat_event JSON to parse because syntax is valid, actual parse error=" + r.logMessage());
         assertFalse(r.isHandled(), "expected blank combat event to be ignored because it has no text, amount, or kind fallback, actual message=" + r.logMessage());
         assertEquals(0, DamageFloaterStore.snapshot(System.currentTimeMillis()).size(), "expected no floater because blank combat event should be discarded, actual floater count differed");
-        assertNull(CombatJuiceSystem.lastCommand().event(), "expected no combat juice command because invalid blank combat event should not be accepted");
+        CombatJuiceSystem.LastCommand last = CombatJuiceSystem.lastCommand();
+        assertTrue(
+            last == null || last.event() == null,
+            "expected no combat juice command because invalid blank combat event should be discarded, actual lastCommand=" + last
+        );
     }
 
     @Test void routesStatusSnapshotEndToEnd() {

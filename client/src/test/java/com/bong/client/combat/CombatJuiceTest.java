@@ -153,6 +153,39 @@ class CombatJuiceTest {
     }
 
     @Test
+    void accept_null_event_returns_empty_command() {
+        CombatJuiceSystem.LastCommand command = CombatJuiceSystem.accept(null, 1_000L);
+
+        assertNull(command.event(), "expected null combat event to produce an empty command because invalid input must be ignored safely");
+        assertFalse(command.overlay().activeAt(1_000L), "expected null combat event to have no active overlay because no visual branch ran");
+    }
+
+    @Test
+    void accept_clears_expired_overlay_before_next_command_snapshot() {
+        CombatJuiceEvent overload = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.OVERLOAD,
+            CombatSchool.BAOMAI,
+            CombatJuiceTier.LIGHT,
+            "attacker",
+            "target",
+            "",
+            "",
+            0.0,
+            1.0,
+            false,
+            1_000L
+        );
+        CombatJuiceSystem.LastCommand overloadCommand = CombatJuiceSystem.accept(overload, 1_000L);
+        assertTrue(overloadCommand.overlay().activeAt(1_000L), "expected overload command to carry active overlay because overload creates a 10 tick vignette");
+
+        CombatJuiceEvent hit = CombatJuiceEvent.hit(CombatSchool.BAOMAI, CombatJuiceTier.LIGHT, "attacker", "target", 0.0, 1.0, 1_501L);
+        CombatJuiceSystem.LastCommand hitCommand = CombatJuiceSystem.accept(hit, 1_501L);
+
+        assertFalse(hitCommand.overlay().activeAt(1_501L), "expected later hit command to drop expired overload overlay because command snapshots must not carry stale overlays");
+        assertEquals(CombatJuiceEvent.Kind.HIT, hitCommand.event().kind(), "expected the post-overlay command to still process the new hit event, actual kind differed");
+    }
+
+    @Test
     void overload_red_freeze() {
         CombatJuiceEvent event = new CombatJuiceEvent(
             CombatJuiceEvent.Kind.OVERLOAD,
@@ -426,9 +459,9 @@ class CombatJuiceTest {
 
     @Test
     void mixed_battle_budget_stays_above_30fps_floor() {
-        CombatJuiceCalibration.PerformanceBudget budget = CombatJuiceCalibration.mixedBattleBudget(5, 10);
+        CombatJuiceCalibration.PerformanceBudget budget = CombatJuiceCalibration.mixedBattleBudget(10, 10);
 
-        assertEquals(20, budget.maxConcurrentJuiceEvents(), "expected 5 players to budget 20 concurrent juice events because budget is 4 events per player, actual event budget differed");
+        assertEquals(40, budget.maxConcurrentJuiceEvents(), "expected 5v5 to budget 40 concurrent juice events because budget is 4 events per player across 10 players, actual event budget differed");
         assertTrue(budget.passesPlanFloor(), "expected 5v5 10min budget to satisfy 30fps floor because plan requires that scenario, actual budget=" + budget);
     }
 

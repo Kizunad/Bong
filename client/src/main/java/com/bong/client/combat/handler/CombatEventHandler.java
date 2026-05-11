@@ -143,7 +143,7 @@ public final class CombatEventHandler implements ServerDataHandler {
             tier,
             firstString(obj, "attacker_uuid", "source_uuid", "caster_uuid"),
             firstString(obj, "target_uuid", "defender_uuid", "victim_uuid", "entity_uuid"),
-            readString(obj, "local_player_uuid"),
+            firstString(obj, "local_player_uuid"),
             firstString(obj, "victim_name", "target_name", "entity_name"),
             firstDouble(obj, 0.0, "direction_x", "dir_x", "dx"),
             firstDouble(obj, 1.0, "direction_z", "dir_z", "dz"),

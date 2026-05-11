@@ -78,13 +78,15 @@ public final class CombatJuiceSystem {
             case DODGE -> lastGhost = ParryDodgeJuicePlanner.dodge(event.targetUuid(), profile.qiColorArgb(), nowMs);
             case KILL -> {
                 CombatJuiceProfile killProfile = CombatJuiceProfile.select(event.school(), CombatJuiceTier.CRITICAL);
+                effectiveProfile = killProfile;
                 KillJuiceController.trigger(event, killProfile, nowMs);
             }
             case WOUND -> {
             }
         }
 
-        LastCommand command = new LastCommand(event, effectiveProfile, List.copyOf(freezes), shake, tint, activeOverlay, lastParry, lastGhost);
+        Overlay overlaySnapshot = activeOverlay(nowMs);
+        LastCommand command = new LastCommand(event, effectiveProfile, List.copyOf(freezes), shake, tint, overlaySnapshot, lastParry, lastGhost);
         lastCommand = command;
         return command;
     }
