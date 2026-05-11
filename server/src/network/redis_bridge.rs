@@ -1881,6 +1881,7 @@ fn validate_command_value(value: &Value, index: usize) -> Result<(), ValidationE
             | "faction_event"
             | "modify_zone"
             | "npc_behavior"
+            | "heartbeat_override"
     ) {
         return Err(ValidationError::new(format!(
             "{context}.type has unsupported value `{command_type}`"

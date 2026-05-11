@@ -2,12 +2,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, bevy_ecs::system::SystemParam, Commands, Despawned, Entity, EventWriter, Query, Res,
-    ResMut, Resource, With, Without,
+    bevy_ecs, Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource, With, Without,
 };
 
 use crate::cultivation::components::Realm;
+use crate::cultivation::tick::CultivationClock;
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::faction::{
     FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
@@ -25,6 +26,7 @@ use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::calamity::{CalamityArsenal, TiandaoPower};
 use crate::world::events::ActiveEventsResource;
+use crate::world::heartbeat::{apply_heartbeat_override_command, WorldHeartbeat};
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::season::query_season;
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
@@ -96,6 +98,16 @@ struct SpawnEventCommandResources<'a> {
     qi_heatmap: Option<&'a QiDensityHeatmap>,
 }
 
+/// 合并 agent command 执行上下文，避免 Bevy 0.14 顶层 SystemParam 16 上限。
+#[derive(SystemParam)]
+pub struct CommandExecutionParams<'w> {
+    heartbeat: Option<ResMut<'w, WorldHeartbeat>>,
+    karma_weights: Option<Res<'w, KarmaWeightStore>>,
+    qi_heatmap: Option<Res<'w, QiDensityHeatmap>>,
+    clock: Option<Res<'w, CultivationClock>>,
+    terrain_providers: Option<Res<'w, TerrainProviders>>,
+}
+
 impl CommandExecutorResource {
     pub fn enqueue_batch(&mut self, batch: AgentCommandV1) -> BatchEnqueueOutcome {
         let now_secs = current_unix_timestamp_secs();
@@ -160,10 +172,7 @@ pub fn execute_agent_commands(
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut faction_store: Option<ResMut<FactionStore>>,
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
-    karma_weights: Option<valence::prelude::Res<KarmaWeightStore>>,
-    qi_heatmap: Option<valence::prelude::Res<QiDensityHeatmap>>,
-    clock: Option<Res<crate::cultivation::tick::CultivationClock>>,
-    terrain_providers: Option<Res<TerrainProviders>>,
+    mut params: CommandExecutionParams,
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     layers: LayerQuery<'_, '_>,
@@ -171,7 +180,7 @@ pub fn execute_agent_commands(
 ) {
     let mut remaining_budget = MAX_COMMANDS_PER_TICK;
     let mut pending_despawn_targets = HashSet::new();
-    let terrain = terrain_providers.as_deref().map(|p| &p.overworld);
+    let terrain = params.terrain_providers.as_deref().map(|p| &p.overworld);
 
     while remaining_budget > 0 {
         let Some(mut batch) = executor.pending_batches.pop_front() else {
@@ -196,9 +205,10 @@ pub fn execute_agent_commands(
                 &mut skin_pool,
                 &mut faction_store,
                 &mut npc_behavior,
-                karma_weights.as_deref(),
-                qi_heatmap.as_deref(),
-                clock.as_deref().map(|clock| clock.tick),
+                &mut params.heartbeat,
+                params.karma_weights.as_deref(),
+                params.qi_heatmap.as_deref(),
+                params.clock.as_deref().map(|clock| clock.tick),
                 terrain,
                 &mut npc_spawn_notices,
                 &mut faction_notices,
@@ -238,6 +248,7 @@ fn execute_single_command(
     skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
+    heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
     tick: Option<u64>,
@@ -279,6 +290,7 @@ fn execute_single_command(
         CommandType::NpcBehavior => {
             execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
         }
+        CommandType::HeartbeatOverride => execute_heartbeat_override(command, heartbeat, tick),
         CommandType::SpawnEvent => execute_spawn_event(
             command,
             SpawnEventCommandResources {
@@ -310,7 +322,23 @@ fn command_type_label(command_type: &CommandType) -> &'static str {
         CommandType::DespawnNpc => "despawn_npc",
         CommandType::FactionEvent => "faction_event",
         CommandType::NpcBehavior => "npc_behavior",
+        CommandType::HeartbeatOverride => "heartbeat_override",
         CommandType::SpawnEvent => "spawn_event",
+    }
+}
+
+fn execute_heartbeat_override(
+    command: &Command,
+    heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
+    tick: Option<u64>,
+) -> &'static str {
+    match apply_heartbeat_override_command(
+        heartbeat.as_deref_mut().map(|heartbeat| &mut *heartbeat),
+        command,
+        tick.unwrap_or_default(),
+    ) {
+        Ok(()) => "ok",
+        Err(error) => error.result_label(),
     }
 }
 
