@@ -1,0 +1,375 @@
+# plan-armor-visual-v1 — 凡物盔甲与补齐的手搓原料。
+
+[[item]]
+id = "iron_ore"
+name = "铁矿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.7
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "贫铁矿石，杂质多，打成甲也只是凡物防护。"
+
+[[item]]
+id = "copper_ore"
+name = "铜矿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.55
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "旧矿脉里剥下的铜矿，可打轻甲，硬度不如铁。"
+
+[[item]]
+id = "spirit_cloth"
+name = "灵布"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.08
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "掺了少量灵草纤维的粗布，轻便但不抗重击。"
+
+[[item]]
+id = "scroll_fragment"
+name = "残卷碎片"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.03
+rarity = "common"
+spirit_quality_initial = 0.4
+description = "残卷边角，缠在甲上能挡住一两下碎石和利刃。"
+
+[[item]]
+id = "scroll_armor_bone"
+name = "骨甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "记着兽骨绑甲手法的残卷，可解锁骨甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_hide"
+name = "兽皮甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "旧猎修留下的缝皮残页，可解锁兽皮甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_iron"
+name = "铁甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "炉灰熏黑的铁甲图样，可解锁铁甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_copper"
+name = "铜甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "薄铜片压出的旧图样，可解锁铜甲手搓配方。"
+
+[[item]]
+id = "scroll_armor_spirit_cloth"
+name = "灵布衫配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "夹着灵草纤维的布甲残页，可解锁灵布衫手搓配方。"
+
+[[item]]
+id = "scroll_armor_scroll_wrap"
+name = "残卷缠甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "残卷里再夹残卷的怪图样，可解锁残卷缠甲手搓配方。"
+
+[[item]]
+id = "armor_bone_helmet"
+name = "骨甲盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.55
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "灰白兽骨扎成的头盔。凡物·骨制；防御 +3，耐久 80。"
+
+[[item]]
+id = "armor_bone_chestplate"
+name = "骨甲胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 1.4
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "骨片用粗绳绑成的胸甲。凡物·骨制；防御 +3，耐久 80。"
+
+[[item]]
+id = "armor_bone_leggings"
+name = "骨甲腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 1.0
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "护住大腿的简陋骨片。凡物·骨制；防御 +3，耐久 80。"
+
+[[item]]
+id = "armor_bone_boots"
+name = "骨甲靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "脚背缝骨的短靴。凡物·骨制；防御 +3，耐久 80。"
+
+[[item]]
+id = "armor_hide_helmet"
+name = "兽皮甲盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.45
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "熟过的兽皮帽盔。凡物·兽皮；防御 +5，耐久 120。"
+
+[[item]]
+id = "armor_hide_chestplate"
+name = "兽皮甲胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 1.15
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "厚兽皮拼成的胸甲。凡物·兽皮；防御 +5，耐久 120。"
+
+[[item]]
+id = "armor_hide_leggings"
+name = "兽皮甲腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.9
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "方便跑动的兽皮护腿。凡物·兽皮；防御 +5，耐久 120。"
+
+[[item]]
+id = "armor_hide_boots"
+name = "兽皮甲靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.42
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "兽皮裹脚靴。凡物·兽皮；防御 +5，耐久 120。"
+
+[[item]]
+id = "armor_iron_helmet"
+name = "铁甲盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 1.0
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "深灰铁片压出的头盔。凡物·铁制；防御 +8，耐久 200。"
+
+[[item]]
+id = "armor_iron_chestplate"
+name = "铁甲胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 2.8
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "沉重铁片胸甲。凡物·铁制；防御 +8，耐久 200。"
+
+[[item]]
+id = "armor_iron_leggings"
+name = "铁甲腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "铁片护腿，结实但拖身。凡物·铁制；防御 +8，耐久 200。"
+
+[[item]]
+id = "armor_iron_boots"
+name = "铁甲靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.95
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "铁头短靴。凡物·铁制；防御 +8，耐久 200。"
+
+[[item]]
+id = "armor_copper_helmet"
+name = "铜甲盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.85
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "古铜色轻盔。凡物·铜制；防御 +7，耐久 160。"
+
+[[item]]
+id = "armor_copper_chestplate"
+name = "铜甲胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 2.1
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "铜片胸甲，较铁甲轻。凡物·铜制；防御 +7，耐久 160。"
+
+[[item]]
+id = "armor_copper_leggings"
+name = "铜甲腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 1.6
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "古铜护腿。凡物·铜制；防御 +7，耐久 160。"
+
+[[item]]
+id = "armor_copper_boots"
+name = "铜甲靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.75
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "铜片缝面的轻靴。凡物·铜制；防御 +7，耐久 160。"
+
+[[item]]
+id = "armor_spirit_cloth_helmet"
+name = "灵布衫盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "淡青灵布缠成的头巾。凡物·灵布；防御 +4，耐久 100。"
+
+[[item]]
+id = "armor_spirit_cloth_chestplate"
+name = "灵布衫胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.7
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "轻便灵布衫，修炼时不碍气。凡物·灵布；防御 +4，耐久 100。"
+
+[[item]]
+id = "armor_spirit_cloth_leggings"
+name = "灵布衫腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.55
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "淡青布护腿。凡物·灵布；防御 +4，耐久 100。"
+
+[[item]]
+id = "armor_spirit_cloth_boots"
+name = "灵布衫靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "布面软靴，便于入定。凡物·灵布；防御 +4，耐久 100。"
+
+[[item]]
+id = "armor_scroll_wrap_helmet"
+name = "残卷缠甲盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.35
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "暗黄残卷缠头。凡物·残卷；防御 +6，耐久 140。"
+
+[[item]]
+id = "armor_scroll_wrap_chestplate"
+name = "残卷缠甲胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 1.0
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "残卷和皮绳缠成的胸甲。凡物·残卷；防御 +6，耐久 140。"
+
+[[item]]
+id = "armor_scroll_wrap_leggings"
+name = "残卷缠甲腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "暗黄残卷护腿。凡物·残卷；防御 +6，耐久 140。"
+
+[[item]]
+id = "armor_scroll_wrap_boots"
+name = "残卷缠甲靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.35
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "残卷缠面的短靴。凡物·残卷；防御 +6，耐久 140。"

@@ -10,6 +10,7 @@ public enum CraftCategory {
     TUIKE_SKIN("tuike_skin", "伪皮 / 替尸"),
     ZHENFA_TRAP("zhenfa_trap", "阵法预埋件"),
     TOOL("tool", "凡器"),
+    ARMOR_CRAFT("armor_craft", "凡物盔甲"),
     CONTAINER("container", "容器 / 装具"),
     POISON_POWDER("poison_powder", "毒粉研磨"),
     MISC("misc", "其它");

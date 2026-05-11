@@ -87,6 +87,9 @@ pub fn register(app: &mut App) {
     crate::cultivation::poison_trait::register_craft_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register poison-trait recipes: {err}");
     });
+    crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register armor-visual-v1 recipes: {err}");
+    });
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
@@ -670,6 +673,8 @@ mod tests {
         assert!(!categories.contains(&CraftCategory::Misc));
         // Container 是 anqi-v2 专项类目，不属于 craft-v1 示例基线。
         assert!(!categories.contains(&CraftCategory::Container));
+        // ArmorCraft 由 armor-visual-v1 注册，不属于 craft-v1 示例基线。
+        assert!(!categories.contains(&CraftCategory::ArmorCraft));
     }
 
     #[test]
@@ -768,6 +773,17 @@ mod tests {
             .get(&RecipeId::new("tuike.false_skin.ancient"))
             .is_some_and(|recipe| recipe.requirements.realm_min == Some(Realm::Void)
                 && recipe.output.0 == crate::combat::tuike_v2::state::FALSE_SKIN_ANCIENT_ITEM_ID));
+    }
+
+    #[test]
+    fn register_mundane_armor_recipes_adds_24_armor_craft_entries() {
+        let mut registry = CraftRegistry::new();
+        crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap();
+
+        assert_eq!(registry.by_category(CraftCategory::ArmorCraft).count(), 24);
+        assert!(registry
+            .get(&RecipeId::new("armor.mundane.iron.chestplate"))
+            .is_some_and(|recipe| recipe.output == ("armor_iron_chestplate".to_string(), 1)));
     }
 
     #[test]

@@ -44,6 +44,9 @@ use crate::inventory::{
     InventoryDurabilityChangedEvent, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN,
     EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -150,6 +153,7 @@ pub struct CombatResolveEventWriters<'w> {
     qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
     multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
     death_events: EventWriter<'w, DeathEvent>,
     durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
 }
@@ -734,6 +738,7 @@ pub fn resolve_attack_intents(
                             let next_abs = (cur_abs - ARMOR_HIT_DURABILITY_COST_POINTS).max(0.0);
                             let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
                             if next_ratio < cur_ratio {
+                                let broke_now = next_ratio <= 0.0 && cur_ratio > 0.0;
                                 match set_item_instance_durability(
                                     &mut inventory,
                                     instance_id,
@@ -748,6 +753,24 @@ pub fn resolve_attack_intents(
                                                 durability: update.durability,
                                             },
                                         );
+                                        if broke_now {
+                                            if let Some(audio_events) =
+                                                event_writers.audio_events.as_deref_mut()
+                                            {
+                                                audio_events.send(PlaySoundRecipeRequest {
+                                                    recipe_id: "armor_break".to_string(),
+                                                    instance_id: 0,
+                                                    pos: None,
+                                                    flag: None,
+                                                    volume_mul: 1.0,
+                                                    pitch_shift: 0.0,
+                                                    recipient: AudioRecipient::Radius {
+                                                        origin: target_position,
+                                                        radius: AUDIO_BROADCAST_RADIUS,
+                                                    },
+                                                });
+                                            }
+                                        }
                                     }
                                     Err(error) => {
                                         tracing::warn!(
@@ -1559,6 +1582,132 @@ mod tests {
             inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].durability < 1.0,
             "armor hit should tick down durability"
         );
+    }
+
+    #[test]
+    fn armor_break_emits_durability_event_and_radius_audio() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1501 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+
+        app.insert_resource(crate::inventory::ItemRegistry::default());
+        app.insert_resource(ArmorProfileRegistry::from_map(
+            std::collections::HashMap::from([(
+                "fake_spirit_hide".to_string(),
+                ArmorProfile {
+                    slot: EquipSlotV1::Chest,
+                    body_coverage: vec![BodyPart::Chest],
+                    kind_mitigation: std::collections::HashMap::from([(WoundKind::Blunt, 0.5)]),
+                    durability_max: 1,
+                    broken_multiplier: 0.3,
+                },
+            )]),
+        ));
+
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                crate::combat::weapon::sync_weapon_component_from_equipped,
+                crate::combat::armor_sync::sync_armor_to_derived_attrs,
+                resolve_attack_intents,
+            ),
+        );
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(target).insert(PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: std::collections::HashMap::from([(
+                crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+                ItemInstance {
+                    instance_id: 89,
+                    template_id: "fake_spirit_hide".to_string(),
+                    display_name: "假灵兽皮胸甲".to_string(),
+                    grid_w: 2,
+                    grid_h: 2,
+                    weight: 5.0,
+                    rarity: crate::inventory::ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 0.25,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                    alchemy: None,
+                    lingering_owner_qi: None,
+                },
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1500,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let durability_events = app
+            .world()
+            .resource::<Events<InventoryDurabilityChangedEvent>>();
+        let events: Vec<_> = durability_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].entity, target);
+        assert_eq!(events[0].instance_id, 89);
+        assert_eq!(events[0].durability, 0.0);
+
+        let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let events: Vec<_> = audio_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].recipe_id, "armor_break");
+        match &events[0].recipient {
+            AudioRecipient::Radius { origin, radius } => {
+                assert_eq!(*origin, valence::prelude::DVec3::new(1.0, 64.0, 0.0));
+                assert_eq!(*radius, AUDIO_BROADCAST_RADIUS);
+            }
+            other => panic!("armor_break should use radius recipient, got {other:?}"),
+        }
     }
 
     fn spawn_npc(app: &mut App, position: [f64; 3], wounds: Wounds, stamina: Stamina) -> Entity {

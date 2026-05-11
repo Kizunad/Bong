@@ -30,6 +30,11 @@ public class AudioEventEnvelopeTest {
     }
 
     @Test
+    void parsesPlayersCategory() {
+        assertEquals(AudioCategory.PLAYERS, AudioCategory.fromWire("PLAYERS"));
+    }
+
+    @Test
     void parsesValidStopPayload() throws IOException {
         String json = PayloadFixtureLoader.readText("valid-audio-stop.json");
 

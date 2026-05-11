@@ -1,5 +1,6 @@
 package com.bong.client.inventory.component;
 
+import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.ItemIconRegistry;
 import com.bong.client.inventory.RarityBorderRenderer;
@@ -22,6 +23,7 @@ public class GridSlotComponent extends BaseComponent {
     private static final int BG_COLOR_ALT = 0xFF232323;
     private static final int BORDER_COLOR = 0xFF3A3A3A;
     private static final int HOVER_BORDER_COLOR = 0xFF888888;
+    private static final double ARMOR_LOW_DURABILITY_THRESHOLD = 0.20;
 
     private final int row;
     private final int col;
@@ -109,17 +111,25 @@ public class GridSlotComponent extends BaseComponent {
             drawSlotBorder(context, dx + 1, dy + 1, dw - 2, dh - 2, botanyBorder & 0x88FFFFFF);
         }
 
-        float ageTicks = 0.0f;
+        long worldTicks = 0L;
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.world != null) {
-            ageTicks = client.world.getTime();
+            worldTicks = client.world.getTime();
         }
+        float ageTicks = (float) worldTicks;
         RarityBorderRenderer.drawBorder(context, dx, dy, dw, dh, item, ageTicks);
         if (item.isAncientRelic()) {
             int alpha = RarityBorderRenderer.ancientInvertFlashAlpha(ageTicks);
             if (alpha > 0) {
                 context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, (alpha << 24) | 0xFFFFFF);
             }
+        }
+
+        int armorFlashAlpha = armorLowDurabilityFlashAlpha(item, worldTicks);
+        if (armorFlashAlpha > 0) {
+            context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, (armorFlashAlpha << 24) | 0xFF2020);
+            drawSlotBorder(context, dx, dy, dw, dh, 0xFFFF3030);
+            drawSlotBorder(context, dx + 1, dy + 1, dw - 2, dh - 2, 0x99FF3030);
         }
 
         // 堆叠数字 —— 右下角（与原版 MC 物品栏一致，保证在贴图上层可见）。
@@ -172,6 +182,17 @@ public class GridSlotComponent extends BaseComponent {
 
     static boolean isScrollTextureCandidate(String itemId) {
         return ItemIconRegistry.isScrollTextureCandidate(itemId);
+    }
+
+    static int armorLowDurabilityFlashAlpha(InventoryItem item, long ageTicks) {
+        if (item == null
+            || item.isEmpty()
+            || !ArmorTintRegistry.isMundaneArmor(item.itemId())
+            || item.durability() <= 0.0
+            || item.durability() >= ARMOR_LOW_DURABILITY_THRESHOLD) {
+            return 0;
+        }
+        return ((Math.max(0L, ageTicks) / 8L) % 2L == 0L) ? 0x60 : 0x20;
     }
 
     static void drawSlotBorder(net.minecraft.client.gui.DrawContext context, int x, int y, int w, int h, int color) {

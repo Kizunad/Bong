@@ -101,6 +101,10 @@
           "type": "string"
         },
         {
+          "const": "PLAYERS",
+          "type": "string"
+        },
+        {
           "const": "HOSTILE",
           "type": "string"
         },

@@ -100,6 +100,9 @@ public final class VisualEffectState {
         PRESSURE_JITTER("pressure_jitter"),
         HIT_PUSHBACK("hit_pushback"),
         WEAPON_BREAK_FLASH("weapon_break_flash"),
+        ARMOR_EQUIP_FLASH("armor_equip_flash"),
+        ARMOR_LOW_DURABILITY_FLASH("armor_low_durability_flash"),
+        ARMOR_BREAK_FLASH("armor_break_flash"),
         MEDITATION_INK_WASH("meditation_ink_wash");
 
         private final String wireName;
@@ -128,6 +131,9 @@ public final class VisualEffectState {
                 case "pressure_jitter", "pressure", "qi_pressure" -> PRESSURE_JITTER;
                 case "hit_pushback", "pushback", "recoil", "knockback_cam" -> HIT_PUSHBACK;
                 case "weapon_break_flash", "weapon_break", "break_flash" -> WEAPON_BREAK_FLASH;
+                case "armor_equip_flash", "armor_equip", "armor_wear_flash" -> ARMOR_EQUIP_FLASH;
+                case "armor_low_durability_flash", "armor_low_durability", "armor_warning_flash" -> ARMOR_LOW_DURABILITY_FLASH;
+                case "armor_break_flash", "armor_break" -> ARMOR_BREAK_FLASH;
                 case "meditation_ink_wash", "ink_wash", "sumi_e", "flashback" -> MEDITATION_INK_WASH;
                 default -> NONE;
             };

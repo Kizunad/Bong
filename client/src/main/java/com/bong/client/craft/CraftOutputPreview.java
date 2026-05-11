@@ -61,7 +61,9 @@ public final class CraftOutputPreview {
             case TUIKE_SKIN -> new String[] {"伪装  可装备", "损耗随战斗结算"};
             case ZHENFA_TRAP -> new String[] {"阵件  可埋设", "触发后交由阵法系统"};
             case TOOL -> new String[] {"凡器  可使用", "耐久随采集/战斗损耗"};
+            case ARMOR_CRAFT -> new String[] {"甲胄  可装备", "耐久随战斗结算"};
             case CONTAINER -> new String[] {"装具  扩展背包", "重量影响行动负担"};
+            case POISON_POWDER -> new String[] {"毒粉  研磨产出", "供附毒 / 消化流程消耗"};
             case MISC -> new String[] {"凡物  通用材料", "以物易物基础流通物"};
         };
     }
@@ -74,6 +76,7 @@ public final class CraftOutputPreview {
             case TOOL -> "散修常用器具，优先保证材料不被误耗。";
             case DUGU_POTION -> "药性需另行鉴别，手搓只负责凡物制备。";
             case CONTAINER -> "装具类产物会影响背包承重与格位。";
+            case POISON_POWDER -> "由毒丹研磨成粉，供双层附毒流程消耗。";
             default -> "可从当前背包材料直接起手制作。";
         };
     }

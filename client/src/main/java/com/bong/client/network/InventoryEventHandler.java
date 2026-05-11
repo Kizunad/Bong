@@ -1,14 +1,18 @@
 package com.bong.client.network;
 
+import com.bong.client.armor.ArmorBreakParticles;
+import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.combat.ArmorProfileStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.state.VisualEffectState;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import net.minecraft.entity.EquipmentSlot;
 
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -40,6 +44,12 @@ public final class InventoryEventHandler implements ServerDataHandler {
 
     private static final int ARMOR_BROKEN_TOAST_COLOR = 0xFFC04040;
     private static final long ARMOR_BROKEN_TOAST_DURATION_MS = 1200L;
+    private static final int ARMOR_WARNING_TOAST_COLOR = 0xFFE05050;
+    private static final long ARMOR_WARNING_TOAST_DURATION_MS = 1400L;
+    private static final double ARMOR_LOW_DURABILITY_THRESHOLD = 0.20;
+    private static final long ARMOR_EQUIP_FLASH_DURATION_MS = 100L;
+    private static final long ARMOR_LOW_DURABILITY_FLASH_DURATION_MS = 700L;
+    private static final long ARMOR_BREAK_FLASH_DURATION_MS = 300L;
 
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
@@ -73,6 +83,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
         InventoryModel current = InventoryStateStore.snapshot();
         InventoryModel next;
         ServerDataDispatch.ToastSpec alertToast = null;
+        VisualEffectState visualEffectState = VisualEffectState.none();
         switch (kind) {
             case "moved" -> {
                 Location from = parseLocation(readRequiredObject(payload, "from"));
@@ -81,7 +92,16 @@ public final class InventoryEventHandler implements ServerDataHandler {
                     return ServerDataDispatch.noOp(envelope.type(),
                         "Ignoring inventory_event 'moved' payload: invalid from/to location");
                 }
+                InventoryItem item = findItem(current, instanceId);
                 next = applyMoved(current, instanceId, from, to);
+                if (next != null && item != null && isArmorEquipMove(item, to)) {
+                    visualEffectState = VisualEffectState.create(
+                        "armor_equip_flash",
+                        1.0,
+                        ARMOR_EQUIP_FLASH_DURATION_MS,
+                        System.currentTimeMillis()
+                    );
+                }
             }
             case "dropped" -> {
                 Location from = parseLocation(readRequiredObject(payload, "from"));
@@ -145,16 +165,40 @@ public final class InventoryEventHandler implements ServerDataHandler {
 
                 // If an equipped armor profile breaks (durability hits 0), surface a short toast.
                 InventoryItem existing = findItem(current, instanceId);
+                boolean equippedArmor = isEquippedArmor(current, existing, instanceId);
                 if (existing != null
                     && existing.durability() > 0.0
                     && durability <= 0.0
-                    && isEquippedArmor(current, existing, instanceId)) {
+                    && equippedArmor) {
                     EquipSlotType slot = armorSlotForInstance(current, instanceId);
                     String label = slot == null ? "护甲" : slot.displayName();
                     alertToast = new ServerDataDispatch.ToastSpec(
                         label + "破损",
                         ARMOR_BROKEN_TOAST_COLOR,
                         ARMOR_BROKEN_TOAST_DURATION_MS
+                    );
+                    visualEffectState = VisualEffectState.create(
+                        "armor_break_flash",
+                        1.0,
+                        ARMOR_BREAK_FLASH_DURATION_MS,
+                        System.currentTimeMillis()
+                    );
+                    ArmorBreakParticles.spawnLocalShards();
+                } else if (existing != null
+                    && existing.durability() >= ARMOR_LOW_DURABILITY_THRESHOLD
+                    && durability > 0.0
+                    && durability < ARMOR_LOW_DURABILITY_THRESHOLD
+                    && equippedArmor) {
+                    alertToast = new ServerDataDispatch.ToastSpec(
+                        "甲胄将破",
+                        ARMOR_WARNING_TOAST_COLOR,
+                        ARMOR_WARNING_TOAST_DURATION_MS
+                    );
+                    visualEffectState = VisualEffectState.create(
+                        "armor_low_durability_flash",
+                        1.0,
+                        ARMOR_LOW_DURABILITY_FLASH_DURATION_MS,
+                        System.currentTimeMillis()
                     );
                 }
                 next = applyItemReplace(current, instanceId,
@@ -173,13 +217,13 @@ public final class InventoryEventHandler implements ServerDataHandler {
         }
 
         InventoryStateStore.applyAuthoritativeSnapshot(next, revision);
-        if (alertToast != null) {
+        if (alertToast != null || !visualEffectState.isEmpty()) {
             return ServerDataDispatch.handledWithEventAlert(
                 envelope.type(),
                 alertToast,
-                null,
+                visualEffectState,
                 "Applied inventory_event '" + kind + "' (instance_id " + instanceId
-                    + ", revision " + revision + ") with toast"
+                    + ", revision " + revision + ") with armor visual cue"
             );
         }
         return ServerDataDispatch.handled(envelope.type(),
@@ -305,6 +349,34 @@ public final class InventoryEventHandler implements ServerDataHandler {
             || slot == EquipSlotType.CHEST
             || slot == EquipSlotType.LEGS
             || slot == EquipSlotType.FEET;
+    }
+
+    private static boolean isArmorEquipMove(InventoryItem item, Location to) {
+        if (!(to instanceof EquipLoc loc) || item.durability() <= 0.0) {
+            return false;
+        }
+        EquipSlotType slot = loc.slot();
+        if (slot != EquipSlotType.HEAD
+            && slot != EquipSlotType.CHEST
+            && slot != EquipSlotType.LEGS
+            && slot != EquipSlotType.FEET) {
+            return false;
+        }
+        ArmorTintRegistry.ArmorItemSpec mundane = ArmorTintRegistry.item(item.itemId());
+        if (mundane != null) {
+            return fromEquipmentSlot(mundane.slot()) == slot;
+        }
+        return ArmorProfileStore.isArmor(item.itemId()) && ArmorProfileStore.equipSlotForItemId(item.itemId()) == slot;
+    }
+
+    private static EquipSlotType fromEquipmentSlot(EquipmentSlot slot) {
+        return switch (slot) {
+            case HEAD -> EquipSlotType.HEAD;
+            case CHEST -> EquipSlotType.CHEST;
+            case LEGS -> EquipSlotType.LEGS;
+            case FEET -> EquipSlotType.FEET;
+            default -> null;
+        };
     }
 
     private static EquipSlotType armorSlotForInstance(InventoryModel model, long instanceId) {

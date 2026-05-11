@@ -26,6 +26,7 @@ export const CraftCategoryV1 = Type.Union([
   Type.Literal("tuike_skin"),
   Type.Literal("zhenfa_trap"),
   Type.Literal("tool"),
+  Type.Literal("armor_craft"),
   Type.Literal("container"),
   Type.Literal("poison_powder"),
   Type.Literal("misc"),

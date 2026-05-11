@@ -109,6 +109,35 @@ class InventoryEquipRulesTest {
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(treasure));
     }
 
+    @Test
+    void mundaneArmorEquipsOnlyMatchingArmorSlot() {
+        InventoryItem chestplate = item(6006L, "armor_bone_chestplate", 2, 2);
+
+        assertTrue(InventoryEquipRules.canEquip(chestplate, EquipSlotType.CHEST, null, equipped()));
+        assertFalse(InventoryEquipRules.canEquip(chestplate, EquipSlotType.HEAD, null, equipped()));
+        assertTrue(InventoryEquipRules.isArmor(chestplate));
+    }
+
+    @Test
+    void brokenArmorCannotEquipAndArmorCannotUseHotbar() {
+        InventoryItem brokenBoots = InventoryItem.createFull(
+            6007L,
+            "armor_bone_boots",
+            "骨甲靴",
+            1,
+            1,
+            1.0,
+            "common",
+            "",
+            1,
+            1.0,
+            0.0
+        );
+
+        assertFalse(InventoryEquipRules.canEquip(brokenBoots, EquipSlotType.FEET, null, equipped()));
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(brokenBoots));
+    }
+
     private static EnumMap<EquipSlotType, InventoryItem> equipped() {
         return new EnumMap<>(EquipSlotType.class);
     }

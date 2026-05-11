@@ -1,0 +1,10 @@
+{
+  "id": "armor_break",
+  "layers": [
+    { "sound": "minecraft:entity.item.break", "volume": 0.4, "pitch": 0.7, "delay_ticks": 0 },
+    { "sound": "minecraft:block.chain.break", "volume": 0.18, "pitch": 1.15, "delay_ticks": 1 }
+  ],
+  "priority": 75,
+  "attenuation": "world_3d",
+  "category": "PLAYERS"
+}

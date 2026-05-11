@@ -1,5 +1,10 @@
 package com.bong.client.combat;
 
+import com.bong.client.armor.ArmorTintRegistry;
+import com.bong.client.inventory.model.EquipSlotType;
+import net.minecraft.entity.EquipmentSlot;
+
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -49,15 +54,41 @@ public final class ArmorProfileStore {
 
     public static ArmorMitigation mitigationForItemId(String itemId) {
         if (itemId == null) return null;
-        return BY_ITEM_ID.get(itemId.trim());
+        ArmorMitigation legacy = BY_ITEM_ID.get(normalizeLegacyItemId(itemId));
+        if (legacy != null) return legacy;
+
+        ArmorTintRegistry.ArmorItemSpec mundane = ArmorTintRegistry.item(itemId);
+        if (mundane == null) return null;
+        float physical = (float) Math.min(0.85, Math.max(0.0, mundane.defenseForSlot() / 10.0));
+        float burn = (float) Math.min(0.85, physical * 0.35f);
+        return new ArmorMitigation(physical, physical, physical, burn, physical);
     }
 
     public static boolean isArmor(String itemId) {
         return mitigationForItemId(itemId) != null;
     }
 
+    public static EquipSlotType equipSlotForItemId(String itemId) {
+        ArmorTintRegistry.ArmorItemSpec mundane = ArmorTintRegistry.item(itemId);
+        if (mundane != null) {
+            return fromEquipmentSlot(mundane.slot());
+        }
+        String legacyId = itemId == null ? "" : normalizeLegacyItemId(itemId);
+        return BY_ITEM_ID.containsKey(legacyId) ? EquipSlotType.CHEST : null;
+    }
+
+    private static EquipSlotType fromEquipmentSlot(EquipmentSlot slot) {
+        return switch (slot) {
+            case HEAD -> EquipSlotType.HEAD;
+            case CHEST -> EquipSlotType.CHEST;
+            case LEGS -> EquipSlotType.LEGS;
+            case FEET -> EquipSlotType.FEET;
+            default -> null;
+        };
+    }
+
     public static String kindLabel(String kindSnakeCase) {
-        String k = Objects.requireNonNullElse(kindSnakeCase, "").trim().toLowerCase(java.util.Locale.ROOT);
+        String k = Objects.requireNonNullElse(kindSnakeCase, "").trim().toLowerCase(Locale.ROOT);
         return switch (k) {
             case "cut" -> "斩";
             case "blunt" -> "钝";
@@ -66,5 +97,9 @@ public final class ArmorProfileStore {
             case "concussion" -> "震";
             default -> "?";
         };
+    }
+
+    private static String normalizeLegacyItemId(String itemId) {
+        return itemId.trim().toLowerCase(Locale.ROOT);
     }
 }

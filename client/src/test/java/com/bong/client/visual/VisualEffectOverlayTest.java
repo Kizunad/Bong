@@ -84,6 +84,16 @@ public class VisualEffectOverlayTest {
     }
 
     @Test
+    void armorBreakFlashProducesRedScreenTint() {
+        List<HudRenderCommand> commands = buildCommandsAt("armor_break_flash", 1.0, 300L, 0L, 0L);
+
+        assertEquals(1, commands.size());
+        HudRenderCommand command = commands.get(0);
+        assertTrue(command.isScreenTint());
+        assertEquals(VisualEffectProfile.ARMOR_BREAK_FLASH.baseColor(), command.color() & 0x00FFFFFF);
+    }
+
+    @Test
     void newEffectsHonorRetriggerWindowLikeExistingOnes() {
         VisualEffectState first = VisualEffectController.acceptIncoming(
             VisualEffectState.none(),

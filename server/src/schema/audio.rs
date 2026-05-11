@@ -39,6 +39,7 @@ pub enum AudioAttenuation {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AudioSoundCategory {
     Master,
+    Players,
     Hostile,
     Ambient,
     Voice,
@@ -405,6 +406,14 @@ mod tests {
         sample_recipe()
             .validate()
             .expect("sample recipe should validate");
+    }
+
+    #[test]
+    fn sound_category_players_roundtrips() {
+        let json = serde_json::to_string(&AudioSoundCategory::Players).expect("serialize category");
+        assert_eq!(json, "\"PLAYERS\"");
+        let back: AudioSoundCategory = serde_json::from_str(&json).expect("deserialize category");
+        assert_eq!(back, AudioSoundCategory::Players);
     }
 
     #[test]

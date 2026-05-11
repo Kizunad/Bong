@@ -1,7 +1,10 @@
 package com.bong.client.inventory;
 
+import com.bong.client.armor.ArmorTintRegistry;
+import com.bong.client.combat.ArmorProfileStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
+import net.minecraft.entity.EquipmentSlot;
 
 import java.util.Map;
 import java.util.Set;
@@ -86,7 +89,7 @@ final class InventoryEquipRules {
                     && !isOccupied(equipped, EquipSlotType.OFF_HAND)));
             case FALSE_SKIN -> isFalseSkin(item);
             case TREASURE_BELT_0, TREASURE_BELT_1, TREASURE_BELT_2, TREASURE_BELT_3 -> isTreasure(item);
-            case HEAD, CHEST, LEGS, FEET -> weaponKind == null && !hoe && !tool && !isFalseSkin(item);
+            case HEAD, CHEST, LEGS, FEET -> isArmorForSlot(item, targetSlot);
         };
     }
 
@@ -109,7 +112,7 @@ final class InventoryEquipRules {
     }
 
     static boolean canPlaceIntoHotbar(InventoryItem item) {
-        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item);
+        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item) && !isArmor(item);
     }
 
     static boolean canPlaceIntoQuickUse(InventoryItem item) {
@@ -132,8 +135,35 @@ final class InventoryEquipRules {
         return item != null && isTool(item.itemId());
     }
 
+    static boolean isArmor(InventoryItem item) {
+        return item != null && isArmor(item.itemId());
+    }
+
     private static boolean isSingleCell(InventoryItem item) {
         return item != null && item.gridWidth() == 1 && item.gridHeight() == 1;
+    }
+
+    private static boolean isArmor(String itemId) {
+        return ArmorTintRegistry.isMundaneArmor(itemId) || ArmorProfileStore.isArmor(itemId);
+    }
+
+    private static boolean isArmorForSlot(InventoryItem item, EquipSlotType targetSlot) {
+        if (item == null || item.isEmpty() || item.durability() <= 0.0) return false;
+        ArmorTintRegistry.ArmorItemSpec mundane = ArmorTintRegistry.item(item.itemId());
+        if (mundane != null) {
+            return mundane.slot() == equipmentSlot(targetSlot);
+        }
+        return ArmorProfileStore.isArmor(item.itemId()) && ArmorProfileStore.equipSlotForItemId(item.itemId()) == targetSlot;
+    }
+
+    private static EquipmentSlot equipmentSlot(EquipSlotType slot) {
+        return switch (slot) {
+            case HEAD -> EquipmentSlot.HEAD;
+            case CHEST -> EquipmentSlot.CHEST;
+            case LEGS -> EquipmentSlot.LEGS;
+            case FEET -> EquipmentSlot.FEET;
+            default -> null;
+        };
     }
 
     private static boolean isOccupied(Map<EquipSlotType, InventoryItem> equipped, EquipSlotType slot) {

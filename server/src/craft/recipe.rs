@@ -70,6 +70,8 @@ pub enum CraftCategory {
     ZhenfaTrap,
     /// 凡器（采药刀 / 刮刀 / 镰刀），tools 流派
     Tool,
+    /// 凡物盔甲（骨甲 / 兽皮甲 / 铁甲 / 铜甲 / 灵布衫 / 残卷缠甲）。
+    ArmorCraft,
     /// 容器 / 装具（箭袋、裤袋、封灵匣等）。
     Container,
     /// 毒丹研磨粉末（poison-trait-v1 双层附毒的消耗品路径）。
@@ -86,6 +88,7 @@ impl CraftCategory {
             Self::TuikeSkin => "tuike_skin",
             Self::ZhenfaTrap => "zhenfa_trap",
             Self::Tool => "tool",
+            Self::ArmorCraft => "armor_craft",
             Self::Container => "container",
             Self::PoisonPowder => "poison_powder",
             Self::Misc => "misc",
@@ -94,12 +97,13 @@ impl CraftCategory {
 
     /// UI 左列表分组顺序固定（§5 决策门 #2 = A，按类别分组 + 字母）。
     /// 客户端不应自行打乱该顺序，否则解锁状态视觉跟服务端不一致。
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::AnqiCarrier,
         Self::DuguPotion,
         Self::TuikeSkin,
         Self::ZhenfaTrap,
         Self::Tool,
+        Self::ArmorCraft,
         Self::Container,
         Self::PoisonPowder,
         Self::Misc,
@@ -373,6 +377,7 @@ mod tests {
                 "tuike_skin",
                 "zhenfa_trap",
                 "tool",
+                "armor_craft",
                 "container",
                 "poison_powder",
                 "misc"

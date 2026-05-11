@@ -160,6 +160,10 @@
                   "type": "string"
                 },
                 {
+                  "const": "PLAYERS",
+                  "type": "string"
+                },
+                {
                   "const": "HOSTILE",
                   "type": "string"
                 },
@@ -428,6 +432,10 @@
               "anyOf": [
                 {
                   "const": "MASTER",
+                  "type": "string"
+                },
+                {
+                  "const": "PLAYERS",
                   "type": "string"
                 },
                 {

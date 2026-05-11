@@ -1,5 +1,6 @@
 package com.bong.client.inventory;
 
+import com.bong.client.armor.ArmorTintRegistry;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.InvalidIdentifierException;
@@ -94,7 +95,8 @@ public final class ItemIconRegistry {
 
         Identifier candidate;
         try {
-            candidate = id(itemTexturePath(itemId));
+            String armorPath = ArmorTintRegistry.iconPathForItemId(itemId);
+            candidate = id(armorPath == null ? itemTexturePath(itemId) : armorPath);
         } catch (InvalidIdentifierException exception) {
             return fallbackTextureIdForItemId(itemId);
         }
