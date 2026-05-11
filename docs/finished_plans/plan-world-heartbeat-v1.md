@@ -454,3 +454,35 @@ WorldHeartbeat（自主）    天道 Agent（LLM 决策）
 10. **每次评估后**：`sum(zone.spirit_qi) + sum(player.qi_current) + sum(pseudo_vein.qi) ≈ SPIRIT_QI_TOTAL`（容差 0.5%）
 11. **域崩 QI 不凭空消失**：域崩前后全服 QI 差值 = redistribute 量
 12. **心跳不创造 NPC**：兽潮 spawn 走 NpcRegistry.reserve_zone_batch()，不超预算
+
+---
+
+## Finish Evidence
+
+- **落地清单**：
+  - P0：`server/src/world/heartbeat.rs` 新增 `WorldHeartbeat`、`EventCadence`、`WorldPressure`、`heartbeat_tick()`；`server/src/world/mod.rs` 注册 server-side 自主心跳。
+  - P1：`EventChainTrigger` + `chain_reaction_tick()` 接入伪灵脉消散、兽潮抵达、域崩完成；链式产物复用 `ActiveEventsResource` 的 `beast_tide` / `realm_collapse` 调度。
+  - P2：`WorldEventOmen`、`OmenKind` 与 `bong:world_omen_*` VFX 事件提供预兆面；client 侧 `OmenStateStore`、`OmenHudPlanner`、`OmenParticlePlayer` 渲染屏幕边缘预兆和粒子反馈。
+  - P3：`season_event_modifiers()` 固定夏 / 冬 / 汐转期的伪灵脉、兽潮、域崩、业力反噬频率与强度调制。
+  - P4：`heartbeat_override` 扩展到 `AgentCommandV1`、Rust `CommandType`、Redis validator 与 `execute_agent_commands()`，支持 `suppress` / `accelerate` / `force`。
+  - P5：`world::heartbeat::tests::*` 覆盖季节表、override、伪灵脉运行时 zone、链式兽潮、48h 无人值守仿真；schema / client planner 侧补正反契约测试。
+- **关键 commit**：
+  - `f5e38ced4`（2026-05-11）`feat(world): 接入自主世界心跳调度`
+  - `090ecea37`（2026-05-11）`feat(schema): 增加 heartbeat_override 指令契约`
+  - `cb8c60583`（2026-05-11）`feat(client): 渲染世界事件预兆`
+  - `f37df60cc`（2026-05-11）`Merge remote-tracking branch 'origin/main' into auto/plan-world-heartbeat-v1`
+- **测试结果**：
+  - `CARGO_BUILD_JOBS=1 cargo fmt --check`：通过。
+  - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings`：通过。合并 `origin/main` 后普通 clippy 曾被 SIGKILL，低内存参数重跑无诊断通过。
+  - `CARGO_BUILD_JOBS=1 cargo test`：4288 passed / 0 failed。
+  - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build`：BUILD SUCCESSFUL。
+  - `npm run build`（agent root）：通过。
+  - `cd agent/packages/schema && npm test`：18 files / 367 tests passed。
+  - `cd agent/packages/tiandao && npm test`：51 files / 352 tests passed。
+- **跨仓库核验**：
+  - server：`WorldHeartbeat`、`WorldEventOmen`、`EventChainTrigger`、`heartbeat_tick()`、`chain_reaction_tick()`、`CommandType::HeartbeatOverride`。
+  - agent/schema：`CommandType` 包含 `heartbeat_override`，`validateAgentCommandV1Contract()` 校验 action / event_type / duration / intensity。
+  - client：`OmenStateStore` 消费 `bong:world_omen_*` 粒子 payload，`OmenHudPlanner` 注入 `HudRenderLayer.VISUAL`，`VfxBootstrap` 注册四类 omen particle player。
+- **遗留 / 后续**：
+  - 本 plan 没有新增 combat `StatusEffects` debuff 或持久 NPC flee-threshold 状态；预兆的可感知 surface 先落在 server VFX 事件、client HUD/particle 与既有 `beast_tide` runtime。若要把“预兆期 NPC 逃窜/囤积”做成独立 gameplay state，应另开 NPC behavior contract plan。
+  - 心跳触发的 QI 路径复用伪灵脉 / 域崩 / 兽潮既有 runtime，没有新增 QI 生成或销毁账户。
