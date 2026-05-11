@@ -9,16 +9,23 @@ import {
 } from "../src/poi-novice.js";
 import { validate } from "../src/validate.js";
 
+const POI_KINDS = [
+  "forge_station",
+  "alchemy_furnace",
+  "rogue_village",
+  "mutant_nest",
+  "scroll_hidden",
+  "spirit_herb_valley",
+  "herb_patch",
+  "qi_spring",
+  "trade_spot",
+  "shelter_spot",
+  "water_source",
+] as const;
+
 describe("plan-poi-novice-v1 — PoiNoviceKindV1", () => {
-  it("accepts all six novice POI types", () => {
-    for (const kind of [
-      "forge_station",
-      "alchemy_furnace",
-      "rogue_village",
-      "mutant_nest",
-      "scroll_hidden",
-      "spirit_herb_valley",
-    ] as const) {
+  it("accepts novice and NPC daily-life POI types", () => {
+    for (const kind of POI_KINDS) {
       expect(validate(PoiNoviceKindV1, kind).ok).toBe(true);
     }
   });
@@ -29,28 +36,37 @@ describe("plan-poi-novice-v1 — PoiNoviceKindV1", () => {
 });
 
 describe("plan-poi-novice-v1 — PoiSpawnedEventV1", () => {
-  const valid = {
+  const valid = (poiType: (typeof POI_KINDS)[number] = "forge_station") => ({
     v: 1 as const,
     kind: "poi_spawned" as const,
-    poi_id: "spawn:forge_station",
-    poi_type: "forge_station" as const,
+    poi_id: `spawn:${poiType}:x304_y71_z208`,
+    poi_type: poiType,
     zone: "spawn",
     pos: [304, 71, 208],
     selection_strategy: "strict_radius_1500",
     qi_affinity: 0.15,
     danger_bias: 0,
-  };
+  });
 
   it("accepts a fully populated spawned event", () => {
-    expect(validatePoiSpawnedEventV1Contract(valid).ok).toBe(true);
+    expect(validatePoiSpawnedEventV1Contract(valid()).ok).toBe(true);
+  });
+
+  it("pins every POI type in spawned event payloads", () => {
+    for (const kind of POI_KINDS) {
+      expect(validatePoiSpawnedEventV1Contract(valid(kind)).ok).toBe(true);
+      expect(validate(PoiSpawnedEventV1, { ...valid(kind), poi_type: `${kind}:future` } as never).ok).toBe(
+        false,
+      );
+    }
   });
 
   it("rejects extra fields", () => {
-    expect(validate(PoiSpawnedEventV1, { ...valid, hud_marker: true } as never).ok).toBe(false);
+    expect(validate(PoiSpawnedEventV1, { ...valid(), hud_marker: true } as never).ok).toBe(false);
   });
 
   it("rejects out-of-range qi affinity", () => {
-    expect(validate(PoiSpawnedEventV1, { ...valid, qi_affinity: 2 } as never).ok).toBe(false);
+    expect(validate(PoiSpawnedEventV1, { ...valid(), qi_affinity: 2 } as never).ok).toBe(false);
   });
 });
 

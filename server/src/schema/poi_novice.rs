@@ -11,6 +11,11 @@ pub enum PoiNoviceKindV1 {
     MutantNest,
     ScrollHidden,
     SpiritHerbValley,
+    HerbPatch,
+    QiSpring,
+    TradeSpot,
+    ShelterSpot,
+    WaterSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

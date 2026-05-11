@@ -2981,6 +2981,7 @@ mod tests {
                 dimension: DimensionKind::Overworld,
                 zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 position: pos,
+                schedule_seed: None,
                 cultivation: cultivation.clone(),
                 meridian_system: MeridianSystem::default(),
                 meridian_severed:

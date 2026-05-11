@@ -99,8 +99,8 @@ use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
-const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(1);
-const REDIS_HASH_REPLACE_TIMEOUT: Duration = Duration::from_secs(1);
+const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(3);
+const REDIS_HASH_REPLACE_TIMEOUT: Duration = Duration::from_secs(3);
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
@@ -217,7 +217,7 @@ pub enum RedisOutbound {
     VoidAction(VoidActionBroadcastV1),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum RedisIoCommand {
     Publish {
         channel: &'static str,
@@ -374,7 +374,7 @@ async fn drain_outbound_messages(
     let mut drained = 0;
 
     if let Some(command) = pending_command.take() {
-        if let Err(error) = execute_outbound_command(pub_conn, &command).await {
+        if let Err((error, command)) = dispatch_outbound_command(pub_conn, command).await {
             *pending_command = Some(command);
             return DrainOutcome::Reconnect {
                 reason: format!("outbound_retry_failed: {error}"),
@@ -389,7 +389,9 @@ async fn drain_outbound_messages(
 
                 match prepare_outbound_command(message) {
                     Ok(command) => {
-                        if let Err(error) = execute_outbound_command(pub_conn, &command).await {
+                        if let Err((error, command)) =
+                            dispatch_outbound_command(pub_conn, command).await
+                        {
                             *pending_command = Some(command);
                             return DrainOutcome::Reconnect {
                                 reason: format!("outbound_failed: {error}"),
@@ -1343,6 +1345,35 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
     } else {
         endpoint.to_string()
     }
+}
+
+async fn dispatch_outbound_command(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    command: RedisIoCommand,
+) -> Result<(), (String, RedisIoCommand)> {
+    if runs_on_background_redis_connection(&command) {
+        let mut background_conn = pub_conn.clone();
+        tokio::spawn(async move {
+            if let Err(error) = execute_outbound_command(&mut background_conn, &command).await {
+                tracing::warn!("[bong][redis] background outbound failed: {error}");
+            }
+        });
+        Ok(())
+    } else {
+        execute_outbound_command(pub_conn, &command)
+            .await
+            .map_err(|error| (error, command))
+    }
+}
+
+fn runs_on_background_redis_connection(command: &RedisIoCommand) -> bool {
+    matches!(
+        command,
+        RedisIoCommand::Publish {
+            channel: CH_WORLD_STATE,
+            ..
+        }
+    )
 }
 
 async fn execute_outbound_command(
@@ -3633,6 +3664,9 @@ mod redis_bridge_tests {
             publish_timeout_for_channel(CH_AGENT_COMMAND),
             REDIS_IO_TIMEOUT
         );
+        assert!(runs_on_background_redis_connection(
+            &prepare_outbound_command(RedisOutbound::WorldState(sample_world_state())).unwrap()
+        ));
     }
 
     #[test]
@@ -3641,6 +3675,9 @@ mod redis_bridge_tests {
             REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
             "dormant HASH replace writes batches and should not share the tiny per-command timeout"
         );
+        assert!(!runs_on_background_redis_connection(
+            &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
+        ));
     }
 
     #[tokio::test]

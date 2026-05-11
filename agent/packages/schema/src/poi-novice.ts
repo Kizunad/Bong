@@ -9,6 +9,11 @@ export const PoiNoviceKindV1 = Type.Union([
   Type.Literal("mutant_nest"),
   Type.Literal("scroll_hidden"),
   Type.Literal("spirit_herb_valley"),
+  Type.Literal("herb_patch"),
+  Type.Literal("qi_spring"),
+  Type.Literal("trade_spot"),
+  Type.Literal("shelter_spot"),
+  Type.Literal("water_source"),
 ]);
 export type PoiNoviceKindV1 = Static<typeof PoiNoviceKindV1>;
 

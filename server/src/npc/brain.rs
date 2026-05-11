@@ -13,8 +13,11 @@ use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::breakthrough::{
     breakthrough_qi_cost, try_breakthrough, BreakthroughError, BreakthroughSuccess, XorshiftRoll,
 };
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    recover_current_qi, Cultivation, MeridianId, MeridianSystem, Realm,
+};
 use crate::cultivation::meridian_open::MeridianTarget;
+use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::topology::MeridianTopology;
 use crate::cultivation::tribulation::{InitiateXuhuaTribulation, TribulationState};
 use crate::identity::{reaction::npc_should_seek_attack, PlayerIdentities};
@@ -32,8 +35,13 @@ use crate::npc::movement::{
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::perf::NpcPerfProbe;
+use crate::npc::schedule::{
+    nearest_poi_for_activity, rest_tick, schedule_multiplier, scheduled_wander_score,
+    NpcDailySchedule, NpcHomeBase, ScheduleActivity, DAILY_POI_SEARCH_RADIUS,
+};
 use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker, NpcMeleeProfile};
 use crate::npc::tribulation::{AscensionQuotaStore, NpcTribulationPacing};
+use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 pub const DEFAULT_FLEE_THRESHOLD: f32 = 0.6;
@@ -71,6 +79,14 @@ const WANDER_MAX_RADIUS: f64 = 10.0;
 const WANDER_ARRIVAL_DISTANCE: f64 = 1.6;
 const WANDER_SPEED_FACTOR: f64 = 0.6;
 const WANDER_MAX_TICKS: u32 = 200;
+const GO_TO_POI_ARRIVAL_DISTANCE: f64 = 1.8;
+const GO_TO_POI_MAX_TICKS: u32 = 400;
+const REST_MAX_TICKS: u32 = 20 * 120;
+const REST_RECOVERY_RATE_PER_TICK: f64 = 1.0 / 120.0;
+const STALL_MIN_TICKS: u32 = 20 * 60;
+const STALL_MAX_TICKS: u32 = 20 * 300;
+const TRADE_STALL_BASELINE_SCORE: f32 = 0.45;
+const RETURN_HOME_ARRIVAL_DISTANCE: f64 = 1.8;
 /// Wander 默认基线评分（作为最低优先级兜底）。
 const WANDER_BASELINE_SCORE: f32 = 0.08;
 /// 散修好奇心基线（始终略高于 Wander baseline，鼓励周期性流浪）。
@@ -153,6 +169,75 @@ pub struct FarmAction;
 /// 随机漫步，失败/到达即 Success。
 #[derive(Clone, Copy, Debug, Component)]
 pub struct WanderAction;
+
+/// 目的地驱动漫游：按当前日程活动优先走向匹配 POI；缺 POI 时退回随机漫游。
+#[derive(Clone, Debug, Component)]
+pub struct GoToPoiAction {
+    pub target_poi: Option<String>,
+    pub arrive_action: Option<ScheduleActivity>,
+    pub timeout_ticks: u32,
+}
+
+impl Default for GoToPoiAction {
+    fn default() -> Self {
+        Self {
+            target_poi: None,
+            arrive_action: None,
+            timeout_ticks: GO_TO_POI_MAX_TICKS,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Component)]
+pub struct GoToPoiState {
+    pub target_poi: Option<String>,
+    pub destination: Option<DVec3>,
+    pub arrive_action: Option<ScheduleActivity>,
+    pub elapsed_ticks: u32,
+    pub arrival_ticks: u32,
+    pub fallback_wander: bool,
+}
+
+/// 日程驱动的交易摆摊评分。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct TradeStallScorer;
+
+/// 在交通点等待玩家靠近。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct StallAction;
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct StallState {
+    pub elapsed_ticks: u32,
+    pub facing_target: Option<DVec3>,
+    pub destination: Option<DVec3>,
+}
+
+fn poi_arrival_required_ticks(activity: ScheduleActivity) -> u32 {
+    match activity {
+        ScheduleActivity::Forage => 1,
+        ScheduleActivity::Cultivate => CULTIVATE_MAX_TICKS,
+        ScheduleActivity::Trade => STALL_MIN_TICKS,
+        ScheduleActivity::Rest => REST_MAX_TICKS,
+        ScheduleActivity::Patrol | ScheduleActivity::Socialize | ScheduleActivity::Wander => 1,
+    }
+}
+
+/// 夜间、低真元或低饱食度时回家。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct ReturnHomeScorer;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct ReturnHomeAction;
+
+/// 在 HomeBase 附近休息，恢复 hunger / qi。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct RestAction;
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct RestState {
+    pub elapsed_ticks: u32,
+}
 
 /// Wander action 运行时记忆：当前目标 + 已耗 tick。
 /// 挂在 actor（不是 action entity）上，Commoner Bundle 默认插入。
@@ -418,6 +503,66 @@ impl ActionBuilder for WanderAction {
     }
 }
 
+impl ActionBuilder for GoToPoiAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(self.clone());
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("GoToPoiAction")
+    }
+}
+
+impl ScorerBuilder for TradeStallScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("TradeStallScorer")
+    }
+}
+
+impl ActionBuilder for StallAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("StallAction")
+    }
+}
+
+impl ScorerBuilder for ReturnHomeScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("ReturnHomeScorer")
+    }
+}
+
+impl ActionBuilder for ReturnHomeAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("ReturnHomeAction")
+    }
+}
+
+impl ActionBuilder for RestAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("RestAction")
+    }
+}
+
 impl ScorerBuilder for CultivationDriveScorer {
     fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
         cmd.entity(scorer).insert(*self);
@@ -510,6 +655,8 @@ pub fn register(app: &mut App) {
                 fear_cultivator_scorer_system,
                 hunger_scorer_system,
                 wander_scorer_system,
+                trade_stall_scorer_system,
+                return_home_scorer_system,
             )
                 .in_set(BigBrainSet::Scorers),
         )
@@ -534,6 +681,10 @@ pub fn register(app: &mut App) {
                 flee_cultivator_action_system,
                 farm_action_system,
                 wander_action_system,
+                go_to_poi_action_system,
+                stall_action_system,
+                return_home_action_system,
+                rest_action_system,
             )
                 .in_set(BigBrainSet::Actions),
         )
@@ -1222,18 +1373,77 @@ fn fear_cultivator_scorer_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn hunger_scorer_system(
-    npcs: Query<(&Hunger, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<(&Hunger, Option<&NpcDailySchedule>, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<HungerScorer>>,
+    clock: Option<Res<CultivationClock>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
+) {
+    let clock_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match npcs.get(*actor) {
+            Ok((h, schedule, tier)) => {
+                match lod_gated_score(tier, tick, &cfg, || h.hunger_pressure()) {
+                    Some(value) => {
+                        let multiplier = schedule_multiplier(
+                            schedule,
+                            tier,
+                            clock_tick,
+                            ScheduleActivity::Forage,
+                        )
+                        .unwrap_or(1.0);
+                        value * multiplier
+                    }
+                    None => continue,
+                }
+            }
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn wander_scorer_system(
+    npcs: Query<
+        (
+            Option<&PendingRetirement>,
+            Option<&NpcDailySchedule>,
+            Option<&NpcLodTier>,
+        ),
+        With<NpcMarker>,
+    >,
+    mut scorers: Query<(&Actor, &mut Score), With<WanderScorer>>,
+    clock: Option<Res<CultivationClock>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
 ) {
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let clock_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
-            Ok((h, tier)) => match lod_gated_score(tier, tick, &cfg, || h.hunger_pressure()) {
-                Some(value) => value,
+            Ok((pending, schedule, tier)) => match lod_gated_score(tier, tick, &cfg, || {
+                if pending.is_some() {
+                    0.0
+                } else {
+                    WANDER_BASELINE_SCORE
+                }
+            }) {
+                Some(value) => scheduled_wander_score(
+                    schedule,
+                    tier,
+                    clock_tick,
+                    schedule
+                        .map(|schedule| schedule.seed)
+                        .unwrap_or_else(|| actor.index() as u64),
+                    value,
+                )
+                .unwrap_or(value),
                 None => continue,
             },
             Err(_) => 0.0,
@@ -1242,30 +1452,105 @@ fn hunger_scorer_system(
     }
 }
 
-fn wander_scorer_system(
-    npcs: Query<(Option<&PendingRetirement>, Option<&NpcLodTier>), With<NpcMarker>>,
-    mut scorers: Query<(&Actor, &mut Score), With<WanderScorer>>,
-    lod_config: Option<Res<NpcLodConfig>>,
-    lod_tick: Option<Res<NpcLodTick>>,
+#[allow(clippy::type_complexity)]
+fn trade_stall_scorer_system(
+    npcs: Query<
+        (
+            &Position,
+            &NpcDailySchedule,
+            Option<&PendingRetirement>,
+            Option<&NpcLodTier>,
+        ),
+        With<NpcMarker>,
+    >,
+    mut scorers: Query<(&Actor, &mut Score), With<TradeStallScorer>>,
+    clock: Option<Res<CultivationClock>>,
+    pois: Option<Res<PoiNoviceRegistry>>,
 ) {
-    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
-    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
-            Ok((pending, tier)) => match lod_gated_score(tier, tick, &cfg, || {
-                if pending.is_some() {
+            Ok((position, schedule, pending, tier)) => {
+                let has_trade_spot = nearest_poi_for_activity(
+                    pois.as_deref(),
+                    position.get(),
+                    ScheduleActivity::Trade,
+                    DAILY_POI_SEARCH_RADIUS,
+                )
+                .is_some();
+                if pending.is_some()
+                    || !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near)
+                    || !has_trade_spot
+                {
                     0.0
                 } else {
-                    WANDER_BASELINE_SCORE
+                    TRADE_STALL_BASELINE_SCORE
+                        * schedule.weight(schedule.phase(tick), ScheduleActivity::Trade)
                 }
-            }) {
-                Some(value) => value,
-                None => continue,
-            },
+            }
             Err(_) => 0.0,
         };
         score.set(value);
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn return_home_scorer_system(
+    npcs: Query<
+        (
+            &NpcDailySchedule,
+            &NpcHomeBase,
+            Option<&Hunger>,
+            Option<&Cultivation>,
+            Option<&PendingRetirement>,
+            Option<&NpcLodTier>,
+        ),
+        With<NpcMarker>,
+    >,
+    mut scorers: Query<(&Actor, &mut Score), With<ReturnHomeScorer>>,
+    clock: Option<Res<CultivationClock>>,
+) {
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match npcs.get(*actor) {
+            Ok((schedule, _home, hunger, cultivation, pending, tier)) => {
+                if pending.is_some()
+                    || !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near)
+                {
+                    0.0
+                } else {
+                    return_home_score(schedule, hunger, cultivation, tick)
+                }
+            }
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
+pub(crate) fn return_home_score(
+    schedule: &NpcDailySchedule,
+    hunger: Option<&Hunger>,
+    cultivation: Option<&Cultivation>,
+    tick: u64,
+) -> f32 {
+    let phase = schedule.phase(tick);
+    let night_rest = if matches!(phase, crate::npc::schedule::DayPhase::Night) {
+        0.6_f32 * schedule.weight(phase, ScheduleActivity::Rest)
+    } else {
+        0.0
+    };
+    let low_qi = cultivation
+        .filter(|cultivation| {
+            cultivation.qi_max > f64::EPSILON && cultivation.qi_current / cultivation.qi_max < 0.2
+        })
+        .map(|_| 0.8_f32)
+        .unwrap_or(0.0);
+    let low_hunger = hunger
+        .filter(|hunger| hunger.value < 0.3)
+        .map(|_| 0.5_f32)
+        .unwrap_or(0.0);
+    night_rest.max(low_qi).max(low_hunger)
 }
 
 fn flee_cultivator_action_system(
@@ -1424,6 +1709,342 @@ fn wander_action_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
+fn go_to_poi_action_system(
+    mut npcs: Query<
+        (
+            &Position,
+            &NpcPatrol,
+            &mut Navigator,
+            &mut GoToPoiState,
+            Option<&NpcDailySchedule>,
+            Option<&mut Hunger>,
+            Option<&mut Cultivation>,
+        ),
+        With<NpcMarker>,
+    >,
+    mut actions: Query<(&Actor, &GoToPoiAction, &mut ActionState)>,
+    clock: Option<Res<CultivationClock>>,
+    game_tick: Option<Res<GameTick>>,
+    pois: Option<Res<PoiNoviceRegistry>>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+) {
+    let clock_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let game_tick = game_tick.as_deref().map(|tick| tick.0).unwrap_or_default();
+
+    for (Actor(actor), action, mut state) in &mut actions {
+        let Ok((position, patrol, mut navigator, mut poi_state, schedule, hunger, cultivation)) =
+            npcs.get_mut(*actor)
+        else {
+            *state = ActionState::Failure;
+            continue;
+        };
+
+        match *state {
+            ActionState::Requested => {
+                let activity = action
+                    .arrive_action
+                    .or_else(|| {
+                        schedule.map(|schedule| schedule.activity_for(clock_tick, schedule.seed))
+                    })
+                    .unwrap_or(ScheduleActivity::Wander);
+                let target = action
+                    .target_poi
+                    .as_deref()
+                    .and_then(|id| pois.as_deref().and_then(|pois| pois.by_id(id)))
+                    .map(|site| (Some(site.id.clone()), site.position_vec(), false))
+                    .or_else(|| {
+                        nearest_poi_for_activity(
+                            pois.as_deref(),
+                            position.get(),
+                            activity,
+                            DAILY_POI_SEARCH_RADIUS,
+                        )
+                        .map(|pos| (None, pos, false))
+                    });
+                let (target_poi, destination, fallback_wander) = target.unwrap_or_else(|| {
+                    let home = zone_registry
+                        .as_deref()
+                        .and_then(|zones| zones.find_zone_by_name(&patrol.home_zone));
+                    (
+                        None,
+                        wander_target_for(position.get(), actor.index(), game_tick, home),
+                        true,
+                    )
+                });
+
+                navigator.set_goal(destination, WANDER_SPEED_FACTOR);
+                poi_state.target_poi = target_poi;
+                poi_state.destination = Some(destination);
+                poi_state.arrive_action = Some(activity);
+                poi_state.elapsed_ticks = 0;
+                poi_state.arrival_ticks = 0;
+                poi_state.fallback_wander = fallback_wander;
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                poi_state.elapsed_ticks = poi_state.elapsed_ticks.saturating_add(1);
+                let arrived = poi_state
+                    .destination
+                    .map(|dest| position.get().distance(dest) <= GO_TO_POI_ARRIVAL_DISTANCE)
+                    .unwrap_or(true);
+
+                if arrived && !poi_state.fallback_wander {
+                    let activity = poi_state.arrive_action.unwrap_or(ScheduleActivity::Wander);
+                    if poi_state.arrival_ticks == 0 {
+                        let mut hunger = hunger;
+                        let mut cultivation = cultivation;
+                        finish_poi_arrival(
+                            activity,
+                            hunger.as_deref_mut(),
+                            cultivation.as_deref_mut(),
+                        );
+                        navigator.stop();
+                        poi_state.destination = None;
+                        poi_state.target_poi = None;
+                    }
+                    poi_state.arrival_ticks = poi_state.arrival_ticks.saturating_add(1);
+                    if poi_state.arrival_ticks >= poi_arrival_required_ticks(activity) {
+                        poi_state.arrival_ticks = 0;
+                        *state = ActionState::Success;
+                    }
+                    continue;
+                }
+
+                if arrived || poi_state.elapsed_ticks >= action.timeout_ticks {
+                    navigator.stop();
+                    poi_state.destination = None;
+                    poi_state.target_poi = None;
+                    poi_state.arrival_ticks = 0;
+                    *state = ActionState::Success;
+                }
+            }
+            ActionState::Cancelled => {
+                navigator.stop();
+                poi_state.destination = None;
+                poi_state.target_poi = None;
+                poi_state.arrival_ticks = 0;
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+fn finish_poi_arrival(
+    activity: ScheduleActivity,
+    hunger: Option<&mut Hunger>,
+    cultivation: Option<&mut Cultivation>,
+) {
+    match activity {
+        ScheduleActivity::Forage => {
+            if let Some(hunger) = hunger {
+                hunger.replenish(0.1);
+            }
+        }
+        ScheduleActivity::Cultivate => {
+            if let Some(cultivation) = cultivation {
+                recover_current_qi(cultivation, cultivation.qi_max * 0.02);
+            }
+        }
+        ScheduleActivity::Trade
+        | ScheduleActivity::Patrol
+        | ScheduleActivity::Rest
+        | ScheduleActivity::Socialize
+        | ScheduleActivity::Wander => {}
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn stall_action_system(
+    players: Query<&Position, With<ClientMarker>>,
+    mut npcs: Query<(&Position, &mut Navigator, &mut StallState), With<NpcMarker>>,
+    mut actions: Query<(&Actor, &mut ActionState), With<StallAction>>,
+    pois: Option<Res<PoiNoviceRegistry>>,
+) {
+    for (Actor(actor), mut state) in &mut actions {
+        let Ok((position, mut navigator, mut stall)) = npcs.get_mut(*actor) else {
+            *state = ActionState::Failure;
+            continue;
+        };
+
+        match *state {
+            ActionState::Requested => {
+                stall.elapsed_ticks = 0;
+                let current = position.get();
+                let trade_destination = nearest_poi_for_activity(
+                    pois.as_deref(),
+                    current,
+                    ScheduleActivity::Trade,
+                    DAILY_POI_SEARCH_RADIUS,
+                );
+                let Some(destination) = trade_destination else {
+                    navigator.stop();
+                    stall.destination = None;
+                    stall.facing_target = None;
+                    *state = ActionState::Failure;
+                    continue;
+                };
+                if current.distance(destination) > GO_TO_POI_ARRIVAL_DISTANCE {
+                    navigator.set_goal(destination, WANDER_SPEED_FACTOR);
+                    stall.destination = Some(destination);
+                    stall.facing_target = Some(stall_facing_target(current, destination));
+                } else {
+                    navigator.stop();
+                    stall.destination = None;
+                    stall.facing_target = Some(stall_facing_target(current, destination));
+                }
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                if let Some(destination) = stall.destination {
+                    let current = position.get();
+                    if current.distance(destination) > GO_TO_POI_ARRIVAL_DISTANCE {
+                        stall.facing_target = Some(stall_facing_target(current, destination));
+                        continue;
+                    }
+                    navigator.stop();
+                    stall.destination = None;
+                    stall.elapsed_ticks = 0;
+                    stall.facing_target = Some(stall_facing_target(current, destination));
+                }
+                stall.elapsed_ticks = stall.elapsed_ticks.saturating_add(1);
+                let player_near = players
+                    .iter()
+                    .any(|player| position.get().distance(player.get()) <= 8.0);
+                if (player_near && stall.elapsed_ticks >= STALL_MIN_TICKS)
+                    || stall.elapsed_ticks >= STALL_MAX_TICKS
+                {
+                    *state = ActionState::Success;
+                }
+            }
+            ActionState::Cancelled => {
+                stall.elapsed_ticks = 0;
+                stall.destination = None;
+                navigator.stop();
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+pub(crate) fn stall_facing_target(position: DVec3, path_hint: DVec3) -> DVec3 {
+    if position.distance(path_hint) <= f64::EPSILON {
+        DVec3::new(position.x + 1.0, position.y, position.z)
+    } else {
+        DVec3::new(path_hint.x, position.y, path_hint.z)
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn return_home_action_system(
+    mut npcs: Query<
+        (
+            &Position,
+            &mut Navigator,
+            &NpcHomeBase,
+            Option<&mut Hunger>,
+            Option<&mut Cultivation>,
+            &mut RestState,
+        ),
+        With<NpcMarker>,
+    >,
+    mut actions: Query<(&Actor, &mut ActionState), With<ReturnHomeAction>>,
+) {
+    for (Actor(actor), mut state) in &mut actions {
+        let Ok((position, mut navigator, home, hunger, cultivation, mut rest)) =
+            npcs.get_mut(*actor)
+        else {
+            *state = ActionState::Failure;
+            continue;
+        };
+        let home_pos = home.center();
+
+        match *state {
+            ActionState::Requested => {
+                rest.elapsed_ticks = 0;
+                navigator.set_goal(home_pos, WANDER_SPEED_FACTOR);
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                if position.get().distance(home_pos) <= RETURN_HOME_ARRIVAL_DISTANCE {
+                    navigator.stop();
+                    rest.elapsed_ticks = rest.elapsed_ticks.saturating_add(1);
+                    let mut hunger = hunger;
+                    let mut cultivation = cultivation;
+                    rest_tick(
+                        hunger.as_deref_mut(),
+                        cultivation.as_deref_mut(),
+                        home.quality,
+                        REST_RECOVERY_RATE_PER_TICK,
+                    );
+                    if rest.elapsed_ticks >= REST_MAX_TICKS {
+                        *state = ActionState::Success;
+                    }
+                } else {
+                    navigator.set_goal(home_pos, WANDER_SPEED_FACTOR);
+                }
+            }
+            ActionState::Cancelled => {
+                navigator.stop();
+                rest.elapsed_ticks = 0;
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn rest_action_system(
+    mut npcs: Query<
+        (
+            &mut Navigator,
+            &NpcHomeBase,
+            Option<&mut Hunger>,
+            Option<&mut Cultivation>,
+            &mut RestState,
+        ),
+        With<NpcMarker>,
+    >,
+    mut actions: Query<(&Actor, &mut ActionState), With<RestAction>>,
+) {
+    for (Actor(actor), mut state) in &mut actions {
+        let Ok((mut navigator, home, hunger, cultivation, mut rest)) = npcs.get_mut(*actor) else {
+            *state = ActionState::Failure;
+            continue;
+        };
+
+        match *state {
+            ActionState::Requested => {
+                navigator.stop();
+                rest.elapsed_ticks = 0;
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                rest.elapsed_ticks = rest.elapsed_ticks.saturating_add(1);
+                let mut hunger = hunger;
+                let mut cultivation = cultivation;
+                rest_tick(
+                    hunger.as_deref_mut(),
+                    cultivation.as_deref_mut(),
+                    home.quality,
+                    REST_RECOVERY_RATE_PER_TICK,
+                );
+                if rest.elapsed_ticks >= REST_MAX_TICKS {
+                    *state = ActionState::Success;
+                }
+            }
+            ActionState::Cancelled => {
+                rest.elapsed_ticks = 0;
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
 /// 基于（entity.index, game_tick）的确定性伪随机方向选取。
 pub(crate) fn wander_target_for(
     npc_pos: DVec3,
@@ -1518,6 +2139,7 @@ fn cultivation_drive_scorer_system(
             &Cultivation,
             &MeridianSystem,
             &NpcPatrol,
+            Option<&NpcDailySchedule>,
             Option<&PendingRetirement>,
             Option<&mut CultivationDriveHistory>,
             Option<&NpcLodTier>,
@@ -1525,15 +2147,17 @@ fn cultivation_drive_scorer_system(
         With<NpcMarker>,
     >,
     zone_registry: Option<Res<ZoneRegistry>>,
+    clock: Option<Res<CultivationClock>>,
     mut scorers: Query<(&Actor, &mut Score), With<CultivationDriveScorer>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
 ) {
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let clock_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get_mut(*actor) {
-            Ok((cultivation, meridians, patrol, pending, history, tier)) => {
+            Ok((cultivation, meridians, patrol, schedule, pending, history, tier)) => {
                 match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                     let raw = if pending.is_some() || matches!(cultivation.realm, Realm::Void) {
                         0.0
@@ -1554,7 +2178,16 @@ fn cultivation_drive_scorer_system(
                     }
                     raw
                 }) {
-                    Some(value) => value,
+                    Some(value) => {
+                        let multiplier = schedule_multiplier(
+                            schedule,
+                            tier,
+                            clock_tick,
+                            ScheduleActivity::Cultivate,
+                        )
+                        .unwrap_or(1.0);
+                        value * multiplier
+                    }
                     None => continue,
                 }
             }
@@ -2021,7 +2654,7 @@ mod tests {
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
     use bevy_transform::components::Transform;
     use big_brain::prelude::{FirstToScore, Thinker};
-    use valence::prelude::{App, EventReader, IntoSystemConfigs, Position, Update};
+    use valence::prelude::{App, BlockPos, EventReader, IntoSystemConfigs, Position, Update};
 
     #[derive(Default)]
     struct CapturedAttackIntents(Vec<AttackIntent>);
@@ -2858,6 +3491,276 @@ mod tests {
             ActionState::Success
         );
         assert!(app.world().get::<Navigator>(npc).unwrap().is_idle());
+    }
+
+    #[test]
+    fn go_to_poi_selects_nearest_herb_patch() {
+        use crate::world::poi_novice::{PoiNoviceKind, PoiNoviceRegistry, PoiNoviceSite};
+
+        let mut app = App::new();
+        let mut registry = PoiNoviceRegistry::default();
+        registry.replace_all(vec![
+            PoiNoviceSite {
+                id: "spawn:far_herb".to_string(),
+                kind: PoiNoviceKind::HerbPatch,
+                zone: "spawn".to_string(),
+                name: "远处灵草".to_string(),
+                pos_xyz: [40.0, 66.0, 0.0],
+                selection_strategy: "test".to_string(),
+                qi_affinity: 0.3,
+                danger_bias: 0,
+                tags: Vec::new(),
+            },
+            PoiNoviceSite {
+                id: "spawn:near_herb".to_string(),
+                kind: PoiNoviceKind::HerbPatch,
+                zone: "spawn".to_string(),
+                name: "近处灵草".to_string(),
+                pos_xyz: [8.0, 66.0, 0.0],
+                selection_strategy: "test".to_string(),
+                qi_affinity: 0.3,
+                danger_bias: 0,
+                tags: Vec::new(),
+            },
+        ]);
+        app.insert_resource(registry);
+        app.add_systems(
+            PreUpdate,
+            go_to_poi_action_system.in_set(BigBrainSet::Actions),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::ZERO),
+                Navigator::new(),
+                GoToPoiState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                GoToPoiAction {
+                    arrive_action: Some(ScheduleActivity::Forage),
+                    ..Default::default()
+                },
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+
+        let state = app.world().get::<GoToPoiState>(npc).unwrap();
+        assert_eq!(state.destination, Some(DVec3::new(8.0, 66.0, 0.0)));
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Executing
+        );
+    }
+
+    #[test]
+    fn go_to_poi_fallback_to_wander_when_no_poi() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(44));
+        app.add_systems(
+            PreUpdate,
+            go_to_poi_action_system.in_set(BigBrainSet::Actions),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::ZERO),
+                Navigator::new(),
+                GoToPoiState::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Actor(npc),
+            GoToPoiAction {
+                arrive_action: Some(ScheduleActivity::Forage),
+                ..Default::default()
+            },
+            ActionState::Requested,
+        ));
+
+        app.update();
+
+        let state = app.world().get::<GoToPoiState>(npc).unwrap();
+        assert!(state.fallback_wander);
+        assert!(state.destination.is_some());
+    }
+
+    #[test]
+    fn go_to_poi_switches_to_cultivate_at_qi_spring() {
+        use crate::world::poi_novice::{PoiNoviceKind, PoiNoviceRegistry, PoiNoviceSite};
+
+        let mut app = App::new();
+        let mut registry = PoiNoviceRegistry::default();
+        registry.replace_all(vec![PoiNoviceSite {
+            id: "spawn:qi_spring".to_string(),
+            kind: PoiNoviceKind::QiSpring,
+            zone: "spawn".to_string(),
+            name: "浅泉".to_string(),
+            pos_xyz: [0.0, 66.0, 0.0],
+            selection_strategy: "test".to_string(),
+            qi_affinity: 0.8,
+            danger_bias: 0,
+            tags: Vec::new(),
+        }]);
+        app.insert_resource(registry);
+        app.add_systems(
+            PreUpdate,
+            go_to_poi_action_system.in_set(BigBrainSet::Actions),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::ZERO),
+                Navigator::new(),
+                GoToPoiState::default(),
+                Cultivation {
+                    qi_current: 0.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                GoToPoiAction {
+                    arrive_action: Some(ScheduleActivity::Cultivate),
+                    ..Default::default()
+                },
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Executing
+        );
+        assert_eq!(
+            app.world().get::<GoToPoiState>(npc).unwrap().arrival_ticks,
+            1
+        );
+        assert!(
+            app.world().get::<Cultivation>(npc).unwrap().qi_current > 0.0,
+            "arriving at qi spring should recover qi"
+        );
+    }
+
+    #[test]
+    fn return_home_high_score_at_night() {
+        let mut schedule = NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 0);
+        schedule.phase_offset_ticks = 0;
+        let hunger = Hunger::new(0.9);
+        let cultivation = Cultivation {
+            qi_current: 90.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let score = return_home_score(&schedule, Some(&hunger), Some(&cultivation), 20_000);
+        assert!(
+            score >= 0.36,
+            "night Rest weight should drive return-home, got {score}"
+        );
+    }
+
+    #[test]
+    fn return_home_keeps_resting_until_rest_window_finishes() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            return_home_action_system.in_set(BigBrainSet::Actions),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.5, 66.0, 10.5]),
+                Navigator::new(),
+                NpcHomeBase::new(BlockPos::new(10, 66, 10), 0.5),
+                Hunger::new(0.2),
+                RestState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), ReturnHomeAction, ActionState::Requested))
+            .id();
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Executing,
+            "return-home should keep the NPC resting instead of completing after one recovery tick"
+        );
+        assert!(
+            app.world().get::<Hunger>(npc).unwrap().value > 0.2,
+            "home rest should recover hunger while ReturnHomeAction remains active"
+        );
+    }
+
+    #[test]
+    fn rest_at_home_doubles_hunger_recovery() {
+        let mut hunger = Hunger::new(0.2);
+        rest_tick(Some(&mut hunger), None, 0.5, 0.1);
+        assert!(
+            (hunger.value - 0.4).abs() < 1e-6,
+            "home rest should apply x2 hunger recovery at neutral quality"
+        );
+    }
+
+    #[test]
+    fn stall_faces_nearest_path() {
+        let pos = DVec3::new(10.0, 66.0, 10.0);
+        let path = DVec3::new(12.0, 70.0, 14.0);
+        assert_eq!(stall_facing_target(pos, path), DVec3::new(12.0, 66.0, 14.0));
+    }
+
+    #[test]
+    fn stall_action_fails_without_trade_spot() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, stall_action_system.in_set(BigBrainSet::Actions));
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::ZERO),
+                Navigator::new(),
+                StallState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), StallAction, ActionState::Requested))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Failure
+        );
     }
 
     // -----------------------------------------------------------------------

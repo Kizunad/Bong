@@ -50,6 +50,26 @@
         {
           "const": "spirit_herb_valley",
           "type": "string"
+        },
+        {
+          "const": "herb_patch",
+          "type": "string"
+        },
+        {
+          "const": "qi_spring",
+          "type": "string"
+        },
+        {
+          "const": "trade_spot",
+          "type": "string"
+        },
+        {
+          "const": "shelter_spot",
+          "type": "string"
+        },
+        {
+          "const": "water_source",
+          "type": "string"
         }
       ]
     },
