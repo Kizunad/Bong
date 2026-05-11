@@ -41,6 +41,7 @@ import {
 import type { AgentDecision } from "./parse.js";
 import { QiColorNarrationTracker } from "./qi-color-narration.js";
 import { RedisIpc } from "./redis-ipc.js";
+import { SeasonalNarrationTracker } from "./templates/seasonal.js";
 import {
   emptyErrorBreakdown,
   JsonLogSink,
@@ -950,6 +951,7 @@ export async function runRuntime(
   const ecologyAnalyzer = new EcologyAnalyzer();
   const economyAnalyzer = new EconomyAnalyzer();
   const locustSwarmTracker = new LocustSwarmNarrationTracker();
+  const seasonalNarrationTracker = new SeasonalNarrationTracker();
 
   logger.log(
     `[tiandao] models: default=${modelOverrides.default}, annotate=${modelOverrides.annotate}, calamity=${modelOverrides.calamity}, mutation=${modelOverrides.mutation}, era=${modelOverrides.era}, base_url: ${config.baseUrl ?? "(mock/no-remote)"}`,
@@ -1127,6 +1129,19 @@ export async function runRuntime(
                     metadata: {
                       sourceTick: state.tick,
                       correlationId: `qi-color:${state.tick}`,
+                    },
+                  });
+                }
+                const seasonalNarrations = seasonalNarrationTracker.ingest(
+                  state.season_state,
+                  state.tick,
+                );
+                if (seasonalNarrations.length > 0) {
+                  await redis.publishNarrations({
+                    narrations: seasonalNarrations,
+                    metadata: {
+                      sourceTick: state.tick,
+                      correlationId: `seasonal:${state.tick}`,
                     },
                   });
                 }

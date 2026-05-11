@@ -45,11 +45,11 @@
 
 ## §0 设计轴心
 
-- [ ] **无显式 tag**：季节不在 HUD 写"当前：夏"——通过天空/粒子/NPC 旁白/灵草状态间接表现（严守 worldview §K 红线）
-- [ ] **可感知的游戏性差异**：玩家应能凭经验判断"现在是渡劫的好时候吗？"
-- [ ] **季节改变世界**：同一坐标夏天和冬天应该是**不同的世界**（worldview §十七原文）
-- [ ] **死域不受季节影响**：死域/余烬死地永远灰白（由 zone-atmosphere-v2 P4 保证，本 plan 不需重复）
-- [ ] **本 plan 是编排者不是实现者**：fog/sky 由 zone-atmosphere-v2 改、ambient 由 audio-world-v1 改、植物渲染由 botany-visual 改——本 plan 提供 `SeasonVisualController` 作为统一触发器，向各 plan 的系统发信号
+- [x] **无显式 tag**：季节不在 HUD 写"当前：夏"——通过天空/粒子/NPC 旁白/灵草状态间接表现（严守 worldview §K 红线）
+- [x] **可感知的游戏性差异**：玩家应能凭经验判断"现在是渡劫的好时候吗？"
+- [x] **季节改变世界**：同一坐标夏天和冬天应该是**不同的世界**（worldview §十七原文）
+- [x] **死域不受季节影响**：死域/余烬死地永远灰白（由 zone-atmosphere-v2 P4 保证，本 plan 不需重复）
+- [x] **本 plan 是编排者不是实现者**：fog/sky 由 zone-atmosphere-v2 改、ambient 由 audio-world-v1 改、植物渲染由 botany-visual 改——本 plan 提供 `SeasonVisualController` 作为统一触发器，向各 plan 的系统发信号
 
 ---
 
@@ -57,16 +57,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | SeasonVisualController 统一编排骨架 + 季节 HUD icon + 季节专属粒子 | ⬜ |
-| P1 | 灵草季节生态可视化 | ⬜ |
-| P2 | NPC 季节行为 + agent narration 季节模板 | ⬜ |
-| P3 | 兽潮大迁徙视觉事件 | ⬜ |
-| P4 | 突破与季节联动的电影化表现 | ⬜ |
-| P5 | 完整季节循环 e2e（一个 game-year 全链路走查） | ⬜ |
+| P0 | SeasonVisualController 统一编排骨架 + 季节 HUD icon + 季节专属粒子 | ✅ |
+| P1 | 灵草季节生态可视化 | ✅ |
+| P2 | NPC 季节行为 + agent narration 季节模板 | ✅ |
+| P3 | 兽潮大迁徙视觉事件 | ✅ |
+| P4 | 突破与季节联动的电影化表现 | ✅ |
+| P5 | 完整季节循环 e2e（一个 game-year 全链路走查） | ✅ |
 
 ---
 
-## P0 — SeasonVisualController + HUD icon + 专属粒子 ⬜
+## P0 — SeasonVisualController + HUD icon + 专属粒子 ✅
 
 ### 交付物
 
@@ -109,7 +109,7 @@
 
 ---
 
-## P1 — 灵草季节生态可视化 ⬜
+## P1 — 灵草季节生态可视化 ✅
 
 ### 交付物
 
@@ -147,7 +147,7 @@
 
 ---
 
-## P2 — NPC 季节行为 + agent narration ⬜
+## P2 — NPC 季节行为 + agent narration ✅
 
 ### 交付物
 
@@ -177,7 +177,7 @@
 
 ---
 
-## P3 — 兽潮大迁徙视觉事件 ⬜
+## P3 — 兽潮大迁徙视觉事件 ✅
 
 ### 交付物
 
@@ -209,7 +209,7 @@
 
 ---
 
-## P4 — 突破与季节联动 ⬜
+## P4 — 突破与季节联动 ✅
 
 ### 交付物
 
@@ -245,7 +245,7 @@
 
 ---
 
-## P5 — 完整季节循环 e2e ⬜
+## P5 — 完整季节循环 e2e ✅
 
 ### 交付物
 
@@ -272,8 +272,42 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`SeasonVisualController` / `SeasonParticleEmitter`(3 套) / `SeasonHintHudPlanner` / 灵草季节 ecology vis / NPC 季节行为 / agent 季节 narration / 兽潮 `MigrationVisualEvent` / 突破季节叠加 / `SeasonBreakthroughOverlay`
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：季节对 PVP meta 的影响数值（`plan-style-balance-v1` 联动）/ 季节 NPC 贸易路线变化（`plan-economy-v2` 如有）
+- 实现提交：
+  - `0182d2013` `plan-season-full-experience-v1: 接入客户端季节体验`
+  - `533c0f02b` `plan-season-full-experience-v1: 落地兽潮与NPC季节契约`
+  - `8b08c5342` `plan-season-full-experience-v1: 增加天道季节旁白`
+  - `e64716c94` `plan-season-full-experience-v1: 补季节循环验证脚本`
+  - `99d7662b3` `plan-season-full-experience-v1: 补 review 实运行接线`
+  - `787d343ff` `plan-season-full-experience-v1: 收敛季节视觉边界`
+  - `ed72fdf1d` `plan-season-full-experience-v1: 防止季节进度NaN`
+- P0：
+  - `SeasonVisualController` 统一读取 `SeasonStateStore`，同步 `ZoneAtmosphereRenderer` / `MusicStateMachine` / `SeasonParticleEmitter`，phase 切换时产出 `SeasonTransitionEvent`。
+  - `SeasonHintHudPlanner` 与 `LingtianOverlayHudPlanner` 仅绘制低 alpha 图标/色块，不写显式季节文字。
+  - `SeasonParticleEmitter` 覆盖炎汐热浪/远雷/蒸散、凝汐飘雪/冰晶、汐转紊乱线/劫气标记。
+- P1：
+  - `SeasonPlantVisuals` 在既有 botany stage 渲染上叠加耐热/不耐热、耐寒/霜结、汐转脉冲视觉。
+  - `BotanyPlantEntityRenderer` 应用季节 tint / alpha / sway；灵田 overlay 追加季节图标。
+- P2：
+  - server `npc::seasonal_behavior` 通过 `NpcSeasonRuntime` 写入 NPC tick，`NpcPatrol` 读取季节移动系数并同步收缩/放宽巡逻半径。
+  - agent `templates/seasonal.ts` 与 `SeasonalNarrationTracker` 在季节切换后延迟发隐喻式 narration，并在模板加载时直接 lint 禁止显式季节名。
+- P3：
+  - server `fauna_migration_system` 按 zone 灵气骤降和低阈值触发 `MigrationEvent`，同时发 `bong:migration_visual` VFX payload。
+  - client `MigrationVisualPlayer` 通过 `MigrationVisualPlanner` 消费兽潮 payload，产出烟尘/雾感视觉。
+- P4：
+  - `SeasonBreakthroughOverlay` 为突破成功/失败和打坐吸灵提供季节 tint、闪电倍率、冰晶折射、汐转 flicker、反噬强度、粒子密度/速度修正。
+  - `SeasonBreakthroughOverlayHud`、`BreakthroughPillarPlayer`、`BreakthroughFailPlayer` / `CultivationAbsorbPlayer` 消费这些 profile，叠加到既有 cinematic/VFX。
+- P5：
+  - `SeasonFullExperienceTest.full_season_cycle_keeps_visual_signals_in_sync` 跑完炎汐→汐转→凝汐→汐转→炎汐，校验 atmosphere/music/HUD/particle 同步。
+  - `scripts/season_cycle_test.sh` 作为跨栈 smoke gate，串起 client 季节体验、server 兽潮/NPC 契约、agent 季节 narration；真截图 / 性能预算留后续 plan。
+- 验证：
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
+  - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`
+  - `cd agent && npm run build && npm test -w @bong/tiandao && npm test -w @bong/schema`
+  - `bash scripts/season_cycle_test.sh`
+  - `git diff --check`
+- 遗留 / 后续：
+  - 季节对 PVP meta 的数值影响仍留给 `plan-style-balance-v1` 联动。
+  - 季节 NPC 贸易路线变化留给后续 `plan-economy-v2` 类任务；本 plan 只落体验层和契约面。
+  - 完整截图编排与帧预算验证仍建议单独拆出 `plan-season-runtime-wire-v1` 一类后续 plan。

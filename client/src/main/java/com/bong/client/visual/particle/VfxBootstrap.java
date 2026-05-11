@@ -62,6 +62,7 @@ public final class VfxBootstrap {
         registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
+        registry.register(MigrationVisualPlayer.EVENT_ID,        new MigrationVisualPlayer());
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         registry.register(TuikeFalseSkinParticlePlayer.DON_DUST,

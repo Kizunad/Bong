@@ -21,6 +21,7 @@ pub mod relic;
 pub mod scattered_cultivator;
 pub mod scenario;
 pub mod schedule;
+pub mod seasonal_behavior;
 pub mod social;
 pub mod spatial;
 pub mod spawn;
@@ -37,7 +38,7 @@ use valence::prelude::App;
 
 pub fn register(app: &mut App) {
     tracing::info!(
-        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/patrol/sync/brain/farming/movement/navigator/scenario/lingtian_pressure/territory/dormant systems"
+        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/seasonal/patrol/sync/brain/farming/movement/navigator/scenario/schedule/lingtian_pressure/territory/dormant systems"
     );
     perf::register(app);
     spatial::register(app);
@@ -47,6 +48,7 @@ pub fn register(app: &mut App) {
     hunger::register(app);
     possession::register(app);
     tribulation::register(app);
+    seasonal_behavior::register(app);
     patrol::register(app);
     sync::register(app);
     brain::register(app);
