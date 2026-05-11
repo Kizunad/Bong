@@ -1026,6 +1026,17 @@ fn append_bong_blocks(blocks: &mut Vec<Block>, shape_count: usize) -> anyhow::Re
         .checked_add(1)
         .context("no room for Bong block states after vanilla max state id")?;
 
+    let mut seen_bong_blocks = HashSet::new();
+    for bong_block in &manifest.blocks {
+        if !seen_bong_blocks.insert((bong_block.namespace.as_str(), bong_block.name.as_str())) {
+            bail!(
+                "duplicate Bong block definition {}:{}",
+                bong_block.namespace,
+                bong_block.name
+            );
+        }
+    }
+
     for bong_block in manifest.blocks {
         bong_block.validate_collision_shapes(shape_count)?;
         let states = bong_block.expand_states(next_state_id)?;

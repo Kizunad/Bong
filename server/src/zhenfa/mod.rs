@@ -887,7 +887,6 @@ fn handle_zhenfa_place_requests(
             }
         }
 
-        cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
         let realm_at_cast = cultivation.realm;
         let specialist = zhenfa_specialist_level(modifiers);
         let duration_ticks = effective_duration_ticks(profile.duration_ticks, qi_color, specialist);
@@ -932,6 +931,7 @@ fn handle_zhenfa_place_requests(
 
         match registry.insert(instance) {
             Ok(id) => {
+                cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
                 commands.entity(anchor_entity).insert(ZhenfaAnchor { id });
                 if let Some(mut mastery) = mastery {
                     mastery.add_cast(req.kind);
@@ -960,7 +960,10 @@ fn handle_zhenfa_place_requests(
             }
             Err(error) => {
                 remove_zhenfa_anchor_block(&mut layers, req.pos);
-                tracing::warn!("[bong][zhenfa] place failed after qi debit: {error}");
+                commands.entity(anchor_entity).despawn();
+                tracing::warn!(
+                    "[bong][zhenfa] place failed before registry insert completed: {error}"
+                );
             }
         }
     }
@@ -2463,6 +2466,44 @@ mod tests {
         );
         assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
         assert_eq!(layer_block_state(&app, layer_entity, pos), None);
+    }
+
+    #[test]
+    fn placement_registry_failure_cleans_world_block_and_anchor_entity() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let pos = [1, 64, 1];
+        app.world_mut()
+            .resource_mut::<ZhenfaRegistry>()
+            .by_pos
+            .insert(pos, 999);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos,
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            100.0
+        );
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(BlockState::AIR)
+        );
+        let anchor_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&ZhenfaAnchor>();
+            query.iter(world).count()
+        };
+        assert_eq!(anchor_count, 0);
     }
 
     #[test]
