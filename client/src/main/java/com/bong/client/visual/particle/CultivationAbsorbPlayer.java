@@ -1,6 +1,8 @@
 package com.bong.client.visual.particle;
 
 import com.bong.client.network.VfxEventPayload;
+import com.bong.client.season.SeasonBreakthroughOverlay;
+import com.bong.client.state.SeasonStateStore;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
@@ -23,6 +25,9 @@ public final class CultivationAbsorbPlayer implements VfxPlayer {
         float alpha = (float) (0.25 + GameplayVfxUtil.strength(payload, 0.6) * 0.45);
         int count = GameplayVfxUtil.count(payload, 8, 1, 24);
         int maxAge = GameplayVfxUtil.duration(payload, 30);
+        SeasonBreakthroughOverlay.MeditationProfile profile =
+            SeasonBreakthroughOverlay.meditationAbsorbProfile(SeasonStateStore.snapshot(), world.getTime());
+        count = Math.max(1, Math.min(32, (int) Math.round(count * profile.densityMultiplier())));
 
         for (int i = 0; i < count; i++) {
             double theta = world.random.nextDouble() * Math.PI * 2.0;
@@ -30,6 +35,10 @@ public final class CultivationAbsorbPlayer implements VfxPlayer {
             double px = ox + Math.cos(theta) * radius;
             double py = oy + (world.random.nextDouble() - 0.5) * 0.8;
             double pz = oz + Math.sin(theta) * radius;
+            double speed = 0.04 * profile.velocityMultiplier();
+            if (profile.allowsReverseBounce() && i % 5 == 0) {
+                speed = -speed;
+            }
             GameplayVfxUtil.spawnSprite(
                 client,
                 world,
@@ -37,9 +46,9 @@ public final class CultivationAbsorbPlayer implements VfxPlayer {
                 px,
                 py,
                 pz,
-                (ox - px) * 0.04,
-                (oy - py) * 0.04,
-                (oz - pz) * 0.04,
+                (ox - px) * speed,
+                (oy - py) * speed,
+                (oz - pz) * speed,
                 rgb,
                 alpha,
                 maxAge,

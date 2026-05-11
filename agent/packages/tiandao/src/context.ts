@@ -347,6 +347,21 @@ export const keyPlayerBlock: ContextBlock = {
   },
 };
 
+export const calamityArsenalBlock: ContextBlock = {
+  name: "calamity_arsenal",
+  priority: 4,
+  required: false,
+  render({ state }) {
+    const season = state.season_state.season;
+    return [
+      "## 灾劫武器库",
+      `当前季节: ${season}`,
+      "权力预算: thunder=15, poison_miasma=20, meridian_seal=25, all_wither=25, daoxiang_wave=30, heavenly_fire=35, pressure_invert=40, realm_collapse=60",
+      "限制: heavenly_fire 仅 summer；pressure_invert 仅汐转；all_wither 仅 winter；同 zone 最多 2 灾劫，同目标 10 分钟最多 3 次。",
+    ].join("\n");
+  },
+};
+
 export const CALAMITY_RECIPE: ContextRecipe = {
   agentName: "calamity",
   maxTokenEstimate: 3000,
@@ -355,11 +370,12 @@ export const CALAMITY_RECIPE: ContextRecipe = {
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...perceptionEnvelopeBlock, priority: 2, required: true },
     { ...recentEventsBlock, priority: 3, required: true },
-    { ...balanceBlock, priority: 4, required: false },
-    { ...recentNarrationsBlock, priority: 5, required: false },
-    { ...peerDecisionsBlock, priority: 6, required: false },
-    { ...chatSignalsBlock, priority: 7, required: false },
-    { ...worldSnapshotBlock, priority: 8, required: false },
+    { ...calamityArsenalBlock, priority: 4, required: false },
+    { ...balanceBlock, priority: 5, required: false },
+    { ...recentNarrationsBlock, priority: 6, required: false },
+    { ...peerDecisionsBlock, priority: 7, required: false },
+    { ...chatSignalsBlock, priority: 8, required: false },
+    { ...worldSnapshotBlock, priority: 9, required: false },
   ],
 };
 

@@ -1,5 +1,6 @@
 pub mod block_break;
 pub mod bong_blocks;
+pub mod calamity;
 pub mod dimension;
 pub mod dimension_transfer;
 pub mod entity_model;
@@ -112,6 +113,7 @@ pub fn register(app: &mut App) {
     environment::register(app);
     weather_physics::register(app);
     season::register(app);
+    calamity::register(app);
     spirit_eye::register(app);
     entity_model::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());

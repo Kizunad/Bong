@@ -3,7 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use valence::prelude::{
-    Commands, Despawned, Entity, EventWriter, Query, Res, ResMut, Resource, With, Without,
+    bevy_ecs, bevy_ecs::system::SystemParam, Commands, Despawned, Entity, EventWriter, Query, Res,
+    ResMut, Resource, With, Without,
 };
 
 use crate::cultivation::components::Realm;
@@ -22,6 +23,7 @@ use crate::npc::territory::Territory;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
+use crate::world::calamity::{CalamityArsenal, TiandaoPower};
 use crate::world::events::ActiveEventsResource;
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::season::query_season;
@@ -76,6 +78,23 @@ type LayerQuery<'w, 's> = Query<
 >;
 
 type LiveNpcQuery<'w, 's> = Query<'w, 's, Entity, (With<NpcMarker>, Without<Despawned>)>;
+
+#[derive(SystemParam)]
+pub(crate) struct CommandExecutorWorldResources<'w> {
+    zone_registry: Option<ResMut<'w, ZoneRegistry>>,
+    active_events: Option<ResMut<'w, ActiveEventsResource>>,
+    tiandao_power: Option<ResMut<'w, TiandaoPower>>,
+    calamity_arsenal: Option<Res<'w, CalamityArsenal>>,
+}
+
+struct SpawnEventCommandResources<'a> {
+    zone_registry: Option<&'a mut ZoneRegistry>,
+    active_events: Option<&'a mut ActiveEventsResource>,
+    tiandao_power: Option<&'a mut TiandaoPower>,
+    calamity_arsenal: Option<&'a CalamityArsenal>,
+    karma_weights: Option<&'a KarmaWeightStore>,
+    qi_heatmap: Option<&'a QiDensityHeatmap>,
+}
 
 impl CommandExecutorResource {
     pub fn enqueue_batch(&mut self, batch: AgentCommandV1) -> BatchEnqueueOutcome {
@@ -136,8 +155,7 @@ impl CommandExecutorResource {
 pub fn execute_agent_commands(
     mut commands: Commands,
     mut executor: ResMut<CommandExecutorResource>,
-    mut zone_registry: Option<ResMut<ZoneRegistry>>,
-    mut active_events: Option<ResMut<ActiveEventsResource>>,
+    mut world_resources: CommandExecutorWorldResources,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut faction_store: Option<ResMut<FactionStore>>,
@@ -170,8 +188,10 @@ pub fn execute_agent_commands(
                 batch_id.as_str(),
                 batch_source.as_deref(),
                 &mut commands,
-                &mut zone_registry,
-                &mut active_events,
+                &mut world_resources.zone_registry,
+                &mut world_resources.active_events,
+                &mut world_resources.tiandao_power,
+                world_resources.calamity_arsenal.as_deref(),
                 &mut npc_registry,
                 &mut skin_pool,
                 &mut faction_store,
@@ -212,6 +232,8 @@ fn execute_single_command(
     commands: &mut Commands,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
+    tiandao_power: &mut Option<ResMut<TiandaoPower>>,
+    calamity_arsenal: Option<&CalamityArsenal>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
     skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
@@ -259,10 +281,14 @@ fn execute_single_command(
         }
         CommandType::SpawnEvent => execute_spawn_event(
             command,
-            zone_registry,
-            active_events,
-            karma_weights,
-            qi_heatmap,
+            SpawnEventCommandResources {
+                zone_registry: zone_registry.as_deref_mut(),
+                active_events: active_events.as_deref_mut(),
+                tiandao_power: tiandao_power.as_deref_mut(),
+                calamity_arsenal,
+                karma_weights,
+                qi_heatmap,
+            },
             tick,
         ),
     };
@@ -625,13 +651,19 @@ fn execute_spawn_npc(
 
 fn execute_spawn_event(
     command: &Command,
-    zone_registry: &mut Option<ResMut<ZoneRegistry>>,
-    active_events: &mut Option<ResMut<ActiveEventsResource>>,
-    karma_weights: Option<&KarmaWeightStore>,
-    qi_heatmap: Option<&QiDensityHeatmap>,
+    resources: SpawnEventCommandResources<'_>,
     tick: Option<u64>,
 ) -> &'static str {
-    let Some(active_events) = active_events.as_deref_mut() else {
+    let SpawnEventCommandResources {
+        zone_registry,
+        active_events,
+        tiandao_power,
+        calamity_arsenal,
+        karma_weights,
+        qi_heatmap,
+    } = resources;
+
+    let Some(active_events) = active_events else {
         tracing::warn!(
             "[bong][network] cannot enqueue spawn_event for `{}` because ActiveEventsResource is missing",
             command.target
@@ -639,14 +671,17 @@ fn execute_spawn_event(
         return "rejected_missing_active_events";
     };
 
-    let season = query_season("", tick.unwrap_or_default()).season;
-    if active_events.enqueue_from_spawn_command_with_karma_and_season_at_tick(
+    let tick = tick.unwrap_or_default();
+    let season = query_season("", tick).season;
+    if active_events.enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
         command,
-        zone_registry.as_deref_mut(),
+        zone_registry,
         karma_weights,
         qi_heatmap,
         season,
-        tick.unwrap_or_default(),
+        tick,
+        tiandao_power,
+        calamity_arsenal,
     ) {
         "ok"
     } else {
@@ -1803,7 +1838,7 @@ mod command_executor_tests {
         ));
 
         let mut unsupported_event_params = HashMap::new();
-        unsupported_event_params.insert("event".to_string(), json!("realm_collapse"));
+        unsupported_event_params.insert("event".to_string(), json!("unknown_calamity"));
         unsupported_event_params.insert("intensity".to_string(), json!(0.3));
         commands.push(command(
             CommandType::SpawnEvent,

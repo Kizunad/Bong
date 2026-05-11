@@ -556,6 +556,40 @@ export const CoffinOpenRequestV1 = Type.Object(
 );
 export type CoffinOpenRequestV1 = Static<typeof CoffinOpenRequestV1>;
 
+export const CoffinPlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type CoffinPlaceRequestV1 = Static<typeof CoffinPlaceRequestV1>;
+
+export const CoffinEnterRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_enter"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type CoffinEnterRequestV1 = Static<typeof CoffinEnterRequestV1>;
+
+export const CoffinLeaveRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_leave"),
+  },
+  { additionalProperties: false },
+);
+export type CoffinLeaveRequestV1 = Static<typeof CoffinLeaveRequestV1>;
+
 export const SpiritNichePlaceRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -950,6 +984,9 @@ export const ClientRequestV1 = Type.Union([
   AlchemyFurnacePlaceRequestV1,
   LingtianStartReplenishRequestV1,
   CoffinOpenRequestV1,
+  CoffinPlaceRequestV1,
+  CoffinEnterRequestV1,
+  CoffinLeaveRequestV1,
   SpiritNichePlaceRequestV1,
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,

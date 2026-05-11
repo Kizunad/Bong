@@ -352,6 +352,9 @@ describe("context with task-21 world model blocks", () => {
     expect(calamityContext).toContain("## 关键人物");
     expect(calamityContext).toContain("## 玩家可感知边界");
     expect(calamityContext).toContain("## 天道平衡态");
+    expect(calamityContext).toContain("## 灾劫武器库");
+    expect(calamityContext).toContain("当前季节: summer");
+    expect(calamityContext).toContain("同 zone 最多 2 灾劫，同目标 10 分钟最多 3 次");
     expect(calamityContext).toContain("## 近轮天道叙事");
     expect(calamityContext).toContain("## 其他天道意志");
     expect(eraContext).toContain("## 当前时代");

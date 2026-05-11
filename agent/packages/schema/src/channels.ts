@@ -18,6 +18,9 @@ export const CHANNELS = {
   /** Agent → Server: WorldModel 快照权威上报（Task 5）(Pub/Sub) */
   AGENT_WORLD_MODEL: "bong:agent_world_model",
 
+  /** Agent → Server: 天道灾劫选型 intent（plan-calamity-arsenal-v1） */
+  CALAMITY_INTENT: "bong:calamity_intent",
+
   /** Server → Agent: 节律相位切换事件（plan-jiezeq-v1 P4） */
   SEASON_CHANGED: "bong:season_changed",
 
@@ -302,6 +305,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.AGENT_COMMAND,
   CHANNELS.AGENT_NARRATE,
   CHANNELS.AGENT_WORLD_MODEL,
+  CHANNELS.CALAMITY_INTENT,
   CHANNELS.SEASON_CHANGED,
   CHANNELS.BONE_COIN_TICK,
   CHANNELS.PRICE_INDEX,
