@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.combat.juice.KillJuiceController;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.VisualEffectState;
@@ -41,7 +42,7 @@ public class MixinGameRenderer {
             state,
             System.currentTimeMillis(),
             PlayerStateStore.snapshot().localNegPressure()
-        );
+        ) + KillJuiceController.fovDelta(System.currentTimeMillis());
         if (delta == 0.0) {
             return;
         }
