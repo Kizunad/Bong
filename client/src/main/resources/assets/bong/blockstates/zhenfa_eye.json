@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "charged=false": {
+      "model": "bong:block/zhenfa_eye"
+    },
+    "charged=true": {
+      "model": "bong:block/zhenfa_eye"
+    }
+  }
+}

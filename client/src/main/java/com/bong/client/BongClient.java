@@ -5,6 +5,7 @@ import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.block.BongBlocks;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
@@ -58,6 +59,7 @@ public class BongClient implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("Initializing Bong Client...");
 
+        BongBlocks.register();
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
         HudRenderCallback.EVENT.register(BongHud::render);
