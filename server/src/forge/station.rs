@@ -235,6 +235,7 @@ mod tests {
             forge_station_spec: Some(ForgeStationSpec { tier }),
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
+            technique_scroll_spec: None,
         }
     }
 

@@ -251,6 +251,10 @@ pub enum ClientRequestV1 {
         v: u8,
         instance_id: u64,
     },
+    TechniqueScrollUse {
+        v: u8,
+        instance_id: u64,
+    },
     /// 客户端拖拽完成后通知 server 把 instance_id 从 from 移动到 to。
     /// server 校验后改 PlayerInventory，回推 inventory_event::moved。
     InventoryMoveIntent {

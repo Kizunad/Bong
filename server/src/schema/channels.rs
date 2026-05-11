@@ -135,6 +135,10 @@ pub const CH_SKILL_XP_GAIN: &str = "bong:skill/xp_gain";
 pub const CH_SKILL_LV_UP: &str = "bong:skill/lv_up";
 pub const CH_SKILL_CAP_CHANGED: &str = "bong:skill/cap_changed";
 pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
+pub const CH_TECHNIQUE_SCROLL_READ: &str = "bong:technique/scroll_read";
+pub const CH_TECHNIQUE_LEARNED: &str = "bong:technique/learned";
+pub const CH_TECHNIQUE_MASTERED: &str = "bong:technique/mastered";
+pub const CH_TECHNIQUE_PROFICIENCY_UP: &str = "bong:technique/proficiency_up";
 
 // 灵眼（plan-spirit-eye-v1 §8）：server → agent 观测频道。
 pub const CH_SPIRIT_EYE_MIGRATE: &str = "bong:spirit_eye/migrate";
@@ -260,6 +264,10 @@ mod tests {
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
         assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");
         assert_eq!(CH_SKILL_SCROLL_USED, "bong:skill/scroll_used");
+        assert_eq!(CH_TECHNIQUE_SCROLL_READ, "bong:technique/scroll_read");
+        assert_eq!(CH_TECHNIQUE_LEARNED, "bong:technique/learned");
+        assert_eq!(CH_TECHNIQUE_MASTERED, "bong:technique/mastered");
+        assert_eq!(CH_TECHNIQUE_PROFICIENCY_UP, "bong:technique/proficiency_up");
         assert_eq!(CH_SPIRIT_EYE_MIGRATE, "bong:spirit_eye/migrate");
         assert_eq!(CH_SPIRIT_EYE_DISCOVERED, "bong:spirit_eye/discovered");
         assert_eq!(

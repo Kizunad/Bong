@@ -93,7 +93,16 @@ pub fn default_loot_for_archetype(archetype: NpcArchetype) -> NpcLootTable {
         // 一件破旧凡物 + 偶尔残卷。完整 loot 继承（从原 corpse 反查 instance）推 P3。
         NpcArchetype::Daoxiang => vec![
             NpcLootEntry::new("item.daoxiang.rusty_blade", 0.5),
-            NpcLootEntry::new("item.daoxiang.tattered_scroll", 0.1),
+            NpcLootEntry::new("scroll_woliu_burst", 0.003),
+            NpcLootEntry::new("scroll_woliu_vacuum_palm", 0.003),
+            NpcLootEntry::new("scroll_woliu_vortex_shield", 0.003),
+            NpcLootEntry::new("scroll_woliu_vortex", 0.0006),
+            NpcLootEntry::new("scroll_woliu_hold", 0.0006),
+            NpcLootEntry::new("scroll_woliu_mouth", 0.0006),
+            NpcLootEntry::new("scroll_woliu_pull", 0.0006),
+            NpcLootEntry::new("scroll_woliu_vacuum_lock", 0.0006),
+            NpcLootEntry::new("scroll_woliu_vortex_resonance", 0.0006),
+            NpcLootEntry::new("tattered_scroll_generic", 0.005),
             NpcLootEntry::new("item.bone_coin", 0.4).with_stack(1, 6),
         ],
         NpcArchetype::Zhinian => vec![
@@ -228,6 +237,63 @@ mod tests {
             .find(|e| e.template_id == "item.relic.engraved_plaque")
             .unwrap();
         assert_eq!(plaque.chance, 1.0);
+    }
+
+    #[test]
+    fn daoxiang_can_drop_woliu_scroll() {
+        let table = default_loot_for_archetype(NpcArchetype::Daoxiang);
+
+        assert!(table
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "scroll_woliu_burst"));
+        assert!(table
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "tattered_scroll_generic"));
+        assert!(!table
+            .entries
+            .iter()
+            .any(|entry| entry.template_id == "item.daoxiang.tattered_scroll"));
+    }
+
+    #[test]
+    fn daoxiang_woliu_probabilities_stay_rare() {
+        let table = default_loot_for_archetype(NpcArchetype::Daoxiang);
+        let yellow = [
+            "scroll_woliu_burst",
+            "scroll_woliu_vacuum_palm",
+            "scroll_woliu_vortex_shield",
+        ];
+        let profound = [
+            "scroll_woliu_vortex",
+            "scroll_woliu_hold",
+            "scroll_woliu_mouth",
+            "scroll_woliu_pull",
+            "scroll_woliu_vacuum_lock",
+            "scroll_woliu_vortex_resonance",
+        ];
+        let yellow_chance: f32 = table
+            .entries
+            .iter()
+            .filter(|entry| yellow.contains(&entry.template_id.as_str()))
+            .map(|entry| entry.chance)
+            .sum();
+        let profound_chance: f32 = table
+            .entries
+            .iter()
+            .filter(|entry| profound.contains(&entry.template_id.as_str()))
+            .map(|entry| entry.chance)
+            .sum();
+
+        assert!(
+            yellow_chance <= 0.03,
+            "黄阶涡流残卷掉率过高: {yellow_chance}"
+        );
+        assert!(
+            profound_chance <= 0.01,
+            "玄阶涡流残卷掉率过高: {profound_chance}"
+        );
     }
 
     // --- splitmix64_unit ---

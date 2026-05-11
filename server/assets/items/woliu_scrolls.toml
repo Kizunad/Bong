@@ -1,0 +1,155 @@
+# 涡流功法残卷。研读后学会对应战斗功法。
+
+[[item]]
+id = "scroll_woliu_vortex"
+name = "涡流残卷·绝灵涡流"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "泛黄残页，记着如何在掌心强造微小负灵域。字迹模糊，需静心研读。"
+[item.technique_scroll]
+skill_id = "woliu.vortex"
+
+[[item]]
+id = "scroll_woliu_hold"
+name = "涡流残卷·持涡"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "碎裂的旧纸页上反复画着掌心涡伞，边角有烧灼痕迹。"
+[item.technique_scroll]
+skill_id = "woliu.hold"
+
+[[item]]
+id = "scroll_woliu_burst"
+name = "涡流残卷·瞬涡"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "只剩半幅的短诀，讲的是在攻势临身时压出一瞬负灵域。"
+[item.technique_scroll]
+skill_id = "woliu.burst"
+
+[[item]]
+id = "scroll_woliu_mouth"
+name = "涡流残卷·涡口"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.55
+description = "纸面留有远距低压点的推演符痕，墨色越靠中心越淡。"
+[item.technique_scroll]
+skill_id = "woliu.mouth"
+
+[[item]]
+id = "scroll_woliu_pull"
+name = "涡流残卷·涡引"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.55
+description = "残页边缘写满了压强比与牵引距离的手算注记。"
+[item.technique_scroll]
+skill_id = "woliu.pull"
+
+[[item]]
+id = "scroll_woliu_heart"
+name = "涡流残卷·涡心"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.7
+description = "地阶残卷，纸页中部像被低压啃空，仍可辨出山谷级涡心的法理。"
+[item.technique_scroll]
+skill_id = "woliu.heart"
+
+[[item]]
+id = "scroll_woliu_vacuum_palm"
+name = "涡流残卷·吸涡掌"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "残卷以肺心二经起笔，记着近身展掌开涡的入门手法。"
+[item.technique_scroll]
+skill_id = "woliu.vacuum_palm"
+
+[[item]]
+id = "scroll_woliu_vortex_shield"
+name = "涡流残卷·涡流护体"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "残缺的护体诀，讲的是用真空层偏转来袭真元。"
+[item.technique_scroll]
+skill_id = "woliu.vortex_shield"
+
+[[item]]
+id = "scroll_woliu_vacuum_lock"
+name = "涡流残卷·真空锁"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.6
+description = "卷中绘有合拢的真空笼，几处关键笔画被血污盖住。"
+[item.technique_scroll]
+skill_id = "woliu.vacuum_lock"
+
+[[item]]
+id = "scroll_woliu_vortex_resonance"
+name = "涡流残卷·涡流共振"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.6
+description = "多道涡旋的相位推演写满一页，纸面微微发凉。"
+[item.technique_scroll]
+skill_id = "woliu.vortex_resonance"
+
+[[item]]
+id = "scroll_woliu_turbulence_burst"
+name = "涡流残卷·紊流爆发"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.7
+description = "地阶残卷，记着碎裂真空场并外放紊流冲击的凶险法门。"
+[item.technique_scroll]
+skill_id = "woliu.turbulence_burst"
+
+[[item]]
+id = "tattered_scroll_generic"
+name = "无字残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "残破到几乎不可辨认的旧卷，只剩一点可卖的纸骨气。"

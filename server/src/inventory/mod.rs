@@ -113,6 +113,7 @@ pub struct ItemTemplate {
     pub forge_station_spec: Option<ForgeStationSpec>,
     pub blueprint_scroll_spec: Option<BlueprintScrollSpec>,
     pub inscription_scroll_spec: Option<InscriptionScrollSpec>,
+    pub technique_scroll_spec: Option<TechniqueScrollSpec>,
 }
 
 /// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
@@ -142,6 +143,12 @@ pub struct InscriptionScrollSpec {
     pub inscription_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TechniqueScrollSpec {
+    pub kind: String,
+    pub skill_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemCategory {
     Pill,
@@ -153,6 +160,7 @@ pub enum ItemCategory {
     Treasure,
     BoneCoin,
     Tool,
+    Scroll,
     Misc,
 }
 
@@ -1286,6 +1294,8 @@ struct ItemTemplateToml {
     blueprint_scroll: Option<BlueprintScrollSpecToml>,
     #[serde(default)]
     inscription_scroll: Option<InscriptionScrollSpecToml>,
+    #[serde(default)]
+    technique_scroll: Option<TechniqueScrollSpecToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1318,8 +1328,20 @@ pub struct InscriptionScrollSpecToml {
     inscription_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TechniqueScrollSpecToml {
+    #[serde(default = "default_combat_technique_scroll_kind")]
+    kind: String,
+    skill_id: String,
+}
+
 fn default_qi_cost_mul() -> f32 {
     1.0
+}
+
+fn default_combat_technique_scroll_kind() -> String {
+    "combat_technique".to_string()
 }
 
 fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
@@ -1332,7 +1354,8 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         | ItemCategory::Tool
         | ItemCategory::Treasure
         | ItemCategory::RecipeFragment
-        | ItemCategory::RecipeHint => 1,
+        | ItemCategory::RecipeHint
+        | ItemCategory::Scroll => 1,
     }
 }
 
@@ -1426,6 +1449,10 @@ impl ItemTemplateToml {
             .inscription_scroll
             .map(|raw| parse_inscription_scroll_spec(raw, source_path, id.as_str()))
             .transpose()?;
+        let technique_scroll_spec = self
+            .technique_scroll
+            .map(|raw| parse_technique_scroll_spec(raw, source_path, id.as_str()))
+            .transpose()?;
 
         Ok(ItemTemplate {
             id,
@@ -1445,6 +1472,7 @@ impl ItemTemplateToml {
             forge_station_spec,
             blueprint_scroll_spec,
             inscription_scroll_spec,
+            technique_scroll_spec,
         })
     }
 }
@@ -1488,6 +1516,36 @@ pub fn parse_inscription_scroll_spec(
         &format!("item `{item_id}` inscription_scroll.inscription_id"),
     )?;
     Ok(InscriptionScrollSpec { inscription_id })
+}
+
+pub fn parse_technique_scroll_spec(
+    raw: TechniqueScrollSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<TechniqueScrollSpec, String> {
+    let kind = required_non_empty(
+        raw.kind,
+        source_path,
+        &format!("item `{item_id}` technique_scroll.kind"),
+    )?;
+    if kind != "combat_technique" {
+        return Err(format!(
+            "{} item `{item_id}` has unsupported technique_scroll.kind `{kind}`",
+            source_path.display()
+        ));
+    }
+    let skill_id = required_non_empty(
+        raw.skill_id,
+        source_path,
+        &format!("item `{item_id}` technique_scroll.skill_id"),
+    )?;
+    if crate::cultivation::known_techniques::technique_definition(skill_id.as_str()).is_none() {
+        return Err(format!(
+            "{} item `{item_id}` references unknown technique_scroll.skill_id `{skill_id}`",
+            source_path.display()
+        ));
+    }
+    Ok(TechniqueScrollSpec { kind, skill_id })
 }
 
 fn parse_weapon_spec(
@@ -1563,6 +1621,7 @@ fn parse_item_category(
         "treasure" => Ok(ItemCategory::Treasure),
         "bonecoin" | "bone_coin" | "bone-coins" | "bone_coins" => Ok(ItemCategory::BoneCoin),
         "tool" => Ok(ItemCategory::Tool),
+        "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
@@ -3644,6 +3703,7 @@ mod tests {
                     forge_station_spec: None,
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
+                    technique_scroll_spec: None,
                 },
             );
         }
@@ -3675,6 +3735,7 @@ mod tests {
             forge_station_spec: None,
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
+            technique_scroll_spec: None,
         }
     }
 
@@ -3989,6 +4050,55 @@ mod tests {
                 .max_stack_count,
             1
         );
+    }
+
+    #[test]
+    fn woliu_scrolls_load_as_combat_technique_templates() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let woliu_scrolls = registry
+            .templates
+            .values()
+            .filter(|template| {
+                template
+                    .technique_scroll_spec
+                    .as_ref()
+                    .is_some_and(|spec| spec.skill_id.starts_with("woliu."))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(woliu_scrolls.len(), 11);
+        assert!(woliu_scrolls.iter().all(|template| {
+            matches!(template.category, ItemCategory::Scroll)
+                && template
+                    .technique_scroll_spec
+                    .as_ref()
+                    .is_some_and(|spec| spec.kind == "combat_technique")
+        }));
+    }
+
+    #[test]
+    fn woliu_scroll_skill_ids_are_known_techniques() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let ids = registry
+            .templates
+            .values()
+            .filter_map(|template| {
+                template
+                    .technique_scroll_spec
+                    .as_ref()
+                    .map(|spec| spec.skill_id.as_str())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids.iter().filter(|id| id.starts_with("woliu.")).count(), 11);
+        for id in ids {
+            assert!(
+                crate::cultivation::known_techniques::technique_definition(id).is_some(),
+                "technique scroll references unknown id `{id}`"
+            );
+        }
     }
 
     #[test]
@@ -4373,6 +4483,7 @@ cols = 4
                 forge_station_spec: None,
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
+                technique_scroll_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -4434,6 +4545,7 @@ cols = 4
                 forge_station_spec: None,
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
+                technique_scroll_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -6149,6 +6261,7 @@ cols = 4
                 forge_station_spec: None,
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
+                technique_scroll_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -6218,6 +6331,7 @@ cols = 4
                 forge_station_spec: None,
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
+                technique_scroll_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();

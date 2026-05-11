@@ -2327,6 +2327,7 @@ mod tests {
             forge_station_spec: None,
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
+            technique_scroll_spec: None,
         };
         ItemRegistry::from_map(HashMap::from([(
             ZHENFA_PEARL_ITEM_ID.to_string(),

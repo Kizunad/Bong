@@ -104,6 +104,7 @@ mod tests {
             forge_station_spec: None,
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
+            technique_scroll_spec: None,
         }
     }
 
