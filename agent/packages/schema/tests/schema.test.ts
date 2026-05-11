@@ -25,6 +25,7 @@ import {
   DuoSheEventV1,
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
+import { validateDeathCinematicS2cV1Contract } from "../src/death-cinematic.js";
 import {
   CalamityKindV1,
   CalamityIntentV1,
@@ -253,6 +254,59 @@ describe("sample files pass schema validation", () => {
   it("declares season changed Redis channel", () => {
     expect(CHANNELS.SEASON_CHANGED).toBe("bong:season_changed");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SEASON_CHANGED);
+  });
+
+  it("declares death cinematic Redis channel", () => {
+    expect(CHANNELS.DEATH_CINEMATIC).toBe("bong:death_cinematic");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.DEATH_CINEMATIC);
+  });
+
+  it("accepts death cinematic phase snapshots", () => {
+    expectContractAccepts("DeathCinematicS2cV1", validateDeathCinematicS2cV1Contract, {
+      v: 1,
+      character_id: "offline:Azure",
+      phase: "roll",
+      phase_tick: 12,
+      phase_duration_ticks: 80,
+      total_elapsed_ticks: 92,
+      total_duration_ticks: 380,
+      roll: {
+        probability: 0.65,
+        threshold: 0.65,
+        luck_value: 0.42,
+        result: "pending",
+      },
+      insight_text: ["坍缩渊，概不赊欠。"],
+      is_final: false,
+      death_number: 4,
+      zone_kind: "negative",
+      tsy_death: true,
+      rebirth_weakened_ticks: 3600,
+      skip_predeath: false,
+    });
+
+    expectContractRejects("DeathCinematicS2cV1", validateDeathCinematicS2cV1Contract, {
+      v: 1,
+      character_id: "offline:Azure",
+      phase: "roll",
+      phase_tick: 12,
+      phase_duration_ticks: 0,
+      total_elapsed_ticks: 92,
+      total_duration_ticks: 380,
+      roll: {
+        probability: 1.2,
+        threshold: 0.65,
+        luck_value: 0.42,
+        result: "pending",
+      },
+      insight_text: [],
+      is_final: false,
+      death_number: 4,
+      zone_kind: "negative",
+      tsy_death: true,
+      rebirth_weakened_ticks: 3600,
+      skip_predeath: false,
+    });
   });
 
   it("declares calamity intent Redis channel", () => {

@@ -15,6 +15,7 @@ import {
 import { SkillConfigSnapshotV1 } from "./skill-config.js";
 import { CarrierStateV1 } from "./combat-carrier.js";
 import { DuguPoisonStateV1 } from "./dugu.js";
+import { DeathCinematicS2cV1 } from "./death-cinematic.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { IdentityPanelStateV1 } from "./identity.js";
 import {
@@ -709,6 +710,7 @@ export const ServerDataDeathScreenV1 = Type.Object(
     death_number: Type.Optional(Type.Integer({ minimum: 1 })),
     zone_kind: Type.Optional(DeathScreenZoneKindV1),
     lifespan: Type.Optional(LifespanPreviewV1),
+    cinematic: Type.Optional(DeathCinematicS2cV1),
   },
   { additionalProperties: false },
 );

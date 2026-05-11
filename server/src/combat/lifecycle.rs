@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{
-    Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
+    Commands, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -44,6 +44,7 @@ use crate::player::state::{
     save_player_slices, PlayerState, PlayerStatePersistence,
 };
 use crate::schema::cultivation::realm_to_string;
+use crate::schema::death_cinematic::DeathCinematicS2cV1;
 use crate::schema::death_insight::{
     DeathInsightCategoryV1, DeathInsightPositionV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
 };
@@ -65,7 +66,8 @@ use super::components::{
     STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
 };
 use super::events::{
-    CombatEvent, DeathEvent, DeathInsightRequested, RevivalActionIntent, RevivalActionKind,
+    CombatEvent, DeathCinematicPublished, DeathEvent, DeathInsightRequested, RevivalActionIntent,
+    RevivalActionKind,
 };
 
 const COMBAT_DRAIN_PER_SEC: f32 = 5.0;
@@ -119,6 +121,8 @@ struct DeathScreenContext<'a> {
     lifespan: Option<&'a LifespanComponent>,
     position: Option<&'a Position>,
     zones: Option<&'a ZoneRegistry>,
+    final_words: Vec<String>,
+    cinematic: Option<DeathCinematicS2cV1>,
 }
 
 pub fn sync_combat_state_from_events(
@@ -615,7 +619,9 @@ pub fn near_death_tick(
     persistence: Res<PersistenceSettings>,
     zones: Option<Res<ZoneRegistry>>,
     _revived: EventWriter<PlayerRevived>,
+    mut commands: Commands,
     mut terminated: EventWriter<PlayerTerminated>,
+    mut death_cinematics: Option<ResMut<Events<DeathCinematicPublished>>>,
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
@@ -713,10 +719,30 @@ pub fn near_death_tick(
 
         let decision_deadline_tick = clock.tick.saturating_add(REVIVAL_CONFIRM_WINDOW_TICKS);
         lifecycle.await_revival_decision(decision, decision_deadline_tick);
+        let cause = eventual_cause(life_record.as_deref());
+        let death_zone =
+            death_zone_from_context(cause.as_str(), position.as_deref(), zones.as_deref());
+        let final_words = vec![default_final_words(cause.as_str(), death_zone)];
+        let cinematic = crate::death_lifecycle::cinematic::build_death_cinematic(
+            &lifecycle,
+            death_registry.as_deref(),
+            Some(decision),
+            death_zone,
+            cause.as_str(),
+            final_words.clone(),
+            clock.tick,
+        );
+        commands.entity(entity).insert(cinematic.clone());
+        let cinematic_payload = cinematic.snapshot(clock.tick);
+        if let Some(death_cinematics) = death_cinematics.as_deref_mut() {
+            death_cinematics.send(DeathCinematicPublished {
+                payload: cinematic_payload.clone(),
+            });
+        }
         emit_death_screen(
             &mut clients,
             entity,
-            &eventual_cause(life_record.as_deref()),
+            cause.as_str(),
             decision,
             DeathScreenContext {
                 lifecycle: &lifecycle,
@@ -724,6 +750,8 @@ pub fn near_death_tick(
                 lifespan: lifespan.as_deref(),
                 position: position.as_deref(),
                 zones: zones.as_deref(),
+                final_words,
+                cinematic: Some(cinematic_payload),
             },
             clock.tick,
             decision_deadline_tick,
@@ -810,6 +838,9 @@ pub fn handle_revival_action_intents(
                         &mut revived,
                         &mut quota_opened,
                     ) {
+                        commands
+                            .entity(entity)
+                            .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
                         hide_death_screen(&mut clients, entity);
                         hide_terminate_screen(&mut clients, entity);
                     }
@@ -826,6 +857,9 @@ pub fn handle_revival_action_intents(
                     &mut vfx_events,
                     "tribulation_failed",
                 ) {
+                    commands
+                        .entity(entity)
+                        .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
                     emit_terminate_screen(
                         &mut clients,
                         entity,
@@ -860,6 +894,9 @@ pub fn handle_revival_action_intents(
                     &mut vfx_events,
                     "voluntary_retire",
                 ) {
+                    commands
+                        .entity(entity)
+                        .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
                     emit_terminate_screen(
                         &mut clients,
                         entity,
@@ -894,6 +931,9 @@ pub fn handle_revival_action_intents(
                     default_loadout.as_deref(),
                     inventory_allocator.as_deref_mut(),
                 );
+                commands
+                    .entity(entity)
+                    .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
                 hide_death_screen(&mut clients, entity);
                 hide_terminate_screen(&mut clients, entity);
             }
@@ -1689,7 +1729,7 @@ fn emit_death_screen(
             visible: true,
             cause: cause.to_string(),
             luck_remaining: decision.chance_shown(),
-            final_words: vec!["尘归尘，劫未尽。".to_string()],
+            final_words: context.final_words,
             countdown_until_ms: decision_deadline_ms(decision_deadline_tick, now_tick),
             can_reincarnate: decision.can_reincarnate(),
             can_terminate: decision.can_terminate(),
@@ -1705,6 +1745,7 @@ fn emit_death_screen(
             lifespan: context.lifespan.map(|lifespan| {
                 death_screen_lifespan_preview(lifespan, context.position, context.zones)
             }),
+            cinematic: context.cinematic,
         }),
     );
 }
@@ -1744,8 +1785,19 @@ fn hide_death_screen(clients: &mut Query<&mut valence::prelude::Client>, entity:
             death_number: None,
             zone_kind: None,
             lifespan: None,
+            cinematic: None,
         }),
     );
+}
+
+fn default_final_words(cause: &str, zone_kind: ZoneDeathKind) -> String {
+    match zone_kind {
+        ZoneDeathKind::Death | ZoneDeathKind::Negative => "秘境所得悉数散落。".to_string(),
+        ZoneDeathKind::Ordinary if cause.contains("tribulation") => {
+            "此次劫数已记入天道。".to_string()
+        }
+        ZoneDeathKind::Ordinary => "尘归尘，劫未尽。".to_string(),
+    }
 }
 
 fn death_screen_stage(decision: RevivalDecision) -> DeathScreenStageV1 {

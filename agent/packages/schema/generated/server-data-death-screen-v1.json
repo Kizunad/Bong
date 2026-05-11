@@ -116,6 +116,170 @@
           "type": "boolean"
         }
       }
+    },
+    "cinematic": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "character_id",
+        "phase",
+        "phase_tick",
+        "phase_duration_ticks",
+        "total_elapsed_ticks",
+        "total_duration_ticks",
+        "roll",
+        "insight_text",
+        "is_final",
+        "death_number",
+        "zone_kind",
+        "tsy_death",
+        "rebirth_weakened_ticks",
+        "skip_predeath"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "character_id": {
+          "minLength": 1,
+          "maxLength": 160,
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "predeath",
+              "type": "string"
+            },
+            {
+              "const": "death_moment",
+              "type": "string"
+            },
+            {
+              "const": "roll",
+              "type": "string"
+            },
+            {
+              "const": "insight_overlay",
+              "type": "string"
+            },
+            {
+              "const": "darkness",
+              "type": "string"
+            },
+            {
+              "const": "rebirth",
+              "type": "string"
+            }
+          ]
+        },
+        "phase_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase_duration_ticks": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_elapsed_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_duration_ticks": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "roll": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "probability",
+            "threshold",
+            "luck_value",
+            "result"
+          ],
+          "properties": {
+            "probability": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "threshold": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "luck_value": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "survive",
+                  "type": "string"
+                },
+                {
+                  "const": "fall",
+                  "type": "string"
+                },
+                {
+                  "const": "final",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "insight_text": {
+          "maxItems": 24,
+          "type": "array",
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "is_final": {
+          "type": "boolean"
+        },
+        "death_number": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zone_kind": {
+          "anyOf": [
+            {
+              "const": "ordinary",
+              "type": "string"
+            },
+            {
+              "const": "death",
+              "type": "string"
+            },
+            {
+              "const": "negative",
+              "type": "string"
+            }
+          ]
+        },
+        "tsy_death": {
+          "type": "boolean"
+        },
+        "rebirth_weakened_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skip_predeath": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

@@ -1,3 +1,4 @@
+pub mod cinematic;
 pub mod intrusion_log;
 
 use valence::prelude::App;

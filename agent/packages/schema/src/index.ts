@@ -69,6 +69,7 @@ export * from "./breakthrough-cinematic.js";
 export * from "./cultivation-death.js";
 export * from "./cultivation.js";
 export * from "./death-insight.js";
+export * from "./death-cinematic.js";
 export * from "./death-lifecycle.js";
 export * from "./forge-event.js";
 export * from "./insight-offer.js";

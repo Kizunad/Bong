@@ -21,6 +21,7 @@ pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
 pub const CH_DEATH: &str = "bong:death";
 pub const CH_REBIRTH: &str = "bong:rebirth";
 pub const CH_DEATH_INSIGHT: &str = "bong:death_insight";
+pub const CH_DEATH_CINEMATIC: &str = "bong:death_cinematic";
 pub const CH_AGING: &str = "bong:aging";
 pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
 pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
@@ -199,6 +200,7 @@ mod tests {
         assert_eq!(CH_DEATH, "bong:death");
         assert_eq!(CH_REBIRTH, "bong:rebirth");
         assert_eq!(CH_DEATH_INSIGHT, "bong:death_insight");
+        assert_eq!(CH_DEATH_CINEMATIC, "bong:death_cinematic");
         assert_eq!(CH_AGING, "bong:aging");
         assert_eq!(CH_LIFESPAN_EVENT, "bong:lifespan_event");
         assert_eq!(CH_DUO_SHE_EVENT, "bong:duo_she_event");

@@ -22,7 +22,8 @@ use crate::schema::channels::{
     CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
     CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_SKILL_EVENT,
     CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT,
-    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT,
+    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC,
+    CH_DEATH_INSIGHT,
     CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE,
     CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
     CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
@@ -53,6 +54,7 @@ use crate::schema::cultivation::{
     BreakthroughCinematicEventV1, BreakthroughEventV1, CultivationDeathV1, ForgeEventV1,
     HeartDemonPregenRequestV1, InsightOfferV1, InsightRequestV1,
 };
+use crate::schema::death_cinematic::DeathCinematicS2cV1;
 use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{
     AgingEventV1, DuoSheEventV1, LifespanEventV1, RebirthEventV1,
@@ -151,6 +153,7 @@ pub enum RedisOutbound {
     HeartDemonRequest(HeartDemonPregenRequestV1),
     SpiritTreasureDialogueRequest(SpiritTreasureDialogueRequestV1),
     DeathInsight(DeathInsightRequestV1),
+    DeathCinematic(DeathCinematicS2cV1),
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
@@ -755,6 +758,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DEATH_INSIGHT,
+                payload,
+            })
+        }
+        RedisOutbound::DeathCinematic(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize DeathCinematicS2cV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_DEATH_CINEMATIC,
                 payload,
             })
         }
@@ -3003,6 +3015,50 @@ mod redis_bridge_tests {
                 assert_eq!(v["character_id"], "offline:Azure");
                 assert_eq!(v["category"], "natural");
                 assert_eq!(v["zone_kind"], "ordinary");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_death_cinematic_on_correct_channel() {
+        use crate::schema::death_cinematic::{
+            DeathCinematicPhaseV1, DeathCinematicRollV1, DeathCinematicS2cV1,
+            DeathCinematicZoneKindV1, DeathRollResultV1,
+        };
+
+        let command =
+            prepare_outbound_command(RedisOutbound::DeathCinematic(DeathCinematicS2cV1 {
+                v: 1,
+                character_id: "offline:Azure".to_string(),
+                phase: DeathCinematicPhaseV1::Roll,
+                phase_tick: 0,
+                phase_duration_ticks: 80,
+                total_elapsed_ticks: 80,
+                total_duration_ticks: 380,
+                roll: DeathCinematicRollV1 {
+                    probability: 0.65,
+                    threshold: 0.65,
+                    luck_value: 0.65,
+                    result: DeathRollResultV1::Pending,
+                },
+                insight_text: vec!["尘归尘，劫未尽。".to_string()],
+                is_final: false,
+                death_number: 1,
+                zone_kind: DeathCinematicZoneKindV1::Ordinary,
+                tsy_death: false,
+                rebirth_weakened_ticks: 3600,
+                skip_predeath: false,
+            }))
+            .expect("death cinematic payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_DEATH_CINEMATIC);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["phase"], "roll");
+                assert_eq!(v["roll"]["result"], "pending");
             }
             other => panic!("expected publish, got {other:?}"),
         }

@@ -6,7 +6,9 @@ use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use super::WORLD_STATE_PUBLISH_INTERVAL_TICKS;
 use crate::combat::components::Lifecycle;
-use crate::combat::events::{CombatEvent, DeathEvent, DeathInsightRequested};
+use crate::combat::events::{
+    CombatEvent, DeathCinematicPublished, DeathEvent, DeathInsightRequested,
+};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
@@ -144,6 +146,17 @@ pub fn publish_death_insight_requests(
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::DeathInsight(ev.payload.clone()));
+    }
+}
+
+pub fn publish_death_cinematic_events(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<DeathCinematicPublished>,
+) {
+    for ev in reader.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::DeathCinematic(ev.payload.clone()));
     }
 }
 

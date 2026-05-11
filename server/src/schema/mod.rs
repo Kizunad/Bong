@@ -21,6 +21,7 @@ pub mod combat_hud;
 pub mod common;
 pub mod craft;
 pub mod cultivation;
+pub mod death_cinematic;
 pub mod death_insight;
 pub mod death_lifecycle;
 pub mod dugu;
