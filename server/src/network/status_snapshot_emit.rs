@@ -53,6 +53,7 @@ pub fn emit_status_snapshot_payloads(
 
 fn status_effect_id(kind: &StatusEffectKind) -> String {
     match kind {
+        StatusEffectKind::QiRegenPaused => "qi_regen_paused".to_string(),
         StatusEffectKind::AlchemyBuff(tag) => format!("alchemy_buff:{tag}"),
         StatusEffectKind::BodyPartResist(part) => {
             format!("body_part_resist:{}", body_part_wire(*part))
@@ -92,6 +93,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::StaminaCrash => "体力虚脱".to_string(),
         StatusEffectKind::QiDrainForStamina => "真元换体".to_string(),
         StatusEffectKind::LegStrain => "腿部应力伤".to_string(),
+        StatusEffectKind::QiRegenPaused => "真元停滞".to_string(),
     }
 }
 
@@ -121,7 +123,8 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::BodyPartWeaken(_)
         | StatusEffectKind::StaminaCrash
         | StatusEffectKind::QiDrainForStamina
-        | StatusEffectKind::LegStrain => "debuff",
+        | StatusEffectKind::LegStrain
+        | StatusEffectKind::QiRegenPaused => "debuff",
         StatusEffectKind::AlchemyBuff(_) => "unknown",
     }
 }
