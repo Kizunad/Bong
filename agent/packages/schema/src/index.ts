@@ -64,6 +64,7 @@ export * from "./validate.js";
 
 // 修炼 (plan-cultivation-v1 §6)
 export * from "./breakthrough-event.js";
+export * from "./breakthrough-cinematic.js";
 export * from "./cultivation-death.js";
 export * from "./cultivation.js";
 export * from "./death-insight.js";

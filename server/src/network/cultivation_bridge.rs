@@ -17,6 +17,7 @@ use valence::prelude::{Entity, EventReader, Query, Res, Username};
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::cultivation::breakthrough::{BreakthroughError, BreakthroughOutcome};
+use crate::cultivation::breakthrough_cinematic::BreakthroughCinematicAgentEvent;
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerRevived};
 use crate::cultivation::forging::{ForgeAxis, ForgeOutcome};
@@ -57,6 +58,17 @@ pub fn publish_breakthrough_events(
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::BreakthroughEvent(payload));
+    }
+}
+
+pub fn publish_breakthrough_cinematic_events(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<BreakthroughCinematicAgentEvent>,
+) {
+    for ev in reader.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::BreakthroughCinematic(ev.payload.clone()));
     }
 }
 
