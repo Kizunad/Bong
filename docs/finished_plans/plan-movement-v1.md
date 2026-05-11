@@ -203,22 +203,21 @@
   - 资源：`client/src/main/resources/assets/bong/player_animation/{dash_forward,slide_low,double_jump}.json`、`client/src/main/resources/assets/bong/particles/cloud256_dust.json`、`server/assets/audio/recipes/movement_{dash,slide,double_jump}.json`。
   - 协议：`agent/packages/schema/src/movement.ts`、generated schema/sample、`client_request.movement_action` 与 `server_data.movement_state` registry 均已接入。
 - **关键 commit**：
-  - `6e1109ba0`（2026-05-11T12:07:25+12:00）`feat(movement): 接入服务端移动状态机`
-  - `2a77b856e`（2026-05-11T12:07:25+12:00）`feat(schema): 补齐 movement 协议契约`
-  - `65149f0ec`（2026-05-11T12:09:00+12:00）`feat(client): 接入 movement 动作反馈`
-  - `ee2571963`（2026-05-11T12:09:00+12:00）`fix(client): 适配 movement HUD 沉浸布局`
-  - `a7a397cbc`（2026-05-11T12:13:06+12:00）`fix(movement): 收紧移动状态契约与同步边界`
-  - `ce73af438`（2026-05-11T12:28:59+12:00）`fix(client): 补齐主线枚举映射`
-  - `e31381498`（2026-05-11T13:06:13+12:00）`fix(movement): 补齐 review 边界回归`
-  - `ad53a59cd`（2026-05-11T13:19:41+12:00）`fix(movement): 处理 review 收尾意见`
+  - `e4352c465`（2026-05-11T13:25:02+12:00）`feat(movement): 接入服务端移动状态机`
+  - `964e168b6`（2026-05-11T13:25:02+12:00）`feat(schema): 补齐 movement 协议契约`
+  - `55c164373`（2026-05-11T13:27:02+12:00）`feat(client): 接入 movement 动作反馈`
+  - `75352043e`（2026-05-11T13:28:04+12:00）`fix(client): 适配 movement HUD 沉浸布局`
+  - `73fa41b81`（2026-05-11T13:28:04+12:00）`fix(movement): 收紧移动状态契约与同步边界`
+  - `2cbdc8777`（2026-05-11T13:29:16+12:00）`fix(client): 补齐主线枚举映射`
+  - `b05b3097f`（2026-05-11T13:29:16+12:00）`fix(movement): 补齐 review 边界回归`
+  - `3ba8e350e`（2026-05-11T13:29:16+12:00）`fix(movement): 处理 review 收尾意见`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ cargo test` ✅ 4196 passed
+  - `server/ cargo test` ✅ 4210 passed
   - `agent/packages/tiandao npm test` ✅ 51 files / 348 tests
   - `agent/packages/schema npm test` ✅ 18 files / 366 tests
   - `agent npm run build` ✅
-  - `client/ JAVA_HOME=<Java 17 home> PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` ✅ 1222 tests, 0 failures, 0 errors（本地使用 JDK 17）
-  - `client/ ./gradlew test --tests com.bong.client.hud.HudLayoutPresetTest --tests com.bong.client.hud.MovementHudPlannerTest --tests com.bong.client.hud.HudImmersionModeTest` ✅
+  - `client/ JAVA_HOME=<Java 17 home> PATH=$JAVA_HOME/bin:$PATH ./gradlew test build` ✅ 1236 tests, 0 failures, 0 errors（本地使用 JDK 17）
 - **跨仓库核验**：server `movement_state`/`MovementActionIntent`/audio recipes，agent `movement.ts`/generated artifacts，client `MovementStateStore`/`MovementHudPlanner`/`MOVEMENT_HUD`/VFX registry 均有测试或 build 覆盖。
 - **遗留 / 后续**：轻功、御风、墙跑、真实 runClient 手感调参仍留给 `plan-movement-v2`；本 plan 未在当前 headless 流水线里跑图形化 `runClient` 手动流程。
