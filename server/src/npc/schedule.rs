@@ -342,7 +342,7 @@ fn schedule_phase_event_system(
             continue;
         }
         let next_phase = schedule.phase(tick);
-        let activity = schedule.activity_for(tick, u64::from(entity.index()));
+        let activity = schedule.activity_for(tick, schedule.seed);
         match state {
             Some(mut state) => {
                 if state.last_phase != Some(next_phase) {
@@ -373,7 +373,6 @@ fn far_npc_schedule_tick_system(
     pois: Option<Res<PoiNoviceRegistry>>,
     mut npcs: Query<
         (
-            Entity,
             &NpcDailySchedule,
             Option<&NpcLodTier>,
             Option<&NpcHomeBase>,
@@ -390,12 +389,12 @@ fn far_npc_schedule_tick_system(
         return;
     }
 
-    for (entity, schedule, tier, home, patrol, hunger, cultivation, position) in &mut npcs {
+    for (schedule, tier, home, patrol, hunger, cultivation, position) in &mut npcs {
         if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Far) {
             continue;
         }
 
-        let activity = schedule.activity_for(tick, u64::from(entity.index()));
+        let activity = schedule.activity_for(tick, schedule.seed);
         let zone_qi = patrol
             .and_then(|patrol| {
                 zones
@@ -793,6 +792,51 @@ mod tests {
 
     #[test]
     fn schedule_matrix_pins_all_phase_activity_archetype_combinations() {
+        fn expected_weight(
+            archetype: NpcArchetype,
+            phase: DayPhase,
+            activity: ScheduleActivity,
+        ) -> f32 {
+            match (archetype, phase, activity) {
+                (NpcArchetype::Rogue, DayPhase::Dawn, ScheduleActivity::Forage) => 0.5,
+                (NpcArchetype::Rogue, DayPhase::Dawn, ScheduleActivity::Cultivate) => 0.3,
+                (NpcArchetype::Rogue, DayPhase::Dawn, ScheduleActivity::Wander) => 0.2,
+                (NpcArchetype::Rogue, DayPhase::Day, ScheduleActivity::Trade) => 0.3,
+                (NpcArchetype::Rogue, DayPhase::Day, ScheduleActivity::Forage) => 0.3,
+                (NpcArchetype::Rogue, DayPhase::Day, ScheduleActivity::Cultivate) => 0.2,
+                (NpcArchetype::Rogue, DayPhase::Day, ScheduleActivity::Socialize) => 0.1,
+                (NpcArchetype::Rogue, DayPhase::Day, ScheduleActivity::Wander) => 0.1,
+                (NpcArchetype::Rogue, DayPhase::Dusk, ScheduleActivity::Rest) => 0.4,
+                (NpcArchetype::Rogue, DayPhase::Dusk, ScheduleActivity::Forage) => 0.3,
+                (NpcArchetype::Rogue, DayPhase::Dusk, ScheduleActivity::Cultivate) => 0.2,
+                (NpcArchetype::Rogue, DayPhase::Dusk, ScheduleActivity::Wander) => 0.1,
+                (NpcArchetype::Rogue, DayPhase::Night, ScheduleActivity::Rest) => 0.6,
+                (NpcArchetype::Rogue, DayPhase::Night, ScheduleActivity::Cultivate) => 0.3,
+                (NpcArchetype::Rogue, DayPhase::Night, ScheduleActivity::Patrol) => 0.1,
+                (NpcArchetype::Commoner, DayPhase::Dawn, ScheduleActivity::Forage) => 0.4,
+                (NpcArchetype::Commoner, DayPhase::Dawn, ScheduleActivity::Trade) => 0.2,
+                (NpcArchetype::Commoner, DayPhase::Dawn, ScheduleActivity::Wander) => 0.4,
+                (NpcArchetype::Commoner, DayPhase::Day, ScheduleActivity::Trade) => 0.4,
+                (NpcArchetype::Commoner, DayPhase::Day, ScheduleActivity::Socialize) => 0.2,
+                (NpcArchetype::Commoner, DayPhase::Day, ScheduleActivity::Forage) => 0.2,
+                (NpcArchetype::Commoner, DayPhase::Day, ScheduleActivity::Wander) => 0.2,
+                (NpcArchetype::Commoner, DayPhase::Dusk, ScheduleActivity::Rest) => 0.5,
+                (NpcArchetype::Commoner, DayPhase::Dusk, ScheduleActivity::Socialize) => 0.2,
+                (NpcArchetype::Commoner, DayPhase::Dusk, ScheduleActivity::Wander) => 0.3,
+                (NpcArchetype::Commoner, DayPhase::Night, ScheduleActivity::Rest) => 0.8,
+                (NpcArchetype::Commoner, DayPhase::Night, ScheduleActivity::Wander) => 0.2,
+                (NpcArchetype::Beast, DayPhase::Dawn, ScheduleActivity::Patrol) => 0.6,
+                (NpcArchetype::Beast, DayPhase::Dawn, ScheduleActivity::Forage) => 0.4,
+                (NpcArchetype::Beast, DayPhase::Day, ScheduleActivity::Patrol) => 0.6,
+                (NpcArchetype::Beast, DayPhase::Day, ScheduleActivity::Wander) => 0.4,
+                (NpcArchetype::Beast, DayPhase::Dusk, ScheduleActivity::Rest) => 0.4,
+                (NpcArchetype::Beast, DayPhase::Dusk, ScheduleActivity::Patrol) => 0.6,
+                (NpcArchetype::Beast, DayPhase::Night, ScheduleActivity::Rest) => 0.5,
+                (NpcArchetype::Beast, DayPhase::Night, ScheduleActivity::Patrol) => 0.5,
+                _ => 0.0,
+            }
+        }
+
         let archetypes = [
             NpcArchetype::Rogue,
             NpcArchetype::Commoner,
@@ -818,7 +862,12 @@ mod tests {
             let schedule = NpcDailySchedule::for_archetype(archetype, 0);
             for phase in phases {
                 for activity in activities {
-                    assert!(schedule.weight(phase, activity).is_finite());
+                    let actual = schedule.weight(phase, activity);
+                    let expected = expected_weight(archetype, phase, activity);
+                    assert!(
+                        (actual - expected).abs() <= f32::EPSILON,
+                        "{archetype:?} {phase:?} {activity:?}: expected {expected}, got {actual}"
+                    );
                     checked += 1;
                 }
             }

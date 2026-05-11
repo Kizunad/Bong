@@ -225,13 +225,13 @@ fn far_npc_schedule_tick(schedule, cultivation, hunger, home, clock) {
 
 ### Dormant（>256 格）—— 最小推演
 
-每 **12000 tick（10 分钟）** tick 一次：
+每 **1200 tick（1 分钟）** tick 一次：
 
 ```rust
 fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
     hunger.value -= 0.1;  // 10 分钟饿了一些
     if hunger.value < 0.0 { hunger.value = 0.3; }  // 假设自己找到了食物
-    lifespan.advance(12000);  // 寿元推进
+    lifespan.advance(1200);   // 寿元推进
     // cultivation 不变（dormant 不修炼）
     // 位置不变（dormant 冻结位置）
 }
@@ -389,7 +389,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 2. **Dormant 最小推演**（§4 Dormant 部分）
 
-   `dormant_npc_tick` system，每 12000 tick 一次。hunger 衰减 + 假设自养 + 寿元推进。
+   `dormant_npc_tick` system，每 1200 tick 一次。hunger 衰减 + 假设自养 + 寿元推进。
 
 3. **Hydrate 过渡**（§4 Hydrate 部分）
 
@@ -418,7 +418,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 2. **LOD 层级一致性**
    - NPC 在 Near 运行 1000 tick → 切到 Far 运行 10 次 tick → 切回 Near → 状态（hunger/qi）偏差 < 5%
-   - Dormant 10 分钟推演 → hydrate 回 Near → 位置合理（在 home 或 POI 附近）
+   - Dormant 1 分钟推演 → hydrate 回 Near → 位置合理（在 home 或 POI 附近）
 
 3. **端到端**
    - 跟踪一个散修 NPC 一整天（24000 tick）：Dawn 出门采集 → Day 在灵草丛蹲 → Dusk 回家 → Night 在家打坐 → Dawn 再出门

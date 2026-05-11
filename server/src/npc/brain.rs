@@ -82,6 +82,7 @@ const WANDER_MAX_TICKS: u32 = 200;
 const GO_TO_POI_ARRIVAL_DISTANCE: f64 = 1.8;
 const GO_TO_POI_MAX_TICKS: u32 = 400;
 const REST_MAX_TICKS: u32 = 20 * 120;
+const REST_RECOVERY_RATE_PER_TICK: f64 = 1.0 / 120.0;
 const STALL_MIN_TICKS: u32 = 20 * 60;
 const STALL_MAX_TICKS: u32 = 20 * 300;
 const TRADE_STALL_BASELINE_SCORE: f32 = 0.45;
@@ -1422,10 +1423,16 @@ fn wander_scorer_system(
                     WANDER_BASELINE_SCORE
                 }
             }) {
-                Some(value) => {
-                    scheduled_wander_score(schedule, tier, clock_tick, actor.index() as u64, value)
-                        .unwrap_or(value)
-                }
+                Some(value) => scheduled_wander_score(
+                    schedule,
+                    tier,
+                    clock_tick,
+                    schedule
+                        .map(|schedule| schedule.seed)
+                        .unwrap_or_else(|| actor.index() as u64),
+                    value,
+                )
+                .unwrap_or(value),
                 None => continue,
             },
             Err(_) => 0.0,
@@ -1717,8 +1724,7 @@ fn go_to_poi_action_system(
                 let activity = action
                     .arrive_action
                     .or_else(|| {
-                        schedule
-                            .map(|schedule| schedule.activity_for(clock_tick, actor.index() as u64))
+                        schedule.map(|schedule| schedule.activity_for(clock_tick, schedule.seed))
                     })
                     .unwrap_or(ScheduleActivity::Wander);
                 let target = action
@@ -1931,7 +1937,7 @@ fn return_home_action_system(
                         hunger.as_deref_mut(),
                         cultivation.as_deref_mut(),
                         home.quality,
-                        1.0 / 120.0,
+                        REST_RECOVERY_RATE_PER_TICK,
                     );
                     if rest.elapsed_ticks >= REST_MAX_TICKS {
                         *state = ActionState::Success;
@@ -1984,7 +1990,7 @@ fn rest_action_system(
                     hunger.as_deref_mut(),
                     cultivation.as_deref_mut(),
                     home.quality,
-                    1.0 / 120.0,
+                    REST_RECOVERY_RATE_PER_TICK,
                 );
                 if rest.elapsed_ticks >= REST_MAX_TICKS {
                     *state = ActionState::Success;
