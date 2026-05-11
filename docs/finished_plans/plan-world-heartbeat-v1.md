@@ -472,12 +472,14 @@ WorldHeartbeat（自主）    天道 Agent（LLM 决策）
   - `cff7dc756`（2026-05-11）`feat(client): 渲染世界事件预兆`
   - `a55858b6d`（2026-05-11）`fix(world-heartbeat): 收敛 review 反馈`
   - `be7541431`（2026-05-11）`fix(world-heartbeat): 收敛二轮 review 反馈`
+  - `299e0562a`（2026-05-11）`fix(world-heartbeat): 收敛三轮 review 反馈`
 - **测试结果**：
   - `CARGO_BUILD_JOBS=1 cargo fmt --check`：通过。
   - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo clippy --all-targets -- -D warnings`：通过。合并 `origin/main` 后普通 clippy 曾被 SIGKILL，低内存参数重跑无诊断通过。
-  - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo test`：4314 passed / 0 failed。
-  - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo test world::heartbeat`：10 passed / 0 failed（补齐 heartbeat override、suppression、intensity override、forced omen replace 与真实 Bevy App 路径回归）。
+  - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo test`：4315 passed / 0 failed。
+  - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo test world::heartbeat`：11 passed / 0 failed（补齐 heartbeat override、suppression、intensity override、forced omen replace、错误分支与真实 Bevy App 路径回归）。
   - `CARGO_BUILD_JOBS=1 cargo test heartbeat_override`：4 passed / 0 failed（覆盖 command executor 的 heartbeat_override 执行链路）。
+  - `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo test rejects_invalid_inbound_payloads`：1 passed / 0 failed（覆盖 Redis 入站 `heartbeat_override` allowlist）。
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build`：BUILD SUCCESSFUL。
   - `npm run build`（agent root）：通过。
   - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test --tests com.bong.client.omen.OmenStateStoreTest --tests com.bong.client.hud.OmenHudPlannerTest`：BUILD SUCCESSFUL（二轮 review 后定向回归）。
