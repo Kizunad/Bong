@@ -217,9 +217,9 @@
 
 ### 关键 commits
 
-- `fcc591446` 2026-05-11 `feat(gathering): 补采集工具和服务端进度流程`
-- `bda373ff2` 2026-05-11 `feat(gathering): 接入客户端采集 HUD 和协议`
-- `577ac96a5` 2026-05-11 `fix(gathering): 接通采集进度反馈`
+- `cf54c97a1` 2026-05-11 `feat(gathering): 补采集工具和服务端进度流程`
+- `578fec44e` 2026-05-11 `feat(gathering): 接入客户端采集 HUD 和协议`
+- `7903aa2ea` 2026-05-11 `fix(gathering): 接通采集进度反馈`
 
 ### 测试结果
 
