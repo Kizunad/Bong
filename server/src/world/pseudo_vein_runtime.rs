@@ -20,7 +20,9 @@ pub const PSEUDO_VEIN_DISSIPATING_TICKS: u64 = 600;
 pub const PSEUDO_VEIN_BASE_DURATION_TICKS: u64 = 36_000;
 pub const PSEUDO_VEIN_MAX_QI: f64 = 0.6;
 pub const PSEUDO_VEIN_WARNING_QI: f64 = 0.3;
+#[allow(dead_code)]
 pub const PSEUDO_VEIN_CRITICAL_DRAIN_RATE: f64 = 0.02;
+#[allow(dead_code)]
 pub const PSEUDO_VEIN_CRITICAL_PLAYER_DENSITY: u32 = 4;
 pub const PSEUDO_VEIN_INFLUENCE_RADIUS_BLOCKS: f64 = 30.0;
 const PSEUDO_VEIN_VISUAL_PERIOD_TICKS: u64 = 100;
@@ -74,6 +76,7 @@ pub struct PseudoVeinQiSettlement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub struct PseudoVeinSpawnIntent {
     pub zone_id: String,
     pub max_qi: f64,
@@ -82,6 +85,7 @@ pub struct PseudoVeinSpawnIntent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum PseudoVeinSpawnReason {
     HighPlayerDensity,
     HighQiDrain,
@@ -363,6 +367,7 @@ pub fn settle_pseudo_vein_qi(zone_id: &str, injected_qi: f64) -> PseudoVeinQiSet
     }
 }
 
+#[allow(dead_code)]
 pub fn fallback_auto_spawn_on_high_drain(
     zones: &ZoneRegistry,
     qi_drain_rate_by_zone: &HashMap<String, f64>,
@@ -410,6 +415,7 @@ pub fn fallback_auto_spawn_on_high_drain(
         })
 }
 
+#[allow(dead_code)]
 fn is_tide_turn(season: PseudoVeinSeasonV1) -> bool {
     matches!(
         season,
