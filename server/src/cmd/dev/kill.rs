@@ -58,35 +58,39 @@ pub fn handle_kill(
             continue;
         }
 
+        let Some(mut life_record) = life_record else {
+            tracing::warn!(
+                "[dev-cmd] kill self rejected: executor {:?} has no LifeRecord",
+                event.executor
+            );
+            client.send_chat_message("[dev] kill self rejected: missing life record");
+            continue;
+        };
+        let Some(settings) = settings.as_deref() else {
+            tracing::warn!("[dev-cmd] kill self rejected: PersistenceSettings resource is missing");
+            client.send_chat_message("[dev] kill self rejected: missing persistence settings");
+            continue;
+        };
+
         let mut staged_lifecycle = lifecycle.clone();
         staged_lifecycle.terminate(tick);
-        if let Some(mut life_record) = life_record {
-            life_record.push(BiographyEntry::Terminated {
-                cause: DEV_COMMAND_TERMINATION_CAUSE.to_string(),
-                tick,
-            });
-            if let Some(settings) = settings.as_deref() {
-                if let Err(error) = persist_termination_transition_with_death_context(
-                    settings,
-                    &staged_lifecycle,
-                    &life_record,
-                    Some(DEV_COMMAND_DEATH_REGISTRY_CAUSE),
-                    None,
-                ) {
-                    let _ = life_record.biography.pop();
-                    tracing::warn!(
-                        "[dev-cmd] kill self rejected: failed to persist dev termination: {error}"
-                    );
-                    client.send_chat_message(
-                        "[dev] kill self rejected: failed to persist termination",
-                    );
-                    continue;
-                }
-            } else {
-                tracing::warn!(
-                    "[dev-cmd] kill self has no PersistenceSettings; termination remains memory-only"
-                );
-            }
+        life_record.push(BiographyEntry::Terminated {
+            cause: DEV_COMMAND_TERMINATION_CAUSE.to_string(),
+            tick,
+        });
+        if let Err(error) = persist_termination_transition_with_death_context(
+            settings,
+            &staged_lifecycle,
+            &life_record,
+            Some(DEV_COMMAND_DEATH_REGISTRY_CAUSE),
+            None,
+        ) {
+            let _ = life_record.biography.pop();
+            tracing::warn!(
+                "[dev-cmd] kill self rejected: failed to persist dev termination: {error}"
+            );
+            client.send_chat_message("[dev] kill self rejected: failed to persist termination");
+            continue;
         }
         *lifecycle = staged_lifecycle;
         terminated.send(PlayerTerminated {
@@ -239,6 +243,60 @@ mod tests {
                 .unwrap()
                 .last_death_tick,
             Some(10)
+        );
+        assert!(app
+            .world()
+            .get::<LifeRecord>(player)
+            .unwrap()
+            .biography
+            .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn kill_self_rejects_missing_life_record_without_events() {
+        let (mut app, root) = setup_app("missing-life-record");
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Lifecycle::default());
+
+        send(&mut app, player);
+        run_update(&mut app);
+
+        assert_eq!(
+            app.world().get::<Lifecycle>(player).unwrap().state,
+            LifecycleState::Alive
+        );
+        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 0);
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn kill_self_rejects_missing_persistence_settings_without_events() {
+        let (mut app, root) = setup_app("missing-persistence");
+        app.world_mut().remove_resource::<PersistenceSettings>();
+        let player = spawn_player(&mut app, Lifecycle::default());
+
+        send(&mut app, player);
+        run_update(&mut app);
+
+        assert_eq!(
+            app.world().get::<Lifecycle>(player).unwrap().state,
+            LifecycleState::Alive
+        );
+        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 0);
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0
         );
         assert!(app
             .world()
