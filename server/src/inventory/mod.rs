@@ -1581,6 +1581,7 @@ fn parse_item_rarity(raw: &str, source_path: &Path, item_id: &str) -> Result<Ite
         "rare" => Ok(ItemRarity::Rare),
         "epic" => Ok(ItemRarity::Epic),
         "legendary" => Ok(ItemRarity::Legendary),
+        "ancient" => Ok(ItemRarity::Ancient),
         other => Err(format!(
             "{} item `{item_id}` has unknown rarity `{other}`",
             source_path.display()
@@ -3878,6 +3879,15 @@ mod tests {
                 .get("anti_spirit_pressure_pill")
                 .and_then(|item| item.effect.as_ref()),
             Some(ItemEffect::AntiSpiritPressure { duration_ticks }) if *duration_ticks == 36_000
+        ));
+        assert!(matches!(
+            registry.get("spirit_treasure_jizhaojing"),
+            Some(ItemTemplate {
+                category: ItemCategory::Treasure,
+                rarity: ItemRarity::Ancient,
+                max_stack_count: 1,
+                ..
+            })
         ));
         assert!(matches!(
             registry
