@@ -432,7 +432,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - P0：`server/src/npc/schedule.rs` 定义 `DayPhase`、`ScheduleActivity`、`NpcDailySchedule`、`NpcScheduleChangedEvent`，并在 `server/src/npc/brain.rs` 将日程权重注入 `HungerScorer`、`WanderScorer`、`CultivationDriveScorer`、`TradeStallScorer`、`ReturnHomeScorer`。
   - P1：`server/src/npc/brain.rs` 新增 `GoToPoiAction` / `GoToPoiState`，`server/src/world/poi_novice.rs`、`server/src/schema/poi_novice.rs`、`agent/packages/schema/src/poi-novice.ts` 扩展 `HerbPatch`、`QiSpring`、`TradeSpot`、`ShelterSpot`、`WaterSource`。
   - P2：`server/src/npc/schedule.rs` 新增 `NpcHomeBase` / `rest_tick()`，`server/src/npc/brain.rs` 新增 `ReturnHomeAction`、`RestAction`、`StallAction`，`server/src/npc/spawn.rs` 为 commoner / rogue / scattered cultivator / beast / disciple 初始化日程和 home。
-  - P3：`server/src/npc/schedule.rs` 新增 Far 层 `far_npc_schedule_tick_system`、Dormant 最小推演测试钩子、`hydrate_position_for()`；`server/src/npc/dormant/mod.rs` 将 dormant tick 间隔收敛到 12000 tick；`server/src/npc/hydrate/mod.rs` hydrate 时按当前日程重定位。
+  - P3：`server/src/npc/schedule.rs` 新增 Far 层 `far_npc_schedule_tick_system`、Dormant 最小推演测试钩子、`hydrate_position_for()`；`server/src/npc/dormant/mod.rs` 将 dormant 生命周期心跳收敛到 `DORMANT_LIFECYCLE_TICK_INTERVAL = 1200` tick 并持久化日程 seed；`server/src/npc/hydrate/mod.rs` hydrate 时沿用 snapshot seed 并按当前日程重定位。
   - P4：`server/src/npc/schedule.rs`、`server/src/npc/brain.rs`、`server/src/world/poi_novice.rs`、`agent/packages/schema/tests/poi-novice.test.ts` 覆盖时段边界、权重矩阵、POI 选择、回家/休息/摆摊、Far/Dormant/Hydrate、schema enum pin。
 - **关键 commit**：
   - `6cd80afb1`（2026-05-11）`feat(npc): 扩展日常生活 POI 契约`
@@ -440,16 +440,17 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `6cc5d076d`（2026-05-11）`feat(npc): 接入目的地漫游与回家休息行为`
   - `3c7afd1ff`（2026-05-11）`fix(npc): 收紧日程 LOD 与回家休息语义`
   - `af61d7331`（2026-05-11）`fix(network): 放宽大型 NPC 快照 Redis timeout`
+  - `348e57218`（2026-05-11）`fix(npc): 修复日常生活 review 边界`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4311 passed
+  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4317 passed
   - `agent/ npm run build` ✅
   - `agent/packages/schema/ npm run check` ✅ generated schema artifacts are fresh（357 files）
-  - `agent/packages/schema/ npm test` ✅ 19 files / 368 tests passed
+  - `agent/packages/schema/ npm test` ✅ 19 files / 369 tests passed
   - `agent/packages/tiandao/ npm test` ✅ 52 files / 354 tests passed
-  - `scripts/e2e-redis.sh` ✅ 15 passed, 0 failed（`.sisyphus/evidence/task-13-e2e-redis-run-20260511-213613-618595-default`）
-  - `scripts/smoke-test-e2e.sh` ✅ 8 passed, 0 failed（`.sisyphus/evidence/task-13-smoke-test-e2e-run-20260511-213853-625658-default`）
+  - `scripts/e2e-redis.sh` ✅ 15 passed, 0 failed（`.sisyphus/evidence/task-13-e2e-redis-run-20260511-224141-790788-default`）
+  - `scripts/smoke-test-e2e.sh` ✅ 8 passed, 0 failed（`.sisyphus/evidence/task-13-smoke-test-e2e-run-20260511-224427-798009-default`）
 - **跨仓库核验**：
   - server：`NpcDailySchedule`、`DayPhase`、`GoToPoiAction`、`NpcHomeBase`、`ReturnHomeAction`、`StallAction`、`PoiNoviceKind::HerbPatch`
   - agent/schema：`PoiNoviceKindV1` 含 `herb_patch` / `qi_spring` / `trade_spot` / `shelter_spot` / `water_source`
