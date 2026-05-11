@@ -139,6 +139,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::HealerNpcAiState => "healer_npc_ai_state",
         ServerDataType::YidaoHudState => "yidao_hud_state",
         ServerDataType::MovementState => "movement_state",
+        ServerDataType::SpiritTreasureState => "spirit_treasure_state",
+        ServerDataType::SpiritTreasureDialogue => "spirit_treasure_dialogue",
         // ─── plan-craft-v1 P2/P3：通用手搓 ──────────────────────
         ServerDataType::CraftRecipeList => "craft_recipe_list",
         ServerDataType::CraftSessionState => "craft_session_state",

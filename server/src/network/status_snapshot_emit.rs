@@ -28,7 +28,7 @@ pub fn emit_status_snapshot_payloads(
                     "stacks": 1,
                     "remaining_ms": effect.remaining_ticks.saturating_mul(50),
                     "source_color": status_effect_color(&effect.kind),
-                    "source_label": "战场丹药",
+                    "source_label": status_effect_source_label(&effect.kind),
                     "dispel": status_effect_dispel(&effect.kind)
                 })
             })
@@ -60,6 +60,9 @@ fn status_effect_id(kind: &StatusEffectKind) -> String {
         StatusEffectKind::BodyPartWeaken(part) => {
             format!("body_part_weaken:{}", body_part_wire(*part))
         }
+        StatusEffectKind::MirrorConcealment => "mirror_concealment".to_string(),
+        StatusEffectKind::MirrorExposed => "mirror_exposed".to_string(),
+        StatusEffectKind::SpiritTreasurePerception => "spirit_treasure_perception".to_string(),
         other => format!("{other:?}").to_ascii_lowercase(),
     }
 }
@@ -92,6 +95,9 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::StaminaCrash => "体力虚脱".to_string(),
         StatusEffectKind::QiDrainForStamina => "真元换体".to_string(),
         StatusEffectKind::LegStrain => "腿部应力伤".to_string(),
+        StatusEffectKind::MirrorConcealment => "镜隐".to_string(),
+        StatusEffectKind::MirrorExposed => "镜照暴露".to_string(),
+        StatusEffectKind::SpiritTreasurePerception => "灵宝感知".to_string(),
     }
 }
 
@@ -110,7 +116,9 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::WoundHeal
         | StatusEffectKind::BodyPartResist(_)
         | StatusEffectKind::SpeedBoost
-        | StatusEffectKind::StaminaRecovBoost => "buff",
+        | StatusEffectKind::StaminaRecovBoost
+        | StatusEffectKind::MirrorConcealment
+        | StatusEffectKind::SpiritTreasurePerception => "buff",
         StatusEffectKind::Slowed
         | StatusEffectKind::DamageAmp
         | StatusEffectKind::Humility
@@ -121,8 +129,18 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::BodyPartWeaken(_)
         | StatusEffectKind::StaminaCrash
         | StatusEffectKind::QiDrainForStamina
-        | StatusEffectKind::LegStrain => "debuff",
+        | StatusEffectKind::LegStrain
+        | StatusEffectKind::MirrorExposed => "debuff",
         StatusEffectKind::AlchemyBuff(_) => "unknown",
+    }
+}
+
+fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
+    match kind {
+        StatusEffectKind::MirrorConcealment
+        | StatusEffectKind::MirrorExposed
+        | StatusEffectKind::SpiritTreasurePerception => "灵宝",
+        _ => "战场丹药",
     }
 }
 

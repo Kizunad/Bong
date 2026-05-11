@@ -45,6 +45,7 @@ pub mod server_data;
 pub mod skill;
 pub mod social;
 pub mod spirit_eye;
+pub mod spirit_treasure;
 pub mod style_balance;
 pub mod tribulation;
 pub mod tsy;

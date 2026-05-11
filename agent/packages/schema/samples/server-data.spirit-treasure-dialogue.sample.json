@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "spirit_treasure_dialogue",
+  "dialogue": {
+    "v": 1,
+    "request_id": "spirit_treasure:7:840",
+    "character_id": "offline:Azure",
+    "treasure_id": "spirit_treasure_jizhaojing",
+    "text": "镜中不见你，只见你脚下灵脉在往西北偏。",
+    "tone": "curious",
+    "affinity_delta": 0.03
+  },
+  "display_name": "寂照镜",
+  "zone": "spawn"
+}

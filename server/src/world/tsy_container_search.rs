@@ -26,6 +26,9 @@ use valence::prelude::{
 use crate::combat::components::{CombatState, Wounds};
 use crate::combat::CombatClock;
 use crate::inventory::ancient_relics::AncientRelicPool;
+use crate::inventory::spirit_treasure::{
+    maybe_spawn_jizhaojing_from_relic_core, SpiritTreasureRegistry,
+};
 use crate::inventory::InventoryInstanceIdAllocator;
 use crate::inventory::{
     bump_revision, consume_item_instance_once, ItemInstance, ItemRegistry, PlacedItemState,
@@ -302,6 +305,7 @@ pub fn tick_search_progress(
     item_registry: Res<ItemRegistry>,
     loot_pools: Res<LootPoolRegistry>,
     relic_pool: Res<AncientRelicPool>,
+    mut spirit_treasure_registry: ResMut<SpiritTreasureRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
     mut relic_extracted: EventWriter<RelicExtracted>,
@@ -388,7 +392,7 @@ pub fn tick_search_progress(
             .tick
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             .wrapping_add(player_ent.to_bits());
-        let loot = roll_loot_pool(
+        let mut loot = roll_loot_pool(
             &loot_pools,
             &container.loot_pool_id,
             &item_registry,
@@ -397,6 +401,16 @@ pub fn tick_search_progress(
             source,
             seed,
         );
+        if let Some(spirit_treasure) = maybe_spawn_jizhaojing_from_relic_core(
+            &mut spirit_treasure_registry,
+            source,
+            container.depth,
+            container_pos.0,
+            seed,
+            &mut allocator,
+        ) {
+            loot.push(spirit_treasure);
+        }
 
         // 入背包（无空间则丢失，告 warn —— P3 demo 简化，不做 ownerless drop）
         if let Ok(mut inv) = inventories.get_mut(player_ent) {

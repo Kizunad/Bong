@@ -54,6 +54,7 @@ pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
 #[cfg(test)]
 mod skillbar_config_emit_test;
+pub mod spirit_treasure_emit;
 pub mod status_snapshot_emit;
 pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
@@ -105,6 +106,7 @@ use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::fauna::rat_phase::{collect_rat_density_heatmap, RatDensityHeatmapV1, RatPhase};
+use crate::inventory::spirit_treasure::SpiritTreasureRegistry;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::dormant::NpcDormantStore;
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
@@ -704,6 +706,11 @@ pub fn register(app: &mut App) {
         ),
     );
     app.add_systems(Update, status_snapshot_emit::emit_status_snapshot_payloads);
+    app.add_systems(
+        Update,
+        spirit_treasure_emit::emit_spirit_treasure_state_payloads
+            .after(crate::inventory::spirit_treasure::sync_spirit_treasures),
+    );
     app.add_systems(
         Update,
         combat_event_emit::emit_combat_event_to_client
@@ -1957,6 +1964,7 @@ fn process_redis_inbound(
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
+    mut spirit_treasure_registry: Option<ResMut<SpiritTreasureRegistry>>,
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
     mut life_records: Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
@@ -2083,6 +2091,16 @@ fn process_redis_inbound(
                         payload: offer,
                     },
                 );
+            }
+            RedisInbound::SpiritTreasureDialogue(dialogue) => {
+                if let Some(registry) = spirit_treasure_registry.as_deref_mut() {
+                    spirit_treasure_emit::process_spirit_treasure_dialogue(
+                        dialogue,
+                        zone_registry.as_deref(),
+                        registry,
+                        &mut clients,
+                    );
+                }
             }
         }
     }
