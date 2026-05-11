@@ -17,8 +17,7 @@ public final class SeasonHintHudPlanner {
     public static List<HudRenderCommand> buildCommands(
         SeasonState state,
         int screenWidth,
-        int screenHeight,
-        long nowMillis
+        int screenHeight
     ) {
         if (state == null || screenWidth <= ICON_SIZE || screenHeight <= ICON_SIZE) {
             return List.of();
@@ -29,7 +28,7 @@ public final class SeasonHintHudPlanner {
         switch (state.phase()) {
             case SUMMER -> appendSummerIcon(out, x, y);
             case WINTER -> appendWinterIcon(out, x, y);
-            case SUMMER_TO_WINTER, WINTER_TO_SUMMER -> appendTideIcon(out, x, y, nowMillis);
+            case SUMMER_TO_WINTER, WINTER_TO_SUMMER -> appendTideIcon(out, x, y, state.tickIntoPhase());
         }
         return List.copyOf(out);
     }
@@ -48,8 +47,8 @@ public final class SeasonHintHudPlanner {
         out.add(HudRenderCommand.rect(HudRenderLayer.VISUAL, x + 2, y + 2, 4, 4, blue));
     }
 
-    private static void appendTideIcon(List<HudRenderCommand> out, int x, int y, long nowMillis) {
-        int jitter = (int) ((nowMillis / 120L) % 3L) - 1;
+    private static void appendTideIcon(List<HudRenderCommand> out, int x, int y, long tickIntoPhase) {
+        int jitter = (int) ((tickIntoPhase / 6L) % 3L) - 1;
         int purple = ALPHA | 0x9966CC;
         int grey = ALPHA | 0xB0A8BC;
         out.add(HudRenderCommand.rect(HudRenderLayer.VISUAL, x + 1 + jitter, y + 1, 6, 1, purple));

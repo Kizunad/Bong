@@ -1,6 +1,9 @@
-#![cfg_attr(not(test), allow(dead_code))] // 季节 NPC 行为先作为纯契约模块落地，后续 plan 接 runtime。
+use valence::prelude::{bevy_ecs, App, Commands, Component, Entity, Query, Res, Update, With};
 
+use crate::npc::lifecycle::NpcArchetype;
+use crate::npc::spawn::NpcMarker;
 use crate::world::season::Season;
+use crate::world::season::WorldSeasonState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NpcSeasonArchetype {
@@ -19,6 +22,48 @@ pub struct NpcSeasonBehavior {
     pub indoor_bias: f32,
     pub prepares_tribulation: bool,
     pub bubble: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Component)]
+pub struct NpcSeasonRuntime {
+    pub archetype: NpcSeasonArchetype,
+    pub behavior: NpcSeasonBehavior,
+}
+
+pub fn register(app: &mut App) {
+    app.add_systems(Update, apply_npc_season_runtime_system);
+}
+
+pub fn apply_npc_season_runtime_system(
+    season_state: Option<Res<WorldSeasonState>>,
+    mut commands: Commands,
+    mut npcs: Query<(Entity, &NpcArchetype, Option<&mut NpcSeasonRuntime>), With<NpcMarker>>,
+) {
+    let season = season_state
+        .as_deref()
+        .map(|state| state.current.season)
+        .unwrap_or_default();
+    for (entity, archetype, runtime) in &mut npcs {
+        let season_archetype = season_archetype_for(*archetype);
+        let next = NpcSeasonRuntime {
+            archetype: season_archetype,
+            behavior: behavior_for_season(season, season_archetype),
+        };
+        if let Some(mut runtime) = runtime {
+            *runtime = next;
+        } else {
+            commands.entity(entity).insert(next);
+        }
+    }
+}
+
+pub const fn season_archetype_for(archetype: NpcArchetype) -> NpcSeasonArchetype {
+    match archetype {
+        NpcArchetype::Commoner => NpcSeasonArchetype::Commoner,
+        NpcArchetype::Disciple => NpcSeasonArchetype::HighRealmCultivator,
+        NpcArchetype::GuardianRelic => NpcSeasonArchetype::GraveKeeper,
+        _ => NpcSeasonArchetype::ScatteredCultivator,
+    }
 }
 
 pub fn behavior_for_season(season: Season, archetype: NpcSeasonArchetype) -> NpcSeasonBehavior {
@@ -122,6 +167,8 @@ fn tide_turn_behavior(archetype: NpcSeasonArchetype) -> NpcSeasonBehavior {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::season::{SeasonState, WorldSeasonState};
+    use valence::prelude::{App, DVec3};
 
     #[test]
     fn npc_activity_by_season() {
@@ -157,5 +204,34 @@ mod tests {
                 NpcSeasonBehavior::neutral()
             );
         }
+    }
+
+    #[test]
+    fn seasonal_runtime_is_applied_to_npc_components() {
+        let mut app = App::new();
+        let mut season_state = WorldSeasonState::default();
+        season_state.current = SeasonState {
+            season: Season::Winter,
+            tick_into_phase: 10,
+            phase_total_ticks: 100,
+            year_index: 0,
+        };
+        app.insert_resource(season_state);
+        app.add_systems(Update, apply_npc_season_runtime_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Commoner,
+                valence::prelude::Position(DVec3::new(0.0, 64.0, 0.0)),
+            ))
+            .id();
+
+        app.update();
+
+        let runtime = app.world().get::<NpcSeasonRuntime>(npc).unwrap();
+        assert_eq!(runtime.archetype, NpcSeasonArchetype::Commoner);
+        assert_eq!(runtime.behavior.indoor_bias, 1.0);
+        assert!(runtime.behavior.speed_multiplier < 1.0);
     }
 }

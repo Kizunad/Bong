@@ -1,7 +1,22 @@
 package com.bong.client.season;
 
+import com.bong.client.network.VfxEventPayload;
+
 public final class MigrationVisualPlanner {
     private MigrationVisualPlanner() {
+    }
+
+    public static MigrationVisualEvent fromVfxPayload(VfxEventPayload.SpawnParticle payload, long nowTick) {
+        double[] direction = payload.direction().orElse(new double[] { 1.0, 0.0, 0.0 });
+        int durationTicks = payload.durationTicks().orElse(200);
+        return new MigrationVisualEvent(
+            "vfx",
+            direction.length > 0 ? direction[0] : 1.0,
+            direction.length > 2 ? direction[2] : 0.0,
+            durationTicks,
+            payload.count().orElse(24),
+            Math.max(0L, nowTick - durationTicks / 2L)
+        );
     }
 
     public static MigrationVisualCommand plan(MigrationVisualEvent event, long nowTick) {

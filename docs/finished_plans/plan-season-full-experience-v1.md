@@ -287,23 +287,24 @@
   - `SeasonPlantVisuals` 在既有 botany stage 渲染上叠加耐热/不耐热、耐寒/霜结、汐转脉冲视觉。
   - `BotanyPlantEntityRenderer` 应用季节 tint / alpha / sway；灵田 overlay 追加季节图标。
 - P2：
-  - server `npc::seasonal_behavior` 固化散修、凡人、高境、守墓人的季节移动/对话/渡劫准备契约。
-  - agent `templates/seasonal.ts` 与 `SeasonalNarrationTracker` 在季节切换后延迟发隐喻式 narration，并测试禁止显式季节名。
+  - server `npc::seasonal_behavior` 通过 `NpcSeasonRuntime` 写入 NPC tick，`NpcPatrol` 读取季节移动系数并同步收缩/放宽巡逻半径。
+  - agent `templates/seasonal.ts` 与 `SeasonalNarrationTracker` 在季节切换后延迟发隐喻式 narration，并在模板加载时直接 lint 禁止显式季节名。
 - P3：
-  - server `fauna_migration_system` 按 zone 灵气骤降和低阈值触发 `MigrationEvent`，包含 refuge 方向与持续 tick。
-  - client `MigrationVisualPlanner` 规划兽潮烟尘、camera shake、directional fog 与 `migration_rumble` 音效 cue。
+  - server `fauna_migration_system` 按 zone 灵气骤降和低阈值触发 `MigrationEvent`，同时发 `bong:migration_visual` VFX payload。
+  - client `MigrationVisualPlayer` 通过 `MigrationVisualPlanner` 消费兽潮 payload，产出烟尘/雾感视觉。
 - P4：
   - `SeasonBreakthroughOverlay` 为突破成功/失败和打坐吸灵提供季节 tint、闪电倍率、冰晶折射、汐转 flicker、反噬强度、粒子密度/速度修正。
-  - `BreakthroughPillarPlayer` / `BreakthroughFailPlayer` / `CultivationAbsorbPlayer` 消费这些 profile，叠加到既有 cinematic/VFX。
+  - `SeasonBreakthroughOverlayHud`、`BreakthroughPillarPlayer`、`BreakthroughFailPlayer` / `CultivationAbsorbPlayer` 消费这些 profile，叠加到既有 cinematic/VFX。
 - P5：
   - `SeasonFullExperienceTest.full_season_cycle_keeps_visual_signals_in_sync` 跑完炎汐→汐转→凝汐→汐转→炎汐，校验 atmosphere/music/HUD/particle 同步。
-  - `scripts/season_cycle_test.sh` 作为跨栈验证入口，串起 client 季节体验、server 兽潮/NPC 契约、agent 季节 narration。
+  - `scripts/season_cycle_test.sh` 作为跨栈 smoke gate，串起 client 季节体验、server 兽潮/NPC 契约、agent 季节 narration；真截图 / 性能预算留后续 plan。
 - 验证：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（4214 passed）
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
   - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`
-  - `cd agent && npm run build && npm test -w @bong/tiandao && npm test -w @bong/schema`（tiandao 350 passed；schema 366 passed）
+  - `cd agent && npm run build && npm test -w @bong/tiandao && npm test -w @bong/schema`
   - `bash scripts/season_cycle_test.sh`
   - `git diff --check`
 - 遗留 / 后续：
   - 季节对 PVP meta 的数值影响仍留给 `plan-style-balance-v1` 联动。
   - 季节 NPC 贸易路线变化留给后续 `plan-economy-v2` 类任务；本 plan 只落体验层和契约面。
+  - 完整截图编排与帧预算验证仍建议单独拆出 `plan-season-runtime-wire-v1` 一类后续 plan。

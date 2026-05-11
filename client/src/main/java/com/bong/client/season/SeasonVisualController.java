@@ -34,12 +34,11 @@ public final class SeasonVisualController {
         }
         SeasonState state = SeasonStateStore.snapshot();
         long worldTick = client.world.getTime();
-        tick(state, worldTick, event -> {
-            if (!firstHintShown) {
-                firstHintShown = true;
-                BongToast.show("你感到天地间灵气在变化", 0xFFE0D0AA, System.currentTimeMillis(), 3500L);
-            }
-        });
+        if (state != null && !firstHintShown) {
+            firstHintShown = true;
+            BongToast.show("你感到天地间灵气在变化", 0xFFE0D0AA, System.currentTimeMillis(), 3500L);
+        }
+        tick(state, worldTick);
         SeasonParticleEmitter.updateSeason(client, state, worldTick);
     }
 
@@ -75,6 +74,7 @@ public final class SeasonVisualController {
         lastPhase = null;
         firstHintShown = false;
         transitionSink = event -> {};
+        SeasonBreakthroughOverlayHud.resetForTests();
         ZoneAtmosphereRenderer.clearSeasonOverrideForTests();
         MusicStateMachine.instance().clearSeasonModifierForTests();
     }

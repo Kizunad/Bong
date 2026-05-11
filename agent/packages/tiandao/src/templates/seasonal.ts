@@ -15,11 +15,13 @@ export function renderSeasonalNarration(
   state: Pick<SeasonStateV1, "season">,
   target = "world:season",
 ): Narration {
+  const text = SEASONAL_NARRATION_TEMPLATES[state.season];
+  assertNoExplicitSeasonName(text, state.season);
   return {
     scope: "broadcast",
     target,
     style: "narration",
-    text: SEASONAL_NARRATION_TEMPLATES[state.season],
+    text,
   };
 }
 
@@ -30,6 +32,10 @@ export function containsExplicitSeasonName(text: string): boolean {
 export class SeasonalNarrationTracker {
   private lastSeason: SeasonalNarrationSeason | null = null;
   private pending: { state: SeasonStateV1; readyAtTick: number } | null = null;
+
+  constructor() {
+    lintSeasonalNarrationTemplates();
+  }
 
   ingest(state: SeasonStateV1, sourceTick: number): Narration[] {
     if (!state || !Number.isFinite(sourceTick)) {
@@ -51,9 +57,21 @@ export class SeasonalNarrationTracker {
     if (this.pending && this.pending.state.season === state.season && tick >= this.pending.readyAtTick) {
       const narration = renderSeasonalNarration(this.pending.state);
       this.pending = null;
-      return containsExplicitSeasonName(narration.text) ? [] : [narration];
+      return [narration];
     }
     return [];
+  }
+}
+
+function lintSeasonalNarrationTemplates(): void {
+  for (const [season, text] of Object.entries(SEASONAL_NARRATION_TEMPLATES)) {
+    assertNoExplicitSeasonName(text, season);
+  }
+}
+
+function assertNoExplicitSeasonName(text: string, season: string): void {
+  if (containsExplicitSeasonName(text)) {
+    throw new Error(`seasonal narration template for ${season} contains explicit season name`);
   }
 }
 

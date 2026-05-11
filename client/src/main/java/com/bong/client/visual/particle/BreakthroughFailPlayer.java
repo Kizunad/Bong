@@ -2,8 +2,10 @@ package com.bong.client.visual.particle;
 
 import com.bong.client.network.VfxEventPayload;
 import com.bong.client.season.SeasonBreakthroughOverlay;
+import com.bong.client.season.SeasonBreakthroughOverlayHud;
 import com.bong.client.state.SeasonStateStore;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.particle.SpriteProvider;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
@@ -23,10 +25,15 @@ public final class BreakthroughFailPlayer implements VfxPlayer {
         double oz = payload.origin()[2];
         SeasonBreakthroughOverlay.BreakthroughProfile profile =
             SeasonBreakthroughOverlay.breakthroughProfile(SeasonStateStore.snapshot(), false, world.getTime());
+        SeasonBreakthroughOverlayHud.trigger(profile, System.currentTimeMillis());
         float[] rgb = GameplayVfxUtil.rgb(payload, profile.pillarTintRgb() == 0 ? FALLBACK_RGB : profile.pillarTintRgb());
-        int count = GameplayVfxUtil.count(payload, 16, 4, 48);
+        int count = Math.min(
+            64,
+            (int) Math.round(GameplayVfxUtil.count(payload, 16, 4, 48) * (1.0 + profile.backlashIntensity()))
+        );
         int maxAge = GameplayVfxUtil.duration(payload, 60);
         float alpha = (float) (0.45 + GameplayVfxUtil.strength(payload, 0.8) * 0.4);
+        SpriteProvider spriteProvider = spriteProviderFor(profile);
 
         GameplayVfxUtil.spawnDecal(client, world, BongParticles.lingqiRippleSprites,
             ox, oy, oz, rgb, alpha, maxAge, 1.2);
@@ -36,7 +43,7 @@ public final class BreakthroughFailPlayer implements VfxPlayer {
             GameplayVfxUtil.spawnSprite(
                 client,
                 world,
-                BongParticles.tribulationSparkSprites,
+                spriteProvider,
                 ox,
                 oy + 0.4,
                 oz,
@@ -49,5 +56,13 @@ public final class BreakthroughFailPlayer implements VfxPlayer {
                 0.12f
             );
         }
+    }
+
+    private static SpriteProvider spriteProviderFor(SeasonBreakthroughOverlay.BreakthroughProfile profile) {
+        return switch (profile.particleSpriteId()) {
+            case "enlightenment_dust" -> BongParticles.enlightenmentDustSprites;
+            case "tribulation_spark" -> BongParticles.tribulationSparkSprites;
+            default -> BongParticles.tribulationSparkSprites;
+        };
     }
 }

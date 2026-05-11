@@ -182,11 +182,11 @@ public final class BongHudOrchestrator {
             if (seasonTint != 0) {
                 commands.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, seasonTint));
             }
+            commands.addAll(com.bong.client.season.SeasonBreakthroughOverlayHud.buildCommands(nowMillis));
             commands.addAll(com.bong.client.season.SeasonHintHudPlanner.buildCommands(
                 com.bong.client.state.SeasonStateStore.snapshot(),
                 screenWidth,
-                screenHeight,
-                nowMillis
+                screenHeight
             ));
             commands.addAll(com.bong.client.visual.TsyPressureOverlay.buildCommands(
                 playerState.localNegPressure(),

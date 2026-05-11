@@ -6,11 +6,15 @@ import com.bong.client.botany.BotanyPlantVisualState;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.LingtianOverlayHudPlanner;
 import com.bong.client.lingtian.state.LingtianSessionStore;
+import com.bong.client.network.VfxEventPayload;
 import com.bong.client.state.SeasonState;
+import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -63,7 +67,7 @@ class SeasonFullExperienceTest {
             transitions += result.transition() == null ? 0 : 1;
             assertEquals(cycle[i].phase(), ZoneAtmosphereRenderer.currentSeasonOverrideForTests().phase());
             assertEquals(cycle[i].phase(), MusicStateMachine.instance().seasonModifierForTests().phase());
-            assertFalse(SeasonHintHudPlanner.buildCommands(cycle[i], 320, 180, 100L + i).isEmpty());
+            assertFalse(SeasonHintHudPlanner.buildCommands(cycle[i], 320, 180).isEmpty());
             assertFalse(SeasonParticleEmitter.plan(cycle[i], 120L).isEmpty());
         }
 
@@ -75,8 +79,7 @@ class SeasonFullExperienceTest {
         List<HudRenderCommand> commands = SeasonHintHudPlanner.buildCommands(
             new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1000L, 0L),
             320,
-            180,
-            120L
+            180
         );
 
         assertFalse(commands.isEmpty());
@@ -210,6 +213,27 @@ class SeasonFullExperienceTest {
     }
 
     @Test
+    void migration_vfx_payload_reaches_visual_planner() {
+        VfxEventPayload.SpawnParticle payload = new VfxEventPayload.SpawnParticle(
+            new Identifier("bong", "migration_visual"),
+            new double[] { 0.0, 64.0, 0.0 },
+            Optional.of(new double[] { 1.0, 0.0, 0.0 }),
+            OptionalInt.empty(),
+            Optional.of(0.8),
+            OptionalInt.of(36),
+            OptionalInt.of(200)
+        );
+
+        MigrationVisualPlanner.MigrationVisualCommand command = MigrationVisualPlanner.plan(
+            MigrationVisualPlanner.fromVfxPayload(payload, 1_000L),
+            1_000L
+        );
+
+        assertTrue(command.dustPerEntityPerFiveTicks() > 0);
+        assertTrue(command.cameraShakeIntensity() > 0.0);
+    }
+
+    @Test
     void summer_breakthrough_extra_lightning() {
         SeasonBreakthroughOverlay.BreakthroughProfile profile = SeasonBreakthroughOverlay.breakthroughProfile(
             new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
@@ -248,6 +272,21 @@ class SeasonFullExperienceTest {
 
         assertNotEquals(left.pillarTintRgb(), right.pillarTintRgb());
         assertTrue(left.backlashIntensity() > 0.5);
+    }
+
+    @Test
+    void breakthrough_profile_pulse_reaches_hud() {
+        SeasonBreakthroughOverlay.BreakthroughProfile profile = SeasonBreakthroughOverlay.breakthroughProfile(
+            new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1000L, 0L),
+            true,
+            0L
+        );
+
+        SeasonBreakthroughOverlayHud.trigger(profile, 1_000L);
+        List<HudRenderCommand> commands = SeasonBreakthroughOverlayHud.buildCommands(2_000L);
+
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isScreenTint));
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isEdgeVignette));
     }
 
     @Test

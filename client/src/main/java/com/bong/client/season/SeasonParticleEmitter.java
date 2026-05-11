@@ -20,37 +20,98 @@ public final class SeasonParticleEmitter {
         if (state == null) {
             return List.of();
         }
+        double progress = phaseProgress(state);
         List<ParticleCue> cues = new ArrayList<>();
         switch (state.phase()) {
             case SUMMER -> {
                 if (worldTick % 10L == 0L) {
-                    cues.add(new ParticleCue(ParticleKind.HEAT_SHIMMER, "lingqi_ripple", 1, 0xFFD700, 0.15f, 30, 0.5, 0.015));
+                    cues.add(new ParticleCue(
+                        ParticleKind.HEAT_SHIMMER,
+                        "lingqi_ripple",
+                        1,
+                        0xFFD700,
+                        (float) (0.10 + progress * 0.12),
+                        30,
+                        0.45 + progress * 0.15,
+                        0.015
+                    ));
                 }
                 if (worldTick % 120L == 0L) {
                     cues.add(new ParticleCue(ParticleKind.DISTANT_THUNDER_FLASH, "tribulation_spark", 1, 0xFFFFFF, 0.80f, 2, 8.0, 0.0));
                 }
                 if (worldTick % 20L == 0L) {
-                    cues.add(new ParticleCue(ParticleKind.BOTANY_EVAPORATION, "enlightenment_dust", 1, 0xFFD36A, 0.35f, 20, 0.25, 0.035));
+                    cues.add(new ParticleCue(
+                        ParticleKind.BOTANY_EVAPORATION,
+                        "enlightenment_dust",
+                        1 + (int) Math.round(progress),
+                        0xFFD36A,
+                        (float) (0.25 + progress * 0.20),
+                        20,
+                        0.20 + progress * 0.15,
+                        0.030 + progress * 0.015
+                    ));
                 }
             }
             case WINTER -> {
                 if (worldTick % 10L == 0L) {
-                    cues.add(new ParticleCue(ParticleKind.SNOW_DRIFT, "cloud256_dust", 2, 0xFFFFFF, 0.55f, 45, 0.20, -0.03));
+                    cues.add(new ParticleCue(
+                        ParticleKind.SNOW_DRIFT,
+                        "cloud256_dust",
+                        1 + (int) Math.round(progress * 2.0),
+                        0xFFFFFF,
+                        (float) (0.25 + progress * 0.35),
+                        45,
+                        0.16 + progress * 0.08,
+                        -0.025 - progress * 0.020
+                    ));
                 }
                 if (worldTick % 60L == 0L) {
-                    cues.add(new ParticleCue(ParticleKind.ICE_SPARK, "enlightenment_dust", 1, 0xC0E0FF, 0.60f, 15, 0.18, 0.01));
+                    cues.add(new ParticleCue(
+                        ParticleKind.ICE_SPARK,
+                        "enlightenment_dust",
+                        1,
+                        0xC0E0FF,
+                        (float) (0.35 + progress * 0.30),
+                        15,
+                        0.14 + progress * 0.08,
+                        0.01
+                    ));
                 }
             }
             case SUMMER_TO_WINTER, WINTER_TO_SUMMER -> {
-                if (worldTick % 40L == 0L) {
-                    cues.add(new ParticleCue(ParticleKind.CHAOTIC_QI_LINE, "sword_qi_trail", 1, 0x9966CC, 0.20f, 10, 2.0, 0.0));
+                int linePeriod = progress < 0.5 ? 40 : 20;
+                if (worldTick % linePeriod == 0L) {
+                    cues.add(new ParticleCue(
+                        ParticleKind.CHAOTIC_QI_LINE,
+                        "sword_qi_trail",
+                        1 + (int) Math.round(progress),
+                        0x9966CC,
+                        (float) (0.12 + progress * 0.20),
+                        10,
+                        1.4 + progress * 1.0,
+                        0.0
+                    ));
                 }
                 if (worldTick % 20L == 0L) {
-                    cues.add(new ParticleCue(ParticleKind.TRIBULATION_MARK, "tribulation_spark", 1, 0xFF4444, 0.45f, 20, 0.20, 0.02));
+                    cues.add(new ParticleCue(
+                        ParticleKind.TRIBULATION_MARK,
+                        "tribulation_spark",
+                        1 + (int) Math.round(progress * 2.0),
+                        0xFF4444,
+                        (float) (0.20 + progress * 0.35),
+                        20,
+                        0.16 + progress * 0.12,
+                        0.015 + progress * 0.015
+                    ));
                 }
             }
         }
         return List.copyOf(cues);
+    }
+
+    private static double phaseProgress(SeasonState state) {
+        long total = Math.max(1L, state.phaseTotalTicks());
+        return Math.max(0.0, Math.min(1.0, (double) state.tickIntoPhase() / (double) total));
     }
 
     public static void updateSeason(MinecraftClient client, SeasonState state, long worldTick) {

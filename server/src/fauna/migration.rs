@@ -3,12 +3,16 @@ use std::collections::HashMap;
 use valence::prelude::{bevy_ecs, DVec3, Event, EventWriter, Res, ResMut, Resource};
 
 use crate::cultivation::tick::CultivationClock;
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 pub const MIGRATION_QI_LOW_THRESHOLD: f64 = 0.18;
 pub const MIGRATION_QI_DROP_THRESHOLD: f64 = 0.20;
 pub const MIGRATION_MIN_DURATION_TICKS: u32 = 6_000;
 pub const MIGRATION_MAX_DURATION_TICKS: u32 = 12_000;
+pub const MIGRATION_VISUAL_EVENT_ID: &str = "bong:migration_visual";
+const MIGRATION_VFX_DURATION_TICKS: u16 = 200;
 
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct MigrationEvent {
@@ -29,6 +33,7 @@ pub fn fauna_migration_system(
     clock: Option<Res<CultivationClock>>,
     mut state: ResMut<FaunaMigrationState>,
     mut events: EventWriter<MigrationEvent>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let Some(zones) = zones else {
         state.previous_qi_by_zone.clear();
@@ -59,13 +64,36 @@ pub fn fauna_migration_system(
         state
             .active_until_by_zone
             .insert(zone.name.clone(), now.saturating_add(duration as u64));
-        events.send(MigrationEvent {
+        let event = MigrationEvent {
             zone_id: zone.name.clone(),
             direction: refuge_direction(zone, &zones.zones),
             duration_ticks: duration,
             started_at_tick: now,
-        });
+        };
+        events.send(event.clone());
+        vfx_events.send(migration_vfx_request(zone, &event));
     }
+}
+
+fn migration_vfx_request(zone: &Zone, event: &MigrationEvent) -> VfxEventRequest {
+    let center = zone.center();
+    VfxEventRequest::new(
+        center,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: MIGRATION_VISUAL_EVENT_ID.to_string(),
+            origin: [center.x, center.y, center.z],
+            direction: Some(event.direction),
+            color: Some("#B08A5A".to_string()),
+            strength: Some((1.0 - zone.spirit_qi).clamp(0.20, 1.0) as f32),
+            count: Some(migration_visual_count(zone)),
+            duration_ticks: Some(MIGRATION_VFX_DURATION_TICKS),
+        },
+    )
+}
+
+fn migration_visual_count(zone: &Zone) -> u16 {
+    let signal = ((1.0 - zone.spirit_qi).clamp(0.0, 1.0) * 64.0).round() as u16;
+    signal.clamp(8, crate::schema::vfx_event::VFX_PARTICLE_COUNT_MAX)
 }
 
 fn migration_duration_ticks(zone: &Zone) -> u32 {
@@ -109,6 +137,7 @@ mod tests {
             zones: vec![zone("draining", 0.52, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.add_event::<MigrationEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, fauna_migration_system);
 
         app.update();
@@ -126,6 +155,27 @@ mod tests {
         assert_eq!(emitted[0].zone_id, "draining");
         assert!(emitted[0].direction[0] > 0.9);
         assert!(emitted[0].duration_ticks >= MIGRATION_MIN_DURATION_TICKS);
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted_vfx = vfx_events
+            .get_reader()
+            .read(vfx_events)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(emitted_vfx.len(), 1);
+        match &emitted_vfx[0].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(event_id, MIGRATION_VISUAL_EVENT_ID);
+                assert_eq!(*direction, Some(emitted[0].direction));
+                assert_eq!(*duration_ticks, Some(MIGRATION_VFX_DURATION_TICKS));
+            }
+            other => panic!("expected migration SpawnParticle VFX, got {other:?}"),
+        }
     }
 
     #[test]

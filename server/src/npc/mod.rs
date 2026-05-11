@@ -47,6 +47,7 @@ pub fn register(app: &mut App) {
     hunger::register(app);
     possession::register(app);
     tribulation::register(app);
+    seasonal_behavior::register(app);
     patrol::register(app);
     sync::register(app);
     brain::register(app);
