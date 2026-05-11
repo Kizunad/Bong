@@ -86,9 +86,9 @@ public class BongNetworkHandler {
                 RealmCollapseHudStateStore.clearOnDisconnect();
                 NpcMetadataStore.clearAll();
                 NpcMoodStore.clearAll();
-                NpcDialogueBubbleRenderer.clearForTests();
-                TsyBossHealthStore.resetForTests();
-                TsyDeathVfxStore.resetForTests();
+                NpcDialogueBubbleRenderer.clear();
+                TsyBossHealthStore.reset();
+                TsyDeathVfxStore.reset();
                 ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
                 com.bong.client.audio.MusicStateMachine.instance().clear();
             })

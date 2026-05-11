@@ -14,7 +14,11 @@ public final class TsyBossHealthStore {
         state = next == null ? TsyBossHealthState.empty() : next;
     }
 
-    public static void resetForTests() {
+    public static void reset() {
         state = TsyBossHealthState.empty();
+    }
+
+    public static void resetForTests() {
+        reset();
     }
 }

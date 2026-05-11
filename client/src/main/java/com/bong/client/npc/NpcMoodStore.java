@@ -15,7 +15,9 @@ public final class NpcMoodStore {
         if (state == null || state.entityId() < 0) {
             return;
         }
-        MOOD_BY_ENTITY_ID.put(state.entityId(), state);
+        MOOD_BY_ENTITY_ID.compute(state.entityId(), (entityId, current) ->
+            current == null || state.updatedAtMillis() >= current.updatedAtMillis() ? state : current
+        );
     }
 
     public static NpcMoodState get(int entityId) {

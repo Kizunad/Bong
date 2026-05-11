@@ -41,8 +41,12 @@ public final class NpcDialogueBubbleRenderer {
         ACTIVE.put(bubble.entityId(), bubble);
     }
 
-    public static void clearForTests() {
+    public static void clear() {
         ACTIVE.clear();
+    }
+
+    public static void clearForTests() {
+        clear();
     }
 
     public static List<Bubble> snapshot(long nowMillis) {

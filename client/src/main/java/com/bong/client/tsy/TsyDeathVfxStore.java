@@ -14,7 +14,11 @@ public final class TsyDeathVfxStore {
         state = new TsyDeathVfxState(true, Math.max(0L, nowMillis));
     }
 
-    public static void resetForTests() {
+    public static void reset() {
         state = TsyDeathVfxState.empty();
+    }
+
+    public static void resetForTests() {
+        reset();
     }
 }
