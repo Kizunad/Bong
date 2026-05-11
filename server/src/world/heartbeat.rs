@@ -951,6 +951,9 @@ fn queue_forced_events(
             continue;
         };
         let kind = omen_kind_for_event(event.event_kind);
+        heartbeat.pending_omens.retain(|omen| {
+            !(omen.kind == kind && omen.zone_name == zone.name && omen.target_player.is_none())
+        });
         queue_omen(
             heartbeat,
             kind,
@@ -2035,6 +2038,83 @@ mod tests {
         assert_eq!(
             heartbeat.pending_omens[0].intensity, 0.42,
             "accelerate intensity_override should drive queued beast tide strength"
+        );
+    }
+
+    #[test]
+    fn force_override_replaces_existing_pending_omen() {
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.pending_omens.push(WorldEventOmen {
+            kind: OmenKind::BeastTideApproaching,
+            zone_name: "hungry".to_string(),
+            target_player: None,
+            origin: DVec3::new(0.0, 65.0, 0.0),
+            intensity: 0.1,
+            scheduled_at_tick: 0,
+            fires_at_tick: 10_000,
+            expires_at_tick: 10_200,
+        });
+        heartbeat.forced_events.push(ForcedHeartbeatEvent {
+            event_kind: HeartbeatEventKind::BeastTide,
+            target_zone: "hungry".to_string(),
+            intensity: 0.9,
+        });
+        let zones = ZoneRegistry {
+            zones: vec![zone("hungry", 0.0, 0.0, 0.1)],
+        };
+
+        queue_forced_events(&mut heartbeat, &zones, 200, None);
+
+        assert_eq!(heartbeat.pending_omens.len(), 1);
+        assert_eq!(
+            heartbeat.pending_omens[0].intensity, 0.9,
+            "force override should replace the older same-zone pending omen"
+        );
+        assert_eq!(
+            heartbeat.pending_omens[0].fires_at_tick, 200,
+            "force override should fire at the current heartbeat tick"
+        );
+    }
+
+    #[test]
+    fn real_heartbeat_system_force_override_fires_through_app() {
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.apply_override(
+            HeartbeatOverrideAction::Force,
+            HeartbeatEventKind::BeastTide,
+            "spawn".to_string(),
+            100,
+            Some(0.8),
+            0,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(heartbeat);
+        app.insert_resource(CultivationClock {
+            tick: HEARTBEAT_EVAL_INTERVAL_TICKS,
+        });
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(
+            Update,
+            (heartbeat_tick, chain_reaction_tick.after(heartbeat_tick)),
+        );
+        app.update();
+
+        let active = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            active.contains("spawn", EVENT_BEAST_TIDE),
+            "real heartbeat_tick system should fire a forced beast tide through ActiveEventsResource"
+        );
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        assert_eq!(
+            heartbeat
+                .event_counts
+                .get(&HeartbeatEventKind::BeastTide)
+                .copied(),
+            Some(1),
+            "real heartbeat_tick path should record the fired beast tide"
         );
     }
 

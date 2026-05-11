@@ -123,23 +123,43 @@ class OmenStateStoreTest {
     }
 
     @Test
-    void noteUpsertsByKind() {
+    void noteUpsertsByKindAndOriginButKeepsParallelZones() {
         OmenStateStore.note(payload("world_omen_beast_tide", 0.2, 20), 1_000L);
+        OmenStateStore.note(payload(
+            "world_omen_beast_tide",
+            0.4,
+            20,
+            new double[] { 120.0, 64.0, 0.0 }
+        ), 1_050L);
         OmenStateStore.note(payload("world_omen_beast_tide", 0.9, 20), 1_100L);
 
         OmenStateStore.Snapshot snapshot = OmenStateStore.snapshot(1_100L);
-        assertEquals(1, snapshot.entries().size(),
-            "second note for same omen kind should replace the old entry");
-        assertEquals(0.9, snapshot.entries().get(0).strength(),
-            "upserted omen should expose the latest strength");
-        assertEquals(2_100L, snapshot.entries().get(0).expiresAtMillis(),
-            "upserted omen should expose the latest expiry");
+        assertEquals(2, snapshot.entries().size(),
+            "same kind from different origins should keep parallel omen entries");
+        OmenStateStore.Entry refreshed = snapshot.entries()
+            .stream()
+            .filter(entry -> entry.origin()[0] == 0.0)
+            .findFirst()
+            .orElseThrow();
+        assertEquals(0.9, refreshed.strength(),
+            "same kind and same origin should replace the old entry");
+        assertEquals(2_100L, refreshed.expiresAtMillis(),
+            "same kind and same origin should expose the latest expiry");
     }
 
     private static VfxEventPayload.SpawnParticle payload(String path, double strength, int durationTicks) {
+        return payload(path, strength, durationTicks, new double[] { 0.0, 64.0, 0.0 });
+    }
+
+    private static VfxEventPayload.SpawnParticle payload(
+        String path,
+        double strength,
+        int durationTicks,
+        double[] origin
+    ) {
         return new VfxEventPayload.SpawnParticle(
             new Identifier("bong", path),
-            new double[] { 0.0, 64.0, 0.0 },
+            origin,
             Optional.empty(),
             OptionalInt.empty(),
             Optional.of(strength),

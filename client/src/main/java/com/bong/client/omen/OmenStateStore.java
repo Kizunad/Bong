@@ -4,6 +4,7 @@ import com.bong.client.network.VfxEventPayload;
 import net.minecraft.util.Identifier;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -93,7 +94,9 @@ public final class OmenStateStore {
     }
 
     private static void upsert(Entry next) {
-        entries.removeIf(entry -> entry.kind == next.kind);
+        entries.removeIf(entry ->
+            entry.kind == next.kind && Arrays.equals(entry.origin(), next.origin())
+        );
         entries.add(next);
     }
 
