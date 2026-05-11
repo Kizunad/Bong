@@ -283,6 +283,8 @@ pub fn record_first_poi_action(life_record: &mut LifeRecord, kind: PoiNoviceKind
     life_record.push(BiographyEntry::InsightTaken {
         trigger,
         choice: kind.first_action_label().to_string(),
+        alignment: None,
+        cost_kind: None,
         tick,
     });
 }
@@ -393,7 +395,7 @@ mod tests {
         assert_eq!(life.biography.len(), 1);
         assert!(matches!(
             &life.biography[0],
-            BiographyEntry::InsightTaken { trigger, choice, tick }
+            BiographyEntry::InsightTaken { trigger, choice, tick, .. }
                 if trigger == "poi_novice:forge_station"
                     && choice == "第一次炼器"
                     && *tick == 12

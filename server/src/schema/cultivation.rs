@@ -121,6 +121,14 @@ pub struct InsightChoiceV1 {
     pub magnitude: f64,
     pub flavor_text: String,
     pub narrator_voice: Option<String>,
+    #[serde(default)]
+    pub alignment: Option<String>,
+    #[serde(default)]
+    pub cost_kind: Option<String>,
+    #[serde(default)]
+    pub cost_magnitude: Option<f64>,
+    #[serde(default)]
+    pub cost_flavor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +204,13 @@ pub enum BiographyEntryV1 {
     InsightTaken {
         trigger: String,
         choice: String,
+        alignment: Option<String>,
+        cost_kind: Option<String>,
+        tick: u64,
+    },
+    InsightDiverge {
+        from_color: String,
+        to_color: String,
         tick: u64,
     },
     Rebirth {
