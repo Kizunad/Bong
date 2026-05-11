@@ -877,7 +877,7 @@ mod tests {
         app.world_mut().entity_mut(player).insert((
             GameMode::Survival,
             CurrentDimension(DimensionKind::Overworld),
-            inventory_with_main_hand("pickaxe_iron"),
+            inventory_with_main_hand("minecraft:iron_pickaxe"),
         ));
         let pos = BlockPos::new(10, 64, 10);
         let mut node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);

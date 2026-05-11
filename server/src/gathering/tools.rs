@@ -184,6 +184,7 @@ pub fn spec_for_item_id(item_id: &str) -> Option<GatheringToolSpec> {
         .iter()
         .copied()
         .find(|spec| spec.item_id == item_id)
+        .or_else(|| vanilla_pickaxe_alias_spec(item_id))
         .or_else(|| {
             // 玄铁锄是 lingtian 既有高档锄头；采集系统按轻快高质档处理。
             (item_id == "hoe_xuantie").then_some(GatheringToolSpec::new(
@@ -194,6 +195,21 @@ pub fn spec_for_item_id(item_id: &str) -> Option<GatheringToolSpec> {
                 GatheringTargetKind::Herb,
             ))
         })
+}
+
+fn vanilla_pickaxe_alias_spec(item_id: &str) -> Option<GatheringToolSpec> {
+    let key = item_id.rsplit(':').next().unwrap_or(item_id);
+    let alias = match key {
+        "wooden_pickaxe" | "golden_pickaxe" => "pickaxe_bone",
+        "stone_pickaxe" | "fan_iron_pickaxe" => "pickaxe_copper",
+        "iron_pickaxe" | "ling_iron_pickaxe" | "diamond_pickaxe" | "netherite_pickaxe"
+        | "yi_pickaxe" => "pickaxe_iron",
+        _ => return None,
+    };
+    GATHERING_TOOL_SPECS
+        .iter()
+        .copied()
+        .find(|spec| spec.item_id == alias)
 }
 
 pub fn item_to_spec(item: &ItemInstance) -> Option<GatheringToolSpec> {
@@ -444,6 +460,43 @@ mod tests {
             "expected hoe_xuantie compatibility mapping to target Herb, actual {:?}",
             spec.target
         );
+    }
+
+    #[test]
+    fn spec_for_item_id_maps_vanilla_pickaxes_to_gathering_specs() {
+        let iron = spec_for_item_id("minecraft:iron_pickaxe")
+            .expect("minecraft:iron_pickaxe should map to a gathering pickaxe spec");
+        assert_eq!(
+            iron.item_id, "pickaxe_iron",
+            "vanilla iron pickaxe should share the custom iron pickaxe gathering spec"
+        );
+        assert_eq!(iron.kind, GatheringToolKind::Pickaxe);
+        assert_eq!(iron.target, GatheringTargetKind::Ore);
+
+        let stone = spec_for_item_id("minecraft:stone_pickaxe")
+            .expect("minecraft:stone_pickaxe should map to a gathering pickaxe spec");
+        assert_eq!(
+            stone.item_id, "pickaxe_copper",
+            "vanilla stone pickaxe should map to the mid-tier ore gathering spec"
+        );
+
+        let wooden = spec_for_item_id("minecraft:wooden_pickaxe")
+            .expect("minecraft:wooden_pickaxe should map to a gathering pickaxe spec");
+        assert_eq!(
+            wooden.item_id, "pickaxe_bone",
+            "vanilla wooden pickaxe should map to the low-tier ore gathering spec"
+        );
+    }
+
+    #[test]
+    fn equipped_gathering_tool_maps_vanilla_pickaxe_to_session_tool() {
+        let tool = equipped_gathering_tool(&inventory_with_main("minecraft:iron_pickaxe"))
+            .expect("vanilla iron pickaxe should resolve as a gathering tool");
+        assert_eq!(
+            tool.item_id, "pickaxe_iron",
+            "mining sessions should receive the same tool spec accepted by mining tier checks"
+        );
+        assert_eq!(tool.target, GatheringTargetKind::Ore);
     }
 
     #[test]

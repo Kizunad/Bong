@@ -67,7 +67,7 @@ fn emit_gathering_progress(
         let Ok(mut client) = clients.get_mut(frame.player) else {
             continue;
         };
-        let Some(quality_hint) = quality_hint_wire(frame.quality_hint.as_str()) else {
+        let Some(payload) = gathering_payload_from_frame(frame) else {
             tracing::warn!(
                 target: "bong::gathering",
                 session_id = %frame.session_id,
@@ -76,23 +76,27 @@ fn emit_gathering_progress(
             );
             continue;
         };
-        let payload = ServerDataV1::new(ServerDataPayloadV1::GatheringSession {
-            session_id: frame.session_id.clone(),
-            progress_ticks: frame.progress_ticks,
-            total_ticks: frame.total_ticks,
-            target_name: frame.target_name.clone(),
-            target_type: target_type_wire(frame.target_type),
-            quality_hint,
-            tool_used: frame.tool_used.clone(),
-            interrupted: frame.interrupted,
-            completed: frame.completed,
-        });
         let payload_type = payload_type_label(payload.payload_type());
         match serialize_server_data_payload(&payload) {
             Ok(bytes) => send_server_data_payload(&mut client, bytes.as_slice()),
             Err(error) => log_payload_build_error(payload_type, &error),
         }
     }
+}
+
+fn gathering_payload_from_frame(frame: &GatheringProgressFrame) -> Option<ServerDataV1> {
+    let quality_hint = quality_hint_wire(frame.quality_hint.as_str())?;
+    Some(ServerDataV1::new(ServerDataPayloadV1::GatheringSession {
+        session_id: frame.session_id.clone(),
+        progress_ticks: frame.progress_ticks,
+        total_ticks: frame.total_ticks,
+        target_name: frame.target_name.clone(),
+        target_type: target_type_wire(frame.target_type),
+        quality_hint,
+        tool_used: frame.tool_used.clone(),
+        interrupted: frame.interrupted,
+        completed: frame.completed,
+    }))
 }
 
 pub fn target_type_wire(target: GatheringTargetKind) -> GatheringTargetTypeV1 {
@@ -117,7 +121,7 @@ fn quality_hint_wire(hint: &str) -> Option<GatheringQualityHintV1> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::Events;
+    use valence::prelude::{Entity, Events};
 
     #[test]
     fn register_installs_gathering_resources_and_events() {
@@ -168,5 +172,94 @@ mod tests {
             Some(GatheringQualityHintV1::Perfect)
         );
         assert_eq!(quality_hint_wire("unexpected"), None);
+    }
+
+    #[test]
+    fn gathering_progress_frame_builds_typed_server_data_payload() {
+        let cases = [
+            (
+                GatheringTargetKind::Herb,
+                "fine_likely",
+                GatheringTargetTypeV1::Herb,
+                GatheringQualityHintV1::FineLikely,
+            ),
+            (
+                GatheringTargetKind::Ore,
+                "perfect",
+                GatheringTargetTypeV1::Ore,
+                GatheringQualityHintV1::Perfect,
+            ),
+            (
+                GatheringTargetKind::Wood,
+                "normal",
+                GatheringTargetTypeV1::Wood,
+                GatheringQualityHintV1::Normal,
+            ),
+        ];
+
+        for (target, hint, expected_target, expected_hint) in cases {
+            let frame = GatheringProgressFrame {
+                player: Entity::from_raw(7),
+                session_id: format!("session:{hint}"),
+                origin_position: [1.5, 64.0, 2.5],
+                progress_ticks: 12,
+                total_ticks: 40,
+                target_name: "测试采集物".to_string(),
+                target_type: target,
+                quality_hint: hint.to_string(),
+                tool_used: Some("pickaxe_iron".to_string()),
+                interrupted: false,
+                completed: false,
+            };
+
+            let payload = gathering_payload_from_frame(&frame)
+                .expect("known quality_hint should build a server-data payload");
+            match payload.payload {
+                ServerDataPayloadV1::GatheringSession {
+                    session_id,
+                    progress_ticks,
+                    total_ticks,
+                    target_name,
+                    target_type,
+                    quality_hint,
+                    tool_used,
+                    interrupted,
+                    completed,
+                } => {
+                    assert_eq!(session_id, frame.session_id);
+                    assert_eq!(progress_ticks, frame.progress_ticks);
+                    assert_eq!(total_ticks, frame.total_ticks);
+                    assert_eq!(target_name, frame.target_name);
+                    assert_eq!(target_type, expected_target);
+                    assert_eq!(quality_hint, expected_hint);
+                    assert_eq!(tool_used.as_deref(), Some("pickaxe_iron"));
+                    assert!(!interrupted);
+                    assert!(!completed);
+                }
+                other => panic!("expected GatheringSession payload, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn gathering_progress_frame_rejects_unknown_quality_hint() {
+        let frame = GatheringProgressFrame {
+            player: Entity::from_raw(7),
+            session_id: "session:bad".to_string(),
+            origin_position: [1.5, 64.0, 2.5],
+            progress_ticks: 12,
+            total_ticks: 40,
+            target_name: "测试采集物".to_string(),
+            target_type: GatheringTargetKind::Herb,
+            quality_hint: "legendary".to_string(),
+            tool_used: None,
+            interrupted: false,
+            completed: false,
+        };
+
+        assert!(
+            gathering_payload_from_frame(&frame).is_none(),
+            "unknown quality_hint must be rejected before serializing gathering_session payload"
+        );
     }
 }
