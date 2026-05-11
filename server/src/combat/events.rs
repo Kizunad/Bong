@@ -97,6 +97,12 @@ pub enum StatusEffectKind {
     ParryRecovery,
     /// plan-niche-defense-v1 P1：高级灵龛阵法陷阱制造的短时迷乱。
     Disoriented,
+    /// plan-spirit-treasure-v1 P3：寂照镜隐匿期间从感知/威胁选择中消失。
+    MirrorConcealment,
+    /// plan-spirit-treasure-v1 P3：镜隐结束后的反向暴露窗口。
+    MirrorExposed,
+    /// plan-spirit-treasure-v1 P3：寂照镜好感缩放后的常驻感知加成标记。
+    SpiritTreasurePerception,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;

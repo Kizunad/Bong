@@ -31,6 +31,8 @@ pub enum AncientRelicKind {
     BeastCore,
     /// 佩物（弟子遗物）
     Pendant,
+    /// plan-spirit-treasure-v1：全服唯一灵宝，实际 spawn 由 RelicCore 深层钩子加唯一性守卫。
+    SpiritTreasure,
 }
 
 /// 上古遗物来源类（来自 `worldview §十六.一` TSY 生命周期表）。

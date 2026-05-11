@@ -51,6 +51,7 @@ pub mod corpse;
 pub mod freshness;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
 pub mod poi_loot;
+pub mod spirit_treasure;
 // plan-tsy-loot-v1 §3 — 秘境内死亡分流。
 pub mod tsy_death_drop;
 // plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
@@ -422,6 +423,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
     app.insert_resource(freshness::FreshnessEnvironment::default());
+    app.insert_resource(spirit_treasure::SpiritTreasureRegistry::default());
     // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
     app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
     app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
@@ -436,6 +438,7 @@ pub fn register(app: &mut App) {
             handle_remains_interactions,
             freshness::freshness_tick_system,
             sync_overloaded_marker,
+            spirit_treasure::sync_spirit_treasures,
             // plan-tsy-loot-v1 §2.2 — 玩家踏入 family 时 spawn 1% 上古遗物（idempotent）。
             tsy_loot_spawn::tsy_loot_spawn_on_enter,
         ),

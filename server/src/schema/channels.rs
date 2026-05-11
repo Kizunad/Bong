@@ -140,6 +140,8 @@ pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
 pub const CH_SPIRIT_EYE_MIGRATE: &str = "bong:spirit_eye/migrate";
 pub const CH_SPIRIT_EYE_DISCOVERED: &str = "bong:spirit_eye/discovered";
 pub const CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH: &str = "bong:spirit_eye/used_for_breakthrough";
+pub const CH_SPIRIT_TREASURE_DIALOGUE_REQUEST: &str = "bong:spirit_treasure_dialogue_request";
+pub const CH_SPIRIT_TREASURE_DIALOGUE: &str = "bong:spirit_treasure_dialogue";
 
 // 活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
 // 玩家踏进 / 走出 TSY 秘境时由 server publish；entry / exit 共享同一频道，consumer 按 `kind` 字段 dispatch。
@@ -266,6 +268,11 @@ mod tests {
             CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
             "bong:spirit_eye/used_for_breakthrough"
         );
+        assert_eq!(
+            CH_SPIRIT_TREASURE_DIALOGUE_REQUEST,
+            "bong:spirit_treasure_dialogue_request"
+        );
+        assert_eq!(CH_SPIRIT_TREASURE_DIALOGUE, "bong:spirit_treasure_dialogue");
         assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
         assert_eq!(CH_POI_NOVICE_EVENT, "bong:poi_novice/event");
         assert_eq!(CH_FORGE_START, "bong:forge/start");

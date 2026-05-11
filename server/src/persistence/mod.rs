@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 23;
+const CURRENT_USER_VERSION: i32 = 24;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1559,6 +1559,48 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 24 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS spirit_treasure_world (
+                template_id TEXT PRIMARY KEY,
+                instance_id INTEGER NOT NULL CHECK (instance_id >= 0),
+                holder_kind TEXT NOT NULL CHECK (holder_kind IN ('player', 'ground', 'lost')),
+                holder_id TEXT,
+                holder_pos_x REAL,
+                holder_pos_y REAL,
+                holder_pos_z REAL,
+                affinity REAL NOT NULL DEFAULT 0.5 CHECK (affinity >= 0.0 AND affinity <= 1.0),
+                dialogue_count INTEGER NOT NULL DEFAULT 0 CHECK (dialogue_count >= 0),
+                sleeping INTEGER NOT NULL DEFAULT 0 CHECK (sleeping IN (0, 1)),
+                spawned_at_tick INTEGER NOT NULL CHECK (spawned_at_tick >= 0),
+                schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL DEFAULT 0 CHECK (last_updated_wall >= 0)
+            );
+
+            CREATE TABLE IF NOT EXISTS spirit_treasure_dialogue_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id TEXT NOT NULL,
+                character_id TEXT NOT NULL,
+                tick INTEGER NOT NULL CHECK (tick >= 0),
+                speaker TEXT NOT NULL CHECK (speaker IN ('player', 'spirit')),
+                content TEXT NOT NULL,
+                affinity_delta REAL NOT NULL DEFAULT 0.0,
+                schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version >= 1)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_spirit_treasure_dialogue_log_character
+            ON spirit_treasure_dialogue_log (character_id, template_id, tick);
+            ",
+        )?;
+        assert_spirit_treasure_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 24;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1665,6 +1707,56 @@ fn table_columns(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn assert_spirit_treasure_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    for (table, required) in [
+        (
+            "spirit_treasure_world",
+            &[
+                "template_id",
+                "instance_id",
+                "holder_kind",
+                "holder_id",
+                "holder_pos_x",
+                "holder_pos_y",
+                "holder_pos_z",
+                "affinity",
+                "dialogue_count",
+                "sleeping",
+                "spawned_at_tick",
+                "schema_version",
+                "last_updated_wall",
+            ][..],
+        ),
+        (
+            "spirit_treasure_dialogue_log",
+            &[
+                "id",
+                "template_id",
+                "character_id",
+                "tick",
+                "speaker",
+                "content",
+                "affinity_delta",
+                "schema_version",
+            ][..],
+        ),
+    ] {
+        let columns = table_columns(transaction, table)?;
+        if let Some(missing) = required
+            .iter()
+            .find(|column| !columns.iter().any(|candidate| candidate == *column))
+        {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!("{table} missing required column {missing}")),
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn assert_legacy_letterbox_schema_ready(
@@ -5735,6 +5827,8 @@ mod persistence_tests {
             "legacy_letterbox",
             "void_action_cooldowns",
             "high_renown_milestones",
+            "spirit_treasure_world",
+            "spirit_treasure_dialogue_log",
         ] {
             let exists: Option<String> = connection
                 .query_row(
@@ -6822,6 +6916,59 @@ mod persistence_tests {
             )
             .expect("legacy row should get default in_coffin");
         assert_eq!(in_coffin, 0);
+    }
+
+    #[test]
+    fn v24_migration_adds_spirit_treasure_tables() {
+        let db_path = database_path("v24-spirit-treasure-tables");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 23;")
+            .expect("legacy v23 fixture should create");
+
+        apply_migrations(&mut connection).expect("v24 migration should succeed");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        for table in ["spirit_treasure_world", "spirit_treasure_dialogue_log"] {
+            let exists: Option<String> = connection
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .optional()
+                .expect("sqlite_master query should succeed");
+            assert_eq!(exists.as_deref(), Some(table));
+        }
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(spirit_treasure_world)")
+            .expect("spirit_treasure_world table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("spirit_treasure_world table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("spirit_treasure_world columns should collect");
+        for column in [
+            "template_id",
+            "instance_id",
+            "holder_kind",
+            "affinity",
+            "dialogue_count",
+            "sleeping",
+            "spawned_at_tick",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "spirit_treasure_world should include {column}"
+            );
+        }
     }
 
     #[test]
