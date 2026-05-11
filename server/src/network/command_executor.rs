@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use valence::prelude::{
-    bevy_ecs, bevy_ecs::system::SystemParam, Commands, Despawned, Entity, EventWriter, Query, Res,
-    ResMut, Resource, With, Without,
+    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Commands, Despawned, Entity, EventWriter,
+    Query, Res, ResMut, Resource, With, Without,
 };
 
 use crate::cultivation::components::Realm;
@@ -22,11 +22,13 @@ use crate::npc::spawn::{
 use crate::npc::territory::Territory;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
+use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::calamity::{CalamityArsenal, TiandaoPower};
 use crate::world::events::ActiveEventsResource;
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
-use crate::world::season::query_season;
+use crate::world::pseudo_vein_runtime::PseudoVeinRuntime;
+use crate::world::season::{query_season, Season};
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
 use crate::world::zone::ZoneRegistry;
 
@@ -36,6 +38,7 @@ const ZONE_DANGER_LEVEL_MIN: i64 = 0;
 const ZONE_DANGER_LEVEL_MAX: i64 = 5;
 const COMMAND_BATCH_DEDUPE_WINDOW_SECS: u64 = 30;
 const COMMAND_BATCH_DEDUPE_CAPACITY: usize = 256;
+const EVENT_PSEUDO_VEIN: &str = "pseudo_vein";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchEnqueueOutcome {
@@ -281,6 +284,7 @@ fn execute_single_command(
         }
         CommandType::SpawnEvent => execute_spawn_event(
             command,
+            commands,
             SpawnEventCommandResources {
                 zone_registry: zone_registry.as_deref_mut(),
                 active_events: active_events.as_deref_mut(),
@@ -651,6 +655,7 @@ fn execute_spawn_npc(
 
 fn execute_spawn_event(
     command: &Command,
+    commands: &mut Commands,
     resources: SpawnEventCommandResources<'_>,
     tick: Option<u64>,
 ) -> &'static str {
@@ -662,6 +667,10 @@ fn execute_spawn_event(
         karma_weights,
         qi_heatmap,
     } = resources;
+
+    if event_name(command) == Some(EVENT_PSEUDO_VEIN) {
+        return execute_spawn_pseudo_vein(command, commands, zone_registry, tick);
+    }
 
     let Some(active_events) = active_events else {
         tracing::warn!(
@@ -686,6 +695,58 @@ fn execute_spawn_event(
         "ok"
     } else {
         "rejected_spawn_event"
+    }
+}
+
+fn execute_spawn_pseudo_vein(
+    command: &Command,
+    commands: &mut Commands,
+    zone_registry: Option<&mut ZoneRegistry>,
+    tick: Option<u64>,
+) -> &'static str {
+    let Some(zone_registry) = zone_registry else {
+        tracing::warn!(
+            "[bong][network] cannot spawn pseudo_vein for `{}` because ZoneRegistry is missing",
+            command.target
+        );
+        return "rejected_missing_zone_registry";
+    };
+    let Some(zone) = zone_registry.find_zone_by_name(command.target.as_str()) else {
+        tracing::warn!(
+            "[bong][network] pseudo_vein target zone `{}` was not found",
+            command.target
+        );
+        return "rejected_unknown_zone";
+    };
+
+    let now = tick.unwrap_or_default();
+    let center = zone.center();
+    commands.spawn(PseudoVeinRuntime::new(
+        command.target.clone(),
+        BlockPos::new(
+            center.x.round() as i32,
+            center.y.round() as i32,
+            center.z.round() as i32,
+        ),
+        now,
+        pseudo_vein_season_from_world(query_season(command.target.as_str(), now).season),
+    ));
+    "ok"
+}
+
+fn event_name(command: &Command) -> Option<&str> {
+    command
+        .params
+        .get("event")
+        .and_then(serde_json::Value::as_str)
+}
+
+fn pseudo_vein_season_from_world(season: Season) -> PseudoVeinSeasonV1 {
+    match season {
+        Season::Summer => PseudoVeinSeasonV1::Summer,
+        Season::SummerToWinter => PseudoVeinSeasonV1::SummerToWinter,
+        Season::Winter => PseudoVeinSeasonV1::Winter,
+        Season::WinterToSummer => PseudoVeinSeasonV1::WinterToSummer,
     }
 }
 
@@ -970,6 +1031,7 @@ mod command_executor_tests {
     use crate::world::karma::{
         TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
     };
+    use crate::world::pseudo_vein_runtime::{PseudoVeinPhase, PseudoVeinRuntime};
 
     fn command(command_type: CommandType, target: &str, params: HashMap<String, Value>) -> Command {
         Command {
@@ -1003,6 +1065,32 @@ mod command_executor_tests {
         app.add_event::<FactionEventNotice>();
         app.add_systems(Update, execute_agent_commands);
         app
+    }
+
+    #[test]
+    fn spawn_event_pseudo_vein_creates_runtime_component() {
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!("pseudo_vein"));
+        params.insert("intensity".to_string(), json!(0.7));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_pseudo_vein_runtime",
+                vec![command(CommandType::SpawnEvent, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(runtimes[0].zone_id, "spawn");
+        assert_eq!(runtimes[0].phase, PseudoVeinPhase::Rising);
     }
 
     #[test]
