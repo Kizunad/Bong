@@ -705,14 +705,18 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
   - `299738dd9`（2026-05-11）`feat(qixiu): 接入法器铭纹染色与共鸣`
   - `b7f5cb084`（2026-05-11）`feat(qixiu): 显示法器铭纹与共鸣状态`
   - `7d9f767c9`（2026-05-11）`feat(qixiu): 补法器进化叙事广播`
+  - `5794388d4`（2026-05-11）`fix(qixiu): 收敛法器 review 回归`（缺 QiColor 不套共鸣、debug 攻击不推进法器成长、断裂搬运失败回退 dropped loot、稳定 tick 不 bump inventory revision、旧 ForgeSession 反序列化兼容、客户端改称"共鸣提示"）
 - **测试结果**：
   - `cd server && cargo fmt --check` ✅
   - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-  - `cd server && cargo test` ✅ `4371 passed; 0 failed`
-  - `cd client && ./gradlew test build` ✅ `BUILD SUCCESSFUL`（JUnit XML 合计 1274 tests）
+  - `cd server && cargo test` ✅ `4372 passed; 0 failed`
+  - `cd server && cargo test artifact_meridian` ✅ `24 passed; 0 failed`
+  - `cd server && cargo test damage_multiplier_with_resonance_scales_around_baseline` ✅ `1 passed; 0 failed`
+  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ `BUILD SUCCESSFUL`
+  - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test --tests com.bong.client.inspect.ItemInspectScreenTest --tests com.bong.client.hud.MiniBodyHudPlannerTest` ✅ `BUILD SUCCESSFUL`
 - **跨仓库核验**：
   - server：`ArtifactMeridian` / `ArtifactColor` / `compute_resonance` / `ArtifactTierEvolved` / `artifact_state:` / `damage_multiplier_with_resonance` / `carrier_seal_efficiency_multiplier`
-  - client：`ArtifactState.fromSideEffects` / `InventoryItem.artifactState()` / `ItemInspectScreen.detailLines` / `MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE` / `BongWeaponModelRegistry` 新模板
+  - client：`ArtifactState.fromSideEffects` / `InventoryItem.artifactState()` / `ItemInspectScreen.detailLines` / `MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE` / `BongWeaponModelRegistry` 新模板（客户端展示为"共鸣提示"，不冒充服务端按持有者 QiColor 结算的真实共鸣）
   - agent：无改动；法器成长按本 plan 定义为修士自身物理路径，叙事通过 server gameplay narration 队列进入既有 narration 管线。
 - **遗留 / 后续**：
   - 御器术（远程真元操控法器——距离衰减制约操控精度，飘逸色天然优势）→ 独立 plan
