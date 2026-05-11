@@ -225,11 +225,17 @@ pub fn equipped_pickaxe_tier(inventory: &PlayerInventory) -> Option<u8> {
 
 pub fn pickaxe_tier_from_item(item: &ItemInstance) -> Option<u8> {
     let id = item.template_id.as_str();
-    if id.contains("wooden_pickaxe") || id.contains("golden_pickaxe") {
+    if id.contains("wooden_pickaxe") || id.contains("golden_pickaxe") || id == "pickaxe_bone" {
         Some(1)
-    } else if id.contains("stone_pickaxe") || id.contains("fan_iron_pickaxe") {
+    } else if id == "pickaxe_copper"
+        || id.contains("stone_pickaxe")
+        || id.contains("fan_iron_pickaxe")
+    {
         Some(2)
-    } else if id.contains("iron_pickaxe") || id.contains("ling_iron_pickaxe") {
+    } else if id == "pickaxe_iron"
+        || id.contains("iron_pickaxe")
+        || id.contains("ling_iron_pickaxe")
+    {
         Some(3)
     } else if id.contains("diamond_pickaxe")
         || id.contains("netherite_pickaxe")
@@ -378,10 +384,12 @@ mod tests {
             Some(1)
         );
         assert_eq!(pickaxe_tier_from_item(&item("stone_pickaxe")), Some(2));
+        assert_eq!(pickaxe_tier_from_item(&item("pickaxe_copper")), Some(2));
         assert_eq!(
             pickaxe_tier_from_item(&item("minecraft:iron_pickaxe")),
             Some(3)
         );
+        assert_eq!(pickaxe_tier_from_item(&item("pickaxe_iron")), Some(3));
         assert_eq!(pickaxe_tier_from_item(&item("netherite_pickaxe")), Some(4));
         assert_eq!(pickaxe_tier_from_item(&item("iron_sword")), None);
     }

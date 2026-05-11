@@ -1,0 +1,9 @@
+{
+  "id": "gather_mine_tick",
+  "layers": [
+    { "sound": "minecraft:block.stone.break", "volume": 0.2, "pitch": 0.8, "delay_ticks": 0 }
+  ],
+  "priority": 35,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

@@ -408,11 +408,11 @@ fn equipped_axe_tier(inventory: &PlayerInventory) -> Option<(u64, u8)> {
 
 fn axe_tier_from_item(item: &ItemInstance) -> Option<u8> {
     let id = item.template_id.as_str();
-    if id.contains("wooden_axe") || id.contains("golden_axe") {
+    if id.contains("wooden_axe") || id.contains("golden_axe") || id == "axe_bone" {
         Some(1)
-    } else if id.contains("stone_axe") || id.contains("fan_iron_axe") {
+    } else if id == "axe_copper" || id.contains("stone_axe") || id.contains("fan_iron_axe") {
         Some(2)
-    } else if id.contains("iron_axe") || id.contains("ling_iron_axe") {
+    } else if id == "axe_iron" || id.contains("iron_axe") || id.contains("ling_iron_axe") {
         Some(3)
     } else if id.contains("diamond_axe") || id.contains("netherite_axe") || id.contains("yi_axe") {
         Some(4)
@@ -568,7 +568,9 @@ mod tests {
             Some(1)
         );
         assert_eq!(axe_tier_from_item(&item("fan_iron_axe", 1)), Some(2));
+        assert_eq!(axe_tier_from_item(&item("axe_copper", 1)), Some(2));
         assert_eq!(axe_tier_from_item(&item("ling_iron_axe", 1)), Some(3));
+        assert_eq!(axe_tier_from_item(&item("axe_iron", 1)), Some(3));
         assert_eq!(axe_tier_from_item(&item("minecraft:iron_axe", 1)), Some(3));
         assert_eq!(axe_tier_from_item(&item("iron_sword", 1)), None);
     }

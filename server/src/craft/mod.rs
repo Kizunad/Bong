@@ -90,6 +90,9 @@ pub fn register(app: &mut App) {
     crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register armor-visual-v1 recipes: {err}");
     });
+    register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
+    });
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
@@ -639,6 +642,81 @@ pub fn register_tuike_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Reg
     Ok(())
 }
 
+/// plan-gathering-ux-v1 P4：斧 / 镐凡器配方。锄头沿用 lingtian 既有三档。
+pub fn register_gathering_tool_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    const BONE_COIN_TEMPLATE: &str = "bone_coin_5";
+    let scroll = |id: &str| {
+        vec![UnlockSource::Scroll {
+            item_template: format!("scroll_gathering_{id}"),
+        }]
+    };
+    let specs = [
+        (
+            "gathering.tool.axe_bone",
+            "骨斧",
+            vec![
+                (BONE_COIN_TEMPLATE.to_string(), 3),
+                ("spirit_wood".to_string(), 2),
+            ],
+            "axe_bone",
+        ),
+        (
+            "gathering.tool.axe_iron",
+            "铁斧",
+            vec![("iron_ore".to_string(), 3), ("spirit_wood".to_string(), 1)],
+            "axe_iron",
+        ),
+        (
+            "gathering.tool.axe_copper",
+            "铜斧",
+            vec![
+                ("copper_ore".to_string(), 3),
+                ("spirit_wood".to_string(), 1),
+            ],
+            "axe_copper",
+        ),
+        (
+            "gathering.tool.pickaxe_bone",
+            "骨镐",
+            vec![
+                (BONE_COIN_TEMPLATE.to_string(), 3),
+                ("spirit_wood".to_string(), 2),
+            ],
+            "pickaxe_bone",
+        ),
+        (
+            "gathering.tool.pickaxe_iron",
+            "铁镐",
+            vec![("iron_ore".to_string(), 4), ("spirit_wood".to_string(), 1)],
+            "pickaxe_iron",
+        ),
+        (
+            "gathering.tool.pickaxe_copper",
+            "铜镐",
+            vec![
+                ("copper_ore".to_string(), 4),
+                ("spirit_wood".to_string(), 1),
+            ],
+            "pickaxe_copper",
+        ),
+    ];
+
+    for (id, display_name, materials, output) in specs {
+        registry.register(CraftRecipe {
+            id: RecipeId::new(id),
+            category: CraftCategory::Tool,
+            display_name: display_name.into(),
+            materials,
+            qi_cost: 0.0,
+            time_ticks: 40 * 20,
+            output: (output.to_string(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: scroll(output),
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,6 +862,17 @@ mod tests {
         assert!(registry
             .get(&RecipeId::new("armor.mundane.iron.chestplate"))
             .is_some_and(|recipe| recipe.output == ("armor_iron_chestplate".to_string(), 1)));
+    }
+
+    #[test]
+    fn register_gathering_tool_recipes_adds_six_tool_entries() {
+        let mut registry = CraftRegistry::new();
+        register_gathering_tool_recipes(&mut registry).unwrap();
+
+        let tools: Vec<_> = registry.by_category(CraftCategory::Tool).collect();
+        assert_eq!(tools.len(), 6);
+        assert!(tools.iter().any(|recipe| recipe.output.0 == "axe_copper"));
+        assert!(tools.iter().any(|recipe| recipe.output.0 == "pickaxe_iron"));
     }
 
     #[test]

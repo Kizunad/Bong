@@ -21,6 +21,8 @@ mod economy;
 mod fauna;
 #[allow(dead_code)]
 mod forge;
+#[allow(dead_code)]
+mod gathering;
 // identity：P0 锁定数据模型 + persistence；P1 起 /identity slash / consumer / scorer
 // 等会逐步消费这些 API，初期保留 #[allow(dead_code)]，每个 P 接入后再收口。
 #[allow(dead_code)]
@@ -131,6 +133,7 @@ fn run_server() {
     death_lifecycle::register(&mut app);
     spiritwood::register(&mut app);
     forge::register(&mut app);
+    gathering::register(&mut app);
     lingtian::register(&mut app);
     mineral::register(&mut app);
     shelflife::register(&mut app);

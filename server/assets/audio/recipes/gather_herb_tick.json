@@ -1,0 +1,9 @@
+{
+  "id": "gather_herb_tick",
+  "layers": [
+    { "sound": "minecraft:block.grass.break", "volume": 0.15, "pitch": 1.3, "delay_ticks": 0 }
+  ],
+  "priority": 30,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}
