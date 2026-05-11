@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -1097,9 +1097,18 @@ impl BongBlockDef {
             bail!("Bong custom block `{}` must define translation_key", self.name);
         }
 
+        let mut seen_properties = HashSet::new();
         for property in &self.properties {
-            if property.name.trim().is_empty() {
+            let property_name = property.name.trim();
+            if property_name.is_empty() {
                 bail!("Bong custom block `{}` has an empty property name", self.name);
+            }
+            if !seen_properties.insert(property_name.to_string()) {
+                bail!(
+                    "Bong custom block `{}` has duplicate property name `{}`",
+                    self.name,
+                    property.name
+                );
             }
             if property.values.is_empty() {
                 bail!(

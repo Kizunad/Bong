@@ -40,7 +40,7 @@
       "properties": [
         {
           "name": "charged",
-          "values": ["false", "true"]
+          "values": ["true", "false"]
         }
       ],
       "default_state": {

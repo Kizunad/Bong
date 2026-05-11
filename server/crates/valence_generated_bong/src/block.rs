@@ -99,11 +99,11 @@ mod tests {
 
         assert_eq!(
             BlockState::BONG_ZHENFA_EYE.get(PropName::Charged),
-            Some(PropValue::False)
+            Some(PropValue::True)
         );
         assert_eq!(
             BlockState::BONG_ZHENFA_EYE
-                .set(PropName::Charged, PropValue::True)
+                .set(PropName::Charged, PropValue::False)
                 .to_raw(),
             24140
         );

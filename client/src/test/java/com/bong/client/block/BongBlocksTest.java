@@ -26,6 +26,7 @@ public class BongBlocksTest {
         assertTrue(manifest.contains("\"name\": \"axis\""));
         assertTrue(manifest.contains("\"name\": \"charged\""));
 
+        // These values intentionally pin protocol IDs; failures mean manifest order or base IDs changed.
         assertEquals(1003, BongBlockIds.BONG_BLOCK_ID_START);
         assertEquals(24135, BongBlockIds.BONG_BLOCK_STATE_START);
         assertEquals(1003, BongBlockIds.ZHENFA_NODE_BLOCK_ID);

@@ -40,7 +40,7 @@ public final class BongBlocks {
 
     private BongBlocks() {}
 
-    public static void register() {
+    public static synchronized void register() {
         if (registered) {
             return;
         }
@@ -72,8 +72,8 @@ public final class BongBlocks {
             "zhenfa_line_axis_x", BongBlockIds.ZHENFA_LINE_STATE_ID,
             "zhenfa_line_axis_y", BongBlockIds.ZHENFA_LINE_STATE_ID + 1,
             "zhenfa_line_axis_z", BongBlockIds.ZHENFA_LINE_STATE_ID + 2,
-            "zhenfa_eye_charged_false", BongBlockIds.ZHENFA_EYE_STATE_ID,
-            "zhenfa_eye_charged_true", BongBlockIds.ZHENFA_EYE_STATE_ID + 1
+            "zhenfa_eye_charged_true", BongBlockIds.ZHENFA_EYE_STATE_ID,
+            "zhenfa_eye_charged_false", BongBlockIds.ZHENFA_EYE_STATE_ID + 1
         );
     }
 
@@ -115,13 +115,13 @@ public final class BongBlocks {
             BongBlockIds.ZHENFA_LINE_STATE_ID + 2
         );
         verifyStateRawId(
-            "zhenfa_eye charged=false",
-            ZHENFA_EYE.getDefaultState().with(CHARGED, false),
+            "zhenfa_eye charged=true",
+            ZHENFA_EYE.getDefaultState().with(CHARGED, true),
             BongBlockIds.ZHENFA_EYE_STATE_ID
         );
         verifyStateRawId(
-            "zhenfa_eye charged=true",
-            ZHENFA_EYE.getDefaultState().with(CHARGED, true),
+            "zhenfa_eye charged=false",
+            ZHENFA_EYE.getDefaultState().with(CHARGED, false),
             BongBlockIds.ZHENFA_EYE_STATE_ID + 1
         );
     }

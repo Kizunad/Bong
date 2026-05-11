@@ -30,10 +30,10 @@ Fork Valence 的 `valence_generated` codegen，扩展 block registry 支持 `bon
 
 ## §0 设计轴心
 
-- [x] **Vanilla 数据零侵入**：`extracted/blocks.json` 不改一个字节。Bong 方块在独立的 `bong_blocks.json` 中定义
-- [x] **ID 自动分配**：Bong 方块 state ID 从 `vanilla_max_state_id + 1`（24135）开始，按定义顺序自动递增
-- [x] **单一事实源**：`bong_blocks.json` 同时驱动 server codegen 和 client 注册，不允许两端各自定义
-- [x] **最小 fork**：只 fork `valence_generated` crate，不 fork 整个 Valence。server Cargo.toml 的 valence 依赖不变，只是把 `valence_generated` 指向本地 fork
+- [ ] **Vanilla 数据零侵入**：`extracted/blocks.json` 不改一个字节。Bong 方块在独立的 `bong_blocks.json` 中定义
+- [ ] **ID 自动分配**：Bong 方块 state ID 从 `vanilla_max_state_id + 1`（24135）开始，按定义顺序自动递增
+- [ ] **单一事实源**：`bong_blocks.json` 同时驱动 server codegen 和 client 注册，不允许两端各自定义
+- [ ] **最小 fork**：只 fork `valence_generated` crate，不 fork 整个 Valence。server Cargo.toml 的 valence 依赖不变，只是把 `valence_generated` 指向本地 fork
 
 ---
 
@@ -126,15 +126,15 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | Fork `valence_generated`，修改 `build/block.rs` 加载 `bong_blocks.json`，验证 codegen | ✅ |
-| P1 | 首批 3 个阵法方块定义（zhenfa_node / zhenfa_line / zhenfa_eye）+ server 放置/读取 API | ✅ |
-| P2 | Client Fabric 方块注册 + blockstate JSON + 模型 + 贴图（gen.py scene 风格） | ✅ |
-| P3 | ID 对齐验证 + 端到端测试（server 放方块 → client 渲染正确） | ✅ |
-| P4 | 文档 + 新增方块流程模板（"加一个新自定义方块需要改哪些文件"） | ✅ |
+| P0 | Fork `valence_generated`，修改 `build/block.rs` 加载 `bong_blocks.json`，验证 codegen | ⬜ |
+| P1 | 首批 3 个阵法方块定义（zhenfa_node / zhenfa_line / zhenfa_eye）+ server 放置/读取 API | ⬜ |
+| P2 | Client Fabric 方块注册 + blockstate JSON + 模型 + 贴图（gen.py scene 风格） | ⬜ |
+| P3 | ID 对齐验证 + 端到端测试（server 放方块 → client 渲染正确） | ⬜ |
+| P4 | 文档 + 新增方块流程模板（"加一个新自定义方块需要改哪些文件"） | ⬜ |
 
 ---
 
-## P0 — Fork valence_generated + codegen 扩展 ✅
+## P0 — Fork valence_generated + codegen 扩展 ⬜
 
 ### 交付物
 
@@ -242,7 +242,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P1 — Server 放置/读取 API ✅
+## P1 — Server 放置/读取 API ⬜
 
 ### 交付物
 
@@ -279,7 +279,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P2 — Client Fabric 方块注册 ✅
+## P2 — Client Fabric 方块注册 ⬜
 
 ### 交付物
 
@@ -349,7 +349,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P3 — 端到端验证 ✅
+## P3 — 端到端验证 ⬜
 
 ### 交付物
 
@@ -367,7 +367,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P4 — 文档 + 新增方块流程模板 ✅
+## P4 — 文档 + 新增方块流程模板 ⬜
 
 ### 交付物
 

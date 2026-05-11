@@ -3,6 +3,7 @@ use std::fmt;
 use valence::prelude::{BlockPos, BlockState, ChunkLayer};
 
 pub const BONG_BLOCK_STATE_START: u16 = 24135;
+pub const BONG_BLOCK_STATE_END: u16 = 24140;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaceError {
@@ -48,13 +49,13 @@ pub fn remove_bong_block(chunk_layer: &mut ChunkLayer, pos: BlockPos) -> Option<
 }
 
 pub fn is_bong_block(state: BlockState) -> bool {
-    state.to_raw() >= BONG_BLOCK_STATE_START
+    (BONG_BLOCK_STATE_START..=BONG_BLOCK_STATE_END).contains(&state.to_raw())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::{App, Entity, UnloadedChunk};
+    use valence::prelude::{App, Entity, PropName, PropValue, UnloadedChunk};
     use valence::testing::ScenarioSingleClient;
 
     fn test_layer() -> (App, Entity) {
@@ -130,6 +131,9 @@ mod tests {
     fn is_bong_block_true_for_custom() {
         assert!(is_bong_block(BlockState::BONG_ZHENFA_NODE));
         assert!(is_bong_block(BlockState::BONG_ZHENFA_EYE));
+        assert!(is_bong_block(
+            BlockState::BONG_ZHENFA_EYE.set(PropName::Charged, PropValue::False)
+        ));
     }
 
     #[test]

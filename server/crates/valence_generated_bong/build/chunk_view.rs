@@ -4,7 +4,7 @@ use quote::quote;
 const MAX_VIEW_DIST: u8 = 32;
 const EXTRA_VIEW_RADIUS: i32 = 2;
 
-pub(crate) fn build() -> TokenStream {
+pub(crate) fn build() -> anyhow::Result<TokenStream> {
     let entries = (0..=MAX_VIEW_DIST).map(|dist| {
         let dist = i32::from(dist) + EXTRA_VIEW_RADIUS;
 
@@ -29,12 +29,12 @@ pub(crate) fn build() -> TokenStream {
 
     let array_len = MAX_VIEW_DIST as usize + 1;
 
-    quote! {
+    Ok(quote! {
         #[doc = "The maximum view distance for a `ChunkView`."]
         pub const MAX_VIEW_DIST: u8 = #MAX_VIEW_DIST;
 
         pub const EXTRA_VIEW_RADIUS: i32 = #EXTRA_VIEW_RADIUS;
 
         pub static CHUNK_VIEW_LUT: [&[(i8, i8)]; #array_len] = [ #(#entries),* ];
-    }
+    })
 }

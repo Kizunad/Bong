@@ -2044,7 +2044,7 @@ fn zhenfa_anchor_block_state(kind: ZhenfaKind) -> BlockState {
     if matches!(kind, ZhenfaKind::ShrineWard | ZhenfaKind::DeceiveHeaven) {
         state.set(PropName::Charged, PropValue::True)
     } else {
-        state
+        state.set(PropName::Charged, PropValue::False)
     }
 }
 
@@ -2054,6 +2054,10 @@ fn place_zhenfa_anchor_block(
     block: BlockState,
 ) -> Result<bool, String> {
     let Some(mut layer) = layers.iter_mut().next() else {
+        tracing::warn!(
+            "[bong][zhenfa] place_zhenfa_anchor_block skipped: OverworldLayer not found pos={:?}",
+            pos
+        );
         return Ok(false);
     };
 
@@ -2067,6 +2071,10 @@ fn remove_zhenfa_anchor_block(
     pos: [i32; 3],
 ) {
     let Some(mut layer) = layers.iter_mut().next() else {
+        tracing::warn!(
+            "[bong][zhenfa] remove_zhenfa_anchor_block skipped: OverworldLayer not found pos={:?}",
+            pos
+        );
         return;
     };
     remove_bong_block(&mut layer, block_pos_from_array(pos));
@@ -2076,7 +2084,15 @@ fn remove_zhenfa_anchor_blocks(
     layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
     positions: impl IntoIterator<Item = [i32; 3]>,
 ) {
+    let positions = positions.into_iter().collect::<Vec<_>>();
+    if positions.is_empty() {
+        return;
+    }
     let Some(mut layer) = layers.iter_mut().next() else {
+        tracing::warn!(
+            "[bong][zhenfa] remove_zhenfa_anchor_blocks skipped: OverworldLayer not found count={}",
+            positions.len()
+        );
         return;
     };
     for pos in positions {
@@ -2112,6 +2128,27 @@ mod tests {
             .insert_chunk([0, 0], UnloadedChunk::new());
         install_zhenfa_test_systems(&mut app);
         (app, scenario.layer)
+    }
+
+    fn zhenfa_eye_state(charged: bool) -> BlockState {
+        BlockState::BONG_ZHENFA_EYE.set(
+            PropName::Charged,
+            if charged {
+                PropValue::True
+            } else {
+                PropValue::False
+            },
+        )
+    }
+
+    fn layer_block_state(app: &App, layer_entity: Entity, pos: [i32; 3]) -> Option<BlockState> {
+        app.world()
+            .get::<ChunkLayer>(layer_entity)
+            .and_then(|layer| {
+                layer
+                    .block(block_pos_from_array(pos))
+                    .map(|block| block.state)
+            })
     }
 
     fn install_zhenfa_test_systems(app: &mut App) {
@@ -2337,15 +2374,10 @@ mod tests {
         });
         app.update();
 
-        {
-            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-            assert_eq!(
-                layer
-                    .block(block_pos_from_array(pos))
-                    .map(|block| block.state),
-                Some(BlockState::BONG_ZHENFA_EYE)
-            );
-        }
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(zhenfa_eye_state(false))
+        );
 
         app.world_mut().send_event(ZhenfaDisarmRequest {
             player: owner,
@@ -2355,11 +2387,8 @@ mod tests {
         });
         app.update();
 
-        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
         assert_eq!(
-            layer
-                .block(block_pos_from_array(pos))
-                .map(|block| block.state),
+            layer_block_state(&app, layer_entity, pos),
             Some(BlockState::AIR)
         );
         assert!(app
@@ -2420,11 +2449,12 @@ mod tests {
 
     #[test]
     fn decay_removes_expired_array_eye() {
-        let mut app = app_with_zhenfa();
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let pos = [3, 64, 3];
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
-            pos: [3, 64, 3],
+            pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::CommonStone,
             qi_invest_ratio: 0.10,
@@ -2436,9 +2466,13 @@ mod tests {
         let anchor_entity = app
             .world()
             .resource::<ZhenfaRegistry>()
-            .find_at([3, 64, 3])
+            .find_at(pos)
             .unwrap()
             .anchor_entity;
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(zhenfa_eye_state(false))
+        );
         app.world_mut().resource_mut::<CombatClock>().tick =
             carrier_spec(ZhenfaCarrierKind::CommonStone).duration_ticks + 1;
         app.update();
@@ -2446,19 +2480,24 @@ mod tests {
         assert!(app
             .world()
             .resource::<ZhenfaRegistry>()
-            .find_at([3, 64, 3])
+            .find_at(pos)
             .is_none());
         assert!(app.world().get_entity(anchor_entity).is_none());
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(BlockState::AIR)
+        );
     }
 
     #[test]
     fn passive_trap_trigger_damages_legs_and_frees_array_eye() {
-        let mut app = app_with_zhenfa();
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let intruder = spawn_player(&mut app, "Bob", [5.5, 64.0, 5.5]);
+        let pos = [5, 64, 5];
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
-            pos: [5, 64, 5],
+            pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
@@ -2470,22 +2509,30 @@ mod tests {
         let id = app
             .world()
             .resource::<ZhenfaRegistry>()
-            .find_at([5, 64, 5])
+            .find_at(pos)
             .unwrap()
             .id;
         let anchor_entity = app
             .world()
             .resource::<ZhenfaRegistry>()
-            .find_at([5, 64, 5])
+            .find_at(pos)
             .unwrap()
             .anchor_entity;
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(zhenfa_eye_state(false))
+        );
         app.world_mut().resource_mut::<CombatClock>().tick = 11;
         app.update();
 
         let registry = app.world().resource::<ZhenfaRegistry>();
         assert!(registry.get(id).is_none());
-        assert!(registry.find_at([5, 64, 5]).is_none());
+        assert!(registry.find_at(pos).is_none());
         assert!(app.world().get_entity(anchor_entity).is_none());
+        assert_eq!(
+            layer_block_state(&app, layer_entity, pos),
+            Some(BlockState::AIR)
+        );
         let wounds = app.world().get::<Wounds>(intruder).unwrap();
         assert_eq!(
             wounds
@@ -2541,7 +2588,7 @@ mod tests {
 
     #[test]
     fn active_trigger_picks_nearest_owned_untriggered_trap() {
-        let mut app = app_with_zhenfa();
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         for (tick, pos) in [(1, [10, 64, 0]), (2, [3, 64, 0])] {
             app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -2565,6 +2612,14 @@ mod tests {
         let registry = app.world().resource::<ZhenfaRegistry>();
         assert!(registry.find_at([3, 64, 0]).is_none());
         assert!(registry.find_at([10, 64, 0]).is_some());
+        assert_eq!(
+            layer_block_state(&app, layer_entity, [3, 64, 0]),
+            Some(BlockState::AIR)
+        );
+        assert_eq!(
+            layer_block_state(&app, layer_entity, [10, 64, 0]),
+            Some(zhenfa_eye_state(false))
+        );
     }
 
     #[test]
