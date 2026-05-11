@@ -6,6 +6,8 @@ import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.identity.IdentityPanelEntry;
 import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.npc.NpcInteractionLogStore;
+import com.bong.client.npc.NpcMoodStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.skill.SkillId;
@@ -36,6 +38,10 @@ public class BongHudOrchestratorTest {
         PlayerStateStore.resetForTests();
         IdentityPanelStateStore.resetForTest();
         TargetInfoStateStore.resetForTests();
+        NpcMoodStore.clearAll();
+        NpcInteractionLogStore.resetForTests();
+        com.bong.client.tsy.TsyBossHealthStore.resetForTests();
+        com.bong.client.tsy.TsyDeathVfxStore.resetForTests();
         HudImmersionMode.resetForTests();
         ForgeProgressHudPlanner.resetForTests();
     }

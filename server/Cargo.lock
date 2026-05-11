@@ -3088,7 +3088,6 @@ dependencies = [
 [[package]]
 name = "valence_generated"
 version = "0.2.0-alpha.1+mc.1.20.1"
-source = "git+https://github.com/valence-rs/valence?rev=2b705351#2b705351b4b99557b1a53360f73cd485c05eeb64"
 dependencies = [
  "anyhow",
  "heck",

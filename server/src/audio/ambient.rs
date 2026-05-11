@@ -374,6 +374,29 @@ fn recipe_with_context(
             .layers
             .push(layer("minecraft:entity.bat.ambient", 0.02, 0.3, 10));
     }
+    match base.id.as_str() {
+        "ambient_spring_marsh" => {
+            recipe
+                .layers
+                .push(layer("minecraft:entity.frog.ambient", 0.04, 0.6, 20));
+        }
+        "ambient_rift_valley" => {
+            recipe
+                .layers
+                .push(layer("minecraft:block.stone.break", 0.05, 0.3, 30));
+        }
+        "ambient_north_wastes" => {
+            recipe
+                .layers
+                .push(layer("minecraft:entity.wolf.growl", 0.04, 0.4, 40));
+        }
+        "ambient_tsy" => {
+            recipe
+                .layers
+                .push(layer("minecraft:block.anvil.land", 0.03, 0.2, 15));
+        }
+        _ => {}
+    }
     if matches!(state, AudioMusicState::Ambient | AudioMusicState::Tsy) {
         match season {
             Season::Summer => {
@@ -510,6 +533,38 @@ mod tests {
         assert_eq!(recipes.get("spawn"), Some("ambient_spawn_plain"));
         assert_eq!(recipes.get("lingquan_marsh"), Some("ambient_spring_marsh"));
         assert_eq!(recipes.get("tsy_lingxu_01_deep"), Some("ambient_tsy"));
+    }
+
+    #[test]
+    fn recipe_context_adds_ambient_detail_layers() {
+        let cases = [
+            ("ambient_spring_marsh", "minecraft:entity.frog.ambient"),
+            ("ambient_rift_valley", "minecraft:block.stone.break"),
+            ("ambient_north_wastes", "minecraft:entity.wolf.growl"),
+            ("ambient_tsy", "minecraft:block.anvil.land"),
+        ];
+
+        for (recipe_id, expected_sound) in cases {
+            let recipe = recipe_with_context(
+                &test_recipe(recipe_id),
+                if recipe_id == "ambient_tsy" {
+                    AudioMusicState::Tsy
+                } else {
+                    AudioMusicState::Ambient
+                },
+                false,
+                Season::SummerToWinter,
+                None,
+            );
+
+            assert!(
+                recipe
+                    .layers
+                    .iter()
+                    .any(|layer| layer.sound == expected_sound),
+                "{recipe_id} should include {expected_sound}"
+            );
+        }
     }
 
     #[test]
@@ -729,6 +784,18 @@ mod tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(min[0], min[1], min[2])],
             blocked_tiles: vec![],
+        }
+    }
+
+    fn test_recipe(id: &str) -> SoundRecipe {
+        SoundRecipe {
+            id: id.to_string(),
+            layers: vec![layer("minecraft:ambient.cave", 0.1, 1.0, 0)],
+            loop_cfg: None,
+            priority: 10,
+            attenuation: crate::schema::audio::AudioAttenuation::ZoneBroadcast,
+            category: crate::schema::audio::AudioSoundCategory::Ambient,
+            bus: None,
         }
     }
 }

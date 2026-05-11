@@ -1,0 +1,21 @@
+{
+  "id": "dugu_poison_hit_heavy",
+  "layers": [
+    {
+      "sound": "minecraft:entity.bee.loop_aggressive",
+      "volume": 0.12,
+      "pitch": 0.25,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.honey_block.break",
+      "volume": 0.18,
+      "pitch": 0.4,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 66,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

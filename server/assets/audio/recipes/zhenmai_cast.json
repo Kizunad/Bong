@@ -1,0 +1,15 @@
+{
+  "id": "zhenmai_cast",
+  "layers": [
+    {
+      "sound": "minecraft:block.amethyst_block.chime",
+      "volume": 0.2,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

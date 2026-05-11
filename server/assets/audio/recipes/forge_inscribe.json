@@ -1,0 +1,15 @@
+{
+  "id": "forge_inscribe",
+  "layers": [
+    {
+      "sound": "minecraft:block.enchantment_table.use",
+      "volume": 0.3,
+      "pitch": 1.2,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 58,
+  "attenuation": "SELF",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

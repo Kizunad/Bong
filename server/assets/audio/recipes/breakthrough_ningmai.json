@@ -1,0 +1,21 @@
+{
+  "id": "breakthrough_ningmai",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.activate",
+      "volume": 0.4,
+      "pitch": 0.6,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.amethyst_block.resonate",
+      "volume": 0.25,
+      "pitch": 0.5,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 84,
+  "attenuation": "AREA",
+  "category": "VOICE",
+  "bus": "ENVIRONMENT"
+}

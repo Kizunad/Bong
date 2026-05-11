@@ -6,5 +6,6 @@
   ],
   "priority": 99,
   "attenuation": "global_hint",
-  "category": "HOSTILE"
+  "category": "HOSTILE",
+  "bus": "COMBAT"
 }

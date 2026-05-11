@@ -91,6 +91,22 @@
         {
           "const": "zone_broadcast",
           "type": "string"
+        },
+        {
+          "const": "SELF",
+          "type": "string"
+        },
+        {
+          "const": "MELEE",
+          "type": "string"
+        },
+        {
+          "const": "AREA",
+          "type": "string"
+        },
+        {
+          "const": "WORLD",
+          "type": "string"
         }
       ]
     },
@@ -118,6 +134,22 @@
         },
         {
           "const": "BLOCKS",
+          "type": "string"
+        }
+      ]
+    },
+    "bus": {
+      "anyOf": [
+        {
+          "const": "COMBAT",
+          "type": "string"
+        },
+        {
+          "const": "ENVIRONMENT",
+          "type": "string"
+        },
+        {
+          "const": "UI",
           "type": "string"
         }
       ]

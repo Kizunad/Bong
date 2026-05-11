@@ -39,6 +39,7 @@ public final class NpcInspectScreen extends Screen {
                 context.drawTextWithShadow(textRenderer, line, x, y, 0xD8D8D8);
                 y += 14;
             }
+            NpcReputationIndicator.draw(context, textRenderer, x, y + 2, metadata.reputationToPlayer());
         }
         super.render(context, mouseX, mouseY, delta);
     }

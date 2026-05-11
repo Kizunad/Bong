@@ -21,7 +21,8 @@ public final class MinecraftSoundSink implements SoundSink {
             return false;
         }
 
-        boolean relative = sound.attenuation() == AudioAttenuation.PLAYER_LOCAL;
+        boolean relative = sound.attenuation() == AudioAttenuation.PLAYER_LOCAL
+            || sound.attenuation() == AudioAttenuation.SELF;
         SoundInstance.AttenuationType attenuationType = relative
             ? SoundInstance.AttenuationType.NONE
             : SoundInstance.AttenuationType.LINEAR;

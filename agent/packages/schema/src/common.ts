@@ -33,6 +33,7 @@ export const CommandType = Type.Union([
   Type.Literal("faction_event"),
   Type.Literal("modify_zone"),
   Type.Literal("npc_behavior"),
+  Type.Literal("heartbeat_override"),
 ]);
 export type CommandType = Static<typeof CommandType>;
 

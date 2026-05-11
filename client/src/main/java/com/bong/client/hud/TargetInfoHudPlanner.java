@@ -2,6 +2,9 @@ package com.bong.client.hud;
 
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.npc.NpcMoodState;
+import com.bong.client.npc.NpcMoodStore;
+import com.bong.client.npc.ThreatAssessmentBar;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,11 +41,20 @@ public final class TargetInfoHudPlanner {
         }
 
         PlayerStateViewModel viewer = PlayerStateStore.snapshot();
+        NpcMoodState npcMood = safeState.kind() == TargetInfoState.Kind.NPC
+            ? NpcMoodStore.get(entityIdFromTargetId(safeState.targetId()))
+            : null;
+        boolean showThreatBar = ThreatAssessmentBar.visibleFor(viewer, npcMood);
+        int panelHeight = showThreatBar ? PANEL_HEIGHT + 18 : PANEL_HEIGHT;
+        if (showThreatBar && npcMood.innerMonologue() != null) {
+            panelHeight += 12;
+        }
+
         int x = Math.max(8, (screenWidth - PANEL_WIDTH) / 2);
         int y = 16;
         List<HudRenderCommand> out = new ArrayList<>();
-        out.add(HudRenderCommand.rect(HudRenderLayer.TARGET_INFO, x, y, PANEL_WIDTH, PANEL_HEIGHT, withAlpha(BG_COLOR, alpha)));
-        appendBorder(out, x, y, PANEL_WIDTH, PANEL_HEIGHT, withAlpha(BORDER_COLOR, alpha));
+        out.add(HudRenderCommand.rect(HudRenderLayer.TARGET_INFO, x, y, PANEL_WIDTH, panelHeight, withAlpha(BG_COLOR, alpha)));
+        appendBorder(out, x, y, PANEL_WIDTH, panelHeight, withAlpha(BORDER_COLOR, alpha));
 
         String name = HudTextHelper.clipToWidth(safeState.displayName(), PANEL_WIDTH - 12, widthMeasurer);
         out.add(HudRenderCommand.text(HudRenderLayer.TARGET_INFO, name, x + 6, y + 5, withAlpha(TEXT_COLOR, alpha)));
@@ -64,8 +76,31 @@ public final class TargetInfoHudPlanner {
             if (safeState.kind() == TargetInfoState.Kind.NPC && safeState.revealRealm(viewer)) {
                 appendBar(out, x + 6, y + 26, PANEL_WIDTH - 12, safeState.qiRatio(), QI_COLOR, alpha);
             }
+            if (showThreatBar) {
+                out.addAll(ThreatAssessmentBar.buildCommands(
+                    npcMood,
+                    viewer,
+                    x + 6,
+                    y + 33,
+                    alpha,
+                    widthMeasurer
+                ));
+            }
         }
         return List.copyOf(out);
+    }
+
+    private static int entityIdFromTargetId(String targetId) {
+        if (targetId == null) {
+            return -1;
+        }
+        int colon = targetId.lastIndexOf(':');
+        String raw = colon >= 0 ? targetId.substring(colon + 1) : targetId;
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException exception) {
+            return -1;
+        }
     }
 
     private static void appendBar(

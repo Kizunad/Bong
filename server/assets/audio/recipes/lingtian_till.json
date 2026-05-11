@@ -1,0 +1,15 @@
+{
+  "id": "lingtian_till",
+  "layers": [
+    {
+      "sound": "minecraft:item.hoe.till",
+      "volume": 0.3,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 48,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

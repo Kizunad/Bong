@@ -1,0 +1,21 @@
+{
+  "id": "forge_hammer_heavy",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.land",
+      "volume": 0.5,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.lava.pop",
+      "volume": 0.1,
+      "pitch": 0.5,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 62,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

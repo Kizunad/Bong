@@ -6,5 +6,6 @@
   "loop": { "interval_ticks": 140, "while_flag": "audio_world" },
   "priority": 24,
   "attenuation": "zone_broadcast",
-  "category": "AMBIENT"
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
 }

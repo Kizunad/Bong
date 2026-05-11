@@ -1,0 +1,21 @@
+{
+  "id": "woliu_signature",
+  "layers": [
+    {
+      "sound": "minecraft:entity.generic.drink",
+      "volume": 0.24,
+      "pitch": 0.2,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.enderman.teleport",
+      "volume": 0.14,
+      "pitch": 0.4,
+      "delay_ticks": 3
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "kill_confirm",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.levelup",
+      "volume": 0.2,
+      "pitch": 0.3,
+      "delay_ticks": 6
+    }
+  ],
+  "priority": 70,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

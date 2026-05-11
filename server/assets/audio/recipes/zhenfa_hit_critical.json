@@ -1,0 +1,21 @@
+{
+  "id": "zhenfa_hit_critical",
+  "layers": [
+    {
+      "sound": "minecraft:block.enchantment_table.use",
+      "volume": 0.24,
+      "pitch": 0.7,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.beacon.ambient",
+      "volume": 0.12,
+      "pitch": 0.5,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 78,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

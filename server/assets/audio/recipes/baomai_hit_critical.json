@@ -1,0 +1,21 @@
+{
+  "id": "baomai_hit_critical",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.land",
+      "volume": 0.5,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.warden.sonic_boom",
+      "volume": 0.15,
+      "pitch": 1.5,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 78,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

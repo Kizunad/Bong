@@ -1,0 +1,15 @@
+{
+  "id": "baomai_hit_light",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.land",
+      "volume": 0.3,
+      "pitch": 1.0,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 56,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

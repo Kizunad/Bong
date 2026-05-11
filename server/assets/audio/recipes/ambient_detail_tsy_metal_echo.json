@@ -1,0 +1,15 @@
+{
+  "id": "ambient_detail_tsy_metal_echo",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.land",
+      "volume": 0.03,
+      "pitch": 0.2,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 18,
+  "attenuation": "AREA",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "forge_consecrate",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.activate",
+      "volume": 0.4,
+      "pitch": 1.0,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 68,
+  "attenuation": "AREA",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}
