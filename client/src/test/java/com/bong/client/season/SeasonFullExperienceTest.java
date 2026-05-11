@@ -1,0 +1,244 @@
+package com.bong.client.season;
+
+import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
+import com.bong.client.audio.MusicStateMachine;
+import com.bong.client.botany.BotanyPlantVisualState;
+import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.LingtianOverlayHudPlanner;
+import com.bong.client.lingtian.state.LingtianSessionStore;
+import com.bong.client.state.SeasonState;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class SeasonFullExperienceTest {
+    @AfterEach
+    void tearDown() {
+        SeasonVisualController.resetForTests();
+    }
+
+    @Test
+    void controller_syncs_all_systems() {
+        SeasonState winter = new SeasonState(SeasonState.Phase.WINTER, 250L, 1000L, 0L);
+
+        SeasonVisualController.tick(winter, 42L);
+
+        assertEquals(SeasonState.Phase.WINTER, ZoneAtmosphereRenderer.currentSeasonOverrideForTests().phase());
+        assertEquals(0.25, ZoneAtmosphereRenderer.currentSeasonOverrideForTests().progress(), 1e-6);
+        assertEquals(SeasonState.Phase.WINTER, MusicStateMachine.instance().seasonModifierForTests().phase());
+        assertEquals(0.25, MusicStateMachine.instance().seasonModifierForTests().progress(), 1e-6);
+    }
+
+    @Test
+    void controller_emits_transition_event_on_phase_change() {
+        SeasonState summer = new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L);
+        SeasonState tide = new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 10L, 1000L, 0L);
+
+        SeasonVisualController.tick(summer, 1L);
+        SeasonVisualController.SeasonTickResult result = SeasonVisualController.tick(tide, 2L);
+
+        assertEquals(SeasonState.Phase.SUMMER, result.transition().from());
+        assertEquals(SeasonState.Phase.SUMMER_TO_WINTER, result.transition().to());
+    }
+
+    @Test
+    void hud_icon_no_text() {
+        List<HudRenderCommand> commands = SeasonHintHudPlanner.buildCommands(
+            new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1000L, 0L),
+            320,
+            180,
+            120L
+        );
+
+        assertFalse(commands.isEmpty());
+        assertTrue(commands.stream().noneMatch(HudRenderCommand::isText));
+        assertTrue(commands.stream().allMatch(HudRenderCommand::isRect));
+    }
+
+    @Test
+    void summer_heat_wave_particles() {
+        List<SeasonParticleEmitter.ParticleCue> cues = SeasonParticleEmitter.plan(
+            new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
+            120L
+        );
+
+        assertTrue(cues.stream().anyMatch(cue -> cue.kind() == SeasonParticleEmitter.ParticleKind.HEAT_SHIMMER));
+        assertTrue(cues.stream().anyMatch(cue -> cue.kind() == SeasonParticleEmitter.ParticleKind.DISTANT_THUNDER_FLASH));
+    }
+
+    @Test
+    void winter_snow_drift_speed() {
+        SeasonParticleEmitter.ParticleCue snow = SeasonParticleEmitter.plan(
+                new SeasonState(SeasonState.Phase.WINTER, 0L, 1000L, 0L),
+                120L
+            )
+            .stream()
+            .filter(cue -> cue.kind() == SeasonParticleEmitter.ParticleKind.SNOW_DRIFT)
+            .findFirst()
+            .orElseThrow();
+
+        assertTrue(snow.yVelocity() < -0.02);
+        assertEquals("cloud256_dust", snow.spriteId());
+    }
+
+    @Test
+    void transition_chaos_particles() {
+        List<SeasonParticleEmitter.ParticleCue> cues = SeasonParticleEmitter.plan(
+            new SeasonState(SeasonState.Phase.WINTER_TO_SUMMER, 0L, 1000L, 0L),
+            120L
+        );
+
+        assertTrue(cues.stream().anyMatch(cue -> cue.kind() == SeasonParticleEmitter.ParticleKind.CHAOTIC_QI_LINE));
+        assertTrue(cues.stream().anyMatch(cue -> cue.kind() == SeasonParticleEmitter.ParticleKind.TRIBULATION_MARK));
+    }
+
+    @Test
+    void plant_heat_tolerance_visual() {
+        BotanyPlantVisualState base = new BotanyPlantVisualState(1.0f, 255, 0x70AA50, 0.05f);
+        BotanyPlantVisualState tolerant = SeasonPlantVisuals.apply(
+            "chi_sui_cao",
+            base,
+            new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
+            0L
+        );
+        BotanyPlantVisualState fragile = SeasonPlantVisuals.apply(
+            "ning_mai_cao",
+            base,
+            new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
+            0L
+        );
+
+        assertTrue(tolerant.scale() > base.scale());
+        assertNotEquals(tolerant.tintRgb(), fragile.tintRgb());
+    }
+
+    @Test
+    void frost_species_fade_in_winter() {
+        BotanyPlantVisualState base = new BotanyPlantVisualState(1.0f, 255, 0x70AA50, 0.05f);
+        BotanyPlantVisualState early = SeasonPlantVisuals.apply(
+            "xue_po_lian",
+            base,
+            new SeasonState(SeasonState.Phase.WINTER, 20L, 1000L, 0L),
+            0L
+        );
+        BotanyPlantVisualState later = SeasonPlantVisuals.apply(
+            "xue_po_lian",
+            base,
+            new SeasonState(SeasonState.Phase.WINTER, 400L, 1000L, 0L),
+            0L
+        );
+
+        assertTrue(early.alpha() < later.alpha());
+        assertTrue(SeasonPlantVisuals.isFrostSpecies("xue_po_lian"));
+    }
+
+    @Test
+    void lingtian_overlay_season_icon() {
+        LingtianSessionStore.Snapshot snapshot = new LingtianSessionStore.Snapshot(
+            true,
+            LingtianSessionStore.Kind.HARVEST,
+            1,
+            64,
+            1,
+            25,
+            100,
+            "凝脉草",
+            "manual",
+            0.0f,
+            false
+        );
+
+        List<HudRenderCommand> commands = LingtianOverlayHudPlanner.buildCommands(
+            snapshot,
+            320,
+            180,
+            new SeasonState(SeasonState.Phase.WINTER, 0L, 1000L, 0L)
+        );
+
+        assertTrue(commands.stream().anyMatch(command -> command.isRect() && command.color() == 0x99E8F4FF));
+    }
+
+    @Test
+    void migration_dust_particles() {
+        MigrationVisualPlanner.MigrationVisualCommand command = MigrationVisualPlanner.plan(
+            new MigrationVisualPlanner.MigrationVisualEvent("spawn", 1.0, 0.0, 6000, 96, 100L),
+            3100L
+        );
+
+        assertEquals(8, command.dustPerEntityPerFiveTicks());
+        assertEquals("migration_rumble", command.rumbleRecipeId());
+    }
+
+    @Test
+    void migration_camera_shake() {
+        MigrationVisualPlanner.MigrationVisualCommand command = MigrationVisualPlanner.plan(
+            new MigrationVisualPlanner.MigrationVisualEvent("spawn", 1.0, 0.0, 6000, 24, 100L),
+            3100L
+        );
+
+        assertTrue(command.cameraShakeIntensity() > 0.0);
+        assertTrue(command.cameraShakeIntensity() <= 0.05);
+    }
+
+    @Test
+    void summer_breakthrough_extra_lightning() {
+        SeasonBreakthroughOverlay.BreakthroughProfile profile = SeasonBreakthroughOverlay.breakthroughProfile(
+            new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
+            true,
+            0L
+        );
+
+        assertEquals(1.50, profile.lightningMultiplier(), 1e-6);
+        assertEquals(0xFFD36A, profile.pillarTintRgb());
+    }
+
+    @Test
+    void winter_breakthrough_frost_refraction() {
+        SeasonBreakthroughOverlay.BreakthroughProfile profile = SeasonBreakthroughOverlay.breakthroughProfile(
+            new SeasonState(SeasonState.Phase.WINTER, 0L, 1000L, 0L),
+            true,
+            0L
+        );
+
+        assertEquals("enlightenment_dust", profile.particleSpriteId());
+        assertEquals(0xC0E0FF, profile.pillarTintRgb());
+    }
+
+    @Test
+    void transition_breakthrough_flicker() {
+        SeasonBreakthroughOverlay.BreakthroughProfile left = SeasonBreakthroughOverlay.breakthroughProfile(
+            new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1000L, 0L),
+            true,
+            0L
+        );
+        SeasonBreakthroughOverlay.BreakthroughProfile right = SeasonBreakthroughOverlay.breakthroughProfile(
+            new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1000L, 0L),
+            true,
+            4L
+        );
+
+        assertNotEquals(left.pillarTintRgb(), right.pillarTintRgb());
+        assertTrue(left.backlashIntensity() > 0.5);
+    }
+
+    @Test
+    void meditation_absorb_density_by_season() {
+        SeasonBreakthroughOverlay.MeditationProfile summer = SeasonBreakthroughOverlay.meditationAbsorbProfile(
+            new SeasonState(SeasonState.Phase.SUMMER, 0L, 1000L, 0L),
+            0L
+        );
+        SeasonBreakthroughOverlay.MeditationProfile winter = SeasonBreakthroughOverlay.meditationAbsorbProfile(
+            new SeasonState(SeasonState.Phase.WINTER, 0L, 1000L, 0L),
+            0L
+        );
+
+        assertTrue(summer.densityMultiplier() > 1.0);
+        assertTrue(winter.densityMultiplier() < 1.0);
+    }
+}

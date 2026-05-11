@@ -1,6 +1,8 @@
 package com.bong.client.visual.particle;
 
 import com.bong.client.network.VfxEventPayload;
+import com.bong.client.season.SeasonBreakthroughOverlay;
+import com.bong.client.state.SeasonStateStore;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
@@ -19,7 +21,9 @@ public final class BreakthroughFailPlayer implements VfxPlayer {
         double ox = payload.origin()[0];
         double oy = payload.origin()[1];
         double oz = payload.origin()[2];
-        float[] rgb = GameplayVfxUtil.rgb(payload, FALLBACK_RGB);
+        SeasonBreakthroughOverlay.BreakthroughProfile profile =
+            SeasonBreakthroughOverlay.breakthroughProfile(SeasonStateStore.snapshot(), false, world.getTime());
+        float[] rgb = GameplayVfxUtil.rgb(payload, profile.pillarTintRgb() == 0 ? FALLBACK_RGB : profile.pillarTintRgb());
         int count = GameplayVfxUtil.count(payload, 16, 4, 48);
         int maxAge = GameplayVfxUtil.duration(payload, 60);
         float alpha = (float) (0.45 + GameplayVfxUtil.strength(payload, 0.8) * 0.4);
