@@ -41,6 +41,12 @@ export const EventKind = Type.Union([
   Type.Literal("beast_tide"),
   Type.Literal("realm_collapse"),
   Type.Literal("karma_backlash"),
+  Type.Literal("poison_miasma"),
+  Type.Literal("meridian_seal"),
+  Type.Literal("daoxiang_wave"),
+  Type.Literal("heavenly_fire"),
+  Type.Literal("pressure_invert"),
+  Type.Literal("all_wither"),
 ]);
 export type EventKind = Static<typeof EventKind>;
 

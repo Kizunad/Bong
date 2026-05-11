@@ -1,0 +1,91 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "calamity",
+    "intensity",
+    "reason"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "calamity": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "const": "thunder",
+              "type": "string"
+            },
+            {
+              "const": "poison_miasma",
+              "type": "string"
+            },
+            {
+              "const": "meridian_seal",
+              "type": "string"
+            },
+            {
+              "const": "daoxiang_wave",
+              "type": "string"
+            },
+            {
+              "const": "heavenly_fire",
+              "type": "string"
+            },
+            {
+              "const": "pressure_invert",
+              "type": "string"
+            },
+            {
+              "const": "all_wither",
+              "type": "string"
+            },
+            {
+              "const": "realm_collapse",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "target_zone": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "target_player": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "intensity": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "reason": {
+      "minLength": 1,
+      "maxLength": 100,
+      "type": "string"
+    }
+  }
+}

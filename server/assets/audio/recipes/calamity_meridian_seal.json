@@ -1,0 +1,11 @@
+{
+  "id": "calamity_meridian_seal",
+  "layers": [
+    { "sound": "minecraft:block.beacon.deactivate", "volume": 0.4, "pitch": 0.3, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.elder_guardian.curse", "volume": 0.2, "pitch": 0.4, "delay_ticks": 10 },
+    { "sound": "minecraft:block.amethyst_block.chime", "volume": 0.1, "pitch": 0.2, "delay_ticks": 20 }
+  ],
+  "priority": 86,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}
