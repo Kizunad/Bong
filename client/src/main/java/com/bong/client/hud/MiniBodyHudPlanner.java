@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.ArmorProfileStore;
+import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.artifact.ArtifactState;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.BodyPart;
@@ -55,6 +56,8 @@ public final class MiniBodyHudPlanner {
 
     // plan-armor-v1 §5：破损护甲裂纹提示（同 layer，靠命令顺序实现 wound dot 覆盖）。
     static final int BROKEN_ARMOR_CRACK_COLOR = 0xFFB0B0B0;
+    static final int BODY_PART_RESIST_FRAME_COLOR = 0xFF409CFF;
+    static final int BODY_PART_WEAKEN_FRAME_COLOR = 0xFFFF5050;
 
     private MiniBodyHudPlanner() {
     }
@@ -104,6 +107,7 @@ public final class MiniBodyHudPlanner {
         appendBrokenArmorCracks(out, anchorX, anchorY, equipped);
         appendArtifactIndicator(out, anchorX, anchorY, equipped);
         appendWoundDots(out, anchorX, anchorY, body);
+        appendCombatPillPartFrames(out, anchorX, anchorY);
         appendBars(out, anchorX, anchorY, hud, nowMillis, seasonState);
 
         return out;
@@ -173,6 +177,87 @@ public final class MiniBodyHudPlanner {
                 dotColor
             ));
         }
+    }
+
+    private static void appendCombatPillPartFrames(
+        List<HudRenderCommand> out,
+        int anchorX,
+        int anchorY
+    ) {
+        EnumSet<BodyPart> resistParts = EnumSet.noneOf(BodyPart.class);
+        EnumSet<BodyPart> weakenParts = EnumSet.noneOf(BodyPart.class);
+        for (StatusEffectStore.Effect effect : StatusEffectStore.snapshot()) {
+            addPartsFromStatus(effect.id(), "body_part_resist:", resistParts);
+            addPartsFromStatus(effect.id(), "body_part_weaken:", weakenParts);
+        }
+        if (resistParts.isEmpty() && weakenParts.isEmpty()) {
+            return;
+        }
+
+        int bx = anchorX + BODY_X_OFFSET;
+        int by = anchorY + BODY_Y_OFFSET;
+        for (BodyPart part : resistParts) {
+            int[] pos = locatePart(bx, by, part);
+            appendThickFrame(out, pos[0], pos[1], BODY_PART_RESIST_FRAME_COLOR);
+        }
+        for (BodyPart part : weakenParts) {
+            int[] pos = locatePart(bx, by, part);
+            appendDashedFrame(out, pos[0], pos[1], BODY_PART_WEAKEN_FRAME_COLOR);
+        }
+    }
+
+    private static void addPartsFromStatus(String id, String prefix, EnumSet<BodyPart> out) {
+        if (id == null || !id.startsWith(prefix)) {
+            return;
+        }
+        switch (id.substring(prefix.length())) {
+            case "head" -> {
+                out.add(BodyPart.HEAD);
+                out.add(BodyPart.NECK);
+            }
+            case "chest" -> out.add(BodyPart.CHEST);
+            case "abdomen" -> out.add(BodyPart.ABDOMEN);
+            case "arm_l" -> {
+                out.add(BodyPart.LEFT_UPPER_ARM);
+                out.add(BodyPart.LEFT_FOREARM);
+                out.add(BodyPart.LEFT_HAND);
+            }
+            case "arm_r" -> {
+                out.add(BodyPart.RIGHT_UPPER_ARM);
+                out.add(BodyPart.RIGHT_FOREARM);
+                out.add(BodyPart.RIGHT_HAND);
+            }
+            case "leg_l" -> {
+                out.add(BodyPart.LEFT_THIGH);
+                out.add(BodyPart.LEFT_CALF);
+                out.add(BodyPart.LEFT_FOOT);
+            }
+            case "leg_r" -> {
+                out.add(BodyPart.RIGHT_THIGH);
+                out.add(BodyPart.RIGHT_CALF);
+                out.add(BodyPart.RIGHT_FOOT);
+            }
+            default -> {
+            }
+        }
+    }
+
+    private static void appendThickFrame(List<HudRenderCommand> out, int cx, int cy, int color) {
+        appendBorder(out, cx - 4, cy - 4, 8, 8, color);
+        appendBorder(out, cx - 3, cy - 3, 6, 6, color);
+    }
+
+    private static void appendDashedFrame(List<HudRenderCommand> out, int cx, int cy, int color) {
+        int x = cx - 4;
+        int y = cy - 4;
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 3, 1, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 5, y, 3, 1, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y + 7, 3, 1, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 5, y + 7, 3, 1, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 1, 3, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y + 5, 1, 3, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 7, y, 1, 3, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 7, y + 5, 1, 3, color));
     }
 
     private static void appendBrokenArmorCracks(

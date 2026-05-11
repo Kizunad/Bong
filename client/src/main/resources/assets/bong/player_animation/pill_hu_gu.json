@@ -1,0 +1,87 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "pill_hu_gu",
+  "description": "plan-alchemy-combat-v1 pill_hu_gu combat pill consume pose.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 40,
+    "stopTick": 43,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INOUTSINE",
+        "rightArm": {
+          "pitch": -1.0,
+          "bend": 0.8,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 24,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.05
+        },
+        "head": {
+          "pitch": -0.1
+        },
+        "rightArm": {
+          "pitch": -0.3,
+          "bend": 1.5,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": -0.3,
+          "bend": 1.5,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 32,
+        "easing": "INOUTSINE",
+        "rightArm": {
+          "pitch": 0.2,
+          "bend": 0.8,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": 0.2,
+          "bend": 0.8,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 40,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        },
+        "head": {
+          "pitch": 0.0
+        },
+        "rightArm": {
+          "pitch": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        }
+      }
+    ]
+  }
+}

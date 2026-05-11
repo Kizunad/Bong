@@ -1,0 +1,21 @@
+{
+  "id": "pill_suo_di_consume",
+  "layers": [
+    {
+      "sound": "minecraft:entity.lightning_bolt.thunder",
+      "volume": 0.3,
+      "pitch": 2.0,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.firework_rocket.launch",
+      "volume": 0.2,
+      "pitch": 1.5,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

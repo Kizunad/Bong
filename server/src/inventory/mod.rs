@@ -185,6 +185,7 @@ pub enum ItemEffect {
     LifespanExtension { years: u32, source: String },
     AntiSpiritPressure { duration_ticks: u64 },
     PoisonPill { pill_item_id: String },
+    CombatPill { pill_item_id: String },
 }
 
 #[derive(Debug, Default)]
@@ -1699,6 +1700,19 @@ fn parse_item_effect(
                 ));
             }
             Ok(ItemEffect::PoisonPill { pill_item_id })
+        }
+        "combat_pill" => {
+            let pill_item_id = effect
+                .target
+                .filter(|target| !target.trim().is_empty())
+                .unwrap_or_else(|| item_id.to_string());
+            if crate::alchemy::pill::combat_pill_spec(&pill_item_id).is_none() {
+                return Err(format!(
+                    "{} item `{item_id}` effect `combat_pill` has unknown combat pill target `{pill_item_id}`",
+                    source_path.display()
+                ));
+            }
+            Ok(ItemEffect::CombatPill { pill_item_id })
         }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",

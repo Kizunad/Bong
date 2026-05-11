@@ -176,8 +176,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            190,
-            "audio registry should include audio-world and audio-implementation cues plus calamity arsenal, gathering UX, and coffin lifecycle cues"
+            200,
+            "audio registry should include base cues plus 10 alchemy-combat consume recipes"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
@@ -250,6 +250,23 @@ mod tests {
         assert!(registry.get("movement_dash").is_some());
         assert!(registry.get("movement_slide").is_some());
         assert!(registry.get("movement_double_jump").is_some());
+        for key in [
+            "pill_huo_xue_consume",
+            "pill_xu_gu_consume",
+            "pill_duan_xu_consume",
+            "pill_tie_bi_consume",
+            "pill_jin_zhong_consume",
+            "pill_ning_jia_consume",
+            "pill_ji_feng_consume",
+            "pill_suo_di_consume",
+            "pill_hui_li_consume",
+            "pill_hu_gu_consume",
+        ] {
+            assert!(
+                registry.get(key).is_some(),
+                "expected alchemy-combat audio recipe `{key}` to be registered"
+            );
+        }
         assert!(registry.get("hit_light").is_some());
         assert!(registry.get("parry_perfect").is_some());
         assert!(registry.get("breakthrough_guyuan").is_some());

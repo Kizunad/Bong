@@ -14,7 +14,7 @@ use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
     bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter,
-    Events, Query, Res, ResMut, Resource, Username, With,
+    Events, Query, Res, ResMut, Resource, UniqueId, Username, With,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -27,7 +27,7 @@ use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
     CastSource, Casting, Lifecycle, LifecycleState, QuickSlotBindings, SkillBarBindings, SkillSlot,
-    Wounds,
+    Stamina, Wounds,
 };
 use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
@@ -178,6 +178,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub unique_ids: Query<'w, 's, &'static UniqueId>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
     pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
     pub skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
@@ -194,6 +195,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub meridians: Query<'w, 's, &'static mut crate::cultivation::components::MeridianSystem>,
     pub contaminations: Query<'w, 's, &'static mut crate::cultivation::components::Contamination>,
     pub wounds: Query<'w, 's, &'static mut Wounds>,
+    pub staminas: Query<'w, 's, &'static mut Stamina>,
     pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
     pub season_state: Option<Res<'w, WorldSeasonState>>,
@@ -680,6 +682,8 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut combat_params,
                     &mut dispatch.lifespan_extension_tx,
+                    alchemy_params.vfx_events.as_deref_mut(),
+                    &mut npc_engagement_params.audio_events,
                 );
             }
             ClientRequestV1::AlchemyFurnacePlace {
@@ -1486,6 +1490,8 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut combat_params,
                     &mut dispatch.lifespan_extension_tx,
+                    alchemy_params.vfx_events.as_deref_mut(),
+                    &mut npc_engagement_params.audio_events,
                 );
             }
             ClientRequestV1::SelfAntidote { instance_id, .. } => {
@@ -7017,6 +7023,8 @@ fn handle_apply_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     let template_id = inventories
         .get(entity)
@@ -7043,6 +7051,8 @@ fn handle_apply_pill(
         cultivations,
         combat_params,
         lifespan_extension_tx,
+        vfx_events,
+        audio_events,
     );
 }
 
@@ -7868,6 +7878,8 @@ fn handle_alchemy_take_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     let Some(template) = combat_params.item_registry.get(pill_item_id).cloned() else {
         tracing::warn!(
@@ -8092,6 +8104,26 @@ fn handle_alchemy_take_pill(
                 }
             }
         }
+        ItemEffect::CombatPill { pill_item_id } => {
+            apply_combat_pill_runtime(
+                entity,
+                pill_item_id.as_str(),
+                &template.id,
+                alchemy_multiplier,
+                foreign_qi.effect_multiplier,
+                duration_multiplier,
+                commands,
+                clock,
+                cultivations,
+                combat_params,
+                &spoil,
+                &age,
+                &mut cultivation_snapshot_override,
+                vfx_events,
+                audio_events,
+                clients,
+            );
+        }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             let meridians = combat_params.meridians.get_mut(entity).ok();
             let contamination = combat_params.contaminations.get_mut(entity).ok();
@@ -8135,6 +8167,221 @@ fn handle_alchemy_take_pill(
         cultivation_snapshot_override.as_ref(),
         "take_pill",
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_combat_pill_runtime(
+    entity: Entity,
+    pill_item_id: &str,
+    template_id: &str,
+    alchemy_multiplier: f64,
+    foreign_qi_multiplier: f64,
+    duration_multiplier: u64,
+    commands: &mut Commands,
+    clock: &CombatClock,
+    cultivations: &Query<&Cultivation>,
+    combat_params: &mut CombatRequestParams,
+    spoil: &crate::shelflife::SpoilCheckOutcome,
+    age: &crate::shelflife::AgePeakCheck,
+    cultivation_snapshot_override: &mut Option<Cultivation>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    let Some(spec) = crate::alchemy::pill::combat_pill_spec(pill_item_id) else {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{template_id}` references unknown combat pill `{pill_item_id}`"
+        );
+        return;
+    };
+
+    let base_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
+    let mut next_cultivation = base_cultivation.clone();
+    let (realm_pos_scale, realm_neg_scale) =
+        crate::alchemy::pill::mortal_pill_realm_scale(base_cultivation.realm);
+    let pos_scale =
+        (realm_pos_scale * alchemy_multiplier as f32 * foreign_qi_multiplier as f32).max(0.0);
+    let neg_scale = realm_neg_scale.max(0.0);
+
+    if let Ok(mut contamination) = combat_params.contaminations.get_mut(entity) {
+        let pill_effect = crate::alchemy::pill::PillEffect {
+            toxin_amount: spec.toxin_amount,
+            toxin_color: spec.toxin_color,
+            qi_gain: None,
+            meridian_progress_bonus: None,
+        };
+        let _ = crate::alchemy::pill::consume_pill(
+            &pill_effect,
+            &mut contamination,
+            &mut next_cultivation,
+            clock.tick,
+            spoil.clone(),
+            false,
+            age.clone(),
+        );
+    }
+
+    let mut touched_cultivation = false;
+    if let Ok(mut wounds) = combat_params.wounds.get_mut(entity) {
+        use crate::alchemy::pill::{
+            apply_severed_mend, apply_wound_heal, apply_wound_worsen, scaled_grades,
+            worst_non_severed_part, worst_severed_part, CombatPillKind,
+        };
+        match spec.kind {
+            CombatPillKind::HuoXueDan => {
+                let grades = scaled_grades(1, pos_scale);
+                apply_wound_heal(&mut wounds, None, grades);
+            }
+            CombatPillKind::XuGuGao => {
+                let target = worst_non_severed_part(&wounds);
+                let grades = scaled_grades(2, pos_scale);
+                apply_wound_heal(&mut wounds, target, grades);
+            }
+            CombatPillKind::DuanXuSan => {
+                let target = worst_severed_part(&wounds);
+                apply_severed_mend(&mut wounds, target, pos_scale);
+                let qi_max_before = next_cultivation.qi_max;
+                next_cultivation.qi_max = (next_cultivation.qi_max * 0.97).max(0.0);
+                next_cultivation.qi_current =
+                    next_cultivation.qi_current.min(next_cultivation.qi_max);
+                touched_cultivation |=
+                    (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
+            }
+            CombatPillKind::SuoDiSan => {
+                let grades = scaled_grades(1, neg_scale);
+                apply_wound_worsen(
+                    &mut wounds,
+                    &[
+                        crate::combat::components::BodyPart::LegL,
+                        crate::combat::components::BodyPart::LegR,
+                    ],
+                    grades,
+                    clock.tick,
+                    Some(format!("alchemy:{pill_item_id}")),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if let Ok(mut stamina) = combat_params.staminas.get_mut(entity) {
+        if spec.kind == crate::alchemy::pill::CombatPillKind::HuGuSan {
+            let boosted_max = (100.0 * (1.0 + 0.50 * pos_scale)).max(stamina.max);
+            stamina.max = boosted_max;
+            stamina.current = stamina.current.max(boosted_max * 0.80).min(boosted_max);
+        }
+    }
+
+    for mut intent in crate::alchemy::pill::combat_pill_status_intents(
+        entity, spec, pos_scale, neg_scale, clock.tick,
+    ) {
+        intent.duration_ticks = intent
+            .duration_ticks
+            .saturating_mul(duration_multiplier.max(1));
+        combat_params.buff_tx.send(intent);
+    }
+
+    if touched_cultivation {
+        commands.entity(entity).insert(next_cultivation.clone());
+        *cultivation_snapshot_override = Some(next_cultivation);
+    }
+
+    emit_combat_pill_feedback(
+        entity,
+        spec,
+        &combat_params.positions,
+        &combat_params.unique_ids,
+        vfx_events,
+        audio_events,
+    );
+    push_combat_pill_event_stream(
+        clients,
+        entity,
+        spec.id,
+        &format!("服下{}，药力入体。", spec.name),
+        if realm_pos_scale < 1.0 { 0xFFFFA040 } else { 0 },
+    );
+}
+
+fn emit_combat_pill_feedback(
+    entity: Entity,
+    spec: crate::alchemy::pill::CombatPillSpec,
+    positions: &Query<&valence::prelude::Position>,
+    unique_ids: &Query<&UniqueId>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+) {
+    let Ok(position) = positions.get(entity) else {
+        return;
+    };
+    let origin = position.get();
+    if let Some(events) = vfx_events {
+        if let Ok(unique_id) = unique_ids.get(entity) {
+            events.send(VfxEventRequest::new(
+                origin,
+                crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                    target_player: unique_id.0.to_string(),
+                    anim_id: spec.animation_id.to_string(),
+                    priority: 250,
+                    fade_in_ticks: Some(2),
+                },
+            ));
+        }
+        events.send(VfxEventRequest::new(
+            origin,
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                event_id: spec.vfx_event_id.to_string(),
+                origin: [origin.x, origin.y + 1.0, origin.z],
+                direction: Some([0.0, 1.0, 0.0]),
+                color: None,
+                strength: Some(0.75),
+                count: Some(12),
+                duration_ticks: Some(30),
+            },
+        ));
+    }
+    if let Some(audio_events) = audio_events.as_deref_mut() {
+        audio_events.send(PlaySoundRecipeRequest {
+            recipe_id: spec.audio_recipe_id.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: crate::network::audio_event_emit::AUDIO_BROADCAST_RADIUS,
+            },
+        });
+    }
+}
+
+fn push_combat_pill_event_stream(
+    clients: &mut Query<(&Username, &mut Client)>,
+    entity: Entity,
+    source_tag: &str,
+    text: &str,
+    color: u32,
+) {
+    let Ok((_username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    let payload = crate::schema::server_data::ServerDataV1::new(
+        crate::schema::server_data::ServerDataPayloadV1::EventStreamPush(
+            crate::schema::combat_hud::EventStreamPushV1 {
+                channel: crate::schema::combat_hud::EventChannelV1::Combat,
+                priority: crate::schema::combat_hud::EventPriorityV1::P1Important,
+                source_tag: format!("alchemy:{source_tag}"),
+                text: text.to_string(),
+                color,
+                created_at_ms: current_unix_millis(),
+            },
+        ),
+    );
+    let Ok(payload_bytes) = serialize_server_data_payload(&payload) else {
+        return;
+    };
+    send_server_data_payload(&mut client, payload_bytes.as_slice());
 }
 
 /// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
