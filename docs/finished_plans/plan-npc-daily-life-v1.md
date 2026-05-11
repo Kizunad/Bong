@@ -442,6 +442,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `af61d7331`（2026-05-11）`fix(network): 放宽大型 NPC 快照 Redis timeout`
   - `348e57218`（2026-05-11）`fix(npc): 修复日常生活 review 边界`
   - `d790fb73b`（2026-05-11）`fix(npc): 收紧日常生活 review 后续边界`
+  - `d5cf6970b`（2026-05-11）`fix(npc): 固定日程采样 seed`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
