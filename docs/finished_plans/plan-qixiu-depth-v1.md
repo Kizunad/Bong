@@ -706,10 +706,12 @@ maintenance_cost_per_day = quality_tier × 2.0 × groove_count
   - `b7f5cb084`（2026-05-11）`feat(qixiu): 显示法器铭纹与共鸣状态`
   - `7d9f767c9`（2026-05-11）`feat(qixiu): 补法器进化叙事广播`
   - `5794388d4`（2026-05-11）`fix(qixiu): 收敛法器 review 回归`（缺 QiColor 不套共鸣、debug 攻击不推进法器成长、断裂搬运失败回退 dropped loot、稳定 tick 不 bump inventory revision、旧 ForgeSession 反序列化兼容、客户端改称"共鸣提示"）
+  - `3b9e90425`（2026-05-11）`fix(qixiu): 补 audio_trigger 测试字段`（对齐主线新增 `CombatEvent.debug_command` / `ForgeOutcomeEvent.consecration_qi_amount` 字段，恢复 PR e2e server stage）
 - **测试结果**：
   - `cd server && cargo fmt --check` ✅
   - `cd server && cargo clippy --all-targets -- -D warnings` ✅
-  - `cd server && cargo test` ✅ `4372 passed; 0 failed`
+  - `cd server && cargo test` ✅ `4427 passed; 0 failed`
+  - `cd server && cargo test audio_trigger` ✅ `12 passed; 0 failed`
   - `cd server && cargo test artifact_meridian` ✅ `24 passed; 0 failed`
   - `cd server && cargo test damage_multiplier_with_resonance_scales_around_baseline` ✅ `1 passed; 0 failed`
   - `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` ✅ `BUILD SUCCESSFUL`
