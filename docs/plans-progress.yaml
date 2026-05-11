@@ -17,7 +17,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/）
 #   - finished            已归档（在 finished_plans/）
 
-generated_at: "2026-05-08"
+generated_at: "2026-05-11"
 project: Bong
 
 groups:
@@ -41,7 +41,7 @@ groups:
     description: "末法残土 terrain profile、worldgen 流水线、CI 视觉快照"
   - id: skeleton
     title: "骨架 plan"
-    description: "玩家旅程 / 经济 / 化虚 / 流派平衡等待开工骨架"
+    description: "玩家旅程 / 经济 / 化虚等待开工骨架"
   - id: finished
     title: "已完成归档"
     description: "M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan"
@@ -64,6 +64,16 @@ plans:
     pr_refs: [98]
     blocking_on: []
     summary: "grep 命中 BongHudOrchestrator/StyleBadge/EventStream/InspectScreen；文档旧称 vortex_fake_skin_layers，代码已拆 tuike_layers/vortex_active。"
+
+  - file: plan-hud-immersion-v2.md
+    group: combat-vfx
+    title: "HUD 感知增强与沉浸布局"
+    state: active-design
+    percent: 10
+    last_updated: "2026-05-11"
+    pr_refs: []
+    blocking_on: []
+    summary: "2026-05-11 从骨架升 active；实地核验 BongHudOrchestrator/BongHudStateSnapshot/HudImmersionMode/TargetInfoHudPlanner/BongZoneHud/ZoneAtmosphereProfileRegistry/PerceptionEdgeState/TribulationStateStore 均可复用，QiDensityRadarHudPlanner/DirectionalCompassHudPlanner/ThreatIndicatorHudPlanner/HudLayoutPreset 尚未实现。"
 
   - file: finished_plans/plan-anqi-v1.md
     group: combat-vfx
@@ -547,15 +557,15 @@ plans:
     blocking_on: []
     summary: "grep 命中 rift_mouth_barrens、portal_anchor_sdf、NegPressureField/tick_neg_pressure、FrostBreathPlayer；归档属实。"
 
-  - file: plans-skeleton/plan-terrain-tribulation-scorch-v1.md
+  - file: plan-terrain-tribulation-scorch-v1.md
     group: worldgen
     title: "烬焰焦土地形"
-    state: skeleton
-    percent: 5
-    last_updated: "2026-04-29"
+    state: active-design
+    percent: 15
+    last_updated: "2026-05-11"
     pr_refs: []
-    blocking_on: ["plan-tribulation-v1", "plan-cultivation-v1"]
-    summary: "grep 无 tribulation_scorch/TribulationScorchGenerator/ScorchWeatherHook/ascension_pit；骨架状态属实。"
+    blocking_on: []
+    summary: "2026-05-11 从骨架升 active；plan-zone-weather-v1/plan-zone-environment-v1 已 finished，server/weather_profiles.json 已有 3 个焦土 zone，ZoneWeatherProfile/lightning_strike_at/style_modifier::for_zone_weather 可复用；缺口集中在 worldgen tribulation_scorch profile、TribulationScorchGenerator 与 tianjie_ascension_pit structure。"
 
   # ============================================================
   # Group: skeleton
@@ -631,14 +641,14 @@ plans:
     summary: "骨架（2026-05-05 立）；承接 qi-physics-v1 P1 完成后的迁移工作。基于 2026-05-05 下午穷尽 audit（500+ 处 qi 调用点）：**P0 红线 6 PR**（3 公式正典化 + 3 守恒律违反 fix）—— ① combat/decay 0.06→0.03 ② tsy_drain×dead_zone 合并 ③ WorldQiAccount 合账 ④ 采集奖励 +14 凭空生灵气 ⑤ TSY 抽取 drain 去向无记账 ⑥ 域崩 RealmCollapse 暴力清零；P1 shelflife 5 profile 全迁；P2 战斗+杂项+守恒释放路径补全+NPC 修炼对冲验证；P3 新机制（坍缩渊 collapse_redistribute / 7 流派异体排斥 ρ / 时代衰减 / 阈值灾劫 / 节律对接 / 汐转守恒检查 / 暴力清零去向）。每 PR 必带守恒断言 + 旧符号 grep 全 0。**反向被依赖**：plan-economy-v1 / plan-style-balance-v1 / 等等都在等本 plan 完成。"
 
   - file: plan-style-balance-v1.md
-    group: skeleton
+    group: combat-vfx
     title: "流派克制系数 config + telemetry 回填"
-    state: skeleton
-    percent: 5
-    last_updated: "2026-05-05"
+    state: active-design
+    percent: 15
+    last_updated: "2026-05-11"
     pr_refs: []
-    blocking_on: ["plan-qi-physics-v1", "plan-qi-physics-patch-v1"]
-    summary: "骨架；承接 gameplay-journey §P 流派克制理论。设计转向：从查表式 ρ/W/β const 改为 qi-physics 物理引擎应用层（StyleAttack/Defense trait 注册物理参数，克制涌现而非查表）。P1 telemetry 已在 PR #129 顺手实装混元色版（2026-05-04），但 spec 要求的 5 维（attacker_style/defender_style/distance/h_eff/qi_drain）未对齐；P0 StyleMatrix const 全空白。等 qi-physics 落地。"
+    blocking_on: []
+    summary: "2026-05-11 从骨架升 active；qi-physics 前置已 finished。实地核验 StyleAttack 尚无 rejection_rate，qi_collision 仍用 purity+resistance 且 high resistance 测试保留 defender_lost=0 旧行为；style_collision_sim 已有 CURRENT/FIX_A/FIX_B 脚手架，telemetry 仅有颜色快照，需补 attacker_style/defender_style/ρ 聚合字段。"
 
   - file: plan-void-actions-v1.md
     group: cultivation-economy
