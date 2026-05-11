@@ -41,3 +41,36 @@ base_weight = 0.6
 rarity = "epic"
 spirit_quality_initial = 0.9
 description = "高阶地师封成的阵石，可承载迷乱与道伥血印。"
+
+[[item]]
+id = "warning_trap"
+name = "警示符"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "埋入地下后感知上方三格内的真元体。触发时向放置者传递方向与距离。"
+
+[[item]]
+id = "blast_trap"
+name = "爆阵符"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "贴附在方块表面，水平感知来者后引爆封存真元。一次性。"
+
+[[item]]
+id = "slow_trap"
+name = "缓阵符"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "埋入地下后释放负压场减速上方来者。三次触发后耗尽。"

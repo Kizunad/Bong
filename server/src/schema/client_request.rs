@@ -16,7 +16,9 @@ use super::tuike::FalseSkinKindV1;
 use super::void_actions::VoidActionRequestV1;
 use crate::cultivation::components::MeridianId;
 use crate::cultivation::forging::ForgeAxis;
-use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind};
+use crate::zhenfa::{
+    trap_content::TrapTargetFace, ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -230,8 +232,12 @@ pub enum ClientRequestV1 {
         #[serde(default)]
         carrier: Option<ZhenfaCarrierKind>,
         qi_invest_ratio: f64,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item_instance_id: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_face: Option<TrapTargetFace>,
     },
     /// plan-zhenfa-v1 §3.1.G — 主动引爆最近或指定的自有诡雷。
     ZhenfaTrigger {
@@ -1440,7 +1446,7 @@ mod tests {
 
     #[test]
     fn zhenfa_requests_roundtrip() {
-        let place = r#"{"type":"zhenfa_place","v":1,"x":1,"y":64,"z":-2,"kind":"trap","carrier":"night_withered_vine","qi_invest_ratio":0.3,"trigger":"proximity"}"#;
+        let place = r#"{"type":"zhenfa_place","v":1,"x":1,"y":64,"z":-2,"kind":"blast_trap","carrier":"night_withered_vine","qi_invest_ratio":0.3,"trigger":"proximity","item_instance_id":9001,"target_face":"north"}"#;
         let req: ClientRequestV1 = serde_json::from_str(place).unwrap();
         match req {
             ClientRequestV1::ZhenfaPlace {
@@ -1452,13 +1458,17 @@ mod tests {
                 carrier,
                 qi_invest_ratio,
                 trigger,
+                item_instance_id,
+                target_face,
             } => {
                 assert_eq!(v, 1);
                 assert_eq!((x, y, z), (1, 64, -2));
-                assert_eq!(kind, ZhenfaKind::Trap);
+                assert_eq!(kind, ZhenfaKind::BlastTrap);
                 assert_eq!(carrier, Some(ZhenfaCarrierKind::NightWitheredVine));
                 assert_eq!(qi_invest_ratio, 0.3);
                 assert_eq!(trigger.as_deref(), Some("proximity"));
+                assert_eq!(item_instance_id, Some(9001));
+                assert_eq!(target_face, Some(TrapTargetFace::North));
             }
             other => panic!("expected ZhenfaPlace, got {other:?}"),
         }

@@ -2844,6 +2844,18 @@
               "type": "string"
             },
             {
+              "const": "warning_trap",
+              "type": "string"
+            },
+            {
+              "const": "blast_trap",
+              "type": "string"
+            },
+            {
+              "const": "slow_trap",
+              "type": "string"
+            },
+            {
               "const": "shrine_ward",
               "type": "string"
             },
@@ -2890,6 +2902,39 @@
           "minLength": 1,
           "maxLength": 64,
           "type": "string"
+        },
+        "item_instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "target_face": {
+          "anyOf": [
+            {
+              "const": "top",
+              "type": "string"
+            },
+            {
+              "const": "bottom",
+              "type": "string"
+            },
+            {
+              "const": "north",
+              "type": "string"
+            },
+            {
+              "const": "south",
+              "type": "string"
+            },
+            {
+              "const": "east",
+              "type": "string"
+            },
+            {
+              "const": "west",
+              "type": "string"
+            }
+          ]
         }
       }
     },

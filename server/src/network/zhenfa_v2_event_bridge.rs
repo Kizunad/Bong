@@ -154,7 +154,10 @@ fn event_payload(
 
 fn map_kind(kind: ZhenfaKind) -> ZhenfaArrayKindV2 {
     match kind {
-        ZhenfaKind::Trap => ZhenfaArrayKindV2::Trap,
+        ZhenfaKind::Trap
+        | ZhenfaKind::WarningTrap
+        | ZhenfaKind::BlastTrap
+        | ZhenfaKind::SlowTrap => ZhenfaArrayKindV2::Trap,
         ZhenfaKind::Ward => ZhenfaArrayKindV2::Ward,
         ZhenfaKind::ShrineWard => ZhenfaArrayKindV2::ShrineWard,
         ZhenfaKind::Lingju => ZhenfaArrayKindV2::Lingju,

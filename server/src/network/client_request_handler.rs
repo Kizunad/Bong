@@ -1182,6 +1182,8 @@ pub fn handle_client_request_payloads(
                 carrier,
                 qi_invest_ratio,
                 trigger,
+                item_instance_id,
+                target_face,
                 ..
             } => {
                 let Some(place_tx) = dispatch.zhenfa_place_tx.as_deref_mut() else {
@@ -1197,6 +1199,8 @@ pub fn handle_client_request_payloads(
                     carrier: carrier.unwrap_or_default(),
                     qi_invest_ratio,
                     trigger,
+                    item_instance_id,
+                    target_face,
                     requested_at_tick: combat_clock.tick,
                 });
             }
