@@ -712,9 +712,9 @@ worldview §五:546-548 锚定的完整公式：
 
 ### 测试结果
 
-- `server/`：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo test technique_proficiency` ✅ 15 passed；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test` ✅ 4528 passed。
+- `server/`：`cargo fmt --check` ✅；`CARGO_BUILD_JOBS=1 cargo test technique_proficiency` ✅ 15 passed；`CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` ✅；`CARGO_BUILD_JOBS=1 cargo test` ✅ 4535 passed。
 - `client/`：`JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$JAVA_HOME/bin:$PATH ./gradlew --no-daemon test build` ✅。
-- `agent/`：`npm run build` ✅；`cd packages/schema && npm test` ✅ 377 passed；`npm run check` ✅ 361 schemas fresh；`cd packages/tiandao && npm test` ✅ 358 passed。
+- `agent/`：`npm run build` ✅；`cd packages/schema && npm test` ✅ 377 passed；`cd packages/schema && npm run check` ✅ 361 schemas fresh；`cd packages/tiandao && npm test` ✅ 358 passed。
 
 ### 跨仓库核验
 
