@@ -144,6 +144,10 @@ public final class HudImmersionMode {
         return manualImmersive;
     }
 
+    public static boolean immersiveActive() {
+        return immersiveActive;
+    }
+
     static void setAutoMeditationImmersiveForTests(boolean enabled) {
         autoMeditationImmersive = enabled;
     }

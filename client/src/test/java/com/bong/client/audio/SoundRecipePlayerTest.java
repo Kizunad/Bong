@@ -4,6 +4,7 @@ import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DerivedAttrFlags;
 import com.bong.client.environment.EnvironmentAudioLoopState;
+import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.network.AudioEventPayload;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,7 @@ public class SoundRecipePlayerTest {
     void resetStores() {
         CombatHudStateStore.resetForTests();
         EnvironmentAudioLoopState.clear();
+        HudImmersionMode.resetForTests();
     }
 
     @Test
@@ -166,6 +168,65 @@ public class SoundRecipePlayerTest {
         assertEquals(0.12f, sink.played.get(0).volume(), 0.0001f);
     }
 
+    @Test
+    void busMixerKeepsCombatVolumeIndependentFromEnvironment() {
+        RecordingSink sink = new RecordingSink();
+        AudioBusMixer mixer = new AudioBusMixer();
+        mixer.setVolume(AudioBus.COMBAT, 0.25f);
+        mixer.setVolume(AudioBus.ENVIRONMENT, 1.0f);
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false, mixer, new AudioTelemetry());
+
+        player.play(playPayload(recipe("combat_hit", 50, Optional.empty()), 1.0f, 0.0f));
+        player.tick();
+
+        assertEquals(2, sink.played.size());
+        assertEquals(0.1f, sink.played.get(0).volume(), 0.0001f);
+        assertEquals(AudioBus.COMBAT, recipe("combat_hit", 50, Optional.empty()).bus());
+    }
+
+    @Test
+    void tribulationDucksEnvironmentBusOnly() {
+        RecordingSink sink = new RecordingSink();
+        AudioBusMixer mixer = new AudioBusMixer();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false, mixer, new AudioTelemetry());
+        player.setMusicState(MusicStateMachine.State.TRIBULATION);
+
+        player.play(playPayload(ambientRecipe(), 1.0f, 0.0f));
+        player.tick();
+
+        assertEquals(2, sink.played.size());
+        assertEquals(0.12f, sink.played.get(0).volume(), 0.0001f);
+    }
+
+    @Test
+    void immersiveModeMutesUiBusUntilRestoreWindow() {
+        RecordingSink sink = new RecordingSink();
+        AudioBusMixer mixer = new AudioBusMixer();
+        HudImmersionMode.setManualImmersive(true, 0L);
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false, mixer, new AudioTelemetry());
+
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(0.0f, sink.played.get(0).volume(), 0.0001f);
+
+        mixer.restoreUiForTicks(5);
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(0.4f, sink.played.get(2).volume(), 0.0001f);
+    }
+
+    @Test
+    void telemetryFlagsRecipeOverplayWindow() {
+        AudioTelemetry telemetry = new AudioTelemetry(1_000L, 2);
+
+        telemetry.record("hit_light", 1_000L);
+        telemetry.record("hit_light", 1_100L);
+        telemetry.record("hit_light", 1_200L);
+
+        assertEquals(true, telemetry.isOverThreshold("hit_light", 1_200L));
+        assertEquals(false, telemetry.isOverThreshold("hit_light", 2_500L));
+    }
+
     private static AudioEventPayload.PlaySoundRecipe playPayload(AudioRecipe recipe, float volumeMul, float pitchShift) {
         return new AudioEventPayload.PlaySoundRecipe(
             recipe.id(),
@@ -200,7 +261,8 @@ public class SoundRecipePlayerTest {
             Optional.empty(),
             40,
             AudioAttenuation.PLAYER_LOCAL,
-            AudioCategory.VOICE
+            AudioCategory.VOICE,
+            AudioBus.UI
         );
     }
 
@@ -211,7 +273,8 @@ public class SoundRecipePlayerTest {
             Optional.of(new AudioLoopConfig(2, "hp_below_30")),
             70,
             AudioAttenuation.PLAYER_LOCAL,
-            AudioCategory.HOSTILE
+            AudioCategory.HOSTILE,
+            AudioBus.COMBAT
         );
     }
 
@@ -222,7 +285,8 @@ public class SoundRecipePlayerTest {
             Optional.empty(),
             24,
             AudioAttenuation.ZONE_BROADCAST,
-            AudioCategory.AMBIENT
+            AudioCategory.AMBIENT,
+            AudioBus.ENVIRONMENT
         );
     }
 
@@ -233,7 +297,8 @@ public class SoundRecipePlayerTest {
             Optional.empty(),
             95,
             AudioAttenuation.WORLD_3D,
-            AudioCategory.AMBIENT
+            AudioCategory.AMBIENT,
+            AudioBus.ENVIRONMENT
         );
     }
 
@@ -247,7 +312,8 @@ public class SoundRecipePlayerTest {
             loop,
             priority,
             AudioAttenuation.PLAYER_LOCAL,
-            AudioCategory.HOSTILE
+            AudioCategory.HOSTILE,
+            AudioBus.COMBAT
         );
     }
 

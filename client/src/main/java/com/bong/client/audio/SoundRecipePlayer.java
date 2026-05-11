@@ -2,7 +2,9 @@ package com.bong.client.audio;
 
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.environment.EnvironmentAudioLoopState;
+import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.lingtian.state.LingtianSessionStore;
+import com.bong.client.BongClient;
 import com.bong.client.network.AudioEventPayload;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -29,14 +31,27 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     private final SoundSink sink;
     private final Predicate<String> flagProvider;
+    private final AudioBusMixer mixer;
+    private final AudioTelemetry telemetry;
     private final Map<Long, ActiveLoop> loops = new LinkedHashMap<>();
     private final List<AudioEventPayload.PlaySoundRecipe> pending = new ArrayList<>();
     private float ambientVolumeFactor = 1.0f;
     private long tick;
 
     public SoundRecipePlayer(SoundSink sink, Predicate<String> flagProvider) {
+        this(sink, flagProvider, new AudioBusMixer(), new AudioTelemetry());
+    }
+
+    public SoundRecipePlayer(
+        SoundSink sink,
+        Predicate<String> flagProvider,
+        AudioBusMixer mixer,
+        AudioTelemetry telemetry
+    ) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.flagProvider = Objects.requireNonNull(flagProvider, "flagProvider");
+        this.mixer = Objects.requireNonNull(mixer, "mixer");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     public static SoundRecipePlayer instance() {
@@ -75,6 +90,8 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public void tick() {
         tick++;
+        mixer.setImmersiveMode(HudImmersionMode.immersiveActive());
+        mixer.tick();
         updateAmbientDucking();
         Iterator<Map.Entry<Long, ActiveLoop>> iterator = loops.entrySet().iterator();
         while (iterator.hasNext()) {
@@ -97,6 +114,18 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public int activeLoopCountForTests() {
         return loops.size();
+    }
+
+    public void setMusicState(MusicStateMachine.State state) {
+        mixer.setMusicState(state);
+    }
+
+    public AudioBusMixer mixerForTests() {
+        return mixer;
+    }
+
+    public AudioTelemetry telemetryForTests() {
+        return telemetry;
     }
 
     private void enqueue(AudioEventPayload.PlaySoundRecipe payload) {
@@ -155,6 +184,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             if (payload.recipe().category() == AudioCategory.AMBIENT) {
                 volume *= ambientVolumeFactor;
             }
+            volume *= mixer.effectiveVolume(payload.recipe().bus());
             float pitch = (float) clamp(layer.pitch() * Math.pow(2.0, payload.pitchShift()), AUDIO_PITCH_MIN, AUDIO_PITCH_MAX);
             anyPlayed |= sink.play(new AudioScheduledSound(
                 payload.instanceId(),
@@ -166,6 +196,10 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
                 pitch,
                 layer.delayTicks()
             ));
+        }
+        int count = telemetry.record(payload.recipeId(), System.currentTimeMillis());
+        if (count == 101 && telemetry.isOverThreshold(payload.recipeId(), System.currentTimeMillis())) {
+            BongClient.LOGGER.warn("[bong][audio] recipe {} played more than 100 times in 30 min", payload.recipeId());
         }
         return anyPlayed;
     }
