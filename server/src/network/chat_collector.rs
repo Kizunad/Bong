@@ -12,6 +12,7 @@ use crate::combat::components::Lifecycle;
 use crate::player::state::canonical_player_id;
 use crate::schema::chat_message::ChatMessageV1;
 use crate::social::events::PlayerChatCollected;
+use crate::world::tsy::TsyPresence;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
@@ -45,7 +46,15 @@ pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut player_sets: ParamSet<(
-        Query<(&Username, &Position, Option<&Lifecycle>), With<Client>>,
+        Query<
+            (
+                &Username,
+                &Position,
+                Option<&Lifecycle>,
+                Option<&TsyPresence>,
+            ),
+            With<Client>,
+        >,
         Query<&mut Client, With<Client>>,
     )>,
     mut events: EventReader<ChatMessageEvent>,
@@ -70,11 +79,12 @@ pub fn collect_player_chat(
             players
                 .get(*client)
                 .ok()
-                .map(|(username, position, lifecycle)| {
+                .map(|(username, position, lifecycle, tsy_presence)| {
                     (
                         username.0.clone(),
                         position.get(),
                         lifecycle.map(|lifecycle| lifecycle.character_id.clone()),
+                        tsy_presence.is_some(),
                     )
                 })
         };
@@ -105,7 +115,7 @@ fn classify_player_message(
     player_entity: Entity,
     message: &str,
     timestamp: u64,
-    player_info: Option<(String, DVec3, Option<String>)>,
+    player_info: Option<(String, DVec3, Option<String>, bool)>,
     clients: &mut Query<&mut Client, With<Client>>,
     zone_registry: &ZoneRegistry,
     rate_limit: &mut ChatCollectorRateLimit,
@@ -117,7 +127,7 @@ fn classify_player_message(
         return None;
     }
 
-    let (username, position, char_id) = player_info?;
+    let (username, position, char_id, in_negative_pressure) = player_info?;
 
     if is_legacy_bang_command(message) {
         if let Ok(mut client) = clients.get_mut(player_entity) {
@@ -127,6 +137,13 @@ fn classify_player_message(
     }
 
     if is_command_like(message) {
+        return None;
+    }
+
+    if in_negative_pressure {
+        if let Ok(mut client) = clients.get_mut(player_entity) {
+            client.send_chat_message("坍缩渊负压吞掉了你的话。");
+        }
         return None;
     }
 
@@ -192,8 +209,10 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: DVec3) -> Stri
 mod chat_collector_tests {
     use super::*;
     use crate::network::RedisBridgeResource;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::tsy::{DimensionAnchor, TsyPresence};
     use crossbeam_channel::unbounded;
-    use valence::prelude::{App, Position, Update};
+    use valence::prelude::{App, DVec3, Position, Update};
     use valence::testing::create_mock_client;
 
     fn setup_chat_collector_app(
@@ -381,6 +400,34 @@ mod chat_collector_tests {
             }
             other => panic!("expected player chat outbound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn chat_blocked_in_negative_pressure() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        app.world_mut().entity_mut(alice).insert(TsyPresence {
+            family_id: "tsy_lingxu_01".to_string(),
+            entered_at_tick: 42,
+            entry_inventory_snapshot: Vec::new(),
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(8.0, 66.0, 8.0),
+            },
+        });
+
+        send_chat_event(&mut app, alice, "有人吗", 1_712_345_706);
+        app.update();
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "TSY negative pressure should block normal player chat"
+        );
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<PlayerChatCollected>>();
+        let mut reader = events.get_reader();
+        assert!(reader.read(events).next().is_none());
     }
 
     #[test]

@@ -4584,6 +4584,8 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::TribulationFled { .. } => "tribulation_fled",
         BiographyEntry::HeartDemonRecord { .. } => "heart_demon_record",
         BiographyEntry::TradeCompleted { .. } => "trade_completed",
+        BiographyEntry::PvpEncounter { .. } => "pvp_encounter",
+        BiographyEntry::PvpBetrayal { .. } => "pvp_betrayal",
         BiographyEntry::NicheIntrusion { .. } => "niche_intrusion",
         BiographyEntry::VortexProjectileDrained { .. } => "vortex_projectile_drained",
         BiographyEntry::VortexBackfired { .. } => "vortex_backfired",
@@ -4672,6 +4674,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::TribulationFled { tick, .. }
         | BiographyEntry::HeartDemonRecord { tick, .. }
         | BiographyEntry::TradeCompleted { tick, .. }
+        | BiographyEntry::PvpEncounter { tick, .. }
+        | BiographyEntry::PvpBetrayal { tick, .. }
         | BiographyEntry::NicheIntrusion { tick, .. }
         | BiographyEntry::VortexProjectileDrained { tick, .. }
         | BiographyEntry::VortexBackfired { tick, .. }
