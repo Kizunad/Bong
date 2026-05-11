@@ -62,13 +62,17 @@ pub fn special_diverge_pool(color: ColorKind, target: ColorKind) -> Vec<InsightT
 pub fn tradeoff(
     alignment: InsightAlignment,
     gain: InsightEffect,
-    cost: InsightCost,
+    mut cost: InsightCost,
     gain_flavor: String,
     cost_flavor: String,
     target_color: Option<ColorKind>,
 ) -> InsightTradeoff {
     let gain_magnitude = gain.magnitude();
-    let cost_magnitude = cost.magnitude().max(gain_magnitude * 0.5).max(0.01);
+    let min_cost = (gain_magnitude * 0.5).max(0.01);
+    if cost.magnitude() < min_cost {
+        cost = amplify_cost(cost, min_cost);
+    }
+    let cost_magnitude = cost.magnitude();
     InsightTradeoff {
         alignment,
         gain,
@@ -78,5 +82,34 @@ pub fn tradeoff(
         gain_flavor,
         cost_flavor,
         target_color,
+    }
+}
+
+fn amplify_cost(cost: InsightCost, required: f64) -> InsightCost {
+    match cost {
+        InsightCost::OppositeColorPenalty { color, .. } => InsightCost::OppositeColorPenalty {
+            color,
+            penalty: required,
+        },
+        InsightCost::QiVolatility { .. } => InsightCost::QiVolatility { add: required },
+        InsightCost::ShockSensitivity { .. } => InsightCost::ShockSensitivity { add: required },
+        InsightCost::MainColorPenalty { color, .. } => InsightCost::MainColorPenalty {
+            color,
+            penalty: required,
+        },
+        InsightCost::OverloadFragility { .. } => InsightCost::OverloadFragility { add: required },
+        InsightCost::MeridianHealSlowdown { .. } => InsightCost::MeridianHealSlowdown {
+            mul: (1.0 - required).clamp(0.85, 0.95),
+        },
+        InsightCost::BreakthroughFailurePenalty { .. } => InsightCost::BreakthroughFailurePenalty {
+            mul: 1.0 + required,
+        },
+        InsightCost::SenseExposure { .. } => InsightCost::SenseExposure { add: required },
+        InsightCost::ReactionWindowShrink { .. } => InsightCost::ReactionWindowShrink {
+            mul: (1.0 - required).clamp(0.90, 0.97),
+        },
+        InsightCost::ChaoticToleranceLoss { .. } => {
+            InsightCost::ChaoticToleranceLoss { sub: required }
+        }
     }
 }

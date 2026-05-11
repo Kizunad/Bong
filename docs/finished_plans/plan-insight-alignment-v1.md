@@ -776,6 +776,7 @@ pub struct InsightModifiers {
 - `cd agent && npm run build && npm run check -w @bong/schema && npm test -w @bong/tiandao` ✅ schema artifacts fresh；tiandao `51 passed (51)` / `350 passed (350)`
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew test build` ✅ `BUILD SUCCESSFUL`
 - `git diff --check origin/main..HEAD` ✅
+- 评审收口增量验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test cultivation::color_affinity` / `cultivation::generic_talent` / `cultivation::insight_apply` / `cultivation::insight_fallback`、`npm run build`、`npm run check -w @bong/schema`、`npm test -w @bong/tiandao -- insight-runtime`、`git diff --check origin/main..HEAD` ✅
 
 ### 跨仓库核验
 
@@ -785,6 +786,8 @@ pub struct InsightModifiers {
 
 ### 遗留 / 后续
 
-- Agent LLM 真实接入后仍需观察三轨 prompt 的实际输出质量；当前 server 仍以本地 fallback 作为可执行权威。
+- 代价字段已写入并累计到 `InsightModifiers`，但 combat / PvP / inspect 等 downstream 消费尚未全量接线；本 plan 落地的是三轨契约、持久字段、审计记录与 UI 可见性。
+- Agent schema / prompt / Arbiter 已收紧为 3 个三轨选择和非零代价校验；当前 gameplay 执行权威仍是 server fallback，现有 agent IPC bridge 尚未把 LLM choice payload 直接作为可执行选择落地。
+- Agent fallback 路径目前仍缺玩家 `QiColor` / `PracticeLog` 上下文；直到 bridge 升级前，真实玩家向量感知由 server fallback 侧保证。
 - inspect 中的"顿悟倾向历史"与 PvP 侧模糊感知不在本 plan 范围，保留给后续 UI / 信息战 plan。
 - 连续 DIVERGE 触发特殊叙事"你已不是你"未在本 plan 内落地，需结合后续杂色/混元叙事切片实现。

@@ -39,6 +39,8 @@ pub struct InsightModifiers {
     #[serde(default)]
     pub main_color_efficiency_penalty: f64,
     #[serde(default)]
+    pub overload_tolerance_add: f64,
+    #[serde(default)]
     pub reaction_window_penalty: f64,
     #[serde(default = "default_one")]
     pub breakthrough_failure_penalty_mul: f64,
@@ -72,6 +74,7 @@ impl InsightModifiers {
             qi_volatility_add: 0.0,
             shock_sensitivity_add: 0.0,
             main_color_efficiency_penalty: 0.0,
+            overload_tolerance_add: 0.0,
             reaction_window_penalty: 0.0,
             breakthrough_failure_penalty_mul: 1.0,
             sense_exposure_add: 0.0,
@@ -105,9 +108,8 @@ pub fn apply_choice(
         MeridianForgeDiscount { .. } => {
             // 记到 modifiers（本 plan 未细化锻造折扣接口，留作后续）
         }
-        MeridianOverloadTolerance { id, add } => {
-            let m = meridians.get_mut(*id);
-            m.flow_rate *= 1.0 + add; // 用 flow_rate 代理 overload 阈值
+        MeridianOverloadTolerance { add, .. } => {
+            modifiers.overload_tolerance_add += add;
         }
         QiRegenFactor { mul } => {
             modifiers.qi_regen_mul *= mul;
@@ -314,6 +316,30 @@ mod tests {
             &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 0,
         );
         assert!((mods.qi_regen_mul - 1.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn overload_tolerance_records_modifier_without_touching_flow_rate() {
+        let mut c = Cultivation::default();
+        let mut ms = MeridianSystem::default();
+        let mut qc = QiColor::default();
+        let mut perc = UnlockedPerceptions::default();
+        let mut mods = InsightModifiers::new();
+        let mut lr = LifeRecord::default();
+        let before = ms.get(MeridianId::Lung).flow_rate;
+        let choice = InsightChoice::neutral(
+            InsightCategory::Meridian,
+            InsightEffect::MeridianOverloadTolerance {
+                id: MeridianId::Lung,
+                add: 0.03,
+            },
+            "",
+        );
+        apply_choice(
+            &choice, &mut c, &mut ms, &mut qc, None, &mut perc, &mut mods, &mut lr, "t", 0,
+        );
+        assert!((mods.overload_tolerance_add - 0.03).abs() < 1e-9);
+        assert_eq!(ms.get(MeridianId::Lung).flow_rate, before);
     }
 
     #[test]

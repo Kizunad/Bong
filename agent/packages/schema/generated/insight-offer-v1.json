@@ -24,7 +24,7 @@
     },
     "choices": {
       "minItems": 1,
-      "maxItems": 4,
+      "maxItems": 3,
       "type": "array",
       "items": {
         "additionalProperties": false,

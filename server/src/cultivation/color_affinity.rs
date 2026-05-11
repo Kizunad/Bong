@@ -92,6 +92,15 @@ pub fn select_aligned_tradeoffs(
             &mut used,
         ) {
             selected.push(choice);
+        } else if let Some(choice) = neutral_degrade_tradeoff(
+            trigger_id,
+            alignment,
+            qi_color.main,
+            quota,
+            realm,
+            &mut used,
+        ) {
+            selected.push(choice);
         }
     }
     selected
@@ -154,6 +163,46 @@ fn select_first_valid(
         }
     }
     None
+}
+
+fn neutral_degrade_tradeoff(
+    trigger_id: &str,
+    saturated_alignment: InsightAlignment,
+    main_color: ColorKind,
+    quota: &InsightQuota,
+    realm: Realm,
+    used: &mut HashSet<String>,
+) -> Option<InsightTradeoff> {
+    let mut candidate = tradeoff(
+        InsightAlignment::Neutral,
+        InsightEffect::UnlockPerception {
+            kind: format!("alignment_saturated_{}", saturated_alignment.code()),
+        },
+        InsightCost::SenseExposure { add: 0.03 },
+        format!(
+            "此道已臻顶，{}之意暂不再添；你转而看见真元走向的细痕。",
+            super::generic_talent::color_kind_to_chinese(main_color)
+        ),
+        "灵识外放——被感知暴露度 +3%".to_string(),
+        None,
+    );
+    candidate.gain_flavor = flavor_for(
+        trigger_id,
+        InsightAlignment::Neutral,
+        main_color,
+        None,
+        candidate.gain_flavor.as_str(),
+    );
+    let key = format!("{:?}", candidate.gain);
+    if used.contains(&key) {
+        return None;
+    }
+    let choice = InsightChoice::from_tradeoff(candidate.clone());
+    if validate_offer(quota, &choice, realm).is_err() {
+        return None;
+    }
+    used.insert(key);
+    Some(candidate)
 }
 
 fn hunyuan_tradeoffs(
@@ -531,5 +580,22 @@ mod tests {
         for color in ALL_COLORS {
             assert_ne!(opposite_color(color), color);
         }
+    }
+
+    #[test]
+    fn missing_track_degrades_to_neutral_hint() {
+        let mut used = HashSet::new();
+        let degraded = neutral_degrade_tradeoff(
+            "first_breakthrough_to_Induce",
+            InsightAlignment::Converge,
+            ColorKind::Sharp,
+            &InsightQuota::default(),
+            Realm::Induce,
+            &mut used,
+        )
+        .unwrap();
+        assert_eq!(degraded.alignment, InsightAlignment::Neutral);
+        assert!(degraded.gain_flavor.contains("此道已臻顶"));
+        assert!(matches!(degraded.cost, InsightCost::SenseExposure { .. }));
     }
 }

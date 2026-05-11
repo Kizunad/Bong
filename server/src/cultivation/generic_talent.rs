@@ -112,7 +112,7 @@ impl GenericTalentRegistry {
         let gain = effect_from_modifier(&def.gain, coeff, main_color, diverge_color)
             .map_err(|error| format!("{} gain 无效: {error}", def.id))?;
         let gain_magnitude = gain.magnitude();
-        let mut cost = cost_from_modifier(&def.cost, main_color, diverge_color)
+        let mut cost = cost_from_modifier(&def.cost, main_color)
             .map_err(|error| format!("{} cost 无效: {error}", def.id))?;
         let min_cost = gain_magnitude * 0.5;
         if cost.magnitude() < min_cost {
@@ -350,11 +350,7 @@ fn scaled_gain_value(stat: &StatModifier, coeff: f64) -> f64 {
     }
 }
 
-fn cost_from_modifier(
-    stat: &StatModifier,
-    main_color: ColorKind,
-    diverge_color: ColorKind,
-) -> Result<InsightCost, String> {
+fn cost_from_modifier(stat: &StatModifier, main_color: ColorKind) -> Result<InsightCost, String> {
     Ok(match stat.stat.as_str() {
         "qi_volatility" => InsightCost::QiVolatility {
             add: stat.base_value,
@@ -388,10 +384,6 @@ fn cost_from_modifier(
         "chaotic_tolerance_loss" => InsightCost::ChaoticToleranceLoss {
             sub: stat.base_value,
         },
-        "main_color_token" => InsightCost::MainColorPenalty {
-            color: resolve_color_token(stat.color.as_deref(), main_color, diverge_color)?,
-            penalty: stat.base_value,
-        },
         other => return Err(format!("未知 cost stat: {other}")),
     })
 }
@@ -410,14 +402,14 @@ fn amplify_cost(cost: InsightCost, required: f64) -> InsightCost {
         },
         InsightCost::OverloadFragility { .. } => InsightCost::OverloadFragility { add: required },
         InsightCost::MeridianHealSlowdown { .. } => InsightCost::MeridianHealSlowdown {
-            mul: (1.0 - required).max(0.01),
+            mul: (1.0 - required).clamp(0.85, 0.95),
         },
         InsightCost::BreakthroughFailurePenalty { .. } => InsightCost::BreakthroughFailurePenalty {
             mul: 1.0 + required,
         },
         InsightCost::SenseExposure { .. } => InsightCost::SenseExposure { add: required },
         InsightCost::ReactionWindowShrink { .. } => InsightCost::ReactionWindowShrink {
-            mul: (1.0 - required).max(0.01),
+            mul: (1.0 - required).clamp(0.90, 0.97),
         },
         InsightCost::ChaoticToleranceLoss { .. } => {
             InsightCost::ChaoticToleranceLoss { sub: required }

@@ -99,7 +99,7 @@ export function applyInsightArbiter(
     return [{ ...choice, alignment }];
   });
 
-  return { ...offer, choices: filtered.slice(0, 4) };
+  return { ...offer, choices: filtered.slice(0, 3) };
 }
 
 function normalizeAlignment(
