@@ -276,9 +276,34 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：60+ recipe JSON / `AudioBusMixer` / 3D attenuation 4 profile / 7 流派 35 recipe / `AudioTelemetry` / ducking
-- **关键 commit**：P0-P5 各自 hash
-- **测试结果**：720+ recipe e2e + 压测 10p × 50 recipe
-- **遗留 / 后续**：agent narration 联动 AudioTrigger / 音效白名单扩展（新 MC 版本）/ NPC voice 音效（等 NPC 视觉差异化后联动）
+- **落地清单**
+  - P0 战斗细分 recipe：`server/assets/audio/recipes/hit_light.json` / `hit_heavy.json` / `hit_critical.json` / `parry_success.json` / `parry_perfect.json` / `dodge_success.json` / `charge_start.json` / `charge_release.json` / `overload_tear.json` / `qi_collision.json` / `kill_confirm.json` / `wound_inflict.json`；`server/src/audio/implementation.rs` 负责 damage tier / parry window / 100ms dedup，`server/src/network/audio_trigger.rs` 负责战斗、死亡、伤口 emit。
+  - P1 修炼 / 产出 / 社交 recipe：`breakthrough_yinqi` / `breakthrough_ningmai` / `breakthrough_guyuan` / `breakthrough_fail` / `meridian_open` / `enlightenment_flash` / `forge_*` / `alchemy_*` / `lingtian_*` / `niche_establish` / `pact_bind` / `renown_gain` / `renown_loss` / `death_insight` / `inventory_open` / `inventory_close`；server 路由覆盖 cultivation / forge / alchemy / lingtian / social。
+  - P2 3D 空间化 + ambient detail：`AudioAttenuation::{SELF,MELEE,AREA,WORLD}`、`AUDIO_MELEE_RADIUS=8`、`AUDIO_AREA_RADIUS=32`、`AUDIO_WORLD_RADIUS=128`；`server/src/audio/ambient.rs` 追加灵泉湿地蛙鸣、血谷岩崩、北荒狼嚎、TSY 金属残响；client `MinecraftSoundSink` 将 SELF / PLAYER_LOCAL 映射为无衰减。
+  - P3 七流派专属音效：`baomai_*` / `dugu_*` / `dugu_poison_*` / `tuike_*` / `woliu_*` / `zhenfa_*` / `zhenmai_*` 共 35 条流派 recipe，`school_recipe_prefix` / `school_hit_recipe` 负责 hit/cast/signature 路由。
+  - P4 bus / 沉浸 / telemetry：`AudioBus::{COMBAT,ENVIRONMENT,UI}` 跨 server schema、agent schema、client parser 对齐；`AudioBusMixer` 支持三 bus 独立 volume、沉浸模式 UI mute、COMBAT/TRIBULATION 环境 ducking；`AudioTelemetry` 统计 30min recipe 播放次数并在超过 100 次时 warn；`NpcFootstepAudioController` 纯 client 本地 NPC 脚步声按材质选择 default/ash/water recipe。
+  - P5 饱和化测试：recipe registry 锁定 172 条 JSON，schema/generated artifacts、server routing、attenuation recipient、client mixer、NPC footstep、music-state ducking 均有回归测试；多人实机压测与可视化调参未纳入自动 CI。
+
+- **关键 commit**
+  - `d94c11d2c` · 2026-05-11 · `plan-audio-implementation-v1: 扩展音频协议与 bus 契约`
+  - `ad539c26d` · 2026-05-11 · `plan-audio-implementation-v1: 补齐音效 recipe 与 ambient detail`
+  - `ba2b3a0b6` · 2026-05-11 · `plan-audio-implementation-v1: 接入音频事件路由与去重`
+  - `d5b0713d6` · 2026-05-11 · `plan-audio-implementation-v1: 接入客户端混音与 NPC 脚步`
+
+- **测试结果**
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings`：通过。
+  - `cd server && CARGO_BUILD_JOBS=1 cargo test`：`4261 passed; 0 failed; 0 ignored`。默认并发 `cargo test` 在本机测试二进制编译阶段曾被 SIGKILL，降并发后同一代码通过。
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build`：`BUILD SUCCESSFUL`。
+  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`：`tiandao 51 files / 348 tests passed`，`schema 18 files / 366 tests passed`。
+
+- **跨仓库核验**
+  - server：`SoundRecipeRegistry::load_default()` / `AudioAttenuation` / `AudioBus` / `PlaySoundRecipeRequest` / `recipient_for_attenuation` / `AudioImplementationDedup` / `emit_*_audio_triggers`。
+  - agent/schema：`agent/packages/schema/src/audio-event.ts`、`generated/audio-event-v1.json`、`generated/play-sound-recipe-event-v1.json`、`generated/sound-recipe-v1.json` 对齐 bus + attenuation。
+  - client：`AudioEventEnvelope` 解析 inline recipe bus，`AudioRecipe.bus()`、`AudioBusMixer.effectiveVolume()`、`SoundRecipePlayer.setMusicState()`、`NpcFootstepAudioController.recipeForMaterial()`。
+
+- **遗留 / 后续**
+  - 本 plan 不新增 .ogg / resource pack；全部 recipe 仍按 vanilla SoundEvent 组合。
+  - 音量设置 UI slider、F8 debug overlay、10 人实机压测属于后续可视化/调参工作；本 PR 已落地底层 bus、telemetry snapshot 与自动化回归护栏。
+  - agent narration 的 `audio_trigger_id` 可在后续叙事联动 plan 中接入；当前未新增 agent→client 音频通道。
