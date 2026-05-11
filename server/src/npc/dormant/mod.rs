@@ -27,6 +27,7 @@ use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLif
 use crate::npc::loot::default_loot_for_archetype;
 use crate::npc::loot::NpcLootTable;
 use crate::npc::movement::GameTick;
+use crate::npc::schedule::DORMANT_SCHEDULE_TICK_INTERVAL;
 use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index, seed_position_for_zone};
 use crate::qi_physics::{
     constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
@@ -64,7 +65,7 @@ impl Default for NpcVirtualizationConfig {
             hydrate_radius_blocks: HYDRATE_RADIUS_BLOCKS,
             dehydrate_radius_blocks: DEHYDRATE_RADIUS_BLOCKS,
             transition_interval_ticks: 20,
-            dormant_tick_interval_ticks: 20 * 60,
+            dormant_tick_interval_ticks: DORMANT_SCHEDULE_TICK_INTERVAL as u32,
             dormant_aging_rate_multiplier: 0.3,
             max_hydrated_count: 200,
             max_dormant_count: 5000,

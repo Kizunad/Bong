@@ -20,6 +20,7 @@ pub mod possession;
 pub mod relic;
 pub mod scattered_cultivator;
 pub mod scenario;
+pub mod schedule;
 pub mod social;
 pub mod spatial;
 pub mod spawn;
@@ -59,6 +60,7 @@ pub fn register(app: &mut App) {
     hydrate::register(app);
     navigator::register(app);
     scenario::register(app);
+    schedule::register(app);
     lingtian_pressure::register(app);
     territory::register(app);
     scattered_cultivator::register(app);
