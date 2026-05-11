@@ -185,18 +185,22 @@ pub fn jizhaojing_def() -> SpiritTreasureDef {
     }
 }
 
+type SpiritTreasureInventoryQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static PlayerInventory,
+        Option<&'static mut ActiveSpiritTreasures>,
+        Option<&'static mut StatusEffects>,
+    ),
+    Changed<PlayerInventory>,
+>;
+
 pub fn sync_spirit_treasures(
     mut commands: Commands,
     mut registry: ResMut<SpiritTreasureRegistry>,
-    mut inventories: Query<
-        (
-            Entity,
-            &PlayerInventory,
-            Option<&mut ActiveSpiritTreasures>,
-            Option<&mut StatusEffects>,
-        ),
-        Changed<PlayerInventory>,
-    >,
+    mut inventories: SpiritTreasureInventoryQuery,
 ) {
     for (entity, inventory, active_component, status_effects) in &mut inventories {
         let previous = active_component

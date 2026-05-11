@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use valence::message::ChatMessageEvent;
 use valence::message::SendMessage;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    Client, DVec3, Entity, EventReader, ParamSet, Position, Query, Res, ResMut, Resource, Username,
-    With,
+    bevy_ecs, Client, DVec3, Entity, EventReader, ParamSet, Position, Query, Res, ResMut, Resource,
+    Username, With,
 };
 
 use super::redis_bridge::RedisOutbound;
@@ -49,12 +50,18 @@ pub struct ChatCollectorRateLimit {
 
 impl Resource for ChatCollectorRateLimit {}
 
+#[derive(SystemParam)]
+pub struct ChatCollectorResources<'w> {
+    zone_registry: Option<Res<'w, ZoneRegistry>>,
+    clock: Option<Res<'w, CombatClock>>,
+    spirit_treasure_registry: Option<ResMut<'w, SpiritTreasureRegistry>>,
+    rate_limit: ResMut<'w, ChatCollectorRateLimit>,
+}
+
 #[allow(clippy::type_complexity)]
 pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
-    zone_registry: Option<Res<ZoneRegistry>>,
-    clock: Option<Res<CombatClock>>,
-    mut spirit_treasure_registry: Option<ResMut<SpiritTreasureRegistry>>,
+    mut resources: ChatCollectorResources,
     mut player_sets: ParamSet<(
         Query<
             (
@@ -70,11 +77,11 @@ pub fn collect_player_chat(
     )>,
     mut events: EventReader<ChatMessageEvent>,
     mut collected_chats: valence::prelude::EventWriter<PlayerChatCollected>,
-    mut rate_limit: valence::prelude::ResMut<ChatCollectorRateLimit>,
 ) {
-    rate_limit.per_player_count.clear();
+    resources.rate_limit.per_player_count.clear();
 
-    let zone_registry = zone_registry
+    let zone_registry = resources
+        .zone_registry
         .as_deref()
         .cloned()
         .unwrap_or_else(ZoneRegistry::fallback);
@@ -109,20 +116,23 @@ pub fn collect_player_chat(
             )
         };
 
-        let now_tick = clock
+        let now_tick = resources
+            .clock
             .as_deref()
             .map(|clock| clock.tick)
             .unwrap_or(*timestamp);
-        let Some(classified) = classify_player_message(
-            *client,
+        let context = ChatMessageContext {
+            player_entity: *client,
             message,
-            *timestamp,
-            player_info,
-            &mut player_sets.p1(),
-            &zone_registry,
-            &mut rate_limit,
-            spirit_treasure_registry.as_deref_mut(),
+            timestamp: *timestamp,
             now_tick,
+        };
+        let Some(classified) = classify_player_message(
+            context,
+            player_info,
+            &zone_registry,
+            &mut resources.rate_limit,
+            resources.spirit_treasure_registry.as_deref_mut(),
         ) else {
             continue;
         };
@@ -141,15 +151,29 @@ pub fn collect_player_chat(
                 public_message,
             } => {
                 let mut clients = player_sets.p1();
-                for (mut client, position) in &mut clients {
+                for (mut target_client, position) in &mut clients {
                     if zone_name_for_position(&zone_registry, position.get()) == zone {
-                        client.send_chat_message(public_message.clone());
+                        target_client.send_chat_message(public_message.clone());
                     }
                 }
                 let _ = redis.tx_outbound.send(outbound);
             }
+            ClassifiedChat::PromptSelf(text) => {
+                let mut clients = player_sets.p1();
+                if let Ok((mut target_client, _)) = clients.get_mut(*client) {
+                    target_client.send_chat_message(text);
+                }
+            }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChatMessageContext<'a> {
+    player_entity: Entity,
+    message: &'a str,
+    timestamp: u64,
+    now_tick: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -172,21 +196,18 @@ enum ClassifiedChat {
         zone: String,
         public_message: String,
     },
+    PromptSelf(String),
 }
 
 fn classify_player_message(
-    player_entity: Entity,
-    message: &str,
-    timestamp: u64,
+    context: ChatMessageContext<'_>,
     player_info: Option<PlayerChatInfo>,
-    clients: &mut Query<(&mut Client, &Position), With<Client>>,
     zone_registry: &ZoneRegistry,
     rate_limit: &mut ChatCollectorRateLimit,
     spirit_treasure_registry: Option<&mut SpiritTreasureRegistry>,
-    now_tick: u64,
 ) -> Option<ClassifiedChat> {
-    let too_long = is_oversize_message(message);
-    let over_budget = exceeds_rate_budget(player_entity, rate_limit);
+    let too_long = is_oversize_message(context.message);
+    let over_budget = exceeds_rate_budget(context.player_entity, rate_limit);
 
     if too_long || over_budget {
         return None;
@@ -196,14 +217,13 @@ fn classify_player_message(
     let username = player_info.username.clone();
     let position = player_info.position;
 
-    if is_legacy_bang_command(message) {
-        if let Ok((mut client, _)) = clients.get_mut(player_entity) {
-            client.send_chat_message("`!` 命令已迁至 `/`，使用 Tab 补全");
-        }
-        return None;
+    if is_legacy_bang_command(context.message) {
+        return Some(ClassifiedChat::PromptSelf(
+            "`!` 命令已迁至 `/`，使用 Tab 补全".to_string(),
+        ));
     }
 
-    if is_command_like(message) {
+    if is_command_like(context.message) {
         return None;
     }
 
@@ -217,28 +237,22 @@ fn classify_player_message(
 
     if let Some(registry) = spirit_treasure_registry {
         if let Some(route) = classify_spirit_treasure_dialogue(
-            player_entity,
-            message,
+            context,
             &player_info,
             char_id.as_str(),
             zone.as_str(),
             registry,
-            now_tick,
-            timestamp,
         ) {
             match route {
                 SpiritTreasureRoute::PromptSelf(text) => {
-                    if let Ok((mut client, _)) = clients.get_mut(player_entity) {
-                        client.send_chat_message(text);
-                    }
-                    return None;
+                    return Some(ClassifiedChat::PromptSelf(text));
                 }
                 SpiritTreasureRoute::Dialogue {
                     outbound,
                     public_message,
                 } => {
                     return Some(ClassifiedChat::SpiritTreasureDialogue {
-                        outbound,
+                        outbound: *outbound,
                         zone,
                         public_message,
                     });
@@ -250,18 +264,18 @@ fn classify_player_message(
     Some(ClassifiedChat::PlayerChat {
         outbound: RedisOutbound::PlayerChat(ChatMessageV1 {
             v: 1,
-            ts: timestamp,
+            ts: context.timestamp,
             player: canonical_player,
-            raw: message.to_string(),
+            raw: context.message.to_string(),
             zone: zone.clone(),
         }),
         collected: PlayerChatCollected {
-            entity: player_entity,
+            entity: context.player_entity,
             username,
             char_id,
             zone,
-            raw: message.to_string(),
-            timestamp,
+            raw: context.message.to_string(),
+            timestamp: context.timestamp,
         },
     })
 }
@@ -269,22 +283,19 @@ fn classify_player_message(
 enum SpiritTreasureRoute {
     PromptSelf(String),
     Dialogue {
-        outbound: RedisOutbound,
+        outbound: Box<RedisOutbound>,
         public_message: String,
     },
 }
 
 fn classify_spirit_treasure_dialogue(
-    player_entity: Entity,
-    message: &str,
+    context: ChatMessageContext<'_>,
     player_info: &PlayerChatInfo,
     char_id: &str,
     zone: &str,
     registry: &mut SpiritTreasureRegistry,
-    now_tick: u64,
-    timestamp: u64,
 ) -> Option<SpiritTreasureRoute> {
-    let (target_name, player_message) = parse_spirit_treasure_mention(message)?;
+    let (target_name, player_message) = parse_spirit_treasure_mention(context.message)?;
     let def = registry.find_by_display_name(target_name)?.clone();
     let active = player_info
         .active_treasures
@@ -315,20 +326,24 @@ fn classify_spirit_treasure_dialogue(
 
     let cooldown_ticks = u64::from(def.dialogue_cooldown_s).saturating_mul(20);
     let ready_at = last_dialogue_tick.saturating_add(cooldown_ticks);
-    if last_dialogue_tick > 0 && now_tick < ready_at {
-        let seconds = ready_at.saturating_sub(now_tick).div_ceil(20);
+    if last_dialogue_tick > 0 && context.now_tick < ready_at {
+        let seconds = ready_at.saturating_sub(context.now_tick).div_ceil(20);
         return Some(SpiritTreasureRoute::PromptSelf(format!(
             "§8[灵宝] §7寂照镜尚未回神，还需 {seconds}s。"
         )));
     }
 
     if let Some(state) = registry.active.get_mut(&def.template_id) {
-        state.last_dialogue_tick = now_tick;
+        state.last_dialogue_tick = context.now_tick;
     }
 
     let request = SpiritTreasureDialogueRequestV1 {
         v: 1,
-        request_id: format!("spirit_treasure:{:x}:{timestamp}", player_entity.to_bits()),
+        request_id: format!(
+            "spirit_treasure:{:x}:{}",
+            context.player_entity.to_bits(),
+            context.timestamp
+        ),
         character_id: char_id.to_string(),
         treasure_id: def.template_id.clone(),
         trigger: SpiritTreasureDialogueTriggerV1::Player,
@@ -348,7 +363,7 @@ fn classify_spirit_treasure_dialogue(
     };
 
     Some(SpiritTreasureRoute::Dialogue {
-        outbound: RedisOutbound::SpiritTreasureDialogueRequest(request),
+        outbound: Box::new(RedisOutbound::SpiritTreasureDialogueRequest(request)),
         public_message: format!(
             "§7[灵宝] §f{} §8@{}§7：{}",
             player_info.username, def.display_name, player_message
