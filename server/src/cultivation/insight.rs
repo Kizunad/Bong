@@ -201,11 +201,147 @@ impl InsightEffect {
     }
 }
 
+/// 顿悟三轨：靠近当前色谱 / 中性安全牌 / 远离旧路。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InsightAlignment {
+    Converge,
+    Neutral,
+    Diverge,
+}
+
+impl InsightAlignment {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Converge => "converge",
+            Self::Neutral => "neutral",
+            Self::Diverge => "diverge",
+        }
+    }
+}
+
+fn default_alignment() -> InsightAlignment {
+    InsightAlignment::Neutral
+}
+
+fn default_cost() -> InsightCost {
+    InsightCost::QiVolatility { add: 0.015 }
+}
+
+fn default_cost_magnitude() -> f64 {
+    0.015
+}
+
+/// 顿悟代价。每个选项必须同时携带 gain + cost，不能再出现纯增益。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum InsightCost {
+    OppositeColorPenalty { color: ColorKind, penalty: f64 },
+    QiVolatility { add: f64 },
+    ShockSensitivity { add: f64 },
+    MainColorPenalty { color: ColorKind, penalty: f64 },
+    OverloadFragility { add: f64 },
+    MeridianHealSlowdown { mul: f64 },
+    BreakthroughFailurePenalty { mul: f64 },
+    SenseExposure { add: f64 },
+    ReactionWindowShrink { mul: f64 },
+    ChaoticToleranceLoss { sub: f64 },
+}
+
+impl InsightCost {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::OppositeColorPenalty { .. } => "opposite_color_penalty",
+            Self::QiVolatility { .. } => "qi_volatility",
+            Self::ShockSensitivity { .. } => "shock_sensitivity",
+            Self::MainColorPenalty { .. } => "main_color_penalty",
+            Self::OverloadFragility { .. } => "overload_fragility",
+            Self::MeridianHealSlowdown { .. } => "meridian_heal_slowdown",
+            Self::BreakthroughFailurePenalty { .. } => "breakthrough_failure_penalty",
+            Self::SenseExposure { .. } => "sense_exposure",
+            Self::ReactionWindowShrink { .. } => "reaction_window_shrink",
+            Self::ChaoticToleranceLoss { .. } => "chaotic_tolerance_loss",
+        }
+    }
+
+    pub fn magnitude(&self) -> f64 {
+        match self {
+            Self::OppositeColorPenalty { penalty, .. } | Self::MainColorPenalty { penalty, .. } => {
+                *penalty
+            }
+            Self::QiVolatility { add }
+            | Self::ShockSensitivity { add }
+            | Self::OverloadFragility { add }
+            | Self::SenseExposure { add } => *add,
+            Self::MeridianHealSlowdown { mul } | Self::ReactionWindowShrink { mul } => {
+                (1.0 - *mul).abs()
+            }
+            Self::BreakthroughFailurePenalty { mul } => (*mul - 1.0).abs(),
+            Self::ChaoticToleranceLoss { sub } => *sub,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InsightTradeoff {
+    pub alignment: InsightAlignment,
+    pub gain: InsightEffect,
+    pub gain_magnitude: f64,
+    pub cost: InsightCost,
+    pub cost_magnitude: f64,
+    pub gain_flavor: String,
+    pub cost_flavor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_color: Option<ColorKind>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsightChoice {
     pub category: InsightCategory,
+    #[serde(default = "default_alignment")]
+    pub alignment: InsightAlignment,
     pub effect: InsightEffect,
     pub flavor: String,
+    #[serde(default = "default_cost")]
+    pub cost: InsightCost,
+    #[serde(default = "default_cost_magnitude")]
+    pub cost_magnitude: f64,
+    #[serde(default)]
+    pub cost_flavor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_color: Option<ColorKind>,
+}
+
+impl InsightChoice {
+    pub fn from_tradeoff(tradeoff: InsightTradeoff) -> Self {
+        Self {
+            category: tradeoff.gain.category(),
+            alignment: tradeoff.alignment,
+            effect: tradeoff.gain,
+            flavor: tradeoff.gain_flavor,
+            cost: tradeoff.cost,
+            cost_magnitude: tradeoff.cost_magnitude,
+            cost_flavor: tradeoff.cost_flavor,
+            target_color: tradeoff.target_color,
+        }
+    }
+
+    pub fn neutral(
+        category: InsightCategory,
+        effect: InsightEffect,
+        flavor: impl Into<String>,
+    ) -> Self {
+        let cost = InsightCost::QiVolatility { add: 0.015 };
+        Self {
+            category,
+            alignment: InsightAlignment::Neutral,
+            effect,
+            flavor: flavor.into(),
+            cost_magnitude: cost.magnitude(),
+            cost,
+            cost_flavor: "灵气更活，战斗中真元挥发加速。".to_string(),
+            target_color: None,
+        }
+    }
 }
 
 /// 顿悟请求事件（agent 消费）。
@@ -297,6 +433,8 @@ pub enum ArbiterError {
     SingleCapExceeded,
     CumulativeCapExceeded,
     QuotaExhausted,
+    MissingCost,
+    CostTooSmall,
 }
 
 pub fn validate_offer(
@@ -316,6 +454,12 @@ pub fn validate_offer(
     if accumulated + mag > cat.cumulative_cap() + 1e-9 {
         return Err(ArbiterError::CumulativeCapExceeded);
     }
+    if choice.cost_magnitude <= 0.0 || choice.cost.magnitude() <= 0.0 {
+        return Err(ArbiterError::MissingCost);
+    }
+    if choice.cost_magnitude + 1e-9 < mag * 0.5 {
+        return Err(ArbiterError::CostTooSmall);
+    }
     Ok(())
 }
 
@@ -328,11 +472,16 @@ mod tests {
         let quota = InsightQuota::default();
         let bad = InsightChoice {
             category: InsightCategory::Meridian,
+            alignment: InsightAlignment::Neutral,
             effect: InsightEffect::MeridianRate {
                 id: MeridianId::Lung,
                 mul: 1.50,
             },
             flavor: "".into(),
+            cost: InsightCost::QiVolatility { add: 0.75 },
+            cost_magnitude: 0.75,
+            cost_flavor: "真元挥发加速。".into(),
+            target_color: None,
         };
         assert_eq!(
             validate_offer(&quota, &bad, Realm::Awaken),
@@ -347,11 +496,16 @@ mod tests {
         // 已累积 0.19，上限 0.20；再 +0.05 超限
         let c = InsightChoice {
             category: InsightCategory::Meridian,
+            alignment: InsightAlignment::Neutral,
             effect: InsightEffect::MeridianRate {
                 id: MeridianId::Lung,
                 mul: 1.05,
             },
             flavor: "".into(),
+            cost: InsightCost::QiVolatility { add: 0.03 },
+            cost_magnitude: 0.03,
+            cost_flavor: "真元挥发加速。".into(),
+            target_color: None,
         };
         assert_eq!(
             validate_offer(&quota, &c, Realm::Induce),
@@ -367,11 +521,16 @@ mod tests {
         };
         let c = InsightChoice {
             category: InsightCategory::Meridian,
+            alignment: InsightAlignment::Neutral,
             effect: InsightEffect::MeridianRate {
                 id: MeridianId::Lung,
                 mul: 1.05,
             },
             flavor: "".into(),
+            cost: InsightCost::QiVolatility { add: 0.03 },
+            cost_magnitude: 0.03,
+            cost_flavor: "真元挥发加速。".into(),
+            target_color: None,
         };
         assert_eq!(
             validate_offer(&quota, &c, Realm::Awaken),
@@ -398,5 +557,24 @@ mod tests {
     #[test]
     fn perception_has_infinite_cumulative() {
         assert!(InsightCategory::Perception.cumulative_cap().is_infinite());
+    }
+
+    #[test]
+    fn pure_gain_is_rejected() {
+        let quota = InsightQuota::default();
+        let c = InsightChoice {
+            category: InsightCategory::Qi,
+            alignment: InsightAlignment::Neutral,
+            effect: InsightEffect::QiRegenFactor { mul: 1.03 },
+            flavor: "".into(),
+            cost: InsightCost::QiVolatility { add: 0.0 },
+            cost_magnitude: 0.0,
+            cost_flavor: "".into(),
+            target_color: None,
+        };
+        assert_eq!(
+            validate_offer(&quota, &c, Realm::Induce),
+            Err(ArbiterError::MissingCost)
+        );
     }
 }

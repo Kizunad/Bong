@@ -26,6 +26,11 @@ import {
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
 import {
+  CalamityKindV1,
+  CalamityIntentV1,
+  validateCalamityIntentV1Contract,
+} from "../src/calamity.js";
+import {
   AlchemyItemDataV1,
   InventoryEventV1,
   InventorySnapshotV1,
@@ -37,6 +42,7 @@ import {
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
+  EventKind,
   MAX_COMMANDS_PER_TICK,
   MAX_NARRATION_LENGTH,
   NEWBIE_POWER_THRESHOLD,
@@ -154,6 +160,26 @@ function expectContractRejects(name: string, validator: ContractValidation, data
 
 type ContractValidation = (data: unknown) => { ok: boolean; errors: string[] };
 
+const CALAMITY_KIND_WIRES = [
+  "thunder",
+  "poison_miasma",
+  "meridian_seal",
+  "daoxiang_wave",
+  "heavenly_fire",
+  "pressure_invert",
+  "all_wither",
+  "realm_collapse",
+] as const;
+
+const CALAMITY_EVENT_KIND_WIRES = [
+  "poison_miasma",
+  "meridian_seal",
+  "daoxiang_wave",
+  "heavenly_fire",
+  "pressure_invert",
+  "all_wither",
+] as const;
+
 // ─── Sample validation ─────────────────────────────────
 
 describe("sample files pass schema validation", () => {
@@ -226,6 +252,53 @@ describe("sample files pass schema validation", () => {
   it("declares season changed Redis channel", () => {
     expect(CHANNELS.SEASON_CHANGED).toBe("bong:season_changed");
     expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SEASON_CHANGED);
+  });
+
+  it("declares calamity intent Redis channel", () => {
+    expect(CHANNELS.CALAMITY_INTENT).toBe("bong:calamity_intent");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.CALAMITY_INTENT);
+  });
+
+  it("validates calamity intent contracts including null no-action", () => {
+    for (const calamity of CALAMITY_KIND_WIRES) {
+      expect(validate(CalamityKindV1, calamity).ok).toBe(true);
+      expectContractAccepts(`CalamityIntentV1 ${calamity}`, validateCalamityIntentV1Contract, {
+        v: 1,
+        calamity,
+        target_zone: "spawn",
+        target_player: null,
+        intensity: 0.6,
+        reason: "灵气连续下降，灾劫清场。",
+      });
+    }
+    expectContractAccepts("CalamityIntentV1 null", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: null,
+      intensity: 0,
+      reason: "权力不足，静观。",
+    });
+    expectContractRejects("CalamityIntentV1 intensity", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "heavenly_fire",
+      target_zone: "spawn",
+      intensity: 1.2,
+      reason: "越界强度",
+    });
+    expectContractRejects("CalamityIntentV1 missing reason", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "thunder",
+      intensity: 0.5,
+    });
+    expectContractRejects("CalamityIntentV1 invalid calamity", validateCalamityIntentV1Contract, {
+      v: 1,
+      calamity: "meteor",
+      intensity: 0.5,
+      reason: "未知灾劫",
+    });
+    for (const eventKind of CALAMITY_EVENT_KIND_WIRES) {
+      expect(validate(EventKind, eventKind).ok).toBe(true);
+    }
+    expect(SchemaPackage.CalamityIntentV1).toBe(CalamityIntentV1);
   });
 
   it("declares economy Redis channels", () => {
@@ -562,6 +635,18 @@ describe("sample files pass schema validation", () => {
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  for (const sampleName of [
+    "server-data.gathering-session.active.sample.json",
+    "server-data.gathering-session.completed.sample.json",
+    "server-data.gathering-session.interrupted.sample.json",
+  ]) {
+    it(sampleName, () => {
+      const data = loadSample(sampleName);
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
 
   it("server-data.botany-skill.sample.json", () => {
     const data = loadSample("server-data.botany-skill.sample.json");
@@ -1289,6 +1374,12 @@ describe("negative sample files fail schema validation", () => {
 
   it("server-data.invalid-unknown-type.sample.json", () => {
     const data = loadSample("server-data.invalid-unknown-type.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("server-data.gathering-session.invalid-quality.sample.json", () => {
+    const data = loadSample("server-data.gathering-session.invalid-quality.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });

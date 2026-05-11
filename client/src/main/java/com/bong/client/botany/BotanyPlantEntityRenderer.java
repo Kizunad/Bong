@@ -1,5 +1,7 @@
 package com.bong.client.botany;
 
+import com.bong.client.season.SeasonPlantVisuals;
+import com.bong.client.state.SeasonStateStore;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
@@ -45,6 +47,12 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
             profile.tintAt(entity.getWorld().getTime()),
             entity.age,
             tickDelta
+        );
+        visual = SeasonPlantVisuals.apply(
+            entity.plantId(),
+            visual,
+            SeasonStateStore.snapshot(),
+            entity.getWorld().getTime()
         );
 
         matrices.push();

@@ -31,6 +31,7 @@ public class ServerDataRouterTest {
             "dropped_loot_sync",
             // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
+            "gathering_session",
             "botany_plant_v2_render_profiles",
             "botany_skill",
             // Combat UI handlers (plan-combat-ui §U1–U7).
@@ -110,6 +111,8 @@ public class ServerDataRouterTest {
             "yidao_hud_state",
             // plan-movement-v1 — movement HUD/action state push.
             "movement_state",
+            // plan-coffin-v1 — 卧棺状态与寿命倍率推送。
+            "coffin_state",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。
             "skill_xp_gain",
             "skill_lv_up",
@@ -219,6 +222,18 @@ public class ServerDataRouterTest {
         assertFalse(result.isParseError());
         assertTrue(result.isHandled());
         assertEquals("botany_skill", result.envelope().type());
+    }
+
+    @Test
+    void routesGatheringSessionIntoStoreHandler() {
+        String json = """
+            {"v":1,"type":"gathering_session","session_id":"mine-1","progress_ticks":30,"total_ticks":60,"target_name":"凡铁矿","target_type":"ore","quality_hint":"fine_likely","tool_used":"pickaxe_iron","interrupted":false,"completed":false}
+            """;
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("gathering_session", result.envelope().type());
     }
 
     @Test

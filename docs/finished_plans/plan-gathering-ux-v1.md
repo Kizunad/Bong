@@ -30,11 +30,11 @@
 
 ## §0 设计轴心
 
-- [ ] **采集 ≠ 瞬间获得**：长按右键 → 进度环填充（1-3s 按材质/工具/境界决定）→ 完成后获得
-- [ ] **工具提升效率**：无工具可采但慢 ×3 / 有对应工具正常速度 / 高材质工具 +速度 +品质
-- [ ] **品质 roll**：采集完成时 roll 品质（普通/优良/极品），工具材质+境界影响概率
-- [ ] **修复贴图优先**：P0 先修锄头贴图 + 重复植物 icon，再做新功能
-- [ ] **HUD auto-hide**：进度环仅在采集时显示，完成后 1s fade out
+- [x] **采集 ≠ 瞬间获得**：长按右键 → 进度环填充（1-3s 按材质/工具/境界决定）→ 完成后获得
+- [x] **工具提升效率**：无工具可采但慢 ×3 / 有对应工具正常速度 / 高材质工具 +速度 +品质
+- [x] **品质 roll**：采集完成时 roll 品质（普通/优良/极品），工具材质+境界影响概率
+- [x] **修复贴图优先**：P0 先修锄头贴图 + 重复植物 icon，再做新功能
+- [x] **HUD auto-hide**：进度环仅在采集时显示，完成后 1s fade out
 
 ---
 
@@ -42,15 +42,15 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 修复锄头贴图 + 修复重复植物 icon + 补全斧头/镐物品注册 + 工具 icon 生成 | ⬜ |
-| P1 | 采集进度系统 server（GatheringSession + 进度 tick + 工具效率修正） | ⬜ |
-| P2 | 品质 roll 系统 + client 进度环 HUD + 品质结果 UI | ⬜ |
-| P3 | 采集动画 + 粒子 + 音效全流程 | ⬜ |
-| P4 | 工具 craft 配方 + 全工具×全植物×全品质饱和化测试 | ⬜ |
+| P0 | 修复锄头贴图 + 修复重复植物 icon + 补全斧头/镐物品注册 + 工具 icon 生成 | ✅ |
+| P1 | 采集进度系统 server（GatheringSession + 进度 tick + 工具效率修正） | ✅ |
+| P2 | 品质 roll 系统 + client 进度环 HUD + 品质结果 UI | ✅ |
+| P3 | 采集动画 + 粒子 + 音效全流程 | ✅ |
+| P4 | 工具 craft 配方 + 全工具×全植物×全品质饱和化测试 | ✅ |
 
 ---
 
-## P0 — 贴图修复 + 工具补全 ⬜
+## P0 — 贴图修复 + 工具补全 ✅
 
 ### 交付物
 
@@ -83,7 +83,7 @@
 
 ---
 
-## P1 — 采集进度系统 ⬜
+## P1 — 采集进度系统 ✅
 
 ### 交付物
 
@@ -113,7 +113,7 @@
 
 ---
 
-## P2 — 品质 roll + client 进度环 ⬜
+## P2 — 品质 roll + client 进度环 ✅
 
 ### 交付物
 
@@ -142,7 +142,7 @@
 
 ---
 
-## P3 — 动画 + 粒子 + 音效 ⬜
+## P3 — 动画 + 粒子 + 音效 ✅
 
 ### 交付物
 
@@ -175,7 +175,7 @@
 
 ---
 
-## P4 — 工具 craft + 饱和化测试 ⬜
+## P4 — 工具 craft + 饱和化测试 ✅
 
 ### 交付物
 
@@ -205,8 +205,62 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：6 工具物品 / 工具 icon / 锄头贴图修复 / 植物 icon 去重 / `GatheringSession` / 品质 roll / `GatheringProgressHud` / 3 动画 + 3 粒子 + 5 音效 / 稀有 cinematic / 6 craft 配方 / 工具耐久
-- **关键 commit**：P0-P4 各自 hash
-- **遗留 / 后续**：高级采集工具走 forge / 采集点重生机制 / NPC 采集竞争
+### 落地清单
+
+- **P0 工具 / icon / 贴图核验**：`server/src/gathering/tools.rs` 注册 Axe / Pickaxe / Hoe 三类采集工具与 Bone / Iron / Copper 三材质；`server/assets/items/tools.toml` 增加 6 个斧 / 镐凡器 item；`client/src/main/resources/assets/bong-client/textures/gui/items/tools/` 新增 6 张工具 icon；`client/src/main/java/com/bong/client/inventory/ItemIconRegistry.java` 显式映射工具 icon。锄头沿用现有 `HoeVanillaIconMap` 三档 vanilla 映射；botany 贴图用 md5 校验，`botany/` 下 100 张 PNG 无重复 hash。
+- **P1 server 采集进度**：新增 `server/src/gathering/session.rs` / `tools.rs` / `quality.rs` / `feedback.rs` / `mod.rs`，覆盖 `GatheringSession`、`GatheringProgressFrame`、`GatheringCompleteEvent`、工具速度修正、境界时间修正、移动 / 受击打断、品质 roll、耐久扣减和统一反馈。`server/src/botany/mod.rs`、`server/src/spiritwood/mod.rs`、`server/src/mineral/break_handler.rs` 已把既有采药 / 砍灵木 / 挖矿流程桥接到统一 `gathering_session` 进度帧。
+- **P2 schema + client HUD**：`server/src/schema/server_data.rs`、`agent/packages/schema/src/server-data.ts` 与 generated schema 增加 `gathering_session`；client 新增 `GatheringSessionStore` / `GatheringSessionViewModel` / `GatheringSessionHandler` / `GatheringProgressHud`，并接入 `ServerDataRouter` 与 `BongHudOrchestrator`。HUD 支持 crosshair 进度环、目标名、优良 / 极品提示、完成 / 中断后 auto-hide。
+- **P3 动画 / 粒子 / 音效**：`server/assets/audio/recipes/gather_{herb,mine,chop}_tick.json`、`gather_complete.json`、`gather_perfect.json` 已注册；`VfxBootstrap` 与 `BotanyHarvestBurstPlayer` 注册 herb / mine / chop / complete / perfect 五类采集 VFX；`emit_gathering_feedback` 按目标触发 `harvest_crouch` / `npc_mine` / `npc_chop_tree`，完成时触发 `loot_bend` / `release_burst` 动画。
+- **P4 craft / 耐久 / 覆盖测试**：`server/src/craft/mod.rs` 注册 6 个 ToolCraft 配方；`damage_equipped_gathering_tool` 复用 inventory durability update 与 `InventoryDurabilityChangedEvent`；测试覆盖工具矩阵、速度、品质、反馈、craft、client HUD、server-data router、icon registry、VFX registry。
+
+### 关键 commits
+
+- `cf54c97a1` 2026-05-11 `feat(gathering): 补采集工具和服务端进度流程`
+- `578fec44e` 2026-05-11 `feat(gathering): 接入客户端采集 HUD 和协议`
+- `7903aa2ea` 2026-05-11 `fix(gathering): 接通采集进度反馈`
+- `7b1d9ac08` 2026-05-11 `fix(gathering): 收紧采集协议与完成事件`
+- `ba2703c8c` 2026-05-11 `fix(gathering): 收紧矿物采集边界与 Rust 协议枚举`
+- `bc3fdbb5a` 2026-05-11 `fix(gathering): 补齐采集 review 边界护栏`
+- `654680039` 2026-05-11 `fix(gathering): 补齐协议与配方测试护栏`
+- `529945fad` 2026-05-11 `fix(gathering): 对齐采集协议输出与原版镐识别`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：4268 passed
+- `cd server && cargo fmt --check`：pass
+- `cd server && CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings`：pass
+- `cd server && CARGO_BUILD_JOBS=1 cargo check --tests`：pass
+- `cd server && CARGO_BUILD_JOBS=1 cargo test equipped_pickaxe_tier`：5 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test mineral_gatherable`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test startup_spawns_index_entries_and_skips_exhausted_positions`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test gathering_wire_enums_match_shared_schema_values`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test loads_default_audio_recipes`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test register_gathering_tool_recipes`：2 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test gathering_session_rejects_invalid_enum_values`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test hud_payload_wire_type_matches_label`：1 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test gathering_progress_frame`：2 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test vanilla_pickaxe`：2 passed
+- `cd server && CARGO_BUILD_JOBS=1 cargo test survival_start_opens_gathering_progress_without_drop_or_cleanup`：1 passed
+- `cd server && cargo test mineral::break_handler::tests`：12 passed
+- `cd server && cargo test spiritwood::tests`：8 passed
+- `cd server && cargo test craft::tests::register_gathering_tool_recipes_adds_six_tool_entries`：1 passed
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test --tests com.bong.client.network.ServerDataRouterTest --tests com.bong.client.inventory.ItemIconRegistryTest --tests com.bong.client.hud.GatheringProgressHudTest`：BUILD SUCCESSFUL
+- `cd agent && npm run build`
+- `cd agent && npm test -w @bong/tiandao`：348 passed
+- `cd agent && npm test -w @bong/schema`：374 passed
+- `cd agent && npm run generate -w @bong/schema`：generated schemas refreshed
+- `git diff --check`：clean
+
+### 跨仓库核验
+
+- **server**：`GatheringToolSpec` / `GatheringSession` / `GatheringProgressFrame` / `GatheringCompleteEvent` / `ServerDataPayloadV1::GatheringSession` / `register_gathering_tool_recipes`
+- **agent/schema**：`ServerDataGatheringSessionV1` / `server-data-gathering-session-v1.json` / `SCHEMA_REGISTRY.serverDataGatheringSessionV1`
+- **client**：`GatheringSessionHandler` / `GatheringProgressHud` / `GatheringSessionViewModel` / `ItemIconRegistry` / `BotanyHarvestBurstPlayer.GATHER_PERFECT`
+
+### 遗留 / 后续
+
+- 高阶采集工具仍归 forge 后续 plan；本 plan 只落凡器斧 / 镐与既有锄头兼容。
+- 采集点重生、NPC 采集竞争、稀有采集的真实 camera slowmo / camera push 需要后续专门 camera / world interaction plan；本次已落 self-visible HUD 金色反馈 + perfect VFX / SFX / player animation。

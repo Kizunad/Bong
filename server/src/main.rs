@@ -4,6 +4,7 @@ mod armor;
 mod audio;
 mod botany;
 mod cmd;
+mod coffin;
 mod combat;
 // craft：plan-craft-v1 P0+P1 通用手搓底盘。register() 注入 5 示例配方 + resources +
 // events；P2/P3（client UI + agent narration + 三渠道 hook）由 plan vN+1 接入。
@@ -21,6 +22,8 @@ mod economy;
 mod fauna;
 #[allow(dead_code)]
 mod forge;
+#[allow(dead_code)]
+mod gathering;
 // identity：P0 锁定数据模型 + persistence；P1 起 /identity slash / consumer / scorer
 // 等会逐步消费这些 API，初期保留 #[allow(dead_code)]，每个 P 接入后再收口。
 #[allow(dead_code)]
@@ -124,6 +127,7 @@ fn run_server() {
     fauna::register(&mut app);
     alchemy::register(&mut app);
     craft::register(&mut app);
+    coffin::register(&mut app);
     audio::register(&mut app);
     combat::register(&mut app);
     social::register(&mut app);
@@ -131,6 +135,7 @@ fn run_server() {
     death_lifecycle::register(&mut app);
     spiritwood::register(&mut app);
     forge::register(&mut app);
+    gathering::register(&mut app);
     lingtian::register(&mut app);
     mineral::register(&mut app);
     shelflife::register(&mut app);

@@ -165,6 +165,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
   Type.Literal("botany_harvest_progress"),
+  Type.Literal("gathering_session"),
   Type.Literal("botany_plant_v2_render_profiles"),
   Type.Literal("lumber_progress"),
   Type.Literal("botany_skill"),
@@ -236,6 +237,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
   Type.Literal("movement_state"),
+  Type.Literal("coffin_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -534,6 +536,36 @@ export const ServerDataLumberProgressV1 = Type.Object(
 );
 export type ServerDataLumberProgressV1 = Static<
   typeof ServerDataLumberProgressV1
+>;
+
+export const ServerDataGatheringSessionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("gathering_session"),
+    session_id: Type.String({ minLength: 1, maxLength: 128 }),
+    progress_ticks: Type.Integer({ minimum: 0 }),
+    total_ticks: Type.Integer({ minimum: 0 }),
+    target_name: Type.String({ minLength: 1, maxLength: 64 }),
+    target_type: Type.Union([
+      Type.Literal("herb"),
+      Type.Literal("ore"),
+      Type.Literal("wood"),
+    ]),
+    quality_hint: Type.Union([
+      Type.Literal("normal"),
+      Type.Literal("fine_likely"),
+      Type.Literal("perfect_possible"),
+      Type.Literal("fine"),
+      Type.Literal("perfect"),
+    ]),
+    tool_used: Type.Optional(Type.String({ minLength: 1 })),
+    interrupted: Type.Boolean(),
+    completed: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataGatheringSessionV1 = Static<
+  typeof ServerDataGatheringSessionV1
 >;
 
 export const ServerDataBotanySkillV1 = Type.Object(
@@ -1024,6 +1056,25 @@ export const ServerDataMovementStateV1 = Type.Object(
 );
 export type ServerDataMovementStateV1 = Static<typeof ServerDataMovementStateV1>;
 
+export const CoffinStateV1 = Type.Object(
+  {
+    in_coffin: Type.Boolean(),
+    lifespan_rate_multiplier: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type CoffinStateV1 = Static<typeof CoffinStateV1>;
+
+export const ServerDataCoffinStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_state"),
+    ...CoffinStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataCoffinStateV1 = Static<typeof ServerDataCoffinStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1467,6 +1518,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,
+  ServerDataGatheringSessionV1,
   ServerDataBotanySkillV1,
   ServerDataProcessingSessionV1,
   ServerDataFreshnessUpdateV1,
@@ -1501,6 +1553,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataHealerNpcAiStateV1,
   ServerDataYidaoHudStateV1,
   ServerDataMovementStateV1,
+  ServerDataCoffinStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,

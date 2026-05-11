@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "gathering_session",
+  "session_id": "lumber:offline-kiz:1",
+  "progress_ticks": 0,
+  "total_ticks": 50,
+  "target_name": "灵木",
+  "target_type": "wood",
+  "quality_hint": "normal",
+  "interrupted": true,
+  "completed": false
+}

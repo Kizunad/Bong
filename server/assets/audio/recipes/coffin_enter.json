@@ -1,0 +1,10 @@
+{
+  "id": "coffin_enter",
+  "layers": [
+    { "sound": "minecraft:block.wooden_door.close", "volume": 0.55, "pitch": 0.65, "delay_ticks": 0 },
+    { "sound": "minecraft:block.chest.close", "volume": 0.35, "pitch": 0.7, "delay_ticks": 2 }
+  ],
+  "priority": 44,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

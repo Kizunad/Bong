@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "gathering_session",
+  "session_id": "gathering:bad-quality",
+  "progress_ticks": 1,
+  "total_ticks": 40,
+  "target_name": "凝脉草",
+  "target_type": "herb",
+  "quality_hint": "legendary",
+  "interrupted": false,
+  "completed": false
+}

@@ -45,6 +45,24 @@ pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringTargetTypeV1 {
+    Herb,
+    Ore,
+    Wood,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringQualityHintV1 {
+    Normal,
+    FineLikely,
+    PerfectPossible,
+    Fine,
+    Perfect,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifespanPreviewV1 {
     pub years_lived: f64,
@@ -53,6 +71,13 @@ pub struct LifespanPreviewV1 {
     pub death_penalty_years: u32,
     pub tick_rate_multiplier: f64,
     pub is_wind_candle: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CoffinStateV1 {
+    pub in_coffin: bool,
+    pub lifespan_rate_multiplier: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -84,6 +109,7 @@ pub enum ServerDataType {
     ZoneInfo,
     EventAlert,
     PlayerState,
+    CoffinState,
     UiOpen,
     CultivationDetail,
     QiColorObserved,
@@ -94,6 +120,7 @@ pub enum ServerDataType {
     BotanyPlantV2RenderProfiles,
     MiningProgress,
     LumberProgress,
+    GatheringSession,
     BotanySkill,
     AlchemyFurnace,
     AlchemySession,
@@ -216,6 +243,7 @@ pub enum ServerDataPayloadV1 {
         season_state: Option<SeasonStateV1>,
         social: Option<PlayerSocialSnapshotV1>,
     },
+    CoffinState(CoffinStateV1),
     UiOpen {
         ui: Option<String>,
         xml: String,
@@ -283,6 +311,17 @@ pub enum ServerDataPayloadV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+    },
+    GatheringSession {
+        session_id: String,
+        progress_ticks: u64,
+        total_ticks: u64,
+        target_name: String,
+        target_type: GatheringTargetTypeV1,
+        quality_hint: GatheringQualityHintV1,
+        tool_used: Option<String>,
+        interrupted: bool,
+        completed: bool,
     },
     BotanySkill {
         level: u64,
@@ -700,6 +739,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         social: Option<PlayerSocialSnapshotV1>,
     },
+    CoffinState {
+        #[serde(flatten)]
+        state: CoffinStateV1,
+    },
     UiOpen {
         #[serde(skip_serializing_if = "Option::is_none")]
         ui: Option<String>,
@@ -782,6 +825,18 @@ enum ServerDataPayloadWireV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+    },
+    GatheringSession {
+        session_id: String,
+        progress_ticks: u64,
+        total_ticks: u64,
+        target_name: String,
+        target_type: GatheringTargetTypeV1,
+        quality_hint: GatheringQualityHintV1,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_used: Option<String>,
+        interrupted: bool,
+        completed: bool,
     },
     BotanySkill {
         level: u64,
@@ -1530,6 +1585,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 season_state,
                 social,
             }),
+            ServerDataPayloadWireV1::CoffinState { state } => Ok(Self::CoffinState(state)),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
                 realm,
@@ -1637,6 +1693,27 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+            }),
+            ServerDataPayloadWireV1::GatheringSession {
+                session_id,
+                progress_ticks,
+                total_ticks,
+                target_name,
+                target_type,
+                quality_hint,
+                tool_used,
+                interrupted,
+                completed,
+            } => Ok(Self::GatheringSession {
+                session_id,
+                progress_ticks,
+                total_ticks,
+                target_name,
+                target_type,
+                quality_hint,
+                tool_used,
+                interrupted,
+                completed,
             }),
             ServerDataPayloadWireV1::BotanySkill {
                 level,
@@ -2005,6 +2082,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 season_state: *season_state,
                 social: social.clone(),
             },
+            ServerDataPayloadV1::CoffinState(state) => Self::CoffinState { state: *state },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
                 ui: ui.clone(),
                 xml: xml.clone(),
@@ -2119,6 +2197,27 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted: *interrupted,
                 completed: *completed,
                 detail: detail.clone(),
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id,
+                progress_ticks,
+                total_ticks,
+                target_name,
+                target_type,
+                quality_hint,
+                tool_used,
+                interrupted,
+                completed,
+            } => Self::GatheringSession {
+                session_id: session_id.clone(),
+                progress_ticks: *progress_ticks,
+                total_ticks: *total_ticks,
+                target_name: target_name.clone(),
+                target_type: *target_type,
+                quality_hint: *quality_hint,
+                tool_used: tool_used.clone(),
+                interrupted: *interrupted,
+                completed: *completed,
             },
             ServerDataPayloadV1::BotanySkill {
                 level,
@@ -2572,6 +2671,7 @@ impl ServerDataPayloadV1 {
             Self::ZoneInfo { .. } => ServerDataType::ZoneInfo,
             Self::EventAlert { .. } => ServerDataType::EventAlert,
             Self::PlayerState { .. } => ServerDataType::PlayerState,
+            Self::CoffinState(..) => ServerDataType::CoffinState,
             Self::UiOpen { .. } => ServerDataType::UiOpen,
             Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
             Self::QiColorObserved(..) => ServerDataType::QiColorObserved,
@@ -2582,6 +2682,7 @@ impl ServerDataPayloadV1 {
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
             Self::LumberProgress { .. } => ServerDataType::LumberProgress,
+            Self::GatheringSession { .. } => ServerDataType::GatheringSession,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
@@ -2952,6 +3053,61 @@ mod tests {
                 tint_rgb_secondary: None,
                 model_overlay: super::super::botany::BotanyModelOverlayV1::Emissive,
             }]),
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "gathering:herb:offline-kiz".to_string(),
+                progress_ticks: 20,
+                total_ticks: 40,
+                target_name: "凝脉草".to_string(),
+                target_type: GatheringTargetTypeV1::Herb,
+                quality_hint: GatheringQualityHintV1::FineLikely,
+                tool_used: Some("hoe_iron".to_string()),
+                interrupted: false,
+                completed: false,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "mining:10:64:10:FanTie".to_string(),
+                progress_ticks: 60,
+                total_ticks: 60,
+                target_name: "凡铁矿".to_string(),
+                target_type: GatheringTargetTypeV1::Ore,
+                quality_hint: GatheringQualityHintV1::Perfect,
+                tool_used: Some("pickaxe_iron".to_string()),
+                interrupted: false,
+                completed: true,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "lumber:offline-kiz:1".to_string(),
+                progress_ticks: 0,
+                total_ticks: 50,
+                target_name: "灵木".to_string(),
+                target_type: GatheringTargetTypeV1::Wood,
+                quality_hint: GatheringQualityHintV1::Normal,
+                tool_used: None,
+                interrupted: true,
+                completed: false,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "gathering:herb:fine".to_string(),
+                progress_ticks: 40,
+                total_ticks: 40,
+                target_name: "优良凝脉草".to_string(),
+                target_type: GatheringTargetTypeV1::Herb,
+                quality_hint: GatheringQualityHintV1::Fine,
+                tool_used: Some("hoe_copper".to_string()),
+                interrupted: false,
+                completed: true,
+            },
+            ServerDataPayloadV1::GatheringSession {
+                session_id: "lumber:perfect-possible".to_string(),
+                progress_ticks: 45,
+                total_ticks: 50,
+                target_name: "灵木".to_string(),
+                target_type: GatheringTargetTypeV1::Wood,
+                quality_hint: GatheringQualityHintV1::PerfectPossible,
+                tool_used: Some("axe_copper".to_string()),
+                interrupted: false,
+                completed: false,
+            },
             ServerDataPayloadV1::RealmVisionParams(RealmVisionParamsV1 {
                 fog_start: 30.0,
                 fog_end: 60.0,
@@ -3009,6 +3165,10 @@ mod tests {
                 low_stamina: false,
                 last_action_tick: Some(120),
                 rejected_action: Some(MovementActionRequestV1::Dash),
+            }),
+            ServerDataPayloadV1::CoffinState(CoffinStateV1 {
+                in_coffin: true,
+                lifespan_rate_multiplier: 0.9,
             }),
             // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
             ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {
@@ -3226,6 +3386,15 @@ mod tests {
                 "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
             ),
             include_str!(
+                "../../../agent/packages/schema/samples/server-data.gathering-session.active.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.gathering-session.completed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.gathering-session.interrupted.sample.json"
+            ),
+            include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"
             ),
             include_str!(
@@ -3378,6 +3547,33 @@ mod tests {
                 "roundtrip must preserve typed payload content"
             );
         }
+    }
+
+    #[test]
+    fn gathering_session_rejects_invalid_enum_values() {
+        let invalid_quality =
+            include_str!("../../../agent/packages/schema/samples/server-data.gathering-session.invalid-quality.sample.json");
+        assert!(
+            serde_json::from_str::<ServerDataV1>(invalid_quality).is_err(),
+            "invalid gathering_session quality_hint sample should fail to deserialize"
+        );
+
+        let invalid_target = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "gathering_session",
+            "session_id": "gathering:bad-target",
+            "progress_ticks": 10,
+            "total_ticks": 40,
+            "target_name": "测试采集物",
+            "target_type": "invalid_type",
+            "quality_hint": "normal",
+            "interrupted": false,
+            "completed": false
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(invalid_target).is_err(),
+            "invalid gathering_session target_type should fail to deserialize"
+        );
     }
 
     #[test]

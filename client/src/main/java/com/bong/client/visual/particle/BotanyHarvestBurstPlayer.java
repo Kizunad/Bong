@@ -8,6 +8,11 @@ import net.minecraft.util.Identifier;
 /** {@code bong:botany_harvest} —— 采收瞬间的碎叶与稀有光柱。 */
 public final class BotanyHarvestBurstPlayer implements VfxPlayer {
     public static final Identifier EVENT_ID = new Identifier("bong", "botany_harvest");
+    public static final Identifier GATHER_HERB_TICK = new Identifier("bong", "gather_herb_tick");
+    public static final Identifier GATHER_MINE_TICK = new Identifier("bong", "gather_mine_tick");
+    public static final Identifier GATHER_CHOP_TICK = new Identifier("bong", "gather_chop_tick");
+    public static final Identifier GATHER_COMPLETE = new Identifier("bong", "gather_complete");
+    public static final Identifier GATHER_PERFECT = new Identifier("bong", "gather_perfect");
 
     private static final int FALLBACK_RGB = 0x88CC55;
     private static final int DEFAULT_COUNT = 12;

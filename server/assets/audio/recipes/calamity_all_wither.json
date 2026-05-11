@@ -1,0 +1,12 @@
+{
+  "id": "calamity_all_wither",
+  "layers": [
+    { "sound": "minecraft:block.grass.break", "volume": 0.5, "pitch": 0.3, "delay_ticks": 0 },
+    { "sound": "minecraft:block.azalea_leaves.break", "volume": 0.4, "pitch": 0.4, "delay_ticks": 5 },
+    { "sound": "minecraft:block.wood.break", "volume": 0.3, "pitch": 0.25, "delay_ticks": 10 },
+    { "sound": "minecraft:block.sand.fall", "volume": 0.15, "pitch": 0.5, "delay_ticks": 20 }
+  ],
+  "priority": 80,
+  "attenuation": "zone_broadcast",
+  "category": "AMBIENT"
+}

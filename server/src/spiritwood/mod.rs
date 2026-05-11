@@ -10,6 +10,12 @@ use valence::prelude::{
 };
 
 use crate::combat::events::CombatEvent;
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::gathering::quality::{quality_hint, roll_quality};
+use crate::gathering::session::{
+    GatheringCompleteEvent, GatheringProgressFrame, PROGRESS_SYNC_INTERVAL_TICKS,
+};
+use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
     bump_revision, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlacedItemState,
     PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND, MAIN_PACK_CONTAINER_ID,
@@ -73,6 +79,9 @@ struct LumberTerminalEvent {
     interrupted: bool,
     completed: bool,
     detail: String,
+    duration_ticks: u64,
+    gathering_quality: Option<crate::gathering::quality::GatheringQuality>,
+    tool_used: Option<String>,
 }
 
 pub fn register(app: &mut App) {
@@ -84,9 +93,9 @@ pub fn register(app: &mut App) {
         (
             start_spiritwood_sessions,
             enforce_spiritwood_session_constraints,
-            complete_spiritwood_sessions,
-            emit_active_lumber_progress,
-            emit_terminal_lumber_progress,
+            complete_spiritwood_sessions.in_set(crate::gathering::GatheringSystemSet::Produce),
+            emit_active_lumber_progress.in_set(crate::gathering::GatheringSystemSet::Produce),
+            emit_terminal_lumber_progress.in_set(crate::gathering::GatheringSystemSet::Produce),
         )
             .chain(),
     );
@@ -222,12 +231,13 @@ fn enforce_spiritwood_session_constraints(
                 session.player_id.clone(),
                 session.log_pos,
                 session.progress_at(now_tick),
+                session.ticks_total,
                 detail.to_string(),
             ));
         }
     }
 
-    for (player, session_id, log_pos, progress, detail) in to_cancel {
+    for (player, session_id, log_pos, progress, duration_ticks, detail) in to_cancel {
         store.remove(player);
         terminal_events.send(LumberTerminalEvent {
             client_entity: player,
@@ -237,6 +247,9 @@ fn enforce_spiritwood_session_constraints(
             interrupted: true,
             completed: false,
             detail,
+            duration_ticks,
+            gathering_quality: None,
+            tool_used: None,
         });
     }
 }
@@ -252,6 +265,8 @@ fn complete_spiritwood_sessions(
     profile_registry: Option<Res<DecayProfileRegistry>>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory, With<Client>>,
+    cultivations: Query<&Cultivation, With<Client>>,
+    mut gathering_completions: EventWriter<GatheringCompleteEvent>,
     mut terminal_events: EventWriter<LumberTerminalEvent>,
 ) {
     let now_tick = gameplay_tick.map(|tick| tick.current_tick()).unwrap_or(0);
@@ -273,7 +288,23 @@ fn complete_spiritwood_sessions(
         }
 
         let drop_count = ling_mu_drop_count(session.log_pos, session.player, now_tick);
+        let mut gathering_tool = None;
+        let mut gathering_quality = None;
         if let Ok(mut inventory) = inventories.get_mut(session.player) {
+            gathering_tool = equipped_gathering_tool(&inventory)
+                .filter(|tool| tool.matches_target(GatheringTargetKind::Wood));
+            let realm = cultivations
+                .get(session.player)
+                .map(|cultivation| cultivation.realm)
+                .unwrap_or(Realm::Awaken);
+            let gathering_quality_seed = now_tick
+                ^ session.player.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ session.ticks_total.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            gathering_quality = Some(roll_quality(
+                gathering_quality_seed,
+                gathering_tool.map(|tool| tool.material),
+                realm,
+            ));
             if let Err(error) = grant_ling_mu_gun_to_inventory(
                 &mut inventory,
                 item_registry.as_ref(),
@@ -289,6 +320,17 @@ fn complete_spiritwood_sessions(
                 );
             }
         }
+        if let Some(quality) = gathering_quality {
+            gathering_completions.send(GatheringCompleteEvent {
+                player: session.player,
+                session_id: session.player_id.clone(),
+                origin_position: block_origin(session.log_pos),
+                target_name: "灵木".to_string(),
+                target_type: GatheringTargetKind::Wood,
+                quality,
+                tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
+            });
+        }
 
         terminal_events.send(LumberTerminalEvent {
             client_entity: session.player,
@@ -298,6 +340,9 @@ fn complete_spiritwood_sessions(
             interrupted: false,
             completed: true,
             detail: format!("采得灵木原木 ×{drop_count}"),
+            duration_ticks: session.ticks_total,
+            gathering_quality,
+            tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
         });
     }
 }
@@ -305,18 +350,47 @@ fn complete_spiritwood_sessions(
 fn emit_active_lumber_progress(
     gameplay_tick: Option<Res<GameplayTick>>,
     store: Res<WoodSessionStore>,
+    mut gathering_frames: EventWriter<GatheringProgressFrame>,
     mut clients: Query<&mut Client, With<Client>>,
+    inventories: Query<&PlayerInventory, With<Client>>,
+    cultivations: Query<&Cultivation, With<Client>>,
 ) {
     let now_tick = gameplay_tick.map(|tick| tick.current_tick()).unwrap_or(0);
     for session in store.iter() {
         let Ok(mut client) = clients.get_mut(session.player) else {
             continue;
         };
+        let progress = session.progress_at(now_tick);
+        if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
+            let active_tool = inventories
+                .get(session.player)
+                .ok()
+                .and_then(equipped_gathering_tool)
+                .filter(|tool| tool.matches_target(GatheringTargetKind::Wood));
+            let active_realm = cultivations
+                .get(session.player)
+                .map(|cultivation| cultivation.realm)
+                .unwrap_or(Realm::Awaken);
+            gathering_frames.send(GatheringProgressFrame {
+                player: session.player,
+                session_id: session.player_id.clone(),
+                origin_position: block_origin(session.log_pos),
+                progress_ticks: (progress * session.ticks_total as f64).round() as u64,
+                total_ticks: session.ticks_total,
+                target_name: "灵木".to_string(),
+                target_type: GatheringTargetKind::Wood,
+                quality_hint: quality_hint(active_tool.map(|tool| tool.material), active_realm)
+                    .to_string(),
+                tool_used: active_tool.map(|tool| tool.item_id.to_string()),
+                interrupted: false,
+                completed: false,
+            });
+        }
         send_lumber_progress_to_client(
             &mut client,
             session.player_id.clone(),
             session.log_pos,
-            session.progress_at(now_tick),
+            progress,
             false,
             false,
             String::new(),
@@ -326,12 +400,33 @@ fn emit_active_lumber_progress(
 
 fn emit_terminal_lumber_progress(
     mut events: EventReader<LumberTerminalEvent>,
+    mut gathering_frames: EventWriter<GatheringProgressFrame>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for event in events.read() {
         let Ok(mut client) = clients.get_mut(event.client_entity) else {
             continue;
         };
+        gathering_frames.send(GatheringProgressFrame {
+            player: event.client_entity,
+            session_id: event.session_id.clone(),
+            origin_position: block_origin(event.log_pos),
+            progress_ticks: if event.completed {
+                event.duration_ticks.max(1)
+            } else {
+                0
+            },
+            total_ticks: event.duration_ticks.max(1),
+            target_name: "灵木".to_string(),
+            target_type: GatheringTargetKind::Wood,
+            quality_hint: event
+                .gathering_quality
+                .map(|quality| quality.as_wire().to_string())
+                .unwrap_or_else(|| "normal".to_string()),
+            tool_used: event.tool_used.clone(),
+            interrupted: event.interrupted,
+            completed: event.completed,
+        });
         send_lumber_progress_to_client(
             &mut client,
             event.session_id.clone(),
@@ -365,6 +460,10 @@ fn send_lumber_progress_to_client(
         return;
     };
     send_server_data_payload(client, bytes.as_slice());
+}
+
+fn block_origin(pos: BlockPos) -> [f64; 3] {
+    [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5]
 }
 
 fn is_spiritwood_log_target(
@@ -408,11 +507,11 @@ fn equipped_axe_tier(inventory: &PlayerInventory) -> Option<(u64, u8)> {
 
 fn axe_tier_from_item(item: &ItemInstance) -> Option<u8> {
     let id = item.template_id.as_str();
-    if id.contains("wooden_axe") || id.contains("golden_axe") {
+    if id.contains("wooden_axe") || id.contains("golden_axe") || id == "axe_bone" {
         Some(1)
-    } else if id.contains("stone_axe") || id.contains("fan_iron_axe") {
+    } else if id == "axe_copper" || id.contains("stone_axe") || id.contains("fan_iron_axe") {
         Some(2)
-    } else if id.contains("iron_axe") || id.contains("ling_iron_axe") {
+    } else if id == "axe_iron" || id.contains("iron_axe") || id.contains("ling_iron_axe") {
         Some(3)
     } else if id.contains("diamond_axe") || id.contains("netherite_axe") || id.contains("yi_axe") {
         Some(4)
@@ -568,7 +667,9 @@ mod tests {
             Some(1)
         );
         assert_eq!(axe_tier_from_item(&item("fan_iron_axe", 1)), Some(2));
+        assert_eq!(axe_tier_from_item(&item("axe_copper", 1)), Some(2));
         assert_eq!(axe_tier_from_item(&item("ling_iron_axe", 1)), Some(3));
+        assert_eq!(axe_tier_from_item(&item("axe_iron", 1)), Some(3));
         assert_eq!(axe_tier_from_item(&item("minecraft:iron_axe", 1)), Some(3));
         assert_eq!(axe_tier_from_item(&item("iron_sword", 1)), None);
     }
@@ -589,6 +690,12 @@ mod tests {
             .insert(EQUIP_SLOT_TWO_HAND.to_string(), item("ling_iron_axe", 42));
 
         assert_eq!(equipped_harvest_tool_instance_id(&inventory), Some(42));
+    }
+
+    #[test]
+    fn block_origin_offsets_to_block_center() {
+        assert_eq!(block_origin(BlockPos::new(3, 64, 5)), [3.5, 64.5, 5.5]);
+        assert_eq!(block_origin(BlockPos::new(-1, 64, -1)), [-0.5, 64.5, -0.5]);
     }
 
     #[test]

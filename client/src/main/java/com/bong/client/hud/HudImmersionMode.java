@@ -38,11 +38,13 @@ public final class HudImmersionMode {
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.MINI_BODY,
         HudRenderLayer.PROCESSING_HUD,
+        HudRenderLayer.GATHERING,
         HudRenderLayer.MOVEMENT_HUD,
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.MERIDIAN_OPEN,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY,
         HudRenderLayer.REALM_COLLAPSE
     );
@@ -57,10 +59,12 @@ public final class HudImmersionMode {
         HudRenderLayer.QUICK_BAR,
         HudRenderLayer.BOTANY,
         HudRenderLayer.PROCESSING_HUD,
+        HudRenderLayer.GATHERING,
         HudRenderLayer.MOVEMENT_HUD,
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY
     );
 

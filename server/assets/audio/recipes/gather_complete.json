@@ -1,0 +1,9 @@
+{
+  "id": "gather_complete",
+  "layers": [
+    { "sound": "minecraft:entity.item.pickup", "volume": 0.3, "pitch": 1.2, "delay_ticks": 0 }
+  ],
+  "priority": 45,
+  "attenuation": "world_3d",
+  "category": "PLAYERS"
+}
