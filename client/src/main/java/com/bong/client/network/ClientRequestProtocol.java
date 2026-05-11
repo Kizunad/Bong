@@ -413,6 +413,27 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeCoffinPlace(BlockPos pos, long itemInstanceId) {
+        JsonObject obj = envelope("coffin_place");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeCoffinEnter(BlockPos pos) {
+        JsonObject obj = envelope("coffin_enter");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        return obj.toString();
+    }
+
+    public static String encodeCoffinLeave() {
+        return envelope("coffin_leave").toString();
+    }
+
     public sealed interface ApplyPillTarget {
         JsonObject toJson();
     }

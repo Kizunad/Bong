@@ -51,6 +51,9 @@ import {
   AbortTribulationRequestV1,
   CancelExtractRequestV1,
   CoffinOpenRequestV1,
+  CoffinEnterRequestV1,
+  CoffinLeaveRequestV1,
+  CoffinPlaceRequestV1,
   CombatCreateNewCharacterRequestV1,
   CombatReincarnateRequestV1,
   CombatTerminateRequestV1,
@@ -287,6 +290,7 @@ import {
   ServerDataV1,
   ServerDataHealerNpcAiStateV1,
   ServerDataMovementStateV1,
+  ServerDataCoffinStateV1,
   ServerDataWeaponBrokenV1,
   ServerDataWeaponEquippedV1,
   ServerDataForgeStationV1,
@@ -308,6 +312,7 @@ import {
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   ServerDataYidaoHudStateV1,
+  CoffinStateV1,
   BurstMeridianEventV1,
   QiColorObservedV1,
   TreasureEquippedV1,
@@ -581,6 +586,9 @@ export const SCHEMA_REGISTRY = {
   clientRequestSkillBarBindV1: SkillBarBindRequestV1,
   clientRequestSkillConfigIntentV1: SkillConfigIntentRequestV1,
   clientRequestCoffinOpenV1: CoffinOpenRequestV1,
+  clientRequestCoffinPlaceV1: CoffinPlaceRequestV1,
+  clientRequestCoffinEnterV1: CoffinEnterRequestV1,
+  clientRequestCoffinLeaveV1: CoffinLeaveRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
@@ -694,6 +702,8 @@ export const SCHEMA_REGISTRY = {
   movementZoneKindV1: MovementZoneKindV1,
   movementStateV1: MovementStateV1,
   serverDataMovementStateV1: ServerDataMovementStateV1,
+  coffinStateV1: CoffinStateV1,
+  serverDataCoffinStateV1: ServerDataCoffinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -1008,6 +1018,9 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-skill-config-intent-v1.json":
     SCHEMA_REGISTRY.clientRequestSkillConfigIntentV1,
   "client-request-coffin-open-v1.json": SCHEMA_REGISTRY.clientRequestCoffinOpenV1,
+  "client-request-coffin-place-v1.json": SCHEMA_REGISTRY.clientRequestCoffinPlaceV1,
+  "client-request-coffin-enter-v1.json": SCHEMA_REGISTRY.clientRequestCoffinEnterV1,
+  "client-request-coffin-leave-v1.json": SCHEMA_REGISTRY.clientRequestCoffinLeaveV1,
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
@@ -1135,6 +1148,8 @@ export const GENERATED_SCHEMA_FILES = {
   "movement-state-v1.json": SCHEMA_REGISTRY.movementStateV1,
   "server-data-movement-state-v1.json":
     SCHEMA_REGISTRY.serverDataMovementStateV1,
+  "coffin-state-v1.json": SCHEMA_REGISTRY.coffinStateV1,
+  "server-data-coffin-state-v1.json": SCHEMA_REGISTRY.serverDataCoffinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7
