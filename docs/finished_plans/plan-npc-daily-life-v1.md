@@ -439,6 +439,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `d18a042e4`（2026-05-11）`feat(npc): 加入日程阶段与 LOD 状态 tick`
   - `6cc5d076d`（2026-05-11）`feat(npc): 接入目的地漫游与回家休息行为`
   - `3c7afd1ff`（2026-05-11）`fix(npc): 收紧日程 LOD 与回家休息语义`
+  - `af61d7331`（2026-05-11）`fix(network): 放宽大型 NPC 快照 Redis timeout`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
@@ -447,6 +448,8 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `agent/packages/schema/ npm run check` ✅ generated schema artifacts are fresh（352 files）
   - `agent/packages/schema/ npm test` ✅ 18 files / 366 tests passed
   - `agent/packages/tiandao/ npm test` ✅ 51 files / 352 tests passed
+  - `scripts/e2e-redis.sh` ✅ 15 passed, 0 failed（`.sisyphus/evidence/task-13-e2e-redis-run-20260511-210638-550781-default`）
+  - `scripts/smoke-test-e2e.sh` ✅ 8 passed, 0 failed（`.sisyphus/evidence/task-13-smoke-test-e2e-run-20260511-210952-554406-default`）
 - **跨仓库核验**：
   - server：`NpcDailySchedule`、`DayPhase`、`GoToPoiAction`、`NpcHomeBase`、`ReturnHomeAction`、`StallAction`、`PoiNoviceKind::HerbPatch`
   - agent/schema：`PoiNoviceKindV1` 含 `herb_patch` / `qi_spring` / `trade_spot` / `shelter_spot` / `water_source`
