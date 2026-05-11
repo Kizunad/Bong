@@ -7,11 +7,10 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | CalamityArsenal 灾劫注册表 + TiandaoPower 权力预算系统 | ⬜ |
-| P1 | 8 类灾劫实装（雷劫扩展 + 7 种新灾劫） | ⬜ |
+| P1 | 8 类灾劫实装（server 效果 + 视听规格内联，每种灾劫完整到可直接实现） | ⬜ |
 | P2 | agent 灾劫选型 prompt + 权力分配决策 | ⬜ |
 | P3 | 灾劫组合技（天道可同时/连续释放多重灾劫） | ⬜ |
-| P4 | 全灾劫视听差异化（每种灾劫独立粒子/音效/天象/narration） | ⬜ |
-| P5 | 饱和测试 | ⬜ |
+| P4 | 饱和测试 | ⬜ |
 
 ---
 
@@ -139,7 +138,7 @@ pub struct PowerSpendEntry {
 | 7 | **万物凋零** | 25 | zone 全域 | 即时 | Pressure | 冬季独占 |
 | 8 | **域崩** | 60 | zone 全域 | 30s 撤离 | Annihilate | 无 |
 
-### 灾劫详解
+### 灾劫详解（每种含完整视听规格）
 
 ---
 
@@ -147,14 +146,32 @@ pub struct PowerSpendEntry {
 
 > "天道最常见的手段。劈你不是因为恨你——是因为便宜。"
 
-**效果**：目标区域落雷 2-5 次（按 intensity），每次造成真元伤害 + 体表伤害。
+**server 效果**：
+- 目标区域落雷 2-5 次（按 intensity），精准追踪目标玩家（中心 ±15 格）
+- 每次造成真元伤害 + 体表 `Burn` 伤
+- 高 intensity（≥0.7）附带 `Stunned` 40 tick（2 秒）
 
-**扩展**（本 plan 新增）：
-- 雷劫落点**精准追踪目标玩家**（不再是随机区域，而是以目标为中心 ±15 格）
-- 高 intensity 雷劫附带 `Stunned` 2s（被劈懵）
-- 雷劫后落点 3 格内地面**焦黑**（GroundDecal，持续 5 分钟）——视觉痕迹暴露你被天劫劈过
+**narration**（scope=zone, style=narrative）：
+- "天劫——落。"
+- "雷落 [zone]。区区虫蚁，也值得天劈一回。"
 
-**成本**：15 权力——最便宜，天道日常消耗品
+**粒子** `bong:vfx_event` ID = `bong:calamity_thunder`：
+- 闪电主体：`BongLineParticle` ×(2-5)，y=256→target_y，颜色 `#E0E8FF`，width 3px，lifetime 4 tick，zigzag 8 段
+- 落点爆发：`BongSpriteParticle` ×12，颜色 `#FFE0A0`，burst 半径 4 格，speed 0.12，lifetime 12 tick
+- 落点焦痕：`BongGroundDecalParticle` ×1，颜色 `#201008`，直径 6 格，lifetime 6000 tick（5 分钟）
+
+**天象**：闪电前 5 tick 天空白闪——全屏 `#FFFFFF` opacity 0.5，fade-out 5 tick
+
+**音效** `calamity_thunder.json`：
+```json
+{ "id": "calamity_thunder", "layers": [
+  { "sound": "entity.lightning_bolt.impact", "pitch": 0.7, "volume": 0.9 },
+  { "sound": "entity.generic.explode", "pitch": 0.4, "volume": 0.5, "delay_ticks": 2 },
+  { "sound": "block.anvil.land", "pitch": 0.3, "volume": 0.3, "delay_ticks": 5 }
+]}
+```
+
+**HUD**：闪电命中瞬间 camera shake 振幅 4px 持续 10 tick，fade-out 线性
 
 ---
 
@@ -162,22 +179,36 @@ pub struct PowerSpendEntry {
 
 > "不是毒蛊师的毒。是天地本身在腐烂。"
 
-**效果**：zone 内生成 `PoisonMiasmaCloud`——半透明绿紫色雾气覆盖区域。
+**server 效果**：
+- zone 生成 `PoisonMiasmaCloud`，持续 180 秒
+- 雾中所有生物每 5 秒 20 条经脉各 contamination +0.02（共 +0.72）
+- NPC brain `flee_score` 对 miasma = 1.0
 
-在雾中的所有生物（玩家 + NPC）：
-- 每 5 秒所有经脉 contamination +0.02（20 条经脉同步）
-- 持续 180 秒（3 分钟），共计 +0.72 污染——接近 SEVERED 阈值
-- 排毒需要消耗大量真元（10:15 亏损比）
-- NPC 会在雾气边缘停下不进入（brain flee_score 对 miasma = 1.0）
+**反制**：跑出去 / 抗灵压丹 / 涡流流隔绝
 
-**物理依据**：天道将该区域灵气"反相"——正常灵气变成腐蚀性异灵，如同§二"负灵域"的地面版
+**narration**（scope=zone, style=perception）：
+- "地气变了。这不是瘴——是天地在呕。"
+- "[zone] 弥漫异气。灵脉在此处……腐了。"
+- "闻到了吗？那是天地的恶心。"
 
-**反制**：
-- 跑出去（最简单）
-- 抗灵压丹减轻效果（已有丹药）
-- 涡流流可短暂隔绝雾气（涡流制造局部真空）
+**粒子** `bong:vfx_event` ID = `bong:calamity_miasma`：
+- 雾体：`BongSpriteParticle`，持续 spawn 模式（每 2 tick spawn 3 个），颜色 `#305020` 50% + `#402848` 50%（绿紫交替），speed 0.02 随机方向，lifetime 80 tick，y 范围 0~3 格高
+- 贴图：新增 `miasma_cloud.png`（gen.py `--style particle`："绿紫色毒雾团，边缘模糊散开，中心浓"）
+- 雾气边缘涟漪：`BongGroundDecalParticle` ×4（zone 边界），颜色 `#304020`，直径 8 格，lifetime 200 tick，opacity 脉搏 0.1-0.3
 
-**视觉**：地面到 3 格高度的绿紫色半透明粒子云（BongSpriteParticle 大量低速漂浮），边缘有毒气涟漪
+**天象**：天空 RGB shift `R+0, G+8, B-4`（泛绿），雾气存在期间持续
+
+**音效** `calamity_miasma.json`：
+```json
+{ "id": "calamity_miasma", "layers": [
+  { "sound": "entity.puffer_fish.blow_up", "pitch": 0.3, "volume": 0.15, "loop": true },
+  { "sound": "block.wet_grass.break", "pitch": 0.4, "volume": 0.08, "loop": true },
+  { "sound": "entity.player.hurt", "pitch": 0.5, "volume": 0.06, "loop": false, "interval_ticks_min": 100, "interval_ticks_max": 200 }
+]}
+```
+- 持续低频膨胀音 + 湿腐植物声 + 偶尔闷哼（中毒反应）
+
+**HUD**（所有人可见，不限境界）：雾中时屏幕整体 tint `#102008` opacity 0.06（微绿），脉搏闪烁周期 60 tick
 
 ---
 
@@ -185,22 +216,35 @@ pub struct PowerSpendEntry {
 
 > "天道布下的禁制。在这个圈里，你的经脉跟没有一样。"
 
-**效果**：目标 50 格圆形区域内出现地面阵纹（GroundDecal），区域内所有人：
-- **经脉流量归零**——不能打坐修炼、不能使用任何需要经脉的招式
-- 真元不流失但**不可使用**（qi_current 冻结，不涨不跌）
-- 凡物攻击/移动不受影响——**你被打回凡人**
-- 体修爆脉流仍可使用（爆脉本质是过载肉体，不走经脉流量）
+**server 效果**：
+- 50 格圆形区域内：经脉流量归零，真元冻结（不涨不跌），招式 cast 全部失败
+- 凡物攻击/移动不受影响；体修爆脉流不受影响
+- 持续 120 秒
 
-**持续**：120 秒（2 分钟）
+**反制**：走出 50 格 / 体修爆脉不受限 / 阵法流识破破坏（20 秒 + 消耗真元）
 
-**物理依据**：天道在该区域局部"静止化"灵气流动——如同§二"灵气凝固"的极端版
+**narration**（scope=zone, style=narrative）：
+- "天地之间，灵脉凝滞。此圈内无人可修。"
+- "经脉封了。不是你的错——是天道不许你呼吸。"
 
-**反制**：
-- 走出 50 格范围即解除
-- 体修爆脉流不受影响（§五 正典：体修不依赖外物）
-- 阵法流可识破并破坏阵纹（需 20 秒 + 消耗真元）
+**粒子** `bong:vfx_event` ID = `bong:calamity_meridian_seal`：
+- 地面阵纹：`BongGroundDecalParticle` ×1，颜色 `#A0C8D8`（青白），直径 50 格，lifetime = duration（持续到结束），贴图 `meridian_seal_circle.png`（gen.py `--style hud`："几何六角阵纹，线条纤细，青白发光"）
+- 空气静止：区域内**停止所有其他粒子的 velocity 更新**（通过 `MeridianSealZone` 标记区域，粒子 tick 检查此标记 → speed=0）
+- 阵纹边缘闪烁：每 40 tick 阵纹边缘 `BongLineParticle` ×8 环绕一圈，颜色 `#80A0B0`，lifetime 20 tick
 
-**视觉**：地面出现青白色几何阵纹（GroundDecal），空气中灵气粒子静止不动（粒子速度 = 0），天空泛出死灰色
+**天象**：天空 RGB shift `R-6, G-6, B-6`（整体变灰），saturation ×0.8
+
+**音效** `calamity_meridian_seal.json`：
+```json
+{ "id": "calamity_meridian_seal", "layers": [
+  { "sound": "block.beacon.deactivate", "pitch": 0.3, "volume": 0.4 },
+  { "sound": "entity.elder_guardian.curse", "pitch": 0.4, "volume": 0.2, "delay_ticks": 10 },
+  { "sound": "block.amethyst_block.chime", "pitch": 0.2, "volume": 0.10, "loop": true, "interval_ticks_min": 60, "interval_ticks_max": 80 }
+]}
+```
+- 封印启动音（beacon 关闭）+ 守护者诅咒声 + 持续低频水晶共鸣
+
+**HUD**（所有人可见）：进入阵内时屏幕下方出现 `HudRenderLayer.OVERLAY` 文字 "§8经脉封锁"，颜色 `#607080`，持续显示直到离开
 
 ---
 
@@ -208,22 +252,40 @@ pub struct PowerSpendEntry {
 
 > "地底的枯骨醒了。不是一具——是一群。"
 
-**效果**：zone 内多个点位同时复活道伥 NPC：
-- 数量 = `intensity × 8 + 2`（3-10 只）
-- 强度 = zone 内最高境界玩家 -1（有挑战但不秒杀）
-- 道伥行为：半智能巡逻 + 真元低于 20% 的玩家优先攻击（§七 正典）
-- 持续 300 秒后未被击杀的道伥缓慢消散
+**server 效果**：
+- zone 多点 spawn 道伥 NPC：数量 = `round(intensity × 8 + 2)`（3-10 只）
+- 强度 = zone 内最高境界 -1；真元 < 20% 的玩家优先攻击
+- 持续 300 秒后未击杀的道伥消散
+- 击杀正常掉落（装备/残卷/钥匙）
 
-**物理依据**：§七"被天劫劈死的高手遗骸，保留了生前战斗本能"——天道主动激活地底枯骨
+**反制**：战斗击杀 / 寂照镜预警 / 多人协作
 
-**掉落**：道伥击杀后正常掉落（生前装备/残卷/钥匙），这是**风险中的机遇**
+**narration**（scope=zone, style=perception）：
+- "地底有动静。是旧人——还是旧鬼？"
+- "枯骨动了。它们还记得……怎么杀人。"
+- 道伥全清后（scope=zone）："安静了。但地底还有。总会还有。"
 
-**反制**：
-- 打就完了——道伥是可击杀的 NPC
-- 灵宝寂照镜的「明虚残识」会提前预警
-- 多人协作最高效
+**粒子** `bong:vfx_event` ID = `bong:calamity_daoxiang_wave`：
+- 每只道伥 spawn 点：
+  - 地裂：`BongGroundDecalParticle` ×1，裂纹贴图 `ground_crack.png`（已有或 gen.py `--style particle`："地面碎裂纹，深褐色，从中心放射"），颜色 `#302010`，直径 3 格，lifetime 120 tick
+  - 骨碎飞溅：`BongSpriteParticle` ×8，颜色 `#C0B090`（骨白），burst upward speed 0.10，gravity 0.04，lifetime 25 tick
+  - 泥土扬起：`BongSpriteParticle` ×5，颜色 `#604830`（土色），burst speed 0.06，lifetime 30 tick
+- 道伥消散时：`BongSpriteParticle` ×12，颜色 `#404040`（灰烬），slow float upward speed 0.03，lifetime 40 tick
 
-**视觉**：地面裂开（方块碎裂粒子），道伥从地下爬出（spawn 动画），伴随低沉的骨骼嘎吱声
+**天象**：无天象变化（道伥潮是突发事件，没有天象预兆——突然性是恐惧来源）
+
+**音效** 每只道伥 spawn `calamity_daoxiang_spawn.json`：
+```json
+{ "id": "calamity_daoxiang_spawn", "layers": [
+  { "sound": "block.gravel.break", "pitch": 0.5, "volume": 0.6 },
+  { "sound": "entity.skeleton.hurt", "pitch": 0.4, "volume": 0.5, "delay_ticks": 3 },
+  { "sound": "block.bone_block.break", "pitch": 0.6, "volume": 0.3, "delay_ticks": 5 },
+  { "sound": "entity.zombie.ambient", "pitch": 0.3, "volume": 0.2, "delay_ticks": 10 }
+]}
+```
+- 碎石 + 骨骼碎裂 + 骨块断裂 + 低沉呻吟
+
+**HUD**：道伥 spawn 瞬间 camera shake 振幅 2px 持续 8 tick（微震 = 地面在裂）
 
 ---
 
@@ -231,22 +293,49 @@ pub struct PowerSpendEntry {
 
 > "不是修士放的火。是天地自己在烧。"
 
-**效果**：目标 40 格区域从天空降下青白色天火：
-- 区域内所有生物每 3 秒受 `Burn` 体表伤害（severity 随 intensity 缩放）
-- 区域内所有灵草/植物**永久焚毁**（botany 资源清零）
-- 天火结束后地面**永久焦黑**（terrain profile 改写为 tribulation_scorch）
-- 焦土区域 spirit_qi **永久 = 0**（§十七 正典："天道劫气抹掉的真元不会回"）
+**server 效果**：
+- 目标 40 格区域从天空降下天火，持续 90 秒
+- 区域内生物每 3 秒受 `Burn` 体表伤害（severity = intensity × 0.4）
+- 灵草/植物永久焚毁；天火后地面永久改 terrain `tribulation_scorch`；spirit_qi 永久 = 0
+- 10 秒预热期 → 90 秒燃烧 → 永久焦土
 
-**物理依据**：§十七"天劫焦地——天道学费的物理实现：你被劈过的地方，地永远记得"
+**限制**：仅夏季
 
-**限制**：**仅夏季可用**（夏季雷信号清晰——§十七 正典）。权力成本高（35），天道不会轻易焚地。
+**反制**：看到预热就跑（40 格冲刺 7 秒出去）
 
-**反制**：
-- 跑——40 格不大，冲刺 7 秒跑出去
-- 天火有 10 秒预热期（天空发红 + 地面阵纹出现），看到就跑
-- 无法扑灭——天火是天道意志，不是物理火焰
+**narration**（scope=broadcast, style=narrative）：
+- 预热时（scope=zone）："天空裂了一条缝。那不是光——是火。"
+- 燃烧时："天火焚 [zone]。寸草不留。"
+- 结束后："[zone] 一片焦土。天道的印记，刻在了地上。"
 
-**视觉**：天空裂开一道青白光柱 → 光柱扩散为 40 格圆形火幕 → 地面持续青白火焰粒子 → 结束后地面变焦黑（永久 terrain 改变）
+**粒子** `bong:vfx_event` ID = `bong:calamity_heavenly_fire`：
+- **预热期**（10 秒）：
+  - 天空光柱：`BongLineParticle` ×1，从 y=256 到中心点，颜色 `#E0F0FF`（青白），width 8px，lifetime 200 tick（持续到燃烧期），glow 效果
+  - 地面预警圈：`BongGroundDecalParticle` ×1，颜色 `#801000`（暗红），直径 40 格，opacity 脉搏 0.1-0.3，lifetime 200 tick
+- **燃烧期**（90 秒）：
+  - 火幕：`BongSpriteParticle`，持续 spawn（每 tick 8 个），颜色 `#D0E0FF` 70% + `#FFFFFF` 30%（青白火焰），y 范围 0-6 格，speed upward 0.08 + random lateral 0.03，lifetime 30 tick
+  - 贴图：`heavenly_fire_flame.png`（gen.py `--style particle`："青白色天火火焰，尖锐向上，中心极亮边缘渐隐"）
+  - 地面持续焦化：`BongGroundDecalParticle`，每 20 tick 从边缘向中心新增一圈焦痕，颜色 `#101008`（焦黑）
+- **结束后**（永久）：
+  - 焦土 `BongGroundDecalParticle` ×1，颜色 `#0A0804`（深焦），直径 40 格，lifetime = 永久（terrain profile 已改写，decal 仅做即时视觉过渡）
+
+**天象**：
+- 预热：天空中心一点 `#FFE0C0` 光斑，扩散到 40 格对应角度
+- 燃烧中：区域上方天空 RGB shift `R+20, G-5, B-10`（偏红热），范围外天空正常
+- 结束后：焦土区域上方天空永久偏暗——`R-5, G-5, B-5`（天道的伤疤）
+
+**音效** `calamity_heavenly_fire.json`：
+```json
+{ "id": "calamity_heavenly_fire", "layers": [
+  { "sound": "entity.blaze.shoot", "pitch": 0.3, "volume": 0.6, "loop": true },
+  { "sound": "block.fire.ambient", "pitch": 0.5, "volume": 0.4, "loop": true },
+  { "sound": "item.firecharge.use", "pitch": 0.2, "volume": 0.3, "loop": false, "interval_ticks_min": 40, "interval_ticks_max": 80 },
+  { "sound": "entity.generic.burn", "pitch": 0.4, "volume": 0.2, "loop": false, "interval_ticks_min": 60, "interval_ticks_max": 100 }
+]}
+```
+预热音效（单独）：`{ "sound": "entity.warden.sonic_boom", "pitch": 0.15, "volume": 0.5 }`（天空裂开的轰鸣）
+
+**HUD**：燃烧区域内 vignette `#C04000` opacity 0.12 + camera shake 振幅 1px 持续（热浪抖动）
 
 ---
 
@@ -254,24 +343,40 @@ pub struct PowerSpendEntry {
 
 > "天地突然倒吸一口气。你的真元池就是它的猎物。"
 
-**效果**：目标 60 格区域灵压瞬间从正转负（-0.5 ~ -0.8）：
-- 区域内所有人按§二负灵域法则被抽真元
-- **境界越高抽得越猛**——化虚修士 3 秒内被抽干（§十六 正典：非线性关系）
-- 低境修士受影响较小（醒灵/引气几乎无感）
-- 持续仅 45 秒——天道维持倒转极其昂贵
+**server 效果**：
+- 60 格区域灵压瞬变负数（-0.5 ~ -0.8），持续 45 秒
+- 高境抽真元极快（化虚 3 秒空），低境几乎无感
+- qi drain 走 `QiTransfer { from: player, to: zone }`（归还不消灭）
 
-**物理依据**：§二"存在巨大的灵压差。踏入此地，天地会疯狂反吸你的真元。境界越高被抽吸的速度越恐怖"
+**限制**：仅汐转期
 
-**限制**：**仅汐转期可用**（天道节律紊乱时才能制造灵压倒转）。成本 40——非常贵。
+**反制**：低境不动 / 高境立刻跑 / 涡流流部分抵消
 
-**战术意义**：这是**天道针对化虚修士的终极手段**。高境被秒杀，低境几乎没事——完美实现§十六"深层是高阶的禁区，反而是低阶的避难所"的地面版。低境玩家如果知道倒转即将发生，**留在原地反而安全**。
+**narration**（scope=broadcast, style=narrative）：
+- 触发瞬间："天地倒吸。"（两个字足够）
+- 3 秒后（scope=zone）："真元池越大者，失去得越多。"
+- 结束时（scope=zone）："……呼出来了。暂且如此。"
 
-**反制**：
-- 低境修士：不跑（受影响小）
-- 高境修士：**立刻跑**——或使用灵宝「镜隐」（气息消隐可能减轻抽吸？设计决策点）
-- 涡流流可以"吞噬"部分负压（涡流本质就是局部负灵域——与天道的倒转互相抵消）
+**粒子** `bong:vfx_event` ID = `bong:calamity_pressure_invert`：
+- 所有现有粒子**方向反转**：区域内 BongSpriteParticle/BongLineParticle 的 velocity 乘以 -1（粒子向中心收缩而非外散）
+  - 实现：`PressureInvertZone` 标记区域，粒子 tick 检查 → 反转 velocity
+- 高境真元外溢：realm ≥ Solidify 的玩家身上 spawn `BongLineParticle` ×4，从身体向外辐射，颜色取玩家 QiColor 对应色，speed 0.15 向外（被抽出的真元），lifetime 15 tick，每 10 tick 持续 spawn
+- 地面涡流：`BongGroundDecalParticle` ×1，中心点旋转涡纹贴图 `pressure_vortex.png`（gen.py `--style particle`："暗蓝色漩涡，从外向内收缩纹路"），颜色 `#102040`，直径 60 格，lifetime = duration，旋转速度 1°/tick
 
-**视觉**：天空瞬间变暗蓝 + 所有粒子方向反转（向内收缩）+ 空气中出现"吸入"涡流线 + 高境玩家身上真元可见外溢（青色气流从身体被抽出）
+**天象**：天空瞬间变暗蓝 RGB shift `R-20, G-10, B+15`，fade-in 3 tick（瞬变不渐变——突然性是恐惧来源）；结束时 fade-out 40 tick
+
+**音效** `calamity_pressure_invert.json`：
+```json
+{ "id": "calamity_pressure_invert", "layers": [
+  { "sound": "entity.enderman.teleport", "pitch": 0.2, "volume": 0.7 },
+  { "sound": "entity.warden.sonic_boom", "pitch": 0.1, "volume": 0.4, "delay_ticks": 3, "loop": false },
+  { "sound": "entity.player.breath", "pitch": 0.3, "volume": 0.3, "loop": true, "interval_ticks_min": 20, "interval_ticks_max": 30 },
+  { "sound": "block.portal.ambient", "pitch": 0.2, "volume": 0.15, "loop": true }
+]}
+```
+- 瞬间虚空吸入音（enderman tp）+ 低频冲击 + 持续急促呼吸（被抽）+ 传送门环境音（负压嗡鸣）
+
+**HUD**（所有人可见）：区域内全屏 tint `#081020` opacity 0.10（暗蓝），高境玩家额外叠加 vignette `#200808` opacity 0.15 脉搏（真元在流失的视觉焦虑）
 
 ---
 
@@ -279,24 +384,39 @@ pub struct PowerSpendEntry {
 
 > "草木枯了不是因为秋天。是天道不想让你在这里找到任何活的东西。"
 
-**效果**：zone 全域内所有植物/灵草即时枯萎：
-- `BotanyKindRegistry` 中该 zone 的所有植物节点 → 状态变为 `Withered`
-- 枯萎植物 3 天后消失（不可采集、不可恢复）
-- 灵田作物同样枯萎（灵田玩法直接受打击）
-- 不影响矿物/动物/玩家——**只杀植物**
+**server 效果**：
+- zone 全域植物/灵草即时 → `Withered`，3 天后消失
+- 灵田作物同步枯萎；矿物/动物/玩家不受影响
+- 即时效果无持续时间
 
-**物理依据**：天道抽走该区域"生机"——灵气中维持植物的频段被定向清除
+**限制**：仅冬季
 
-**限制**：**仅冬季可用**（冬季植物本就脆弱，天道借势）。
+**反制**：提前采集储备 / 转移 / zhenfa 防护封闭灵田
 
-**战术意义**：不杀人但**断你的资源链**。炼丹需要灵草 → 灵草枯了 → 你得去别的区域找 → 被迫移动 → 天道赢了。这是§八"温和到中等手段"的典型——不动刀子，但让你活不下去。
+**narration**（scope=zone, style=narrative）：
+- "草木枯了。不是季节——是天意。"
+- "[zone] 的灵草……今晨全都死了。"
+- "天道收走了这片地的生机。不留一株。"
 
-**反制**：
-- 提前采集储备（但灵物有 shelflife，存不久）
-- 转移到未受影响的区域
-- 灵田玩家在室内封闭灵田（zhenfa 防护可挡凋零——需阵法流配合）
+**粒子** `bong:vfx_event` ID = `bong:calamity_all_wither`：
+- 每株枯萎植物位置：`BongSpriteParticle` ×3，颜色 `#806040` 50% + `#504030` 50%（枯黄/褐），gravity 0.06（下落），speed lateral 0.02，lifetime 40 tick
+  - 贴图：`wither_leaf.png`（gen.py `--style particle`："干枯树叶碎片，褐色卷曲，半透明边缘"）
+- zone 全域灰化波：从 zone 中心向外扩散的 `BongGroundDecalParticle` 环，颜色 `#383028`（灰褐），扩散速度 10 格/tick，环宽 3 格，lifetime 60 tick（视觉波浪——灰化从中心席卷全 zone）
 
-**视觉**：所有植物方块颜色瞬间变灰褐 + 叶片掉落粒子 + 枯萎音效（木头断裂声）
+**天象**：天空 RGB shift `R+5, G-3, B-8`（泛枯黄），持续到凋零完成后 5 分钟才恢复
+
+**音效** `calamity_all_wither.json`：
+```json
+{ "id": "calamity_all_wither", "layers": [
+  { "sound": "block.grass.break", "pitch": 0.3, "volume": 0.5 },
+  { "sound": "block.azalea_leaves.break", "pitch": 0.4, "volume": 0.4, "delay_ticks": 5 },
+  { "sound": "block.wood.break", "pitch": 0.25, "volume": 0.3, "delay_ticks": 10 },
+  { "sound": "block.sand.fall", "pitch": 0.5, "volume": 0.15, "delay_ticks": 20 }
+]}
+```
+- 草断裂 + 叶片碎落 + 木头断裂 + 沙尘沉降（从生到死的音序）
+
+**HUD**：无特殊 HUD。凋零是沉默的——你走到灵草田发现全枯了，那一刻的冲击比任何 HUD 效果都大。
 
 ---
 
@@ -304,10 +424,11 @@ pub struct PowerSpendEntry {
 
 > "域崩不是天灾——是天道的死刑。"
 
-现有 `RealmCollapseRuntimeState` 完整实现。本 plan 将其纳入灾劫武器库统一管理：
-- 权力成本 60（最贵——天道不会轻易灭一片区域）
-- 最低注意力：Annihilate（只有被天道判死刑的区域/玩家才会触发）
+现有 `RealmCollapseRuntimeState` 完整实现（视听已在 plan-tribulation-v1 落地）。本 plan 纳入武器库统一管理：
+- 权力成本 60（最贵）
+- 最低注意力：Annihilate
 - 与 tiandao-hunt-v1 的 Annihilate 级响应直接关联
+- 视听沿用现有域崩 VFX/audio（不重复定义）
 
 ---
 
@@ -419,22 +540,7 @@ export const CalamityIntentV1 = Type.Object({
 
 ---
 
-## P4：视听差异化
-
-| # | 灾劫 | 天象 | 粒子 | 音效 | narration 模板 |
-|---|------|------|------|------|---------------|
-| 1 | 雷劫 | 天空闪白 + 乌云聚集 | 闪电 BongLineParticle | 雷鸣（已有） | "天劫降于[zone]。" |
-| 2 | 毒瘴 | 天空泛绿 | 绿紫雾气 BongSpriteParticle 大量 | 嘶嘶腐蚀 + 风声 | "[zone]上空弥漫毒气。此地灵脉……在腐。" |
-| 3 | 封脉 | 天空泛死灰 | 地面青白阵纹 GroundDecal + 空气粒子静止 | 低频嗡鸣（共振感） | "天地之间，灵脉凝滞。此圈内无人可修。" |
-| 4 | 道伥潮 | 无天象变化（突然） | 地面裂开 + 骨骼碎片飞溅 | 骨骼嘎吱 + 低吼 | "地底有动静。是旧人——还是旧鬼？" |
-| 5 | 天火 | 天空裂开青白光柱 | 青白火焰 + 焦黑地面扩散 | 火焰爆裂 + 高频呼啸 | "天火焚[zone]。寸草不留。" |
-| 6 | 灵压倒转 | 天空瞬间暗蓝 | 所有粒子方向反转 + 真元外溢流 | 吸入音（反向风声）+ 心跳放大 | "天地倒吸。真元池越大者，失去得越多。" |
-| 7 | 凋零 | 天空泛枯黄 | 叶片掉落 + 灰化粒子 | 木头断裂 + 枯叶沙沙 | "草木枯了。不是季节——是天意。" |
-| 8 | 域崩 | 天空暗红裂纹（已有） | 地面裂纹 + 崩塌粒子 | 持续轰鸣（已有） | "[zone]将崩。诸修速避。"（已有） |
-
----
-
-## P5：饱和测试
+## P4：饱和测试
 
 ### 权力预算测试
 

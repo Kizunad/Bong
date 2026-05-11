@@ -7,11 +7,10 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | TiandaoAttention 注意力系统（per-player 累积/衰减/阈值） | ⬜ |
-| P1 | 四级天道响应链（微调→施压→天劫→灭绝）自动触发 | ⬜ |
+| P1 | 四级天道响应链（微调→施压→天劫→灭绝）+ 各级视听内联 | ⬜ |
 | P2 | 反制玩法（欺天阵/游牧打坐/负灵域躲避/低境伪装） | ⬜ |
 | P3 | 天道叙事接入（agent 对高注意力玩家产出个性化 narration） | ⬜ |
-| P4 | HUD 环境感知（天意压迫感——非数字，是氛围） | ⬜ |
-| P5 | 饱和测试（境界缩放 + 注意力衰减 + 反制有效性 + 守恒） | ⬜ |
+| P4 | 饱和测试（境界缩放 + 注意力衰减 + 反制有效性 + 守恒） | ⬜ |
 
 ---
 
@@ -181,61 +180,167 @@ decay_rate（天道"遗忘"你的速度）：
 
 > "天道还不动手，但它在看。"
 
-**效果**（自动，无需 agent 决策）：
-- 玩家所在区域 spirit_qi **缓慢下降**：每分钟 -0.01（不走 WorldHeartbeat 事件管线——直接修改 zone qi，走 QiTransfer 归还世界）
-- 玩家附近 50 格内 NPC 散修开始**不安**：brain 评分中 `flee_score += 0.2`（NPC 感觉到天道在看这个方向）
-- 天道 narration 概率触发（每 5 分钟 30% 概率）：zone 广播一句阴阳怪气的话
-  - "此间灵脉又薄了几分。仍有人在此贪恋。"
-  - "青云残峰上，不知何人吞吐不休。"
+**server 效果**（自动，无需 agent 决策）：
+- 玩家所在区域 spirit_qi **缓慢下降**：每分钟 -0.01（走 QiTransfer 归还世界）
+- 玩家附近 50 格内 NPC 散修开始**不安**：brain `flee_score += 0.2`
 
-**玩家体感**：感觉灵气在变差，NPC 开始躲你。老玩家看到 narration 就知道——该挪窝了。
+**narration**（scope=zone, style=perception, 每 5 分钟 30% 概率）：
+- "此间灵脉又薄了几分。仍有人在此贪恋。"
+- "青云残峰上，不知何人吞吐不休。"
+- "灵草弯了腰——是风，还是有人在吸？"
+
+**HUD / 屏幕效果**（仅 realm ≥ Spirit 可见）：
+- `HudRenderLayer.EFFECT` vignette overlay：颜色 `#400800`（暗红），opacity 0.03，无 fade（持续常驻）
+- 不影响中心区域——仅屏幕最外圈 15% 边缘可见
+- 进入 Watch 时 fade-in 120 tick（6 秒缓入，不突兀）
+
+**音效** audio_recipe `tiandao_watch_ambient.json`：
+```json
+{ "id": "tiandao_watch_ambient", "layers": [
+  { "sound": "ambient.cave", "pitch": 0.4, "volume": 0.06, "delay_ticks": 0, "loop": true }
+]}
+```
+- 极低音量远处洞穴环境音——像有什么在远处注视
+- 每 60-90 秒随机插一声：`{ "sound": "entity.warden.heartbeat", "pitch": 0.3, "volume": 0.04 }`（低频心跳）
+
+**粒子**：无。Watch 级不产生可见粒子——纯氛围。
+
+---
 
 ### Level 2 — Pressure（注意力 40-70）
 
 > "天道开始出手了，但还留着余地。"
 
-**效果**（自动 + agent 可叠加）：
+**server 效果**（自动 + agent 可叠加）：
 - **zone qi 下降加速**：每分钟 -0.03
 - **定向刷怪**：每 3 分钟在玩家 100 格内刷 1-2 只异变兽（走 NpcRegistry 预算）
-  - 兽的强度 = 玩家境界 -1（固元碰凝脉级兽，通灵碰固元级兽——不会秒杀但很烦）
-- **灵物密度检查**：玩家背包灵物权重 > 阈值 → 该区块所有灵物灵气 -10%（§八 灵物密度阈值）
-- **narration 频率提升**：每 3 分钟 50% 概率，措辞更直接
-  - "尔在此处吞噬几何？天地薄了，你可知？"
-  - "此地异变兽闻到了高浓真元。它们来了。"
-- **HUD**：屏幕边缘开始出现极淡的暗红 vignette（几乎看不出——但时间久了会注意到）
+  - 兽的强度 = 玩家境界 -1
+- **灵物密度检查**：玩家背包灵物权重 > 阈值 → 该区块灵物灵气 -10%（§八）
 
-**玩家体感**：灵气快速下降、怪开始来找你、天道在点你名。必须决定：扛着继续修炼还是跑。
+**narration**（scope=zone, style=narrative, 每 3 分钟 50% 概率）：
+- "尔在此处吞噬几何？天地薄了，你可知？"
+- "此地异变兽闻到了高浓真元。它们来了。"
+- "天象微变。智者当知避让。"
+
+**HUD / 屏幕效果**（仅 realm ≥ Spirit 可见）：
+- vignette 升级：颜色 `#400800`，opacity 从 0.03 渐变到 0.08（进入 Pressure 后 60 tick fade）
+- 天空色温偏冷：RGB shift `R-8, G-4, B+6`（通过 `TiandaoPresenceHudPlanner` 输出 color correction command）
+- 可见范围：屏幕外圈 20%
+
+**音效** audio_recipe `tiandao_pressure_ambient.json`：
+```json
+{ "id": "tiandao_pressure_ambient", "layers": [
+  { "sound": "ambient.cave", "pitch": 0.35, "volume": 0.10, "delay_ticks": 0, "loop": true },
+  { "sound": "weather.rain.above", "pitch": 0.3, "volume": 0.05, "delay_ticks": 0, "loop": true },
+  { "sound": "entity.lightning_bolt.thunder", "pitch": 0.25, "volume": 0.08, "delay_ticks": 0, "loop": false, "interval_ticks_min": 1200, "interval_ticks_max": 2400 }
+]}
+```
+- 洞穴环境音加重 + 持续低频雨声压迫 + 每 60-120 秒一声远雷
+
+**粒子**：
+- 刷怪时 `bong:vfx_event` ID = `bong:tiandao_beast_spawn`
+- `TiandaoBeastSpawnPlayer.java`：怪出生点地面 `BongGroundDecalParticle` ×1，颜色 `#301808`（暗褐），直径 3 格，lifetime 100 tick（5 秒后淡出）
+- 怪出生瞬间 `BongSpriteParticle` ×6，颜色 `#604020`（泥褐），从地面向上 burst，speed 0.08，lifetime 20 tick
+
+---
 
 ### Level 3 — Tribulation（注意力 70-90）
 
 > "天道来真的了。"
 
-**效果**：
-- **定向天劫**：每 5 分钟一次雷劫（走现有 ThunderRuntimeState），强度 = 0.6 + (level-70)/40
-  - 范围：玩家为中心 30 格
-  - 附带 narration 全服广播："天劫降于 [区域名]。"——**所有人知道你在哪**
-- **zone qi 骤降**：每分钟 -0.08（很快变死域）
-- **NPC 全面逃离**：100 格内 NPC flee_score = 1.0（无条件跑）
-- **灵物密度强制清零**：该区块灵物灵气全部归零（§八 正典）
-- **定向刷道伥**：天劫落点有 20% 概率刷 1 只道伥（天劫劈死的前人遗骸被激活）
-- **HUD**：暗红 vignette 加重 + 持续低频轰鸣音效 + 屏幕微颤
+**server 效果**：
+- **定向天劫**：每 5 分钟一次（走 ThunderRuntimeState），强度 = 0.6 + (level-70)/40
+  - 范围：目标玩家为中心 30 格
+  - 附带 narration 全服广播
+- **zone qi 骤降**：每分钟 -0.08
+- **NPC 全面逃离**：100 格内 `flee_score = 1.0`
+- **灵物密度强制清零**：该区块灵物灵气全归零
+- **定向刷道伥**：天劫落点 20% 概率刷 1 只道伥
 
-**玩家体感**：5 分钟一劫，灵气暴跌，全服知道你在哪——其他玩家可能来截杀。扛得住就继续（说不定突破了），扛不住就跑。
+**narration**（scope=broadcast, style=narrative）：
+- 天劫时："天劫降于 [zone]。"
+- 每 5 分钟："[zone] 灵脉将尽。天道之手，已按在此处。"
+- 道伥出现时（scope=zone）："地底有动静。是旧人的怨念。"
+
+**HUD / 屏幕效果**（仅 realm ≥ Spirit 可见）：
+- vignette 颜色 `#601000`，opacity 0.15，范围屏幕外圈 25%
+- **屏幕微颤**：`HudRenderLayer.EFFECT` camera shake，振幅 1.5px，频率 8Hz，持续常驻
+  - 实现：`TiandaoPresenceHudPlanner` 输出 `HudRenderCommand.shake(1.5, 8.0)`
+- **天空裂纹**：客户端天空 overlay 叠加裂纹纹理 `tiandao_sky_crack.png`（256×256 tileable），opacity 0.12，颜色 `#800000`（暗红）
+  - 裂纹贴图位置：gen.py `--style hud` 生成
+- 天劫闪电瞬间：全屏白闪 `#FFFFFF` opacity 0.6，fade-out 10 tick
+
+**音效** audio_recipe `tiandao_tribulation_ambient.json`：
+```json
+{ "id": "tiandao_tribulation_ambient", "layers": [
+  { "sound": "ambient.cave", "pitch": 0.3, "volume": 0.15, "delay_ticks": 0, "loop": true },
+  { "sound": "entity.warden.heartbeat", "pitch": 0.25, "volume": 0.12, "delay_ticks": 0, "loop": true, "interval_ticks_min": 40, "interval_ticks_max": 60 },
+  { "sound": "weather.rain.above", "pitch": 0.25, "volume": 0.10, "delay_ticks": 0, "loop": true },
+  { "sound": "entity.warden.sonic_boom", "pitch": 0.2, "volume": 0.08, "delay_ticks": 0, "loop": false, "interval_ticks_min": 400, "interval_ticks_max": 800 }
+]}
+```
+- 洞穴音 + 持续心跳（2-3 秒一次）+ 雨声 + 每 20-40 秒低频冲击波音
+
+**天劫粒子**（每次天劫时）：
+- `bong:vfx_event` ID = `bong:tiandao_directed_thunder`
+- `TiandaoDirectedThunderPlayer.java`：
+  - 闪电主体：`BongLineParticle` ×3，从 y=256 到 target y，颜色 `#E0E8FF`（青白），width 3px，lifetime 5 tick，zigzag 分段 8 段
+  - 落点爆发：`BongSpriteParticle` ×15，颜色 `#FFE0A0`（金白），burst 半径 5 格，speed 0.15，lifetime 15 tick
+  - 落点焦痕：`BongGroundDecalParticle` ×1，颜色 `#201008`（焦黑），直径 6 格，lifetime 6000 tick（5 分钟）
+  - 音效同步：`entity.lightning_bolt.impact` pitch=0.8 vol=0.8 + `entity.generic.explode` pitch=0.5 vol=0.4 delay=2
+
+**道伥 spawn 粒子**：
+- 地面裂开：`BongGroundDecalParticle` ×1，裂纹形态，颜色 `#302010`，直径 2 格，lifetime 60 tick
+- 骨碎飞溅：`BongSpriteParticle` ×8，颜色 `#C0B090`（骨白），burst upward speed 0.12，lifetime 25 tick
+- 音效：`entity.skeleton.hurt` pitch=0.5 vol=0.5 + `block.bone_block.break` pitch=0.7 vol=0.3 delay=3
+
+---
 
 ### Level 4 — Annihilate（注意力 90+）
 
 > "天道要你从这个世界消失。"
 
-**效果**：
+**server 效果**：
 - **连续天劫**：每 2 分钟一次，强度 = 0.9+
-- **域崩预警**：该区域进入域崩倒计时（30 秒撤离窗口——走现有 RealmCollapseRuntimeState）
-- **全服广播 narration**：
-  - "天道之怒降于 [区域]。[区域] 将崩。诸修速避。"
-  - "[某人] 的气息已触怒天地。这不是试炼——这是驱逐。"
+- **域崩预警**：该区域进入域崩倒计时（30 秒撤离窗口——走 RealmCollapseRuntimeState）
 - **注意力不衰减**——直到玩家死亡或逃入负灵域
-- **HUD**：全屏暗红闪烁 + 裂纹纹理 + 雷鸣不断
 
-**玩家体感**：世界在崩塌，全服都知道因为你。**这是化虚修士的日常**——他们的存在消耗太多灵气，天道每天都想赶走他们。唯一的出路是跑进负灵域（但高境在负灵域掉真元更快），或者死一次降境降注意力。
+**narration**（scope=broadcast, style=narrative）：
+- 进入 Annihilate 时："天道之怒降于 [zone]。[zone] 将崩。诸修速避。"
+- 30 秒后："[某人] 的气息已触怒天地。这不是试炼——这是驱逐。"
+- 域崩启动时："天道不容。"（只有三个字）
+
+**HUD / 屏幕效果**（仅 realm ≥ Spirit 可见）：
+- vignette 颜色 `#801000`，opacity **脉搏式闪烁**：0.15 ↔ 0.25，周期 40 tick（2 秒一次心跳节奏）
+  - 实现：`TiandaoPresenceHudPlanner` 输出 `HudRenderCommand.vignettePulse(0x801000, 0.15, 0.25, 40)`
+- **持续裂纹加重**：`tiandao_sky_crack.png` opacity 从 0.12 升到 0.25 + 裂纹纹理叠加第二层 `tiandao_sky_crack_deep.png`（更粗的裂纹），opacity 0.10
+- **屏幕微颤加重**：振幅 3.0px，频率 12Hz
+- **色彩饱和度降低**：saturation ×0.7（世界失去颜色——末日感）
+  - 实现：`HudRenderCommand.desaturate(0.7)` 叠加在 EFFECT 层
+- 域崩启动后：全屏暗红 `#400000` opacity 0.3 持续脉搏 + 地面裂纹粒子从脚下向外扩散
+
+**音效** audio_recipe `tiandao_annihilate_ambient.json`：
+```json
+{ "id": "tiandao_annihilate_ambient", "layers": [
+  { "sound": "entity.warden.sonic_boom", "pitch": 0.15, "volume": 0.20, "delay_ticks": 0, "loop": true, "interval_ticks_min": 60, "interval_ticks_max": 100 },
+  { "sound": "entity.warden.heartbeat", "pitch": 0.2, "volume": 0.18, "delay_ticks": 0, "loop": true, "interval_ticks_min": 30, "interval_ticks_max": 40 },
+  { "sound": "entity.lightning_bolt.thunder", "pitch": 0.2, "volume": 0.15, "delay_ticks": 0, "loop": false, "interval_ticks_min": 200, "interval_ticks_max": 400 },
+  { "sound": "ambient.basalt_deltas.loop", "pitch": 0.3, "volume": 0.12, "delay_ticks": 0, "loop": true }
+]}
+```
+- 连续冲击波（3-5 秒一次）+ 快速心跳（1.5-2 秒一次）+ 频繁远雷 + 地狱熔岩环境音
+
+**域崩粒子**（复用现有 RealmCollapse VFX）：
+- 地面裂纹扩散：`BongGroundDecalParticle`，从中心向外每 10 tick 扩展一圈，颜色 `#601000`
+- 空气碎片：`BongSpriteParticle` ×30，颜色 `#A08060`（土黄），gravity 0.02，从 zone 各处随机 burst，lifetime 40 tick
+- 音效：`block.anvil.destroy` pitch=0.3 vol=0.6 + `entity.generic.explode` pitch=0.3 vol=0.5 delay=5（连续轰鸣）
+
+**低境修士的间接感知**（realm < Spirit，看不到 HUD 效果但能看到）：
+- 天劫闪电（BongLineParticle 所有人可见）
+- 雷声（thunder 音效所有人可听）
+- narration 全服广播（聊天栏文字所有人可读）
+- 域崩地面裂纹粒子（所有人可见）
+- **唯独看不到** vignette / 天空裂纹 / 饱和度降低 / 心跳音——这些是通灵+的"感知天道"独有能力
 
 **设计意图**：化虚不是"我终于到顶了可以享受"——化虚是"我站在天地之间最高处，而天道要把我推下去"。每一天都是生存战。
 
@@ -322,37 +427,7 @@ Annihilate:
 
 ---
 
-## P4：HUD 环境感知
-
-### 天意压迫感（不是数字，是氛围）
-
-通灵修士能"感知天道注意力"（§三），但不是一个数字——是环境变化：
-
-| ResponseLevel | 视觉 | 音效 | 体感 |
-|------|------|------|------|
-| None | 正常 | 正常 | — |
-| Watch | 屏幕极淡暗红 vignette（opacity 0.03） | 偶尔远处低频嗡鸣 | "好像有什么在看我" |
-| Pressure | vignette 加深（opacity 0.08）+ 天空色温偏冷 | 持续低频压迫音 + 偶尔雷声 | "天在变" |
-| Tribulation | vignette 明显（opacity 0.15）+ 屏幕微颤 + 天空裂纹 | 雷鸣 + 风声加剧 | "来了" |
-| Annihilate | 全屏暗红脉搏闪烁 + 持续裂纹 + 画面色彩饱和度降低 | 连续雷鸣 + 低频轰鸣 | "逃" |
-
-**关键**：低境修士（凝脉以下）**看不到这些效果**——他们没有感知天道的能力。但他们能看到**天劫的闪电、听到雷声、看到 narration**——间接知道附近有人被天道盯上了。
-
-### 实现
-
-```java
-// client: TiandaoPresenceHudPlanner.java
-// 监听 TiandaoAttentionSnapshot payload
-// 根据 response_level 输出 HudRenderCommand:
-//   - HudRenderLayer.EFFECT: vignette overlay (暗红渐变)
-//   - HudRenderLayer.EFFECT: screen shake (low amplitude)
-//   - AudioRecipePlayer: ambient_tiandao_pressure (layered)
-// 只对 realm ≥ Spirit 的玩家渲染
-```
-
----
-
-## P5：饱和测试
+## P4：饱和测试
 
 ### 注意力曲线测试
 
