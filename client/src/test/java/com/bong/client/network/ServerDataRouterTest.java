@@ -111,6 +111,8 @@ public class ServerDataRouterTest {
             "yidao_hud_state",
             // plan-movement-v1 — movement HUD/action state push.
             "movement_state",
+            // plan-coffin-v1 — 卧棺状态与寿命倍率推送。
+            "coffin_state",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。
             "skill_xp_gain",
             "skill_lv_up",

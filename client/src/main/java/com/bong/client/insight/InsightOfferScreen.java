@@ -50,7 +50,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     private static final int COLOR_TIMER_OK = 0xFF8FE38F;
     private static final int COLOR_TIMER_LOW = 0xFFE57373;
     private static final int COLOR_FLAVOR = 0xFFE0D4B8;
-    private static final int COLOR_EFFECT = 0xFFB7CDE5;
+    private static final int COLOR_COST = 0xFFFF6060;
     private static final int COLOR_HINT = 0xFFB0A37C;
     private static final int COLOR_DECLINE = 0xFFAAAAAA;
 
@@ -132,27 +132,35 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
 
     private FlowLayout buildCard(InsightChoice choice) {
         FlowLayout card = Containers.verticalFlow(Sizing.fixed(CARD_WIDTH), Sizing.fixed(CARD_HEIGHT));
-        card.surface(Surface.PANEL_INSET.and(Surface.outline(choice.category().accentArgb())));
+        card.surface(Surface.flat(choice.alignment().cardTintArgb())
+            .and(Surface.PANEL_INSET)
+            .and(Surface.outline(choice.category().accentArgb())));
         card.padding(Insets.of(CARD_PADDING));
         card.gap(4);
         card.horizontalAlignment(HorizontalAlignment.LEFT);
 
-        // 类别标签 (彩色)
-        card.child(coloredLabel(choice.category().label(), choice.category().accentArgb()));
+        FlowLayout tagRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        tagRow.gap(6);
+        tagRow.child(coloredLabel(choice.alignment().icon(), choice.alignment().gainArgb()));
+        tagRow.child(coloredLabel(choice.alignment().label(), choice.alignment().gainArgb()));
+        tagRow.child(coloredLabel(choice.category().label(), choice.category().accentArgb()));
+        card.child(tagRow);
         // 标题 (大字)
         card.child(Components.label(Text.literal(choice.title())
             .formatted(Formatting.BOLD)).color(Color.ofArgb(COLOR_TITLE)));
-        // 数值描述
-        card.child(wrapped(choice.effectSummary(), COLOR_EFFECT, CARD_WIDTH - CARD_PADDING * 2));
+        card.child(wrapped("▲ " + choice.effectSummary(), choice.alignment().gainArgb(), CARD_WIDTH - CARD_PADDING * 2));
+        card.child(wrapped("▼ " + choice.costSummary(), COLOR_COST, CARD_WIDTH - CARD_PADDING * 2));
         // 灰色分隔符
         card.child(divider(CARD_WIDTH - CARD_PADDING * 2));
         // ✦ flavor
         card.child(wrapped("✦ " + choice.flavor(), COLOR_FLAVOR, CARD_WIDTH - CARD_PADDING * 2));
+        card.child(wrapped("代价: " + choice.costFlavor(), COLOR_COST, CARD_WIDTH - CARD_PADDING * 2));
         // 风格提示
         if (!choice.styleHint().isEmpty()) {
             card.child(Components.label(Text.literal(""))); // spacer
             card.child(wrapped("→ " + choice.styleHint(), COLOR_HINT, CARD_WIDTH - CARD_PADDING * 2));
         }
+        card.tooltip(Text.literal(choice.alignment().label() + " | 代价: " + choice.costSummary()));
 
         card.mouseDown().subscribe((mouseX, mouseY, button) -> {
             if (button == 0) {
@@ -266,9 +274,11 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
         lines.add(metaQuotaLabel(offer));
         lines.add(timerLabel(offer, Math.max(0L, offer.remainingMillis(System.currentTimeMillis()) / 1000L)));
         for (InsightChoice c : offer.choices()) {
-            lines.add("[" + c.category().code() + "] " + c.title());
-            lines.add("    效果: " + c.effectSummary());
+            lines.add("[" + c.alignment().wire() + "/" + c.category().code() + "] " + c.title());
+            lines.add("    ▲ " + c.effectSummary());
+            lines.add("    ▼ " + c.costSummary());
             lines.add("    ✦ " + c.flavor());
+            lines.add("    代价: " + c.costFlavor());
             if (!c.styleHint().isEmpty()) {
                 lines.add("    → " + c.styleHint());
             }

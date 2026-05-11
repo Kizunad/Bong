@@ -375,6 +375,7 @@ public final class BongHudOrchestrator {
         ));
         commands.addAll(ForgeProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight));
+        commands.addAll(CoffinHudPlanner.buildCommands(screenWidth, screenHeight));
         commands.addAll(LingtianOverlayHudPlanner.buildCommands(
             com.bong.client.lingtian.state.LingtianSessionStore.snapshot(),
             screenWidth,

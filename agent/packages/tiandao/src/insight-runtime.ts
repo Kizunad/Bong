@@ -29,6 +29,8 @@ import { normalizeLlmChatResult } from "./llm.js";
 
 const { INSIGHT_REQUEST, INSIGHT_OFFER } = CHANNELS;
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const ALIGNMENT_SEQUENCE = ["converge", "neutral", "diverge"] as const;
+type InsightAlignment = (typeof ALIGNMENT_SEQUENCE)[number];
 
 export interface InsightRuntimeLogger {
   info: (...args: unknown[]) => void;
@@ -75,15 +77,45 @@ export function applyInsightArbiter(
 ): InsightOfferV1 {
   const allowed = new Set<InsightCategory>(request.available_categories);
   const caps = request.global_caps;
+  const usedAlignments = new Set<InsightAlignment>();
 
-  const filtered = offer.choices.filter((choice) => {
-    if (!allowed.has(choice.category)) return false;
+  const filtered = offer.choices.flatMap((choice, index) => {
+    if (!allowed.has(choice.category)) return [];
+    if (typeof choice.magnitude !== "number" || choice.magnitude <= 0) return [];
     const cap = caps[choice.category];
-    if (typeof cap === "number" && choice.magnitude > cap) return false;
-    return true;
+    if (typeof cap === "number" && choice.magnitude > cap) return [];
+    if (
+      !choice.cost_kind ||
+      typeof choice.cost_magnitude !== "number" ||
+      choice.cost_magnitude <= 0 ||
+      choice.cost_magnitude + 1e-9 < choice.magnitude * 0.5 ||
+      !choice.cost_flavor ||
+      choice.cost_flavor.trim().length === 0
+    ) {
+      return [];
+    }
+    const alignment = normalizeAlignment(choice.alignment, index, usedAlignments);
+    if (!alignment || usedAlignments.has(alignment)) return [];
+    usedAlignments.add(alignment);
+    return [{ ...choice, alignment }];
   });
 
-  return { ...offer, choices: filtered.slice(0, 4) };
+  return { ...offer, choices: filtered.slice(0, 3) };
+}
+
+function normalizeAlignment(
+  value: unknown,
+  index: number,
+  used: Set<InsightAlignment>,
+): InsightAlignment | null {
+  if (isInsightAlignment(value) && !used.has(value)) return value;
+  const preferred = ALIGNMENT_SEQUENCE[index];
+  if (preferred && !used.has(preferred)) return preferred;
+  return ALIGNMENT_SEQUENCE.find((alignment) => !used.has(alignment)) ?? null;
+}
+
+function isInsightAlignment(value: unknown): value is InsightAlignment {
+  return typeof value === "string" && ALIGNMENT_SEQUENCE.includes(value as InsightAlignment);
 }
 
 function defaultSystemPrompt(): string {
@@ -149,6 +181,10 @@ function emptyOffer(request: InsightRequestV1): InsightOfferV1 {
         effect_kind: "NoOp",
         magnitude: 0,
         flavor_text: "心未契机，此番无所得。",
+        alignment: "neutral",
+        cost_kind: "qi_volatility",
+        cost_magnitude: 0.01,
+        cost_flavor: "气机散乱，短时真元更易挥发。",
       },
     ],
   };
@@ -267,7 +303,7 @@ export class InsightRuntime {
     }
 
     const filtered = applyInsightArbiter(request, offer);
-    if (filtered.choices.length === 0) {
+    if (filtered.choices.length !== 3) {
       this.stats.rejectedArbiter += 1;
       if (!this.publishEmptyOnFailure) return null;
       return emptyOffer(request);

@@ -93,6 +93,9 @@ pub fn register(app: &mut App) {
     register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
     });
+    crate::coffin::register_craft_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register coffin-v1 recipes: {err}");
+    });
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);

@@ -13659,6 +13659,33 @@
       "required": [
         "v",
         "type",
+        "in_coffin",
+        "lifespan_rate_multiplier"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "coffin_state",
+          "type": "string"
+        },
+        "in_coffin": {
+          "type": "boolean"
+        },
+        "lifespan_rate_multiplier": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {

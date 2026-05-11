@@ -44,6 +44,7 @@ public final class HudImmersionMode {
         HudRenderLayer.MERIDIAN_OPEN,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY,
         HudRenderLayer.REALM_COLLAPSE
     );
@@ -63,6 +64,7 @@ public final class HudImmersionMode {
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY
     );
 

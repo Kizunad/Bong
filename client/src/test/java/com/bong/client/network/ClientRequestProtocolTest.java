@@ -500,6 +500,24 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesCoffinLifecycleRequests() {
+        BlockPos pos = new BlockPos(4, 65, -9);
+
+        assertEquals(
+            "{\"type\":\"coffin_place\",\"v\":1,\"x\":4,\"y\":65,\"z\":-9,\"item_instance_id\":4242}",
+            ClientRequestProtocol.encodeCoffinPlace(pos, 4242L)
+        );
+        assertEquals(
+            "{\"type\":\"coffin_enter\",\"v\":1,\"x\":4,\"y\":65,\"z\":-9}",
+            ClientRequestProtocol.encodeCoffinEnter(pos)
+        );
+        assertEquals(
+            "{\"type\":\"coffin_leave\",\"v\":1}",
+            ClientRequestProtocol.encodeCoffinLeave()
+        );
+    }
+
+    @Test
     void encodesDuoSheRequest() {
         String json = ClientRequestProtocol.encodeDuoSheRequest("npc_12v0");
         assertEquals(

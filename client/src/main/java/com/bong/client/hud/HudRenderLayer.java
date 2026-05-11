@@ -31,6 +31,7 @@ public enum HudRenderLayer {
     SEARCH_PROGRESS,
     DAMAGE_FLOATER,
     FLIGHT_HUD,
+    COFFIN,
     TRIBULATION,
     NEAR_DEATH,
     TSY_EXTRACT,

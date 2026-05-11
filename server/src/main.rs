@@ -4,6 +4,7 @@ mod armor;
 mod audio;
 mod botany;
 mod cmd;
+mod coffin;
 mod combat;
 // craft：plan-craft-v1 P0+P1 通用手搓底盘。register() 注入 5 示例配方 + resources +
 // events；P2/P3（client UI + agent narration + 三渠道 hook）由 plan vN+1 接入。
@@ -126,6 +127,7 @@ fn run_server() {
     fauna::register(&mut app);
     alchemy::register(&mut app);
     craft::register(&mut app);
+    coffin::register(&mut app);
     audio::register(&mut app);
     combat::register(&mut app);
     social::register(&mut app);

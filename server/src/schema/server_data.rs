@@ -73,6 +73,13 @@ pub struct LifespanPreviewV1 {
     pub is_wind_candle: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CoffinStateV1 {
+    pub in_coffin: bool,
+    pub lifespan_rate_multiplier: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeathScreenStageV1 {
@@ -102,6 +109,7 @@ pub enum ServerDataType {
     ZoneInfo,
     EventAlert,
     PlayerState,
+    CoffinState,
     UiOpen,
     CultivationDetail,
     QiColorObserved,
@@ -235,6 +243,7 @@ pub enum ServerDataPayloadV1 {
         season_state: Option<SeasonStateV1>,
         social: Option<PlayerSocialSnapshotV1>,
     },
+    CoffinState(CoffinStateV1),
     UiOpen {
         ui: Option<String>,
         xml: String,
@@ -729,6 +738,10 @@ enum ServerDataPayloadWireV1 {
         season_state: Option<SeasonStateV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         social: Option<PlayerSocialSnapshotV1>,
+    },
+    CoffinState {
+        #[serde(flatten)]
+        state: CoffinStateV1,
     },
     UiOpen {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1572,6 +1585,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 season_state,
                 social,
             }),
+            ServerDataPayloadWireV1::CoffinState { state } => Ok(Self::CoffinState(state)),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
                 realm,
@@ -2068,6 +2082,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 season_state: *season_state,
                 social: social.clone(),
             },
+            ServerDataPayloadV1::CoffinState(state) => Self::CoffinState { state: *state },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
                 ui: ui.clone(),
                 xml: xml.clone(),
@@ -2656,6 +2671,7 @@ impl ServerDataPayloadV1 {
             Self::ZoneInfo { .. } => ServerDataType::ZoneInfo,
             Self::EventAlert { .. } => ServerDataType::EventAlert,
             Self::PlayerState { .. } => ServerDataType::PlayerState,
+            Self::CoffinState(..) => ServerDataType::CoffinState,
             Self::UiOpen { .. } => ServerDataType::UiOpen,
             Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
             Self::QiColorObserved(..) => ServerDataType::QiColorObserved,
@@ -3127,6 +3143,10 @@ mod tests {
                 low_stamina: false,
                 last_action_tick: Some(120),
                 rejected_action: Some(MovementActionRequestV1::Dash),
+            }),
+            ServerDataPayloadV1::CoffinState(CoffinStateV1 {
+                in_coffin: true,
+                lifespan_rate_multiplier: 0.9,
             }),
             // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
             ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {

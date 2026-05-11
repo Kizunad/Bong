@@ -174,9 +174,13 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            98,
-            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2/v3, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, audio-world ambient/music loops, armor break cue, movement-v1 action cues, and gathering-ux cues"
+            102,
+            "audio registry should include MVP cues plus JueBi, botany/fauna visual cues, TSY experience, woliu-v2/v3, dugu-v2, baomai-v3, tuike-v2, NPC engagement cues, audio-world ambient/music loops, armor break cue, movement-v1 action cues, gathering-ux cues, and coffin lifecycle cues"
         );
+        assert!(registry.get("coffin_enter").is_some());
+        assert!(registry.get("coffin_exit").is_some());
+        assert!(registry.get("coffin_ambient").is_some());
+        assert!(registry.get("coffin_break").is_some());
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
         assert!(registry.get("tribulation_thunder_distant").is_some());

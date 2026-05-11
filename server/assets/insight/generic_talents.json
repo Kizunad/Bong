@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "talents": [
+    {
+      "id": "color_deepen_self",
+      "category": "coloring",
+      "color_affinity": ["*"],
+      "alignment": "converge",
+      "gain": {
+        "stat": "color_cap",
+        "op": "add",
+        "base_value": 0.03,
+        "color": "$main"
+      },
+      "cost": {
+        "stat": "chaotic_tolerance_loss",
+        "op": "sub",
+        "base_value": 0.02
+      },
+      "gain_flavor": "{color_name}之色更纯——染色深度 +{gain_pct}%",
+      "cost_flavor": "越纯越排异——杂色容忍 -{cost_pct}%"
+    },
+    {
+      "id": "meridian_surge_focus",
+      "category": "meridian",
+      "color_affinity": ["*"],
+      "alignment": "converge",
+      "gain": {
+        "stat": "meridian_flow_rate",
+        "op": "mul",
+        "base_value": 1.05,
+        "meridian_group": "arm_yin"
+      },
+      "cost": {
+        "stat": "opposite_color_penalty",
+        "op": "add",
+        "base_value": 0.15
+      },
+      "gain_flavor": "{color_name}之意贯穿经脉——手三阴流速 +{gain_pct}%",
+      "cost_flavor": "对路越深，反路越涩——对立色效率 -{cost_pct}%"
+    },
+    {
+      "id": "overload_iron_will",
+      "category": "meridian",
+      "color_affinity": ["*"],
+      "alignment": "converge",
+      "gain": {
+        "stat": "overload_tolerance",
+        "op": "add",
+        "base_value": 0.03,
+        "meridian_group": "arm_yin"
+      },
+      "cost": {
+        "stat": "meridian_heal_slowdown",
+        "op": "mul",
+        "base_value": 0.9
+      },
+      "gain_flavor": "{color_name}之意硬住脉壁——过载容忍 +{gain_pct}%",
+      "cost_flavor": "硬脉难愈——经脉修复速度 -{cost_pct}%"
+    },
+    {
+      "id": "qi_regen_harmony",
+      "category": "qi",
+      "color_affinity": ["mellow", "gentle", "*"],
+      "alignment": "any",
+      "gain": {
+        "stat": "qi_regen_factor",
+        "op": "mul",
+        "base_value": 1.03
+      },
+      "cost": {
+        "stat": "qi_volatility",
+        "op": "add",
+        "base_value": 0.015
+      },
+      "gain_flavor": "{color_name}之息调和——真元回复 +{gain_pct}%",
+      "cost_flavor": "灵气更活——战斗中真元挥发 +{cost_pct}%"
+    },
+    {
+      "id": "composure_calm",
+      "category": "composure",
+      "color_affinity": ["*"],
+      "alignment": "neutral",
+      "gain": {
+        "stat": "composure_recover",
+        "op": "mul",
+        "base_value": 1.06
+      },
+      "cost": {
+        "stat": "shock_sensitivity",
+        "op": "add",
+        "base_value": 0.03
+      },
+      "gain_flavor": "心如止水——心境恢复 +{gain_pct}%",
+      "cost_flavor": "水面更易起波——心境冲击敏感 +{cost_pct}%"
+    },
+    {
+      "id": "breakthrough_gamble",
+      "category": "breakthrough",
+      "color_affinity": ["*"],
+      "alignment": "neutral",
+      "gain": {
+        "stat": "breakthrough_bonus",
+        "op": "add",
+        "base_value": 0.03
+      },
+      "cost": {
+        "stat": "breakthrough_failure_penalty",
+        "op": "mul",
+        "base_value": 1.1
+      },
+      "gain_flavor": "冲关之诀——突破成功率 +{gain_pct}%",
+      "cost_flavor": "愿赌服输——突破失败惩罚 +{cost_pct}%"
+    },
+    {
+      "id": "diverge_color_seed",
+      "category": "coloring",
+      "color_affinity": ["*"],
+      "alignment": "diverge",
+      "gain": {
+        "stat": "color_cap",
+        "op": "add",
+        "base_value": 0.04,
+        "color": "$diverge"
+      },
+      "cost": {
+        "stat": "main_color_penalty",
+        "op": "add",
+        "base_value": 0.1
+      },
+      "gain_flavor": "{target_color_name}之理初窥——新色染色上限 +{gain_pct}%",
+      "cost_flavor": "{color_name}之忆淡去——主色效率 -{cost_pct}%"
+    }
+  ]
+}
