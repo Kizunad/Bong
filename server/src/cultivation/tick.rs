@@ -320,6 +320,7 @@ fn has_frailty_status(status_effects: &StatusEffects) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::ActiveStatusEffect;
     use crate::cultivation::color::{
         record_cultivation_session_practice_events, CultivationSessionPracticeEvent, PracticeLog,
         STYLE_PRACTICE_AMOUNT,
@@ -560,6 +561,59 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert_eq!(turbulent_qi, 0.0);
+    }
+
+    #[test]
+    fn qi_regen_paused_status_blocks_qi_recovery_until_expired() {
+        fn run_once(remaining_ticks: Option<u64>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if let Some(remaining_ticks) = remaining_ticks {
+                entity.insert(StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::QiRegenPaused,
+                        magnitude: 1.0,
+                        remaining_ticks,
+                    }],
+                });
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let normal_qi = run_once(None);
+        let paused_qi = run_once(Some(100));
+        let expired_qi = run_once(Some(0));
+
+        assert!(
+            normal_qi > 0.0,
+            "expected normal qi regen to be positive; actual={normal_qi}"
+        );
+        assert_eq!(
+            paused_qi, 0.0,
+            "expected QiRegenPaused with remaining ticks to block regen; actual={paused_qi}"
+        );
+        assert!(
+            (expired_qi - normal_qi).abs() < 1e-6,
+            "expected expired QiRegenPaused to restore normal regen; expected={normal_qi}, actual={expired_qi}"
+        );
     }
 
     #[test]

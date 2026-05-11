@@ -924,20 +924,62 @@ mod tests {
         let warning = registry
             .get(&RecipeId::new("zhenfa.content.warning_trap"))
             .expect("warning trap recipe should be registered");
-        assert_eq!(warning.category, CraftCategory::ZhenfaTrap);
-        assert_eq!(warning.output, ("warning_trap".to_string(), 3));
+        assert_eq!(
+            warning.category,
+            CraftCategory::ZhenfaTrap,
+            "expected warning trap recipe to use ZhenfaTrap category because content-v1 routes through generic trap crafting; actual={:?}",
+            warning.category
+        );
+        assert_eq!(
+            warning.output,
+            ("warning_trap".to_string(), 3),
+            "expected warning trap recipe to batch craft three talismans; actual={:?}",
+            warning.output
+        );
 
         let blast = registry
             .get(&RecipeId::new("zhenfa.content.blast_trap"))
             .expect("blast trap recipe should be registered");
-        assert_eq!(blast.time_ticks, 60 * 20);
-        assert_eq!(blast.output, ("blast_trap".to_string(), 1));
+        assert_eq!(
+            blast.time_ticks,
+            60 * 20,
+            "expected blast trap craft time to be 60 seconds at 20 tps; actual={}",
+            blast.time_ticks
+        );
+        assert_eq!(
+            blast.output,
+            ("blast_trap".to_string(), 1),
+            "expected blast trap recipe to output one talisman because it is the expensive trap; actual={:?}",
+            blast.output
+        );
 
         let slow = registry
             .get(&RecipeId::new("zhenfa.content.slow_trap"))
             .expect("slow trap recipe should be registered");
-        assert_eq!(slow.qi_cost, 8.0);
-        assert_eq!(slow.output, ("slow_trap".to_string(), 2));
+        assert_eq!(
+            slow.qi_cost, 8.0,
+            "expected slow trap recipe qi cost to match plan pin; actual={}",
+            slow.qi_cost
+        );
+        assert_eq!(
+            slow.output,
+            ("slow_trap".to_string(), 2),
+            "expected slow trap recipe to output two talismans; actual={:?}",
+            slow.output
+        );
+    }
+
+    #[test]
+    fn register_zhenfa_content_recipes_rejects_duplicate_ids() {
+        let mut registry = CraftRegistry::new();
+        register_zhenfa_content_recipes(&mut registry).unwrap();
+
+        let duplicate = register_zhenfa_content_recipes(&mut registry);
+
+        assert!(
+            matches!(duplicate, Err(RegistryError::DuplicateId(_))),
+            "expected duplicate recipe ids to be rejected when registering zhenfa content twice; actual={duplicate:?}"
+        );
     }
 
     #[test]

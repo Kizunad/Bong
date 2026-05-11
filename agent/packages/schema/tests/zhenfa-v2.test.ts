@@ -34,6 +34,58 @@ describe("zhenfa-v2 schema", () => {
     });
 
     expect(contentResult.ok).toBe(true);
+
+    const omittedFaceResult = validate(ClientRequestV1, {
+      v: 1,
+      type: "zhenfa_place",
+      x: 2,
+      y: 64,
+      z: -3,
+      kind: "slow_trap",
+      qi_invest_ratio: 0,
+      item_instance_id: 9002,
+    });
+    expect(omittedFaceResult.ok).toBe(true);
+
+    const invalidTargetFaceResult = validate(ClientRequestV1, {
+      v: 1,
+      type: "zhenfa_place",
+      x: 2,
+      y: 64,
+      z: -3,
+      kind: "slow_trap",
+      qi_invest_ratio: 0,
+      item_instance_id: 9002,
+      target_face: "diagonal",
+    });
+    expect(invalidTargetFaceResult.ok).toBe(false);
+
+    const extraFieldResult = validate(ClientRequestV1, {
+      v: 1,
+      type: "zhenfa_place",
+      x: 2,
+      y: 64,
+      z: -3,
+      kind: "slow_trap",
+      qi_invest_ratio: 0,
+      item_instance_id: 9002,
+      target_face: "top",
+      unused: true,
+    });
+    expect(extraFieldResult.ok).toBe(false);
+
+    const nullTargetFaceResult = validate(ClientRequestV1, {
+      v: 1,
+      type: "zhenfa_place",
+      x: 2,
+      y: 64,
+      z: -3,
+      kind: "slow_trap",
+      qi_invest_ratio: 0,
+      item_instance_id: 9002,
+      target_face: null,
+    });
+    expect(nullTargetFaceResult.ok).toBe(false);
   });
 
   it("validates zhenfa-v2 deploy and exposure events", () => {

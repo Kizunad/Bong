@@ -10,8 +10,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
 /**
- * 阵法布置 UI (plan §U5 / §1 ZhenfaLayout). Lets the player pick trigger type
- * and how much qi to invest; commits via {@code zhenfa_place}.
+ * 阵法布置 UI (plan §U5 / §1 ZhenfaLayout). Classic arrays let the player
+ * pick trigger type; ordinary traps use fixed trigger semantics.
  */
 public final class ZhenfaLayoutScreen extends Screen {
     public static final int BG_COLOR = 0xC0101830;
@@ -53,9 +53,11 @@ public final class ZhenfaLayoutScreen extends Screen {
         super.init();
         int cx = width / 2;
         int y = height / 2 - 60;
-        this.addDrawableChild(triggerButton(cx - 170, y, "\u8fd1\u63a5", "proximity"));
-        this.addDrawableChild(triggerButton(cx - 60, y, "\u89e6\u6c14", "contact"));
-        this.addDrawableChild(triggerButton(cx + 50, y, "\u5b9a\u65f6", "timed"));
+        if (!usesFixedTrapTrigger()) {
+            this.addDrawableChild(triggerButton(cx - 170, y, "\u8fd1\u63a5", "proximity"));
+            this.addDrawableChild(triggerButton(cx - 60, y, "\u89e6\u6c14", "contact"));
+            this.addDrawableChild(triggerButton(cx + 50, y, "\u5b9a\u65f6", "timed"));
+        }
 
         this.addDrawableChild(new QiSlider(cx - 110, y + 40, 220, 20, qiInvest));
 
@@ -67,7 +69,7 @@ public final class ZhenfaLayoutScreen extends Screen {
                     kind,
                     ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
                     qiInvest,
-                    trigger,
+                    usesFixedTrapTrigger() ? null : trigger,
                     itemInstanceId > 0 ? itemInstanceId : null,
                     targetFace
                 );
@@ -86,13 +88,22 @@ public final class ZhenfaLayoutScreen extends Screen {
         ).dimensions(x, y, 100, 20).build();
     }
 
+    private boolean usesFixedTrapTrigger() {
+        return kind == ClientRequestProtocol.ZhenfaKind.WARNING_TRAP
+            || kind == ClientRequestProtocol.ZhenfaKind.BLAST_TRAP
+            || kind == ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
+    }
+
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, BG_COLOR);
         context.drawCenteredTextWithShadow(this.textRenderer, "\u9635\u6cd5\u5e03\u7f6e", width / 2, height / 2 - 90, TITLE_COLOR);
         context.drawCenteredTextWithShadow(
             this.textRenderer,
-            "\u89e6\u53d1\u7c7b\u578b: " + trigger + "    \u771f\u5143: " + Math.round(qiInvest * 100) + "%",
+            (usesFixedTrapTrigger() ? "\u89e6\u53d1\u7c7b\u578b: \u56fa\u5b9a" : "\u89e6\u53d1\u7c7b\u578b: " + trigger)
+                + "    \u771f\u5143: "
+                + Math.round(qiInvest * 100)
+                + "%",
             width / 2, height / 2 - 20, TEXT_COLOR
         );
         super.render(context, mouseX, mouseY, delta);

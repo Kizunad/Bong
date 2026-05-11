@@ -38,7 +38,7 @@
 - **跨仓库契约**：
   - server：`server/src/zhenfa/trap_content.rs`（新文件，3 种凡阵的放置/触发/逸散逻辑）
   - client：放置动画 + 触发 VFX + 警示阵通知 HUD
-  - agent：无改动（凡阵是玩家行为，天道不干预）
+  - agent/schema：同步 `ZhenfaKindV1` 三种凡阵 kind、`ZhenfaTargetFaceV1` 与 `ZhenfaPlaceRequestV1.target_face`；天道运行时无新增干预逻辑
 - **worldview 锚点**：§五 地师阵法流 + §八 灵物密度阈值 + §十五 万物皆有成本
 - **qi_physics 锚点**：阵法逸散走 `qi_excretion(initial_qi, ContainerKind::EmbeddedTrap, elapsed, env)`；爆炸阵触发走 `qi_release_to_zone(blast_qi, region, env)`；不自定衰减公式
 
@@ -219,17 +219,17 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 3 种凡阵物品模板（TOML）+ craft 配方注册 + `TrapKind` enum 扩展 + GUI icon 生成 | ✅ 2026-05-12 |
-| P1 | 放置交互（右键 → 预览 → 确认 → 嵌入/贴附）+ 放置动画/粒子 + 真元扣除 | ✅ 2026-05-12 |
-| P2 | 触发系统（竖向柱形检测 / 水平 LOS 检测）+ 效果应用（通知/伤害/减速）| ✅ 2026-05-12 |
-| P3 | 逸散 tick + 失效移除 + 天道密度阈值检查 + 环境修正 | ✅ 2026-05-12 |
-| P4 | 隐蔽性判定（感知 vs 阵法 qi + 环境 + 地师专精加成）+ 拆除机制 | ✅ 2026-05-12 |
-| P5 | Client 视觉（放置者标记粒子 / 触发 VFX / 警示 HUD 通知 / 神识扫描高亮） | ✅ 2026-05-12 |
-| P6 | 饱和化测试（3 阵 × 放置位 × 触发条件 × 逸散 × 隐蔽 × 天道阈值） | ✅ 2026-05-12 |
+| P0 | 3 种凡阵物品模板（TOML）+ craft 配方注册 + `TrapKind` enum 扩展 + GUI icon 生成 | ✅ 2026-05-12 NZST |
+| P1 | 放置交互（右键 → 预览 → 确认 → 嵌入/贴附）+ 放置动画/粒子 + 真元扣除 | ✅ 2026-05-12 NZST |
+| P2 | 触发系统（竖向柱形检测 / 水平 LOS 检测）+ 效果应用（通知/伤害/减速）| ✅ 2026-05-12 NZST |
+| P3 | 逸散 tick + 失效移除 + 天道密度阈值检查 + 环境修正 | ✅ 2026-05-12 NZST |
+| P4 | 隐蔽性判定（感知 vs 阵法 qi + 环境 + 地师专精加成）+ 拆除机制 | ✅ 2026-05-12 NZST |
+| P5 | Client 视觉（放置者标记粒子 / 触发 VFX / 警示 HUD 通知 / 神识扫描高亮） | ✅ 2026-05-12 NZST |
+| P6 | 饱和化测试（3 阵 × 放置位 × 触发条件 × 逸散 × 隐蔽 × 天道阈值） | ✅ 2026-05-12 NZST |
 
 ---
 
-## P0 — 物品 + 配方 + icon ✅ 2026-05-12
+## P0 — 物品 + 配方 + icon ✅ 2026-05-12 NZST
 
 ### 交付物
 
@@ -350,7 +350,7 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## P1 — 放置交互 ✅ 2026-05-12
+## P1 — 放置交互 ✅ 2026-05-12 NZST
 
 ### 交付物
 
@@ -387,7 +387,7 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## P2 — 触发系统 ✅ 2026-05-12
+## P2 — 触发系统 ✅ 2026-05-12 NZST
 
 ### 交付物
 
@@ -426,7 +426,7 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## P3-P6 — 逸散/隐蔽/Client/测试 ✅ 2026-05-12
+## P3-P6 — 逸散/隐蔽/Client/测试 ✅ 2026-05-12 NZST
 
 （结构同 P0-P2 模式，具体交付物见 §5/§2/§4 对应节）
 
@@ -448,13 +448,13 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
   - P3-P4：`survival_ticks_with_environment()` 接 zone qi 环境修正；过期阵法走 `ArrayDecayEvent` + `qi_release_to_zone`；`discovery_profile()` 进入 reveal threshold；拆除沿用 `ZhenfaDisarmRequest` / `ArrayBreakthroughEvent`。
   - P5-P6：client/server/schema 对齐 `target_face` 和 3 个凡阵 kind；生成 schema 更新 `client-request-v1.json` / `client-request-zhenfa-place-v1.json`；边界回归覆盖放置扣 qi、无阵旗可用、LOS 阻挡、忽略放置者、缓阵耗尽、密度阈值、半衰期/环境倍率。
 - **关键 commit**：
-  - `dce9e0e99`（2026-05-12）实现凡阵内容服务端契约。
-  - `ca9d26b3a`（2026-05-12）接入凡阵客户端放置与图标。
-  - `2b97746d2`（2026-05-12）同步凡阵放置请求生成 schema。
-  - `edfab7d72`（2026-05-12）补齐凡阵环境逸散运行时。
-  - `af079f418`（2026-05-12）补充凡阵触发边界回归。
+  - `dce9e0e99`（2026-05-12 NZST）实现凡阵内容服务端契约。
+  - `ca9d26b3a`（2026-05-12 NZST）接入凡阵客户端放置与图标。
+  - `2b97746d2`（2026-05-12 NZST）同步凡阵放置请求生成 schema。
+  - `edfab7d72`（2026-05-12 NZST）补齐凡阵环境逸散运行时。
+  - `af079f418`（2026-05-12 NZST）补充凡阵触发边界回归。
 - **测试结果**：
-  - `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 4497 passed。
+  - `server/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 4500 passed。
   - `agent/`: `npm run build && cd packages/tiandao && npm test && cd ../schema && npm test` → tiandao 358 passed；schema 377 passed。
   - `client/`: `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
 - **跨仓库核验**：

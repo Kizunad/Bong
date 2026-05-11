@@ -1241,6 +1241,7 @@ fn handle_zhenfa_trigger_requests(
         apply_trigger_snapshots(
             snapshots,
             &mut targets,
+            &mut layers,
             &mut practice_logs,
             &mut combat_events,
             &mut death_events,
@@ -1391,7 +1392,9 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
-        release_trap_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
+        if trap_content::OrdinaryTrapKind::from_zhenfa_kind(instance.kind).is_some() {
+            release_trap_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
+        }
         remove_zhenfa_anchor_block(&mut layers, instance.pos);
         events.decay_events.send(ArrayDecayEvent {
             owner: instance.owner,
@@ -1721,6 +1724,7 @@ fn tick_zhenfa_registry(
     apply_trigger_snapshots(
         snapshots,
         &mut targets,
+        &mut layers,
         &mut practice_logs,
         &mut events.combat_events,
         &mut events.death_events,
@@ -1973,6 +1977,7 @@ fn shrine_ward_allows_target(
 fn apply_trigger_snapshots(
     snapshots: Vec<TriggerSnapshot>,
     targets: &mut Query<ZhenfaDamageTarget<'_>>,
+    layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
     practice_logs: &mut Query<&mut PracticeLog>,
     combat_events: &mut EventWriter<CombatEvent>,
     death_events: &mut EventWriter<DeathEvent>,
@@ -2033,14 +2038,15 @@ fn apply_trigger_snapshots(
             if target == snapshot.owner {
                 continue;
             }
+            let target_pos = position.get();
             let in_trigger_area = if snapshot.kind == ZhenfaKind::BlastTrap {
                 trap_content::horizontal_same_layer_contains(
-                    position.get(),
+                    target_pos,
                     snapshot.pos,
                     trap_content::OrdinaryTrapKind::Blast.detection_radius(),
-                )
+                ) && blast_has_clear_los(layers, snapshot.pos, target_pos)
             } else {
-                in_horizontal_radius(position.get(), snapshot.pos, snapshot.effect_radius)
+                in_horizontal_radius(target_pos, snapshot.pos, snapshot.effect_radius)
             };
             if !in_trigger_area {
                 continue;
@@ -3536,6 +3542,58 @@ mod tests {
     }
 
     #[test]
+    fn blast_damage_resolution_keeps_los_filter_per_target() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should exist")
+            .set_block(block_pos_from_array([2, 64, 1]), BlockState::STONE);
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let visible_intruder = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
+        let blocked_intruder = spawn_player(&mut app, "Chen", [2.9, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9110,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9110),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let visible_wounds = app.world().get::<Wounds>(visible_intruder).unwrap();
+        assert!(
+            visible_wounds.health_current < visible_wounds.health_max,
+            "expected visible intruder to take blast damage because LOS is clear; actual health={}",
+            visible_wounds.health_current
+        );
+        let blocked_wounds = app.world().get::<Wounds>(blocked_intruder).unwrap();
+        assert_eq!(
+            blocked_wounds.health_current, blocked_wounds.health_max,
+            "expected blocked intruder to avoid blast damage because wall blocks LOS; actual health={}",
+            blocked_wounds.health_current
+        );
+        assert!(
+            blocked_wounds.entries.is_empty(),
+            "expected blocked intruder to receive no wound entries because LOS is blocked; actual={:?}",
+            blocked_wounds.entries
+        );
+    }
+
+    #[test]
     fn slow_three_charges_then_remove() {
         let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
@@ -3591,6 +3649,7 @@ mod tests {
     #[test]
     fn decay_removes_expired_array_eye() {
         let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.insert_resource(ZoneRegistry::fallback());
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let pos = [3, 64, 3];
         app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -3629,6 +3688,11 @@ mod tests {
         assert_eq!(
             layer_block_state(&app, layer_entity, pos),
             Some(BlockState::AIR)
+        );
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        assert!(
+            transfers.iter_current_update_events().next().is_none(),
+            "expected legacy trap decay to skip ordinary-trap qi release path"
         );
     }
 

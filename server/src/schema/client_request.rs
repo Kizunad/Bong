@@ -232,11 +232,11 @@ pub enum ClientRequestV1 {
         #[serde(default)]
         carrier: Option<ZhenfaCarrierKind>,
         qi_invest_ratio: f64,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<String>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         item_instance_id: Option<u64>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         target_face: Option<TrapTargetFace>,
     },
     /// plan-zhenfa-v1 §3.1.G — 主动引爆最近或指定的自有诡雷。
