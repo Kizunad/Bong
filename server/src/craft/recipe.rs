@@ -97,7 +97,7 @@ impl CraftCategory {
 
     /// UI 左列表分组顺序固定（§5 决策门 #2 = A，按类别分组 + 字母）。
     /// 客户端不应自行打乱该顺序，否则解锁状态视觉跟服务端不一致。
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::AnqiCarrier,
         Self::DuguPotion,
         Self::TuikeSkin,
