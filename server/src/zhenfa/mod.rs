@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, Entity, Event, EventReader, EventWriter, Events,
-    IntoSystemConfigs, Position, Query, Res, ResMut, Resource, SystemSet, Update, Username, With,
-    Without,
+    bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Component, Entity, Event,
+    EventReader, EventWriter, Events, IntoSystemConfigs, Position, PropName, PropValue, Query, Res,
+    ResMut, Resource, SystemSet, Update, Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -30,6 +30,10 @@ use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
 use crate::schema::social::RelationshipKindV1;
 use crate::social::components::{Relationships, Renown};
+use crate::world::{
+    bong_blocks::{place_bong_block, remove_bong_block},
+    dimension::OverworldLayer,
+};
 
 const TICKS_PER_SECOND: u64 = 20;
 const MIN_QI_INVEST_RATIO: f64 = 0.05;
@@ -793,6 +797,7 @@ fn handle_zhenfa_place_requests(
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut players: Query<ZhenfaPlacePlayer<'_>>,
+    mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
     mut ward_events: EventWriter<WardArrayDeployEvent>,
     mut ling_events: EventWriter<LingArrayDeployEvent>,
     mut deceive_events: EventWriter<DeceiveHeavenEvent>,
@@ -863,6 +868,21 @@ fn handle_zhenfa_place_requests(
             );
             continue;
         }
+
+        let placed_world_block = match place_zhenfa_anchor_block(
+            &mut layers,
+            req.pos,
+            zhenfa_anchor_block_state(req.kind),
+        ) {
+            Ok(placed) => placed,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][zhenfa] place rejected: failed to write custom block at {:?}: {error}",
+                    req.pos
+                );
+                continue;
+            }
+        };
 
         cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
         let realm_at_cast = cultivation.realm;
@@ -936,6 +956,9 @@ fn handle_zhenfa_place_requests(
                 );
             }
             Err(error) => {
+                if placed_world_block {
+                    remove_zhenfa_anchor_block(&mut layers, req.pos);
+                }
                 tracing::warn!("[bong][zhenfa] place failed after qi debit: {error}");
             }
         }
@@ -948,6 +971,7 @@ fn handle_zhenfa_trigger_requests(
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut players: Query<ZhenfaTriggerPlayer<'_>>,
+    mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut practice_logs: Query<&mut PracticeLog>,
     mut combat_events: EventWriter<CombatEvent>,
@@ -1012,6 +1036,7 @@ fn handle_zhenfa_trigger_requests(
         if let Some(mut mastery) = mastery {
             mastery.add_trigger(ZhenfaKind::Trap);
         }
+        remove_zhenfa_anchor_blocks(&mut layers, snapshots.iter().map(|snapshot| snapshot.pos));
         despawn_triggered_anchors(&mut commands, &snapshots);
         apply_trigger_snapshots(
             snapshots,
@@ -1135,6 +1160,7 @@ fn tick_zhenfa_registry(
     clock: Res<CombatClock>,
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
+    mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut practice_logs: Query<&mut PracticeLog>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
@@ -1154,6 +1180,7 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
+        remove_zhenfa_anchor_block(&mut layers, instance.pos);
         decay_events.send(ArrayDecayEvent {
             owner: instance.owner,
             owner_player_id: instance.owner_player_id.clone(),
@@ -1303,10 +1330,12 @@ fn tick_zhenfa_registry(
             });
         }
         commands.entity(anchor_entity).despawn();
+        remove_zhenfa_anchor_block(&mut layers, pos);
     }
 
     let mut snapshots = registry.trigger_now(passive_triggers, now);
     snapshots.extend(registry.drain_due_chain_triggers(now));
+    remove_zhenfa_anchor_blocks(&mut layers, snapshots.iter().map(|snapshot| snapshot.pos));
     despawn_triggered_anchors(&mut commands, &snapshots);
     apply_trigger_snapshots(
         snapshots,
@@ -1326,6 +1355,7 @@ fn handle_zhenfa_disarm_requests(
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut players: Query<ZhenfaDisarmPlayer<'_>>,
+    mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut breakthrough_events: EventWriter<ArrayBreakthroughEvent>,
@@ -1359,6 +1389,7 @@ fn handle_zhenfa_disarm_requests(
         let Some(instance) = registry.remove(instance_id) else {
             continue;
         };
+        remove_zhenfa_anchor_block(&mut layers, instance.pos);
         commands.entity(instance.anchor_entity).despawn();
         breakthrough_events.send(ArrayBreakthroughEvent {
             breaker: req.player,
@@ -2004,6 +2035,55 @@ fn squared_distance_i32(left: [i32; 3], right: [i32; 3]) -> i32 {
     dx * dx + dy * dy + dz * dz
 }
 
+fn block_pos_from_array(pos: [i32; 3]) -> BlockPos {
+    BlockPos::new(pos[0], pos[1], pos[2])
+}
+
+fn zhenfa_anchor_block_state(kind: ZhenfaKind) -> BlockState {
+    let state = BlockState::BONG_ZHENFA_EYE;
+    if matches!(kind, ZhenfaKind::ShrineWard | ZhenfaKind::DeceiveHeaven) {
+        state.set(PropName::Charged, PropValue::True)
+    } else {
+        state
+    }
+}
+
+fn place_zhenfa_anchor_block(
+    layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
+    pos: [i32; 3],
+    block: BlockState,
+) -> Result<bool, String> {
+    let Some(mut layer) = layers.iter_mut().next() else {
+        return Ok(false);
+    };
+
+    place_bong_block(&mut layer, block_pos_from_array(pos), block)
+        .map(|_| true)
+        .map_err(|error| error.to_string())
+}
+
+fn remove_zhenfa_anchor_block(
+    layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
+    pos: [i32; 3],
+) {
+    let Some(mut layer) = layers.iter_mut().next() else {
+        return;
+    };
+    remove_bong_block(&mut layer, block_pos_from_array(pos));
+}
+
+fn remove_zhenfa_anchor_blocks(
+    layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
+    positions: impl IntoIterator<Item = [i32; 3]>,
+) {
+    let Some(mut layer) = layers.iter_mut().next() else {
+        return;
+    };
+    for pos in positions {
+        remove_bong_block(&mut layer, block_pos_from_array(pos));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2013,10 +2093,28 @@ mod tests {
         ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
         PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     };
-    use valence::prelude::{App, DVec3, Events};
+    use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
 
     fn app_with_zhenfa() -> App {
         let mut app = App::new();
+        install_zhenfa_test_systems(&mut app);
+        app
+    }
+
+    fn app_with_zhenfa_layer() -> (App, Entity) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer")
+            .insert_chunk([0, 0], UnloadedChunk::new());
+        install_zhenfa_test_systems(&mut app);
+        (app, scenario.layer)
+    }
+
+    fn install_zhenfa_test_systems(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(PendingGameplayNarrations::default());
         app.add_event::<ZhenfaPlaceRequest>();
@@ -2045,7 +2143,6 @@ mod tests {
             )
                 .chain(),
         );
-        app
     }
 
     fn spawn_player(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
@@ -2221,6 +2318,55 @@ mod tests {
         assert_eq!(instance.qi_invest_ratio, 0.10);
         assert_eq!(instance.effect_radius, 0);
         assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn placement_writes_and_disarm_removes_custom_block() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let pos = [1, 64, 1];
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos,
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.10,
+            trigger: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        {
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            assert_eq!(
+                layer
+                    .block(block_pos_from_array(pos))
+                    .map(|block| block.state),
+                Some(BlockState::BONG_ZHENFA_EYE)
+            );
+        }
+
+        app.world_mut().send_event(ZhenfaDisarmRequest {
+            player: owner,
+            pos,
+            mode: ZhenfaDisarmMode::ForceBreak,
+            requested_at_tick: 11,
+        });
+        app.update();
+
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        assert_eq!(
+            layer
+                .block(block_pos_from_array(pos))
+                .map(|block| block.state),
+            Some(BlockState::AIR)
+        );
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at(pos)
+            .is_none());
     }
 
     #[test]
