@@ -99,8 +99,8 @@ use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
-const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(1);
-const REDIS_HASH_REPLACE_TIMEOUT: Duration = Duration::from_secs(1);
+const REDIS_WORLD_STATE_PUBLISH_TIMEOUT: Duration = Duration::from_secs(3);
+const REDIS_HASH_REPLACE_TIMEOUT: Duration = Duration::from_secs(3);
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
