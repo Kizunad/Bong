@@ -252,15 +252,15 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `DayPhase` + `NpcDailySchedule` component + 时段权重注入到现有 Scorer | ⬜ |
-| P1 | `GoToPoiAction`（替换 WanderAction）+ POI 类型扩展（5 种新 POI） | ⬜ |
-| P2 | `NpcHomeBase` + `ReturnHomeAction` + `RestAction` + `StallAction` | ⬜ |
-| P3 | Far 层状态 tick + Dormant 层最小推演 + Hydrate 过渡逻辑 | ⬜ |
-| P4 | 饱和化测试（4 时段 × 7 活动 × 3 LOD 层 × hydrate 过渡） | ⬜ |
+| P0 | `DayPhase` + `NpcDailySchedule` component + 时段权重注入到现有 Scorer | ✅ 2026-05-11 |
+| P1 | `GoToPoiAction`（替换 WanderAction）+ POI 类型扩展（5 种新 POI） | ✅ 2026-05-11 |
+| P2 | `NpcHomeBase` + `ReturnHomeAction` + `RestAction` + `StallAction` | ✅ 2026-05-11 |
+| P3 | Far 层状态 tick + Dormant 层最小推演 + Hydrate 过渡逻辑 | ✅ 2026-05-11 |
+| P4 | 饱和化测试（4 时段 × 7 活动 × 3 LOD 层 × hydrate 过渡） | ✅ 2026-05-11 |
 
 ---
 
-## P0 — 时段日程 ⬜
+## P0 — 时段日程 ✅ 2026-05-11
 
 ### 交付物
 
@@ -306,7 +306,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P1 — 目的地驱动漫游 ⬜
+## P1 — 目的地驱动漫游 ✅ 2026-05-11
 
 ### 交付物
 
@@ -346,7 +346,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P2 — HomeBase + 新 Action ⬜
+## P2 — HomeBase + 新 Action ✅ 2026-05-11
 
 ### 交付物
 
@@ -379,7 +379,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P3 — LOD 分层推演 ⬜
+## P3 — LOD 分层推演 ✅ 2026-05-11
 
 ### 交付物
 
@@ -408,7 +408,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P4 — 饱和化测试 ⬜
+## P4 — 饱和化测试 ✅ 2026-05-11
 
 ### 交付物
 
@@ -426,13 +426,32 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`DayPhase` enum / `NpcDailySchedule` component / `day_phase()` 函数 / 时段权重注入 5 个 Scorer / `GoToPoiAction`（替换 WanderAction）/ 5 种新 POI 类型 / `NpcHomeBase` / `ReturnHomeAction` / `RestAction` / `StallAction` / Far 状态 tick / Dormant 最小推演 / Hydrate 过渡 / 84 种权重组合 pin
-- **关键 commit**：P0-P4 各自 hash
+- **落地清单**：
+  - P0：`server/src/npc/schedule.rs` 定义 `DayPhase`、`ScheduleActivity`、`NpcDailySchedule`、`NpcScheduleChangedEvent`，并在 `server/src/npc/brain.rs` 将日程权重注入 `HungerScorer`、`WanderScorer`、`CultivationDriveScorer`、`TradeStallScorer`、`ReturnHomeScorer`。
+  - P1：`server/src/npc/brain.rs` 新增 `GoToPoiAction` / `GoToPoiState`，`server/src/world/poi_novice.rs`、`server/src/schema/poi_novice.rs`、`agent/packages/schema/src/poi-novice.ts` 扩展 `HerbPatch`、`QiSpring`、`TradeSpot`、`ShelterSpot`、`WaterSource`。
+  - P2：`server/src/npc/schedule.rs` 新增 `NpcHomeBase` / `rest_tick()`，`server/src/npc/brain.rs` 新增 `ReturnHomeAction`、`RestAction`、`StallAction`，`server/src/npc/spawn.rs` 为 commoner / rogue / scattered cultivator / beast / disciple 初始化日程和 home。
+  - P3：`server/src/npc/schedule.rs` 新增 Far 层 `far_npc_schedule_tick_system`、Dormant 最小推演测试钩子、`hydrate_position_for()`；`server/src/npc/dormant/mod.rs` 将 dormant tick 间隔收敛到 12000 tick；`server/src/npc/hydrate/mod.rs` hydrate 时按当前日程重定位。
+  - P4：`server/src/npc/schedule.rs`、`server/src/npc/brain.rs`、`server/src/world/poi_novice.rs`、`agent/packages/schema/tests/poi-novice.test.ts` 覆盖时段边界、权重矩阵、POI 选择、回家/休息/摆摊、Far/Dormant/Hydrate、schema enum pin。
+- **关键 commit**：
+  - `6cd80afb1`（2026-05-11）`feat(npc): 扩展日常生活 POI 契约`
+  - `d18a042e4`（2026-05-11）`feat(npc): 加入日程阶段与 LOD 状态 tick`
+  - `6cc5d076d`（2026-05-11）`feat(npc): 接入目的地漫游与回家休息行为`
+- **测试结果**：
+  - `server/ cargo fmt --check` ✅
+  - `server/ cargo clippy --all-targets -- -D warnings` ✅
+  - `server/ cargo test` ✅ 4297 passed
+  - `agent/ npm run build` ✅
+  - `agent/packages/schema/ npm test` ✅ 18 files / 366 tests passed
+  - `agent/packages/tiandao/ npm test` ✅ 51 files / 352 tests passed
+- **跨仓库核验**：
+  - server：`NpcDailySchedule`、`DayPhase`、`GoToPoiAction`、`NpcHomeBase`、`ReturnHomeAction`、`StallAction`、`PoiNoviceKind::HerbPatch`
+  - agent/schema：`PoiNoviceKindV1` 含 `herb_patch` / `qi_spring` / `trade_spot` / `shelter_spot` / `water_source`
+  - client：无 client 改动；NPC 渲染继续走既有服务端位置 / 动作同步链路
 - **遗留 / 后续**：
-  - NPC 季节行为差异（冬天少出门 / 夏天活动范围大）→ SeasonState 注入 Schedule
-  - NPC 社交 session 实质化（聊天/交易/结伴旅行）→ plan-npc-interaction-polish-v1
-  - NPC 间竞争（多个散修抢同一灵草丛）→ 需要 POI 占用计数
-  - NPC 记忆（"上次去那个灵草丛被打了，这次换一个"）→ NpcBlackboard 扩展
-  - 天道事件影响日程（伪灵脉升起 → 所有散修涌向该方向）→ agent 指令注入 Schedule
+  - NPC 季节行为差异（冬天少出门 / 夏天活动范围大）→ SeasonState 注入 Schedule。
+  - NPC 社交 session 实质化（聊天 / 交易 / 结伴旅行）→ `plan-npc-interaction-polish-v1`。
+  - NPC 间竞争（多个散修抢同一灵草丛）→ 需要 POI 占用计数。
+  - NPC 记忆（"上次去那个灵草丛被打了，这次换一个"）→ NpcBlackboard 扩展。
+  - 天道事件影响日程（伪灵脉升起 → 所有散修涌向该方向）→ agent 指令注入 Schedule。
