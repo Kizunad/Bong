@@ -30,10 +30,10 @@ Fork Valence 的 `valence_generated` codegen，扩展 block registry 支持 `bon
 
 ## §0 设计轴心
 
-- [ ] **Vanilla 数据零侵入**：`extracted/blocks.json` 不改一个字节。Bong 方块在独立的 `bong_blocks.json` 中定义
-- [ ] **ID 自动分配**：Bong 方块 state ID 从 `vanilla_max_state_id + 1`（24135）开始，按定义顺序自动递增
-- [ ] **单一事实源**：`bong_blocks.json` 同时驱动 server codegen 和 client 注册，不允许两端各自定义
-- [ ] **最小 fork**：只 fork `valence_generated` crate，不 fork 整个 Valence。server Cargo.toml 的 valence 依赖不变，只是把 `valence_generated` 指向本地 fork
+- [x] **Vanilla 数据零侵入**：`extracted/blocks.json` 不改一个字节。Bong 方块在独立的 `bong_blocks.json` 中定义
+- [x] **ID 自动分配**：Bong 方块 state ID 从 `vanilla_max_state_id + 1`（24135）开始，按定义顺序自动递增
+- [x] **单一事实源**：`bong_blocks.json` 同时驱动 server codegen 和 client 注册，不允许两端各自定义
+- [x] **最小 fork**：只 fork `valence_generated` crate，不 fork 整个 Valence。server Cargo.toml 的 valence 依赖不变，只是把 `valence_generated` 指向本地 fork
 
 ---
 
@@ -126,15 +126,15 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | Fork `valence_generated`，修改 `build/block.rs` 加载 `bong_blocks.json`，验证 codegen | ⬜ |
-| P1 | 首批 3 个阵法方块定义（zhenfa_node / zhenfa_line / zhenfa_eye）+ server 放置/读取 API | ⬜ |
-| P2 | Client Fabric 方块注册 + blockstate JSON + 模型 + 贴图（gen.py scene 风格） | ⬜ |
-| P3 | ID 对齐验证 + 端到端测试（server 放方块 → client 渲染正确） | ⬜ |
-| P4 | 文档 + 新增方块流程模板（"加一个新自定义方块需要改哪些文件"） | ⬜ |
+| P0 | Fork `valence_generated`，修改 `build/block.rs` 加载 `bong_blocks.json`，验证 codegen | ✅ |
+| P1 | 首批 3 个阵法方块定义（zhenfa_node / zhenfa_line / zhenfa_eye）+ server 放置/读取 API | ✅ |
+| P2 | Client Fabric 方块注册 + blockstate JSON + 模型 + 贴图（gen.py scene 风格） | ✅ |
+| P3 | ID 对齐验证 + 端到端测试（server 放方块 → client 渲染正确） | ✅ |
+| P4 | 文档 + 新增方块流程模板（"加一个新自定义方块需要改哪些文件"） | ✅ |
 
 ---
 
-## P0 — Fork valence_generated + codegen 扩展 ⬜
+## P0 — Fork valence_generated + codegen 扩展 ✅
 
 ### 交付物
 
@@ -242,7 +242,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P1 — Server 放置/读取 API ⬜
+## P1 — Server 放置/读取 API ✅
 
 ### 交付物
 
@@ -279,7 +279,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P2 — Client Fabric 方块注册 ⬜
+## P2 — Client Fabric 方块注册 ✅
 
 ### 交付物
 
@@ -349,7 +349,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P3 — 端到端验证 ⬜
+## P3 — 端到端验证 ✅
 
 ### 交付物
 
@@ -367,7 +367,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P4 — 文档 + 新增方块流程模板 ⬜
+## P4 — 文档 + 新增方块流程模板 ✅
 
 ### 交付物
 
@@ -384,12 +384,33 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：valence_generated fork / bong_blocks.json 扩展入口 / BongBlockApi / BongBlocks.java / 3 个阵法方块（node/line/eye）/ blockstate+model+texture / ID 对齐验证 / 新增方块 checklist
-- **关键 commit**：P0-P4 各自 hash
+- **落地清单**：
+  - P0：`server/crates/valence_generated_bong/` 本地 fork 接入，`server/Cargo.toml` 通过 `[patch."https://github.com/valence-rs/valence"]` 指向 fork；`server/crates/valence_generated_bong/build/block.rs` 从仓库根 `bong_blocks.json` 读取 Bong 方块定义并追加 codegen。
+  - P1：`bong_blocks.json` 定义 `bong:zhenfa_node`、`bong:zhenfa_line`、`bong:zhenfa_eye`；`server/src/world/bong_blocks.rs` 提供 `place_bong_block` / `remove_bong_block` / `is_bong_block`；`server/src/zhenfa/mod.rs` 在阵法放置、触发、拆除、衰减路径写入和移除 Bong 自定义方块。
+  - P2：`client/build.gradle` 从 `bong_blocks.json` 生成 `BongBlockIds`；`client/src/main/java/com/bong/client/block/BongBlocks.java` 注册 3 个 Fabric 方块并 fail-fast 校验 raw block/state ID；补齐 `assets/bong/blockstates/`、`models/block/`、`textures/block/`。
+  - P3：server 覆盖 codegen raw ID、方块写入/读取/移除、阵法放置写块与拆除移除；client 覆盖 manifest、生成 ID、blockstate/model/texture 资源存在性。图形客户端截图未在本轮无显示环境执行，改由可重复的 raw ID fail-fast 和资源契约测试锁定。
+  - P4：`server/crates/valence_generated_bong/README.md` 记录新增自定义方块 checklist。
+- **关键 commit**：
+  - `8bdc686f5`（2026-05-11）`feat(custom-block): 接入 Bong 方块 codegen fork`
+  - `192eb6c14`（2026-05-11）`feat(custom-block): 接入阵法自定义方块放置`
+  - `ea84ce911`（2026-05-11）`feat(custom-block): 注册客户端阵法方块资源`
+  - `b85adc312`（2026-05-11）`docs(custom-block): 记录新增方块流程`
+  - `3545b85a7`（2026-05-11）`Merge remote-tracking branch 'origin/main' into auto/plan-custom-block-v1`
+- **测试结果**：
+  - `server/crates/valence_generated_bong`: `cargo test` → 3 passed。
+  - `server`: `cargo fmt --check` → passed。
+  - `server`: `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` → passed。
+  - `server`: `CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1` → 4287 passed。
+  - `client`: `JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
+- **跨仓库核验**：
+  - server：`BlockState::BONG_ZHENFA_NODE`、`BlockKind::BongZhenfaNode`、`BONG_BLOCK_STATE_START = 24135`、`place_bong_block`、阵法 `ChunkLayer` 写块/移除路径。
+  - client：`BongBlocks.register()`、`BongBlockIds.ZHENFA_*`、`bong:zhenfa_*` blockstate/model/texture 资源。
+  - 共享：`bong_blocks.json` 是 server codegen 与 client generated ID 的共同来源。
+- **生成资产说明**：`scripts/images/gen.py` 因本地缺少 `CLIPROXY_API_KEY` / `CLIPROXY_BASE_URL` 未能调用图像后端；本轮使用确定性的 32x32 PNG fallback 贴图，避免引入不稳定外部依赖。
 - **遗留 / 后续**：
-  - 方块碰撞体积自定义（当前全部 noCollision，未来可能需要半方块碰撞）
-  - 方块实体数据（NBT）——Valence 层面当前不支持，等 plan-persistence-v1
-  - 批量方块定义工具（从 TOML/YAML 转 bong_blocks.json）
-  - 更多自定义方块：灵龛方块 / 炼器台方块 / 灵田可视化方块 / 装饰方块
+  - 方块碰撞体积自定义（当前全部 noCollision，未来可能需要半方块碰撞）。
+  - 方块实体数据（NBT）——Valence 层面当前不支持，等 plan-persistence-v1。
+  - 批量方块定义工具（从 TOML/YAML 转 `bong_blocks.json`）。
+  - 更多自定义方块：灵龛方块 / 炼器台方块 / 灵田可视化方块 / 装饰方块。
