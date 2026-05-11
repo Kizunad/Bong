@@ -454,10 +454,11 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
   - `edfab7d72`（2026-05-12 NZST）补齐凡阵环境逸散运行时。
   - `af079f418`（2026-05-12 NZST）补充凡阵触发边界回归。
   - `037980e3b`（2026-05-12 NZST）补齐 `QiRegenPaused` 在 `status_snapshot` 的 id/name/debuff 映射。
+  - `ec5f69405`（2026-05-12 NZST）覆盖凡阵布置屏幕的固定触发、item id 与 target face 请求映射。
 - **测试结果**：
   - `server/`: `cargo build --release` → passed；`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 4507 passed。
   - `agent/`: `npm run build && (cd packages/schema && npm test)` → build passed；schema 377 passed；`cd packages/tiandao && npm test` → tiandao 358 passed。
-  - `client/`: `source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk use java 17.0.18-amzn && ./gradlew test build` → BUILD SUCCESSFUL。
+  - `client/`: `source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk use java 17.0.18-amzn && ./gradlew test build` → BUILD SUCCESSFUL（含 `ZhenfaLayoutScreenTest`）。
 - **跨仓库核验**：
   - server：`OrdinaryTrapKind` / `ZhenfaKind::WarningTrap` / `ZhenfaKind::BlastTrap` / `ZhenfaKind::SlowTrap` / `StatusEffectKind::QiRegenPaused` / `ZhenfaPlaceRequest.target_face`。
   - agent/schema：`ZhenfaKindV1` 包含 3 个凡阵 kind；`ZhenfaTargetFaceV1`；`ZhenfaPlaceRequestV1.target_face`。
