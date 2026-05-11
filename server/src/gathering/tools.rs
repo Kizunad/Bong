@@ -418,6 +418,35 @@ mod tests {
     }
 
     #[test]
+    fn spec_for_item_id_supports_hoe_xuantie_alias() {
+        let spec = spec_for_item_id("hoe_xuantie")
+            .expect("expected hoe_xuantie alias to resolve to a gathering spec");
+        assert_eq!(
+            spec.item_id, "hoe_xuantie",
+            "expected hoe_xuantie alias to preserve the registered item id, actual {}",
+            spec.item_id
+        );
+        assert_eq!(
+            spec.kind,
+            GatheringToolKind::Hoe,
+            "expected hoe_xuantie to map to Hoe because it is a herb tool, actual {:?}",
+            spec.kind
+        );
+        assert_eq!(
+            spec.material,
+            GatheringMaterial::Copper,
+            "expected hoe_xuantie compatibility mapping to use Copper tier, actual {:?}",
+            spec.material
+        );
+        assert_eq!(
+            spec.target,
+            GatheringTargetKind::Herb,
+            "expected hoe_xuantie compatibility mapping to target Herb, actual {:?}",
+            spec.target
+        );
+    }
+
+    #[test]
     fn successful_gathering_ticks_tool_durability() {
         let mut inventory = inventory_with_two_hand("pickaxe_copper");
         let spec = spec_for_item_id("pickaxe_copper").expect("fixture tool exists");

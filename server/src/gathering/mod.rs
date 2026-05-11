@@ -18,7 +18,9 @@ use session::{
 use tools::GatheringTargetKind;
 
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::{
+    GatheringQualityHintV1, GatheringTargetTypeV1, ServerDataPayloadV1, ServerDataV1,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub enum GatheringSystemSet {
@@ -70,8 +72,8 @@ fn emit_gathering_progress(
             progress_ticks: frame.progress_ticks,
             total_ticks: frame.total_ticks,
             target_name: frame.target_name.clone(),
-            target_type: target_type_wire(frame.target_type).to_string(),
-            quality_hint: frame.quality_hint.clone(),
+            target_type: target_type_wire(frame.target_type),
+            quality_hint: quality_hint_wire(frame.quality_hint.as_str()),
             tool_used: frame.tool_used.clone(),
             interrupted: frame.interrupted,
             completed: frame.completed,
@@ -84,11 +86,21 @@ fn emit_gathering_progress(
     }
 }
 
-pub fn target_type_wire(target: GatheringTargetKind) -> &'static str {
+pub fn target_type_wire(target: GatheringTargetKind) -> GatheringTargetTypeV1 {
     match target {
-        GatheringTargetKind::Herb => "herb",
-        GatheringTargetKind::Ore => "ore",
-        GatheringTargetKind::Wood => "wood",
+        GatheringTargetKind::Herb => GatheringTargetTypeV1::Herb,
+        GatheringTargetKind::Ore => GatheringTargetTypeV1::Ore,
+        GatheringTargetKind::Wood => GatheringTargetTypeV1::Wood,
+    }
+}
+
+fn quality_hint_wire(hint: &str) -> GatheringQualityHintV1 {
+    match hint {
+        "fine_likely" => GatheringQualityHintV1::FineLikely,
+        "perfect_possible" => GatheringQualityHintV1::PerfectPossible,
+        "fine" => GatheringQualityHintV1::Fine,
+        "perfect" => GatheringQualityHintV1::Perfect,
+        _ => GatheringQualityHintV1::Normal,
     }
 }
 
@@ -109,5 +121,38 @@ mod tests {
         assert!(app
             .world()
             .contains_resource::<Events<GatheringCompleteEvent>>());
+    }
+
+    #[test]
+    fn gathering_wire_enums_match_shared_schema_values() {
+        assert_eq!(
+            target_type_wire(GatheringTargetKind::Herb),
+            GatheringTargetTypeV1::Herb
+        );
+        assert_eq!(
+            target_type_wire(GatheringTargetKind::Ore),
+            GatheringTargetTypeV1::Ore
+        );
+        assert_eq!(
+            target_type_wire(GatheringTargetKind::Wood),
+            GatheringTargetTypeV1::Wood
+        );
+        assert_eq!(
+            quality_hint_wire("fine_likely"),
+            GatheringQualityHintV1::FineLikely
+        );
+        assert_eq!(
+            quality_hint_wire("perfect_possible"),
+            GatheringQualityHintV1::PerfectPossible
+        );
+        assert_eq!(quality_hint_wire("fine"), GatheringQualityHintV1::Fine);
+        assert_eq!(
+            quality_hint_wire("perfect"),
+            GatheringQualityHintV1::Perfect
+        );
+        assert_eq!(
+            quality_hint_wire("unexpected"),
+            GatheringQualityHintV1::Normal
+        );
     }
 }

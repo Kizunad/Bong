@@ -300,12 +300,13 @@ pub(super) fn handle_block_break_for_mineral(
                 cultivation: queries.cultivations.get(event.client).ok(),
             };
             let session = mining_gathering_session(&context);
-            let progress_frame = session.progress_frame(now_tick, false, false);
             if let Some(store) = resources.gathering_sessions.as_deref_mut() {
-                if store.session_for(event.client).is_none() {
-                    store.upsert(session);
+                if store.session_for(event.client).is_some() {
+                    continue;
                 }
+                store.upsert(session.clone());
             }
+            let progress_frame = session.progress_frame(now_tick, false, false);
             if let Ok(mut client) = queries.clients.get_mut(event.client) {
                 send_mining_progress_to_client(
                     &mut client,
@@ -869,5 +870,79 @@ mod tests {
             .resource::<GatheringSessionStore>()
             .session_for(player)
             .is_some());
+    }
+
+    #[test]
+    fn survival_start_does_not_emit_new_frame_when_session_already_exists() {
+        use crate::mineral::components::{MineralOreIndex, MineralOreNode};
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use valence::prelude::{App, BlockPos, Events, GameMode, IntoSystemConfigs, Update};
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<DiggingEvent>();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<MineralExhaustedEvent>();
+        app.add_event::<KarmaFlagIntent>();
+        app.add_event::<MineralFeedbackEvent>();
+        app.add_event::<GatheringProgressFrame>();
+        app.add_event::<GatheringCompleteEvent>();
+        app.insert_resource(GatheringSessionStore::default());
+        app.insert_resource(crate::mineral::registry::build_default_registry());
+        app.insert_resource(MineralOreIndex::default());
+        app.add_systems(Update, handle_block_break_for_mineral.into_configs());
+
+        let (client_bundle, _helper) = create_mock_client("Survivor");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+            inventory_with_main_hand("pickaxe_iron"),
+        ));
+        let old_session = GatheringSession::new(GatheringSessionStart {
+            player,
+            session_id: "mining:old".to_string(),
+            target: GatheringTargetKind::Ore,
+            target_name: "旧矿脉".to_string(),
+            started_at_tick: 0,
+            origin_position: [0.5, 64.5, 0.5],
+            tool: None,
+            realm: Realm::Awaken,
+            auto_complete: false,
+        });
+        app.world_mut()
+            .resource_mut::<GatheringSessionStore>()
+            .upsert(old_session);
+
+        let pos = BlockPos::new(10, 64, 10);
+        let node = MineralOreNode::new(crate::mineral::types::MineralId::FanTie, pos);
+        let ore_entity = app.world_mut().spawn(node).id();
+        app.world_mut().resource_mut::<MineralOreIndex>().insert(
+            DimensionKind::Overworld,
+            pos,
+            ore_entity,
+        );
+
+        app.world_mut().send_event(DiggingEvent {
+            client: player,
+            position: pos,
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Start,
+        });
+
+        app.update();
+
+        let frames = app.world().resource::<Events<GatheringProgressFrame>>();
+        assert_eq!(
+            frames.get_reader().read(frames).count(),
+            0,
+            "Survival Start must not emit a new frame when GatheringSessionStore still holds another active session"
+        );
+        let stored = app
+            .world()
+            .resource::<GatheringSessionStore>()
+            .session_for(player)
+            .expect("existing mining session should be preserved");
+        assert_eq!(stored.session_id, "mining:old");
     }
 }

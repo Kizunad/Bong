@@ -166,6 +166,7 @@ fn spawn_fossil_mineral_nodes(
 }
 
 fn mineral_gatherable(mineral_id: MineralId, registry: &MineralRegistry) -> Gatherable {
+    let mineral_key = mineral_id.as_str();
     let display_name = registry
         .get(mineral_id)
         .map(|entry| entry.display_name_zh.to_string())
@@ -173,7 +174,7 @@ fn mineral_gatherable(mineral_id: MineralId, registry: &MineralRegistry) -> Gath
     Gatherable {
         target: GatheringTargetKind::Ore,
         base_time_ticks: base_time_ticks(GatheringTargetKind::Ore),
-        loot_table: format!("mineral:{mineral_id:?}"),
+        loot_table: format!("mineral:{mineral_key}"),
         display_name,
     }
 }

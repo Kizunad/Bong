@@ -45,6 +45,24 @@ pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringTargetTypeV1 {
+    Herb,
+    Ore,
+    Wood,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringQualityHintV1 {
+    Normal,
+    FineLikely,
+    PerfectPossible,
+    Fine,
+    Perfect,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifespanPreviewV1 {
     pub years_lived: f64,
@@ -290,8 +308,8 @@ pub enum ServerDataPayloadV1 {
         progress_ticks: u64,
         total_ticks: u64,
         target_name: String,
-        target_type: String,
-        quality_hint: String,
+        target_type: GatheringTargetTypeV1,
+        quality_hint: GatheringQualityHintV1,
         tool_used: Option<String>,
         interrupted: bool,
         completed: bool,
@@ -800,8 +818,8 @@ enum ServerDataPayloadWireV1 {
         progress_ticks: u64,
         total_ticks: u64,
         target_name: String,
-        target_type: String,
-        quality_hint: String,
+        target_type: GatheringTargetTypeV1,
+        quality_hint: GatheringQualityHintV1,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_used: Option<String>,
         interrupted: bool,
@@ -2180,8 +2198,8 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 progress_ticks: *progress_ticks,
                 total_ticks: *total_ticks,
                 target_name: target_name.clone(),
-                target_type: target_type.clone(),
-                quality_hint: quality_hint.clone(),
+                target_type: *target_type,
+                quality_hint: *quality_hint,
                 tool_used: tool_used.clone(),
                 interrupted: *interrupted,
                 completed: *completed,
@@ -3024,8 +3042,8 @@ mod tests {
                 progress_ticks: 20,
                 total_ticks: 40,
                 target_name: "凝脉草".to_string(),
-                target_type: "herb".to_string(),
-                quality_hint: "fine_likely".to_string(),
+                target_type: GatheringTargetTypeV1::Herb,
+                quality_hint: GatheringQualityHintV1::FineLikely,
                 tool_used: Some("hoe_iron".to_string()),
                 interrupted: false,
                 completed: false,
@@ -3035,8 +3053,8 @@ mod tests {
                 progress_ticks: 60,
                 total_ticks: 60,
                 target_name: "凡铁矿".to_string(),
-                target_type: "ore".to_string(),
-                quality_hint: "perfect".to_string(),
+                target_type: GatheringTargetTypeV1::Ore,
+                quality_hint: GatheringQualityHintV1::Perfect,
                 tool_used: Some("pickaxe_iron".to_string()),
                 interrupted: false,
                 completed: true,
@@ -3046,8 +3064,8 @@ mod tests {
                 progress_ticks: 0,
                 total_ticks: 50,
                 target_name: "灵木".to_string(),
-                target_type: "wood".to_string(),
-                quality_hint: "normal".to_string(),
+                target_type: GatheringTargetTypeV1::Wood,
+                quality_hint: GatheringQualityHintV1::Normal,
                 tool_used: None,
                 interrupted: true,
                 completed: false,
