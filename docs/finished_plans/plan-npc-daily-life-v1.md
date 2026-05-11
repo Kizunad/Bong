@@ -441,10 +441,11 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `3c7afd1ff`（2026-05-11）`fix(npc): 收紧日程 LOD 与回家休息语义`
   - `af61d7331`（2026-05-11）`fix(network): 放宽大型 NPC 快照 Redis timeout`
   - `348e57218`（2026-05-11）`fix(npc): 修复日常生活 review 边界`
+  - `d790fb73b`（2026-05-11）`fix(npc): 收紧日常生活 review 后续边界`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
-  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4317 passed
+  - `server/ CARGO_BUILD_JOBS=1 cargo test` ✅ 4320 passed
   - `agent/ npm run build` ✅
   - `agent/packages/schema/ npm run check` ✅ generated schema artifacts are fresh（357 files）
   - `agent/packages/schema/ npm test` ✅ 19 files / 369 tests passed
