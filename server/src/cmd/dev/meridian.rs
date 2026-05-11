@@ -47,7 +47,9 @@ impl Command for MeridianCmd {
             .argument("id")
             .with_parser::<MeridianArg>()
             .with_executable(|input| MeridianCmd::Open {
-                id: MeridianArg::parse_arg(input).unwrap().0,
+                id: MeridianArg::parse_arg(input)
+                    .expect("brigadier should pre-validate meridian id")
+                    .0,
             });
 
         graph

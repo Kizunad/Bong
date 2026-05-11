@@ -180,6 +180,22 @@ mod tests {
     }
 
     #[test]
+    fn qi_max_rejects_negative_and_non_finite_values() {
+        let mut app = setup_app();
+        let player = spawn_cultivator(&mut app, 25.0, 100.0);
+
+        for value in [-10.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            send(&mut app, player, QiCmd::Max { value });
+        }
+        run_update(&mut app);
+
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.qi_current, 25.0);
+        assert_eq!(cultivation.qi_max, 100.0);
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+    }
+
+    #[test]
     fn qi_commands_do_not_emit_qi_transfer_events() {
         let mut app = setup_app();
         let player = spawn_cultivator(&mut app, 0.0, 100.0);

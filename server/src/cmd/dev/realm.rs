@@ -41,7 +41,9 @@ impl Command for RealmCmd {
             .argument("id")
             .with_parser::<RealmArg>()
             .with_executable(|input| RealmCmd::Set {
-                id: RealmArg::parse_arg(input).unwrap().0,
+                id: RealmArg::parse_arg(input)
+                    .expect("brigadier should pre-validate realm id")
+                    .0,
             });
     }
 }
@@ -102,10 +104,14 @@ mod tests {
             ("通灵", Realm::Spirit),
             ("void", Realm::Void),
             ("化虚", Realm::Void),
+            ("  AwAkEn  ", Realm::Awaken),
+            ("SPIRIT  ", Realm::Spirit),
+            ("  化虚  ", Realm::Void),
         ] {
             assert_eq!(parse_realm(raw), Some(realm));
         }
         assert_eq!(parse_realm("immortal"), None);
+        assert_eq!(parse_realm("   "), None);
     }
 
     #[test]

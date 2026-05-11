@@ -141,6 +141,12 @@ pub fn handle_technique(
                     client.send_chat_message(format!("[dev] technique `{id}` missing"));
                     continue;
                 };
+                if !value.is_finite() {
+                    client.send_chat_message(format!(
+                        "[dev] technique proficiency rejected: value must be finite for `{id}`"
+                    ));
+                    continue;
+                }
                 entry.proficiency = value.clamp(0.0, 1.0) as f32;
                 client.send_chat_message(format!(
                     "[dev] technique `{id}` proficiency={:.2}",
@@ -313,6 +319,44 @@ mod tests {
             .unwrap();
         assert_eq!(entry.proficiency, 1.0);
         assert!(!entry.active);
+    }
+
+    #[test]
+    fn technique_proficiency_rejects_non_finite_values() {
+        let mut app = setup_app();
+        let player = spawn_known(&mut app, KnownTechniques::default());
+        let before = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.id == ECHO)
+            .unwrap()
+            .proficiency;
+
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            send(
+                &mut app,
+                player,
+                TechniqueCmd::Proficiency {
+                    id: ECHO.to_string(),
+                    value,
+                },
+            );
+        }
+        run_update(&mut app);
+
+        let entry = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.id == ECHO)
+            .unwrap();
+        assert_eq!(entry.proficiency, before);
+        assert!(entry.proficiency.is_finite());
     }
 
     #[test]

@@ -134,7 +134,9 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].entity, player);
         assert_eq!(collected[0].cause, CultivationDeathCause::DevCommand);
+        assert_eq!(collected[0].context["source"], "dev_command");
         assert_eq!(collected[0].context["command"], "kill self");
+        assert_eq!(collected[0].context["tick"], 77);
     }
 
     #[test]
