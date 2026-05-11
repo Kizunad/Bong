@@ -19,10 +19,11 @@ use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction, CultivateState,
     CultivationDriveHistory, CultivationDriveScorer, CuriosityScorer, DashAction, DashScorer,
-    FarmAction, FearCultivatorScorer, FleeAction, FleeCultivatorAction, HungerScorer,
-    MeleeAttackAction, MeleeRangeScorer, PlayerProximityScorer, RetireAction, SeclusionAction,
-    SeclusionScorer, StartDuXuAction, TribulationReadyScorer, WanderAction, WanderScorer,
-    WanderState,
+    FarmAction, FearCultivatorScorer, FleeAction, FleeCultivatorAction, GoToPoiAction,
+    GoToPoiState, HungerScorer, MeleeAttackAction, MeleeRangeScorer, PlayerProximityScorer,
+    RestState, RetireAction, ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer,
+    StallAction, StallState, StartDuXuAction, TradeStallScorer, TribulationReadyScorer,
+    WanderAction, WanderScorer, WanderState,
 };
 use crate::npc::faction::{
     FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
@@ -45,6 +46,7 @@ use crate::npc::relic::{
     TrialEval, TrialEvalScorer, TrialState,
 };
 use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
+use crate::npc::schedule::{NpcDailySchedule, NpcHomeBase};
 use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
 use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
@@ -685,8 +687,10 @@ fn commoner_npc_thinker() -> ThinkerBuilder {
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
         .when(FearCultivatorScorer, FleeCultivatorAction)
+        .when(ReturnHomeScorer, ReturnHomeAction)
+        .when(TradeStallScorer, StallAction)
         .when(HungerScorer, FarmAction)
-        .when(WanderScorer, WanderAction)
+        .when(WanderScorer, GoToPoiAction::default())
 }
 
 fn rogue_npc_thinker() -> ThinkerBuilder {
@@ -696,9 +700,11 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
         .when(PlayerProximityScorer, FleeAction)
+        .when(ReturnHomeScorer, ReturnHomeAction)
+        .when(TradeStallScorer, StallAction)
         .when(CultivationDriveScorer, CultivateAction)
-        .when(CuriosityScorer, WanderAction)
-        .when(WanderScorer, WanderAction)
+        .when(CuriosityScorer, GoToPoiAction::default())
+        .when(WanderScorer, GoToPoiAction::default())
 }
 
 fn scattered_cultivator_thinker() -> ThinkerBuilder {
@@ -713,9 +719,11 @@ fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
         .when(PlayerProximityScorer, FleeAction)
+        .when(ReturnHomeScorer, ReturnHomeAction)
+        .when(TradeStallScorer, StallAction)
         .when(CultivationDriveScorer, CultivateAction)
-        .when(CuriosityScorer, WanderAction)
-        .when(WanderScorer, WanderAction)
+        .when(CuriosityScorer, GoToPoiAction::default())
+        .when(WanderScorer, GoToPoiAction::default())
 }
 
 fn beast_npc_thinker() -> ThinkerBuilder {
@@ -741,10 +749,12 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(FactionDuelScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
         .when(MissionQueueScorer, MissionExecuteAction)
+        .when(ReturnHomeScorer, ReturnHomeAction)
+        .when(TradeStallScorer, StallAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(SocializeScorer, SocializeAction)
-        .when(CuriosityScorer, WanderAction)
-        .when(WanderScorer, WanderAction)
+        .when(CuriosityScorer, GoToPoiAction::default())
+        .when(WanderScorer, GoToPoiAction::default())
 }
 
 #[allow(dead_code)]
@@ -1012,6 +1022,13 @@ fn spawn_rogue_commoner_base(
             NpcPatrol::new(home_zone, patrol_target),
         ))
         .id();
+    commands.entity(entity).insert((
+        NpcDailySchedule::for_archetype(archetype, skin_salt(spawn_position)),
+        NpcHomeBase::from_world_pos(patrol_target, 0.6),
+        GoToPoiState::default(),
+        StallState::default(),
+        RestState::default(),
+    ));
     commands
         .entity(entity)
         .insert((profile, visual_equipment(&profile)));
@@ -1088,6 +1105,11 @@ pub fn spawn_beast_npc_at(
         .id();
 
     commands.entity(entity).insert((
+        NpcDailySchedule::for_archetype(NpcArchetype::Beast, fauna_seed),
+        NpcHomeBase::from_world_pos(territory.center, 0.5),
+        GoToPoiState::default(),
+        StallState::default(),
+        RestState::default(),
         NpcLodTier::Dormant,
         Hunger::default(),
         WanderState::default(),
@@ -1174,6 +1196,11 @@ pub fn spawn_disciple_npc_at(
         .insert((profile, visual_equipment(&profile)));
 
     commands.entity(entity).insert((
+        NpcDailySchedule::for_archetype(NpcArchetype::Disciple, skin_salt(spawn_position)),
+        NpcHomeBase::from_world_pos(patrol_target, 0.7),
+        GoToPoiState::default(),
+        StallState::default(),
+        RestState::default(),
         WanderState::default(),
         CultivateState::default(),
         CultivationDriveHistory::default(),

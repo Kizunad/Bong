@@ -32,6 +32,7 @@ use crate::npc::loot::{default_loot_for_archetype, NpcLootTable};
 use crate::npc::movement::GameTick;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::relic::{GuardianDuty, TrialEval};
+use crate::npc::schedule::{hydrate_position_for, NpcDailySchedule, NpcHomeBase};
 use crate::npc::spawn::{
     spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
     spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
@@ -43,6 +44,7 @@ use crate::npc::tsy_hostile::{
 };
 use crate::skin::NpcSkinFallbackPolicy;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::tsy_lifecycle::DaoxiangOrigin;
 use crate::world::zone::ZoneRegistry;
 
@@ -80,6 +82,7 @@ pub fn hydrate_dormant_near_players_system(
     dimension_layers: Option<Res<DimensionLayers>>,
     players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     registry: Option<Res<NpcRegistry>>,
+    pois: Option<Res<PoiNoviceRegistry>>,
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
@@ -122,7 +125,13 @@ pub fn hydrate_dormant_near_players_system(
         let Some(snapshot) = store.remove(&char_id) else {
             continue;
         };
-        let entity = spawn_from_snapshot(&mut commands, snapshot, dimension_layers);
+        let entity = spawn_from_snapshot(
+            &mut commands,
+            snapshot,
+            dimension_layers,
+            tick,
+            pois.as_deref(),
+        );
         if force_tribulation {
             tribulations.send(InitiateXuhuaTribulation {
                 entity,
@@ -393,17 +402,29 @@ fn spawn_from_snapshot(
     commands: &mut Commands,
     snapshot: NpcDormantSnapshot,
     dimension_layers: &DimensionLayers,
+    current_tick: u64,
+    pois: Option<&PoiNoviceRegistry>,
 ) -> Entity {
     let layer = match snapshot.dimension {
         DimensionKind::Tsy => dimension_layers.tsy,
         _ => dimension_layers.overworld,
     };
-    let pos = snapshot.position_vec();
+    let schedule_seed = dormant_schedule_seed(snapshot.char_id.as_str());
+    let schedule = NpcDailySchedule::for_archetype(snapshot.archetype, schedule_seed);
     let patrol_target = snapshot
         .patrol
         .as_ref()
         .map(|patrol| dvec3_from_array(patrol.current_target))
-        .unwrap_or(pos);
+        .unwrap_or_else(|| snapshot.position_vec());
+    let home_base = NpcHomeBase::from_world_pos(patrol_target, 0.6);
+    let pos = hydrate_position_for(
+        &schedule,
+        Some(home_base),
+        snapshot.position_vec(),
+        current_tick,
+        schedule_seed,
+        pois,
+    );
     let home_zone = snapshot.zone_name.as_str();
     let entity = match snapshot.archetype {
         NpcArchetype::Zombie => spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target),
@@ -531,6 +552,8 @@ fn spawn_from_snapshot(
         snapshot.lifespan_extension_ledger,
         snapshot.death_registry,
         snapshot.life_record,
+        schedule,
+        home_base,
         NpcLodTier::Near,
         Lifecycle {
             character_id: snapshot.char_id.clone(),
@@ -590,6 +613,12 @@ fn spawn_from_snapshot(
         }
     }
     entity
+}
+
+fn dormant_schedule_seed(char_id: &str) -> u64 {
+    char_id.bytes().fold(0x6e_70_63_64_61_79, |hash, byte| {
+        hash.wrapping_mul(0x100_0000_01b3) ^ u64::from(byte)
+    })
 }
 
 fn dormant_tribulation_ready(snapshot: &NpcDormantSnapshot) -> bool {
