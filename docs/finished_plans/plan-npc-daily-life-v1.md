@@ -252,15 +252,15 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | `DayPhase` + `NpcDailySchedule` component + 时段权重注入到现有 Scorer | ⬜ |
-| P1 | `GoToPoiAction`（替换 WanderAction）+ POI 类型扩展（5 种新 POI） | ⬜ |
-| P2 | `NpcHomeBase` + `ReturnHomeAction` + `RestAction` + `StallAction` | ⬜ |
-| P3 | Far 层状态 tick + Dormant 层最小推演 + Hydrate 过渡逻辑 | ⬜ |
-| P4 | 饱和化测试（4 时段 × 7 活动 × 3 LOD 层 × hydrate 过渡） | ⬜ |
+| P0 | `DayPhase` + `NpcDailySchedule` component + 时段权重注入到现有 Scorer | ✅ 2026-05-11 |
+| P1 | `GoToPoiAction`（替换 WanderAction）+ POI 类型扩展（5 种新 POI） | ✅ 2026-05-11 |
+| P2 | `NpcHomeBase` + `ReturnHomeAction` + `RestAction` + `StallAction` | ✅ 2026-05-11 |
+| P3 | Far 层状态 tick + Dormant 层最小推演 + Hydrate 过渡逻辑 | ✅ 2026-05-11 |
+| P4 | 饱和化测试（4 时段 × 7 活动 × 3 LOD 层 × hydrate 过渡） | ✅ 2026-05-11 |
 
 ---
 
-## P0 — 时段日程 ⬜
+## P0 — 时段日程 ✅ 2026-05-11
 
 ### 交付物
 
@@ -306,7 +306,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P1 — 目的地驱动漫游 ⬜
+## P1 — 目的地驱动漫游 ✅ 2026-05-11
 
 ### 交付物
 
@@ -346,7 +346,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P2 — HomeBase + 新 Action ⬜
+## P2 — HomeBase + 新 Action ✅ 2026-05-11
 
 ### 交付物
 
@@ -379,7 +379,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P3 — LOD 分层推演 ⬜
+## P3 — LOD 分层推演 ✅ 2026-05-11
 
 ### 交付物
 
@@ -408,7 +408,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
 
 ---
 
-## P4 — 饱和化测试 ⬜
+## P4 — 饱和化测试 ✅ 2026-05-11
 
 ### 交付物
 
@@ -444,6 +444,7 @@ fn dormant_npc_tick(cultivation, hunger, lifespan, clock) {
   - `d790fb73b`（2026-05-11）`fix(npc): 收紧日常生活 review 后续边界`
   - `d5cf6970b`（2026-05-11）`fix(npc): 固定日程采样 seed`
   - `e50d5f8e9`（2026-05-11）`fix(npc): 收紧 POI 到达行为`
+  - `e28428aaf`（2026-05-11）`fix(npc): 收紧交易日程边界`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
