@@ -20,7 +20,7 @@ public final class HitStopController {
             created.add(put(targetUuid, Role.DEFENDER, profile.hitStopTicks(), nowMs));
         }
         if (attackerUuid != null && !attackerUuid.isBlank()) {
-            int attackerTicks = Math.max(1, (int) Math.ceil(profile.hitStopTicks() * 0.5));
+            int attackerTicks = Math.max(1, (int) Math.floor(profile.hitStopTicks() * 0.5));
             created.add(put(attackerUuid, Role.ATTACKER, attackerTicks, nowMs));
         }
         return List.copyOf(created);
@@ -38,7 +38,7 @@ public final class HitStopController {
         if (freeze == null) {
             return 0;
         }
-        long remainingMs = freeze.endsAtMs() - Math.max(0L, nowMs);
+        long remainingMs = freeze.endsAtMs() - nowMs;
         if (remainingMs <= 0L) {
             FREEZES.remove(entityUuid, freeze);
             return 0;
@@ -52,11 +52,7 @@ public final class HitStopController {
     }
 
     public static void tick(long nowMs) {
-        for (Map.Entry<String, Freeze> entry : FREEZES.entrySet()) {
-            if (entry.getValue().endsAtMs() <= nowMs) {
-                FREEZES.remove(entry.getKey(), entry.getValue());
-            }
-        }
+        FREEZES.entrySet().removeIf(entry -> entry.getValue().endsAtMs() <= nowMs);
     }
 
     public static void resetForTests() {

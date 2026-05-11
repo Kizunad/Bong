@@ -6,6 +6,7 @@ import com.bong.client.combat.store.WoundsStore;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public final class WoundWorldVisualPlanner {
     private WoundWorldVisualPlanner() {
@@ -20,12 +21,15 @@ public final class WoundWorldVisualPlanner {
                     continue;
                 }
                 contamination = Math.max(contamination, wound.infection());
-                boolean fracture = "bone_fracture".equals(wound.kind()) && wound.severity() >= 0.5f;
-                boolean severed = wound.severity() >= 0.85f;
-                boolean lowerLimb = wound.partId().contains("leg") || wound.partId().contains("foot");
+                String kind = wound.kind() == null ? "" : wound.kind().toLowerCase(Locale.ROOT);
+                String partId = wound.partId() == null ? "" : wound.partId();
+                String normalizedPartId = partId.toLowerCase(Locale.ROOT);
+                boolean fracture = "bone_fracture".equals(kind) && wound.severity() >= 0.5f;
+                boolean severed = "severed".equals(kind) || "limb_severed".equals(kind) || "amputation".equals(kind);
+                boolean lowerLimb = normalizedPartId.contains("leg") || normalizedPartId.contains("foot");
                 if (fracture || severed) {
                     out.add(new WoundCommand(
-                        wound.partId(),
+                        partId,
                         fracture ? 5.0f : 0.0f,
                         tint(wound.kindColor(), fracture ? 0x26 : 0x40),
                         severed,
@@ -56,7 +60,7 @@ public final class WoundWorldVisualPlanner {
             if (effect == null) {
                 continue;
             }
-            String id = effect.id().toLowerCase(java.util.Locale.ROOT);
+            String id = effect.id() == null ? "" : effect.id().toLowerCase(Locale.ROOT);
             if (id.contains("contam") || id.contains("poison") || id.contains("taint")) {
                 max = Math.max(max, effect.stacks() >= 3 ? 0.75f : 0.45f);
             }

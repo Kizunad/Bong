@@ -5,6 +5,7 @@ import com.bong.client.combat.juice.CombatJuiceSystem;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.WoundsStore;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -17,7 +18,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ServerDataRouterCombatTest {
 
-    @AfterEach void tearDown() {
+    @BeforeEach
+    @AfterEach
+    void resetState() {
         DamageFloaterStore.resetForTests();
         CombatJuiceSystem.resetForTests();
         StatusEffectStore.resetForTests();
@@ -42,10 +45,32 @@ class ServerDataRouterCombatTest {
               {"kind":"hit","amount":10,"color":-65536,"target_uuid":"target"}
             ]}""";
         ServerDataRouter.RouteResult r = router.route(json, json.getBytes(StandardCharsets.UTF_8).length);
-        assertFalse(r.isParseError());
-        assertTrue(r.isHandled());
-        assertEquals(1, DamageFloaterStore.snapshot(System.currentTimeMillis()).size());
-        assertEquals("target", CombatJuiceSystem.lastCommand().event().targetUuid());
+        assertFalse(r.isParseError(), "expected combat_event JSON to parse because payload is valid, actual parse error=" + r.logMessage());
+        assertTrue(r.isHandled(), "expected combat_event to be handled because it has one valid hit event, actual message=" + r.logMessage());
+        assertEquals(1, DamageFloaterStore.snapshot(System.currentTimeMillis()).size(), "expected one damage floater because one valid hit event was routed, actual floater count differed");
+        CombatJuiceSystem.LastCommand last = CombatJuiceSystem.lastCommand();
+        assertNotNull(last, "expected non-null combat juice command because combat_event(hit) was routed");
+        assertNotNull(last.event(), "expected non-null combat juice event because combat_event(hit) should enter CombatJuiceSystem");
+        assertEquals(
+            "target",
+            last.event().targetUuid(),
+            "expected targetUuid to be 'target' because payload contains target_uuid=target, actual targetUuid=" + last.event().targetUuid()
+        );
+    }
+
+    @Test void dropsBlankCombatEventTextWithoutPublishingFloater() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String json = """
+            {"v":1,"type":"combat_event","events":[
+              {"amount":0,"text":"   ","target_uuid":"target"}
+            ]}""";
+
+        ServerDataRouter.RouteResult r = router.route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(r.isParseError(), "expected blank-text combat_event JSON to parse because syntax is valid, actual parse error=" + r.logMessage());
+        assertFalse(r.isHandled(), "expected blank combat event to be ignored because it has no text, amount, or kind fallback, actual message=" + r.logMessage());
+        assertEquals(0, DamageFloaterStore.snapshot(System.currentTimeMillis()).size(), "expected no floater because blank combat event should be discarded, actual floater count differed");
+        assertNull(CombatJuiceSystem.lastCommand().event(), "expected no combat juice command because invalid blank combat event should not be accepted");
     }
 
     @Test void routesStatusSnapshotEndToEnd() {

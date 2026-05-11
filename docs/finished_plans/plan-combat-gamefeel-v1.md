@@ -46,11 +46,11 @@
 
 ## §0 设计轴心
 
-- [ ] **不碰 combat 数值**——只改表现，不改判定
-- [ ] **6 层 juice 按强度分层**：轻击 = 低 juice（微 shake + 微 hit-stop）/ 全力一击 = 满 juice（大 shake + 长 hit-stop + 慢动作）/ 过载撕裂 = 极端 juice（红闪 + 最长 hit-stop + 全屏 vignette）
-- [ ] **流派质感差异**：体修 = 沉重（大 shake + 低频 + 古铜泛色）/ 暗器 = 锐利（微 shake + 高频 + 银白泛色）/ 毒蛊 = 阴渗（无 shake + 嗡鸣 + 墨绿泛色）/ 涡流 = 真空（反向 shake + 吸音 + 淡紫泛色）
-- [ ] **异体排斥可视化**：QiCollisionEvent → 攻击方真元颜色粒子灌入防守方体内 → 防守方身体短暂泛对应色（0.3s lerp → 恢复）——让"真元侵入"成为可见的物理现象
-- [ ] **与 vfx-wiring-v1 叠加不冲突**：本 plan 的 juice 是 camera/timing/color 层，vfx-wiring 是粒子层——两层同时播放互不干扰
+- [x] **不碰 combat 数值**——只改表现，不改判定
+- [x] **6 层 juice 按强度分层**：轻击 = 低 juice（微 shake + 微 hit-stop）/ 全力一击 = 满 juice（大 shake + 长 hit-stop + 慢动作）/ 过载撕裂 = 极端 juice（红闪 + 最长 hit-stop + 全屏 vignette）
+- [x] **流派质感差异**：体修 = 沉重（大 shake + 低频 + 古铜泛色）/ 暗器 = 锐利（微 shake + 高频 + 银白泛色）/ 毒蛊 = 阴渗（无 shake + 嗡鸣 + 墨绿泛色）/ 涡流 = 真空（反向 shake + 吸音 + 淡紫泛色）
+- [x] **异体排斥可视化**：QiCollisionEvent → 攻击方真元颜色粒子灌入防守方体内 → 防守方身体短暂泛对应色（0.3s lerp → 恢复）——让"真元侵入"成为可见的物理现象
+- [x] **与 vfx-wiring-v1 叠加不冲突**：本 plan 的 juice 是 camera/timing/color 层，vfx-wiring 是粒子层——两层同时播放互不干扰
 
 ---
 
@@ -58,16 +58,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | hit-stop + camera shake + CombatJuiceProfile 骨架 | ⬜ |
-| P1 | 异体排斥可视化 + 全力一击/过载撕裂 juice | ⬜ |
-| P2 | 招架/弹反/闪避 juice | ⬜ |
-| P3 | 伤口世界内表现 | ⬜ |
-| P4 | 击杀 juice（慢动作 + 弹射） | ⬜ |
-| P5 | 7 流派 × 3 强度 juice profile + PVP 实测 | ⬜ |
+| P0 | hit-stop + camera shake + CombatJuiceProfile 骨架 | ✅ 2026-05-12 |
+| P1 | 异体排斥可视化 + 全力一击/过载撕裂 juice | ✅ 2026-05-12 |
+| P2 | 招架/弹反/闪避 juice | ✅ 2026-05-12 |
+| P3 | 伤口世界内表现 | ✅ 2026-05-12 |
+| P4 | 击杀 juice（慢动作 + 弹射） | ✅ 2026-05-12 |
+| P5 | 7 流派 × 3 强度 juice profile + PVP 实测 | ✅ 2026-05-12 |
 
 ---
 
-## P0 — hit-stop + camera shake + 骨架 ⬜
+## P0 — hit-stop + camera shake + 骨架 ✅ 2026-05-12
 
 ### 交付物
 
@@ -110,7 +110,7 @@
 
 ---
 
-## P1 — 异体排斥 + 全力一击/过载 ⬜
+## P1 — 异体排斥 + 全力一击/过载 ✅ 2026-05-12
 
 ### 交付物
 
@@ -143,7 +143,7 @@
 
 ---
 
-## P2 — 招架/弹反/闪避 juice ⬜
+## P2 — 招架/弹反/闪避 juice ✅ 2026-05-12
 
 ### 交付物
 
@@ -176,7 +176,7 @@
 
 ---
 
-## P3 — 伤口世界内表现 ⬜
+## P3 — 伤口世界内表现 ✅ 2026-05-12
 
 ### 交付物
 
@@ -200,7 +200,7 @@
 
 ---
 
-## P4 — 击杀 juice ⬜
+## P4 — 击杀 juice ✅ 2026-05-12
 
 ### 交付物
 
@@ -231,7 +231,7 @@
 
 ---
 
-## P5 — 7 流派 juice profile + PVP 实测 ⬜
+## P5 — 7 流派 juice profile + PVP 实测 ✅ 2026-05-12
 
 ### 交付物
 

@@ -28,7 +28,10 @@ public enum CombatJuiceTier {
         if (normalizedKind.contains("crit") || normalizedKind.contains("overload")) {
             return CRITICAL;
         }
-        if (normalizedKind.contains("full_power") || normalizedKind.contains("heavy") || normalizedKind.contains("release")) {
+        if (normalizedKind.contains("full_power")
+            || normalizedKind.contains("full_charge")
+            || normalizedKind.contains("heavy")
+            || normalizedKind.contains("release")) {
             return HEAVY;
         }
         if (amount >= 30.0) {

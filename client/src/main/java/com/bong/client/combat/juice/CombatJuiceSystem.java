@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class CombatJuiceSystem {
+    private static final int FULL_CHARGE_FLASH_ARGB = 0x4DFFFFFF;
+    private static final int OVERLOAD_FLASH_ARGB = 0x66FF2020;
+
     private static final AtomicBoolean BOOTSTRAPPED = new AtomicBoolean(false);
     private static volatile LastCommand lastCommand = LastCommand.empty();
     private static volatile Overlay activeOverlay = Overlay.none();
@@ -52,14 +55,14 @@ public final class CombatJuiceSystem {
                 freezes.addAll(HitStopController.request(event.attackerUuid(), event.targetUuid(), critical, nowMs));
                 shake = CameraShakeController.trigger(critical, event.directionX(), event.directionZ(), nowMs);
                 tint = EntityTintController.trigger(event.targetUuid(), critical, nowMs);
-                activeOverlay = Overlay.screenTint(0x4DFFFFFF, 2, nowMs, false);
+                activeOverlay = Overlay.screenTint(FULL_CHARGE_FLASH_ARGB, 2, nowMs, false);
             }
             case OVERLOAD -> {
                 CombatJuiceProfile critical = CombatJuiceProfile.select(event.school(), CombatJuiceTier.CRITICAL);
                 effectiveProfile = critical;
                 freezes.addAll(HitStopController.request(event.attackerUuid(), event.targetUuid(), critical, nowMs));
                 shake = CameraShakeController.trigger(critical, event.directionX(), event.directionZ(), nowMs);
-                activeOverlay = Overlay.screenTint(0x66FF2020, 10, nowMs, true);
+                activeOverlay = Overlay.screenTint(OVERLOAD_FLASH_ARGB, 10, nowMs, true);
             }
             case PARRY, PERFECT_PARRY -> {
                 boolean perfect = event.kind() == CombatJuiceEvent.Kind.PERFECT_PARRY;

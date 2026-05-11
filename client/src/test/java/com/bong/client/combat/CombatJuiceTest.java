@@ -15,6 +15,7 @@ import com.bong.client.combat.juice.WoundWorldVisualPlanner;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.WoundsStore;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -22,8 +23,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CombatJuiceTest {
+    @BeforeEach
     @AfterEach
-    void tearDown() {
+    void resetState() {
         CombatJuiceSystem.resetForTests();
     }
 
@@ -46,9 +48,18 @@ class CombatJuiceTest {
         CombatJuiceProfile profile = CombatJuiceProfile.select(CombatSchool.BAOMAI, CombatJuiceTier.HEAVY);
         HitStopController.request("attacker", "target", profile, 1_000L);
 
-        assertEquals(6, HitStopController.remainingTicks("target", 1_000L));
-        assertEquals(3, HitStopController.remainingTicks("attacker", 1_000L));
-        assertTrue(HitStopController.isFrozen("target", 1_100L));
+        assertEquals(6, HitStopController.remainingTicks("target", 1_000L), "expected defender to receive full heavy hit-stop budget because target was hit, actual remaining ticks differed");
+        assertEquals(3, HitStopController.remainingTicks("attacker", 1_000L), "expected attacker to receive half heavy hit-stop budget because local swing recovery is shorter, actual remaining ticks differed");
+        assertTrue(HitStopController.isFrozen("target", 1_100L), "expected target to remain frozen 100ms into a 6 tick freeze because duration is 300ms, actual was unfrozen");
+    }
+
+    @Test
+    void hit_stop_attacker_ticks_floor_half_budget() {
+        CombatJuiceProfile profile = CombatJuiceProfile.select(CombatSchool.GENERIC, CombatJuiceTier.HEAVY);
+        HitStopController.request("attacker", "target", profile, 1_000L);
+
+        assertEquals(5, HitStopController.remainingTicks("target", 1_000L), "expected generic heavy defender freeze to use the full 5 tick profile budget, actual remaining ticks differed");
+        assertEquals(2, HitStopController.remainingTicks("attacker", 1_000L), "expected attacker freeze to floor half of 5 ticks to 2 because attacker recovery must not exceed design budget, actual remaining ticks differed");
     }
 
     @Test
@@ -130,6 +141,15 @@ class CombatJuiceTest {
         assertEquals(CombatJuiceTier.CRITICAL, command.profile().tier());
         assertEquals(10, HitStopController.remainingTicks("target", 3_000L));
         assertTrue(command.overlay().activeAt(3_000L));
+    }
+
+    @Test
+    void full_charge_alias_infers_heavy_tier_without_explicit_tier() {
+        assertEquals(
+            CombatJuiceTier.HEAVY,
+            CombatJuiceTier.fromCombatEvent("full_charge", 1.0, null),
+            "expected full_charge alias to infer HEAVY because fromWire(full_charge) maps to the same tier, actual tier differed"
+        );
     }
 
     @Test
@@ -223,12 +243,34 @@ class CombatJuiceTest {
     @Test
     void severed_drip_particle() {
         List<WoundWorldVisualPlanner.WoundCommand> commands = WoundWorldVisualPlanner.plan(
-            List.of(new WoundsStore.Wound("right_arm", "cut", 0.9f, WoundsStore.HealingState.BLEEDING, 0f, false, 0L)),
+            List.of(new WoundsStore.Wound("right_arm", "limb_severed", 0.9f, WoundsStore.HealingState.BLEEDING, 0f, false, 0L)),
             List.of(),
             false
         );
 
-        assertTrue(commands.get(0).dripParticle());
+        assertTrue(commands.get(0).dripParticle(), "expected explicit limb_severed wound to emit drip particles because only amputation-type wounds should look severed, actual command did not drip");
+    }
+
+    @Test
+    void high_severity_cut_does_not_trigger_severed_visuals() {
+        List<WoundWorldVisualPlanner.WoundCommand> commands = WoundWorldVisualPlanner.plan(
+            List.of(new WoundsStore.Wound("right_arm", "cut", 0.95f, WoundsStore.HealingState.BLEEDING, 0f, false, 0L)),
+            List.of(),
+            false
+        );
+
+        assertTrue(commands.isEmpty(), "expected high-severity non-amputation cut to avoid severed visuals because severity alone is not an amputation signal, actual commands=" + commands);
+    }
+
+    @Test
+    void wound_visual_planner_handles_blank_network_fields() {
+        List<WoundWorldVisualPlanner.WoundCommand> commands = WoundWorldVisualPlanner.plan(
+            List.of(new WoundsStore.Wound(null, null, 0.95f, WoundsStore.HealingState.BLEEDING, 0f, false, 0L)),
+            List.of(new StatusEffectStore.Effect(null, null, null, 1, 1_000L, 0, null, 0)),
+            false
+        );
+
+        assertTrue(commands.isEmpty(), "expected blank wound/effect ids to be ignored because missing optional network fields must not create false visuals, actual commands=" + commands);
     }
 
     @Test
@@ -267,7 +309,23 @@ class CombatJuiceTest {
             1_000L
         );
 
-        assertFalse(KillJuiceController.trigger(remoteKill, profile, 1_000L).activeAt(1_000L));
+        assertFalse(KillJuiceController.trigger(remoteKill, profile, 1_000L).activeAt(1_000L), "expected remote kill to suppress slowmo because local player is not attacker, actual state was active");
+
+        CombatJuiceEvent unknownLocalKill = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.KILL,
+            CombatSchool.BAOMAI,
+            CombatJuiceTier.CRITICAL,
+            "attacker",
+            "target",
+            "",
+            "rat",
+            0.0,
+            1.0,
+            false,
+            1_000L
+        );
+
+        assertFalse(KillJuiceController.trigger(unknownLocalKill, profile, 1_000L).activeAt(1_000L), "expected blank local uuid to suppress kill slowmo because unknown identity must not count as local attacker, actual state was active");
 
         CombatJuiceEvent localKill = new CombatJuiceEvent(
             CombatJuiceEvent.Kind.KILL,
@@ -283,8 +341,8 @@ class CombatJuiceTest {
             1_000L
         );
 
-        assertTrue(KillJuiceController.trigger(localKill, profile, 1_000L).activeAt(1_000L));
-        assertTrue(KillJuiceController.fovDelta(1_000L) < 0.0);
+        assertTrue(KillJuiceController.trigger(localKill, profile, 1_000L).activeAt(1_000L), "expected local attacker kill to trigger slowmo because local uuid matches attacker, actual state was inactive");
+        assertTrue(KillJuiceController.fovDelta(1_000L) < 0.0, "expected local kill slowmo to push FOV negative because kill juice adds impact zoom, actual delta=" + KillJuiceController.fovDelta(1_000L));
     }
 
     @Test
@@ -329,9 +387,32 @@ class CombatJuiceTest {
         KillJuiceController.trigger(kill, profile, 1_000L);
         KillJuiceController.trigger(kill, profile, 4_000L);
 
-        assertEquals(2, KillJuiceController.multiKill().count());
-        assertEquals(1.2, KillJuiceController.multiKill().shakeMultiplier(), 0.0001);
-        assertEquals(1.1, KillJuiceController.multiKill().pitchMultiplier(), 0.0001);
+        assertEquals(2, KillJuiceController.multiKill().count(), "expected second kill inside 5s window to stack multi-kill count to 2, actual count differed");
+        assertEquals(1.2, KillJuiceController.multiKill().shakeMultiplier(), 0.0001, "expected second kill to raise shake multiplier to 1.2, actual multiplier differed");
+        assertEquals(1.1, KillJuiceController.multiKill().pitchMultiplier(), 0.0001, "expected second kill to raise pitch multiplier to 1.1, actual multiplier differed");
+    }
+
+    @Test
+    void multi_kill_counter_expires_after_window() {
+        CombatJuiceProfile profile = CombatJuiceProfile.select(CombatSchool.BAOMAI, CombatJuiceTier.CRITICAL);
+        CombatJuiceEvent kill = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.KILL,
+            CombatSchool.BAOMAI,
+            CombatJuiceTier.CRITICAL,
+            "attacker",
+            "target",
+            "attacker",
+            "target",
+            0.0,
+            1.0,
+            false,
+            1_000L
+        );
+
+        KillJuiceController.trigger(kill, profile, 1_000L);
+        KillJuiceController.trigger(kill, profile, 6_001L);
+
+        assertEquals(1, KillJuiceController.multiKill().count(), "expected kill after the 5s window to reset multi-kill count because previous chain expired, actual count differed");
     }
 
     @Test
@@ -347,7 +428,15 @@ class CombatJuiceTest {
     void mixed_battle_budget_stays_above_30fps_floor() {
         CombatJuiceCalibration.PerformanceBudget budget = CombatJuiceCalibration.mixedBattleBudget(5, 10);
 
-        assertEquals(20, budget.maxConcurrentJuiceEvents());
-        assertTrue(budget.passesPlanFloor());
+        assertEquals(20, budget.maxConcurrentJuiceEvents(), "expected 5 players to budget 20 concurrent juice events because budget is 4 events per player, actual event budget differed");
+        assertTrue(budget.passesPlanFloor(), "expected 5v5 10min budget to satisfy 30fps floor because plan requires that scenario, actual budget=" + budget);
+    }
+
+    @Test
+    void mixed_battle_budget_clamps_large_inputs_without_overflow() {
+        CombatJuiceCalibration.PerformanceBudget budget = CombatJuiceCalibration.mixedBattleBudget(Integer.MAX_VALUE, 10);
+
+        assertEquals(Integer.MAX_VALUE, budget.maxConcurrentJuiceEvents(), "expected huge player count to clamp maxConcurrentJuiceEvents to Integer.MAX_VALUE because int budget field cannot represent larger values, actual budget differed");
+        assertEquals(30, budget.estimatedFpsFloor(), "expected huge event count to clamp estimated FPS floor to 30 instead of overflowing below the minimum, actual floor differed");
     }
 }

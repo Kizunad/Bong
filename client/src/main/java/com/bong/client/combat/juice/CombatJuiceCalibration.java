@@ -4,6 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class CombatJuiceCalibration {
+    private static final int INPUT_LAG_RISK_THRESHOLD_TICKS = 10;
+    private static final int EVENTS_PER_PLAYER_BUDGET = 4;
+
     private CombatJuiceCalibration() {
     }
 
@@ -13,7 +16,7 @@ public final class CombatJuiceCalibration {
             for (CombatSchool defender : CombatSchool.playableSchools()) {
                 CombatJuiceProfile critical = CombatJuiceProfile.select(attacker, CombatJuiceTier.CRITICAL);
                 boolean sameColor = (attacker.qiColorArgb() & 0x00FFFFFF) == (defender.qiColorArgb() & 0x00FFFFFF);
-                boolean inputLagRisk = critical.hitStopTicks() > 10;
+                boolean inputLagRisk = critical.hitStopTicks() > INPUT_LAG_RISK_THRESHOLD_TICKS;
                 out.add(new PvpPairing(attacker, defender, sameColor, inputLagRisk, critical.hitStopTicks(), critical.shakeIntensity()));
             }
         }
@@ -23,7 +26,8 @@ public final class CombatJuiceCalibration {
     public static PerformanceBudget mixedBattleBudget(int players, int minutes) {
         int safePlayers = Math.max(0, players);
         int safeMinutes = Math.max(0, minutes);
-        int maxConcurrentJuiceEvents = safePlayers * 4;
+        long computedEvents = (long) safePlayers * EVENTS_PER_PLAYER_BUDGET;
+        int maxConcurrentJuiceEvents = (int) Math.min(Integer.MAX_VALUE, computedEvents);
         int estimatedFpsFloor = maxConcurrentJuiceEvents <= 20 ? 42 : Math.max(30, 42 - (maxConcurrentJuiceEvents - 20));
         return new PerformanceBudget(safePlayers, safeMinutes, maxConcurrentJuiceEvents, estimatedFpsFloor);
     }

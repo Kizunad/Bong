@@ -2,8 +2,9 @@ package com.bong.client.combat.juice;
 
 public final class KillJuiceController {
     private static final long MULTI_KILL_WINDOW_MS = 5_000L;
-    private static volatile KillState activeKill = KillState.none();
-    private static volatile MultiKillState multiKill = MultiKillState.empty();
+    private static final Object LOCK = new Object();
+    private static KillState activeKill = KillState.none();
+    private static MultiKillState multiKill = MultiKillState.empty();
 
     private KillJuiceController() {
     }
@@ -12,7 +13,7 @@ public final class KillJuiceController {
         if (event == null || profile == null) {
             return KillState.none();
         }
-        boolean localOnly = event.localPlayerUuid().isBlank() || event.localPlayerIsAttacker();
+        boolean localOnly = !event.localPlayerUuid().isBlank() && event.localPlayerIsAttacker();
         if (!localOnly) {
             return KillState.none();
         }
@@ -25,18 +26,22 @@ public final class KillJuiceController {
             -5.0,
             event.rareDrop()
         );
-        activeKill = state;
-        multiKill = nextMultiKill(nowMs);
+        synchronized (LOCK) {
+            activeKill = state;
+            multiKill = nextMultiKillLocked(nowMs);
+        }
         return state;
     }
 
     public static KillState activeKill(long nowMs) {
-        KillState state = activeKill;
-        if (state == null || !state.activeAt(nowMs)) {
-            activeKill = KillState.none();
-            return KillState.none();
+        synchronized (LOCK) {
+            KillState state = activeKill;
+            if (state == null || !state.activeAt(nowMs)) {
+                activeKill = KillState.none();
+                return KillState.none();
+            }
+            return state;
         }
-        return state;
     }
 
     public static double fovDelta(long nowMs) {
@@ -48,15 +53,19 @@ public final class KillJuiceController {
     }
 
     public static MultiKillState multiKill() {
-        return multiKill;
+        synchronized (LOCK) {
+            return multiKill;
+        }
     }
 
     public static void resetForTests() {
-        activeKill = KillState.none();
-        multiKill = MultiKillState.empty();
+        synchronized (LOCK) {
+            activeKill = KillState.none();
+            multiKill = MultiKillState.empty();
+        }
     }
 
-    private static MultiKillState nextMultiKill(long nowMs) {
+    private static MultiKillState nextMultiKillLocked(long nowMs) {
         MultiKillState previous = multiKill;
         int count = previous != null && nowMs - previous.lastKillAtMs() <= MULTI_KILL_WINDOW_MS
             ? previous.count() + 1

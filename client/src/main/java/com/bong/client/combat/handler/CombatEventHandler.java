@@ -55,10 +55,16 @@ public final class CombatEventHandler implements ServerDataHandler {
             double y = readDouble(obj, "y", 0d);
             double z = readDouble(obj, "z", 0d);
             String text = readString(obj, "text");
+            if (text != null) {
+                text = text.trim();
+            }
             int color = (int) Math.round(readDouble(obj, "color", defaultColorFor(kindWire)));
             DamageFloaterStore.Kind kind = parseKind(kindWire);
-            if (text == null || text.isEmpty()) {
-                text = amount > 0 ? formatAmount(amount) : kindWire;
+            if (text == null || text.isBlank()) {
+                text = amount > 0 ? formatAmount(amount) : kindFallback(kindWire);
+            }
+            if (text.isBlank()) {
+                continue;
             }
             DamageFloaterStore.publish(
                 new DamageFloaterStore.Floater(x, y, z, text, color, kind, now)
@@ -88,6 +94,10 @@ public final class CombatEventHandler implements ServerDataHandler {
             case "qi_damage" -> DamageFloaterStore.Kind.QI_DAMAGE;
             default -> DamageFloaterStore.Kind.HIT;
         };
+    }
+
+    private static String kindFallback(String wire) {
+        return wire == null ? "" : wire.trim();
     }
 
     private static int defaultColorFor(String wire) {
