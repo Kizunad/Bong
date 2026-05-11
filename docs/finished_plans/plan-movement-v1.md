@@ -210,6 +210,7 @@
   - `a7a397cbc`（2026-05-11T12:13:06+12:00）`fix(movement): 收紧移动状态契约与同步边界`
   - `ce73af438`（2026-05-11T12:28:59+12:00）`fix(client): 补齐主线枚举映射`
   - `e31381498`（2026-05-11T13:06:13+12:00）`fix(movement): 补齐 review 边界回归`
+  - `ad53a59cd`（2026-05-11T13:19:41+12:00）`fix(movement): 处理 review 收尾意见`
 - **测试结果**：
   - `server/ cargo fmt --check` ✅
   - `server/ cargo clippy --all-targets -- -D warnings` ✅
