@@ -24,6 +24,7 @@ use crate::world::zone::ZoneRegistry;
 pub const DAY_TICKS: u64 = 20 * 60 * 20;
 pub const PHASE_OFFSET_LIMIT_TICKS: i32 = 200;
 pub const FAR_SCHEDULE_TICK_INTERVAL: u64 = 20 * 60;
+#[cfg(test)]
 pub const DORMANT_SCHEDULE_TICK_INTERVAL: u64 = 20 * 60 * 10;
 pub const DAILY_POI_SEARCH_RADIUS: f64 = 64.0;
 
@@ -48,6 +49,7 @@ pub enum ScheduleActivity {
 
 #[derive(Clone, Debug, Component)]
 pub struct NpcDailySchedule {
+    pub seed: u64,
     pub phase_weights: HashMap<DayPhase, Vec<(ScheduleActivity, f32)>>,
     pub phase_offset_ticks: i32,
 }
@@ -102,6 +104,7 @@ impl NpcDailySchedule {
             _ => fallback_schedule_weights(),
         };
         Self {
+            seed,
             phase_weights,
             phase_offset_ticks: deterministic_phase_offset(seed),
         }
@@ -560,6 +563,13 @@ fn deterministic_phase_offset(seed: u64) -> i32 {
         - i64::from(PHASE_OFFSET_LIMIT_TICKS)) as i32
 }
 
+pub fn schedule_seed_from_char_id(char_id: &str) -> u64 {
+    char_id.bytes().fold(0xcbf2_9ce4_8422_2325, |acc, byte| {
+        acc.wrapping_mul(0x100_0000_01b3)
+            .wrapping_add(u64::from(byte))
+    })
+}
+
 fn weighted_activity(weights: &[(ScheduleActivity, f32)], unit: f64) -> Option<ScheduleActivity> {
     let total = weights
         .iter()
@@ -639,6 +649,55 @@ mod tests {
         let mut hunger = Hunger::new(0.2);
         far_activity_tick(ScheduleActivity::Forage, Some(&mut hunger), None, 0.0);
         assert!((hunger.value - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn far_tick_cultivate_recovers_qi() {
+        let mut cultivation = Cultivation {
+            qi_max: 100.0,
+            qi_current: 50.0,
+            ..Default::default()
+        };
+        far_activity_tick(
+            ScheduleActivity::Cultivate,
+            None,
+            Some(&mut cultivation),
+            10.0,
+        );
+        assert!((cultivation.qi_current - 50.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn far_tick_rest_replenishes_hunger() {
+        let mut hunger = Hunger::new(0.2);
+        far_activity_tick(ScheduleActivity::Rest, Some(&mut hunger), None, 0.0);
+        assert!((hunger.value - 0.22).abs() < 1e-6);
+    }
+
+    #[test]
+    fn weighted_activity_empty_returns_none() {
+        assert_eq!(weighted_activity(&[], 0.5), None);
+    }
+
+    #[test]
+    fn weighted_activity_zero_total_returns_none() {
+        let weights = vec![
+            (ScheduleActivity::Forage, 0.0),
+            (ScheduleActivity::Rest, 0.0),
+        ];
+        assert_eq!(weighted_activity(&weights, 0.5), None);
+    }
+
+    #[test]
+    fn weighted_activity_selects_last_at_boundary() {
+        let weights = vec![
+            (ScheduleActivity::Forage, 0.5),
+            (ScheduleActivity::Rest, 0.5),
+        ];
+        assert_eq!(
+            weighted_activity(&weights, 0.99),
+            Some(ScheduleActivity::Rest)
+        );
     }
 
     #[test]

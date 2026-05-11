@@ -32,7 +32,9 @@ use crate::npc::loot::{default_loot_for_archetype, NpcLootTable};
 use crate::npc::movement::GameTick;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::relic::{GuardianDuty, TrialEval};
-use crate::npc::schedule::{hydrate_position_for, NpcDailySchedule, NpcHomeBase};
+use crate::npc::schedule::{
+    hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule, NpcHomeBase,
+};
 use crate::npc::spawn::{
     spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
     spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
@@ -164,6 +166,7 @@ pub fn dehydrate_far_npcs_system(
             &Cultivation,
             &MeridianSystem,
             &Contamination,
+            Option<&NpcDailySchedule>,
             Option<&FactionMembership>,
             Option<&NpcPatrol>,
         ),
@@ -202,6 +205,7 @@ pub fn dehydrate_far_npcs_system(
         cultivation,
         meridian_system,
         contamination,
+        schedule,
         faction,
         patrol,
     ) in npcs.iter()
@@ -239,6 +243,9 @@ pub fn dehydrate_far_npcs_system(
                 dimension,
                 zone_name,
                 position: vec3_to_array(position.get()),
+                schedule_seed: Some(schedule.map(|schedule| schedule.seed).unwrap_or_else(|| {
+                    schedule_seed_from_char_id(lifecycle.character_id.as_str())
+                })),
                 cultivation: cultivation.clone(),
                 meridian_system: meridian_system.clone(),
                 meridian_severed: severed
@@ -409,7 +416,9 @@ fn spawn_from_snapshot(
         DimensionKind::Tsy => dimension_layers.tsy,
         _ => dimension_layers.overworld,
     };
-    let schedule_seed = dormant_schedule_seed(snapshot.char_id.as_str());
+    let schedule_seed = snapshot
+        .schedule_seed
+        .unwrap_or_else(|| schedule_seed_from_char_id(snapshot.char_id.as_str()));
     let schedule = NpcDailySchedule::for_archetype(snapshot.archetype, schedule_seed);
     let patrol_target = snapshot
         .patrol
@@ -615,12 +624,6 @@ fn spawn_from_snapshot(
     entity
 }
 
-fn dormant_schedule_seed(char_id: &str) -> u64 {
-    char_id.bytes().fold(0x6e_70_63_64_61_79, |hash, byte| {
-        hash.wrapping_mul(0x100_0000_01b3) ^ u64::from(byte)
-    })
-}
-
 fn dormant_tribulation_ready(snapshot: &NpcDormantSnapshot) -> bool {
     live_tribulation_ready(&snapshot.cultivation, &snapshot.meridian_system)
 }
@@ -666,6 +669,7 @@ mod tests {
             dimension: DimensionKind::Overworld,
             zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             position: vec3_to_array(pos),
+            schedule_seed: None,
             cultivation: cultivation.clone(),
             meridian_system: MeridianSystem::default(),
             meridian_severed: MeridianSeveredPermanent::default(),
@@ -757,6 +761,7 @@ mod tests {
                 Position(DVec3::new(10.0, 64.0, 10.0)),
                 lifecycle,
                 NpcArchetype::Rogue,
+                NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 42),
                 NpcLifespan::new(0.0, 1_000.0),
                 Cultivation {
                     realm: Realm::Awaken,
@@ -775,6 +780,14 @@ mod tests {
             .world()
             .resource::<NpcDormantStore>()
             .contains("npc_far"));
+        assert_eq!(
+            app.world()
+                .resource::<NpcDormantStore>()
+                .snapshots
+                .get("npc_far")
+                .and_then(|snapshot| snapshot.schedule_seed),
+            Some(42)
+        );
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "dehydrated NPC must be marked Despawned instead of raw despawned"

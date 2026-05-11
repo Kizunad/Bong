@@ -208,6 +208,7 @@ pub struct StallAction;
 pub struct StallState {
     pub elapsed_ticks: u32,
     pub facing_target: Option<DVec3>,
+    pub destination: Option<DVec3>,
 }
 
 /// 夜间、低真元或低饱食度时回家。
@@ -1815,6 +1816,7 @@ fn stall_action_system(
     players: Query<&Position, With<ClientMarker>>,
     mut npcs: Query<(&Position, &NpcPatrol, &mut Navigator, &mut StallState), With<NpcMarker>>,
     mut actions: Query<(&Actor, &mut ActionState), With<StallAction>>,
+    pois: Option<Res<PoiNoviceRegistry>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
         let Ok((position, patrol, mut navigator, mut stall)) = npcs.get_mut(*actor) else {
@@ -1824,13 +1826,42 @@ fn stall_action_system(
 
         match *state {
             ActionState::Requested => {
-                navigator.stop();
                 stall.elapsed_ticks = 0;
-                stall.facing_target =
-                    Some(stall_facing_target(position.get(), patrol.current_target));
+                let current = position.get();
+                let trade_destination = nearest_poi_for_activity(
+                    pois.as_deref(),
+                    current,
+                    ScheduleActivity::Trade,
+                    DAILY_POI_SEARCH_RADIUS,
+                );
+                if let Some(destination) = trade_destination.filter(|destination| {
+                    current.distance(*destination) > GO_TO_POI_ARRIVAL_DISTANCE
+                }) {
+                    navigator.set_goal(destination, WANDER_SPEED_FACTOR);
+                    stall.destination = Some(destination);
+                    stall.facing_target = Some(stall_facing_target(current, destination));
+                } else {
+                    navigator.stop();
+                    stall.destination = None;
+                    stall.facing_target = Some(stall_facing_target(
+                        current,
+                        trade_destination.unwrap_or(patrol.current_target),
+                    ));
+                }
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
+                if let Some(destination) = stall.destination {
+                    let current = position.get();
+                    if current.distance(destination) > GO_TO_POI_ARRIVAL_DISTANCE {
+                        stall.facing_target = Some(stall_facing_target(current, destination));
+                        continue;
+                    }
+                    navigator.stop();
+                    stall.destination = None;
+                    stall.elapsed_ticks = 0;
+                    stall.facing_target = Some(stall_facing_target(current, patrol.current_target));
+                }
                 stall.elapsed_ticks = stall.elapsed_ticks.saturating_add(1);
                 let player_near = players
                     .iter()
@@ -1843,6 +1874,8 @@ fn stall_action_system(
             }
             ActionState::Cancelled => {
                 stall.elapsed_ticks = 0;
+                stall.destination = None;
+                navigator.stop();
                 *state = ActionState::Failure;
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}

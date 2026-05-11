@@ -354,7 +354,7 @@ pub fn site_from_manifest_poi(poi: &Poi) -> Option<PoiNoviceSite> {
         .unwrap_or("unknown")
         .to_string();
     Some(PoiNoviceSite {
-        id: format!("{}:{}", poi.zone, kind.as_str()),
+        id: stable_site_id(poi, kind, &tags),
         kind,
         zone: poi.zone.clone(),
         name: poi.name.clone(),
@@ -364,6 +364,42 @@ pub fn site_from_manifest_poi(poi: &Poi) -> Option<PoiNoviceSite> {
         danger_bias: poi.danger_bias,
         tags: poi.tags.clone(),
     })
+}
+
+fn stable_site_id(poi: &Poi, kind: PoiNoviceKind, tags: &HashMap<&str, &str>) -> String {
+    let token = tags
+        .get("poi_id")
+        .or_else(|| tags.get("id"))
+        .map(|raw| stable_id_token(raw))
+        .unwrap_or_else(|| position_id_token(poi.pos_xyz));
+    format!("{}:{}:{}", poi.zone, kind.as_str(), token)
+}
+
+fn position_id_token(pos_xyz: [f32; 3]) -> String {
+    format!(
+        "x{}_y{}_z{}",
+        pos_xyz[0].round() as i32,
+        pos_xyz[1].round() as i32,
+        pos_xyz[2].round() as i32
+    )
+}
+
+fn stable_id_token(raw: &str) -> String {
+    let token = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if token.is_empty() {
+        "site".to_string()
+    } else {
+        token
+    }
 }
 
 pub fn parse_tags(tags: &[String]) -> HashMap<&str, &str> {
@@ -426,10 +462,26 @@ mod tests {
     #[test]
     fn manifest_poi_tag_parses_into_runtime_site() {
         let site = site_from_manifest_poi(&novice_poi()).expect("novice poi should parse");
-        assert_eq!(site.id, "spawn:forge_station");
+        assert_eq!(site.id, "spawn:forge_station:x304_y71_z208");
         assert_eq!(site.kind, PoiNoviceKind::ForgeStation);
         assert_eq!(site.selection_strategy, "strict_radius_1500");
         assert_eq!(site.pos_xyz, [304.0, 71.0, 208.0]);
+    }
+
+    #[test]
+    fn manifest_poi_ids_are_unique_for_same_kind_instances() {
+        let mut first = novice_poi();
+        first.tags[1] = "poi_type:herb_patch".to_string();
+        first.pos_xyz = [10.0, 66.0, 10.0];
+        let mut second = first.clone();
+        second.pos_xyz = [12.0, 66.0, 10.0];
+
+        let first = site_from_manifest_poi(&first).expect("first herb patch should parse");
+        let second = site_from_manifest_poi(&second).expect("second herb patch should parse");
+
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.id, "spawn:herb_patch:x10_y66_z10");
+        assert_eq!(second.id, "spawn:herb_patch:x12_y66_z10");
     }
 
     #[test]

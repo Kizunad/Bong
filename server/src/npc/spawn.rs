@@ -17,9 +17,9 @@ use crate::cultivation::components::Realm;
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
 use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
-    AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction, CultivateState,
-    CultivationDriveHistory, CultivationDriveScorer, CuriosityScorer, DashAction, DashScorer,
-    FarmAction, FearCultivatorScorer, FleeAction, FleeCultivatorAction, GoToPoiAction,
+    canonical_npc_id, AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction,
+    CultivateState, CultivationDriveHistory, CultivationDriveScorer, CuriosityScorer, DashAction,
+    DashScorer, FarmAction, FearCultivatorScorer, FleeAction, FleeCultivatorAction, GoToPoiAction,
     GoToPoiState, HungerScorer, MeleeAttackAction, MeleeRangeScorer, PlayerProximityScorer,
     RestState, RetireAction, ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer,
     StallAction, StallState, StartDuXuAction, TradeStallScorer, TribulationReadyScorer,
@@ -46,7 +46,7 @@ use crate::npc::relic::{
     TrialEval, TrialEvalScorer, TrialState,
 };
 use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
-use crate::npc::schedule::{NpcDailySchedule, NpcHomeBase};
+use crate::npc::schedule::{schedule_seed_from_char_id, NpcDailySchedule, NpcHomeBase};
 use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
 use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
@@ -960,6 +960,10 @@ fn skin_salt(spawn_position: DVec3) -> u64 {
         ^ spawn_position.z.to_bits().rotate_left(31)
 }
 
+fn schedule_seed_for_entity(entity: Entity) -> u64 {
+    schedule_seed_from_char_id(canonical_npc_id(entity).as_str())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_rogue_commoner_base(
     commands: &mut Commands,
@@ -1023,7 +1027,7 @@ fn spawn_rogue_commoner_base(
         ))
         .id();
     commands.entity(entity).insert((
-        NpcDailySchedule::for_archetype(archetype, skin_salt(spawn_position)),
+        NpcDailySchedule::for_archetype(archetype, schedule_seed_for_entity(entity)),
         NpcHomeBase::from_world_pos(patrol_target, 0.6),
         GoToPoiState::default(),
         StallState::default(),
@@ -1105,7 +1109,7 @@ pub fn spawn_beast_npc_at(
         .id();
 
     commands.entity(entity).insert((
-        NpcDailySchedule::for_archetype(NpcArchetype::Beast, fauna_seed),
+        NpcDailySchedule::for_archetype(NpcArchetype::Beast, schedule_seed_for_entity(entity)),
         NpcHomeBase::from_world_pos(territory.center, 0.5),
         GoToPoiState::default(),
         StallState::default(),
@@ -1196,7 +1200,7 @@ pub fn spawn_disciple_npc_at(
         .insert((profile, visual_equipment(&profile)));
 
     commands.entity(entity).insert((
-        NpcDailySchedule::for_archetype(NpcArchetype::Disciple, skin_salt(spawn_position)),
+        NpcDailySchedule::for_archetype(NpcArchetype::Disciple, schedule_seed_for_entity(entity)),
         NpcHomeBase::from_world_pos(patrol_target, 0.7),
         GoToPoiState::default(),
         StallState::default(),
