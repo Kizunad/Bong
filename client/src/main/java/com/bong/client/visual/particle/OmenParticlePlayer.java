@@ -18,11 +18,11 @@ public final class OmenParticlePlayer implements VfxPlayer {
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
-        OmenStateStore.note(payload, System.currentTimeMillis());
         ClientWorld world = GameplayVfxUtil.world(client);
         if (world == null) {
             return;
         }
+        OmenStateStore.note(payload, System.currentTimeMillis());
 
         double[] origin = payload.origin();
         float[] rgb = GameplayVfxUtil.rgb(payload, fallbackColor(payload.eventId()));

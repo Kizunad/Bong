@@ -2107,6 +2107,7 @@ mod redis_bridge_tests {
     use crate::schema::combat_event::{
         CombatAttackSourceV1, CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
     };
+    use crate::schema::common::CommandType;
     use crate::schema::death_insight::{
         DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
     };
@@ -3497,6 +3498,33 @@ mod redis_bridge_tests {
                 .expect("arbiter command payload should pass"),
             Some(RedisInbound::AgentCommand(_))
         ));
+
+        let heartbeat_override_command = r#"{
+            "v": 1,
+            "id": "cmd_heartbeat_override",
+            "source": "arbiter",
+            "commands": [{
+                "type": "heartbeat_override",
+                "target": "spawn",
+                "params": {
+                    "action": "suppress",
+                    "event_type": "beast_tide",
+                    "duration_ticks": 6000
+                }
+            }]
+        }"#;
+        match parse_inbound_message(CH_AGENT_COMMAND, heartbeat_override_command)
+            .expect("heartbeat_override command payload should pass")
+        {
+            Some(RedisInbound::AgentCommand(batch)) => {
+                assert_eq!(batch.commands.len(), 1);
+                assert_eq!(
+                    batch.commands[0].command_type,
+                    CommandType::HeartbeatOverride
+                );
+            }
+            other => panic!("expected heartbeat_override AgentCommand, got {other:?}"),
+        }
 
         let political_narration = r#"{
             "v": 1,

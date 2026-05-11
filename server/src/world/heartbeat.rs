@@ -498,14 +498,12 @@ pub fn apply_heartbeat_override_command(
         .filter(|value| !value.is_empty())
         .unwrap_or(command.target.as_str())
         .to_string();
-    let duration_ticks = command
-        .params
-        .get("duration_ticks")
-        .and_then(value_to_u64)
-        .unwrap_or(5 * TICKS_PER_MINUTE);
-    if duration_ticks == 0 {
-        return Err(HeartbeatOverrideError::InvalidDuration);
-    }
+    let duration_ticks = match command.params.get("duration_ticks") {
+        Some(value) => value_to_u64(value)
+            .filter(|duration| *duration > 0)
+            .ok_or(HeartbeatOverrideError::InvalidDuration)?,
+        None => 5 * TICKS_PER_MINUTE,
+    };
     let intensity_override = command
         .params
         .get("intensity_override")
@@ -1894,6 +1892,58 @@ mod tests {
             heartbeat.overrides[0].event_kind,
             HeartbeatEventKind::BeastTide
         );
+    }
+
+    #[test]
+    fn override_command_rejects_invalid_contract_branches() {
+        let valid = Command {
+            command_type: CommandType::HeartbeatOverride,
+            target: "waste".to_string(),
+            params: HashMap::from([
+                ("action".to_string(), json!("accelerate")),
+                ("event_type".to_string(), json!("beast_tide")),
+                ("duration_ticks".to_string(), json!(6000)),
+            ]),
+        };
+
+        let mut heartbeat = WorldHeartbeat::default();
+        assert_eq!(
+            apply_heartbeat_override_command(None, &valid, 100),
+            Err(HeartbeatOverrideError::MissingHeartbeat),
+            "missing WorldHeartbeat resource should reject heartbeat_override instead of succeeding"
+        );
+
+        let mut invalid_action = valid.clone();
+        invalid_action
+            .params
+            .insert("action".to_string(), json!("unknown"));
+        assert_eq!(
+            apply_heartbeat_override_command(Some(&mut heartbeat), &invalid_action, 100),
+            Err(HeartbeatOverrideError::InvalidAction),
+            "unsupported heartbeat_override action should be rejected"
+        );
+
+        let mut invalid_event = valid.clone();
+        invalid_event
+            .params
+            .insert("event_type".to_string(), json!("not_real"));
+        assert_eq!(
+            apply_heartbeat_override_command(Some(&mut heartbeat), &invalid_event, 100),
+            Err(HeartbeatOverrideError::InvalidEventType),
+            "unsupported heartbeat_override event_type should be rejected"
+        );
+
+        for value in [json!(0), json!(-1), json!("bad")] {
+            let mut invalid_duration = valid.clone();
+            invalid_duration
+                .params
+                .insert("duration_ticks".to_string(), value);
+            assert_eq!(
+                apply_heartbeat_override_command(Some(&mut heartbeat), &invalid_duration, 100),
+                Err(HeartbeatOverrideError::InvalidDuration),
+                "explicit invalid heartbeat_override duration_ticks should be rejected"
+            );
+        }
     }
 
     #[test]

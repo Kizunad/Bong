@@ -55,7 +55,7 @@
 | server | `heartbeat_tick()` system（FixedUpdate 每 200 tick = 10s 评估一次）|
 | client | `OmenHudPlanner` — 天象预兆 HUD 层（屏幕边缘微光/色调偏移）|
 | client | `OmenParticlePlayer` — 预兆粒子（风向变化/鸟群惊飞/灵气涟漪）|
-| agent | 无新增——心跳不依赖 agent，但 agent 可通过现有 `spawn_event` 命令 override |
+| agent/schema | `heartbeat_override` — 心跳不依赖 agent 在线，但 agent 可通过该命令 `suppress` / `accelerate` / `force` 自主节拍 |
 
 ### worldview 锚点
 
@@ -391,7 +391,7 @@ switch (omenKind) {
 WorldHeartbeat（自主）    天道 Agent（LLM 决策）
      │                        │
      ├─ 自动评估世界状态        ├─ 读取 world_state
-     ├─ 按规则投放事件          ├─ 发 spawn_event 命令
+     ├─ 按规则投放事件          ├─ 发 heartbeat_override 命令
      ├─ 链式反应自动触发        ├─ 可 override 心跳决策
      │                        ├─ 发 modify_zone 调整灵气
      └─ 不依赖 agent 在线      └─ 可 suppress 某类事件
