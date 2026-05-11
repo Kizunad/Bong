@@ -30,10 +30,10 @@ Fork Valence 的 `valence_generated` codegen，扩展 block registry 支持 `bon
 
 ## §0 设计轴心
 
-- [ ] **Vanilla 数据零侵入**：`extracted/blocks.json` 不改一个字节。Bong 方块在独立的 `bong_blocks.json` 中定义
-- [ ] **ID 自动分配**：Bong 方块 state ID 从 `vanilla_max_state_id + 1`（24135）开始，按定义顺序自动递增
-- [ ] **单一事实源**：`bong_blocks.json` 同时驱动 server codegen 和 client 注册，不允许两端各自定义
-- [ ] **最小 fork**：只 fork `valence_generated` crate，不 fork 整个 Valence。server Cargo.toml 的 valence 依赖不变，只是把 `valence_generated` 指向本地 fork
+- [x] **Vanilla 数据零侵入**：`extracted/blocks.json` 不改一个字节。Bong 方块在独立的 `bong_blocks.json` 中定义
+- [x] **ID 自动分配**：Bong 方块 state ID 从 `vanilla_max_state_id + 1`（24135）开始，按定义顺序自动递增
+- [x] **单一事实源**：`bong_blocks.json` 同时驱动 server codegen 和 client 注册，不允许两端各自定义
+- [x] **最小 fork**：只 fork `valence_generated` crate，不 fork 整个 Valence。server Cargo.toml 的 valence 依赖不变，只是把 `valence_generated` 指向本地 fork
 
 ---
 
@@ -126,15 +126,15 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | Fork `valence_generated`，修改 `build/block.rs` 加载 `bong_blocks.json`，验证 codegen | ⬜ |
-| P1 | 首批 3 个阵法方块定义（zhenfa_node / zhenfa_line / zhenfa_eye）+ server 放置/读取 API | ⬜ |
-| P2 | Client Fabric 方块注册 + blockstate JSON + 模型 + 贴图（gen.py scene 风格） | ⬜ |
-| P3 | ID 对齐验证 + 端到端测试（server 放方块 → client 渲染正确） | ⬜ |
-| P4 | 文档 + 新增方块流程模板（"加一个新自定义方块需要改哪些文件"） | ⬜ |
+| P0 | Fork `valence_generated`，修改 `build/block.rs` 加载 `bong_blocks.json`，验证 codegen | ✅ |
+| P1 | 首批 3 个阵法方块定义（zhenfa_node / zhenfa_line / zhenfa_eye）+ server 放置/读取 API | ✅ |
+| P2 | Client Fabric 方块注册 + blockstate JSON + 模型 + 贴图（gen.py scene 风格） | ✅ |
+| P3 | ID 对齐验证 + 端到端测试（server 放方块 → client 渲染正确） | ✅ |
+| P4 | 文档 + 新增方块流程模板（"加一个新自定义方块需要改哪些文件"） | ✅ |
 
 ---
 
-## P0 — Fork valence_generated + codegen 扩展 ⬜
+## P0 — Fork valence_generated + codegen 扩展 ✅
 
 ### 交付物
 
@@ -242,7 +242,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P1 — Server 放置/读取 API ⬜
+## P1 — Server 放置/读取 API ✅
 
 ### 交付物
 
@@ -279,7 +279,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P2 — Client Fabric 方块注册 ⬜
+## P2 — Client Fabric 方块注册 ✅
 
 ### 交付物
 
@@ -349,7 +349,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P3 — 端到端验证 ⬜
+## P3 — 端到端验证 ✅
 
 ### 交付物
 
@@ -367,7 +367,7 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
 
 ---
 
-## P4 — 文档 + 新增方块流程模板 ⬜
+## P4 — 文档 + 新增方块流程模板 ✅
 
 ### 交付物
 
@@ -402,14 +402,16 @@ zhenfa_eye:   block_id=1005, state_id=24139~24140 (charged=true/false, 2 states)
   - `5574e4346`（2026-05-11）`test(custom-block): 补齐自定义方块边界覆盖`
   - `69dc52ad6`（2026-05-11）`fix(custom-block): 收紧自定义方块放置失败路径`
   - `2b2066a6b`（2026-05-11）`Merge remote-tracking branch 'origin/main' into auto/plan-custom-block-v1`
+  - `9547f88ef`（2026-05-11）`docs(custom-block): 记录主线同步验证`
+  - `9fdc558d4`（2026-05-11）`fix(custom-block): 补齐追加review回滚护栏`
 - **测试结果**：
   - `server/crates/valence_generated_bong`: `cargo test` → 3 passed。
   - `server`: `cargo fmt --check` → passed。
   - `server`: `CARGO_BUILD_JOBS=1 cargo clippy --all-targets -- -D warnings` → passed。
-  - `server`: `CARGO_BUILD_JOBS=1 cargo test zhenfa -- --test-threads=1` → 35 passed。
-  - `server`: `CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1` → 4311 passed（合入 `origin/main` 后复跑）。
+  - `server`: `CARGO_BUILD_JOBS=1 cargo test zhenfa -- --test-threads=1` → 36 passed。
+  - `server`: `CARGO_BUILD_JOBS=1 cargo test -- --test-threads=1` → 4312 passed（合入 `origin/main` 后复跑，并覆盖追加 review 修复）。
   - `client`: `JAVA_HOME=/home/kiz/.sdkman/candidates/java/17.0.18-amzn PATH=/home/kiz/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL。
-- **Review 修复**：Claude review 指出 `charged` boolean 属性顺序必须对齐 Minecraft `BooleanProperty` 的 `true,false` 状态顺序；已改 `bong_blocks.json`、server pinning test、client raw ID 校验与阵法 Trap 显式 `charged=false` 写块路径，并补 trigger / decay 拆块断言。CodeRabbit 后续建议已收敛 manifest collision shape / property value fail-fast 校验、`ChunkNotLoaded` error branch、`charged=true` 写块和 unloaded chunk 拒绝路径测试；追加 actionable 已处理 `Block::min_state_id` / `max_state_id` 空 states 明确报错，以及 `OverworldLayer` 缺失时阵法放置不扣气、不写注册表的回归保护。
+- **Review 修复**：Claude review 指出 `charged` boolean 属性顺序必须对齐 Minecraft `BooleanProperty` 的 `true,false` 状态顺序；已改 `bong_blocks.json`、server pinning test、client raw ID 校验与阵法 Trap 显式 `charged=false` 写块路径，并补 trigger / decay 拆块断言。CodeRabbit 后续建议已收敛 manifest collision shape / property value fail-fast 校验、`ChunkNotLoaded` error branch、`charged=true` 写块和 unloaded chunk 拒绝路径测试；追加 actionable 已处理 `Block::min_state_id` / `max_state_id` 空 states 明确报错、`OverworldLayer` 缺失时阵法放置不扣气不写注册表、重复 Bong block `(namespace, name)` fail-fast、registry insert 失败回滚 world block 与 anchor entity 且不扣气，并把归档 checklist / P0-P4 状态同步为完成。
 - **跨仓库核验**：
   - server：`BlockState::BONG_ZHENFA_NODE`、`BlockKind::BongZhenfaNode`、`BONG_BLOCK_STATE_START = 24135`、`place_bong_block`、阵法 `ChunkLayer` 写块/移除路径。
   - client：`BongBlocks.register()`、`BongBlockIds.ZHENFA_*`、`bong:zhenfa_*` blockstate/model/texture 资源。
