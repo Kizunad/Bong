@@ -16,6 +16,9 @@ use crate::schema::audio::{
 pub const AUDIO_PLAY_CHANNEL: &str = "bong:audio/play";
 pub const AUDIO_STOP_CHANNEL: &str = "bong:audio/stop";
 pub const AUDIO_BROADCAST_RADIUS: f64 = 64.0;
+pub const AUDIO_MELEE_RADIUS: f64 = 8.0;
+pub const AUDIO_AREA_RADIUS: f64 = 32.0;
+pub const AUDIO_WORLD_RADIUS: f64 = 128.0;
 
 #[derive(Debug, Default)]
 pub struct AudioInstanceIdAllocator {
@@ -230,7 +233,21 @@ pub fn recipient_for_attenuation(
     origin: DVec3,
 ) -> AudioRecipient {
     match attenuation {
-        AudioAttenuation::PlayerLocal => AudioRecipient::Single(entity),
+        AudioAttenuation::PlayerLocal | AudioAttenuation::SelfOnly => {
+            AudioRecipient::Single(entity)
+        }
+        AudioAttenuation::Melee => AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_MELEE_RADIUS,
+        },
+        AudioAttenuation::Area => AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_AREA_RADIUS,
+        },
+        AudioAttenuation::World => AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_WORLD_RADIUS,
+        },
         AudioAttenuation::World3d | AudioAttenuation::ZoneBroadcast => AudioRecipient::Radius {
             origin,
             radius: AUDIO_BROADCAST_RADIUS,
@@ -398,5 +415,28 @@ mod tests {
 
         assert_eq!(collect_play_payloads(&mut near_helper).len(), 1);
         assert!(collect_play_payloads(&mut far_helper).is_empty());
+    }
+
+    #[test]
+    fn new_spatial_profiles_map_to_plan_radii() {
+        let entity = Entity::from_raw(7);
+        let origin = DVec3::new(1.0, 64.0, 1.0);
+
+        assert!(matches!(
+            recipient_for_attenuation(AudioAttenuation::SelfOnly, entity, origin),
+            AudioRecipient::Single(target) if target == entity
+        ));
+        assert!(matches!(
+            recipient_for_attenuation(AudioAttenuation::Melee, entity, origin),
+            AudioRecipient::Radius { radius, .. } if radius == AUDIO_MELEE_RADIUS
+        ));
+        assert!(matches!(
+            recipient_for_attenuation(AudioAttenuation::Area, entity, origin),
+            AudioRecipient::Radius { radius, .. } if radius == AUDIO_AREA_RADIUS
+        ));
+        assert!(matches!(
+            recipient_for_attenuation(AudioAttenuation::World, entity, origin),
+            AudioRecipient::Radius { radius, .. } if radius == AUDIO_WORLD_RADIUS
+        ));
     }
 }

@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.audio.AudioAttenuation;
+import com.bong.client.audio.AudioBus;
 import com.bong.client.audio.AudioCategory;
 import com.bong.client.audio.AudioLayer;
 import com.bong.client.audio.AudioLoopConfig;
@@ -164,7 +165,8 @@ public final class AudioEventEnvelope {
         if (attenuation == null || category == null) {
             return null;
         }
-        return new AudioRecipe(id, layers, loop, priority, attenuation, category);
+        AudioBus bus = AudioBus.fromWire(readOptionalString(root, "bus"));
+        return new AudioRecipe(id, layers, loop, priority, attenuation, category, bus);
     }
 
     private static AudioLayer parseLayer(JsonElement element) {
@@ -238,6 +240,17 @@ public final class AudioEventEnvelope {
         }
         String value = element.getAsString();
         return value.isBlank() ? null : Optional.of(value);
+    }
+
+    private static String readOptionalString(JsonObject root, String fieldName) {
+        JsonElement element = root.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+            return null;
+        }
+        return element.getAsString();
     }
 
     private static Identifier parseIdentifier(String raw) {
