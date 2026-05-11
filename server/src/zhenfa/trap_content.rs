@@ -91,6 +91,18 @@ pub struct TrapDiscoveryProfile {
     pub scan_range_blocks: f64,
 }
 
+impl TrapDiscoveryProfile {
+    pub fn reveal_threshold(self) -> f64 {
+        if self.signature_qi >= 0.10 || self.induce_chance >= 1.0 {
+            10.0
+        } else if self.signature_qi >= 0.05 || self.condense_chance >= 1.0 {
+            20.0
+        } else {
+            30.0
+        }
+    }
+}
+
 pub fn placement_shape(kind: OrdinaryTrapKind) -> TrapPlacementShape {
     match kind {
         OrdinaryTrapKind::Warning | OrdinaryTrapKind::Slow => TrapPlacementShape::EmbeddedVertical,
@@ -134,11 +146,18 @@ pub fn half_life_ticks(kind: OrdinaryTrapKind) -> u64 {
 }
 
 pub fn survival_ticks(kind: OrdinaryTrapKind) -> u64 {
+    let half_life = half_life_ticks(kind);
     match kind {
-        OrdinaryTrapKind::Warning => 50 * TICKS_PER_HOUR,
-        OrdinaryTrapKind::Blast => 8 * TICKS_PER_HOUR,
-        OrdinaryTrapKind::Slow => 12 * TICKS_PER_HOUR,
+        OrdinaryTrapKind::Warning => ((half_life as f64) * 6.25).round() as u64,
+        OrdinaryTrapKind::Blast => half_life * 4,
+        OrdinaryTrapKind::Slow => half_life * 3,
     }
+}
+
+pub fn survival_ticks_with_environment(kind: OrdinaryTrapKind, zone_qi: f64) -> u64 {
+    ((survival_ticks(kind) as f64) * env_half_life_multiplier(zone_qi))
+        .round()
+        .max(1.0) as u64
 }
 
 pub fn discovery_profile(kind: OrdinaryTrapKind) -> TrapDiscoveryProfile {
@@ -327,5 +346,9 @@ mod tests {
         assert_eq!(env_half_life_multiplier(0.0), 0.8);
         assert_eq!(env_half_life_multiplier(0.31), 1.2);
         assert_eq!(env_half_life_multiplier(0.2), 1.0);
+        assert_eq!(
+            survival_ticks_with_environment(OrdinaryTrapKind::Slow, -0.1),
+            (12 * TICKS_PER_HOUR * 3) / 10
+        );
     }
 }

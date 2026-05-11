@@ -734,7 +734,10 @@ pub fn zhenfa_kind_profile(
             radius: 2,
             density_multiplier: 1.0,
             tiandao_gaze_weight: 0.0,
-            reveal_threshold: 30.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::Warning,
+            )
+            .reveal_threshold(),
             reveal_chance_per_tick: 0.0,
             reflect_ratio: 0.0,
         },
@@ -746,7 +749,10 @@ pub fn zhenfa_kind_profile(
             radius: 2,
             density_multiplier: 1.0,
             tiandao_gaze_weight: 0.0,
-            reveal_threshold: 10.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::Blast,
+            )
+            .reveal_threshold(),
             reveal_chance_per_tick: 0.0,
             reflect_ratio: 0.0,
         },
@@ -758,7 +764,8 @@ pub fn zhenfa_kind_profile(
             radius: 2,
             density_multiplier: 1.0,
             tiandao_gaze_weight: 0.0,
-            reveal_threshold: 20.0,
+            reveal_threshold: trap_content::discovery_profile(trap_content::OrdinaryTrapKind::Slow)
+                .reveal_threshold(),
             reveal_chance_per_tick: 0.0,
             reflect_ratio: 0.0,
         },
@@ -889,6 +896,7 @@ fn handle_zhenfa_place_requests(
     mut commands: Commands,
     mut players: Query<ZhenfaPlacePlayer<'_>>,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
+    zones: Option<Res<ZoneRegistry>>,
     mut ward_events: EventWriter<WardArrayDeployEvent>,
     mut ling_events: EventWriter<LingArrayDeployEvent>,
     mut deceive_events: EventWriter<DeceiveHeavenEvent>,
@@ -1052,7 +1060,13 @@ fn handle_zhenfa_place_requests(
 
         let realm_at_cast = cultivation.realm;
         let specialist = zhenfa_specialist_level(modifiers);
-        let duration_ticks = effective_duration_ticks(profile.duration_ticks, qi_color, specialist);
+        let base_duration_ticks = if let Some(trap_kind) = ordinary_trap {
+            let zone_qi = zone_qi_at_pos(zones.as_deref(), req.pos).unwrap_or(0.2);
+            trap_content::survival_ticks_with_environment(trap_kind, zone_qi)
+        } else {
+            profile.duration_ticks
+        };
+        let duration_ticks = effective_duration_ticks(base_duration_ticks, qi_color, specialist);
         let owner_player_id = canonical_player_id(username.0.as_str());
         let anchor_entity = commands
             .spawn((
@@ -2476,6 +2490,21 @@ fn is_solid_for_blast_los(block: BlockState) -> bool {
         return false;
     }
     block.collision_shapes().next().is_some()
+}
+
+fn zone_qi_at_pos(zones: Option<&ZoneRegistry>, pos: [i32; 3]) -> Option<f64> {
+    zones
+        .and_then(|zones| {
+            zones.find_zone(
+                DimensionKind::Overworld,
+                valence::math::DVec3::new(
+                    f64::from(pos[0]) + 0.5,
+                    f64::from(pos[1]) + 0.5,
+                    f64::from(pos[2]) + 0.5,
+                ),
+            )
+        })
+        .map(|zone| zone.spirit_qi)
 }
 
 fn release_trap_snapshot_qi_to_zone(
