@@ -1283,6 +1283,7 @@ impl ActiveEventsResource {
                 }
                 EVENT_HEAVENLY_FIRE => {
                     let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    // 天火先给玩家完整预兆窗口，结束时一次性把地貌烧成焦土。
                     if next_elapsed >= event.duration_ticks && !event.calamity_state.initialized {
                         let redistributed = redistribute_zone_qi_before_collapse(
                             zone_registry,
