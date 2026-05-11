@@ -1,0 +1,15 @@
+{
+  "id": "alchemy_overheat",
+  "layers": [
+    {
+      "sound": "minecraft:block.fire.extinguish",
+      "volume": 0.4,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 63,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

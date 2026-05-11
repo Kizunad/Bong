@@ -1,0 +1,21 @@
+{
+  "id": "parry_perfect",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.use",
+      "volume": 0.5,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.experience_orb.pickup",
+      "volume": 0.2,
+      "pitch": 0.5,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 88,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

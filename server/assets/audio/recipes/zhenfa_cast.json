@@ -1,0 +1,15 @@
+{
+  "id": "zhenfa_cast",
+  "layers": [
+    {
+      "sound": "minecraft:block.enchantment_table.use",
+      "volume": 0.28,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "alchemy_bubble",
+  "layers": [
+    {
+      "sound": "minecraft:block.pointed_dripstone.drip_lava",
+      "volume": 0.2,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 46,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT",
+  "loop": {
+    "interval_ticks": 40,
+    "while_flag": "alchemy_brewing"
+  }
+}

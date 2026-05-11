@@ -1,0 +1,15 @@
+{
+  "id": "dugu_hit_light",
+  "layers": [
+    {
+      "sound": "minecraft:entity.arrow.shoot",
+      "volume": 0.24,
+      "pitch": 1.8,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 56,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

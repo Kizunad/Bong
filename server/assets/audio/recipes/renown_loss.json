@@ -1,0 +1,15 @@
+{
+  "id": "renown_loss",
+  "layers": [
+    {
+      "sound": "minecraft:block.soul_sand.break",
+      "volume": 0.2,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 44,
+  "attenuation": "SELF",
+  "category": "VOICE",
+  "bus": "UI"
+}

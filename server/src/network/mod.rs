@@ -542,6 +542,7 @@ pub fn register(app: &mut App) {
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
+    app.add_systems(Update, audio_trigger::tick_audio_dedup_clock);
     app.add_systems(
         Update,
         (
@@ -564,6 +565,7 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_player_state_audio_triggers,
             npc_metadata::emit_npc_metadata_payloads,
         )
+            .after(audio_trigger::tick_audio_dedup_clock)
             .before(audio_event_emit::emit_audio_play_payloads),
     );
     app.add_systems(
@@ -650,7 +652,8 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::apply_defense_intents),
             // Run after attack resolve so damage interrupts are observed same tick.
             cast_emit::tick_casts_or_interrupt
-                .after(crate::combat::resolve::resolve_attack_intents),
+                .after(crate::combat::resolve::resolve_attack_intents)
+                .after(audio_trigger::tick_audio_dedup_clock),
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(crate::combat::yidao::complete_yidao_casts),

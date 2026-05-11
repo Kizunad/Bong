@@ -23,8 +23,19 @@ export const AudioAttenuationV1 = Type.Union([
   Type.Literal("world_3d"),
   Type.Literal("global_hint"),
   Type.Literal("zone_broadcast"),
+  Type.Literal("SELF"),
+  Type.Literal("MELEE"),
+  Type.Literal("AREA"),
+  Type.Literal("WORLD"),
 ]);
 export type AudioAttenuationV1 = Static<typeof AudioAttenuationV1>;
+
+export const AudioBusV1 = Type.Union([
+  Type.Literal("COMBAT"),
+  Type.Literal("ENVIRONMENT"),
+  Type.Literal("UI"),
+]);
+export type AudioBusV1 = Static<typeof AudioBusV1>;
 
 export const AudioSoundCategoryV1 = Type.Union([
   Type.Literal("MASTER"),
@@ -64,6 +75,7 @@ export const SoundRecipeV1 = Type.Object(
     priority: Type.Integer({ minimum: 0, maximum: AUDIO_PRIORITY_MAX }),
     attenuation: AudioAttenuationV1,
     category: AudioSoundCategoryV1,
+    bus: Type.Optional(AudioBusV1),
   },
   { additionalProperties: false },
 );

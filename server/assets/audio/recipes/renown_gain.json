@@ -1,0 +1,15 @@
+{
+  "id": "renown_gain",
+  "layers": [
+    {
+      "sound": "minecraft:entity.experience_orb.pickup",
+      "volume": 0.2,
+      "pitch": 1.0,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 44,
+  "attenuation": "SELF",
+  "category": "VOICE",
+  "bus": "UI"
+}

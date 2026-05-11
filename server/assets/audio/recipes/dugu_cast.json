@@ -1,0 +1,15 @@
+{
+  "id": "dugu_cast",
+  "layers": [
+    {
+      "sound": "minecraft:entity.arrow.shoot",
+      "volume": 0.18,
+      "pitch": 1.6,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

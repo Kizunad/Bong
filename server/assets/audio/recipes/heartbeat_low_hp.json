@@ -7,5 +7,6 @@
   "loop": { "interval_ticks": 20, "while_flag": "hp_below_30" },
   "priority": 70,
   "attenuation": "player_local",
-  "category": "HOSTILE"
+  "category": "HOSTILE",
+  "bus": "COMBAT"
 }

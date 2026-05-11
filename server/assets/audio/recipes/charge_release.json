@@ -1,0 +1,21 @@
+{
+  "id": "charge_release",
+  "layers": [
+    {
+      "sound": "minecraft:entity.generic.explode",
+      "volume": 0.4,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.beacon.deactivate",
+      "volume": 0.25,
+      "pitch": 0.3,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 80,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

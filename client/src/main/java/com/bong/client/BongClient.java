@@ -4,6 +4,7 @@ import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
+import com.bong.client.audio.NpcFootstepAudioController;
 import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.block.BongBlocks;
 import com.bong.client.botany.BotanyHudBootstrap;
@@ -92,6 +93,7 @@ public class BongClient implements ClientModInitializer {
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
         SoundRecipePlayer.bootstrap();
+        NpcFootstepAudioController.register();
         ZoneAtmosphereRenderer.bootstrap();
         EnvironmentEffectController.bootstrap();
         BongAnimCommand.register();

@@ -1,0 +1,21 @@
+{
+  "id": "woliu_hit_critical",
+  "layers": [
+    {
+      "sound": "minecraft:entity.enderman.teleport",
+      "volume": 0.22,
+      "pitch": 0.3,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.portal.ambient",
+      "volume": 0.12,
+      "pitch": 2.0,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 78,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

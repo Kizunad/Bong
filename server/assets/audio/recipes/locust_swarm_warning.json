@@ -7,5 +7,6 @@
   ],
   "priority": 88,
   "attenuation": "global_hint",
-  "category": "AMBIENT"
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
 }

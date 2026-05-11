@@ -1,0 +1,15 @@
+{
+  "id": "zhenmai_hit_light",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.use",
+      "volume": 0.24,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 56,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

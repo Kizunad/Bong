@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.audio.AudioAttenuation;
+import com.bong.client.audio.AudioBus;
 import com.bong.client.audio.AudioCategory;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,37 @@ public class AudioEventEnvelopeTest {
         assertEquals(1, payload.pos().orElseThrow().x());
         assertEquals(AudioAttenuation.PLAYER_LOCAL, payload.recipe().attenuation());
         assertEquals(AudioCategory.VOICE, payload.recipe().category());
+        assertEquals(AudioBus.UI, payload.recipe().bus());
         assertEquals(new Identifier("minecraft", "entity.generic.drink"), payload.recipe().layers().get(0).sound());
+    }
+
+    @Test
+    void parsesOptionalBusWhenPresent() {
+        String json = """
+            {
+              "v": 1,
+              "recipe_id": "pill_consume",
+              "instance_id": 42,
+              "volume_mul": 1.0,
+              "pitch_shift": 0.0,
+              "recipe": {
+                "id": "pill_consume",
+                "layers": [
+                  {"sound": "minecraft:entity.generic.drink", "volume": 0.4, "pitch": 1.0, "delay_ticks": 0}
+                ],
+                "priority": 40,
+                "attenuation": "SELF",
+                "category": "VOICE",
+                "bus": "UI"
+              }
+            }
+            """;
+
+        AudioEventParseResult result = AudioEventEnvelope.parsePlay(json, jsonLen(json));
+        assertTrue(result.isSuccess(), result.errorMessage());
+        AudioEventPayload.PlaySoundRecipe payload = (AudioEventPayload.PlaySoundRecipe) result.payload();
+        assertEquals("pill_consume", payload.recipe().id());
+        assertEquals("UI", payload.recipe().bus().name());
     }
 
     @Test

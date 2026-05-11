@@ -1,0 +1,15 @@
+{
+  "id": "dodge_success",
+  "layers": [
+    {
+      "sound": "minecraft:entity.phantom.flap",
+      "volume": 0.3,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

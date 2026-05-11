@@ -1,0 +1,15 @@
+{
+  "id": "woliu_cast",
+  "layers": [
+    {
+      "sound": "minecraft:block.portal.ambient",
+      "volume": 0.1,
+      "pitch": 2.0,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "SELF",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

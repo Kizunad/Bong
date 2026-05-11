@@ -1,0 +1,15 @@
+{
+  "id": "tuike_hit_light",
+  "layers": [
+    {
+      "sound": "minecraft:entity.slime.squish",
+      "volume": 0.24,
+      "pitch": 0.5,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 56,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

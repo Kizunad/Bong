@@ -6,5 +6,6 @@
   ],
   "priority": 58,
   "attenuation": "world_3d",
-  "category": "HOSTILE"
+  "category": "HOSTILE",
+  "bus": "COMBAT"
 }

@@ -1,0 +1,21 @@
+{
+  "id": "hit_critical",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.crit",
+      "volume": 0.5,
+      "pitch": 0.8,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.lightning_bolt.impact",
+      "volume": 0.1,
+      "pitch": 2.0,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 78,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -33,6 +33,14 @@ pub enum AudioAttenuation {
     World3d,
     GlobalHint,
     ZoneBroadcast,
+    #[serde(rename = "SELF")]
+    SelfOnly,
+    #[serde(rename = "MELEE")]
+    Melee,
+    #[serde(rename = "AREA")]
+    Area,
+    #[serde(rename = "WORLD")]
+    World,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +52,14 @@ pub enum AudioSoundCategory {
     Ambient,
     Voice,
     Blocks,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AudioBus {
+    Combat,
+    Environment,
+    Ui,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -105,6 +121,8 @@ pub struct SoundRecipe {
     pub priority: u8,
     pub attenuation: AudioAttenuation,
     pub category: AudioSoundCategory,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<AudioBus>,
 }
 
 impl SoundRecipe {
@@ -398,6 +416,7 @@ mod tests {
             priority: 40,
             attenuation: AudioAttenuation::PlayerLocal,
             category: AudioSoundCategory::Voice,
+            bus: None,
         }
     }
 
@@ -414,6 +433,38 @@ mod tests {
         assert_eq!(json, "\"PLAYERS\"");
         let back: AudioSoundCategory = serde_json::from_str(&json).expect("deserialize category");
         assert_eq!(back, AudioSoundCategory::Players);
+    }
+
+    #[test]
+    fn spatial_profiles_and_bus_roundtrip() {
+        let mut recipe = sample_recipe();
+        recipe.attenuation = AudioAttenuation::Melee;
+        recipe.bus = Some(AudioBus::Combat);
+
+        let json = serde_json::to_string(&recipe).expect("serialize recipe");
+        assert!(json.contains("\"attenuation\":\"MELEE\""));
+        assert!(json.contains("\"bus\":\"COMBAT\""));
+
+        let back: SoundRecipe = serde_json::from_str(&json).expect("deserialize recipe");
+        assert_eq!(back.attenuation, AudioAttenuation::Melee);
+        assert_eq!(back.bus, Some(AudioBus::Combat));
+    }
+
+    #[test]
+    fn legacy_recipe_without_bus_still_roundtrips() {
+        let json = r#"{
+            "id": "pill_consume",
+            "layers": [
+                { "sound": "minecraft:entity.generic.drink", "volume": 0.4, "pitch": 1.0, "delay_ticks": 0 }
+            ],
+            "priority": 40,
+            "attenuation": "player_local",
+            "category": "VOICE"
+        }"#;
+
+        let recipe: SoundRecipe = serde_json::from_str(json).expect("legacy recipe should parse");
+        assert_eq!(recipe.bus, None);
+        recipe.validate().expect("legacy recipe remains valid");
     }
 
     #[test]

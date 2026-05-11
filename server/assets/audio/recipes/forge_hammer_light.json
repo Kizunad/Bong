@@ -1,0 +1,15 @@
+{
+  "id": "forge_hammer_light",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.use",
+      "volume": 0.3,
+      "pitch": 1.3,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 54,
+  "attenuation": "MELEE",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}
