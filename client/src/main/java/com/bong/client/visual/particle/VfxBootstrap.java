@@ -133,5 +133,11 @@ public final class VfxBootstrap {
         registry.register(SocialLinkVfxPlayer.FEUD_MARK,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.FEUD_MARK));
         registry.register(PoisonMistPlayer.EVENT_ID,            new PoisonMistPlayer());
+        registry.register(MovementVfxPlayer.DASH,
+            new MovementVfxPlayer(MovementVfxPlayer.Kind.DASH));
+        registry.register(MovementVfxPlayer.SLIDE,
+            new MovementVfxPlayer(MovementVfxPlayer.Kind.SLIDE));
+        registry.register(MovementVfxPlayer.DOUBLE_JUMP,
+            new MovementVfxPlayer(MovementVfxPlayer.Kind.DOUBLE_JUMP));
     }
 }

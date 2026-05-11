@@ -282,6 +282,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }
 
+    public static void sendMovementAction(ClientRequestProtocol.MovementAction action) {
+        dispatch(ClientRequestProtocol.encodeMovementAction(action));
+    }
+
     public static void sendQiColorInspect(String observed) {
         dispatch(ClientRequestProtocol.encodeQiColorInspect(observed));
     }

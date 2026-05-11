@@ -26,6 +26,9 @@ pub const SOCIAL_NICHE_ESTABLISH: &str = "bong:social_niche_establish";
 pub const SOCIAL_PACT_LINK: &str = "bong:social_pact_link";
 pub const SOCIAL_FEUD_MARK: &str = "bong:social_feud_mark";
 pub const POISON_MIST: &str = "bong:poison_mist";
+pub const MOVEMENT_DASH: &str = "bong:movement_dash";
+pub const MOVEMENT_SLIDE: &str = "bong:movement_slide";
+pub const MOVEMENT_DOUBLE_JUMP: &str = "bong:movement_double_jump";
 
 pub fn block_center(pos: [i32; 3]) -> DVec3 {
     DVec3::new(

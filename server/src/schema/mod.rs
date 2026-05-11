@@ -31,6 +31,7 @@ pub mod identity;
 pub mod inventory;
 pub mod lingtian;
 pub mod lingtian_weather;
+pub mod movement;
 pub mod narration;
 pub mod npc;
 pub mod poi_novice;

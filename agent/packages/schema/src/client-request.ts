@@ -20,6 +20,7 @@ import {
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
+import { MovementActionRequestV1 } from "./movement.js";
 import { GuardianKindV1 } from "./social.js";
 import { FalseSkinKindV1 } from "./tuike.js";
 import { VoidActionRequestV1 } from "./void-actions.js";
@@ -64,6 +65,16 @@ export const VoidActionClientRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type VoidActionClientRequestV1 = Static<typeof VoidActionClientRequestV1>;
+
+export const MovementActionClientRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("movement_action"),
+    action: MovementActionRequestV1,
+  },
+  { additionalProperties: false },
+);
+export type MovementActionClientRequestV1 = Static<typeof MovementActionClientRequestV1>;
 
 export const AbortTribulationRequestV1 = Type.Object(
   {
@@ -901,6 +912,7 @@ export const ClientRequestV1 = Type.Union([
   BreakthroughRequestV1,
   StartDuXuRequestV1,
   VoidActionClientRequestV1,
+  MovementActionClientRequestV1,
   AbortTribulationRequestV1,
   HeartDemonDecisionRequestV1,
   ForgeRequestV1,

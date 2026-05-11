@@ -29,6 +29,7 @@ import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
 import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.npc.NpcNametagRenderer;
 import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
@@ -63,6 +64,7 @@ public class BongClient implements ClientModInitializer {
         ScreenTransitionController.register();
         InteractionKeybindings.register();
         HudImmersionControls.register();
+        MovementKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();

@@ -63,4 +63,20 @@ class HudLayoutPresetTest {
         assertTrue(minimal.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.COMPASS));
         assertTrue(minimal.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.EVENT_STREAM));
     }
+
+    @Test
+    void movementHudUsesBarsWidget() {
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        List<HudRenderCommand> minimal = HudLayoutPreset.filter(
+            commands,
+            HudImmersionMode.Mode.PEACE,
+            HudLayoutPreferenceStore.Density.MINIMAL,
+            1_000L
+        );
+
+        assertTrue(minimal.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.MOVEMENT_HUD));
+    }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "movement_dash",
+  "layers": [
+    { "sound": "minecraft:entity.phantom.flap", "volume": 0.30, "pitch": 1.8, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.player.attack.sweep", "volume": 0.15, "pitch": 1.5, "delay_ticks": 1 }
+  ],
+  "priority": 58,
+  "attenuation": "world_3d",
+  "category": "VOICE"
+}

@@ -785,6 +785,7 @@ describe("sample files pass schema validation", () => {
   for (const sample of [
     "server-data.realm-vision-params.sample.json",
     "server-data.spiritual-sense-targets.sample.json",
+    "server-data.movement-state.sample.json",
   ]) {
     it(sample, () => {
       const data = loadSample(sample);
@@ -928,6 +929,12 @@ describe("sample files pass schema validation", () => {
 
   it("client-request.mineral-probe.sample.json", () => {
     const data = loadSample("client-request.mineral-probe.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.movement-action.sample.json", () => {
+    const data = loadSample("client-request.movement-action.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });

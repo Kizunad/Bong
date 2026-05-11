@@ -88,6 +88,9 @@ public final class BongAnimations {
     public static final Identifier ARM_INJURED_LEFT = new Identifier(MOD_ID, "arm_injured_left");
     public static final Identifier ARM_INJURED_RIGHT = new Identifier(MOD_ID, "arm_injured_right");
     public static final Identifier EXHAUSTED_WALK = new Identifier(MOD_ID, "exhausted_walk");
+    public static final Identifier DASH_FORWARD = new Identifier(MOD_ID, "dash_forward");
+    public static final Identifier SLIDE_LOW = new Identifier(MOD_ID, "slide_low");
+    public static final Identifier DOUBLE_JUMP = new Identifier(MOD_ID, "double_jump");
 
     public static final List<Identifier> IMPLEMENTATION_V1_ANIMATIONS = List.of(
         SWORD_SWING_RIGHT,
@@ -133,6 +136,12 @@ public final class BongAnimations {
         DEATH_COLLAPSE,
         DEATH_DISINTEGRATE,
         REBIRTH_WAKE
+    );
+
+    public static final List<Identifier> MOVEMENT_V1_ANIMATIONS = List.of(
+        DASH_FORWARD,
+        SLIDE_LOW,
+        DOUBLE_JUMP
     );
 
     private BongAnimations() {

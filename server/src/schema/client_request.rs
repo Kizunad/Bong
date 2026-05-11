@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::alchemy::AlchemyInterventionV1;
 use super::combat_carrier::AnqiContainerKindV1;
 use super::inventory::{EquipSlotV1, InventoryLocationV1};
+use super::movement::MovementActionRequestV1;
 use super::tuike::FalseSkinKindV1;
 use super::void_actions::VoidActionRequestV1;
 use crate::cultivation::components::MeridianId;
@@ -44,6 +45,11 @@ pub enum ClientRequestV1 {
     VoidAction {
         v: u8,
         request: VoidActionRequestV1,
+    },
+    /// plan-movement-v1 — 冲刺 / 滑铲 / 二段跳移动动作。
+    MovementAction {
+        v: u8,
+        action: MovementActionRequestV1,
     },
     AbortTribulation {
         v: u8,
@@ -587,6 +593,33 @@ mod tests {
             }
             other => panic!("expected VoidAction, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn movement_action_request_roundtrip() {
+        let json = r#"{"type":"movement_action","v":1,"action":"dash"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::MovementAction { v, action } => {
+                assert_eq!(v, 1);
+                assert_eq!(action, MovementActionRequestV1::Dash);
+            }
+            other => panic!("expected MovementAction, got {other:?}"),
+        }
+
+        let encoded = serde_json::to_string(&req).expect("movement action serializes");
+        assert_eq!(encoded, json);
+    }
+
+    #[test]
+    fn movement_action_rejects_unknown_fields() {
+        let json = r#"{"type":"movement_action","v":1,"action":"dash","extra":true}"#;
+        let error =
+            serde_json::from_str::<ClientRequestV1>(json).expect_err("extra field must fail");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "expected unknown-field error, got {error}"
+        );
     }
 
     #[test]

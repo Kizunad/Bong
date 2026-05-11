@@ -79,6 +79,7 @@ use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
 use crate::lingtian::PlotEnvironment;
 use crate::mineral::probe::is_probe_target_in_range;
 use crate::mineral::MineralProbeIntent;
+use crate::movement::{MovementAction, MovementActionIntent};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -230,6 +231,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
     pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
     pub void_action_tx: Option<ResMut<'w, Events<VoidActionIntent>>>,
+    pub movement_action_tx: Option<ResMut<'w, Events<MovementActionIntent>>>,
     pub heart_demon_choice_tx: Option<ResMut<'w, Events<HeartDemonChoiceSubmitted>>>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
@@ -358,6 +360,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::StartDuXu { v }
             | ClientRequestV1::VoidAction { v, .. }
+            | ClientRequestV1::MovementAction { v, .. }
             | ClientRequestV1::AbortTribulation { v }
             | ClientRequestV1::HeartDemonDecision { v, .. }
             | ClientRequestV1::ForgeRequest { v, .. }
@@ -491,6 +494,23 @@ pub fn handle_client_request_payloads(
                     caster: ev.client,
                     request,
                     requested_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::MovementAction { action, .. } => {
+                tracing::debug!(
+                    "[bong][network] client_request movement_action entity={:?} action={:?}",
+                    ev.client,
+                    action
+                );
+                let Some(movement_action_tx) = dispatch.movement_action_tx.as_deref_mut() else {
+                    tracing::debug!(
+                        "[bong][network] dropped movement_action because MovementActionIntent event resource is missing"
+                    );
+                    continue;
+                };
+                movement_action_tx.send(MovementActionIntent {
+                    entity: ev.client,
+                    action: MovementAction::from(action),
                 });
             }
             ClientRequestV1::AbortTribulation { .. } => {
@@ -3322,6 +3342,60 @@ mod tests {
             1,
             "abort_tribulation must not emit another StartDuXuRequest or cancellation side effect"
         );
+    }
+
+    #[test]
+    fn movement_action_request_emits_intent_when_event_resource_exists() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<MovementActionIntent>();
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"movement_action","v":1,"action":"dash"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<MovementActionIntent>>();
+        let intents: Vec<_> = events.iter_current_update_events().collect();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].entity, entity);
+        assert_eq!(intents[0].action, MovementAction::Dashing);
+    }
+
+    #[test]
+    fn movement_action_request_without_event_resource_is_dropped() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"movement_action","v":1,"action":"slide"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .get_resource::<valence::prelude::Events<MovementActionIntent>>()
+            .is_none());
     }
 
     #[test]

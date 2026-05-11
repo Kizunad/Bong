@@ -80,6 +80,7 @@ import {
   SkillConfigIntentRequestV1,
   StartDuXuRequestV1,
   VoidActionClientRequestV1,
+  MovementActionClientRequestV1,
   SparringInviteResponseRequestV1,
   StartExtractRequestV1,
   TradeOfferRequestV1,
@@ -284,6 +285,7 @@ import {
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataHealerNpcAiStateV1,
+  ServerDataMovementStateV1,
   ServerDataWeaponBrokenV1,
   ServerDataWeaponEquippedV1,
   ServerDataForgeStationV1,
@@ -313,6 +315,12 @@ import {
   WeaponEquippedV1,
   WeaponViewV1,
 } from "./server-data.js";
+import {
+  MovementActionRequestV1,
+  MovementActionV1,
+  MovementStateV1,
+  MovementZoneKindV1,
+} from "./movement.js";
 import {
   FullPowerChargingStateV1,
   FullPowerExhaustedStateV1,
@@ -549,6 +557,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestStartDuXuV1: StartDuXuRequestV1,
   clientRequestVoidActionV1: VoidActionClientRequestV1,
+  clientRequestMovementActionV1: MovementActionClientRequestV1,
   clientRequestAbortTribulationV1: AbortTribulationRequestV1,
   clientRequestHeartDemonDecisionV1: HeartDemonDecisionRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
@@ -677,6 +686,11 @@ export const SCHEMA_REGISTRY = {
   yidaoHudStateV1: YidaoHudStateV1,
   serverDataHealerNpcAiStateV1: ServerDataHealerNpcAiStateV1,
   serverDataYidaoHudStateV1: ServerDataYidaoHudStateV1,
+  movementActionRequestV1: MovementActionRequestV1,
+  movementActionV1: MovementActionV1,
+  movementZoneKindV1: MovementZoneKindV1,
+  movementStateV1: MovementStateV1,
+  serverDataMovementStateV1: ServerDataMovementStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -951,6 +965,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-start-du-xu-v1.json": SCHEMA_REGISTRY.clientRequestStartDuXuV1,
   "client-request-void-action-v1.json":
     SCHEMA_REGISTRY.clientRequestVoidActionV1,
+  "client-request-movement-action-v1.json":
+    SCHEMA_REGISTRY.clientRequestMovementActionV1,
   "client-request-abort-tribulation-v1.json":
     SCHEMA_REGISTRY.clientRequestAbortTribulationV1,
   "client-request-heart-demon-decision-v1.json":
@@ -1108,6 +1124,12 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataHealerNpcAiStateV1,
   "server-data-yidao-hud-state-v1.json":
     SCHEMA_REGISTRY.serverDataYidaoHudStateV1,
+  "movement-action-request-v1.json": SCHEMA_REGISTRY.movementActionRequestV1,
+  "movement-action-v1.json": SCHEMA_REGISTRY.movementActionV1,
+  "movement-zone-kind-v1.json": SCHEMA_REGISTRY.movementZoneKindV1,
+  "movement-state-v1.json": SCHEMA_REGISTRY.movementStateV1,
+  "server-data-movement-state-v1.json":
+    SCHEMA_REGISTRY.serverDataMovementStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7

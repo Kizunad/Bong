@@ -36,6 +36,22 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesMovementActionRequest() {
+        assertEquals(
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"double_jump\"}",
+            ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DOUBLE_JUMP)
+        );
+    }
+
+    @Test
+    void rejectsNullMovementAction() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeMovementAction(null)
+        );
+    }
+
+    @Test
     void encodesVoidActionSuppressTsy() {
         assertEquals(
             "{\"type\":\"void_action\",\"v\":1,\"request\":{\"kind\":\"suppress_tsy\",\"zone_id\":\"tsy_lingxu\"}}",

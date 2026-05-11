@@ -13437,6 +13437,134 @@
       "required": [
         "v",
         "type",
+        "current_speed_multiplier",
+        "stamina_cost_active",
+        "movement_action",
+        "zone_kind",
+        "dash_cooldown_remaining_ticks",
+        "slide_cooldown_remaining_ticks",
+        "double_jump_charges_remaining",
+        "double_jump_charges_max",
+        "hitbox_height_blocks",
+        "stamina_current",
+        "stamina_max",
+        "low_stamina"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "movement_state",
+          "type": "string"
+        },
+        "current_speed_multiplier": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "stamina_cost_active": {
+          "type": "boolean"
+        },
+        "movement_action": {
+          "anyOf": [
+            {
+              "const": "none",
+              "type": "string"
+            },
+            {
+              "const": "dashing",
+              "type": "string"
+            },
+            {
+              "const": "sliding",
+              "type": "string"
+            },
+            {
+              "const": "double_jumping",
+              "type": "string"
+            }
+          ]
+        },
+        "zone_kind": {
+          "anyOf": [
+            {
+              "const": "normal",
+              "type": "string"
+            },
+            {
+              "const": "dead",
+              "type": "string"
+            },
+            {
+              "const": "negative",
+              "type": "string"
+            },
+            {
+              "const": "residue_ash",
+              "type": "string"
+            }
+          ]
+        },
+        "dash_cooldown_remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slide_cooldown_remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "double_jump_charges_remaining": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "double_jump_charges_max": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hitbox_height_blocks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "stamina_current": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "stamina_max": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "low_stamina": {
+          "type": "boolean"
+        },
+        "last_action_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected_action": {
+          "anyOf": [
+            {
+              "const": "dash",
+              "type": "string"
+            },
+            {
+              "const": "slide",
+              "type": "string"
+            },
+            {
+              "const": "double_jump",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {

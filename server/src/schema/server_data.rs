@@ -22,6 +22,7 @@ use super::forge::{
 use super::identity::IdentityPanelStateV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
+use super::movement::MovementStateV1;
 use super::narration::Narration;
 use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
 use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
@@ -169,6 +170,7 @@ pub enum ServerDataType {
     SpiritualSenseTargets,
     HealerNpcAiState,
     YidaoHudState,
+    MovementState,
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList,
     CraftSessionState,
@@ -380,6 +382,7 @@ pub enum ServerDataPayloadV1 {
     SpiritualSenseTargets(SpiritualSenseTargetsV1),
     HealerNpcAiState(HealerNpcAiStateV1),
     YidaoHudState(YidaoHudStateV1),
+    MovementState(MovementStateV1),
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     /// inventory 打开时一次性推全配方表（含解锁状态）。
     CraftRecipeList(Box<RecipeListV1>),
@@ -1130,6 +1133,10 @@ enum ServerDataPayloadWireV1 {
     YidaoHudState {
         #[serde(flatten)]
         state: YidaoHudStateV1,
+    },
+    MovementState {
+        #[serde(flatten)]
+        state: MovementStateV1,
     },
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList {
@@ -1923,6 +1930,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::HealerNpcAiState(state))
             }
             ServerDataPayloadWireV1::YidaoHudState { state } => Ok(Self::YidaoHudState(state)),
+            ServerDataPayloadWireV1::MovementState { state } => Ok(Self::MovementState(state)),
             ServerDataPayloadWireV1::CraftRecipeList { list } => Ok(Self::CraftRecipeList(list)),
             ServerDataPayloadWireV1::CraftSessionState { state } => {
                 Ok(Self::CraftSessionState(state))
@@ -2392,6 +2400,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::YidaoHudState(state) => Self::YidaoHudState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::MovementState(state) => Self::MovementState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::CraftRecipeList(list) => {
                 Self::CraftRecipeList { list: list.clone() }
             }
@@ -2647,6 +2658,7 @@ impl ServerDataPayloadV1 {
             Self::SpiritualSenseTargets(..) => ServerDataType::SpiritualSenseTargets,
             Self::HealerNpcAiState(..) => ServerDataType::HealerNpcAiState,
             Self::YidaoHudState(..) => ServerDataType::YidaoHudState,
+            Self::MovementState(..) => ServerDataType::MovementState,
             Self::CraftRecipeList(..) => ServerDataType::CraftRecipeList,
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
@@ -2660,6 +2672,7 @@ impl ServerDataPayloadV1 {
 mod tests {
     use super::*;
     use crate::network::agent_bridge::payload_type_label;
+    use crate::schema::movement::{MovementActionRequestV1, MovementActionV1, MovementZoneKindV1};
     use crate::schema::poison_trait::{PoisonOverdoseSeverityV1, PoisonSideEffectTagV1};
 
     /// Catches wire-vs-label drift like the QuickSlotConfig "snake_case" bug
@@ -2980,6 +2993,22 @@ mod tests {
                 severed_meridian_count: 1,
                 contract_count: 2,
                 mass_preview_count: 0,
+            }),
+            ServerDataPayloadV1::MovementState(MovementStateV1 {
+                current_speed_multiplier: 0.75,
+                stamina_cost_active: true,
+                movement_action: MovementActionV1::Dashing,
+                zone_kind: MovementZoneKindV1::Normal,
+                dash_cooldown_remaining_ticks: 40,
+                slide_cooldown_remaining_ticks: 0,
+                double_jump_charges_remaining: 1,
+                double_jump_charges_max: 1,
+                hitbox_height_blocks: 1.8,
+                stamina_current: 85.0,
+                stamina_max: 100.0,
+                low_stamina: false,
+                last_action_tick: Some(120),
+                rejected_action: Some(MovementActionRequestV1::Dash),
             }),
             // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
             ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {
@@ -3324,6 +3353,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.movement-state.sample.json"
             ),
         ];
 

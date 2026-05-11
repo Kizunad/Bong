@@ -81,6 +81,7 @@ import {
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
 import { FalseSkinStateV1 } from "./tuike.js";
 import { HealerNpcAiStateV1, YidaoHudStateV1 } from "./yidao.js";
+import { MovementStateV1 } from "./movement.js";
 import {
   ServerDataFreshnessUpdateV1,
   ServerDataProcessingSessionV1,
@@ -234,6 +235,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("false_skin_state"),
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
+  Type.Literal("movement_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -1012,6 +1014,16 @@ export const ServerDataYidaoHudStateV1 = Type.Object(
 );
 export type ServerDataYidaoHudStateV1 = Static<typeof ServerDataYidaoHudStateV1>;
 
+export const ServerDataMovementStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("movement_state"),
+    ...MovementStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataMovementStateV1 = Static<typeof ServerDataMovementStateV1>;
+
 // plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
 export const WeaponViewV1 = Type.Object(
   {
@@ -1488,6 +1500,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataFalseSkinStateV1,
   ServerDataHealerNpcAiStateV1,
   ServerDataYidaoHudStateV1,
+  ServerDataMovementStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataTreasureEquippedV1,
