@@ -196,6 +196,10 @@ mod tests {
         player
     }
 
+    fn default_technique_count() -> usize {
+        KnownTechniques::default().entries.len()
+    }
+
     fn send(app: &mut App, player: valence::prelude::Entity, result: TechniqueCmd) {
         app.world_mut()
             .resource_mut::<Events<CommandResultEvent<TechniqueCmd>>>()
@@ -220,7 +224,7 @@ mod tests {
                 .unwrap()
                 .entries
                 .len(),
-            25
+            default_technique_count()
         );
     }
 
@@ -246,7 +250,7 @@ mod tests {
         run_update(&mut app);
 
         let techniques = app.world().get::<KnownTechniques>(player).unwrap();
-        assert_eq!(techniques.entries.len(), 25);
+        assert_eq!(techniques.entries.len(), default_technique_count());
         assert!(techniques.entries.iter().all(|entry| entry.id != "foo.bar"));
     }
 
@@ -272,7 +276,7 @@ mod tests {
         run_update(&mut app);
 
         let techniques = app.world().get::<KnownTechniques>(player).unwrap();
-        assert_eq!(techniques.entries.len(), 24);
+        assert_eq!(techniques.entries.len(), default_technique_count() - 1);
         assert!(techniques.entries.iter().all(|entry| entry.id != NEEDLE));
     }
 
@@ -329,7 +333,7 @@ mod tests {
         run_update(&mut app);
 
         let techniques = app.world().get::<KnownTechniques>(player).unwrap();
-        assert_eq!(techniques.entries.len(), 25);
+        assert_eq!(techniques.entries.len(), default_technique_count());
         assert!(techniques
             .entries
             .iter()
