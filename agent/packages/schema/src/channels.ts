@@ -263,6 +263,12 @@ export const CHANNELS = {
   /** Server → Agent: 灵眼内固元突破观测（plan-spirit-eye-v1 §5） */
   SPIRIT_EYE_USED_FOR_BREAKTHROUGH: "bong:spirit_eye/used_for_breakthrough",
 
+  /** Server → Agent: 灵宝器灵对话请求（plan-spirit-treasure-v1 P1） */
+  SPIRIT_TREASURE_DIALOGUE_REQUEST: "bong:spirit_treasure_dialogue_request",
+
+  /** Agent → Server: 灵宝器灵对话结果（plan-spirit-treasure-v1 P1） */
+  SPIRIT_TREASURE_DIALOGUE: "bong:spirit_treasure_dialogue",
+
   /** Server → Agent: 玩家踏进 / 走出活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
    *
    * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
@@ -375,6 +381,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SPIRIT_EYE_MIGRATE,
   CHANNELS.SPIRIT_EYE_DISCOVERED,
   CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+  CHANNELS.SPIRIT_TREASURE_DIALOGUE_REQUEST,
+  CHANNELS.SPIRIT_TREASURE_DIALOGUE,
   CHANNELS.TSY_EVENT,
   CHANNELS.POI_NOVICE_EVENT,
   CHANNELS.FORGE_START,

@@ -41,6 +41,7 @@ import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
 import com.bong.client.social.SparringInviteScreenBootstrap;
 import com.bong.client.social.TradeOfferScreenBootstrap;
+import com.bong.client.spirittreasure.SpiritTreasureScreenBootstrap;
 import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.ui.ScreenTransitionController;
@@ -118,6 +119,7 @@ public class BongClient implements ClientModInitializer {
         SparringInviteScreenBootstrap.register();
         TradeOfferScreenBootstrap.register();
         ExtractInteractionBootstrap.register();
+        SpiritTreasureScreenBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();

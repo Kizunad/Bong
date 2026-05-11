@@ -1,0 +1,89 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "dialogue",
+    "display_name",
+    "zone"
+  ],
+  "properties": {
+    "dialogue": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "request_id",
+        "character_id",
+        "treasure_id",
+        "text",
+        "tone",
+        "affinity_delta"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "request_id": {
+          "minLength": 1,
+          "maxLength": 160,
+          "type": "string"
+        },
+        "character_id": {
+          "minLength": 1,
+          "maxLength": 160,
+          "type": "string"
+        },
+        "treasure_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "tone": {
+          "anyOf": [
+            {
+              "const": "cold",
+              "type": "string"
+            },
+            {
+              "const": "curious",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            },
+            {
+              "const": "amused",
+              "type": "string"
+            },
+            {
+              "const": "silent",
+              "type": "string"
+            }
+          ]
+        },
+        "affinity_delta": {
+          "minimum": -1,
+          "maximum": 1,
+          "type": "number"
+        }
+      }
+    },
+    "display_name": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "zone": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    }
+  }
+}

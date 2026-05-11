@@ -2,15 +2,25 @@ use std::collections::HashMap;
 
 use valence::message::ChatMessageEvent;
 use valence::message::SendMessage;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    Client, DVec3, Entity, EventReader, ParamSet, Position, Query, Res, Resource, Username, With,
+    bevy_ecs, Client, DVec3, Entity, EventReader, ParamSet, Position, Query, Res, ResMut, Resource,
+    Username, With,
 };
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::combat::components::Lifecycle;
+use crate::combat::CombatClock;
+use crate::cultivation::components::Cultivation;
+use crate::inventory::spirit_treasure::{ActiveSpiritTreasures, SpiritTreasureRegistry};
 use crate::player::state::canonical_player_id;
 use crate::schema::chat_message::ChatMessageV1;
+use crate::schema::cultivation::realm_to_string;
+use crate::schema::spirit_treasure::{
+    SpiritTreasureDialogueContextV1, SpiritTreasureDialogueHistoryEntryV1,
+    SpiritTreasureDialogueRequestV1, SpiritTreasureDialogueTriggerV1,
+};
 use crate::social::events::PlayerChatCollected;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -40,21 +50,38 @@ pub struct ChatCollectorRateLimit {
 
 impl Resource for ChatCollectorRateLimit {}
 
+#[derive(SystemParam)]
+pub struct ChatCollectorResources<'w> {
+    zone_registry: Option<Res<'w, ZoneRegistry>>,
+    clock: Option<Res<'w, CombatClock>>,
+    spirit_treasure_registry: Option<ResMut<'w, SpiritTreasureRegistry>>,
+    rate_limit: ResMut<'w, ChatCollectorRateLimit>,
+}
+
 #[allow(clippy::type_complexity)]
 pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
-    zone_registry: Option<Res<ZoneRegistry>>,
+    mut resources: ChatCollectorResources,
     mut player_sets: ParamSet<(
-        Query<(&Username, &Position, Option<&Lifecycle>), With<Client>>,
-        Query<&mut Client, With<Client>>,
+        Query<
+            (
+                &Username,
+                &Position,
+                Option<&Lifecycle>,
+                Option<&ActiveSpiritTreasures>,
+                Option<&Cultivation>,
+            ),
+            With<Client>,
+        >,
+        Query<(&mut Client, &Position), With<Client>>,
     )>,
     mut events: EventReader<ChatMessageEvent>,
     mut collected_chats: valence::prelude::EventWriter<PlayerChatCollected>,
-    mut rate_limit: valence::prelude::ResMut<ChatCollectorRateLimit>,
 ) {
-    rate_limit.per_player_count.clear();
+    resources.rate_limit.per_player_count.clear();
 
-    let zone_registry = zone_registry
+    let zone_registry = resources
+        .zone_registry
         .as_deref()
         .cloned()
         .unwrap_or_else(ZoneRegistry::fallback);
@@ -67,90 +94,294 @@ pub fn collect_player_chat(
     {
         let player_info = {
             let players = player_sets.p0();
-            players
-                .get(*client)
-                .ok()
-                .map(|(username, position, lifecycle)| {
-                    (
-                        username.0.clone(),
-                        position.get(),
-                        lifecycle.map(|lifecycle| lifecycle.character_id.clone()),
-                    )
-                })
+            players.get(*client).ok().map(
+                |(username, position, lifecycle, active_treasures, cultivation)| PlayerChatInfo {
+                    username: username.0.clone(),
+                    position: position.get(),
+                    char_id: lifecycle.map(|lifecycle| lifecycle.character_id.clone()),
+                    active_treasures: active_treasures.cloned(),
+                    realm: cultivation
+                        .map(|cultivation| realm_to_string(cultivation.realm).to_string())
+                        .unwrap_or_else(|| "Awaken".to_string()),
+                    qi_percent: cultivation
+                        .map(|cultivation| {
+                            if cultivation.qi_max > 0.0 {
+                                (cultivation.qi_current / cultivation.qi_max).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            }
+                        })
+                        .unwrap_or_default(),
+                },
+            )
         };
 
-        let Some(classified) = classify_player_message(
-            *client,
+        let now_tick = resources
+            .clock
+            .as_deref()
+            .map(|clock| clock.tick)
+            .unwrap_or(*timestamp);
+        let context = ChatMessageContext {
+            player_entity: *client,
             message,
-            *timestamp,
+            timestamp: *timestamp,
+            now_tick,
+        };
+        let Some(classified) = classify_player_message(
+            context,
             player_info,
-            &mut player_sets.p1(),
             &zone_registry,
-            &mut rate_limit,
+            &mut resources.rate_limit,
+            resources.spirit_treasure_registry.as_deref_mut(),
         ) else {
             continue;
         };
 
-        collected_chats.send(classified.collected);
-        let _ = redis.tx_outbound.send(classified.outbound);
+        match classified {
+            ClassifiedChat::PlayerChat {
+                outbound,
+                collected,
+            } => {
+                collected_chats.send(collected);
+                let _ = redis.tx_outbound.send(outbound);
+            }
+            ClassifiedChat::SpiritTreasureDialogue {
+                outbound,
+                zone,
+                public_message,
+            } => {
+                let mut clients = player_sets.p1();
+                for (mut target_client, position) in &mut clients {
+                    if zone_name_for_position(&zone_registry, position.get()) == zone {
+                        target_client.send_chat_message(public_message.clone());
+                    }
+                }
+                let _ = redis.tx_outbound.send(outbound);
+            }
+            ClassifiedChat::PromptSelf(text) => {
+                let mut clients = player_sets.p1();
+                if let Ok((mut target_client, _)) = clients.get_mut(*client) {
+                    target_client.send_chat_message(text);
+                }
+            }
+        }
     }
 }
 
-struct ClassifiedChat {
-    outbound: RedisOutbound,
-    collected: PlayerChatCollected,
+#[derive(Debug, Clone, Copy)]
+struct ChatMessageContext<'a> {
+    player_entity: Entity,
+    message: &'a str,
+    timestamp: u64,
+    now_tick: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PlayerChatInfo {
+    username: String,
+    position: DVec3,
+    char_id: Option<String>,
+    active_treasures: Option<ActiveSpiritTreasures>,
+    realm: String,
+    qi_percent: f64,
+}
+
+enum ClassifiedChat {
+    PlayerChat {
+        outbound: RedisOutbound,
+        collected: PlayerChatCollected,
+    },
+    SpiritTreasureDialogue {
+        outbound: RedisOutbound,
+        zone: String,
+        public_message: String,
+    },
+    PromptSelf(String),
 }
 
 fn classify_player_message(
-    player_entity: Entity,
-    message: &str,
-    timestamp: u64,
-    player_info: Option<(String, DVec3, Option<String>)>,
-    clients: &mut Query<&mut Client, With<Client>>,
+    context: ChatMessageContext<'_>,
+    player_info: Option<PlayerChatInfo>,
     zone_registry: &ZoneRegistry,
     rate_limit: &mut ChatCollectorRateLimit,
+    spirit_treasure_registry: Option<&mut SpiritTreasureRegistry>,
 ) -> Option<ClassifiedChat> {
-    let too_long = is_oversize_message(message);
-    let over_budget = exceeds_rate_budget(player_entity, rate_limit);
+    let too_long = is_oversize_message(context.message);
+    let over_budget = exceeds_rate_budget(context.player_entity, rate_limit);
 
     if too_long || over_budget {
         return None;
     }
 
-    let (username, position, char_id) = player_info?;
+    let player_info = player_info?;
+    let username = player_info.username.clone();
+    let position = player_info.position;
 
-    if is_legacy_bang_command(message) {
-        if let Ok(mut client) = clients.get_mut(player_entity) {
-            client.send_chat_message("`!` 命令已迁至 `/`，使用 Tab 补全");
-        }
-        return None;
+    if is_legacy_bang_command(context.message) {
+        return Some(ClassifiedChat::PromptSelf(
+            "`!` 命令已迁至 `/`，使用 Tab 补全".to_string(),
+        ));
     }
 
-    if is_command_like(message) {
+    if is_command_like(context.message) {
         return None;
     }
 
     let zone = zone_name_for_position(zone_registry, position);
     let canonical_player = canonical_player_id(username.as_str());
-    let char_id = char_id.unwrap_or_else(|| canonical_player.clone());
+    let char_id = player_info
+        .char_id
+        .as_deref()
+        .unwrap_or(canonical_player.as_str())
+        .to_string();
 
-    Some(ClassifiedChat {
+    if let Some(registry) = spirit_treasure_registry {
+        if let Some(route) = classify_spirit_treasure_dialogue(
+            context,
+            &player_info,
+            char_id.as_str(),
+            zone.as_str(),
+            registry,
+        ) {
+            match route {
+                SpiritTreasureRoute::PromptSelf(text) => {
+                    return Some(ClassifiedChat::PromptSelf(text));
+                }
+                SpiritTreasureRoute::Dialogue {
+                    outbound,
+                    public_message,
+                } => {
+                    return Some(ClassifiedChat::SpiritTreasureDialogue {
+                        outbound: *outbound,
+                        zone,
+                        public_message,
+                    });
+                }
+            }
+        }
+    }
+
+    Some(ClassifiedChat::PlayerChat {
         outbound: RedisOutbound::PlayerChat(ChatMessageV1 {
             v: 1,
-            ts: timestamp,
+            ts: context.timestamp,
             player: canonical_player,
-            raw: message.to_string(),
+            raw: context.message.to_string(),
             zone: zone.clone(),
         }),
         collected: PlayerChatCollected {
-            entity: player_entity,
+            entity: context.player_entity,
             username,
             char_id,
             zone,
-            raw: message.to_string(),
-            timestamp,
+            raw: context.message.to_string(),
+            timestamp: context.timestamp,
         },
     })
+}
+
+enum SpiritTreasureRoute {
+    PromptSelf(String),
+    Dialogue {
+        outbound: Box<RedisOutbound>,
+        public_message: String,
+    },
+}
+
+fn classify_spirit_treasure_dialogue(
+    context: ChatMessageContext<'_>,
+    player_info: &PlayerChatInfo,
+    char_id: &str,
+    zone: &str,
+    registry: &mut SpiritTreasureRegistry,
+) -> Option<SpiritTreasureRoute> {
+    let (target_name, player_message) = parse_spirit_treasure_mention(context.message)?;
+    let def = registry.find_by_display_name(target_name)?.clone();
+    let active = player_info
+        .active_treasures
+        .as_ref()
+        .and_then(|active| {
+            active
+                .treasures
+                .iter()
+                .find(|entry| entry.template_id == def.template_id)
+        })
+        .cloned();
+    let Some(active) = active else {
+        return Some(SpiritTreasureRoute::PromptSelf(
+            "§8[灵宝] §7你并未持有此物。".to_string(),
+        ));
+    };
+
+    let (sleeping, last_dialogue_tick, affinity) = registry
+        .active
+        .get(&def.template_id)
+        .map(|state| (state.sleeping, state.last_dialogue_tick, state.affinity))
+        .unwrap_or((false, 0, 0.5));
+    if sleeping {
+        return Some(SpiritTreasureRoute::PromptSelf(
+            "§8[灵宝] §7镜面无光，器灵仍在沉睡。".to_string(),
+        ));
+    }
+
+    let cooldown_ticks = u64::from(def.dialogue_cooldown_s).saturating_mul(20);
+    let ready_at = last_dialogue_tick.saturating_add(cooldown_ticks);
+    if last_dialogue_tick > 0 && context.now_tick < ready_at {
+        let seconds = ready_at.saturating_sub(context.now_tick).div_ceil(20);
+        return Some(SpiritTreasureRoute::PromptSelf(format!(
+            "§8[灵宝] §7寂照镜尚未回神，还需 {seconds}s。"
+        )));
+    }
+
+    if let Some(state) = registry.active.get_mut(&def.template_id) {
+        state.last_dialogue_tick = context.now_tick;
+    }
+
+    let request = SpiritTreasureDialogueRequestV1 {
+        v: 1,
+        request_id: format!(
+            "spirit_treasure:{:x}:{}",
+            context.player_entity.to_bits(),
+            context.timestamp
+        ),
+        character_id: char_id.to_string(),
+        treasure_id: def.template_id.clone(),
+        trigger: SpiritTreasureDialogueTriggerV1::Player,
+        player_message: Some(player_message.to_string()),
+        context: SpiritTreasureDialogueContextV1 {
+            realm: player_info.realm.clone(),
+            qi_percent: player_info.qi_percent,
+            zone: zone.to_string(),
+            recent_events: Vec::new(),
+            affinity,
+            dialogue_history: vec![SpiritTreasureDialogueHistoryEntryV1 {
+                speaker: "player".to_string(),
+                content: player_message.to_string(),
+            }],
+            equipped: active.equipped,
+        },
+    };
+
+    Some(SpiritTreasureRoute::Dialogue {
+        outbound: Box::new(RedisOutbound::SpiritTreasureDialogueRequest(request)),
+        public_message: format!(
+            "§7[灵宝] §f{} §8@{}§7：{}",
+            player_info.username, def.display_name, player_message
+        ),
+    })
+}
+
+fn parse_spirit_treasure_mention(message: &str) -> Option<(&str, &str)> {
+    let trimmed = message.trim_start();
+    let rest = trimmed.strip_prefix('@')?;
+    let (name, body) = rest
+        .split_once(char::is_whitespace)
+        .map(|(name, body)| (name, body.trim()))
+        .unwrap_or((rest, ""));
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, body))
 }
 
 fn exceeds_rate_budget(player_entity: Entity, rate_limit: &mut ChatCollectorRateLimit) -> bool {
@@ -210,6 +441,7 @@ mod chat_collector_tests {
             rx_inbound,
         });
         app.insert_resource(ChatCollectorRateLimit::default());
+        app.insert_resource(SpiritTreasureRegistry::default());
 
         if with_zone_registry {
             app.insert_resource(ZoneRegistry::fallback());
@@ -407,5 +639,49 @@ mod chat_collector_tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].char_id, "char:alice");
         assert_eq!(collected[0].raw, "现身一言");
+    }
+
+    #[test]
+    fn routes_owned_spirit_treasure_mention_to_dialogue_runtime() {
+        use crate::inventory::spirit_treasure::{ActiveTreasureEntry, JIZHAOJING_TEMPLATE_ID};
+
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        app.world_mut().entity_mut(alice).insert((
+            Lifecycle {
+                character_id: "char:alice".to_string(),
+                ..Default::default()
+            },
+            ActiveSpiritTreasures {
+                treasures: vec![ActiveTreasureEntry {
+                    template_id: JIZHAOJING_TEMPLATE_ID.to_string(),
+                    instance_id: 88,
+                    equipped: true,
+                    passive_active: true,
+                }],
+            },
+        ));
+        send_chat_event(&mut app, alice, "@寂照镜 镜中可见什么？", 1_712_345_706);
+
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("owned spirit treasure mention should publish dialogue request");
+        match outbound {
+            RedisOutbound::SpiritTreasureDialogueRequest(request) => {
+                assert_eq!(request.v, 1);
+                assert_eq!(request.character_id, "char:alice");
+                assert_eq!(request.treasure_id, JIZHAOJING_TEMPLATE_ID);
+                assert_eq!(request.trigger, SpiritTreasureDialogueTriggerV1::Player);
+                assert_eq!(request.player_message.as_deref(), Some("镜中可见什么？"));
+                assert!(request.context.equipped);
+            }
+            other => panic!("expected spirit treasure dialogue request, got {other:?}"),
+        }
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "spirit treasure mention should not also enter normal player_chat"
+        );
     }
 }

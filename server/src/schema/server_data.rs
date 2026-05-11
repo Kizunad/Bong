@@ -35,6 +35,7 @@ use super::social::{
     SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
+use super::spirit_treasure::{SpiritTreasureDialoguePayloadV1, SpiritTreasureStatePayloadV1};
 use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
@@ -199,6 +200,8 @@ pub enum ServerDataType {
     HealerNpcAiState,
     YidaoHudState,
     MovementState,
+    SpiritTreasureState,
+    SpiritTreasureDialogue,
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList,
     CraftSessionState,
@@ -424,6 +427,8 @@ pub enum ServerDataPayloadV1 {
     HealerNpcAiState(HealerNpcAiStateV1),
     YidaoHudState(YidaoHudStateV1),
     MovementState(MovementStateV1),
+    SpiritTreasureState(SpiritTreasureStatePayloadV1),
+    SpiritTreasureDialogue(SpiritTreasureDialoguePayloadV1),
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     /// inventory 打开时一次性推全配方表（含解锁状态）。
     CraftRecipeList(Box<RecipeListV1>),
@@ -1220,6 +1225,14 @@ enum ServerDataPayloadWireV1 {
     MovementState {
         #[serde(flatten)]
         state: MovementStateV1,
+    },
+    SpiritTreasureState {
+        #[serde(flatten)]
+        state: SpiritTreasureStatePayloadV1,
+    },
+    SpiritTreasureDialogue {
+        #[serde(flatten)]
+        dialogue: SpiritTreasureDialoguePayloadV1,
     },
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList {
@@ -2040,6 +2053,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::YidaoHudState { state } => Ok(Self::YidaoHudState(state)),
             ServerDataPayloadWireV1::MovementState { state } => Ok(Self::MovementState(state)),
+            ServerDataPayloadWireV1::SpiritTreasureState { state } => {
+                Ok(Self::SpiritTreasureState(state))
+            }
+            ServerDataPayloadWireV1::SpiritTreasureDialogue { dialogue } => {
+                Ok(Self::SpiritTreasureDialogue(dialogue))
+            }
             ServerDataPayloadWireV1::CraftRecipeList { list } => Ok(Self::CraftRecipeList(list)),
             ServerDataPayloadWireV1::CraftSessionState { state } => {
                 Ok(Self::CraftSessionState(state))
@@ -2537,6 +2556,12 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::MovementState(state) => Self::MovementState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::SpiritTreasureState(state) => Self::SpiritTreasureState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::SpiritTreasureDialogue(dialogue) => Self::SpiritTreasureDialogue {
+                dialogue: dialogue.clone(),
+            },
             ServerDataPayloadV1::CraftRecipeList(list) => {
                 Self::CraftRecipeList { list: list.clone() }
             }
@@ -2837,6 +2862,8 @@ impl ServerDataPayloadV1 {
             Self::HealerNpcAiState(..) => ServerDataType::HealerNpcAiState,
             Self::YidaoHudState(..) => ServerDataType::YidaoHudState,
             Self::MovementState(..) => ServerDataType::MovementState,
+            Self::SpiritTreasureState(..) => ServerDataType::SpiritTreasureState,
+            Self::SpiritTreasureDialogue(..) => ServerDataType::SpiritTreasureDialogue,
             Self::CraftRecipeList(..) => ServerDataType::CraftRecipeList,
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
@@ -3621,6 +3648,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.movement-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.spirit-treasure-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.spirit-treasure-dialogue.sample.json"
             ),
         ];
 

@@ -115,6 +115,12 @@ pub enum StatusEffectKind {
     QiDrainForStamina,
     /// plan-alchemy-combat-v1 P0：缩地散透支双腿的即时应力伤 HUD 标记。
     LegStrain,
+    /// plan-spirit-treasure-v1 P3：寂照镜隐匿期间从感知/威胁选择中消失。
+    MirrorConcealment,
+    /// plan-spirit-treasure-v1 P3：镜隐结束后的反向暴露窗口。
+    MirrorExposed,
+    /// plan-spirit-treasure-v1 P3：寂照镜好感缩放后的常驻感知加成标记。
+    SpiritTreasurePerception,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
