@@ -167,3 +167,37 @@ block_broken = block_stress > block.hardness
 20-31. P2 碰撞（土墙碎/石墙不碎/穿透 3 上限/撞人动量交换/连锁 3 级/护甲减伤）
 32-36. 守恒安全（碰撞不产真元/方块走 block_break/连锁上限/MAX clamp/NPC 玩家统一）
 37-40. 回归（baomai≈3格 / skull-fiend≈6格 / zhenfa≈2格 / NPC≈4格）
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 力学模型：`server/src/qi_physics/knockback.rs` 提供 `KnockbackInput` / `KnockbackResult` / `compute_knockback()` / `wall_collision()` / `entity_collision()`；`server/src/combat/body_mass.rs` 提供 `BodyMass`、`Stance`、装备重量同步、NPC archetype 质量表。
+- P1 战斗集成：`server/src/combat/knockback.rs` 提供武器/攻击来源击退映射；`server/src/combat/resolve.rs` 在命中后插入动态 `PendingKnockback` 并发出 `KnockbackEvent`；`server/src/npc/skull_fiend.rs` 切到动态击退入口。
+- P2 碰撞物理：`server/src/npc/movement.rs` 扩展 `PendingKnockback` / `ActiveOverride::Knockback`，处理撞墙钝伤、软块破坏、撞人连锁、动能衰减和链深上限。
+- P3 饱和测试：server 覆盖 body mass、姿态、公式、武器/来源映射、撞墙、撞人、战斗 resolve、骨煞回归；agent/client 覆盖 `knockback_sync` schema、router 注册和 `hit_pushback` 视觉复用。
+- 跨仓库契约：server `server/src/schema/server_data.rs` + `server/src/network/knockback_sync_emit.rs`；agent `agent/packages/schema/src/server-data.ts` + generated schema；client `client/src/main/java/com/bong/client/network/KnockbackSyncHandler.java`。
+
+### 关键 commit
+
+- `efb697456` · 2026-05-12 · `feat(knockback): 建立统一击退物理模型`
+- `7dc6d2145` · 2026-05-12 · `feat(knockback): 接入战斗击退与碰撞链`
+- `d7ecc5b43` · 2026-05-12 · `feat(knockback): 同步击退客户端契约`
+- `dfec33de2` · 2026-05-12 · `test(client): 同步鲸实体 raw id 断言`（client 基线测试漂移修正，运行时未改）
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 4629 passed。
+- `cd server && cargo test body_mass --all-targets && cargo test knockback --all-targets && cargo test skull_fiend --all-targets` → 5 + 14 + 8 passed。
+- `cd agent && npm run build && npm test --workspace @bong/schema` → schema 20 files / 384 tests passed。
+- `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn PATH=$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH ./gradlew test build` → 1389 tests passed，build successful。
+
+### 跨仓库核验
+
+- server：`qi_physics::knockback`、`BodyMass`、`Stance`、`KnockbackEvent`、`PendingKnockback::from_result()`、`KnockbackSyncV1`。
+- agent：`ServerDataKnockbackSyncV1`、`server-data-knockback-sync-v1.json`、`ServerDataV1` union。
+- client：`knockback_sync` router type、`KnockbackSyncHandler`、`VisualEffectState.EffectType.HIT_PUSHBACK`。
+
+### 遗留 / 后续
+
+- 玩家物理位移仍等待 `plan-movement-overhaul-v1` 接入 server-authoritative player movement；本 plan 已同步客户端击退视觉并保持 NPC 动态击退生效。
