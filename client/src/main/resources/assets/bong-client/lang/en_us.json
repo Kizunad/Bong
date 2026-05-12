@@ -16,6 +16,8 @@
   "key.bong-client.jiemai_react": "Jiemai Reaction",
   "key.bong-client.spell_volume_hold": "Hold Spell Volume Panel",
   "key.bong-client.event_stream_toggle": "Toggle Event Stream HUD",
+  "key.bong-client.movement_dash": "Dash",
+  "key.bong-client.movement_slide": "Slide",
   "key.bong-client.botany_auto_harvest": "Botany Auto Harvest",
   "key.bong-client.open_alchemy_screen": "Open Alchemy Furnace",
   "key.bong-client.tsy_extract": "Start TSY Extract",
