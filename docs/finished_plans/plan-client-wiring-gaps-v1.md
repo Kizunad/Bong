@@ -97,3 +97,33 @@ public final class GatheringProgressStore {
 5. 多个 session 并行 → 只显示最新活跃 session
 6. 断线重连 → store 清空（无残留进度条）
 7. 未注册类型 → `ServerDataRouter` 走 unknown 分支不崩溃（回归）
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 / trade_offer 注册：`client/src/main/java/com/bong/client/network/ServerDataRouter.java` 注册 `trade_offer` 到 `SocialServerDataHandler`。
+- P0 / mining_progress 接入：`MiningProgressHandler` + `GatheringProgressPayloadReader` 将 `mining_progress` 写入 `GatheringSessionStore`，复用 `GatheringProgressHud` 渲染。
+- P0 / lumber_progress 接入：`LumberProgressHandler` + `GatheringProgressPayloadReader` 将 `lumber_progress` 写入同一 gathering store/HUD。
+- P0 / 断线清理：`BongNetworkHandler` disconnect hook 调用 `GatheringSessionStore.clearOnDisconnect()`，避免重连残留进度条。
+- P1 / 饱和测试：`GatheringProgressHandlerTest` 覆盖 mining/lumber 更新、完成清理、并行 session 最新优先、invalid payload no-op、断线清理；`ServerDataRouterTest` 固定注册表；`SocialServerDataHandlerTest` 改为经默认 router 验证 `trade_offer` 分发。
+
+### 关键 commit
+
+- `863afd1f5` · 2026-05-13 · `feat(client): 补全三条采集与交易接线`
+
+### 测试结果
+
+- `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew --no-daemon --console=plain test --tests "com.bong.client.network.GatheringProgressHandlerTest" --tests "com.bong.client.network.ServerDataRouterTest" --tests "com.bong.client.network.SocialServerDataHandlerTest"`：通过。
+- `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew --no-daemon --console=plain test build`：通过，`1394 tests / 0 failures / 0 errors / 0 skipped`。
+- `git diff --check`：通过。
+
+### 跨仓库核验
+
+- server：已存在 `ServerDataPayloadV1::MiningProgress` / `ServerDataPayloadV1::LumberProgress`、`send_mining_progress_to_client()`、`send_lumber_progress_to_client()`；本 plan 未改 server。
+- client：`ServerDataRouter.createDefault()` 现在注册 `trade_offer`、`mining_progress`、`lumber_progress`；`SocialServerDataHandler.handleTradeOffer()`、`MiningProgressHandler`、`LumberProgressHandler`、`GatheringSessionStore`、`GatheringProgressHud` 全链路有测试覆盖。
+- agent：无新增/修改。
+
+### 遗留 / 后续
+
+- 无。本次实现以当前 server schema 为准：`mining_progress` 使用 `session_id/ore_pos/progress/interrupted/completed`，`lumber_progress` 使用 `session_id/log_pos/progress/interrupted/completed/detail`；client 额外兼容 `display_name/mineral_id/tree_id` 作为未来 label 来源。
