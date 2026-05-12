@@ -38,8 +38,8 @@ public class ClientRequestProtocolTest {
     @Test
     void encodesMovementActionRequest() {
         assertEquals(
-            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"double_jump\"}",
-            ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DOUBLE_JUMP)
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\"}",
+            ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH)
         );
     }
 

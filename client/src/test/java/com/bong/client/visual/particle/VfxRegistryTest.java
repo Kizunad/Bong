@@ -282,10 +282,6 @@ public class VfxRegistryTest {
             "bootstrap should register poison_mist");
         assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.DASH),
             "bootstrap should register movement_dash");
-        assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.SLIDE),
-            "bootstrap should register movement_slide");
-        assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.DOUBLE_JUMP),
-            "bootstrap should register movement_double_jump");
         for (Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {
             assertTrue(VfxRegistry.instance().contains(eventId),
                 "bootstrap should register alchemy combat pill VFX " + eventId);

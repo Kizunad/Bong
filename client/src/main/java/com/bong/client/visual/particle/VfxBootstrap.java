@@ -172,10 +172,6 @@ public final class VfxBootstrap {
         registry.register(PoisonMistPlayer.EVENT_ID,            new PoisonMistPlayer());
         registry.register(MovementVfxPlayer.DASH,
             new MovementVfxPlayer(MovementVfxPlayer.Kind.DASH));
-        registry.register(MovementVfxPlayer.SLIDE,
-            new MovementVfxPlayer(MovementVfxPlayer.Kind.SLIDE));
-        registry.register(MovementVfxPlayer.DOUBLE_JUMP,
-            new MovementVfxPlayer(MovementVfxPlayer.Kind.DOUBLE_JUMP));
         AlchemyCombatPillVfxPlayer combatPills = new AlchemyCombatPillVfxPlayer();
         for (net.minecraft.util.Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {
             registry.register(eventId, combatPills);

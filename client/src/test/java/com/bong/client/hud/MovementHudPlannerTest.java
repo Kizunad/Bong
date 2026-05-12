@@ -35,9 +35,6 @@ class MovementHudPlannerTest {
             MovementState.Action.DASHING,
             MovementState.ZoneKind.NORMAL,
             20,
-            0,
-            1,
-            1,
             1.8,
             70,
             100,
@@ -74,35 +71,6 @@ class MovementHudPlannerTest {
     }
 
     @Test
-    void doubleJumpDotsReflectMaxCharges() {
-        MovementState state = new MovementState(
-            0.75,
-            false,
-            MovementState.Action.DOUBLE_JUMPING,
-            MovementState.ZoneKind.NORMAL,
-            0,
-            0,
-            1,
-            2,
-            1.8,
-            80,
-            100,
-            false,
-            12L,
-            "",
-            1_000L,
-            1_000L,
-            0L
-        );
-
-        List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 1_100L);
-
-        long dotRects = commands.stream()
-            .filter(c -> isMovementRect(c) && c.width() == 6 && c.height() == 6)
-            .count();
-        assertEquals(2, dotRects);
-    }
-
     private static boolean isMovementRect(HudRenderCommand command) {
         return command.layer() == HudRenderLayer.MOVEMENT_HUD && command.isRect();
     }
@@ -120,9 +88,6 @@ class MovementHudPlannerTest {
             action,
             zone,
             0,
-            0,
-            1,
-            1,
             1.8,
             lowStamina ? 20 : 80,
             100,

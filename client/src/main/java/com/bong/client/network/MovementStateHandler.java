@@ -46,9 +46,6 @@ public final class MovementStateHandler implements ServerDataHandler {
         MovementState.Action action = MovementState.Action.fromWireName(readString(payload, "movement_action"));
         MovementState.ZoneKind zoneKind = MovementState.ZoneKind.fromWireName(readString(payload, "zone_kind"));
         Long dashCooldown = readLong(payload, "dash_cooldown_remaining_ticks");
-        Long slideCooldown = readLong(payload, "slide_cooldown_remaining_ticks");
-        Integer jumpCharges = readInteger(payload, "double_jump_charges_remaining");
-        Integer jumpChargesMax = readInteger(payload, "double_jump_charges_max");
         Double hitboxHeight = readDouble(payload, "hitbox_height_blocks");
         Double staminaCurrent = readDouble(payload, "stamina_current");
         Double staminaMax = readDouble(payload, "stamina_max");
@@ -60,18 +57,12 @@ public final class MovementStateHandler implements ServerDataHandler {
             || action == null
             || zoneKind == null
             || dashCooldown == null
-            || slideCooldown == null
-            || jumpCharges == null
-            || jumpChargesMax == null
             || hitboxHeight == null
             || staminaCurrent == null
             || staminaMax == null
             || lowStamina == null
             || speed < 0.0
             || dashCooldown < 0L
-            || slideCooldown < 0L
-            || jumpCharges < 0
-            || jumpChargesMax < 0
             || hitboxHeight < 0.0
             || staminaCurrent < 0.0
             || staminaMax <= 0.0
@@ -90,9 +81,6 @@ public final class MovementStateHandler implements ServerDataHandler {
             action,
             zoneKind,
             dashCooldown,
-            slideCooldown,
-            jumpCharges,
-            jumpChargesMax,
             hitboxHeight,
             staminaCurrent,
             staminaMax,
@@ -175,19 +163,9 @@ public final class MovementStateHandler implements ServerDataHandler {
         }
         String value = p.getAsString();
         if (value.isEmpty()
-            || "dash".equals(value)
-            || "slide".equals(value)
-            || "double_jump".equals(value)) {
+            || "dash".equals(value)) {
             return value;
         }
         return null;
-    }
-
-    private static Integer readInteger(JsonObject obj, String field) {
-        Long value = readLong(obj, field);
-        if (value == null || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
-            return null;
-        }
-        return value.intValue();
     }
 }
