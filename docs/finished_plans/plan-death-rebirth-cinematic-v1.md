@@ -294,10 +294,13 @@
   - `72a1a1506` 2026-05-12 `feat(death-cinematic): 接入死亡电影化状态契约`
   - `a8f122d25` 2026-05-12 `feat(client): 渲染死亡重生电影化流程`
   - `ad1b7d7bc` 2026-05-12 `feat(agent): 订阅死亡电影化事件`
+  - `c8a0d2aae` 2026-05-12 `docs(plan-death-rebirth-cinematic-v1): finish evidence 并归档至 finished_plans/`
+  - `6ce38fadb` 2026-05-12 `fix(death-cinematic): 补 CodeRabbit 边界测试与解析护栏`
 - **测试结果**：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 4480 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 4482 passed。
   - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过，schema 378 passed，tiandao 355 passed。
   - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL。
+  - CodeRabbit review follow-up：`cargo test death_lifecycle::cinematic`、`cargo test network::combat_bridge`、`./gradlew test --rerun-tasks --tests "com.bong.client.death.DeathCinematicTest" --tests "com.bong.client.combat.handler.CombatHandlersTest"`、`npm test -w @bong/schema -- schema.test.ts`、`npm test -w @bong/tiandao -- redis-ipc.test.ts` 均通过。
   - `git diff --check`：通过。
 - **跨仓库核验**：
   - server：`DeathCinematicS2cV1`、`DeathCinematic`、`DeathCinematicPublished`、`CH_DEATH_CINEMATIC`、`DeathScreenS2cV1.cinematic`。
