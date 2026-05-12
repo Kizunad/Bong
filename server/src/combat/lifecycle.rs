@@ -1,7 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{
-    Commands, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
+    Commands, Entity, EventReader, EventWriter, Events, GameMode, Position, Query, Res, ResMut,
+    Username,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -154,6 +155,7 @@ pub fn sync_combat_state_from_events(
 pub fn wound_bleed_tick(
     clock: Res<CombatClock>,
     mut deaths: EventWriter<DeathEvent>,
+    game_modes: Query<&GameMode>,
     mut wounded: Query<(Entity, &mut Wounds, Option<&Lifecycle>)>,
 ) {
     if !clock.tick.is_multiple_of(BLEED_TICK_INTERVAL_TICKS) {
@@ -162,6 +164,9 @@ pub fn wound_bleed_tick(
 
     for (entity, mut wounds, lifecycle) in &mut wounded {
         if wounds.health_current <= 0.0 {
+            continue;
+        }
+        if !super::is_damageable(entity, &game_modes) {
             continue;
         }
         if lifecycle.is_some_and(|lifecycle| {
@@ -1916,7 +1921,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use valence::prelude::{App, Events, IntoSystemConfigs, Update};
+    use valence::prelude::{App, Events, GameMode, IntoSystemConfigs, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -2062,6 +2067,95 @@ mod tests {
         let death_events = app.world().resource::<Events<DeathEvent>>();
         assert_eq!(wounds.health_current, 0.0);
         assert_eq!(death_events.len(), 1);
+    }
+
+    #[test]
+    fn wound_bleed_tick_skips_creative_players() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: BLEED_TICK_INTERVAL_TICKS,
+        });
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, wound_bleed_tick);
+
+        let entity = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 12.0,
+                health_max: 30.0,
+                entries: vec![Wound {
+                    location: BodyPart::Chest,
+                    kind: WoundKind::Cut,
+                    severity: 0.3,
+                    bleeding_per_sec: 3.0,
+                    created_at_tick: 0,
+                    inflicted_by: None,
+                }],
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(GameMode::Creative);
+
+        app.update();
+
+        let wounds = app.world().entity(entity).get::<Wounds>().unwrap();
+        assert_eq!(wounds.health_current, 12.0);
+        assert_eq!(app.world().resource::<Events<DeathEvent>>().len(), 0);
+    }
+
+    #[test]
+    fn wound_bleed_tick_uses_latest_game_mode_component() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: BLEED_TICK_INTERVAL_TICKS,
+        });
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, wound_bleed_tick);
+
+        let entity = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 12.0,
+                health_max: 30.0,
+                entries: vec![Wound {
+                    location: BodyPart::Chest,
+                    kind: WoundKind::Cut,
+                    severity: 0.3,
+                    bleeding_per_sec: 3.0,
+                    created_at_tick: 0,
+                    inflicted_by: None,
+                }],
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(GameMode::Survival);
+        app.update();
+        let after_survival = app
+            .world()
+            .entity(entity)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+        assert_eq!(after_survival, 9.0);
+
+        app.world_mut().resource_mut::<CombatClock>().tick += BLEED_TICK_INTERVAL_TICKS;
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(GameMode::Creative);
+        app.update();
+
+        let wounds = app.world().entity(entity).get::<Wounds>().unwrap();
+        assert_eq!(
+            wounds.health_current, after_survival,
+            "switching to Creative must stop residual wound bleed damage"
+        );
     }
 
     #[test]
